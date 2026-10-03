@@ -1,4 +1,5 @@
-import { migrateBases } from '@merv/code/base-schema';
+import { initializeResearchCheckConfiguration, researchCheck } from './check-configuration.js';
+import { migrateBases } from './base-schema.js';
 import { OperationJournal } from '@merv/code/operation-journal';
 import {
   canonical,
@@ -227,6 +228,7 @@ export class CodeBaseService {
 
   async initialize(): Promise<void> {
     await migrateBases(this.state);
+    await initializeResearchCheckConfiguration(this.state);
     if (this.hooks.resolved)
       await this.state.transaction(async (tx) => {
         for (const row of await tx.all<BaseRow>(
@@ -858,19 +860,15 @@ export class CodeBaseService {
   }
 
   /**
-   * The project's check, read from the limits document the store already keeps. A project
-   * bound before checks existed reads as no command, which is what it meant. A command that
+   * The project's check, retained by the research adapter. A project bound before checks
+   * existed reads as no command, which is what it meant. A command that
    * is there and cannot be read is not the same thing: reading it as absent would switch
    * verification off without anybody having asked, so it stops the base instead.
    */
   private async checkSpec(sql: Sql, projectId: string): Promise<CodeCheckSpec | null> {
-    const row = await sql.get<{ limits_json: string | null }>(
-      'SELECT limits_json FROM code_projects WHERE project_id=?',
-      projectId,
-    );
-    const stored = JSON.parse(row?.limits_json || '{}') as { check?: unknown };
-    if (stored.check === null || stored.check === undefined) return null;
-    const parsed = codeCheckSpecSchema.safeParse(stored.check);
+    const configured = await researchCheck(sql, projectId);
+    if (configured === null) return null;
+    const parsed = codeCheckSpecSchema.safeParse(configured);
     check(
       parsed.success,
       'code_check_unavailable',

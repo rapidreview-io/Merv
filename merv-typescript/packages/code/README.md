@@ -1,12 +1,13 @@
 # Code
 
-Code is an optional Git utility for parallel research. It retains exact revisions, project
-repository bindings, unit facts and writer generations; owns repository files and Git
+Code is an optional Git utility. It retains exact commits, project repository bindings,
+workspace inputs and writer generations; owns repository files and Git
 execution; and provides optional GitHub authentication and transport. It depends only on
 **State and Scope**. It does not load Workflows, Reviews, Sessions, or research policies.
 
-The core service is `ctx.code`. Its repository, unit and writer APIs are technical building
-blocks. Callers choose what to retain and supply immutable facts inside their own transaction.
+The core service is `ctx.code`. Its repository, workspace and writer APIs are technical building
+blocks. Callers retain commits under opaque keys and pin workspace inputs inside their own
+transaction. Retention keys preserve every commit across repository transfers and rebinding.
 Core checks integrity and concurrency; it does not decide research acceptance, scheduling,
 review requirements, or which experiment's work belongs in a project.
 
@@ -25,14 +26,18 @@ GitHub is separately optional: a local repository does not require a GitHub conn
 The utility owns repository locks and the GitHub client. The integration releases its own
 operations when unloaded. Technical changes to bindings and writers notify optional
 projections within the same transaction; failure rolls back both the fact and projection.
-Unloading a projection never deletes facts. Reattachment rebuilds derived research state.
+Unloading a projection never deletes facts. Persistent repository holds preserve transfer
+and rebinding restrictions when an integration is unloaded. Reattachment rebuilds derived
+research state.
 
 `repositories.root`, `quotaBytes` and `reservedFreeBytes` belong to the core configuration.
 `finalizeGraceSeconds` also belongs to Code, so every writer uses the same timeout.
 Import maintenance, drain timing, automatic base merging and mirroring belong to the
 integration's `repositories` configuration. Disaster backup and restoration belong to
-[deployment operations](../../docs/RECOVERY_SNAPSHOTS.md), outside both plugins. Existing database
-migration identities and retained workflow evidence remain unchanged by the split.
+[deployment operations](../../docs/RECOVERY_SNAPSHOTS.md), outside both plugins. Historical migration text and retained workflow evidence remain unchanged. A separate generic
+storage migration creates technical workspace, commit retention and repository hold records.
+Legacy installations hold repository changes until the research compatibility migration has
+transferred their retained Git facts; standalone Code never interprets acceptance or reviews.
 
 The machine [Code workspace driver](src/driver/index.ts) supports isolated checkouts and
 cross-machine handoff. The [Runner](../runner/README.md) loads it only when enabled;
@@ -40,4 +45,4 @@ cross-machine handoff. The [Runner](../runner/README.md) loads it only when enab
 
 See [Code operations](../../docs/CODE_OPERATIONS.md),
 [GitHub connections](../../docs/GITHUB_REPOSITORIES.md), and the
-[cleanup scope and verification](../../docs/CODE_UTILITY_CLEANUP.md).
+[ownership boundary and upgrade behavior](../../docs/CODE_RESEARCH_BOUNDARY.md).

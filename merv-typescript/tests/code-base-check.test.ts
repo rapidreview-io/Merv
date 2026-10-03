@@ -13,7 +13,7 @@ import type {
 import { checkScript } from '@merv/sandboxes';
 import { checkBriefSections, checkResolutionCheck } from '@merv/code-research/base-check';
 import { baseFixture } from './fixtures/code-bases.js';
-import { migrateBases } from '@merv/code/base-schema';
+import { migrateBases } from '@merv/code-research/base-schema';
 import { openState } from './fixtures/state.js';
 
 /**
@@ -111,27 +111,14 @@ function scripted(verdicts: SandboxCheckVerdict[] = [], readyAfter = 1) {
 
 type Fixture = Awaited<ReturnType<typeof baseFixture>>;
 
-/** The project's check, written where CodeStore.configure writes it. */
+/** Configure only research check policy; technical admission constraints stay independent. */
 async function configure(f: Fixture, check: CodeCheckSpec | null): Promise<void> {
   await f.state.transaction(async (tx) => {
-    const limits = JSON.stringify({ format: 1, denyGlobs: [], secretExemptGlobs: [], check });
-    const updated = await tx.run(
-      'UPDATE code_projects SET limits_json=? WHERE project_id=?',
-      limits,
+    await tx.run(
+      'INSERT INTO code_research_check_configuration(project_id,check_json) VALUES (?,?) ON CONFLICT(project_id) DO UPDATE SET check_json=EXCLUDED.check_json',
       f.projectId,
+      JSON.stringify(check),
     );
-    if (!updated.changes)
-      await tx.run(
-        'INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES (?,?,?,?,?,?,?,?)',
-        f.projectId,
-        'local',
-        'repository-bases',
-        '{}',
-        '{}',
-        limits,
-        '[]',
-        new Date().toISOString(),
-      );
   });
 }
 

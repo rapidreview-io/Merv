@@ -2,6 +2,7 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { digest, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
+import { restoreResearchCompatibility } from '@merv/code-research/compatibility';
 import type { FaultPoint } from '@merv/code/store/operations';
 import { codeStoreFixture, faultAt, git, gitSource } from './fixtures/code-store.js';
 
@@ -69,8 +70,12 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
   });
   await f.code.v2!.putPart(human, begun.id, 0, bundle.content);
   await f.code.v2!.call(human, `uploads/${begun.id}/complete`, {});
-  const write = async (sql: string, ...values: (string | null)[]) =>
-    await f.state.transaction((tx) => tx.run(sql, ...(values as string[])));
+  const write = async (sql: string, ...values: (string | null)[]) => {
+    const result = await f.state.transaction((tx) => tx.run(sql, ...(values as string[])));
+    if (/^(?:UPDATE code_units|INSERT INTO code_review_acceptances)/.test(sql))
+      await restoreResearchCompatibility(f.state, f.core.units);
+    return result;
+  };
   return {
     f,
     source,
@@ -276,7 +281,7 @@ test('a rebind proves Code holds the history, retains what it leaves and keeps t
   assert.equal(binding.proof, digest(proof));
   assert.ok(
     proof.refs.some((ref) => ref.kind === 'main') &&
-      proof.refs.some((ref) => ref.kind === 'accepted'),
+      proof.refs.some((ref) => ref.kind === 'retained'),
     'main and the accepted commit are both proved',
   );
 
@@ -379,7 +384,7 @@ test('a rebind refuses what it cannot prove, what it would not change and the ma
 
   // A retained commit Code does not hold names itself and stops everything.
   const unit = await h.unit('unit');
-  await h.write('UPDATE code_units SET head_oid=? WHERE unit_id=?', 'c'.repeat(40), unit.id);
+  await h.write('UPDATE code_workspaces SET head_oid=? WHERE unit_id=?', 'c'.repeat(40), unit.id);
   await assert.rejects(h.rebind(), (error: Error & { code: string }) => {
     assert.equal(error.code, 'code_rebind_incomplete');
     assert.match(error.message, new RegExp(`work ${unit.id} ${'c'.repeat(40)}`));
@@ -404,7 +409,7 @@ test('a rebind refuses what it cannot prove, what it would not change and the ma
 
   // A main Code does not hold is the same refusal, which is why the ancestry question
   // below can always be asked.
-  await h.write('UPDATE code_units SET head_oid=NULL WHERE unit_id=?', unit.id);
+  await h.write('UPDATE code_workspaces SET head_oid=NULL WHERE unit_id=?', unit.id);
   await assert.rejects(h.rebind({ mainOid: 'd'.repeat(40), requestId: 'unheld-main' }), {
     code: 'code_rebind_incomplete',
   });
@@ -440,7 +445,7 @@ test('a rebind refuses what it cannot prove, what it would not change and the ma
     h.rebind({ repositoryId: 'a-third-repository', requestId: 'after-acceptance' }),
     (error: Error & { code: string }) => {
       assert.equal(error.code, 'code_rebind_incomplete');
-      assert.match(error.message, new RegExp(`accepted ${unit.id} ${'e'.repeat(40)}`));
+      assert.match(error.message, new RegExp(`retained unit:${unit.id} ${'e'.repeat(40)}`));
       return true;
     },
   );
@@ -456,7 +461,7 @@ test('the proof covers base pins and the acceptances of reviewed consolidation r
   assert.equal((await h.rebind()).status, 'completed');
   assert.ok(
     ((await h.result((await h.rebind()).id)).refs as { kind: string; id: string }[]).some(
-      (ref) => ref.kind === 'base-pin' && ref.id === pinned.id,
+      (ref) => ref.kind === 'retained' && ref.id === `pin:${pinned.id}`,
     ),
     'the pin is named in the proof the binding hashes',
   );
@@ -466,13 +471,13 @@ test('the proof covers base pins and the acceptances of reviewed consolidation r
   await h.pin(stranded.id, 'f'.repeat(40));
   // A consolidation@5 acceptance never touches the unit row, and its commit is the one
   // that becomes main.
-  await h.reviewed('round', 'review', 'g'.repeat(40));
+  await h.reviewed('round', 'review', 'c'.repeat(40));
   await assert.rejects(
     h.rebind({ repositoryId: 'a-third-repository', requestId: 'after-pin' }),
     (error: Error & { code: string }) => {
       assert.equal(error.code, 'code_rebind_incomplete');
-      assert.match(error.message, new RegExp(`base-pin ${stranded.id} ${'f'.repeat(40)}`));
-      assert.match(error.message, new RegExp(`accepted round:review ${'g'.repeat(40)}`));
+      assert.match(error.message, new RegExp(`retained pin:${stranded.id} ${'f'.repeat(40)}`));
+      assert.match(error.message, new RegExp(`retained review:round:review ${'c'.repeat(40)}`));
       return true;
     },
   );
@@ -520,17 +525,17 @@ test('work in flight is named and refuses the rebind, and publication is neither
     );
   for (const state of ['queued', 'retry_wait', 'awaiting_resolution']) {
     await move('base-unfinished', 'state', state);
-    await busy(/unfinished bases: 1 \(base-unfinished\)/);
+    await busy(/repository holds: 1 \(research:base:base-unfinished\)/);
     await move('base-unfinished', 'state', 'cancelled');
   }
   // A resolved base whose project check is executing in a rented machine counts too.
   await move('base-checking', 'check_state', 'running');
-  await busy(/unfinished bases: 1 \(base-checking\)/);
+  await busy(/repository holds: 1 \(research:base:base-checking\)/);
   await move('base-checking', 'check_state', 'none');
 
-  await h.write("UPDATE code_units SET writer_state='active' WHERE unit_id=?", unit.id);
+  await h.write("UPDATE code_workspaces SET writer_state='active' WHERE unit_id=?", unit.id);
   await busy(new RegExp(`open writer generations: 1 \\(${unit.id}\\)`));
-  await h.write("UPDATE code_units SET writer_state='idle' WHERE unit_id=?", unit.id);
+  await h.write("UPDATE code_workspaces SET writer_state='idle' WHERE unit_id=?", unit.id);
 
   // A leased worker is owned by whoever offered it, never by the administrator rebinding,
   // and its checkouts are worktrees of the cache the machine would re-key: the refusal is
@@ -576,7 +581,7 @@ test('work in flight is named and refuses the rebind, and publication is neither
     'null',
     '0',
   );
-  await busy(/unsettled publications: 1 \(proposal-open\)/);
+  await busy(/repository holds: 1 \(research:publication:proposal-open\)/);
   await h.write('UPDATE code_publications SET settled=1 WHERE proposal_id=?', 'proposal-open');
 
   // A prepared mirror row is not a refusal: publication never gates anything.
@@ -607,7 +612,7 @@ test('work in flight is named and refuses the rebind, and publication is neither
 test('an unfinished rebind is superseded rather than standing in the way', async (t) => {
   const h = await hosted(t);
   const unit = await h.unit('unit');
-  await h.write('UPDATE code_units SET head_oid=? WHERE unit_id=?', 'c'.repeat(40), unit.id);
+  await h.write('UPDATE code_workspaces SET head_oid=? WHERE unit_id=?', 'c'.repeat(40), unit.id);
   await assert.rejects(h.rebind(), { code: 'code_rebind_incomplete' });
   const stale = (await h.f.state.read((sql) =>
     sql.get<{ id: string }>(
@@ -626,7 +631,7 @@ test('an unfinished rebind is superseded rather than standing in the way', async
     ]);
   assert.deepEqual(await operations(), [[stale, 'rebind', 'prepared', null]]);
 
-  await h.write('UPDATE code_units SET head_oid=NULL WHERE unit_id=?', unit.id);
+  await h.write('UPDATE code_workspaces SET head_oid=NULL WHERE unit_id=?', unit.id);
   assert.equal((await h.rebind({ requestId: 'second' })).status, 'completed');
   const superseded = (await h.f.state.read((sql) =>
     sql.get<{ status: string; error: string }>(

@@ -412,6 +412,47 @@ test('retiring the versions that can no longer start deletes their records and n
   expected.session_managed_assignments = [];
   expected.experiment_compute_runs = [];
   expected.session_messages = [];
+  // The research adapter also restores technical custody of historically retained code.
+  // The retired owner's acceptance remains authoritative and gains an opaque Code receipt
+  // and workspace; retirement must preserve both projections.
+  const jsonRow = (row: Record<string, unknown>) =>
+    JSON.stringify(
+      Object.fromEntries(
+        Object.entries(row).sort(([a], [b]) => a.length - b.length || (a < b ? -1 : 1)),
+      ),
+    );
+  expected.code_retained_commits = [
+    ...(expected.code_retained_commits ?? []),
+    jsonRow({
+      project_id: seed.history.projectId,
+      retention_key: 'unit:r-exp4',
+      unit_id: 'r-exp4',
+      commit_oid: 'a'.repeat(40),
+      storage: 'code',
+      receipt: null,
+      created_at: at,
+    }),
+  ].sort();
+  expected.code_workspaces = [
+    ...(expected.code_workspaces ?? []),
+    jsonRow({
+      project_id: seed.history.projectId,
+      unit_id: 'r-exp4',
+      declared_at: at,
+      base_json: null,
+      generation: 0,
+      writer_state: 'idle',
+      writer_session_id: null,
+      writer_lease_id: null,
+      writer_changed_at: null,
+      head_oid: null,
+      head_operation_id: null,
+      mirrored_oid: null,
+      mirrored_at: null,
+      quarantine_operation_id: null,
+      blocked_by: null,
+    }),
+  ].sort();
   const after = await snapshot(client);
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))
     assert.deepEqual(after[table], expected[table], table);
@@ -433,7 +474,9 @@ test('retiring the versions that can no longer start deletes their records and n
   // Only the records kept on purpose still name a retired instance.
   assert.deepEqual([...new Set(second.C9!.map((row) => row.table_name))].sort(), [
     'code_edges',
+    'code_retained_commits',
     'code_units',
+    'code_workspaces',
     'paper_proposals',
     'session_service_work',
   ]);

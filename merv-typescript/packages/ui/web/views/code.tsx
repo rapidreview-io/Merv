@@ -1,4 +1,5 @@
-import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
+import type { CodeCommandRecord } from '@merv/contracts/code';
+import type { CodeProjectStatus } from '@merv/contracts/code-research-models';
 import type { CodePublication, GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';

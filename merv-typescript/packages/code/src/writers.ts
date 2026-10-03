@@ -10,7 +10,6 @@ import {
   recorded,
   type Caller,
   type CodeCommandCompletion,
-  type CodeUnit,
   type CodeWriterState,
   type CodeWriterStatus,
   type Scope,
@@ -35,7 +34,7 @@ export interface WriterRow {
   mirrored_oid: string | null;
   mirrored_at: string | null;
   quarantine_operation_id: string | null;
-  quarantine_base_key: string | null;
+  blocked_by: string | null;
 }
 /** Everything a mutation of a unit's branch names; the server compares all of it. */
 export interface WriterFence {
@@ -49,7 +48,7 @@ export interface WriterFence {
   moves: boolean;
 }
 export const writerColumns =
-  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id,quarantine_base_key';
+  'project_id,unit_id,base_json,generation,writer_state,writer_session_id,writer_lease_id,writer_changed_at,head_oid,head_operation_id,mirrored_oid,mirrored_at,quarantine_operation_id,blocked_by';
 
 /**
  * The writer fence of a unit. One leased session at a time may advance a unit's branch in
@@ -59,6 +58,17 @@ export const writerColumns =
  * guessed at: after the grace it waits, visibly, for an operator to fence it.
  */
 export class CodeWriterService {
+  private async requireStorageReady(tx: Transaction, projectId: string): Promise<void> {
+    check(
+      !(await tx.get(
+        "SELECT hold_key FROM code_repository_holds WHERE project_id=? AND hold_key='code-storage-upgrade'",
+        projectId,
+      )),
+      'code_storage_upgrade_required',
+      'Retained repository history must be upgraded before writing',
+      409,
+    );
+  }
   private closed = false;
   constructor(
     private readonly state: State,
@@ -80,14 +90,15 @@ export class CodeWriterService {
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
+    await this.requireStorageReady(tx, caller.projectId);
     const row = await this.row(tx, caller.projectId, unitId);
     check(row?.base_json, 'code_base_pending', 'This unit has no base to write from yet', 409);
-    check(!row.quarantine_base_key, 'code_quarantined', 'This unit uses a quarantined base', 409);
+    check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
     if (row.writer_lease_id === leaseId && row.writer_state !== 'idle') return this.view(row);
     const refusal = this.refusal(row, true);
     if (refusal) throw new MervError(refusal.code, refusal.message, 409);
     await tx.run(
-      "UPDATE code_units SET generation=generation+1,writer_state='reserved',writer_session_id=?,writer_lease_id=?,writer_changed_at=? WHERE project_id=? AND unit_id=?",
+      "UPDATE code_workspaces SET generation=generation+1,writer_state='reserved',writer_session_id=?,writer_lease_id=?,writer_changed_at=? WHERE project_id=? AND unit_id=?",
       leaseId,
       leaseId,
       now(),
@@ -121,7 +132,7 @@ export class CodeWriterService {
     this.assertOpen();
     this.state.assertTransaction(tx);
     const row = await tx.get<WriterRow>(
-      `SELECT ${writerColumns} FROM code_units WHERE project_id=? AND writer_session_id=?`,
+      `SELECT ${writerColumns} FROM code_workspaces WHERE project_id=? AND writer_session_id=?`,
       projectId,
       sessionId,
     );
@@ -141,7 +152,7 @@ export class CodeWriterService {
     const before = new Date(Date.now() - this.finalizeGraceSeconds * 1000).toISOString();
     await this.state.transaction(async (tx) => {
       for (const row of await tx.all<WriterRow>(
-        `SELECT ${writerColumns} FROM code_units WHERE writer_state='closing' AND writer_changed_at<=? ORDER BY project_id,unit_id LIMIT 100`,
+        `SELECT ${writerColumns} FROM code_workspaces WHERE writer_state='closing' AND writer_changed_at<=? ORDER BY project_id,unit_id LIMIT 100`,
         before,
       )) {
         await this.move(tx, row, 'recovery_required');
@@ -156,9 +167,10 @@ export class CodeWriterService {
    * and heals a generation the grace already gave up on.
    */
   async fenced(tx: Transaction, fence: WriterFence, kind: 'checkpoint' | 'final') {
+    await this.requireStorageReady(tx, fence.projectId);
     const row = await this.row(tx, fence.projectId, fence.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
-    check(!row.quarantine_base_key, 'code_quarantined', 'This unit uses a quarantined base', 409);
+    check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
     check(
       Number(row.generation) === fence.generation &&
         row.writer_session_id === fence.sessionId &&
@@ -202,7 +214,7 @@ export class CodeWriterService {
     input: { head: string; operationId: string; final: boolean },
   ): Promise<void> {
     await tx.run(
-      'UPDATE code_units SET head_oid=?,head_operation_id=? WHERE project_id=? AND unit_id=?',
+      'UPDATE code_workspaces SET head_oid=?,head_operation_id=? WHERE project_id=? AND unit_id=?',
       input.head,
       input.operationId,
       fence.projectId,
@@ -212,7 +224,7 @@ export class CodeWriterService {
     const row = (await this.row(tx, fence.projectId, fence.unitId))!;
     await this.move(tx, row, 'closed');
     await tx.run(
-      'UPDATE code_units SET quarantine_operation_id=NULL WHERE project_id=? AND unit_id=?',
+      'UPDATE code_workspaces SET quarantine_operation_id=NULL WHERE project_id=? AND unit_id=?',
       fence.projectId,
       fence.unitId,
     );
@@ -225,7 +237,7 @@ export class CodeWriterService {
     if (!row || Number(row.generation) !== fence.generation) return;
     await this.move(tx, row, 'recovery_required');
     await tx.run(
-      'UPDATE code_units SET quarantine_operation_id=? WHERE project_id=? AND unit_id=?',
+      'UPDATE code_workspaces SET quarantine_operation_id=? WHERE project_id=? AND unit_id=?',
       operationId,
       fence.projectId,
       fence.unitId,
@@ -239,6 +251,7 @@ export class CodeWriterService {
    * bytes nobody may complete any more.
    */
   async fence(caller: Caller, value: unknown, tx: Transaction): Promise<CodeWriterStatus> {
+    await this.requireStorageReady(tx, caller.projectId);
     this.assertOpen();
     const input = parseCodeInput(codeUnitFenceInputSchema, value);
     await this.scope.require(caller, 'admin', tx);
@@ -255,7 +268,7 @@ export class CodeWriterService {
     if (previous) return JSON.parse(previous.result_json) as CodeWriterStatus;
     const row = await this.row(tx, caller.projectId, input.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
-    check(!row.quarantine_base_key, 'code_quarantined', 'This unit uses a quarantined base', 409);
+    check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
     check(
       !(await tx.get(
         "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='prepared' AND phase<>'receiving'",
@@ -277,7 +290,7 @@ export class CodeWriterService {
     );
     if (!['idle', 'closed'].includes(row.writer_state)) await this.move(tx, row, 'closed');
     await tx.run(
-      'UPDATE code_units SET quarantine_operation_id=NULL WHERE project_id=? AND unit_id=?',
+      'UPDATE code_workspaces SET quarantine_operation_id=NULL WHERE project_id=? AND unit_id=?',
       caller.projectId,
       input.unitId,
     );
@@ -307,7 +320,7 @@ export class CodeWriterService {
     if (!('receipt' in input) || !input.receipt) return;
     const instanceId = command.instanceId;
     const unit = await tx.get<{ generation: number | string }>(
-      'SELECT generation FROM code_units WHERE project_id=? AND unit_id=?',
+      'SELECT generation FROM code_workspaces WHERE project_id=? AND unit_id=?',
       command.projectId,
       instanceId,
     );
@@ -343,12 +356,14 @@ export class CodeWriterService {
     sql: Sql,
     projectId: string,
     unitId: string,
-  ): Promise<
-    Pick<
-      CodeUnit,
-      'generation' | 'writerState' | 'canonicalHead' | 'mirroredHead' | 'mirroredAt' | 'quarantine'
-    >
-  > {
+  ): Promise<{
+    generation: number;
+    writerState: CodeWriterState;
+    canonicalHead: string | null;
+    mirroredHead: string | null;
+    mirroredAt: string | null;
+    quarantine: { operationId: string } | null;
+  }> {
     const row = await this.row(sql, projectId, unitId);
     return {
       generation: Number(row?.generation ?? 0),
@@ -362,9 +377,26 @@ export class CodeWriterService {
     };
   }
 
+  /** Workspace identities whose writer generation has begun, without exposing owned storage. */
+  async writerIdentities(
+    sql: Sql,
+    projectId?: string,
+  ): Promise<{ projectId: string; unitId: string }[]> {
+    this.assertOpen();
+    const rows =
+      projectId === undefined
+        ? await sql.all<{ project_id: string; unit_id: string }>(
+            'SELECT project_id,unit_id FROM code_workspaces WHERE generation>0 ORDER BY project_id,unit_id',
+          )
+        : await sql.all<{ project_id: string; unit_id: string }>(
+            'SELECT project_id,unit_id FROM code_workspaces WHERE project_id=? AND generation>0 ORDER BY unit_id',
+            projectId,
+          );
+    return rows.map((row) => ({ projectId: row.project_id, unitId: row.unit_id }));
+  }
   async row(sql: Sql, projectId: string, unitId: string): Promise<WriterRow | undefined> {
     return await sql.get<WriterRow>(
-      `SELECT ${writerColumns} FROM code_units WHERE project_id=? AND unit_id=?`,
+      `SELECT ${writerColumns} FROM code_workspaces WHERE project_id=? AND unit_id=?`,
       projectId,
       unitId,
     );
@@ -384,10 +416,10 @@ export class CodeWriterService {
   }
 
   private refusal(row: WriterRow, reserving: boolean): CodeWriterStatus['blocked'] {
-    if (row.quarantine_base_key)
+    if (row.blocked_by)
       return {
         code: 'code_quarantined',
-        message: `This unit uses quarantined base ${row.quarantine_base_key}; create corrective work and replan.`,
+        message: `This unit uses quarantined base ${row.blocked_by}; create corrective work and replan.`,
       };
     if (row.quarantine_operation_id !== null)
       return {
@@ -422,7 +454,7 @@ export class CodeWriterService {
 
   private async move(tx: Transaction, row: WriterRow, to: CodeWriterState): Promise<void> {
     await tx.run(
-      'UPDATE code_units SET writer_state=?,writer_changed_at=? WHERE project_id=? AND unit_id=?',
+      'UPDATE code_workspaces SET writer_state=?,writer_changed_at=? WHERE project_id=? AND unit_id=?',
       to,
       now(),
       row.project_id,

@@ -1,6 +1,6 @@
 import { check, digest, type ReviewProvenance, type Transaction } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
-import type { BaseBody } from '@merv/code/units';
+import type { BaseBody } from './unit-store.js';
 import type { CodeBaseService } from './bases.js';
 
 const commitField = "(acceptance_json::jsonb #>> '{code,commit}')";

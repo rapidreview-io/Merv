@@ -214,18 +214,7 @@ export async function reconcileRepository(
       'The reviewed integration is no longer admissible',
       409,
     );
-    await tx.run(
-      'UPDATE code_projects SET main_json=?,updated_at=? WHERE project_id=?',
-      canonical({
-        oid: accepted.reference,
-        stored: true,
-        admittedBy: caller.actorId,
-        admittedAt: now(),
-        operationId: key,
-      }),
-      now(),
-      caller.projectId,
-    );
+    await units.moveMain(caller, accepted.reference!, tx, local, key);
     await tx.run(
       'UPDATE code_repository_sync SET promoted_oid=? WHERE project_id=? AND sync_key=? AND promoted_oid IS NULL',
       accepted.reference,

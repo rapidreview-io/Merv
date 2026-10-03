@@ -6,14 +6,18 @@ import test, { type TestContext } from 'node:test';
 import { createService, type Caller, type Transaction } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
-import { CodeUnitStore, type AcceptanceBody, type BaseBody } from '@merv/code/units';
+import {
+  ResearchUnitRecords,
+  type AcceptanceBody,
+  type BaseBody,
+} from '@merv/code-research/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { CodeStore } from '@merv/code/store/operations';
 import { gitSource } from './fixtures/code-store.js';
 import { openState } from './fixtures/state.js';
 
-/** The storage capability accepts facts from an owner; it has no research service to consult. */
-class OwnerStore extends CodeUnitStore {
+/** Research records retain validated owner facts over the technical Code store. */
+class OwnerStore extends ResearchUnitRecords {
   declare(caller: Caller, unitId: string, tx: Transaction) {
     return this.retainDeclaration(caller, { unitId, workflow: 'external-owner', version: 9 }, tx);
   }
@@ -91,7 +95,7 @@ async function fixture(t: TestContext) {
   };
 }
 
-test('Code unit storage runs without research services and rolls facts back with its owner', async (t) => {
+test('research records roll facts back with their owner', async (t) => {
   const f = await fixture(t);
   const tables = await f.state.read((sql) =>
     sql.all<{ name: string }>(
@@ -141,7 +145,7 @@ test('Code unit storage runs without research services and rolls facts back with
   assert.deepEqual((await f.store.status(f.caller)).blockers, []);
 });
 
-test('standalone Code storage imports and rebinds while retaining unfinished bases and their commits', async (t) => {
+test('Code storage imports and rebinds while research retains unfinished bases and their commits', async (t) => {
   const f = await fixture(t);
   const source = gitSource(t);
   const head = source.commit({ 'research.txt': 'retained baseline' });
@@ -207,6 +211,8 @@ test('standalone Code storage imports and rebinds while retaining unfinished bas
         at,
       ),
     );
+    // Repository protection remains durable after the research record service closes.
+    f.store.close();
     await assert.rejects(rebind(), { code: 'code_rebind_busy' });
     await f.state.transaction((tx) =>
       tx.run(
@@ -223,6 +229,7 @@ test('standalone Code storage imports and rebinds while retaining unfinished bas
       ),
     );
     assert.equal((await rebind()).status, 'completed');
+    await f.reopen();
     assert.equal((await f.store.status(f.caller)).project?.repositoryId, 'renamed');
     const tables = await f.state.read((sql) =>
       sql.all<{ name: string }>(

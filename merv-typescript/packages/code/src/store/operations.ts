@@ -5,11 +5,13 @@ import {
   check,
   CODE_BUNDLE_MAX_BYTES,
   CODE_PART_MAX_BYTES,
-  codeRepositoryConfigureInputSchema,
+  codeAdmissionConfigureInputSchema,
+  codeAdmissionLimitsSchema,
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
   digest,
   eventSource,
+  inTransaction,
   MervError,
   newId,
   now,
@@ -18,7 +20,7 @@ import {
   type CodeFinding,
   type CodeRepositoryImportInput,
   type CodeRepositoryRebindInput,
-  type CodeStoreLimits,
+  type CodeAdmissionLimits,
   type CodeStoreOperation,
   type CodeStoreStatus,
   type CodeUploadBegin,
@@ -201,14 +203,16 @@ interface UploadPayload {
   treeOid: string;
   bundle: Bundle | null;
 }
-/** The ref an acceptance is kept under; its objects are already in the repository. */
-interface AcceptRefPayload {
+/** A retained ref whose objects are already durable; accept-ref journals are historical. */
+type AcceptRefPayload = {
   format: 1;
-  source: 'accept-ref';
   actorId: string;
   unitId: string;
   tip: string;
-}
+  retentionKey?: string;
+  ref?: string;
+  mirror?: boolean;
+} & ({ source: 'accept-ref' } | { source: 'retain-ref' });
 /**
  * The identity a project is being rebound to. The database trigger reads `repositoryId` out of
  * this payload and refuses any other value in the row, and `code_operations_identity` makes the
@@ -225,7 +229,7 @@ interface RebindPayload {
 type Payload = ImportPayload | UploadPayload | AcceptRefPayload | RebindPayload;
 /** A commit this project retains as authoritative, with what retains it. */
 interface RetainedRef {
-  kind: 'main' | 'accepted' | 'work' | 'base-pin' | 'base';
+  kind: 'main' | 'retained' | 'work' | 'base-pin' | 'accepted' | 'base';
   id: string;
   oid: string;
 }
@@ -253,7 +257,7 @@ const fenceOf = (row: { project_id: string }, payload: UploadPayload): WriterFen
 });
 /** Refusals of the fence end an upload; nothing about them passes with time. */
 const fenceRefusals = ['code_generation_stale', 'code_writer_closed', 'code_head_conflict'];
-const kinds = ['import', 'upload', 'accept-ref'];
+const kinds = ['import', 'upload', 'accept-ref', 'retain-ref'];
 interface Progress {
   received: number;
   merge?: { plan: string; left: string; right: string; firstMerge: string | null };
@@ -736,29 +740,20 @@ export class CodeStore {
         ),
       );
     const busy = [
-      // A base that is not finished, or whose project check is executing in a rented machine
-      // against a manifest that stamped the repository this rebind is leaving.
-      ...(await named(
-        'unfinished bases:',
-        "SELECT base_key FROM code_bases WHERE project_id=? AND (state NOT IN ('resolved','cancelled','suspended') OR check_state IN ('queued','running')) ORDER BY base_key",
-      )),
       ...(await named(
         'open writer generations:',
-        "SELECT unit_id FROM code_units WHERE project_id=? AND writer_state IN ('reserved','active','closing') ORDER BY unit_id",
+        "SELECT unit_id FROM code_workspaces WHERE project_id=? AND writer_state IN ('reserved','active','closing') ORDER BY unit_id",
       )),
       ...(await named(
         'unfinished transfers:',
-        "SELECT id FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('import','upload','accept-ref') ORDER BY created_at,id",
+        "SELECT id FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('import','upload','accept-ref','retain-ref') ORDER BY created_at,id",
       )),
-      // PublicationHost writes main_json with its own lock and no compare-and-set, so a merge
-      // landing after this transaction would otherwise overwrite the main a rebind just named.
       ...(await named(
-        'unsettled publications:',
-        'SELECT proposal_id FROM code_publications WHERE project_id=? AND settled=0 ORDER BY proposal_id',
+        'repository holds:',
+        'SELECT hold_key FROM code_repository_holds WHERE project_id=? ORDER BY hold_key',
       )),
     ];
-    // A frozen candidate set names the repository it froze under and is re-validated against
-    // that same frozen value, so a rebind would leave it passing against a binding that is gone.
+    // Consumers holding repository-scoped snapshots must release them before rebinding.
     const listed = [
       ...busy,
       ...held('sessions holding a workspace:', await this.hooks.workspaces(caller.projectId, tx)),
@@ -773,12 +768,9 @@ export class CodeStore {
   }
 
   /**
-   * Every commit this project retains as authoritative: main as it stands, the main it is being
-   * given, every accepted commit — a unit's own and every reviewed consolidation round's, which
-   * is the class that reaches main — every unit head, every base pin and every resolved base
-   * result. A pin's reference is retained and immutable, and for a unit with no code-bearing
-   * dependency it is main as it stood when the pin was made, which `code.local.bind` has since
-   * been free to move away from: no other bucket holds it.
+   * Every commit this project retains: current and proposed main, opaque retained commits,
+   * workspace heads and immutable input pins. Pins retain the original input even after
+   * a later binding operation moves main.
    */
   private async retained(
     projectId: string,
@@ -786,31 +778,18 @@ export class CodeStore {
     mainOid: string,
   ): Promise<RetainedRef[]> {
     const read = await this.state.read(async (sql) => ({
-      units: await sql.all<{
-        unit_id: string;
-        acceptance_json: string | null;
-        base_json: string | null;
-        head_oid: string | null;
-      }>(
-        'SELECT unit_id,acceptance_json,base_json,head_oid FROM code_units WHERE project_id=? ORDER BY unit_id',
+      units: await sql.all<{ unit_id: string; base_json: string | null; head_oid: string | null }>(
+        'SELECT unit_id,base_json,head_oid FROM code_workspaces WHERE project_id=? ORDER BY unit_id',
         projectId,
       ),
-      reviewed: await sql.all<{ unit_id: string; review_id: string; acceptance_json: string }>(
-        'SELECT unit_id,review_id,acceptance_json FROM code_review_acceptances WHERE project_id=? ORDER BY review_id',
-        projectId,
-      ),
-      bases: await sql.all<{ base_key: string; result_json: string }>(
-        "SELECT base_key,result_json FROM code_bases WHERE project_id=? AND state='resolved' ORDER BY base_key",
+      commits: await sql.all<{ retention_key: string; commit_oid: string }>(
+        'SELECT retention_key,commit_oid FROM code_retained_commits WHERE project_id=? ORDER BY retention_key',
         projectId,
       ),
     }));
-    const accepted = (json: string) =>
-      (JSON.parse(json) as { code: { commit: string } | null }).code;
     const refs: RetainedRef[] = [{ kind: 'main', id: 'main', oid: previousMain }];
     if (mainOid !== previousMain) refs.push({ kind: 'main', id: 'named', oid: mainOid });
     for (const unit of read.units) {
-      const code = unit.acceptance_json ? accepted(unit.acceptance_json) : null;
-      if (code) refs.push({ kind: 'accepted', id: unit.unit_id, oid: code.commit });
       if (unit.base_json)
         refs.push({
           kind: 'base-pin',
@@ -819,23 +798,8 @@ export class CodeStore {
         });
       if (unit.head_oid) refs.push({ kind: 'work', id: unit.unit_id, oid: unit.head_oid });
     }
-    // A consolidation@5 acceptance is written to its own immutable table and never to the unit
-    // row, and it is the one whose commit is published to main.
-    for (const round of read.reviewed) {
-      const code = accepted(round.acceptance_json);
-      if (code)
-        refs.push({
-          kind: 'accepted',
-          id: `${round.unit_id}:${round.review_id}`,
-          oid: code.commit,
-        });
-    }
-    for (const base of read.bases)
-      refs.push({
-        kind: 'base',
-        id: base.base_key,
-        oid: (JSON.parse(base.result_json) as { commit: string }).commit,
-      });
+    for (const retained of read.commits)
+      refs.push({ kind: 'retained', id: retained.retention_key, oid: retained.commit_oid });
     return refs;
   }
 
@@ -1177,13 +1141,41 @@ export class CodeStore {
     }
   }
 
+  /** An owner's journal can atomically configure admission without creating a second journal. */
+  async setAdmission(
+    caller: Caller,
+    input: { denyGlobs: string[]; secretExemptGlobs: string[] },
+    tx: Transaction,
+  ): Promise<CodeAdmissionLimits> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    await this.administrator(caller, tx);
+    check(
+      await this.project(tx, caller.projectId),
+      'code_project_unbound',
+      'Bind this project before configuring its repository',
+      409,
+    );
+    const limits = parseCodeInput(codeAdmissionLimitsSchema, {
+      format: 1,
+      denyGlobs: input.denyGlobs,
+      secretExemptGlobs: input.secretExemptGlobs,
+    });
+    await tx.run(
+      'UPDATE code_projects SET limits_json=?,updated_at=? WHERE project_id=?',
+      canonical(limits),
+      now(),
+      caller.projectId,
+    );
+    return limits;
+  }
   /** Project limits admission applies on top of the fixed ones. */
-  async configure(caller: Caller, value: unknown): Promise<CodeStoreLimits> {
+  async configure(caller: Caller, value: unknown, tx?: Transaction): Promise<CodeAdmissionLimits> {
     this.assertOpen();
     caller = structuredClone(caller);
-    const { requestId, ...body } = parseCodeInput(codeRepositoryConfigureInputSchema, value);
-    const limits: CodeStoreLimits = { format: 1, ...body };
-    return await this.state.transaction(async (tx) => {
+    const { requestId, ...body } = parseCodeInput(codeAdmissionConfigureInputSchema, value);
+    const limits: CodeAdmissionLimits = { format: 1, ...body };
+    return await inTransaction(this.state, tx, async (tx) => {
       await this.administrator(caller, tx);
       check(
         await this.project(tx, caller.projectId),
@@ -1200,7 +1192,7 @@ export class CodeStore {
         digest(body),
       );
       const previous = await journal.previous();
-      if (previous) return JSON.parse(previous.result_json) as CodeStoreLimits;
+      if (previous) return JSON.parse(previous.result_json) as CodeAdmissionLimits;
       const id = newId('cop'),
         at = now();
       await tx.run(
@@ -1214,8 +1206,6 @@ export class CodeStore {
         operationId: id,
         denyGlobs: limits.denyGlobs.length,
         secretExemptGlobs: limits.secretExemptGlobs.length,
-        // Presence only: an operator's command text is configuration, not an event payload.
-        check: limits.check ? 'configured' : 'none',
       });
       return limits;
     });
@@ -1329,26 +1319,16 @@ export class CodeStore {
     return this.view((await this.state.read((sql) => this.row(sql, row.id)))!);
   }
 
-  /** The accepted commits kept only in a runner's repository that this one now holds. */
+  /** Externally retained commits that this repository now holds. */
   private async legacy(projectId: string): Promise<string[]> {
     if (!(await this.repositories.exists(projectId))) return [];
-    const accepted = await this.state.read((sql) =>
-      sql.all<{ acceptance_json: string }>(
-        'SELECT acceptance_json FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id',
+    const retained = await this.state.read((sql) =>
+      sql.all<{ commit_oid: string }>(
+        "SELECT commit_oid FROM code_retained_commits WHERE project_id=? AND storage='external' ORDER BY retention_key",
         projectId,
       ),
     );
-    const commits = [
-      ...new Set(
-        accepted.flatMap((row) => {
-          const acceptance = JSON.parse(row.acceptance_json) as {
-            storage?: string;
-            code?: { commit: string } | null;
-          };
-          return acceptance.storage !== 'code' && acceptance.code ? [acceptance.code.commit] : [];
-        }),
-      ),
-    ].sort();
+    const commits = [...new Set(retained.map((row) => row.commit_oid))].sort();
     if (!commits.length) return [];
     const found = await this.repositories.git.run(
       ['cat-file', '--batch-check=%(objectname) %(objecttype)'],
@@ -1386,11 +1366,11 @@ export class CodeStore {
       // here with the transfers: nothing else would show that it is open, who opened it, or
       // that a later request superseded it.
       open: await sql.all<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND phase IS NOT NULL AND kind IN ('initialize','import','upload','accept-ref','rebind') ORDER BY created_at,id LIMIT 100`,
+        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND phase IS NOT NULL AND kind IN ('initialize','import','upload','accept-ref','retain-ref','rebind') ORDER BY created_at,id LIMIT 100`,
         projectId,
       ),
       failed: await sql.all<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='failed' AND phase IS NOT NULL AND kind IN ('import','upload','accept-ref','rebind') ORDER BY completed_at DESC,id LIMIT 10`,
+        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='failed' AND phase IS NOT NULL AND kind IN ('import','upload','accept-ref','retain-ref','rebind') ORDER BY completed_at DESC,id LIMIT 10`,
         projectId,
       ),
       imports: await sql.all<{ result_json: string }>(
@@ -1434,7 +1414,7 @@ export class CodeStore {
         const rows = await this.state.read(
           async (sql) =>
             await sql.all<OperationRow>(
-              `SELECT ${columns} FROM code_operations WHERE status='prepared' AND phase IS NOT NULL ORDER BY created_at,id`,
+              `SELECT ${columns} FROM code_operations WHERE status='prepared' AND phase IS NOT NULL AND NOT EXISTS (SELECT 1 FROM code_repository_holds WHERE project_id=code_operations.project_id AND hold_key='code-storage-upgrade') ORDER BY created_at,id`,
             ),
         );
         const stale = new Date(Date.now() - this.config.abandonSeconds * 1000).toISOString();
@@ -1521,6 +1501,15 @@ export class CodeStore {
   private async administrator(caller: Caller, tx: Transaction): Promise<void> {
     await this.scope.require(caller, 'admin', tx);
     check(
+      !(await tx.get(
+        "SELECT hold_key FROM code_repository_holds WHERE project_id=? AND hold_key='code-storage-upgrade'",
+        caller.projectId,
+      )),
+      'code_storage_upgrade_required',
+      'Retained repository history must be upgraded before changing it',
+      409,
+    );
+    check(
       !caller.session,
       'session_forbidden',
       'A leased worker cannot change the project’s repository',
@@ -1554,6 +1543,7 @@ export class CodeStore {
     check(
       kinds.includes(row.kind) &&
         payload.source !== 'accept-ref' &&
+        payload.source !== 'retain-ref' &&
         payload.actorId === caller.actorId,
       'code_operation_forbidden',
       'Only the principal that began this operation continues it',
@@ -1589,13 +1579,12 @@ export class CodeStore {
     );
   }
 
-  private limits(project: ProjectRow | undefined): CodeStoreLimits {
-    const stored = JSON.parse(project?.limits_json ?? '{}') as Partial<CodeStoreLimits>;
+  private limits(project: ProjectRow | undefined): CodeAdmissionLimits {
+    const stored = JSON.parse(project?.limits_json ?? '{}') as Partial<CodeAdmissionLimits>;
     return {
       format: 1,
       denyGlobs: stored.denyGlobs ?? [],
       secretExemptGlobs: stored.secretExemptGlobs ?? [],
-      check: stored.check ?? null,
     };
   }
 
@@ -1651,7 +1640,16 @@ export class CodeStore {
     let job = this.jobs.get(row.id);
     if (!job) {
       job = this.owned(() =>
-        this.repositories.run(row.project_id, () => this.advance(row.id, caller)),
+        this.repositories.run(row.project_id, async () => {
+          const held = await this.state.read((sql) =>
+            sql.get(
+              "SELECT hold_key FROM code_repository_holds WHERE project_id=? AND hold_key='code-storage-upgrade'",
+              row.project_id,
+            ),
+          );
+          if (held) return;
+          await this.advance(row.id, caller);
+        }),
       )
         .catch(async (failure: unknown) => {
           const error = refusal(failure);
@@ -1720,6 +1718,14 @@ export class CodeStore {
     const directory = join(paths.quarantine, row.id);
     const env = this.repositories.environment(row.project_id);
     let progress = JSON.parse(row.progress_json ?? '{}') as Progress;
+    if (payload.source === 'retain-ref')
+      check(
+        payload.ref === progress.receiptRef && payload.tip === progress.target,
+        'code_retention_intent_changed',
+        'The retained ref differs from its immutable intent',
+        409,
+      );
+
     const examine = async (target: string) => {
       try {
         const header = await bundleHeader(join(directory, 'bundle'));
@@ -1788,7 +1794,12 @@ export class CodeStore {
 
     if (row.phase === 'receiving') {
       await this.repositories.assertRoom(row.project_id, 0);
-      check(payload.source !== 'accept-ref', 'code_operation_changed', 'Nothing to receive', 409);
+      check(
+        payload.source !== 'accept-ref' && payload.source !== 'retain-ref',
+        'code_operation_changed',
+        'Nothing to receive',
+        409,
+      );
       const target =
         payload.source === 'github'
           ? await this.fetched(row, payload, project, directory, caller)
@@ -1864,6 +1875,26 @@ export class CodeStore {
       row.phase = 'objects_durable';
     }
     if (row.phase === 'objects_durable') {
+      if (payload.source === 'retain-ref')
+        check(
+          payload.ref === progress.receiptRef && payload.tip === progress.target,
+          'code_retention_intent_changed',
+          'The retained ref differs from its immutable intent',
+          409,
+        );
+
+      if (payload.source === 'retain-ref') {
+        const retained = await this.repositories.git.run(['cat-file', '-t', progress.target!], {
+          env,
+        });
+        check(
+          retained.code === 0 && retained.stdout.toString('utf8').trim() === 'commit',
+          'code_retention_missing',
+          'The retained commit must exist in Code before its ref is created',
+          409,
+        );
+      }
+
       const receipt = async () => {
         const found = await this.repositories.git.run(
           ['rev-parse', '--verify', '--quiet', `${progress.receiptRef}^{commit}`],
@@ -1926,7 +1957,9 @@ export class CodeStore {
       // holds is asked of Git here, before the transaction, and recorded with the operation:
       // an ancestor never becomes a tip of its own, and a bundle cut at one is empty.
       const contained =
-        upload || payload.source === 'accept-ref' ? [] : await this.legacy(row.project_id);
+        upload || payload.source === 'accept-ref' || payload.source === 'retain-ref'
+          ? []
+          : await this.legacy(row.project_id);
       await this.state.transaction(async (tx) => {
         const current = await this.row(tx, id);
         if (current?.status !== 'prepared') return;
@@ -1934,7 +1967,7 @@ export class CodeStore {
         await tx.run(
           "UPDATE code_operations SET status='completed',result_json=?,completed_at=?,updated_at=? WHERE id=? AND status='prepared'",
           canonical(
-            payload.source === 'accept-ref'
+            payload.source === 'accept-ref' || payload.source === 'retain-ref'
               ? { head: progress.target, receiptRef: progress.receiptRef }
               : {
                   head: progress.target,
@@ -1950,6 +1983,18 @@ export class CodeStore {
           at,
           id,
         );
+        if (payload.source === 'retain-ref') {
+          if (payload.mirror && payload.retentionKey)
+            await enqueueMirror(
+              tx,
+              row!.project_id,
+              'mirror-retained',
+              payload.retentionKey,
+              progress.target!,
+              progress.receiptRef,
+            );
+          return;
+        }
         if (payload.source === 'accept-ref') {
           // The accepted ref exists; what publishes it is the server's own later work.
           await enqueueMirror(

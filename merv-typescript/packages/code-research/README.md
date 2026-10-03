@@ -32,3 +32,12 @@ Connection, retained server history, accepted changes and remote publication rem
 as distinct states. Connecting a repository is not approval to merge a research outcome.
 
 Review provenance is read through the Reviews service rather than its private tables.
+
+The adapter owns research unit declarations, dependency-derived pins, acceptance bodies and
+hashes, reviewed rounds, resolution provenance, and publication obligations. Its records
+compose Code's generic workspace and retained-commit API; Code receives commit identities
+and durable repository holds, without interpreting research workflow state. Compatibility
+backfill preserves historical record bodies and receipts and keeps repository changes fenced
+until technical projections and publication holds have been restored in one transaction.
+
+See the [ownership boundary and upgrade behavior](../../docs/CODE_RESEARCH_BOUNDARY.md).

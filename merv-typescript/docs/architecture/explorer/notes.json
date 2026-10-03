@@ -119,7 +119,7 @@
     },
     "code": {
       "label": "Code",
-      "purpose": "Owns the durable project Git repository, objects, branches, writer coordination and optional GitHub synchronization. Managed Git works without GitHub. Research-specific acceptance and publication rules belong to Code Research."
+      "purpose": "Owns durable Git repositories, objects, refs, technical workspaces, writer coordination, transfers and optional GitHub synchronization. Stores opaque retention obligations and repository holds without reading research records. Fresh standalone Code initializes no acceptance, review, research-base or publication tables."
     },
     "artifacts": {
       "label": "Artifacts",
@@ -175,7 +175,7 @@
     },
     "codeResearch": {
       "label": "Code Research",
-      "purpose": "Connects Git to research workflows: scoped workspaces, exact captures, accepted bases, independent review and publication. Uses the shared core Code owner and retains cleanup as structured durable state."
+      "purpose": "Owns research-to-code mappings, exact captures, dependency and base selection, acceptance and review provenance, merge-check configuration and publication policy. Composes generic Code APIs; atomically projects retention requests, repository holds and mirror eligibility, preserving obligations when the adapter is unloaded."
     },
     "fleet": {
       "label": "Fleet",

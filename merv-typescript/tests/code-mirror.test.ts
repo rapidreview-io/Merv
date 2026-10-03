@@ -280,7 +280,7 @@ test('a quarantined unit and an unlinked project publish nothing, and neither is
   await f.state.transaction(
     async (tx) =>
       await tx.run(
-        "UPDATE code_units SET quarantine_operation_id='cop_fixture' WHERE unit_id=?",
+        "UPDATE code_workspaces SET quarantine_operation_id='cop_fixture' WHERE unit_id=?",
         f.unitId,
       ),
   );
@@ -293,7 +293,10 @@ test('a quarantined unit and an unlinked project publish nothing, and neither is
 
   await f.state.transaction(
     async (tx) =>
-      await tx.run('UPDATE code_units SET quarantine_operation_id=NULL WHERE unit_id=?', f.unitId),
+      await tx.run(
+        'UPDATE code_workspaces SET quarantine_operation_id=NULL WHERE unit_id=?',
+        f.unitId,
+      ),
   );
   await f.step();
   assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${one}`]);

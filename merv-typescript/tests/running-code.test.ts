@@ -204,7 +204,7 @@ async function fixture(t: TestContext) {
     const done = await move(work);
     await f.state.transaction(async (tx) => {
       await tx.run(
-        "UPDATE code_units SET generation=1,writer_state='closed',head_oid=? WHERE project_id=? AND unit_id=?",
+        "UPDATE code_workspaces SET generation=1,writer_state='closed',head_oid=? WHERE project_id=? AND unit_id=?",
         commit,
         f.admin.projectId,
         work.id,
@@ -602,8 +602,8 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
   };
   await f.state.transaction((tx) =>
     tx.run(
-      'UPDATE code_projects SET limits_json=? WHERE project_id=?',
-      JSON.stringify({ check: SPEC }),
+      'INSERT INTO code_research_check_configuration(check_json,project_id) VALUES (?,?) ON CONFLICT(project_id) DO UPDATE SET check_json=EXCLUDED.check_json',
+      JSON.stringify(SPEC),
       f.admin.projectId,
     ),
   );
@@ -867,8 +867,8 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
   // the board or the sidebar says about it.
   await f.state.transaction((tx) =>
     tx.run(
-      'UPDATE code_projects SET limits_json=? WHERE project_id=?',
-      JSON.stringify({ check: { ...SPEC, timeoutSeconds: 1800 } }),
+      'INSERT INTO code_research_check_configuration(check_json,project_id) VALUES (?,?) ON CONFLICT(project_id) DO UPDATE SET check_json=EXCLUDED.check_json',
+      JSON.stringify({ ...SPEC, timeoutSeconds: 1800 }),
       f.admin.projectId,
     ),
   );
@@ -971,26 +971,14 @@ async function keptMachine(t: TestContext, action: 'suspend' | 'cancel') {
   const f = await baseFixture(t);
   const command = 'make test';
   await f.state.transaction(async (tx) => {
-    const limits = JSON.stringify({
-      format: 1,
-      denyGlobs: [],
-      secretExemptGlobs: [],
-      check: {
+    await tx.run(
+      'INSERT INTO code_research_check_configuration(project_id,check_json) VALUES (?,?) ON CONFLICT(project_id) DO UPDATE SET check_json=EXCLUDED.check_json',
+      f.projectId,
+      JSON.stringify({
         command,
         timeoutSeconds: 600,
         image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
-      },
-    });
-    await tx.run(
-      'INSERT INTO code_projects (project_id,mode,repository_id,binding_json,main_json,limits_json,warnings_json,updated_at) VALUES (?,?,?,?,?,?,?,?)',
-      f.projectId,
-      'local',
-      'repository-bases',
-      '{}',
-      '{}',
-      limits,
-      '[]',
-      new Date().toISOString(),
+      }),
     );
   });
   // A machine that never comes up, and a service that will not take it back.

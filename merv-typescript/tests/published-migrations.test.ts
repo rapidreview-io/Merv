@@ -11,6 +11,7 @@ import { initializeLegacyHistory } from '../src/legacy-history.js';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/codex-relay.js';
 import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';
+import { initializeLegacyCodeRecords } from '../packages/code-research/src/research-schema.js';
 import { PiService } from '../packages/pi/src/index.js';
 
 interface Row {
@@ -70,6 +71,9 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   } as unknown as State;
   for (const start of [
     () => initializeLegacyFoundationImports(recorder),
+    // Existing Code installations validate the historical mixed schema before projection;
+    // a fresh standalone Code installation never registers these research migrations.
+    () => initializeLegacyCodeRecords(recorder),
     () => new FleetService(recorder, {} as never, undefined).initialize(),
     // The Fleet workflow owner's start(), only where it is enabled: the census app leaves it off.
     () => recorder.migrate('fleet_workflow', modelMigrations),

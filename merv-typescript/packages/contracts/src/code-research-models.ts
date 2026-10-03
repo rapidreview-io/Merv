@@ -1,0 +1,228 @@
+import type { CodeUnitPublication } from './code-research-publication-models.js';
+export type { CodeUnitPublication } from './code-research-publication-models.js';
+import type { CodeCaptureRef } from './code-models.js';
+import type { WorkflowProvidedBlockerInput, WorkflowProvidedBlocker } from './workflow-guidance.js';
+import type { CodeResearchStoreStatus } from './code-research-store.js';
+import type { CodeWriterState } from './code-units.js';
+import type { CodeProjectBinding } from './code.js';
+import type { CodePublication, CodePublicationControls } from './code-publication-models.js';
+import type { CodeStoreOperation, CodeMirrorStatus, CodeStoreWarning } from './code-store.js';
+
+/**
+ * What an owner plugin and Code say to each other about a unit of work. Nothing here names a
+ * commit: an owner hands over the capture reference it already holds and receives an opaque
+ * `reference` it passes on unread, so only Code interprets either.
+ */
+export interface CodeUnitAcceptInput {
+  /** The workflow instance that succeeded. */
+  unitId: string;
+  /** The revision at which it reached its success state. */
+  terminalRevision: number;
+  submissionRef: string;
+  reviewRef: string;
+  /** Null says the unit succeeded without code, which lets a later base look past it. */
+  codeRef: CodeCaptureRef | null;
+  /** The leased review session, when there was one, so Code can record where it attached. */
+  reviewSessionId: string | null;
+}
+/**
+ * Accepted units of a project whose code the project's main does not yet contain, as one
+ * answer: a reader that wants to know what is still unpublished asks once rather than
+ * comparing commits it is not allowed to interpret.
+ */
+export interface CodeAcceptedSince {
+  unitIds: string[];
+  /**
+   * The unpublished units whose acceptance is quarantined. They are unpublished code like the
+   * rest, and are named rather than hidden, because nothing may be built on them.
+   */
+  quarantined: string[];
+  /** The main those units were compared against. */
+  main: string;
+  /** The answer's identity, so a caller can tell one reading from another. */
+  hash: string;
+}
+export interface CodeUnitAcceptance {
+  unitId: string;
+  hash: string;
+  acceptedAt: string;
+  terminalRevision: number;
+  submissionRef: string;
+  reviewRef: string;
+  acceptedBy: string;
+  /** The exact reviewed code, opaque to everyone but Code; null for a code-less success. */
+  reference: string | null;
+  /** Whether the reviewer's checkout was attached at exactly that code; null without code. */
+  reviewAttached: boolean | null;
+  /**
+   * Where the accepted code is kept. `legacy-local` is the runner's own retained capture:
+   * the server holds the identity and makes no durability claim for the objects.
+   */
+  storage: 'none' | 'legacy-local' | 'code';
+  /** The Code operation that made the accepted commit durable; only `code` storage has one. */
+  receipt?: string;
+}
+export interface CodeBasePin {
+  unitId: string;
+  /** `merged` is a base Code made from several accepted commits; it is never itself accepted. */
+  kind: 'main' | 'accepted' | 'merged';
+  reference: string;
+  /** Every acceptance that contributed, including those whose code was the same. */
+  sources: { unitId: string; acceptanceHash: string }[];
+  pinnedAt: string;
+  leaseId: string;
+}
+/**
+ * Where a unit's base stands. Only `pinned` is a fact; the others are what a derivation would
+ * find now, and may differ by the time a lease pins it.
+ */
+export type CodeBaseStatus =
+  | { status: 'pinned'; pin: CodeBasePin }
+  /**
+   * `merge` names the accepted commits the base was made from, so a reader can join this
+   * unit to that base by its member set without asking the server for a second name.
+   */
+  | { status: 'ready'; kind: CodeBasePin['kind']; sources: string[]; merge?: string[] }
+  /** A declared dependency has not settled; Workflows already says so, and Code adds nothing. */
+  | { status: 'waiting' }
+  /** `merge` names the accepted commits a base has still to be made from. */
+  | { status: 'blocked'; blockers: WorkflowProvidedBlockerInput[]; merge?: string[] };
+export interface CodeUnit {
+  unitId: string;
+  workflow: string;
+  version: number;
+  declaredAt: string;
+  /** The branch a writer stands on, which is the name the mirror publishes it under. */
+  branch: string;
+  base: CodeBasePin | null;
+  /** Null once the unit has ended or been accepted without ever taking a base. */
+  baseStatus: CodeBaseStatus | null;
+  acceptance: CodeUnitAcceptance | null;
+  /** Where this unit's publication to main stands; null unless it publishes and was accepted. */
+  publication: CodeUnitPublication | null;
+  /** Zero until a session first writes to Code's repository for this unit. */
+  generation: number;
+  writerState: CodeWriterState;
+  /** The newest commit Code admitted for this unit, which is what a successor resumes from. */
+  canonicalHead: string | null;
+  /** The newest commit a mirror push put on the published repository; behind while it catches up. */
+  mirroredHead: string | null;
+  mirroredAt: string | null;
+  /** A final capture admission refused; the unit waits for an operator until it is fenced. */
+  quarantine: { operationId: string } | null;
+}
+
+export type CodeBaseState =
+  | 'waiting_inputs'
+  | 'queued'
+  | 'running'
+  | 'retry_wait'
+  | 'blocked_infra'
+  | 'awaiting_resolution'
+  | 'resolved'
+  | 'suspended'
+  | 'cancelled';
+/**
+ * Where the project check of one base stands. `unavailable` is deliberately not a verdict: it
+ * pairs with an operator's blocker, writes no receipt, and so never burns the one slot a real
+ * verdict needs later.
+ */
+export type CodeBaseCheckState =
+  'none' | 'queued' | 'running' | 'unavailable' | 'passed' | 'failed' | 'skipped';
+/** The write-once receipt of the one logical check of a base: what ran, where, and what it could not isolate. */
+export interface CodeBaseCheck {
+  state: 'passed' | 'failed' | 'skipped';
+  /** The command and machine as configured when the check started; null for a skip. */
+  spec: {
+    command: string;
+    timeoutSeconds: number;
+    image: { provider: string; offerId: string; snapshotId: string | null };
+  } | null;
+  receipt: {
+    sandboxId: string;
+    jobId: string;
+    /** Which source was shipped, so a reader can tell one base's tarball from another's. */
+    objectId: string;
+    exitCode: number | null;
+    timedOut: boolean;
+    startedAt: string | null;
+    finishedAt: string | null;
+    output: { head: string; tail: string; bytes: number };
+    environment: { provider: string; offerId: string; snapshotId: string | null } | null;
+    usage: { amount: string; currency: string } | null;
+    /**
+     * What the adapter could and could not guarantee, in its own words. Copied onto the
+     * record verbatim and never inferred by Code, because only the plugin that speaks to the
+     * service knows what that service does.
+     */
+    isolation: {
+      network: 'on';
+      sourceReadOnly: false;
+      imagePinned: 'offer';
+      facts: string[];
+    };
+  } | null;
+  /** Why a check was skipped, or what the machine could not do; null for an ordinary verdict. */
+  reason: string | null;
+  at: string;
+}
+export interface CodeBaseRecord {
+  key: string;
+  members: string[];
+  left: string;
+  right: string;
+  /**
+   * The two commits `left` and `right` stand for, in that order: a lone member is itself, an
+   * earlier base is the result it reached. A null is an input that has no usable result, and
+   * a base nobody may build on again is left unresolved rather than read for. Present only
+   * where a whole project was in hand: one row on its own is not worth two more reads.
+   */
+  parents?: [string | null, string | null];
+  state: CodeBaseState;
+  quarantined: boolean;
+  /** How the result was made: by this server's merge, or by the one task that resolved it. */
+  result: { method: 'auto' | 'task'; commit: string; tree: string | null; engine: string } | null;
+  /** A failing project check is a conflict with no paths; its evidence is the one message. */
+  conflict: { paths: string[]; messages: string } | null;
+  checkState: CodeBaseCheckState;
+  check: CodeBaseCheck | null;
+  resolutionTaskId: string | null;
+  resolutionError: string | null;
+  attempts: number;
+  executionEpoch: number;
+  deadline: string | null;
+  sponsors: string[];
+  blocker: string | null;
+  operatorReason: string | null;
+  updatedAt: string;
+}
+
+/** Operator disposition of one retained base; every request retains its reason. */
+export interface CodeBaseControlInput {
+  key: string;
+  action: 'retry' | 'suspend' | 'resume' | 'cancel' | 'quarantine';
+  reason: string;
+  requestId: string;
+}
+
+export interface CodeProjectStatus {
+  /** Publication tracks approved work waiting for its verified receipt. */
+  publication?: {
+    records: CodePublication[];
+    controls: CodePublicationControls & { blockers: string[] };
+  };
+  /** Shared base records and their retained admission and recovery state, when hosted. */
+  bases?: CodeBaseRecord[];
+  project: CodeProjectBinding | null;
+  /** Null when this server keeps no repositories. */
+  store: CodeResearchStoreStatus | null;
+  /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
+  operations: CodeStoreOperation[];
+  /** How the project's work reaches the repository it is published to; null with no store. */
+  mirror: CodeMirrorStatus | null;
+  /** What is worth saying about the repository and stops nothing, newest first. */
+  warnings: CodeStoreWarning[];
+  /** The newest 200 units. */
+  units: CodeUnit[];
+  blockers: WorkflowProvidedBlocker[];
+}

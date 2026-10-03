@@ -1,3 +1,4 @@
+import { configureResearchRepository, researchCheck } from './check-configuration.js';
 import type { CodeGitHubService, GitHubBinding } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
 import { rejectRetiredBackup } from '@merv/code/configuration';
@@ -171,6 +172,8 @@ export class CodeService extends CodeCommandService implements Code {
         );
       },
       (caller, tx) => this.github.publicationBinding(caller, tx),
+      this.writerStore,
+      (caller, oid, tx, expectedOid) => this.unitStore.moveMain(caller, oid, tx, expectedOid),
       (projectId, tx) => this.unitStore.imported(tx, projectId),
     );
     this.publicationStore = new CodePublicationService(
@@ -232,8 +235,10 @@ export class CodeService extends CodeCommandService implements Code {
               sponsors: (tx, projectId, members) =>
                 this.unitStore.baseSponsors(tx, projectId, members),
               serviceWork: sessions.serviceWork,
-              resolved: (tx, projectId, key, commit) =>
-                enqueueMirror(tx, projectId, 'mirror-base', key, commit),
+              resolved: async (tx, projectId, key, commit) => {
+                await this.unitStore.retainBaseResult(tx, projectId, key, commit);
+                await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
+              },
             },
             repositories.autoMerge !== false,
           );
@@ -515,13 +520,16 @@ export class CodeService extends CodeCommandService implements Code {
           }
         : {};
     if (!this.store) return { ...status, ...publication };
+    const technical = await this.store.describe(caller.projectId);
+    const configuredCheck = await this.storage.read((sql) => researchCheck(sql, caller.projectId));
     return {
       ...status,
       ...publication,
       bases: await this.storage.read(
         (sql) => this.baseStore?.records(sql, caller.projectId) ?? Promise.resolve([]),
       ),
-      ...(await this.store.describe(caller.projectId)),
+      ...technical,
+      store: { ...technical.store, limits: { ...technical.store.limits, check: configuredCheck } },
       mirror: (await this.mirrorStore?.describe(caller.projectId)) ?? null,
     };
   }
@@ -557,7 +565,13 @@ export class CodeService extends CodeCommandService implements Code {
     return await this.requireStore().rebindRepository(caller, input);
   }
   async configureRepository(caller: Caller, input: unknown) {
-    return await this.requireStore().configure(caller, input);
+    return await configureResearchRepository(
+      this.storage,
+      this.baseScope,
+      this.requireStore(),
+      caller,
+      input,
+    );
   }
   /**
    * The second workspace protocol as the API forwards it: opaque bodies and bundle bytes.

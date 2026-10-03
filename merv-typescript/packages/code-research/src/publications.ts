@@ -1,6 +1,6 @@
 import { CodeGitHubService } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
-import { migratePublications } from '@merv/code/publications-schema';
+import { migratePublications } from './publications-schema.js';
 import {
   canonical,
   check,
@@ -353,7 +353,7 @@ export class CodePublicationService implements CodePublicationApi {
         }),
         row.proposal_id,
       );
-      await this.host.main(caller, record.headOid, tx);
+      await this.host.main(caller, record.headOid, tx, main);
       await this.host.apply(caller, current, 'published', tx);
       await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
         destination: 'local',

@@ -2,7 +2,7 @@ import { CodeService as CoreCodeService } from '@merv/code/service';
 import { CodeService } from '@merv/code-research/service';
 import type { CodeCapture } from '@merv/code-research/types';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { CodeUnitStore } from '@merv/code/units';
+import { ResearchUnitRecords } from '@merv/code-research/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { createService, type WorkflowSnapshot } from '@merv/contracts';
 import assert from 'node:assert/strict';
@@ -213,7 +213,7 @@ async function fixture(t: TestContext, connected = false) {
     if (storage === 'code')
       await f.state.transaction(async (tx) => {
         await tx.run(
-          "UPDATE code_units SET generation=1,writer_state='closed',head_oid=? WHERE project_id=? AND unit_id=?",
+          "UPDATE code_workspaces SET generation=1,writer_state='closed',head_oid=? WHERE project_id=? AND unit_id=?",
           commit,
           f.admin.projectId,
           work.id,
@@ -722,7 +722,11 @@ test('a disabled project and a published tree mismatch both show on the unit', a
     reason: 'The disposable stale pull request merged under a bypass.',
     requestId: 'failed-canary',
   });
-  const core = new CodeUnitStore(f.state, f.scope, new CodeWriterService(f.state, f.scope, 900));
+  const core = new ResearchUnitRecords(
+    f.state,
+    f.scope,
+    new CodeWriterService(f.state, f.scope, 900),
+  );
   assert.equal((await core.unit(f.admin, work.id)).publication?.state, 'pending');
   core.close();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'disabled');

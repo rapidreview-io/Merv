@@ -15,3 +15,16 @@ export const workRef = (unitId: string) => `refs/merv/work/${unitRef(unitId)}`;
 export const acceptedRef = (unitId: string) => `refs/merv/accepted/${unitRef(unitId)}`;
 /** The local branch a writer's checkout stands on; the mirror publishes it under the same name. */
 export const workBranch = (unitId: string) => `merv/work/${unitRef(unitId)}`;
+
+/** An opaque retained commit identity supplied by a repository consumer. */
+export const retainedRef = (key: string) => `refs/merv/retained/${unitRef(key)}`;
+
+/** Explicit retention destinations stay inside Code's namespace and obey Git ref syntax. */
+export const validRetentionRef = (ref: string): boolean =>
+  /^refs\/merv\/[A-Za-z0-9._/-]+$/.test(ref) &&
+  !ref.includes('..') &&
+  !ref.includes('//') &&
+  !ref.endsWith('/') &&
+  ref
+    .split('/')
+    .every((part) => !part.startsWith('.') && !part.endsWith('.') && !part.endsWith('.lock'));

@@ -361,6 +361,17 @@ test('code-import brings a local branch into a served project, in steps, as its 
       JSON.stringify({ storage: 'legacy-local', code: { commit: one } }),
     ),
   );
+  await app.ctx.state.transaction((tx) =>
+    app.ctx.code.units.retainHistoricalCommit(tx, {
+      projectId: owner.projectId,
+      key: 'unit:legacy',
+      unitId: 'legacy',
+      commit: one,
+      storage: 'external',
+      receipt: null,
+      createdAt: 'now',
+    }),
+  );
   const second = await importRepository({
     url,
     repository: source.repository,

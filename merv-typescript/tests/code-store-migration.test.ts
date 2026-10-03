@@ -7,6 +7,7 @@ import { createService, type SqlValue } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { CodeUnitService } from '@merv/code-research/units';
+import { postgresMigrations } from '@merv/code-research/legacy-units.postgres';
 import { CodeWriterService } from '@merv/code/writers';
 import { openState } from './fixtures/state.js';
 
@@ -22,7 +23,16 @@ async function fixture(t: TestContext) {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const initialize = async () =>
+  const initialize = async () => {
+    // Seed the exact published pre-boundary schema: its retained columns and guards
+    // must still survive an upgrade even though fresh research no longer creates them.
+    await state.migrate(
+      'code_units',
+      Object.entries(postgresMigrations).map(([version, sql]) => ({
+        version: Number(version),
+        sql,
+      })),
+    );
     await new CodeUnitService(
       state,
       scope,
@@ -31,6 +41,7 @@ async function fixture(t: TestContext) {
       new CodeWriterService(state, scope, 900),
       { contributors: async () => assert.fail('a migration reads no contributors') },
     ).initialize();
+  };
   const run = async (sql: string, ...params: SqlValue[]) =>
     await state.transaction(async (tx) => await tx.run(sql, ...params));
   const get = async <T>(sql: string, ...params: SqlValue[]) =>
@@ -38,7 +49,7 @@ async function fixture(t: TestContext) {
   return { initialize, run, get };
 }
 
-test('unit storage creates the repository, writer and journal with their guards', async (t) => {
+test('published legacy storage preserves repository, writer and journal guards after upgrade', async (t) => {
   const f = await fixture(t);
   // PostgreSQL's words never leave the state store, so every guard refuses alike; the comment
   // beside each use names the guard.

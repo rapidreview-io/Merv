@@ -12,6 +12,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code-research/service';
+import { CodeCommandService } from '@merv/code-research/commands';
 import { workBranch } from '@merv/code/store/refs';
 import { openState } from './fixtures/state.js';
 
@@ -43,7 +44,6 @@ const policy: WorkflowPolicy = {
 async function fixture(t: TestContext, withUnits = true) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-units-'));
   const state = await openState();
-  const migrate = state.migrate.bind(state);
   const scope = await createService(new ProjectScope(state));
   await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
   const workflows = await createService(new WorkflowsService(state, scope));
@@ -52,22 +52,24 @@ async function fixture(t: TestContext, withUnits = true) {
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
   let core: CoreCodeService;
-  /** Code as it was before units existed, or as it is now. */
+  /** An older command store can exist before the research unit adapter is installed. */
   const open = async (units: boolean) => {
-    let skipped = false;
-    state.migrate = async (component, migrations) => {
-      if (component === 'code_units' && !units) skipped = true;
-      else await migrate(component, migrations);
-    };
-    try {
-      core = await createService(new CoreCodeService(state, scope, {}));
-      const service = new CodeService(state, scope, sessions, workflows, core);
-      await service.initialize();
-      assert.equal(skipped, !units);
-      return service;
-    } finally {
-      state.migrate = migrate;
+    core = await createService(new CoreCodeService(state, scope, {}));
+    const service = new CodeService(state, scope, sessions, workflows, core);
+    if (units) await service.initialize();
+    else {
+      const commands = await createService(new CodeCommandService(state, scope, sessions));
+      commands.close();
+      assert.equal(
+        await state.read((sql) =>
+          sql.get(
+            "SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() AND table_name='code_units'",
+          ),
+        ),
+        undefined,
+      );
     }
+    return service;
   };
   let code = await open(withUnits);
   t.after(async () => {

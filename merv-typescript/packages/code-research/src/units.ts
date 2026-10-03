@@ -39,15 +39,15 @@ import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './typ
 
 import {
   bindsRepository,
-  CodeUnitStore,
+  ResearchUnitRecords,
   oid,
   unitColumns,
   type AcceptanceBody,
   type BaseBody,
   type ProjectRow,
   type UnitRow,
-} from '@merv/code/units';
-export { bindsRepository, CODE_DRIVER } from '@merv/code/units';
+} from './unit-store.js';
+export { bindsRepository, CODE_DRIVER } from './unit-store.js';
 
 /**
  * What an open publication means for the unit that is waiting on it. A done unit carrying one
@@ -124,7 +124,7 @@ const EXPLICIT_BASE =
 const IMPORT = 'An administrator imports it with `merv code-import`';
 
 /** Research policy for durable Code records; absent deployments do not install this integration. */
-export class CodeUnitService extends CodeUnitStore implements CodeUnits {
+export class CodeUnitService extends ResearchUnitRecords implements CodeUnits {
   /** Set once the project repositories exist; without it several commits are never merged. */
   bases?: CodeBaseService;
   /** The journal that carries an accepted unit to main; without it nothing publishes. */
@@ -1308,22 +1308,15 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     }
     for (const unit of units) {
       const key = reached.get(unit.unit_id) ?? null;
-      // Two statements rather than one with the key tested inside the CASE: a placeholder whose
-      // only use is `? IS NOT NULL` gives PostgreSQL nothing to infer a type from, and it
-      // rejects such a statement at parse time whatever the bound value is.
-      if (key !== unit.quarantine_base_key)
-        await (key
-          ? tx.run(
-              "UPDATE code_units SET quarantine_base_key=?,writer_state=CASE WHEN writer_state IN ('reserved','active','closing') THEN 'recovery_required' ELSE writer_state END WHERE project_id=? AND unit_id=?",
-              key,
-              projectId,
-              unit.unit_id,
-            )
-          : tx.run(
-              'UPDATE code_units SET quarantine_base_key=NULL WHERE project_id=? AND unit_id=?',
-              projectId,
-              unit.unit_id,
-            ));
+      if (key !== unit.quarantine_base_key) {
+        await tx.run(
+          'UPDATE code_units SET quarantine_base_key=? WHERE project_id=? AND unit_id=?',
+          key,
+          projectId,
+          unit.unit_id,
+        );
+        await this.code.blockWorkspace(tx, { projectId, unitId: unit.unit_id, reason: key });
+      }
       // As in reconcileUnit: a quarantine is a refusal to let more work start on this base,
       // and work that has ended cleared its rows when it ended with nothing left to withdraw
       // one afterwards, so a row written here would block it for good.
@@ -1350,23 +1343,34 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       if (blocker || base.operatorReason)
         await this.setBlockers(tx, projectId, base.resolutionTaskId, blocker ? [blocker] : []);
     }
-    for (const { unit_id } of await tx.all<{ unit_id: string }>(
-      'SELECT unit_id FROM code_units WHERE project_id=? AND ((base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL OR generation>0) ORDER BY unit_id',
-      projectId,
-    ))
-      await this.reconcileUnit(tx, projectId, unit_id);
+    const units = new Set(
+      (
+        await tx.all<{ unit_id: string }>(
+          'SELECT unit_id FROM code_units WHERE project_id=? AND ((base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL)',
+          projectId,
+        )
+      ).map((row) => row.unit_id),
+    );
+    for (const writer of await this.writers.writerIdentities(tx, projectId))
+      units.add(writer.unitId);
+    for (const unitId of [...units].sort()) await this.reconcileUnit(tx, projectId, unitId);
   }
 
   /** Rebuild projects with open bases or retained writers whose facts may change while detached. */
   async reconcileAll(): Promise<void> {
-    const projects = await this.state.read(
-      async (sql) =>
-        await sql.all<{ project_id: string }>(
-          'SELECT DISTINCT project_id FROM code_units WHERE (base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL OR generation>0 ORDER BY project_id',
-        ),
-    );
-    for (const { project_id } of projects)
-      await this.state.transaction(async (tx) => await this.reconcileProject(tx, project_id));
+    const projects = await this.state.read(async (sql) => {
+      const ids = new Set(
+        (
+          await sql.all<{ project_id: string }>(
+            'SELECT DISTINCT project_id FROM code_units WHERE (base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL',
+          )
+        ).map((row) => row.project_id),
+      );
+      for (const writer of await this.writers.writerIdentities(sql)) ids.add(writer.projectId);
+      return [...ids].sort();
+    });
+    for (const projectId of projects)
+      await this.state.transaction((tx) => this.reconcileProject(tx, projectId));
   }
 
   /**

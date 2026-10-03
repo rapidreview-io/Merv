@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { CodeUnit } from '@merv/contracts/code-units';
+import type { CodeUnit } from '@merv/contracts/code-research-models';
 import { Ago, CopyButton, KV, Short, StatusPill, Summary, cx, words } from '../components';
 import { ArrowRightIcon, ExternalIcon } from '../icons';
 import { RecordLink, useRecordNames, type RecordNames } from '../markdown';

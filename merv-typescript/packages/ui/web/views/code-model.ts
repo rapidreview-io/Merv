@@ -1,5 +1,6 @@
-import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
-import type { CodeBaseRecord, CodeUnit } from '@merv/contracts/code-units';
+import type { CodeCommandRecord } from '@merv/contracts/code';
+import type { CodeProjectStatus } from '@merv/contracts/code-research-models';
+import type { CodeBaseRecord, CodeUnit } from '@merv/contracts/code-research-models';
 import type { CodePublication } from '@merv/contracts/types';
 import type { RecordNames } from '../markdown';
 import { status as publicationWord } from './github-publications';

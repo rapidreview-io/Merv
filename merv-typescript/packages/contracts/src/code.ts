@@ -1,16 +1,6 @@
 import { visible } from './text.js';
 import { z } from 'zod';
 import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
-import type {
-  CodeMirrorStatus,
-  CodeStoreOperation,
-  CodeStoreStatus,
-  CodeStoreWarning,
-} from './code-store.js';
-import type { CodePublication, CodePublicationControls } from './code-publication-models.js';
-import type { CodeUnit, CodeBaseRecord } from './code-units.js';
-import type { WorkflowProvidedBlocker } from './workflow-guidance.js';
-
 export interface CodeCommitInput {
   expectedHead: string;
   message: string;
@@ -178,27 +168,6 @@ export interface CodeProjectBinding {
    * which `code_github` holds and which a rebind never touches.
    */
   durability: 'legacy-local' | 'code';
-}
-export interface CodeProjectStatus {
-  /** Publication tracks approved work waiting for its verified receipt. */
-  publication?: {
-    records: CodePublication[];
-    controls: CodePublicationControls & { blockers: string[] };
-  };
-  /** Shared base records and their retained admission and recovery state, when hosted. */
-  bases?: CodeBaseRecord[];
-  project: CodeProjectBinding | null;
-  /** Null when this server keeps no repositories. */
-  store: CodeStoreStatus | null;
-  /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
-  operations: CodeStoreOperation[];
-  /** How the project's work reaches the repository it is published to; null with no store. */
-  mirror: CodeMirrorStatus | null;
-  /** What is worth saying about the repository and stops nothing, newest first. */
-  warnings: CodeStoreWarning[];
-  /** The newest 200 units. */
-  units: CodeUnit[];
-  blockers: WorkflowProvidedBlocker[];
 }
 export const codeLocalBindInputSchema = z
   .object({

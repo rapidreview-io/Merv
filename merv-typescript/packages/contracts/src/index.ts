@@ -39,12 +39,9 @@ export type {
 export {
   CODE_BUNDLE_MAX_BYTES,
   CODE_PART_MAX_BYTES,
-  CODE_CHECK_SOURCE_MAX_BYTES,
-  CODE_CHECK_SLACK_SECONDS,
+  codeAdmissionLimitsSchema,
+  codeAdmissionConfigureInputSchema,
   codeFindingSchema,
-  codeCheckSpecSchema,
-  codeStoreLimitsSchema,
-  codeRepositoryConfigureInputSchema,
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
   codeWorkspaceManifestInputSchema,
@@ -58,9 +55,8 @@ export {
 } from './code-store.js';
 export type {
   CodeFinding,
-  CodeCheckSpec,
-  CodeStoreLimits,
-  CodeRepositoryConfigureInput,
+  CodeAdmissionLimits,
+  CodeAdmissionConfigureInput,
   CodeRepositoryImportInput,
   CodeRepositoryPrepareInput,
   CodeRepositoryPreparation,
@@ -132,7 +128,7 @@ export {
   codeCommandRecordSchema,
   codeLocalBindInputSchema,
 } from './code.js';
-import type { CodeUnit } from './code-units.js';
+import type { CodeUnit } from './code-research-models.js';
 export type {
   CodeAcceptedSince,
   CodeUnitAcceptInput,
@@ -146,13 +142,12 @@ export type {
   CodeBaseState,
   CodeBaseStatus,
   CodeUnit,
-  CodeWriterState,
-  CodeWriterStatus,
-} from './code-units.js';
+  CodeProjectStatus,
+} from './code-research-models.js';
+export type { CodeWriterState, CodeWriterStatus } from './code-units.js';
 export type {
   CodeLocalBindInput,
   CodeProjectBinding,
-  CodeProjectStatus,
   CodeCommitInput,
   CodeMergeInput,
   CodeCommitCommand,
@@ -2453,3 +2448,17 @@ export const delegationEnd = (source: DelegationSource): number =>
     : source.kind !== 'human' && source.expiresAt
       ? Date.parse(source.expiresAt)
       : Infinity;
+
+export {
+  CODE_CHECK_SOURCE_MAX_BYTES,
+  CODE_CHECK_SLACK_SECONDS,
+  codeCheckSpecSchema,
+  codeStoreLimitsSchema,
+  codeRepositoryConfigureInputSchema,
+} from './code-research-store.js';
+export type {
+  CodeCheckSpec,
+  CodeStoreLimits,
+  CodeRepositoryConfigureInput,
+  CodeResearchStoreStatus,
+} from './code-research-store.js';

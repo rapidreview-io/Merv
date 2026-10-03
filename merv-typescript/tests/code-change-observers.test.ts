@@ -184,7 +184,7 @@ test('direct core writer changes and research blockers commit or roll back toget
         tx,
       );
     await tx.run(
-      'UPDATE code_units SET writer_changed_at=? WHERE unit_id=?',
+      'UPDATE code_workspaces SET writer_changed_at=? WHERE unit_id=?',
       '2000-01-01T00:00:00.000Z',
       f.unitId,
     );
@@ -234,7 +234,7 @@ test('removing an observer during its awaited mutation rejects and rolls back th
   unobserve();
   resume();
   await assert.rejects(pending, { code: 'code_projection_changed' });
-  assert.equal((await f.ctx.code.units.status(f.caller)).project?.main.oid, 'a'.repeat(40));
+  assert.equal((await f.ctx.codeResearch.status(f.caller)).project?.main.oid, 'a'.repeat(40));
   assert.deepEqual(await f.blockers(), []);
 });
 
@@ -243,11 +243,9 @@ test('research observers ignore generic Code records with no research workflow o
   const unitId = 'external-tool-unit';
   await f.ctx.state.transaction((tx) =>
     tx.run(
-      "INSERT INTO code_units(project_id,unit_id,workflow,version,declared_at,generation,writer_state,writer_changed_at) VALUES(?,?,?,?,?,1,'closing',?)",
+      "INSERT INTO code_workspaces(project_id,unit_id,declared_at,generation,writer_state,writer_changed_at) VALUES(?,?,?,1,'closing',?)",
       f.caller.projectId,
       unitId,
-      'external-tool',
-      1,
       '2000-01-01T00:00:00.000Z',
       '2000-01-01T00:00:00.000Z',
     ),
@@ -271,7 +269,7 @@ test('writer recovery composes with base blockers and fencing preserves the base
   await f.bind('b', 'a');
   await f.ctx.state.transaction((tx) =>
     tx.run(
-      "UPDATE code_units SET generation=1,writer_state='closing',writer_changed_at=? WHERE unit_id=?",
+      "UPDATE code_workspaces SET generation=1,writer_state='closing',writer_changed_at=? WHERE unit_id=?",
       new Date(Date.now() - 1800_000).toISOString(),
       f.unitId,
     ),
@@ -284,7 +282,7 @@ test('writer recovery composes with base blockers and fencing preserves the base
   );
   await f.ctx.state.transaction((tx) =>
     tx.run(
-      'UPDATE code_units SET writer_changed_at=? WHERE unit_id=?',
+      'UPDATE code_workspaces SET writer_changed_at=? WHERE unit_id=?',
       '2000-01-01T00:00:00.000Z',
       f.unitId,
     ),

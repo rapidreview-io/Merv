@@ -1,3 +1,4 @@
+import type { CodeWriterService } from '@merv/code/writers';
 import type { GitHubBinding } from '@merv/code/github';
 import type { GitHubClient } from '@merv/code/github-client';
 import { parseCodeInput } from '@merv/code/input';
@@ -55,6 +56,13 @@ export class PublicationHost {
     private mirror: () => MirrorTransport,
     private imported: (caller: Caller, ref: string, oid: string) => Promise<void>,
     private binding: (caller: Caller, tx: Transaction) => Promise<GitHubBinding>,
+    private writers: CodeWriterService,
+    private moveMain: (
+      caller: Caller,
+      oid: string,
+      tx: Transaction,
+      expectedOid?: string,
+    ) => Promise<void>,
     private changed: (projectId: string, tx: Transaction) => Promise<void>,
   ) {}
   bindReviews(service: Pick<Reviews, 'get'>): () => void {
@@ -122,16 +130,9 @@ export class PublicationHost {
       'The exact independent review certificate is required',
       409,
     );
-    const unit = await tx.get<{
-      quarantine_base_key: string | null;
-      quarantine_operation_id: string | null;
-    }>(
-      'SELECT quarantine_base_key,quarantine_operation_id FROM code_units WHERE project_id=? AND unit_id=?',
-      caller.projectId,
-      record.instanceId,
-    );
+    const unit = await this.writers.row(tx, caller.projectId, record.instanceId);
     check(
-      unit && !unit.quarantine_base_key && !unit.quarantine_operation_id,
+      unit && !unit.blocked_by && !unit.quarantine_operation_id,
       'code_quarantined',
       'Quarantined work cannot be published',
       409,
@@ -217,13 +218,8 @@ export class PublicationHost {
   async import(caller: Caller, record: CodePublication, oid: string) {
     await this.imported(caller, `refs/heads/${record.baseBranch}`, oid);
   }
-  async main(caller: Caller, oid: string, tx: Transaction) {
-    await tx.run(
-      'UPDATE code_projects SET main_json=?,updated_at=? WHERE project_id=?',
-      canonical({ oid, stored: true, admittedBy: caller.actorId, admittedAt: now() }),
-      now(),
-      caller.projectId,
-    );
+  async main(caller: Caller, oid: string, tx: Transaction, expectedOid?: string) {
+    await this.moveMain(caller, oid, tx, expectedOid);
     await this.changed(caller.projectId, tx);
   }
   async verifyLocal(caller: Caller, record: CodePublication) {

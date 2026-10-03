@@ -197,7 +197,7 @@ async function fixture(t: TestContext, human = false) {
     };
     await f.state.transaction(async (tx) => {
       await tx.run(
-        "UPDATE code_units SET generation=CASE WHEN generation=0 THEN 1 ELSE generation END,writer_state=CASE WHEN generation=0 THEN 'closed' ELSE writer_state END,head_oid=? WHERE project_id=? AND unit_id=?",
+        "UPDATE code_workspaces SET generation=CASE WHEN generation=0 THEN 1 ELSE generation END,writer_state=CASE WHEN generation=0 THEN 'closed' ELSE writer_state END,head_oid=? WHERE project_id=? AND unit_id=?",
         commit,
         f.admin.projectId,
         taskId,
@@ -1398,7 +1398,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     }
     // The fixture plays the final handoff; real final capture is exercised by the driver tests.
     await f.state.transaction((tx) =>
-      tx.run("UPDATE code_units SET writer_state='closed' WHERE unit_id=?", taskId),
+      tx.run("UPDATE code_workspaces SET writer_state='closed' WHERE unit_id=?", taskId),
     );
   }
   await f.code.reconcileAll();
@@ -1906,18 +1906,13 @@ test('a base that merged cleanly and failed its check is briefed as that, not as
   const f = await fixture(t);
   await f.state.transaction((tx) =>
     tx.run(
-      'UPDATE code_projects SET limits_json=? WHERE project_id=?',
-      JSON.stringify({
-        format: 1,
-        denyGlobs: [],
-        secretExemptGlobs: [],
-        check: {
-          command: 'make test',
-          timeoutSeconds: 600,
-          image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
-        },
-      }),
+      'INSERT INTO code_research_check_configuration(project_id,check_json) VALUES (?,?) ON CONFLICT(project_id) DO UPDATE SET check_json=EXCLUDED.check_json',
       f.admin.projectId,
+      JSON.stringify({
+        command: 'make test',
+        timeoutSeconds: 600,
+        image: { provider: 'thunder_compute', offerId: 'a6000_x1:thunder', snapshotId: null },
+      }),
     ),
   );
   const isolation: SandboxCheckHandle['isolation'] = {

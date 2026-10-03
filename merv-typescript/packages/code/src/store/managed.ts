@@ -62,7 +62,7 @@ export async function initializeManagedProjects(
 ): Promise<void> {
   const pending = await state.read((sql) =>
     sql.all<{ id: string; project_id: string; payload_json: string }>(
-      "SELECT id,project_id,payload_json FROM code_operations WHERE kind='initialize' AND status='prepared' ORDER BY created_at,id",
+      "SELECT id,project_id,payload_json FROM code_operations WHERE kind='initialize' AND status='prepared' AND NOT EXISTS (SELECT 1 FROM code_repository_holds WHERE project_id=code_operations.project_id AND hold_key='code-storage-upgrade') ORDER BY created_at,id",
     ),
   );
   for (const row of pending) {

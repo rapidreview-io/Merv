@@ -16,7 +16,7 @@ import {
 } from '@merv/contracts';
 import { parseCodeInput } from '../input.js';
 import type { CodeRepositories } from './repository.js';
-import { acceptedRef, workRef } from './refs.js';
+import { validRetentionRef, retainedRef, acceptedRef, workRef } from './refs.js';
 
 /** What the server publishes a ref to, or why it publishes nothing. */
 export type MirrorTarget = { repository: string } | { blocked: string };
@@ -57,7 +57,7 @@ export const defaultMirrorConfig: CodeMirrorConfig = {
 const MAX_BACKOFF_MS = 3600_000;
 const WARNINGS = 20;
 const PRINCIPAL = 'system:code';
-const kinds = ['mirror-work', 'mirror-accepted', 'mirror-base'] as const;
+const kinds = ['mirror-work', 'mirror-accepted', 'mirror-base', 'mirror-retained'] as const;
 export type MirrorKind = (typeof kinds)[number];
 /** Where a ref of Code's own repository is published under. */
 const published = (ref: string) => ref.replace(/^refs\/merv\//, 'refs/heads/merv/');
@@ -99,28 +99,53 @@ export async function enqueueMirror(
   kind: MirrorKind,
   unitId: string,
   tip: string,
+  explicitRef?: string,
 ): Promise<void> {
   const ref =
-    kind === 'mirror-base'
+    explicitRef ??
+    (kind === 'mirror-base'
       ? `refs/merv/bases/${unitId}`
       : kind === 'mirror-work'
         ? workRef(unitId)
-        : acceptedRef(unitId);
+        : kind === 'mirror-retained'
+          ? retainedRef(unitId)
+          : acceptedRef(unitId));
+  check(
+    validRetentionRef(ref),
+    'invalid_ref',
+    'The mirrored ref must be a safe name in Code’s namespace',
+  );
   const requestId = `${kind}:${unitId}:${tip}`;
-  const open = await tx.get<{ id: string }>(
-    "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind=? AND status='prepared'",
+  const open = await tx.get<{ id: string; payload_json: string }>(
+    "SELECT id,payload_json FROM code_operations WHERE project_id=? AND unit_id=? AND kind=? AND status='prepared'",
     projectId,
     unitId,
     kind,
   );
-  if (open) return;
-  const done = await tx.get<{ id: string }>(
-    'SELECT id FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+  if (open) {
+    check(
+      JSON.parse(open.payload_json).ref === ref,
+      'code_mirror_ref_conflict',
+      'An existing mirror request has another destination',
+      409,
+    );
+    return;
+  }
+  const done = await tx.get<{ id: string; payload_json: string }>(
+    'SELECT id,payload_json FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
     projectId,
     PRINCIPAL,
     requestId,
   );
-  if (done) return;
+  if (done) {
+    check(
+      JSON.parse(done.payload_json).ref === ref,
+      'code_mirror_ref_conflict',
+      'An existing mirror request has another destination',
+      409,
+    );
+    return;
+  }
   const payload: MirrorPayload = { format: 1, source: 'mirror', kind, unitId, ref, tip };
   const at = now();
   await tx.run(
@@ -189,7 +214,7 @@ export class CodeMirrorService {
           const due: MirrorRow[] = await this.state.read(
             async (sql) =>
               await sql.all<MirrorRow>(
-                `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) AND created_at<=?
+                `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base','mirror-retained') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) AND created_at<=?
               ${cursor ? "AND (COALESCE(next_at,''),created_at,id) > (?,?,?)" : ''}
               ORDER BY COALESCE(next_at,''),created_at,id LIMIT 50`,
                 at,
@@ -230,7 +255,7 @@ export class CodeMirrorService {
     const rows = await this.state.read(
       async (sql) =>
         await sql.all<MirrorRow>(
-          `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base') ORDER BY created_at,id LIMIT 200`,
+          `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base','mirror-retained') ORDER BY created_at,id LIMIT 200`,
           projectId,
         ),
     );
@@ -374,6 +399,13 @@ export class CodeMirrorService {
     const payload = JSON.parse(row.payload_json) as MirrorPayload;
     const claim = newId('clm');
     const claimed = await this.state.transaction(async (tx) => {
+      if (
+        await tx.get(
+          "SELECT hold_key FROM code_repository_holds WHERE project_id=? AND hold_key='code-storage-upgrade'",
+          row.project_id,
+        )
+      )
+        return null;
       const at = new Date();
       const changed = await tx.run(
         "UPDATE code_operations SET phase='running',claim_id=?,claim_until=?,updated_at=? WHERE id=? AND status='prepared' AND (phase IN ('queued','retry_wait') OR (phase='running' AND (claim_until IS NULL OR claim_until<=?)))",
@@ -384,26 +416,35 @@ export class CodeMirrorService {
         at.toISOString(),
       );
       if (changed.changes !== 1) return null;
-      if (payload.kind === 'mirror-base') {
-        const base = await tx.get<{ health: string }>(
-          "SELECT health FROM code_bases WHERE project_id=? AND base_key=? AND state='resolved'",
+      if (payload.kind === 'mirror-retained')
+        return await tx.get<{
+          head_oid: string | null;
+          mirrored_oid: string | null;
+          quarantine_operation_id: string | null;
+        }>(
+          'SELECT retained.commit_oid AS head_oid,NULL::text AS mirrored_oid,COALESCE(workspace.blocked_by,workspace.quarantine_operation_id) AS quarantine_operation_id FROM code_retained_commits retained JOIN code_workspaces workspace ON workspace.project_id=retained.project_id AND workspace.unit_id=retained.unit_id WHERE retained.project_id=? AND retained.retention_key=?',
           row.project_id,
           payload.unitId,
         );
-        return base
-          ? {
-              head_oid: payload.tip,
-              mirrored_oid: null,
-              quarantine_operation_id: base.health === 'healthy' ? null : row.id,
-            }
-          : null;
+      if (payload.kind === 'mirror-base') {
+        const eligibility = await tx.get<{ blocked_reason: string | null }>(
+          'SELECT blocked_reason FROM code_reference_eligibility WHERE project_id=? AND ref_key=?',
+          row.project_id,
+          `mirror-base:${payload.unitId}`,
+        );
+        return {
+          head_oid: payload.tip,
+          mirrored_oid: null,
+          quarantine_operation_id:
+            !eligibility || eligibility.blocked_reason !== null ? row.id : null,
+        };
       }
       return await tx.get<{
         head_oid: string | null;
         mirrored_oid: string | null;
         quarantine_operation_id: string | null;
       }>(
-        'SELECT head_oid,mirrored_oid,COALESCE(quarantine_base_key,quarantine_operation_id) AS quarantine_operation_id FROM code_units WHERE project_id=? AND unit_id=?',
+        'SELECT head_oid,mirrored_oid,COALESCE(blocked_by,quarantine_operation_id) AS quarantine_operation_id FROM code_workspaces WHERE project_id=? AND unit_id=?',
         row.project_id,
         payload.unitId,
       );
@@ -521,7 +562,7 @@ export class CodeMirrorService {
       if (changed.changes !== 1) return;
       if (payload.kind === 'mirror-work')
         await tx.run(
-          'UPDATE code_units SET mirrored_oid=?,mirrored_at=? WHERE project_id=? AND unit_id=?',
+          'UPDATE code_workspaces SET mirrored_oid=?,mirrored_at=? WHERE project_id=? AND unit_id=?',
           target,
           at,
           row.project_id,
@@ -529,12 +570,19 @@ export class CodeMirrorService {
         );
       await this.warn(tx, row.project_id, null, payload.ref);
       const head = await tx.get<{ head_oid: string | null }>(
-        'SELECT head_oid FROM code_units WHERE project_id=? AND unit_id=?',
+        'SELECT head_oid FROM code_workspaces WHERE project_id=? AND unit_id=?',
         row.project_id,
         payload.unitId,
       );
       if (payload.kind === 'mirror-work' && head?.head_oid && head.head_oid !== target)
-        await enqueueMirror(tx, row.project_id, payload.kind, payload.unitId, head.head_oid);
+        await enqueueMirror(
+          tx,
+          row.project_id,
+          payload.kind,
+          payload.unitId,
+          head.head_oid,
+          payload.ref,
+        );
     });
   }
 
