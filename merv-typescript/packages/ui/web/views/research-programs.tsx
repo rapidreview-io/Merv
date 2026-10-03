@@ -12,7 +12,7 @@ import {
   Summary,
   words,
 } from '../components';
-import { Tabs, splitRoutes } from '../list-filters';
+import { Tabs, recordRoutes } from '../list-filters';
 import { useCommand } from '../mutations';
 import { WORK } from '../navigation';
 import { Gate, StageMark } from '../process';
@@ -20,7 +20,6 @@ import { ArtifactBody, type Artifact } from './artifacts';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 import { ReviewSummary } from './reviews';
-import { WorkList } from './work';
 
 // Browser read models intentionally omit server services and authentication types.
 interface Workflow {
@@ -197,5 +196,4 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   );
 }
 
-/** A wave is a row of the Work list, so its record opens beside that list. */
-export const ReflectionsView = splitRoutes(WorkList, ReflectionDetail, WORK.path);
+export const ReflectionsView = recordRoutes(ReflectionDetail, WORK.path);

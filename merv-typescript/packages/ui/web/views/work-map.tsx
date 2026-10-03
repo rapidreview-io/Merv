@@ -20,7 +20,6 @@ import {
 import { useTool } from '../api';
 import { Ago, LoadState, cx, kindOf, useNow, words } from '../components';
 import { clock, type Clock } from '../liveness';
-import { WORK } from '../navigation';
 import { StageMark } from '../process';
 import type { WorkflowShape } from '../shell-types';
 import type { Flow } from './map-data';
@@ -232,9 +231,6 @@ const Plane = createContext<{ selected: RunningKey | null; onSelect(key: Running
   selected: null,
   onSelect: () => undefined,
 });
-/** True where the board is already being read above: one reader a page, never two. */
-export const useLiveAbove = () => !!useContext(LiveContext);
-
 /** Reads the board at the pace of what moves on it; every clock is the payload's own. */
 function useLive() {
   const [cadence, setCadence] = useState(cadenceOf(undefined));
@@ -250,29 +246,6 @@ function useLive() {
     cadence * 2,
   );
   return { board, now };
-}
-
-/**
- * The board for a list that stands with no map over it, beside an open record: its rows
- * still say who is on each unit and where, and a name there goes to the map with that
- * thing's sidebar open.
- */
-export function LiveProvider({ nameOf, children }: Named & { children: ReactNode }) {
-  const navigate = useNavigate();
-  const { board, now } = useLive();
-  return (
-    <LiveContext.Provider value={{ board: board.data, now }}>
-      <Reading.Provider
-        value={{
-          now,
-          nameOf,
-          open: (key) => navigate(`${WORK.path}?key=${encodeURIComponent(key)}`),
-        }}
-      >
-        {children}
-      </Reading.Provider>
-    </LiveContext.Provider>
-  );
 }
 
 /** One live thing on a line: its dot, what it is, what it is doing and where. */

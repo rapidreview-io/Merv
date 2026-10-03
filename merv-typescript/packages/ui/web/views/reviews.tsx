@@ -2,7 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useState, type ReactNode } from 'react';
 import { refreshTools, useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
-import { splitRoutes } from '../list-filters';
+import { recordRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import {
   Ago,
@@ -18,7 +18,6 @@ import {
 import { ArrowRightIcon } from '../icons';
 import { RecordLink, RecordText, useRecordNames } from '../markdown';
 import { useActorNames } from './people';
-import { WorkList } from './work';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 
 /** review.submit enumerates exactly these finding words and these verdicts. */
@@ -742,4 +741,4 @@ export function Unmet({ text, at }: { text: string; at?: number }) {
   );
 }
 
-export const ReviewsView = splitRoutes(WorkList, ReviewDetail, WORK.path);
+export const ReviewsView = recordRoutes(ReviewDetail, WORK.path);

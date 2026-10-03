@@ -3,12 +3,12 @@ import type { ResearchRecord } from '@merv/research/models';
 import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
 import { LoadState, RecordPage } from '../components';
-import { splitRoutes } from '../list-filters';
+import { recordRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
-import { CycleMove, WorkList } from './work';
+import { CycleMove } from './work';
 
 function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
@@ -78,4 +78,4 @@ function CycleDetail({ row, shell }: ViewProps) {
 }
 
 /** The cycle is read from the Work page it frames; its own list is that page now. */
-export const ResearchView = splitRoutes(WorkList, CycleDetail, WORK.path);
+export const ResearchView = recordRoutes(CycleDetail, WORK.path);

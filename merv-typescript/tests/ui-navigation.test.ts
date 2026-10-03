@@ -6,6 +6,7 @@ import {
   documentTitle,
   dormantOwner,
   headed,
+  holds,
   topRows,
 } from '../packages/ui/web/navigation.js';
 import type { PluginState, Row } from '../packages/ui/web/shell-types.js';
@@ -75,6 +76,16 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
   assert.deepEqual({ path: work.path, kind: work.view.kind }, { path: '/work', kind: 'work' });
   assert.ok(!rows.includes(work), 'no plugin registered the Work row');
   assert.deepEqual(rows, before);
+  // No page is nowhere: a record of the work, and the agents behind it, light the Work row.
+  const lit = (pathname: string) =>
+    sections.flatMap((section) =>
+      section.rows.filter((entry) => holds(entry, pathname, rows)).map((entry) => entry.id),
+    );
+  assert.deepEqual(lit('/work'), ['work']);
+  assert.deepEqual(lit('/task-browser/wf_1'), ['work']);
+  assert.deepEqual(lit('/reflections/wf_2'), ['work']);
+  assert.deepEqual(lit('/artifacts/art_1'), ['artifacts']);
+  assert.deepEqual(lit('/nowhere'), []);
   // Work appears only with the work it opens; the archive only when it holds records.
   const listed = (entries: Row[]) =>
     buildNavigation(entries).flatMap((section) => section.rows.map((entry) => entry.id));

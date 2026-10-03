@@ -3,7 +3,7 @@ import { Link, useLocation, useParams } from 'react-router-dom';
 import type { CodeUnit } from '@merv/contracts/code-units';
 import { call, refreshTools, scopeVersion, useTool, type Loaded } from '../api';
 import { UploadIcon } from '../icons';
-import { splitRoutes } from '../list-filters';
+import { recordRoutes } from '../list-filters';
 import { useCommand } from '../mutations';
 import { WORK } from '../navigation';
 import { RecordPicker, filePick } from '../record-picker';
@@ -35,7 +35,6 @@ import {
   type Drafting,
   type Review,
 } from './reviews';
-import { WorkList } from './work';
 import { MAX_FILE, fileInput, type Artifact } from './artifacts';
 import type { ViewProps } from './index';
 import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
@@ -459,4 +458,4 @@ function TaskDetail({ row }: ViewProps) {
   );
 }
 
-export const TasksView = splitRoutes(WorkList, TaskDetail, WORK.path);
+export const TasksView = recordRoutes(TaskDetail, WORK.path);

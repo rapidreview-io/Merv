@@ -7,7 +7,14 @@ import { cx } from './components';
 import { ChevronsIcon, RowIcon, SidebarIcon, SwitchIcon } from './icons';
 import { signedInEmail } from './auth';
 import { initials, personName } from './views/people';
-import { accountLines, buildNavigation, documentTitle, headed, topRows } from './navigation';
+import {
+  accountLines,
+  buildNavigation,
+  documentTitle,
+  headed,
+  holds as held,
+  topRows,
+} from './navigation';
 import { stepped } from './record-picker';
 import { needsYou } from './views/overview';
 import { useHome } from './views/map-data';
@@ -200,7 +207,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   const { pathname } = useLocation();
   const rows = shell?.rows ?? [];
   const needsYou = useNeedsYou(rows);
-  const holds = (row: Row) => pathname === row.path || pathname.startsWith(`${row.path}/`);
+  const holds = (row: Row) => held(row, pathname, rows);
   return (
     <aside className="sidebar" aria-label="Primary">
       <div className="rail-util">

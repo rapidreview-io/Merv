@@ -4,7 +4,7 @@ import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/ex
 import type { CodeUnit } from '@merv/contracts/code-units';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
-import { splitRoutes } from '../list-filters';
+import { recordRoutes } from '../list-filters';
 import { WORK } from '../navigation';
 import {
   Evidence,
@@ -24,7 +24,6 @@ import { ThreeStates, newestReview, reviewClause } from '../states';
 import { Thread, threadOf } from '../thread';
 import { type Review } from './reviews';
 import { useActorNames } from './people';
-import { WorkList } from './work';
 import type { ViewProps } from './index';
 
 /** The domain's own order; a role with nothing retained under it is left out. */
@@ -202,4 +201,4 @@ function ExperimentDetail({ row }: ViewProps) {
   );
 }
 
-export const ExperimentsView = splitRoutes(WorkList, ExperimentDetail, WORK.path);
+export const ExperimentsView = recordRoutes(ExperimentDetail, WORK.path);

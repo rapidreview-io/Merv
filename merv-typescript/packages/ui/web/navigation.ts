@@ -62,6 +62,16 @@ const shows = (row: Row) =>
     ? !!row.status.count
     : !HIDDEN.has(row.view.kind) && !HIDDEN_ROWS.has(row.id);
 
+/**
+ * The rail row an address lights: the row it stands under, and — for a page the rail does
+ * not show, a record of the work or the agents and machines behind it — Work, where it is
+ * reached from, so no page is ever nowhere.
+ */
+export function holds(row: Row, pathname: string, rows: Row[]): boolean {
+  const under = (other: Row) => pathname === other.path || pathname.startsWith(`${other.path}/`);
+  return under(row) || (row === WORK && rows.some((other) => under(other) && !shows(other)));
+}
+
 const SECTION_LABELS: Record<string, string> = {
   research: 'Research',
   work: 'Work',

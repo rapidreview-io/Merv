@@ -600,7 +600,7 @@ export const useWide = () =>
     () => WIDE.matches,
   );
 
-function Split({ list, record, back }: { list: ReactNode; record: ReactNode; back: string }) {
+function Split({ list, record, back }: { list?: ReactNode; record: ReactNode; back: string }) {
   const wide = useWide();
   const navigate = useNavigate();
   const held = useRef<HTMLDivElement>(null);
@@ -622,9 +622,9 @@ function Split({ list, record, back }: { list: ReactNode; record: ReactNode; bac
   // beside it and never remounts it: a delivery or a verdict half written is only
   // held in the record's own state.
   return (
-    <div className={wide ? 'split' : undefined}>
-      {wide && <div className="split-list">{list}</div>}
-      <div className={wide ? 'split-record' : undefined} ref={held}>
+    <div className={wide && list ? 'split' : undefined}>
+      {wide && list && <div className="split-list">{list}</div>}
+      <div className={wide && list ? 'split-record' : undefined} ref={held}>
         {record}
       </div>
     </div>
@@ -634,32 +634,45 @@ function Split({ list, record, back }: { list: ReactNode; record: ReactNode; bac
 /**
  * A record's two routes. On a wide screen the list stays mounted beside the record
  * it sent you to, under that record's own URL and divided by one hairline; narrower
- * than that the record replaces the list. A kind that shares one page with others
- * names that page as `elsewhere`: its record route stays exactly where it was, so
- * every link and pasted URL still lands, and its index and its Escape go there.
+ * than that the record replaces the list.
  */
 export function splitRoutes<P extends { row: Row; shell: ShellData }>(
   Index: ComponentType<P>,
   Detail: ComponentType<P>,
-  elsewhere?: string,
 ) {
   return function Routed(props: P) {
     return (
       <Routes>
-        <Route
-          index
-          element={elsewhere ? <Navigate to={elsewhere} replace /> : <Index {...props} />}
-        />
+        <Route index element={<Index {...props} />} />
         <Route
           path=":id"
           element={
             <Split
               list={<Index {...props} />}
               record={<Detail {...props} />}
-              back={elsewhere ?? props.row.path}
+              back={props.row.path}
             />
           }
         />
+      </Routes>
+    );
+  };
+}
+
+/**
+ * A kind that has no list of its own, because its records are drawn on another page: its
+ * record route stays exactly where it was, so every link and pasted URL still lands, the
+ * record is the whole page, and its index and its Escape go to the page that draws it.
+ */
+export function recordRoutes<P extends { row: Row; shell: ShellData }>(
+  Detail: ComponentType<P>,
+  home: string,
+) {
+  return function Routed(props: P) {
+    return (
+      <Routes>
+        <Route index element={<Navigate to={home} replace />} />
+        <Route path=":id" element={<Split record={<Detail {...props} />} back={home} />} />
       </Routes>
     );
   };
