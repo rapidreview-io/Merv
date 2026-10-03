@@ -265,11 +265,13 @@ export class CodeService extends CodeCommandService implements Code {
     caller = structuredClone(caller);
     const input = parseCodeInput(codeCommandCompletionSchema, value);
     const complete = async (tx: Transaction) => {
-      const command = await tx.get<{ command_json: string }>(
-        'SELECT command_json FROM code_commands WHERE id=? AND project_id=?',
+      const command = await tx.get<{ command_json: string; status: string }>(
+        'SELECT command_json,status FROM code_commands WHERE id=? AND project_id=?',
         input.commandId,
         caller.projectId,
       );
+      // Replay still checks controller ownership and the exact retained receipt.
+      if (command?.status === 'succeeded') return super.completeCommand(caller, input);
       const binding = command
         ? (JSON.parse(command.command_json) as { projectId: string; instanceId: string })
         : null;
