@@ -1,5 +1,5 @@
 {
-  "snapshot": "2026-10-01",
+  "snapshot": "2026-10-03",
   "groups": [
     {
       "id": "front",
@@ -1018,6 +1018,7 @@
       "provides": [],
       "requires": [
         "fleet",
+        "scope",
         "ui"
       ],
       "optional": [],
@@ -3234,6 +3235,11 @@
     },
     {
       "from": "merv-fleet-ui",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-fleet-ui",
       "to": "ui",
       "optional": false
     },
@@ -3917,7 +3923,7 @@
     "plugins": 70,
     "providers": 31,
     "adapters": 39,
-    "dependencies": 194
+    "dependencies": 195
   },
   "network": [
     {
