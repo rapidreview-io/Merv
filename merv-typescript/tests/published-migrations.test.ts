@@ -11,7 +11,7 @@ import { initializeLegacyHistory } from '../src/legacy-history.js';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/codex-relay.js';
 import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';
-import { initializeLegacyCodeRecords } from '../packages/code-work/src/research-schema.js';
+import { initializeLegacyCodeRecords } from '../packages/code-work/src/work-schema.js';
 import { PiService } from '../packages/pi/src/index.js';
 
 interface Row {

@@ -25,24 +25,20 @@ export interface CodePublication {
   pull: GitHubPullRequest | null;
   lastError: string | null;
   /**
-   * The sealed publication envelope. A reviewed consolidation and a unit accepted to publish
-   * fill the same fields, so the pull request, the approval status and the human-only merge
-   * have one thing to check whichever opened the publication. The reviewed head and tree are
+   * The sealed publication envelope of an accepted unit, so the pull request, the approval
+   * status and the human-only merge have one thing to check. The reviewed head and tree are
    * not repeated here: this row already carries them, and it is immutable.
    */
   approval?: {
     /**
-     * Absent on every envelope sealed before units could publish, which record_json makes
-     * immutable: no source means a consolidation, and that is how a reader must take it.
+     * Who opened the publication. Only `unit` publications are live; any other value, or none,
+     * is a retained envelope from a retired opener that is read but never synced or merged.
      */
-    source?: 'consolidation' | 'unit';
+    source?: string;
     integrationBase: string;
     /** The review's pinned provenance; null where the passing review carried none. */
     certificateHash: string | null;
     acceptanceHash: string;
-    /** A consolidation's own frozen inputs. */
-    candidateSetHash?: string;
-    decisionManifestHash?: string;
   };
   stale?: boolean;
   successor?: string | null;

@@ -7,7 +7,7 @@ import { createService, type Caller, type Transaction } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
 import {
-  ResearchUnitRecords,
+  WorkUnitRecords,
   type AcceptanceBody,
   type BaseBody,
 } from '@merv/code-work/unit-store';
@@ -17,7 +17,7 @@ import { gitSource } from './fixtures/code-store.js';
 import { openState } from './fixtures/state.js';
 
 /** Research records retain validated owner facts over the technical Code store. */
-class OwnerStore extends ResearchUnitRecords {
+class OwnerStore extends WorkUnitRecords {
   declare(caller: Caller, unitId: string, tx: Transaction) {
     return this.retainDeclaration(caller, { unitId, workflow: 'external-owner', version: 9 }, tx);
   }

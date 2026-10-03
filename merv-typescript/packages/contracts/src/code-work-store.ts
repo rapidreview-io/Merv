@@ -71,7 +71,7 @@ export const codeRepositoryConfigureInputSchema = z
   .strict();
 export type CodeRepositoryConfigureInput = z.infer<typeof codeRepositoryConfigureInputSchema>;
 
-/** Research exposes its check configuration alongside technical repository status. */
+/** Code Work exposes its check configuration alongside technical repository status. */
 export interface CodeWorkStoreStatus extends Omit<CodeStoreStatus, 'limits'> {
   limits: CodeStoreLimits;
 }

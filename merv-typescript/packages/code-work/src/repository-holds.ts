@@ -1,7 +1,7 @@
 import type { State, Transaction } from '@merv/contracts';
 
-/** Research policy projects durable technical holds through Code's transactional API. */
-export async function initializeResearchHolds(state: State): Promise<void> {
+/** Work-unit policy projects durable technical holds through Code's transactional API. */
+export async function initializeWorkHolds(state: State): Promise<void> {
   await state.migrate('code_research_repository_holds', [
     {
       version: 1,
@@ -31,7 +31,7 @@ CREATE TRIGGER research_publication_repository_hold AFTER INSERT OR UPDATE ON co
   ]);
 }
 
-export async function backfillResearchHolds(tx: Transaction): Promise<void> {
+export async function backfillWorkHolds(tx: Transaction): Promise<void> {
   for (const row of await tx.all<{
     project_id: string;
     base_key: string;

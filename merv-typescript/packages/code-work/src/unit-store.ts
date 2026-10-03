@@ -1,7 +1,7 @@
-import { initializeResearchCheckConfiguration } from './check-configuration.js';
-import { initializeResearchRecords } from './research-schema.js';
-import { initializeResearchHolds } from './repository-holds.js';
-import { restoreResearchCompatibility } from './compatibility.js';
+import { initializeCheckConfiguration } from './check-configuration.js';
+import { initializeWorkRecords } from './work-schema.js';
+import { initializeWorkHolds } from './repository-holds.js';
+import { restoreLegacyCompatibility } from './compatibility.js';
 import { CodeUnitStore } from '@merv/code/units';
 import {
   canonical,
@@ -115,8 +115,8 @@ export const unitColumns =
 export const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const CODE_DRIVER = 'code.v2';
 
-/** Durable Code records. Research owners supply already validated facts in their transaction. */
-export class ResearchUnitRecords {
+/** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
+export class WorkUnitRecords {
   protected readonly code: CodeUnitStore;
   protected closed = false;
   constructor(
@@ -130,10 +130,10 @@ export class ResearchUnitRecords {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.code.initialize();
-    await initializeResearchRecords(this.state);
-    await initializeResearchHolds(this.state);
-    await initializeResearchCheckConfiguration(this.state);
-    await restoreResearchCompatibility(this.state, this.code);
+    await initializeWorkRecords(this.state);
+    await initializeWorkHolds(this.state);
+    await initializeCheckConfiguration(this.state);
+    await restoreLegacyCompatibility(this.state, this.code);
   }
 
   async moveMain(

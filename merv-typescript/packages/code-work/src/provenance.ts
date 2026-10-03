@@ -93,7 +93,7 @@ export async function resolutionProvenance(
 }
 
 /**
- * A service task that stands on a base rather than resolving one, as a research consolidation
+ * A service task that stands on a base rather than resolving one, as an integration task
  * does: the accepted work its pin holds, every resolution its merged base needed, and each of
  * its own writers, with the authorities who directed them.
  */

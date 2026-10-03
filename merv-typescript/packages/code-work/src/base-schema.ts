@@ -102,7 +102,7 @@ SELECT project_id,base_key,'legacy',
 FROM code_bases WHERE blocker LIKE 'code_check_unreclaimed:%';
 UPDATE code_bases SET blocker=NULL WHERE blocker LIKE 'code_check_unreclaimed:%';`;
 
-/** Keep deployed migration text unchanged; the research adapter supplies execution policy. */
+/** Keep deployed migration text unchanged; Code Work supplies execution policy. */
 export async function migrateBases(state: State): Promise<void> {
   await state.migrate('code_bases', [
     { version: 1, sql: postgres },

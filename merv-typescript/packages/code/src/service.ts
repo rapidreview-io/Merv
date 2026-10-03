@@ -12,7 +12,7 @@ export interface CodeConfiguration {
   repositories?: CodeRepositoryConfig;
 }
 
-/** Durable Git facts and operations. Research policy is supplied by its callers. */
+/** Durable Git facts and operations. Work-unit policy is supplied by its callers. */
 export class CodeService {
   readonly changes: CodeChanges;
   readonly units: CodeUnitStore;

@@ -39,7 +39,7 @@ import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './typ
 
 import {
   bindsRepository,
-  ResearchUnitRecords,
+  WorkUnitRecords,
   oid,
   unitColumns,
   type AcceptanceBody,
@@ -123,8 +123,8 @@ const EXPLICIT_BASE =
   'Import the project repository into managed Code, then create new work with accepted code prerequisites in dependsOn';
 const IMPORT = 'An administrator imports it with `merv code-import`';
 
-/** Research policy for durable Code records; absent deployments do not install this integration. */
-export class CodeUnitService extends ResearchUnitRecords implements CodeUnits {
+/** Work-unit policy for durable Code records; absent deployments do not install this integration. */
+export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   /** Set once the project repositories exist; without it several commits are never merged. */
   bases?: CodeBaseService;
   /** The journal that carries an accepted unit to main; without it nothing publishes. */
@@ -1250,7 +1250,7 @@ export class CodeUnitService extends ResearchUnitRecords implements CodeUnits {
   private async propagateQuarantine(tx: Transaction, projectId: string): Promise<void> {
     if (!this.bases) return;
     const records = await this.bases.records(tx, projectId);
-    // Generic Code consumers share storage but do not opt into research quarantine policy.
+    // Generic Code consumers share storage but do not opt into work-unit quarantine policy.
     const units: UnitRow[] = [];
     for (const row of await tx.all<UnitRow>(
       `SELECT ${unitColumns} FROM code_units WHERE project_id=?`,
@@ -1422,7 +1422,7 @@ export class CodeUnitService extends ResearchUnitRecords implements CodeUnits {
     await this.retainPublishedAcceptance(caller, unitId, reviewId, revision, tx);
   }
 
-  /** Publication enforcement is research policy; the durable store reports retained facts. */
+  /** Publication enforcement is work-unit policy; the durable store reports retained facts. */
   protected override async publicationOf(
     sql: Sql,
     projectId: string,

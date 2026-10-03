@@ -64,7 +64,7 @@ const retireProposals = {
   ].join('\n'),
 };
 
-/** Preserve deployed migration identities while storage remains available without research. */
+/** Preserve deployed migration identities while storage remains available without Code Work. */
 export async function migratePublications(state: State): Promise<void> {
   await state.migrate('code_publications', [
     { version: 1, sql: schema },

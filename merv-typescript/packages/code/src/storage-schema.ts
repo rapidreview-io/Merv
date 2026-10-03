@@ -1,7 +1,7 @@
 import type { State } from '@merv/contracts';
 import { migratePendingMerges } from './pending-merge.js';
 
-/** Generic Git storage; no research records are created by standalone Code. */
+/** Generic Git storage; no work-unit records are created by standalone Code. */
 const schema = `DO $code_storage$
 BEGIN
 IF to_regclass('code_projects') IS NULL THEN

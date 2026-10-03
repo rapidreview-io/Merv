@@ -7,9 +7,9 @@ import { createService } from '@merv/contracts';
 import { CodeService } from '@merv/code/service';
 import { CodeStore } from '@merv/code/store/operations';
 import {
-  configureResearchRepository,
-  initializeResearchCheckConfiguration,
-  researchCheck,
+  configureWorkRepository,
+  initializeCheckConfiguration,
+  projectCheck,
 } from '@merv/code-work/check-configuration';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
@@ -23,7 +23,7 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
   const core = await createService(new CodeService(state, scope, {}));
   await boundProject(state, caller.projectId, 'a'.repeat(40));
-  await initializeResearchCheckConfiguration(state);
+  await initializeCheckConfiguration(state);
   const store = await createService(
     new CodeStore(
       state,
@@ -51,7 +51,7 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
     image: { provider: 'test', offerId: 'offer', snapshotId: null },
   };
   const configure = (requestId: string, denyGlobs: string[] = []) =>
-    configureResearchRepository(state, scope, store, caller, {
+    configureWorkRepository(state, scope, store, caller, {
       requestId,
       denyGlobs,
       secretExemptGlobs: [],
@@ -72,7 +72,7 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
     journals.map((row) => row.request_id),
     ['a'.repeat(200), 'admission:x', 'x'],
   );
-  assert.deepEqual(await state.read((sql) => researchCheck(sql, caller.projectId)), check);
+  assert.deepEqual(await state.read((sql) => projectCheck(sql, caller.projectId)), check);
   await state.transaction((tx) =>
     tx.run(
       `CREATE FUNCTION reject_research_check() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected check write failure'; END $$; CREATE TRIGGER reject_research_check BEFORE UPDATE ON code_research_check_configuration FOR EACH ROW EXECUTE FUNCTION reject_research_check();`,

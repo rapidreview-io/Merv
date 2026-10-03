@@ -3,7 +3,7 @@ import { postgresMigrations } from './legacy-units.postgres.js';
 import { migrateBases } from './base-schema.js';
 import { migratePublications } from './publications-schema.js';
 
-/** Fresh research storage. Published legacy SQL is kept byte-identical for existing databases. */
+/** Fresh work-unit storage. Published legacy SQL is kept byte-identical for existing databases. */
 const schema = `DO $research_records$
 BEGIN
 IF to_regclass('code_units') IS NULL THEN
@@ -114,7 +114,7 @@ CREATE TRIGGER code_units_publish BEFORE UPDATE ON code_units FOR EACH ROW EXECU
 END IF;
 END $research_records$;`;
 
-export async function initializeResearchRecords(state: State): Promise<void> {
+export async function initializeWorkRecords(state: State): Promise<void> {
   const legacy = await state.read((sql) =>
     sql.get("SELECT 1 FROM component_migrations WHERE component='code_units' LIMIT 1"),
   );

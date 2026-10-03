@@ -17,7 +17,7 @@ import { parseCodeInput } from '@merv/code/input';
 import { OperationJournal } from '@merv/code/operation-journal';
 import type { CodeStore } from '@merv/code/store/operations';
 
-export async function initializeResearchCheckConfiguration(state: State): Promise<void> {
+export async function initializeCheckConfiguration(state: State): Promise<void> {
   await state.migrate('code_research_check_configuration', [
     {
       version: 1,
@@ -29,14 +29,14 @@ SELECT project_id,COALESCE(limits_json::jsonb->'check','null'::jsonb)::text FROM
     },
   ]);
 }
-export async function researchCheck(sql: Sql, projectId: string): Promise<CodeCheckSpec | null> {
+export async function projectCheck(sql: Sql, projectId: string): Promise<CodeCheckSpec | null> {
   const row = await sql.get<{ check_json: string }>(
     'SELECT check_json FROM code_research_check_configuration WHERE project_id=?',
     projectId,
   );
   return row ? JSON.parse(row.check_json) : null;
 }
-export async function configureResearchRepository(
+export async function configureWorkRepository(
   state: State,
   scope: Scope,
   store: CodeStore,

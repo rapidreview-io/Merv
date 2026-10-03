@@ -2,7 +2,7 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { digest, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
-import { restoreResearchCompatibility } from '@merv/code-work/compatibility';
+import { restoreLegacyCompatibility } from '@merv/code-work/compatibility';
 import type { FaultPoint } from '@merv/code/store/operations';
 import { codeStoreFixture, faultAt, git, gitSource } from './fixtures/code-store.js';
 
@@ -73,7 +73,7 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
   const write = async (sql: string, ...values: (string | null)[]) => {
     const result = await f.state.transaction((tx) => tx.run(sql, ...(values as string[])));
     if (/^(?:UPDATE code_units|INSERT INTO code_review_acceptances)/.test(sql))
-      await restoreResearchCompatibility(f.state, f.core.units);
+      await restoreLegacyCompatibility(f.state, f.core.units);
     return result;
   };
   return {

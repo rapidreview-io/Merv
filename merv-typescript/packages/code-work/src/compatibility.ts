@@ -1,10 +1,10 @@
 import type { State } from '@merv/contracts';
 import type { CodeUnitStore } from '@merv/code/units';
 import type { AcceptanceBody, BaseBody, UnitRow } from './unit-store.js';
-import { backfillResearchHolds } from './repository-holds.js';
+import { backfillWorkHolds } from './repository-holds.js';
 
-/** Project historical research facts once through the generic Code persistence API. */
-export async function restoreResearchCompatibility(
+/** Project historical work-unit facts once through the generic Code persistence API. */
+export async function restoreLegacyCompatibility(
   state: State,
   code: CodeUnitStore,
 ): Promise<void> {
@@ -121,7 +121,7 @@ export async function restoreResearchCompatibility(
           row.updated_at,
         );
     }
-    await backfillResearchHolds(tx);
+    await backfillWorkHolds(tx);
     for (const row of await tx.all<{ project_id: string }>('SELECT project_id FROM code_projects'))
       await code.releaseRepository(tx, row.project_id, 'code-storage-upgrade');
   });

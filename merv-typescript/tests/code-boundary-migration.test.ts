@@ -6,9 +6,9 @@ import { CodeService } from '@merv/code/service';
 import { postgresMigrations } from '@merv/code-work/legacy-units.postgres';
 import { migrateBases } from '@merv/code-work/base-schema';
 import { migratePublications } from '@merv/code-work/publications-schema';
-import { initializeResearchRecords } from '@merv/code-work/research-schema';
-import { initializeResearchHolds } from '@merv/code-work/repository-holds';
-import { restoreResearchCompatibility } from '@merv/code-work/compatibility';
+import { initializeWorkRecords } from '@merv/code-work/work-schema';
+import { initializeWorkHolds } from '@merv/code-work/repository-holds';
+import { restoreLegacyCompatibility } from '@merv/code-work/compatibility';
 import { openState } from './fixtures/state.js';
 
 test('legacy upgrade retains writer ownership and research history, rolls back on failure, and survives restart', async (t) => {
@@ -126,8 +126,8 @@ test('legacy upgrade retains writer ownership and research history, rolls back o
     ),
     { code: 'code_storage_upgrade_required' },
   );
-  await initializeResearchRecords(state);
-  await initializeResearchHolds(state);
+  await initializeWorkRecords(state);
+  await initializeWorkHolds(state);
   const retain = code.units.retainHistoricalCommit.bind(code.units);
   let count = 0;
   const failure = t.mock.method(
@@ -138,12 +138,12 @@ test('legacy upgrade retains writer ownership and research history, rolls back o
       return retain(...args);
     },
   );
-  await assert.rejects(restoreResearchCompatibility(state, code.units), /interrupted migration/);
+  await assert.rejects(restoreLegacyCompatibility(state, code.units), /interrupted migration/);
   failure.mock.restore();
   assert.deepEqual(await holds(), [{ hold_key: 'code-storage-upgrade' }]);
   assert.deepEqual(await state.read((sql) => sql.all('SELECT * FROM code_workspaces')), []);
   assert.deepEqual(await state.read((sql) => sql.all('SELECT * FROM code_retained_commits')), []);
-  await restoreResearchCompatibility(state, code.units);
+  await restoreLegacyCompatibility(state, code.units);
   assert.deepEqual(await legacy(), before);
   assert.deepEqual(
     (await holds()).map((row) => row.hold_key),
@@ -166,7 +166,7 @@ test('legacy upgrade retains writer ownership and research history, rolls back o
   );
   await code.close();
   code = await createService(new CodeService(state, scope, {}));
-  await restoreResearchCompatibility(state, code.units);
+  await restoreLegacyCompatibility(state, code.units);
   assert.deepEqual(await legacy(), before);
   assert.deepEqual(
     await state.read((sql) => code.writers.row(sql, caller.projectId, 'unit')),

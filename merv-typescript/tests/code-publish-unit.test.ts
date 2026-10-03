@@ -2,7 +2,7 @@ import { CodeService as CoreCodeService } from '@merv/code/service';
 import { CodeService } from '@merv/code-work/service';
 import type { CodeCapture } from '@merv/code-work/types';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { ResearchUnitRecords } from '@merv/code-work/unit-store';
+import { WorkUnitRecords } from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { createService, type WorkflowSnapshot } from '@merv/contracts';
 import assert from 'node:assert/strict';
@@ -722,7 +722,7 @@ test('a disabled project and a published tree mismatch both show on the unit', a
     reason: 'The disposable stale pull request merged under a bypass.',
     requestId: 'failed-canary',
   });
-  const core = new ResearchUnitRecords(
+  const core = new WorkUnitRecords(
     f.state,
     f.scope,
     new CodeWriterService(f.state, f.scope, 900),

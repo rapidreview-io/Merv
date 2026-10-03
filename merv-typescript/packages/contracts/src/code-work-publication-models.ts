@@ -1,4 +1,4 @@
-/** Portable research publication status without runtime schema dependencies. */
+/** Portable work-unit publication status without runtime schema dependencies. */
 /**
  * Where a unit that publishes its accepted code to main stands. Null for every unit that
  * does not publish, and for one that is marked but not accepted yet: publication begins at

@@ -1,4 +1,4 @@
-import { configureResearchRepository, researchCheck } from './check-configuration.js';
+import { configureWorkRepository, projectCheck } from './check-configuration.js';
 import type { CodeGitHubService, GitHubBinding } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
 import { rejectRetiredBackup } from '@merv/code/configuration';
@@ -48,7 +48,7 @@ import { CODE_DRIVER, CodeUnitService } from './units.js';
 import { archiveCommit } from './base-check.js';
 import type { CodeWriterService } from '@merv/code/writers';
 
-/** Research operations over the repositories owned by the core Code service. */
+/** Work-unit operations over the repositories owned by the core Code service. */
 export interface CodeStoreOptions {
   config?: Partial<Omit<CodeStoreConfig, 'root'>>;
   /** Replaces the linked GitHub repository as the place an import reads from. */
@@ -523,7 +523,7 @@ export class CodeService extends CodeCommandService implements Code {
         : {};
     if (!this.store) return { ...status, ...publication };
     const technical = await this.store.describe(caller.projectId);
-    const configuredCheck = await this.storage.read((sql) => researchCheck(sql, caller.projectId));
+    const configuredCheck = await this.storage.read((sql) => projectCheck(sql, caller.projectId));
     return {
       ...status,
       ...publication,
@@ -567,7 +567,7 @@ export class CodeService extends CodeCommandService implements Code {
     return await this.requireStore().rebindRepository(caller, input);
   }
   async configureRepository(caller: Caller, input: unknown) {
-    return await configureResearchRepository(
+    return await configureWorkRepository(
       this.storage,
       this.baseScope,
       this.requireStore(),
