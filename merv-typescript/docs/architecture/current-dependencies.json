@@ -10,11 +10,11 @@
   "apiEntries": 39,
   "serverPlugins": 68,
   "machinePlugins": 1,
-  "directDependencyCount": 193,
+  "directDependencyCount": 192,
   "optionalDependencyCount": 23,
   "directConsumers": {
     "api": 8,
-    "artifacts": 13,
+    "artifacts": 12,
     "blobs": 3,
     "code": 1,
     "codeResearch": 7,
@@ -142,7 +142,6 @@
         "state",
         "scope",
         "sessions",
-        "artifacts",
         "workflows",
         "domainEvents"
       ],

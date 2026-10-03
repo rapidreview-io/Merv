@@ -515,7 +515,6 @@
         "state",
         "scope",
         "sessions",
-        "artifacts",
         "workflows",
         "domainEvents"
       ],
@@ -1296,7 +1295,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -1326,7 +1325,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-proposal:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -3192,11 +3191,6 @@
     },
     {
       "from": "codeResearch",
-      "to": "artifacts",
-      "optional": false
-    },
-    {
-      "from": "codeResearch",
       "to": "workflows",
       "optional": false
     },
@@ -4080,7 +4074,7 @@
     "plugins": 69,
     "providers": 31,
     "adapters": 38,
-    "dependencies": 193
+    "dependencies": 192
   },
   "network": [
     {
