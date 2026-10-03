@@ -4,15 +4,12 @@ import { check, idSchema, MervError, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import {
   initializeLegacyHistory,
-  legacyHistoryTables,
+  legacyHistoryTypes,
   LegacyHistoryReader,
-  type LegacyHistoryType,
 } from './legacy-history.js';
 import { historyMediaLinks } from './legacy-media-links.js';
 
-const recordType = z.enum(
-  Object.keys(legacyHistoryTables) as [LegacyHistoryType, ...LegacyHistoryType[]],
-);
+const recordType = z.enum(legacyHistoryTypes);
 const request = z.discriminatedUnion('action', [
   z.object({ action: z.literal('summary') }).strict(),
   z

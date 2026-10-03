@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { researchUiPlugin } from '@merv/research/ui';
+import { codeUiPlugin } from '@merv/code-research/ui';
 import { buildNavigation } from '../packages/ui/web/navigation.js';
 import type { Row } from '../packages/ui/web/shell-types.js';
 import { createApp } from './fixtures/app.js';
@@ -431,6 +432,24 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual((await tool('ui.read', reader, { rowId: 'code' })).body.result, managedCode);
   assert.equal(shell.plugins.length, plugins(assets).length);
   assert.ok(shell.plugins.every((entry) => entry.state === 'active'));
+  // Code's read belongs to its UI adapter, so optional tool and REST adapters do not
+  // decide whether its graph and integrations can be read. Both retain the same ACL.
+  assert.deepEqual(managedCode.status.publication.records, []);
+  assert.equal('publications' in managedCode, false, 'hosted records appear only once');
+  for (const id of ['code-tools', 'code-research-api']) await app.setEnabled(id, false);
+  assert.equal((await tool('code.status', reader)).status, 404);
+  assert.equal(
+    (await fetch(`${url}/code/publications`, { headers: { authorization: `Bearer ${reader}` } }))
+      .status,
+    503,
+  );
+  for (const token of [reader, operator]) {
+    const read = await tool('ui.read', token, { rowId: 'code' });
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.body.result, managedCode);
+  }
+  assert.equal((await tool('ui.read', 'invalid', { rowId: 'code' })).status, 401);
+  for (const id of ['code-tools', 'code-research-api']) await app.setEnabled(id, true);
   // A reader sees the rows, and no row asks for a number it cannot answer for
   // this caller. A failing status reports itself instead of failing the shell;
   // the registry test above covers that path.
@@ -702,4 +721,37 @@ test('The Cycles badge counts only cycles that have not completed, been abandone
   researchUiPlugin.apply({ research, ui, effect: (fn: () => unknown) => fn() } as never);
   const [cycles] = await ui.describe(caller);
   assert.deepEqual(cycles.status, { count: 2 });
+});
+
+test('Code UI reuses hosted publications and reads the same ordered records for legacy projects', async () => {
+  const ui = new UiRegistry();
+  const records = [{ proposalId: 'new' }, { proposalId: 'old' }];
+  const hosted = { publication: { records, controls: { blockers: [] } } };
+  let status: object = hosted;
+  let publicationReads = 0;
+  let failed = false;
+  const codeResearch = {
+    list: async (input: unknown) => {
+      assert.deepEqual(input, caller);
+      return [];
+    },
+    status: async (input: unknown) => {
+      assert.deepEqual(input, caller);
+      return status;
+    },
+    publications: async (input: unknown) => {
+      assert.deepEqual(input, caller);
+      publicationReads++;
+      if (failed) throw new MervError('unavailable', 'Publications are reconnecting', 503);
+      return records;
+    },
+  };
+  codeUiPlugin.apply({ codeResearch, ui, effect: (fn: () => unknown) => fn() } as never);
+  assert.deepEqual(await ui.read(caller, 'code'), { commands: [], status: hosted });
+  assert.equal(publicationReads, 0, 'hosted status already queried the records');
+  status = { project: { durability: 'legacy-local' } };
+  assert.deepEqual(await ui.read(caller, 'code'), { commands: [], status, publications: records });
+  assert.equal(publicationReads, 1);
+  failed = true;
+  await assert.rejects(ui.read(caller, 'code'), { code: 'unavailable' });
 });

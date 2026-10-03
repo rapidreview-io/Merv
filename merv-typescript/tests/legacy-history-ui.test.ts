@@ -6,8 +6,7 @@ import { join } from 'node:path';
 import { SignJWT } from 'jose';
 import { createApp } from './fixtures/app.js';
 import { legacyHistoryUiPlugin } from '../src/legacy-history-ui.js';
-import { importLegacyHistory } from '../src/legacy-history.js';
-import { emptyLegacyHistorySnapshot, legacyHistoryRow } from './fixtures/legacy-history.js';
+import { seedLegacyHistory } from './fixtures/legacy-history.js';
 import { stateConfig } from './fixtures/state.js';
 
 test('history UI paginates through authenticated ui.read and withdraws cleanly', async (t) => {
@@ -57,33 +56,26 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
     name: 'Other research',
     requestId: 'other-ui-project',
   });
-  const snapshot = emptyLegacyHistorySnapshot([project.id], 'history-ui-test');
-  snapshot.tables.projects = [
-    legacyHistoryRow('projects', {
-      id: project.id,
-      name: project.name,
-      summary: '',
-      status: 'active',
-      created_at: snapshot.capturedAt,
-    }),
-  ];
-  snapshot.tables.experiments = ['exp-a', 'exp-b'].map((id) =>
-    legacyHistoryRow('experiments', {
+  const sourceId = 'history-ui-test';
+  await seedLegacyHistory(
+    app.ctx.state,
+    ['exp-a', 'exp-b'].map((id) => ({
+      projectId: project.id,
+      type: 'experiments' as const,
       id,
-      project_id: project.id,
-      name: id,
-      details: 'Preserved experiment',
-      status: 'complete',
-      intent: 'exploratory',
-      conclusion: 'Completed in the previous backend',
-      revision_context: null,
-      attempt_index: 1,
-      created_at: snapshot.capturedAt,
-      updated_at: snapshot.capturedAt,
-    }),
+      data: {
+        id,
+        project_id: project.id,
+        name: id,
+        details: 'Preserved experiment',
+        status: 'complete',
+        intent: 'exploratory',
+        conclusion: 'Completed in the previous backend',
+      },
+    })),
+    { sourceId },
   );
-  await importLegacyHistory(app.ctx.state, snapshot);
-  const fiber = app.ctx.plugin(legacyHistoryUiPlugin, { sourceId: snapshot.sourceId });
+  const fiber = app.ctx.plugin(legacyHistoryUiPlugin, { sourceId });
   await fiber;
   const request = async (
     params: Record<string, unknown>,

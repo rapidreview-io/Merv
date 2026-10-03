@@ -52,6 +52,8 @@ Domain plugins never import the UI. Adapters import only the public `@merv/ui/ty
 
 Both are ordinary catalog tools, visible to agents as well as the browser.
 
+Code's `ui.read` supplies commit receipts, status and publication records together. Hosted Code already includes records in `status.publication.records`; legacy local repositories return them in `publications`. The graph and integration list use the same browser read and refresh after publication mutations. Reads require neither `code-tools` nor `code-research-api`; GitHub account status and publication detail/sync/merge retain their authenticated HTTP routes.
+
 - `ui.running` (read-only): the Running board, composed from every registered Running contribution (below): three lanes of nodes, each lane's summaries, and the edges between nodes.
 - `ui.running_panel` (read-only): `{ key }` returns one node's sidebar; `running_not_found` when no owner answers for the key.
 

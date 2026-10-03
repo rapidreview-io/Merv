@@ -255,20 +255,19 @@ export async function detachDependencies(
   source: WorkflowSnapshot,
   ids: string[],
 ): Promise<string[]> {
-  const removed: string[] = [];
-  for (const targetId of ids)
-    if (
-      (
-        await tx.run(
-          "DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND target_id=? AND kind='declared'",
-          source.projectId,
-          source.id,
-          targetId,
-        )
-      ).changes
-    )
-      removed.push(targetId);
-  return removed;
+  if (!ids.length) return [];
+  const removed = new Set(
+    (
+      await tx.all<{ target_id: string }>(
+        `DELETE FROM wf_dependencies WHERE project_id=? AND source_id=? AND kind='declared' AND target_id IN (${marks(ids)}) RETURNING target_id`,
+        source.projectId,
+        source.id,
+        ...ids,
+      )
+    ).map((row) => row.target_id),
+  );
+  // RETURNING has no row order; history keeps the order the caller asked for.
+  return ids.filter((id) => removed.has(id));
 }
 
 /**

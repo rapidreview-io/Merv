@@ -8,8 +8,7 @@ import type { ApplicationConfig } from '../src/config.js';
 import { SignJWT } from 'jose';
 import type { Project } from '@merv/contracts';
 import { legacyHistoryUiPlugin } from '../src/legacy-history-ui.js';
-import { importLegacyHistory } from '../src/legacy-history.js';
-import { emptyLegacyHistorySnapshot, legacyHistoryRow } from '../tests/fixtures/legacy-history.js';
+import { seedLegacyHistory } from '../tests/fixtures/legacy-history.js';
 
 /**
  * Disposable synthetic UI acceptance fixture, expanded from ui-demo.ts.
@@ -370,33 +369,49 @@ async function main() {
   }
 
   // A bounded archive fixture provides enough records to exercise cursor pagination.
-  const snapshot = emptyLegacyHistorySnapshot([projects[0]!.id], 'ui-overhaul-synthetic-history');
-  snapshot.tables.projects = [
-    legacyHistoryRow('projects', {
-      id: projects[0]!.id,
-      name: projects[0]!.name,
-      summary: 'Synthetic historical records',
-      status: 'active',
-      created_at: snapshot.capturedAt,
-    }),
-  ];
-  snapshot.tables.experiments = Array.from({ length: 65 }, (_, index) =>
-    legacyHistoryRow('experiments', {
-      id: `synthetic-archive-exp-${String(index + 1).padStart(3, '0')}`,
-      project_id: projects[0]!.id,
-      name: `Archived comparison ${index + 1}`,
-      details: 'Synthetic previous-backend record for navigation checks.',
-      status: index % 7 ? 'complete' : 'abandoned',
-      intent: 'exploratory',
-      conclusion: 'Illustrative result only. This fixture contains no real research conclusions.',
-      revision_context: null,
-      attempt_index: 1,
-      created_at: snapshot.capturedAt,
-      updated_at: snapshot.capturedAt,
-    }),
+  const sourceId = 'ui-overhaul-synthetic-history';
+  const capturedAt = '2026-09-16T12:00:00.000Z';
+  await seedLegacyHistory(
+    app.ctx.state,
+    [
+      {
+        projectId: projects[0]!.id,
+        type: 'projects',
+        id: projects[0]!.id,
+        data: {
+          id: projects[0]!.id,
+          name: projects[0]!.name,
+          summary: 'Synthetic historical records',
+          status: 'active',
+          created_at: capturedAt,
+        },
+      },
+      ...Array.from({ length: 65 }, (_, index) => {
+        const id = `synthetic-archive-exp-${String(index + 1).padStart(3, '0')}`;
+        return {
+          projectId: projects[0]!.id,
+          type: 'experiments' as const,
+          id,
+          data: {
+            id,
+            project_id: projects[0]!.id,
+            name: `Archived comparison ${index + 1}`,
+            details: 'Synthetic previous-backend record for navigation checks.',
+            status: index % 7 ? 'complete' : 'abandoned',
+            intent: 'exploratory',
+            conclusion:
+              'Illustrative result only. This fixture contains no real research conclusions.',
+            revision_context: null,
+            attempt_index: 1,
+            created_at: capturedAt,
+            updated_at: capturedAt,
+          },
+        };
+      }),
+    ],
+    { sourceId },
   );
-  await importLegacyHistory(app.ctx.state, snapshot);
-  const history = app.ctx.plugin(legacyHistoryUiPlugin, { sourceId: snapshot.sourceId });
+  const history = app.ctx.plugin(legacyHistoryUiPlugin, { sourceId });
   await history;
   const credentialsFile = join(directory, 'private-preview.json');
   writeFileSync(

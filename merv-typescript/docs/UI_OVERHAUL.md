@@ -60,7 +60,7 @@ Type `quit` on the fixture terminal, or send SIGINT, to close it. `disable <plug
 - Three continuing agents: one live assignment, one idle agent, one retired agent. Real registry calls recorded tool-call history and payload-token estimates; a local heartbeat keeps the active assignment alive.
 - Five claims across three projects; three experiments, including an abandoned experiment.
 - A research cycle in the researching stage and a populated problem document.
-- Sixty-five synthetic archived experiments, sufficient to test archive pagination and list/detail navigation. The optional history adapter uses the existing archive import and reader APIs.
+- Sixty-five synthetic archived experiments, sufficient to test archive pagination and list/detail navigation. The fixture seeds trusted synthetic archive rows directly, and the optional history adapter uses the production read-only archive reader.
 
 ## Verification and limits
 

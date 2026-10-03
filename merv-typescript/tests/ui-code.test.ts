@@ -21,6 +21,7 @@ sessionStorage.setItem('merv:token', 'fixture-token');
 
 const { createElement, useEffect, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
+const { refreshTools, setProject } = await import('../packages/ui/web/api.js');
 const { MemoryRouter, useLocation } = await import('react-router-dom');
 const { CodePage, managesCode, signedInAdmin } = await import('../packages/ui/web/views/code.js');
 const { GitHubPublications } = await import('../packages/ui/web/views/github-publications.js');
@@ -152,9 +153,8 @@ const connected = (over: Record<string, unknown> = {}) =>
     ...over,
   });
 const nothingMade = () => {
-  serve('/tools/ui.read', { body: { result: { commands: [] } } });
+  serve('/tools/ui.read', { body: { result: { commands: [], publications: [] } } });
   serve('/tools/ui.home', { body: { result: {} } });
-  serve('/code/publications', { body: { publications: [] } });
 };
 
 test('with GitHub not connected the page is one empty state and its one control', async (t) => {
@@ -379,11 +379,9 @@ const publicationWidget = (rows: CodePublication[]) =>
     null,
     createElement(GitHubPublications, {
       rows,
-      error: '',
-      reload: async () => {},
+      onDone() {},
       operator: true,
       named: () => undefined,
-      onControlled() {},
     }),
   );
 /** The whole project read, of which the drawing uses two parts. */
@@ -530,7 +528,13 @@ const project = () => gitModel(status(units(), bases()), commands(), [published(
 /** That same project as the page reads it, with the lists that name its lanes. */
 const servedProject = (over: Partial<CodeProjectStatus> = {}, records = bases()) => {
   serve('/tools/ui.read', {
-    body: { result: { commands: commands(), status: status(units(), records, over) } },
+    body: {
+      result: {
+        commands: commands(),
+        status: status(units(), records, over),
+        ...(!over.publication ? { publications: [published()] } : {}),
+      },
+    },
   });
   serve('/tools/ui.home', {
     body: {
@@ -550,9 +554,105 @@ const servedProject = (over: Partial<CodeProjectStatus> = {}, records = bases())
       },
     },
   });
-  serve('/code/publications', { body: { publications: [published()] } });
   serve('/code/github', connected());
 };
+
+test('one Code snapshot refreshes integrations and the selected graph, retaining both on failure', async (t) => {
+  t.after(unmount);
+  servedProject();
+  let publications = [published()];
+  let failed = false;
+  let reads = 0;
+  serve('/tools/ui.read', () => {
+    reads++;
+    return failed
+      ? { status: 503, body: { error: { code: 'unavailable', message: 'Code is reconnecting' } } }
+      : {
+          body: {
+            result: {
+              commands: commands(),
+              status: status(units(), bases(), {
+                publication: { records: publications, controls: { blockers: [] } },
+              }),
+            },
+          },
+        };
+  });
+  serve('/code/publications/sync', () => {
+    publications = [published({ proposalId: 'p2', title: 'Wave two', headOid: 'g2' }), published()];
+    return { body: { publications } };
+  });
+  await mount(page([row], { at: '/code/unit/p1' }));
+  const integrationNames = () =>
+    [...document.querySelectorAll('.pr-row .row-name strong')].map((node) => node.textContent);
+  const graphCount = () => document.querySelectorAll('svg .bg-ring').length;
+  assert.deepEqual(integrationNames(), ['Wave one']);
+  assert.equal(graphCount(), 1);
+  assert.match(document.querySelector('#code-props')?.textContent ?? '', /Wave one/);
+  assert.equal(reads, 1);
+
+  await click('Refresh integrations');
+  assert.equal(reads, 2, 'a successful sync immediately refreshes the shared Code read');
+  assert.deepEqual(integrationNames(), ['Wave two', 'Wave one'], 'server ordering is preserved');
+  assert.equal(graphCount(), 2);
+  assert.match(document.querySelector('#code-props')?.textContent ?? '', /Wave one/);
+  assert.equal(where, '/code/unit/p1', 'refresh preserves graph selection');
+
+  failed = true;
+  await act(async () => refreshTools('ui.read'));
+  await settle();
+  assert.match(text(), /Could not refresh. Showing the state that loaded/);
+  assert.deepEqual(integrationNames(), ['Wave two', 'Wave one']);
+  assert.equal(graphCount(), 2);
+  failed = false;
+  await act(async () => refreshTools('ui.read'));
+  await settle();
+  assert.doesNotMatch(text(), /Could not refresh/);
+  assert.ok(!requests.includes('GET /code/publications'), 'there is no parallel list read');
+});
+
+test('changing Code project clears publications and fences a late answer from the old project', async (t) => {
+  const fetch = globalThis.fetch;
+  let release: (() => void) | undefined;
+  let delay = false;
+  globalThis.fetch = async (...args) => {
+    const result = await fetch(...args);
+    if (delay && String(args[0]) === '/tools/ui.read') {
+      delay = false;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    return result;
+  };
+  t.after(async () => {
+    release?.();
+    globalThis.fetch = fetch;
+    await unmount();
+    setProject(null);
+  });
+  setProject('code-first');
+  servedProject();
+  await mount(page());
+  assert.ok(document.querySelector('.pr-row'), 'legacy publications are in the UI read too');
+  delay = true;
+  await act(async () => refreshTools('ui.read'));
+  await settle();
+  assert.ok(release, 'the old project refresh is in flight');
+  serve('/tools/ui.read', {
+    status: 503,
+    body: { error: { code: 'unavailable', message: 'New project is reconnecting' } },
+  });
+  await act(async () => setProject('code-second'));
+  await settle();
+  assert.equal(document.querySelector('.pr-row'), null);
+  assert.equal(document.querySelector('svg .bg-ring'), null);
+  await act(async () => release!());
+  await settle();
+  assert.equal(document.querySelector('.pr-row'), null, 'the old snapshot cannot return');
+  assert.equal(document.querySelector('svg .bg-ring'), null);
+  assert.match(text(), /New project is reconnecting/);
+});
 
 test('the model draws every kind of node and states every relation a record carries', () => {
   const model = project();
@@ -889,6 +989,7 @@ test('the page builds its model from what it reads, and titles nothing twice', a
           ],
           [base('b1', { members: ['c1', 'c2'], state: 'queued' })],
         ),
+        publications: [published()],
       },
     },
   });
@@ -902,7 +1003,6 @@ test('the page builds its model from what it reads, and titles nothing twice', a
       },
     },
   });
-  serve('/code/publications', { body: { publications: [published()] } });
   serve('/code/github', connected({ baseBranch: 'trunk' }));
   await mount(page([row]));
   // The shell titles the row and the page's own counts stand on that one line beside
@@ -1696,9 +1796,14 @@ test('a superseded publication names the wave that replaced it, and never its id
   t.after(unmount);
   const later = published({ proposalId: 'p2', instanceId: 'u7', title: 'Wave two' });
   const stale = published({ stale: true, successor: 'p2', merge: null });
-  serve('/code/publications', { body: { publications: [stale, later] } });
   serve('/tools/ui.read', {
-    body: { result: { commands: commands(), status: status(units(), bases()) } },
+    body: {
+      result: {
+        commands: commands(),
+        status: status(units(), bases()),
+        publications: [stale, later],
+      },
+    },
   });
   serve('/tools/ui.home', { body: { result: {} } });
   serve('/code/github', connected());

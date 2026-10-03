@@ -988,3 +988,85 @@ test('dependency reads and attaching cost the same however many edges there are'
   });
   assert.equal(linked.revision, 1);
 });
+
+test('replanning removes declared edges in one bounded write, preserving ownership, order and replay', async (t) => {
+  const { state, scope, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const handle = await workflows.register(graph(), policy());
+  const targets: string[] = [];
+  for (let i = 0; i < 20; i++)
+    targets.push((await start(handle, caller, 'preparation', `target-${i}`)).id);
+  const source = await start(handle, caller, 'preparation', 'source', targets);
+  const neighbor = await start(handle, caller, 'preparation', 'neighbor', targets);
+  await state.transaction((tx) =>
+    workflows
+      .systemPrerequisites('provider')
+      .replace(
+        { projectId: caller.projectId, instanceId: source.id, dependencies: targets.slice(0, 2) },
+        tx,
+      ),
+  );
+  const identity = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = { actorId: identity.actor.id, projectId: identity.project.id };
+  const foreignTarget = await start(handle, other, 'preparation', 'foreign-target');
+  const foreignSource = await start(handle, other, 'preparation', 'foreign-source', [
+    foreignTarget.id,
+  ]);
+  // The upper bound includes unknown and another project's IDs. They remove nothing here.
+  const drop = [
+    ...targets.toReversed(),
+    foreignTarget.id,
+    ...Array.from({ length: 979 }, (_, i) => `missing-${i}`),
+  ];
+  const input = {
+    instanceId: source.id,
+    expectedRevision: 0,
+    requestId: 'replan-many',
+    dependsOn: [],
+    drop,
+  };
+  await assert.rejects(
+    state.transaction(async (tx) => {
+      await handle.addDependencies(caller, input, tx);
+      throw new Error('rollback replan');
+    }),
+    /rollback replan/,
+  );
+  assert.equal((await workflows.get(caller, source.id)).revision, 0);
+  assert.equal((await workflows.dependencies(caller, source.id)).dependencies.length, 22);
+  const writes = await statements(state, (tx) => handle.addDependencies(caller, input, tx));
+  assert.equal(writes.filter((sql) => sql.startsWith('DELETE FROM wf_dependencies')).length, 1);
+  const history = await workflows.history(caller, source.id);
+  assert.equal(history.at(-1)?.action, 'replan_dependencies');
+  assert.deepEqual(history.at(-1)?.data, { dependsOn: [], dropped: targets.toReversed() });
+  const remaining = (await workflows.dependencies(caller, source.id)).dependencies;
+  assert.deepEqual(remaining.map(({ id }) => id).sort(), targets.slice(0, 2).sort());
+  assert.ok(remaining.every(({ kind, owner }) => kind === 'system' && owner === 'provider'));
+  assert.equal((await workflows.dependencies(caller, neighbor.id)).dependencies.length, 20);
+  assert.deepEqual(
+    (await workflows.dependencies(other, foreignSource.id)).dependencies.map(({ id }) => id),
+    [foreignTarget.id],
+  );
+  const after = await workflows.get(caller, source.id);
+  assert.equal(after.revision, 1);
+  assert.deepEqual(
+    await handle.addDependencies(caller, { ...input, drop: drop.toReversed() }),
+    after,
+    'replay keeps the original receipt even when requested in another order',
+  );
+  assert.deepEqual(
+    await handle.addDependencies(caller, { ...input, expectedRevision: 1, requestId: 'no-op' }),
+    after,
+    'already removed edges neither advance revision nor erase system ownership',
+  );
+  assert.deepEqual(await workflows.history(caller, source.id), history);
+  await assert.rejects(
+    handle.addDependencies(caller, {
+      ...input,
+      expectedRevision: 1,
+      requestId: 'too-many',
+      drop: [...drop, 'one-too-many'],
+    }),
+    { code: 'invalid_dependencies' },
+  );
+});

@@ -1,5 +1,5 @@
 import type { CodeCommandRecord, CodeProjectStatus } from '@merv/contracts/code';
-import type { GitHubStatus } from '@merv/contracts/types';
+import type { CodePublication, GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { accountRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
@@ -10,7 +10,7 @@ import { usePageFacts } from '../shell';
 import { BranchCanvas } from './code-canvas';
 import { CodeCard, CodeOperations, type Reader } from './code-card';
 import { MAIN, chipsOf, gitModel } from './code-model';
-import { GitHubPublications, usePublications } from './github-publications';
+import { GitHubPublications } from './github-publications';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 
@@ -67,15 +67,16 @@ const addressed = (pathname: string, root: string): string | null => {
 const EM = '—';
 
 export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & Reader) {
-  const read = useTool<{ commands: CodeCommandRecord[]; status?: CodeProjectStatus }>(
-    'ui.read',
-    { rowId: row.id },
-    { every: 10_000 },
-  );
+  const read = useTool<{
+    commands: CodeCommandRecord[];
+    status?: CodeProjectStatus;
+    /** Legacy runner-owned publications; hosted records are already in status. */
+    publications?: CodePublication[];
+  }>('ui.read', { rowId: row.id }, { every: 10_000 });
   // Names change rarely, so the lists that hold them are read once and never polled.
   const home = useTool<NamedHome>('ui.home');
   const { connection: github, settled } = useGitHubStatus();
-  const published = usePublications();
+  const published = read.data?.status?.publication?.records ?? read.data?.publications ?? [];
   const branch = github?.baseBranch ?? github?.repository?.defaultBranch ?? null;
   // The model is rebuilt only when something it is made of answers again, so the ten-second
   // poll costs a render and not a re-derivation of the whole project.
@@ -83,10 +84,10 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
     const names = new Map(recordNames(null, home.data));
     if (branch) names.set(MAIN, { name: branch });
     return {
-      model: gitModel(read.data?.status, read.data?.commands ?? [], published.rows, names),
+      model: gitModel(read.data?.status, read.data?.commands ?? [], published, names),
       names,
     };
-  }, [read.data, home.data, published.rows, branch]);
+  }, [read.data, home.data, branch]);
   const merges = model.nodes.filter((node) => node.kind === 'base').length;
   const unlinked = !!github && (github.status === 'disconnected' || !github.repository);
   // With no repository and nothing Merv made, the page has one thing to say and one
@@ -96,7 +97,7 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
     !read.error &&
     !read.data?.status?.project &&
     !model.lanes.length &&
-    !published.rows.length;
+    !published.length;
   // The counts stand on the line the shell titles the page with, beside its name.
   usePageFacts(
     bare || !settled
@@ -160,7 +161,7 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
           id={selected}
           model={model}
           status={read.data?.status}
-          publications={published.rows}
+          publications={published}
           names={names}
           head={head}
           onSelect={select}
@@ -208,7 +209,7 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
           ))}
         </div>
       )}
-      <LoadState loading={read.loading} error={read.error} data={read.data} />
+      <LoadState {...read} />
       {model.lanes.length === 0 && read.data?.status?.project && (
         <p className="cluster" aria-label="Managed main">
           <span className="branch">main</span>
@@ -222,13 +223,11 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
         </div>
       )}
       <GitHubPublications
-        rows={published.rows}
-        error={published.error}
-        reload={published.reload}
+        rows={published}
+        onDone={read.reload}
         operator={signedIn}
         named={named}
         controls={unlinked ? undefined : read.data?.status?.publication?.controls}
-        onControlled={read.reload}
       />
       <CodeOperations status={read.data?.status} manages={manages} onDone={read.reload} />
     </div>
