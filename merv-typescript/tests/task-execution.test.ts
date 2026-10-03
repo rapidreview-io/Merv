@@ -1,4 +1,5 @@
 import { historicalTask } from './fixtures/historical-task.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import type { TaskService } from '@merv/tasks';
 import { test, type TestContext } from 'node:test';
@@ -96,6 +97,9 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
   });
   const { worker } = await offer(task);
   const reads = t.mock.method(app.ctx.artifacts, 'bytes');
+  // Finish asynchronous project initialization before measuring this read-only boundary.
+  await waitForManagedCode(app.ctx.codeResearch, operator);
+  await app.ctx.domainEvents.drain();
   // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
   const written = countWrites(app.ctx.state as PostgresState);
   const writes = async () => {
