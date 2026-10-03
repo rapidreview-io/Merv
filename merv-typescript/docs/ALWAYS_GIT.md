@@ -72,5 +72,27 @@ Local verification on 2026-10-03:
 - Both the historical UI demo and the managed Git demo started and stopped cleanly.
 - Existing migration, workflow, policy and recipe fixture rows remained unchanged.
 
-Provider-backed live experiments and production deployment were not run for this
-change. The worker-first rollout requirement above still applies.
+Production rollout on 2026-10-03:
+
+- PR #30 merged after all four CI test shards and verification passed (run
+  `37114114425`). Read-only assignment/checkpoint fixtures now wait for asynchronous
+  repository initialization; process-cleanup assertions tolerate observation after
+  the automatic timeout while still verifying rejection and descendant cleanup.
+- Hosted release `20261003T095754Z-06f9746e` passed Linux Pi, workflow and isolation
+  gates, then a real hosted Pi canary in 30 seconds. Both Cloudflare applications
+  use image digest `9932886440b4750e94a0b10a087f787c2defd06889e5954e54fd78bf40993027`.
+- The first worker candidate was refused before production changes because its
+  companion checkout lacked the already-deployed assignment-reset implementation.
+  Sandboxes merge `5157f1ed` preserves that implementation and managed ML support.
+- Main release `20261003T101141Z-7bd8dfee-19265b945bb2` is healthy; authentication,
+  origin checks and public UI assets passed.
+- The exact deployed Main image passed isolated PostgreSQL/S3 acceptance: automatic
+  Git initialization without GitHub, new managed-task admission, historical delivery
+  and independent review, continuing-agent identity, private signed downloads,
+  reflection and restart persistence. The synthetic schema is
+  `merv_ts_smoke_git_20261003_9e55ed0748`; production research records were not used
+  for this smoke test. This smoke does not claim a live GitHub reconciliation.
+- Recovery snapshot `20261003T092414Z-87ed16613318403d8ad9aacc1dea6a48` was retained
+  before rollout. Research supervision remained paused.
+
+The worker-first rollout requirement above also applies to future releases.
