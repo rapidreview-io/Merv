@@ -4759,13 +4759,16 @@ del.cut {
   color: var(--faint);
 }
 
-/* Under the row that narrows it: the map, then what is live. With neither to draw, the
-   block is not there. */
+/* Under the title line: the map, then what is live. The map is the page, so it stands in
+   air of its own — as much above it as below, growing with the window — and the line of what
+   is live sits clear of its last row. With neither to draw, the block is not there. */
 .wmap-stage {
+  --wmap-air: clamp(40px, 7vh, 80px);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding-top: var(--space-2);
+  gap: var(--wmap-air);
+  /* Less what the page already leaves under its title line. */
+  padding-top: calc(var(--wmap-air) - 30px);
 }
 .wmap-stage:not(:has(.wmap-node, .live-head)) {
   display: none;
@@ -4947,7 +4950,7 @@ del.cut {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-top: var(--space-3);
+  padding-top: var(--space-4);
   border-top: 1px solid var(--line);
   font-size: var(--text-sm);
 }
