@@ -35,7 +35,6 @@ const plan =
  */
 async function assembled(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-running-experiments-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const { plugins } = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as { plugins: { id: string; config?: unknown }[] };
@@ -53,7 +52,10 @@ async function assembled(t: TestContext) {
       ) as never,
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const boot = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Op' });
   const operator: Caller = {
     projectId: boot.project.id,
