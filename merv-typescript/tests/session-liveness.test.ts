@@ -802,7 +802,7 @@ test('no read marks or closes an idle session, yet the stuck report already name
     [['session_idle', id, activatedAt, 1800, 'idle']],
   );
   assert.match(report.items[0].why, /not evidence the work is stuck/);
-  assert.match(report.items[0].next, /POST \/sessions\/halt/);
+  assert.ok(report.items[0].next.includes(`POST /sessions/${encodeURIComponent(id)}/halt {}`));
   await assert.rejects(async () => await f.sessions.stuck(worker), {
     code: 'forbidden',
     status: 403,

@@ -343,9 +343,6 @@ export interface RunningEdge {
 }
 
 /** ui.running_panel { key } → RunningPanel */
-export interface RunningPanelInput {
-  key: RunningKey;
-}
 export interface RunningPanel extends RunningPanelPart {
   key: RunningKey;
   observedAt: string;

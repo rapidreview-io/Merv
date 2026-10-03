@@ -22,24 +22,7 @@ const proxy = Object.fromEntries(
 export default defineConfig({
   root: 'web',
   base: '/ui/',
-  plugins: [
-    react(),
-    {
-      name: 'merv-optional-pi',
-      enforce: 'pre',
-      resolveId(source, importer) {
-        if (
-          process.env.MERV_UI_PI === 'omit' &&
-          source === './pi' &&
-          importer?.endsWith('/views/index.tsx')
-        )
-          return '\0merv-pi-omitted';
-      },
-      load(id) {
-        if (id === '\0merv-pi-omitted') return 'export const PiView = () => null;';
-      },
-    },
-  ],
+  plugins: [react()],
   build: { outDir: '../dist', emptyOutDir: true, sourcemap: false },
   server: { port: Number(process.env.PORT) || 5180, proxy },
 });

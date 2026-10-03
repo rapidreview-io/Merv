@@ -25,15 +25,7 @@
       "id": "research",
       "label": "Research",
       "caption": "The work & what we learn",
-      "members": [
-        "tasks",
-        "experiments",
-        "knowledge",
-        "paper",
-        "reflections",
-        "consolidation",
-        "research"
-      ],
+      "members": ["tasks", "experiments", "knowledge", "paper", "reflections", "research"],
       "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Research."
     },
     {
@@ -115,7 +107,7 @@
     },
     "knowledge": {
       "label": "Knowledge",
-      "purpose": "Reads live project research records and resolves research-linked evidence for reflection agents. Historical corpus capture remains available to existing callers."
+      "purpose": "Composes live project, task and experiment records and resolves scoped artifact, review, workflow and code references through their owning services. It has no writable research corpus or publication workflow. Its tool adapter exposes project.records and project.references independently of Research."
     },
     "workflows": {
       "label": "Workflows",
@@ -147,7 +139,7 @@
     },
     "state": {
       "label": "State",
-      "purpose": "Provides async transactions, migrations, durable records and the event ledger. Configuration selects SQLite or PostgreSQL behind the same contract."
+      "purpose": "Provides async PostgreSQL transactions, migrations, durable records and the event ledger. Runner's private local SQLite launch ledger is separate from server State."
     },
     "scope": {
       "label": "Scope",
@@ -173,13 +165,9 @@
       "label": "Reflections",
       "purpose": "Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required."
     },
-    "consolidation": {
-      "label": "Consolidation",
-      "purpose": "Implements and reviews code changes from pinned source artifacts and a selected experiment scope. Requires Code and does not depend on Reflections. Historical report-only cycles remain supported."
-    },
     "research": {
       "label": "Research",
-      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Optional Paper supplies the problem definition; Reflections starts waves and verifies approval; Knowledge supplies live-evidence permissions and unsnapshotted consolidation inputs; Consolidation handles selected code changes. Research stays active when any optional provider is removed, and only operations that use it wait with a named blocker. Stored records and completed command receipts remain readable; absence never means empty or approved evidence. New cycles can finish after approved reflection without consolidation. Paper changes belong to scientific workflows."
+      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Research bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Research publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff."
     }
   }
 }
