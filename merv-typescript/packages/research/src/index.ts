@@ -25,11 +25,11 @@ import {
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowDefinition,
+  type WorkflowDependency,
   type WorkflowPolicy,
   type Workflows,
 } from '@merv/contracts';
 import type { Experiments } from '@merv/experiments/types';
-import type { Knowledge } from '@merv/knowledge/types';
 import type { Paper, PaperRevision } from '@merv/paper/types';
 import type {
   ApprovedReflection,
@@ -78,7 +78,6 @@ type ResearchCode = Pick<Code, 'acceptedSince' | 'hosted' | 'publishOnAcceptance
 interface Capabilities {
   paper: Paper;
   reflections: Reflections;
-  knowledge: Knowledge;
   tasks: Tasks;
   integrations: ServiceTaskCreator;
   experiments: Experiments;
@@ -99,7 +98,6 @@ type BindingChecks = (() => void)[];
 const unavailable = {
   paper: 'This stage needs Paper; enable it to continue',
   reflections: 'This stage needs Reflections; enable it to continue',
-  knowledge: 'This handoff needs live research evidence from Knowledge; enable it to continue',
   tasks:
     'Creating the approved plan\'s work needs Tasks; enable it, or complete this cycle with nextWave: "skip"',
   integrations: 'Injecting the consolidation task needs Tasks; enable it to continue',
@@ -1089,14 +1087,23 @@ export class ResearchService implements Research {
     options: { late: boolean; required: boolean },
   ): Promise<Artifact | null> {
     if (record.digest) return record.digest;
+    const children = this.children(record);
+    const selected = (await this.workflows.dependencies(caller, record.id, tx)).dependencies.filter(
+      (item) => !children.includes(item.id),
+    );
     const needed: (keyof Capabilities)[] = [
       'artifacts',
-      'knowledge',
+      ...(selected.some((item) => item.workflow === 'task') ? (['tasks'] as const) : []),
+      ...(selected.some((item) => item.workflow === 'experiment')
+        ? (['experiments'] as const)
+        : []),
       ...(record.reflectionId ? (['reflections'] as const) : []),
       ...(record.integrations.length ? (['code'] as const) : []),
     ];
     if (!options.required && needed.some((name) => !this.bindings[name])) return null;
-    const content = JSON.stringify(await this.compose(caller, record, tx, checks, options.late));
+    const content = JSON.stringify(
+      await this.compose(caller, record, selected, tx, checks, options.late),
+    );
     const artifact = await this.use('artifacts', checks, (service) =>
       service.create(
         caller,
@@ -1129,17 +1136,13 @@ export class ResearchService implements Research {
   private async compose(
     caller: Caller,
     record: ResearchRecord,
+    selected: WorkflowDependency[],
     tx: Transaction,
     checks: BindingChecks,
     late: boolean,
   ): Promise<ResearchDigest> {
     const text = (value: string) => clip(value, DIGEST_TEXT_CHARS);
     const ref = ({ id, title, hash }: Artifact) => ({ id, title: text(title), hash });
-    const records = await this.use('knowledge', checks, (service) => service.records(caller, tx));
-    const children = this.children(record);
-    const selected = (await this.workflows.dependencies(caller, record.id, tx)).dependencies.filter(
-      (item) => !children.includes(item.id),
-    );
     // A cycle ended while reflecting has a child with nothing approved in it.
     const reflection = record.reflectionId
       ? await this.use('reflections', checks, async (service) =>
@@ -1157,13 +1160,25 @@ export class ResearchService implements Research {
               ?.state ?? null,
         }
       : null;
-    const experimentIds = new Set(
-      selected.filter((item) => item.workflow === 'experiment').map((item) => item.id),
-    );
-    const experiments = records.experiments.filter((entry) => experimentIds.has(entry.id));
-    const taskIds = new Set(
-      selected.filter((item) => item.workflow === 'task').map((item) => item.id),
-    );
+    // A cycle reads only its selected work, directly from the providers that own it.
+    // Keep the existing record order so digest truncation remains stable.
+    const byCreated = (
+      a: { createdAt: string; id: string },
+      b: { createdAt: string; id: string },
+    ) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
+    const ids = (workflow: string) => [
+      ...new Set(selected.filter((item) => item.workflow === workflow).map((item) => item.id)),
+    ];
+    const experiments = (
+      await mapAsync(ids('experiment'), (id) =>
+        this.use('experiments', checks, (service) => service.get(caller, id, tx)),
+      )
+    ).sort(byCreated);
+    const tasks = (
+      await mapAsync(ids('task'), (id) =>
+        this.use('tasks', checks, (service) => service.record(caller, id, tx)),
+      )
+    ).sort(byCreated);
     const lists = {
       experiments: experiments.map((entry) => ({
         id: entry.id,
@@ -1173,9 +1188,11 @@ export class ResearchService implements Research {
         submissions: entry.submissions.length,
         conclusion: entry.conclusion === null ? null : text(entry.conclusion),
       })),
-      tasks: records.tasks
-        .filter((task) => taskIds.has(task.id))
-        .map((task) => ({ id: task.id, title: text(task.title), state: task.workflow.state })),
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        title: text(task.title),
+        state: task.workflow.state,
+      })),
       dropped: selected.filter((item) => item.failed).map((item) => item.id),
       carriedOver: selected.filter((item) => !item.settled).map((item) => item.id),
       rejected: (reflection?.plan?.rejected ?? []).map((entry) => ({
@@ -1798,9 +1815,6 @@ export class ResearchService implements Research {
   bindArtifacts(artifacts: Artifacts): () => void {
     return this.bind('artifacts', artifacts);
   }
-  bindKnowledge(knowledge: Knowledge): () => void {
-    return this.bind('knowledge', knowledge);
-  }
   private requireCapability<K extends keyof Capabilities>(name: K, checks: BindingChecks) {
     this.open();
     checks.forEach((check) => check());
@@ -1864,12 +1878,6 @@ export const researchPlugin = {
       ctx.inject(['reflections'], (ctx) => {
         ctx.effect(async function* () {
           yield service.bindReflections(ctx.reflections);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['knowledge'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindKnowledge(ctx.knowledge);
           await service.wakeAutomatic();
         });
       });

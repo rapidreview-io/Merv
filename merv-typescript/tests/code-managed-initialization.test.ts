@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { join } from 'node:path';
@@ -15,10 +16,17 @@ import { git } from './fixtures/code-store.js';
 
 async function fixture(t: Parameters<typeof resolutionFixture>[0]) {
   const f = await resolutionFixture(t);
-  const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, undefined, undefined, {
-      config: { root: join(f.directory, 'code'), reservedFreeBytes: 1 },
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, {
+      repositories: {
+        root: join(f.directory, 'code'),
+        quotaBytes: 10 * 1024 ** 3,
+        reservedFreeBytes: 1,
+      },
     }),
+  );
+  const code = await createService(
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core),
   );
   await f.state.transaction((tx) => code.ensureRepository(f.admin, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();
@@ -26,6 +34,7 @@ async function fixture(t: Parameters<typeof resolutionFixture>[0]) {
   f.beforeClose.push(async () => {
     unbind();
     await code.close();
+    await core.close();
   });
   return { ...f, code };
 }
@@ -198,12 +207,24 @@ test('recovery after Git succeeded but SQL rolled back keeps exactly one root', 
 
 test('a wake during a slow creation transaction initializes promptly after commit', async (t) => {
   const f = await resolutionFixture(t);
-  const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, undefined, undefined, {
-      config: { root: join(f.directory, 'slow-code'), reservedFreeBytes: 1, sweepSeconds: 3600 },
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, {
+      repositories: {
+        root: join(f.directory, 'slow-code'),
+        quotaBytes: 10 * 1024 ** 3,
+        reservedFreeBytes: 1,
+      },
     }),
   );
-  f.beforeClose.push(() => code.close());
+  const code = await createService(
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core, {
+      config: { sweepSeconds: 3600 },
+    }),
+  );
+  f.beforeClose.push(async () => {
+    await code.close();
+    await core.close();
+  });
   await f.state.transaction(async (tx) => {
     await code.ensureRepository(f.admin, tx);
     // More than one 200ms wake interval; the journal is invisible to other readers.

@@ -25,7 +25,6 @@ flowchart BT
     identity["identity"]
     knowledge["knowledge"]
     merv_knowledge_tools["merv-knowledge-tools"]
-    merv_knowledge_ui["merv-knowledge-ui"]
     mounts["mounts"]
     merv_mounts_ui["merv-mounts-ui"]
     nisa["nisa"]
@@ -52,7 +51,6 @@ flowchart BT
     scope["scope"]
     merv_scope_api["merv-scope-api"]
     merv_scope_tools["merv-scope-tools"]
-    merv_scope_ui["merv-scope-ui"]
     secrets["secrets"]
     merv_secrets_api["merv-secrets-api"]
     sessions["sessions"]
@@ -149,8 +147,6 @@ flowchart BT
   knowledge -. optional .-> codeResearch
   merv_knowledge_tools --> knowledge
   merv_knowledge_tools --> tools
-  merv_knowledge_ui --> knowledge
-  merv_knowledge_ui --> ui
   mounts --> tools
   mounts --> scope
   merv_mounts_ui --> mounts
@@ -193,7 +189,6 @@ flowchart BT
   research -. optional .-> domainEvents
   research -. optional .-> paper
   research -. optional .-> reflections
-  research -. optional .-> knowledge
   research -. optional .-> tasks
   research -. optional .-> experiments
   research -. optional .-> artifacts
@@ -227,8 +222,6 @@ flowchart BT
   merv_scope_api --> api
   merv_scope_tools --> scope
   merv_scope_tools --> tools
-  merv_scope_ui --> scope
-  merv_scope_ui --> ui
   secrets --> state
   merv_secrets_api --> secrets
   merv_secrets_api --> api

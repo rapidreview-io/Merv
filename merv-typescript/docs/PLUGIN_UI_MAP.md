@@ -32,3 +32,14 @@ Shell-owned pages: map.tsx (539) + map-data.ts (229) at `/`, overview.tsx (527) 
 The rail is Home · Now · Research (Claims, Paper, Files) · Work (Work, Reflections) · Agents (Sessions, Code, Sandboxes when its manifest row exists) · Feed (switched off by default) · Settings. Row registrations in packages/*/src/ui.ts are unchanged; navigation.ts hides research, tasks, experiments, reviews, consolidation, knowledge, people, connections and legacy-history (unless it reports records) from the rail. The Work page (views/work.tsx, shell-owned at /work) is framed by the current cycle and lists every task and experiment with an "In this cycle" narrowing; /tasks, /experiments, /reviews and /research redirect to it; records keep their routes beside the Work list. Consolidation is a phase row under its wave on /reflections, created from the approved reflection's Act. Knowledge's reference check is a control in the Claims control row. People, Keys and Connections are Settings sections. The Code row stays until the GitHub-style graph wave. Explanatory prose was removed from every page touched (see UI_DESIGN.md "No explanatory text").
 
 Later the same day: the Code row remains under Agents but its page is the branch graph and pull-request rows (views/code-graph.tsx); GitHub connection, repository and automation controls live under Settings › Integrations; the paper page follows docs/PAPER_PROPOSAL_2026-09-17.md; the sessions page follows docs/SESSIONS_ROBUSTNESS_2026-09-17.md P1-P8; the command palette was removed by ruling.
+
+## Knowledge UI retirement (2026-10-03)
+
+Knowledge no longer registers a UI row or supplies a `@merv/knowledge/ui` plugin.
+The Paper page uses `project.references` for reference lookup, and the browser
+redirects `/knowledge` to Paper independently of plugin registration. The
+Knowledge service and its two read tools remain available.
+
+## Scope UI retirement — 2026-10-03
+
+Scope no longer registers a People sidebar row or a separate UI plugin. Settings owns Members and reads the account and project-membership APIs directly. The shell still redirects `/people` to `/settings/members`, regardless of row registration; membership authority and account controls are unchanged. The earlier inventory above is historical.

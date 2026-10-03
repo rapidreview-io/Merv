@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import {
   canonical,
   createService,
@@ -87,7 +88,10 @@ async function fixture(t: TestContext) {
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
+  const core = await createService(new CoreCodeService(state, scope, {}));
+  const code = await createService(
+    new CodeService(state, scope, sessions, artifacts, workflows, core),
+  );
   // The subscription the Code plugin makes, so a transition reaches Code as it does in the app.
   const unsubscribe = await events.subscribe({
     id: 'code.reconcile.v1',
@@ -98,6 +102,7 @@ async function fixture(t: TestContext) {
   t.after(async () => {
     await unsubscribe();
     await code.close();
+    await core.close();
     await sessions.close();
     await events.close();
     workflows.close();

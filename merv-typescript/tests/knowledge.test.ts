@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { historicalTask } from './fixtures/historical-task.js';
 import { historicalExperiment } from './fixtures/historical-experiment.js';
 import { createService } from '@merv/contracts';
@@ -39,6 +40,7 @@ async function fixture(t: TestContext) {
     experiments: ExperimentService,
     events: DurableEvents,
     sessions: LeasedSessions,
+    core: CoreCodeService,
     code: CodeService,
     knowledge: KnowledgeService;
   const open = async () => {
@@ -55,11 +57,16 @@ async function fixture(t: TestContext) {
     );
     events = await createService(new DurableEvents(state));
     sessions = await createService(new LeasedSessions(state, scope, workflows, events));
-    code = await createService(
-      new CodeService(state, scope, sessions, artifacts, workflows, undefined, undefined, {
-        config: { root: join(directory, 'code'), reservedFreeBytes: 1 },
+    core = await createService(
+      new CoreCodeService(state, scope, {
+        repositories: {
+          root: join(directory, 'code'),
+          quotaBytes: 10 * 1024 ** 3,
+          reservedFreeBytes: 1,
+        },
       }),
     );
+    code = await createService(new CodeService(state, scope, sessions, artifacts, workflows, core));
     experiments = await createService(
       new ExperimentService(
         state,
@@ -79,7 +86,8 @@ async function fixture(t: TestContext) {
   const close = async () => {
     knowledge.close();
     experiments.close();
-    code.close();
+    await code.close();
+    await core.close();
     await sessions.close();
     tasks.dispose();
     builder.close();

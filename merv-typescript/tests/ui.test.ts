@@ -168,7 +168,7 @@ function plugins(assets: string, extra: Entry[] = []): Entry[] {
   ];
 }
 
-test('human readers can open People and read active project membership without actor administration', async (t) => {
+test('human readers can read Settings membership without a People row or actor administration', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-members-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const assets = join(directory, 'bundle');
@@ -227,9 +227,14 @@ test('human readers can open People and read active project membership without a
   const shellData = (await shell.json()) as {
     result: { rows: { id: string; label: string; status: object }[] };
   };
-  const people = shellData.result.rows.find((row) => row.id === 'people');
-  assert.equal(people?.label, 'People');
-  assert.deepEqual(people?.status, {}, 'a human reader does not need operator-only actor listing');
+  assert.equal(
+    shellData.result.rows.some((row) => row.id === 'people'),
+    false,
+  );
+  assert.equal(
+    shellData.result.rows.some((row) => row.id === 'settings'),
+    true,
+  );
   const members = await fetch(`${app.ctx.api.url}/projects/${project.id}/members`, { headers });
   assert.equal(members.status, 200);
   const listed = (await members.json()) as { memberships: { subject: string; active: boolean }[] };
@@ -351,13 +356,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(
     shell.rows.map((entry) => entry.id),
     [
-      'people',
       'research',
 
       'tasks',
       'experiments',
       'paper',
-      'knowledge',
       'reviews',
 
       'running',
@@ -369,9 +372,10 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       'settings',
     ],
   );
-  // One word per thing: the inventory is Knowledge, and retained artifacts are Files.
+  // Retained artifacts are Files; the retired Knowledge page registers no row.
   const named = (id: string) => shell.rows.find((entry) => entry.id === id)?.label;
-  assert.deepEqual([named('knowledge'), named('artifacts')], ['Knowledge', 'Files']);
+  assert.equal(named('artifacts'), 'Files');
+  assert.equal(named('knowledge'), undefined);
   // Every row above keeps its registration, its record routes and its ui.read; the
   // rail is a separate table of kinds, and these are the places it lists.
   assert.deepEqual(
@@ -387,10 +391,9 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       ['Feed', ['Feed']],
     ],
   );
-  // Every count in the chrome means open work; rows that are inventories report none.
+  // Every count in the chrome means open work.
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'tasks')?.status, { count: 0 });
-  for (const id of ['people', 'knowledge'])
-    assert.deepEqual(shell.rows.find((entry) => entry.id === id)?.status, {});
+  assert.equal(named('people'), undefined);
   assert.equal(shell.rows.find((entry) => entry.id === 'settings')?.group, 'settings');
   // Running counts nothing in the chrome and has no row read: its page reads ui.running.
   const running = shell.rows.find((entry) => entry.id === 'running');
@@ -425,19 +428,25 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal(shell.plugins.length, plugins(assets).length);
   assert.ok(shell.plugins.every((entry) => entry.state === 'active'));
   // A reader sees the rows, and no row asks for a number it cannot answer for
-  // this caller: People is a directory and reports nothing. (A status that does
-  // fail still reports itself instead of failing the shell; the registry test
-  // above covers that path.)
+  // this caller. A failing status reports itself instead of failing the shell;
+  // the registry test above covers that path.
   const readerShell = (await tool('ui.shell', reader)).body.result.rows as {
     id: string;
     status: { state?: string };
   }[];
-  assert.deepEqual(readerShell.find((entry) => entry.id === 'people')?.status, {});
+  assert.equal(
+    readerShell.some((entry) => entry.id === 'people'),
+    false,
+  );
   assert.ok(readerShell.every((entry) => entry.status.state !== 'unavailable'));
   assert.equal(
     (await tool('ui.read', operator, { rowId: 'knowledge' })).body.error.code,
     'row_unreadable',
   );
+  // Paper still resolves scoped references through Knowledge without a UI adapter.
+  const references = await tool('project.references', reader, { refs: ['artifact:missing'] });
+  assert.equal(references.status, 200);
+  assert.equal(references.body.result[0].status, 'missing');
   assert.equal((await tool('ui.read', operator, { rowId: 'absent' })).status, 404);
   // Now and the rail share one read, and a part this caller may not read is null rather
   // than a failure that would take the page with it.
@@ -459,13 +468,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // Feed removal drops exactly the feed rows; everything else keeps working; restoration adds no duplicates.
   await app.setEnabled('feed', false);
   assert.deepEqual(await rowIds(), [
-    'people',
     'research',
 
     'tasks',
     'experiments',
     'paper',
-    'knowledge',
     'reviews',
 
     'running',
@@ -480,13 +487,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal((await tool('task.list', operator)).status, 200);
   await app.setEnabled('feed', true);
   assert.deepEqual(await rowIds(), [
-    'people',
     'research',
 
     'tasks',
     'experiments',
     'paper',
-    'knowledge',
     'reviews',
 
     'running',
@@ -505,14 +510,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal((await tool('ui.shell', operator)).body.error.code, 'unknown_tool');
   assert.equal((await tool('task.list', operator)).status, 200);
   for (const id of [
-    'scope-ui',
-
     'research-ui',
     'paper-ui',
     'reflections-ui',
 
     'experiments-ui',
-    'knowledge-ui',
     'tasks-ui',
     'reviews-ui',
     'artifacts-ui',
@@ -524,13 +526,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   await app.setEnabled('ui', true);
   assert.equal((await raw(url, '/ui/')).status, 200);
   assert.deepEqual(await rowIds(), [
-    'people',
     'research',
 
     'tasks',
     'experiments',
     'paper',
-    'knowledge',
     'reviews',
 
     'running',

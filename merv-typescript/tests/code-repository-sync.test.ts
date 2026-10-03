@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { join } from 'node:path';
@@ -13,9 +14,18 @@ async function fixture(t: TestContext) {
   const f = await resolutionFixture(t);
   const source = gitSource(t);
   const remoteHead = source.commit({ 'remote.txt': 'Existing remote work' });
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, {
+      repositories: {
+        root: join(f.directory, 'code'),
+        quotaBytes: 10 * 1024 ** 3,
+        reservedFreeBytes: 1,
+      },
+    }),
+  );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, undefined, undefined, {
-      config: { root: join(f.directory, 'code'), reservedFreeBytes: 1, settleMs: 60000 },
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core, {
+      config: { settleMs: 60000 },
       remote: {
         read: async (_caller, use) =>
           use({
@@ -33,6 +43,7 @@ async function fixture(t: TestContext) {
   f.beforeClose.push(async () => {
     release();
     await code.close();
+    await core.close();
   });
   let observedHead = remoteHead;
   t.mock.method(code.github, 'status', async () => ({

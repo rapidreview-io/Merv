@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { CodeService } from '@merv/code-research/service';
 import type { CodeCapture } from '@merv/code-research/types';
 import { CodeRepositories } from '@merv/code/store/repository';
@@ -12,7 +13,7 @@ import type { CodeBaseService } from '../packages/code-research/src/bases.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
-import { config as githubConfig, githubFixture } from './github-fixture.js';
+import { githubFixture } from './github-fixture.js';
 import { assessment } from './fixtures/review-verdict.js';
 
 /**
@@ -30,10 +31,12 @@ async function fixture(t: TestContext, connected = false) {
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
   const branches = remote?.branches ?? new Map<string, string>();
+  const legacyCore = await createService(new CoreCodeService(f.state, f.scope, {}));
   const legacy = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, legacyCore),
   );
   await legacy.close();
+  await legacyCore.close();
   const source = gitSource(t);
   const bare = repositories.paths(f.admin.projectId).repository;
   const root0 = source.commit({ 'shared.txt': 'root\n', 'own.txt': 'root\n' });
@@ -47,6 +50,11 @@ async function fixture(t: TestContext, connected = false) {
   for (const [name, commit] of Object.entries({ root0, feature, moved, clashing }))
     publish(name, commit);
   await boundProject(f.state, f.admin.projectId, root0, 'repository');
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, {
+      repositories: { root, quotaBytes: 10 * 1024 ** 3, reservedFreeBytes: 1 },
+    }),
+  );
   const code = await createService(
     new CodeService(
       f.state,
@@ -54,10 +62,9 @@ async function fixture(t: TestContext, connected = false) {
       f.sessions,
       f.artifacts,
       f.workflows,
-      connected ? githubConfig : undefined,
-      remote?.fetcher,
+      { ...core, github: remote?.github ?? core.github },
       {
-        config: { root, settleMs: 60_000, reservedFreeBytes: 1 },
+        config: { settleMs: 60_000 },
         // The objects are in the real repository already; only the remote refs are played.
         mirror: {
           target: async () => ({ repository: 'fixture/private' }),
@@ -267,6 +274,7 @@ async function fixture(t: TestContext, connected = false) {
     unbind();
     unbindReviews();
     await code.close();
+    await core.close();
     repositories.git.close();
   });
   return {

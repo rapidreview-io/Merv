@@ -9,7 +9,6 @@ Markdown text artifact titled `Claim: …`, which resolves like any other artifa
 | ----------------------- | ---------------------------------------------------------- | --------------------------------------- |
 | `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Code | `knowledge` service                     |
 | `@merv/knowledge/tools` | Knowledge, Tools                                           | `project.records`, `project.references` |
-| `@merv/knowledge/ui`    | Knowledge, UI                                              | Research records page                   |
 
 `project.records` returns the current Scope project record, including its
 Introduction and all task/experiment metadata. It performs no
@@ -53,11 +52,14 @@ packages/knowledge/
     ├── types.ts    # Public contracts and Cordis capability
     ├── input.ts    # Bounded data-only inputs and canonical serialization
     ├── storage.ts  # Migrations of the retired snapshot tables
-    ├── tools.ts   # Two metadata-read tools
-    └── ui.ts      # Optional Research records registration
+    └── tools.ts    # Two metadata-read tools
 ```
 
-Unloading Knowledge withdraws its adapters; source services and retained State
+The Paper page uses `project.references` for reference lookup. The former
+`/knowledge` address redirects to Paper in the browser; it needs no Knowledge UI
+registration.
+
+Unloading Knowledge withdraws its tools; source services and retained State
 records remain. Reads fail clearly while an injected provider is unavailable.
 See [research inputs](../../docs/RESEARCH_INPUTS.md),
 [Python correspondence](../../docs/CORPUS_PARITY_REFERENCE.md), and

@@ -44,11 +44,6 @@
       "name": "@merv/knowledge/tools"
     },
     {
-      "id": "knowledge-ui",
-      "name": "@merv/knowledge/ui",
-      "required": false
-    },
-    {
       "id": "knowledge",
       "name": "@merv/knowledge"
     },
@@ -89,11 +84,6 @@
     {
       "id": "sessions-ui",
       "name": "@merv/sessions/ui",
-      "required": false
-    },
-    {
-      "id": "scope-ui",
-      "name": "@merv/scope/ui",
       "required": false
     },
     {

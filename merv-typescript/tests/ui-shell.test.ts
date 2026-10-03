@@ -347,7 +347,13 @@ test('the only operator is offered no control that would leave the project witho
     serve(`/projects/${project.id}/members`, {
       body: { memberships: [member(1, 'operator'), member(2, second)] },
     });
-    await open('/settings/members');
+    // The retired People route reaches the same account controls without a row.
+    await open(second === 'reviewer' ? '/people' : '/settings/members');
+    assert.equal(document.querySelector('h1')!.textContent, 'Settings');
+    assert.equal(
+      document.querySelector('.settings nav [aria-current="page"]')!.textContent,
+      'Members',
+    );
     assert.deepEqual(controls('Operator'), [locked, locked], second);
     assert.deepEqual(controls('Reviewer'), [false, false], second);
     await unmount();

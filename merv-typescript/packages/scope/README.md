@@ -2,7 +2,7 @@
 
 Scope owns project membership, actors, actor credentials and user keys, delegation and permissions. Its `toolPolicy` module also owns exact remote-tool grants; session tool enforcement registers with the tool registry instead. Scope injects only State; it does not depend on Sessions, Tools, API or Mounts.
 
-Its adapters publish it: `@merv/scope/tools`, `@merv/scope/ui`, and `@merv/scope/api`, which mounts the HTTP routes `/account` (the caller's account and user keys) and `/projects` (projects and memberships) on the API.
+Its adapters publish it: `@merv/scope/tools` and `@merv/scope/api`, which mounts the HTTP routes `/account` (the caller's account and user keys) and `/projects` (projects and memberships) on the API. The browser's Settings → Members page reads these account routes directly; its `/people` compatibility redirect does not require a Scope UI plugin.
 
 ## Contracts kept on purpose
 

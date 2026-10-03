@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { historicalTask } from './fixtures/historical-task.js';
 import { historicalExperiment } from './fixtures/historical-experiment.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
@@ -64,10 +65,17 @@ async function fixture(t: TestContext) {
       sweepIntervalMs: 60_000,
     }),
   );
-  const code = await createService(
-    new CodeService(state, scope, sessions, artifacts, workflows, undefined, undefined, {
-      config: { root: join(directory, 'code'), reservedFreeBytes: 1 },
+  const core = await createService(
+    new CoreCodeService(state, scope, {
+      repositories: {
+        root: join(directory, 'code'),
+        quotaBytes: 10 * 1024 ** 3,
+        reservedFreeBytes: 1,
+      },
     }),
+  );
+  const code = await createService(
+    new CodeService(state, scope, sessions, artifacts, workflows, core),
   );
   const boot = await scope.bootstrap({ projectName: 'Experiment assignments', actorName: 'Owner' });
   const source: Caller = {
@@ -214,7 +222,8 @@ async function fixture(t: TestContext) {
   };
   t.after(async () => {
     experiments.close();
-    code.close();
+    await code.close();
+    await core.close();
     await sessions.close();
     tasks.dispose();
     await events.close();

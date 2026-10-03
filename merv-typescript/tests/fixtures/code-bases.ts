@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import type { TestContext } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -90,7 +91,10 @@ export async function baseFixture(t: TestContext, enabled = true) {
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(root, 'blobs'))),
   );
-  const code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
+  const core = await createService(new CoreCodeService(state, scope, {}));
+  const code = await createService(
+    new CodeService(state, scope, sessions, artifacts, workflows, core),
+  );
   let changes = 0;
   const hooks = {
     changed: async () => void (changes += 1),
@@ -116,6 +120,7 @@ export async function baseFixture(t: TestContext, enabled = true) {
     await bases.close();
     for (const worker of workers) await worker.close();
     await code.close();
+    await core.close();
     await repositories.close(1000);
     await sessions.close();
     await events.close();

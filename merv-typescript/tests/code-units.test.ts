@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { createService, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -52,6 +53,7 @@ async function fixture(t: TestContext, withUnits = true) {
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
+  let core: CoreCodeService;
   /** Code as it was before units existed, or as it is now. */
   const open = async (units: boolean) => {
     let skipped = false;
@@ -60,7 +62,8 @@ async function fixture(t: TestContext, withUnits = true) {
       else await migrate(component, migrations);
     };
     try {
-      const service = new CodeService(state, scope, sessions, artifacts, workflows);
+      core = await createService(new CoreCodeService(state, scope, {}));
+      const service = new CodeService(state, scope, sessions, artifacts, workflows, core);
       await service.initialize();
       assert.equal(skipped, !units);
       return service;
@@ -71,6 +74,7 @@ async function fixture(t: TestContext, withUnits = true) {
   let code = await open(withUnits);
   t.after(async () => {
     await code.close();
+    await core.close();
     await sessions.close();
     await events.close();
     workflows.close();
@@ -101,6 +105,7 @@ async function fixture(t: TestContext, withUnits = true) {
     },
     reopen: async () => {
       await code.close();
+      await core.close();
       code = await open(true);
     },
     request: () => `request-${++sequence}`,

@@ -94,6 +94,8 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
 
 test('direct core binding changes update research and detached adapters reconcile on reload', async (t) => {
   const f = await fixture(t);
+  assert.equal(f.ctx.code.repositories, undefined);
+  assert.equal((f.ctx.codeResearch as CodeService).v2, undefined);
   assert.deepEqual(await f.blockers(), []);
   await f.bind('b', 'a');
   assert.equal((await f.blockers())[0]?.key, 'main');

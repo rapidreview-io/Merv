@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -24,7 +25,7 @@ import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { assessment } from './fixtures/review-verdict.js';
-import { config as githubConfig, githubFixture } from './github-fixture.js';
+import { githubFixture } from './github-fixture.js';
 
 /**
  * Code's part of the Running page, read the way ui.running reads it: through the code-ui
@@ -43,6 +44,11 @@ async function fixture(t: TestContext) {
   mkdirSync(join(root, 'empty-template'));
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, {
+      repositories: { root, quotaBytes: 10 * 1024 ** 3, reservedFreeBytes: 1 },
+    }),
+  );
   const code = await createService(
     new CodeService(
       f.state,
@@ -50,10 +56,9 @@ async function fixture(t: TestContext) {
       f.sessions,
       f.artifacts,
       f.workflows,
-      githubConfig,
-      remote.fetcher,
+      { ...core, github: remote.github },
       {
-        config: { root, settleMs: 60_000, reservedFreeBytes: 1 },
+        config: { settleMs: 60_000 },
         mirror: {
           target: async () => ({ repository: 'fixture/private' }),
           lsRemote: async (_project: string, ref: string) =>
@@ -255,6 +260,7 @@ async function fixture(t: TestContext) {
     unbind();
     unbindReviews();
     await code.close();
+    await core.close();
     repositories.git.close();
   });
 

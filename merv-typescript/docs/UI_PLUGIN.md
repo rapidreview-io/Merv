@@ -7,13 +7,14 @@ The UI is one optional plugin, `@merv/ui`, plus one small row adapter per featur
 | Module               | Entry id       | Injects           | Owns                                                                                |
 | -------------------- | -------------- | ----------------- | ----------------------------------------------------------------------------------- |
 | `@merv/ui`           | `ui`           | `api`, `tools`    | The `ui` row and Running registries, the `/ui` bundle, `ui.*` tools, a Settings row |
-| `@merv/scope/ui`     | `scope-ui`     | `scope`, `ui`     | People (a directory; no count)                                                      |
 | `@merv/tasks/ui`     | `tasks-ui`     | `tasks`, `ui`     | Tasks (count of tasks not done or failed)                                           |
 | `@merv/reviews/ui`   | `reviews-ui`   | `reviews`, `ui`   | Reviews (count of unclaimed and started reviews); Running's Review section          |
 | `@merv/artifacts/ui` | `artifacts-ui` | `artifacts`, `ui` | Artifacts                                                                           |
 | `@merv/sessions/ui`  | `sessions-ui`  | `sessions`, `ui`  | Sessions, runner presence and project dispatch controls                             |
 | `@merv/feed/ui`      | `feed-ui`      | `feed`, `ui`      | Feed (posts and state changes as one column)                                        |
 | `@merv/mounts/ui`    | `mounts-ui`    | `mounts`, `ui`    | Connections (degraded if a mount is not ready or has an error; data via `ui.read`)  |
+
+People is served by Settings → Members; the old `/people` path redirects there. Knowledge has no UI registration; `/knowledge` redirects to Paper. Neither redirect requires a row adapter.
 
 Every entry is `required: false`. The default configuration lists all of them except `mounts-ui`, which belongs next to a `mounts` entry.
 
