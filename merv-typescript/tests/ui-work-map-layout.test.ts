@@ -208,3 +208,21 @@ test('the keyboard reads rows left to right, and goes straight down to the neare
   assert.equal(beneath(layout, layout.order.at(-1)!, true), undefined);
   assert.equal(beneath(layout, 'gone', true), undefined);
 });
+
+test('the drawing stands in the middle of its frame, however few columns it fills', () => {
+  // One chain on a wide page: a single column, as far from the left edge as from the right.
+  const chain = workMapLayout(['a', 'b', 'c'], edges(['a', 'b'], ['b', 'c']), 1440)!;
+  const boxes = [...chain.at.values()];
+  const [left, right] = [
+    Math.min(...boxes.map((box) => box.x)),
+    Math.max(...boxes.map((box) => box.x + box.w)),
+  ];
+  assert.ok(
+    Math.abs(left - (1440 - right)) <= 1,
+    `${left} from the left, ${1440 - right} from the right`,
+  );
+  assert.ok(left > 400);
+  // Its lines run where its cards stand.
+  for (const wire of chain.wires)
+    assert.equal(Number(/^M(\d+)/.exec(wire.d)![1]), Math.round(centre(chain.at.get(wire.from)!)));
+});

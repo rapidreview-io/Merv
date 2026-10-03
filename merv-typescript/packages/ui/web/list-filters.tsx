@@ -114,6 +114,8 @@ export interface Filter<T> {
   /** True where Mine is pressed over a list that holds nothing of the reader's at all. */
   unowned: boolean;
   clear(): void;
+  /** Back to how the list opens: nothing typed, everyone's, the states it opens on. */
+  reset(): void;
   /** The record open beside the list, which stays a row whatever the filters say. */
   openId?: string;
 }
@@ -173,6 +175,11 @@ export function useListFilter<T extends { id: string }>(
     clear() {
       setQuery('');
       setChosen('');
+      setScope('everyone');
+    },
+    reset() {
+      setQuery('');
+      setChosen(undefined);
       setScope('everyone');
     },
     openId,
@@ -375,6 +382,8 @@ export function ListPage<T extends { id: string }>({
   columns = 2,
   drawn,
   listed = true,
+  lede,
+  reset,
   after,
 }: {
   load: { loading: boolean; error?: ApiError; data?: unknown; loadedAt?: string };
@@ -408,6 +417,13 @@ export function ListPage<T extends { id: string }>({
   drawn?: ReactNode;
   /** False while that drawing shows every kept row, so the rows are not said twice. */
   listed?: boolean;
+  /**
+   * Where the page's title line carries the controls: it is handed them and draws them at
+   * its end, the ones that narrow the list behind the one word `Filter`.
+   */
+  lede?(ends: ReactNode): ReactNode;
+  /** The way back to how the page opens, given only while it is narrowed away from that. */
+  reset?(): void;
   /** What a page states after its rows, where it holds a second list of another kind. */
   after?: ReactNode;
 }) {
@@ -433,7 +449,8 @@ export function ListPage<T extends { id: string }>({
       <button
         type="button"
         data-opens={key}
-        className={cx('btn', !item.plain && open !== key && 'btn--primary')}
+        // In a title line the page's own move is the accent; what opens a form is a word.
+        className={cx('btn', lede ? 'btn--quiet' : !item.plain && open !== key && 'btn--primary')}
         aria-expanded={open === key}
         // Cancel means what Escape means, and neither can take back a request in flight.
         disabled={open === key && locked}
@@ -467,124 +484,202 @@ export function ListPage<T extends { id: string }>({
       : 'Nothing matches';
   const lines = line ? rows.map((item) => line(item)) : [];
   const mixed = mixesKinds(lines);
-  return (
-    <div className="page-stage stack" ref={frame}>
-      <div className="stack controls">
-        {/* Where a page holds more than one list, the strip that chooses between them
-            runs the width of the page over the row that narrows the one chosen. */}
-        {narrow && <div className="tabs tabs--strip">{narrow}</div>}
-        <div className="action-row">
-          {/* The filters wrap among themselves, so the one control at the end of the
-              row keeps the same place however many states a list turns out to hold. */}
-          <div className="action-filters">
-            {total > 0 && (
-              <SearchField
-                label={`Search ${noun}`}
-                title={placeholder}
-                value={filter.query}
-                onChange={filter.setQuery}
-              />
-            )}
-            {total > 0 && filter.owned && (
-              <Segments
-                label={`Whose ${noun}`}
-                options={SCOPES}
-                value={filter.scope}
-                onChange={filter.setScope}
-              />
-            )}
-            {filter.states.length > 1 && (
-              <Chips
-                label={`State of ${noun}`}
-                options={filter.states.map(({ value, count }) => ({
-                  value,
-                  label: words(value),
-                  count,
-                }))}
-                value={filter.state}
-                onChange={(value) => filter.setState(filter.state === value ? '' : value)}
-              />
-            )}
-          </div>
-          {/* What the page can open ends the row, the quiet control before the primary one. */}
-          <div className="action-end">
-            {/* A quiet control beside nothing at all would be the page's only element. */}
-            {aside && (!vacant || open === 'aside') && control('aside', aside)}
-            {create && !offered && !load.loading && control('create', create)}
-          </div>
-        </div>
-        {open === 'aside' && aside && (
-          <Opened onClose={close} onLock={setLocked}>
-            {aside.form(close)}
-          </Opened>
-        )}
-        {creating && create && (
-          <Opened onClose={close} onLock={setLocked}>
-            {create.form(close)}
-          </Opened>
-        )}
-      </div>
-      <LoadState
-        {...load}
-        empty={total === 0 && !creating}
-        emptyTitle={emptyTitle}
-        emptyHint={emptyHint}
-        emptyKind={kind ?? place}
-        emptyAction={offered && control('create', create)}
-        columns={columns}
-      />
-      {total > 0 && !load.loading && rows.length === 0 && (
-        <LoadState
-          loading={false}
-          empty
-          emptyIcon="search"
-          emptyTitle={nothing}
-          emptyAction={
-            <button type="button" className="btn" onClick={filter.clear}>
-              Clear filters
-            </button>
-          }
+  const filters = (
+    <>
+      {total > 0 && (
+        <SearchField
+          label={`Search ${noun}`}
+          title={placeholder}
+          value={filter.query}
+          onChange={filter.setQuery}
         />
       )}
-      {drawn}
-      {/* A failed refresh degrades to the one stale line LoadState renders above; it
+      {total > 0 && filter.owned && (
+        <Segments
+          label={`Whose ${noun}`}
+          options={SCOPES}
+          value={filter.scope}
+          onChange={filter.setScope}
+        />
+      )}
+      {filter.states.length > 1 && (
+        <Chips
+          label={`State of ${noun}`}
+          options={filter.states.map(({ value, count }) => ({
+            value,
+            label: words(value),
+            count,
+          }))}
+          value={filter.state}
+          onChange={(value) => filter.setState(filter.state === value ? '' : value)}
+        />
+      )}
+    </>
+  );
+  // What the page can open ends the row, the quiet control before the primary one.
+  const ends = (
+    <>
+      {/* A quiet control beside nothing at all would be the page's only element. */}
+      {aside && (!vacant || open === 'aside') && control('aside', aside)}
+      {create && !offered && !load.loading && control('create', create)}
+    </>
+  );
+  return (
+    <div className={lede ? undefined : 'page-stage stack'} ref={frame}>
+      {lede && (
+        <div className="page-lede">
+          {lede(
+            <>
+              {total > 0 && (
+                <Narrowing reset={reset}>
+                  {narrow}
+                  {filters}
+                </Narrowing>
+              )}
+              {ends}
+            </>,
+          )}
+        </div>
+      )}
+      <Staged staged={!!lede}>
+        <div className="stack controls">
+          {/* Where a page holds more than one list, the strip that chooses between them
+            runs the width of the page over the row that narrows the one chosen. */}
+          {!lede && narrow && <div className="tabs tabs--strip">{narrow}</div>}
+          {!lede && (
+            <div className="action-row">
+              {/* The filters wrap among themselves, so the one control at the end of the
+                row keeps the same place however many states a list turns out to hold. */}
+              <div className="action-filters">{filters}</div>
+              <div className="action-end">{ends}</div>
+            </div>
+          )}
+          {open === 'aside' && aside && (
+            <Opened onClose={close} onLock={setLocked}>
+              {aside.form(close)}
+            </Opened>
+          )}
+          {creating && create && (
+            <Opened onClose={close} onLock={setLocked}>
+              {create.form(close)}
+            </Opened>
+          )}
+        </div>
+        <LoadState
+          {...load}
+          empty={total === 0 && !creating}
+          emptyTitle={emptyTitle}
+          emptyHint={emptyHint}
+          emptyKind={kind ?? place}
+          emptyAction={offered && control('create', create)}
+          columns={columns}
+        />
+        {total > 0 && !load.loading && rows.length === 0 && (
+          <LoadState
+            loading={false}
+            empty
+            emptyIcon="search"
+            emptyTitle={nothing}
+            emptyAction={
+              <button type="button" className="btn" onClick={filter.clear}>
+                Clear filters
+              </button>
+            }
+          />
+        )}
+        {drawn}
+        {/* A failed refresh degrades to the one stale line LoadState renders above; it
           never blanks rows that are still correct. */}
-      {listed &&
-        rows.length > 0 &&
-        (cards ? (
-          <div className={cards.className}>{rows.map((item) => cards.render(item))}</div>
-        ) : (
-          <ul className="rows">
-            {rows.map((item, index) => {
-              const { kind: of, name, standing } = lines[index]!;
-              const body = (
-                <>
-                  <span className="row-name">
-                    {mixed && of && <KindLabel kind={of} />}
-                    {name}
-                  </span>
-                  {standing}
-                </>
-              );
-              return (
-                <li className="row" key={item.id} onClick={opens ? undefined : openRow}>
-                  {opens ? (
-                    <Link
-                      className={cx('row-link', item.id === filter.openId && 'row-open')}
-                      // Beside an open record the list sits under that record's route.
-                      to={filter.openId === undefined ? item.id : `../${item.id}`}
-                    >
-                      {body}
-                    </Link>
-                  ) : (
-                    body
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        ))}
-      {after}
+        {listed &&
+          rows.length > 0 &&
+          (cards ? (
+            <div className={cards.className}>{rows.map((item) => cards.render(item))}</div>
+          ) : (
+            <ul className="rows">
+              {rows.map((item, index) => {
+                const { kind: of, name, standing } = lines[index]!;
+                const body = (
+                  <>
+                    <span className="row-name">
+                      {mixed && of && <KindLabel kind={of} />}
+                      {name}
+                    </span>
+                    {standing}
+                  </>
+                );
+                return (
+                  <li className="row" key={item.id} onClick={opens ? undefined : openRow}>
+                    {opens ? (
+                      <Link
+                        className={cx('row-link', item.id === filter.openId && 'row-open')}
+                        // Beside an open record the list sits under that record's route.
+                        to={filter.openId === undefined ? item.id : `../${item.id}`}
+                      >
+                        {body}
+                      </Link>
+                    ) : (
+                      body
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          ))}
+        {after}
+      </Staged>
+    </div>
+  );
+}
+
+/** The page's stage: the list's own frame, or a frame of its own under a title line. */
+const Staged = ({ staged, children }: { staged: boolean; children: ReactNode }) =>
+  staged ? <div className="page-stage stack">{children}</div> : <>{children}</>;
+
+/**
+ * The controls that narrow a list, behind one word at the end of the title line. The word
+ * opens them in a panel under itself, which a press outside it or Escape shuts; while the
+ * list is narrowed away from how it opens the word is lit and `Reset` stands beside it.
+ */
+function Narrowing({ reset, children }: { reset?(): void; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: Event) => {
+      if (event instanceof KeyboardEvent) {
+        if (event.key !== 'Escape') return;
+        // Shutting the panel is all this Escape means: the page keeps what else is open.
+        event.preventDefault();
+      } else if (box.current?.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', away, true);
+    return () => {
+      document.removeEventListener('mousedown', away);
+      document.removeEventListener('keydown', away, true);
+    };
+  }, [open]);
+  return (
+    <div className="narrowing" ref={box}>
+      <button
+        type="button"
+        className={cx('btn btn--quiet', reset && 'btn--on')}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        Filter
+      </button>
+      {reset && (
+        <button type="button" className="btn btn--quiet" onClick={reset}>
+          Reset
+        </button>
+      )}
+      {open && (
+        <div className="narrowing-panel" role="group" aria-label="Filter">
+          {children}
+        </div>
+      )}
     </div>
   );
 }

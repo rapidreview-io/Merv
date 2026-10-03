@@ -203,9 +203,13 @@ export function workMapLayout(
     for (const at of kept(row, col)) (used[at.row] ??= [])[at.col] = true;
     for (const [key, local] of cell) place.set(key, { col: col + local.col, row: row + local.row });
   }
+  // The drawing stands in the middle of its frame: a lone chain is not pushed to the left
+  // edge of a wide page, and a full page of cards starts where it always did.
+  const across = Math.max(...[...place.values()].map(({ col }) => col)) + 1;
+  const inset = Math.round((width - (across * (w + GAP_X) - GAP_X)) / 2);
   const at = new Map<string, MapBox>();
   for (const [key, { col, row }] of place)
-    at.set(key, { x: col * (w + GAP_X), y: row * (CARD_H + GAP_Y), w, h: CARD_H });
+    at.set(key, { x: inset + col * (w + GAP_X), y: row * (CARD_H + GAP_Y), w, h: CARD_H });
 
   const rowOf = (key: string) => place.get(key)!.row;
   const colOf = (key: string) => place.get(key)!.col;
@@ -228,7 +232,8 @@ export function workMapLayout(
   const laneOf = (id: string) => {
     const beside = lanes.get(gutterOf(id))!;
     return Math.round(
-      gutterOf(id) * (w + GAP_X) -
+      inset +
+        gutterOf(id) * (w + GAP_X) -
         GAP_X / 2 +
         (beside.indexOf(id) - (beside.length - 1) / 2) * Math.min(6, 16 / beside.length),
     );

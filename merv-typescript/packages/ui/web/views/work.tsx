@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
@@ -6,7 +6,7 @@ import type { CodeProjectStatus } from '@merv/contracts/code';
 import { refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
-import { Chips, ListPage, Tabs, useListFilter } from '../list-filters';
+import { Chips, ListPage, useListFilter } from '../list-filters';
 import { RecordPicker, useWorkPicks } from '../record-picker';
 import { useSession } from '../session';
 import { OPEN, ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
@@ -264,7 +264,12 @@ function WaveList({ shell }: { shell: ShellData }) {
   );
   // Review clauses move with the record beside the list: a claim or a verdict must show.
   const reviews = useTool<Review[]>(rowOf('reviews') ? 'review.list' : null, {}, { every: 8000 });
-  const cycles = useTool<ResearchRecord[]>(cyclesRow ? 'research.list' : null);
+  const cycles = useTool<ResearchRecord[]>(
+    cyclesRow ? 'research.list' : null,
+    {},
+    { every: 10000 },
+  );
+  const all = newest(cycles.data ?? [], (item) => item.workflow.updatedAt);
   const waves = useTool<Reflection[]>(wavesRow ? 'reflection.list' : null, {}, { every: 8000 });
   const navigate = useNavigate();
   // The cycle the head shows is the one the narrowing means.
@@ -390,35 +395,54 @@ function WaveList({ shell }: { shell: ShellData }) {
     ]),
   };
   return (
-    <>
-      {/* The cycle stands where every other page's title line stands, and above the list
-          beside an open record, so its one move is never a page away. */}
-      <div className="page-lede">
-        <CycleHead shell={shell} chosen={chosen} onChoose={setChosen} />
-      </div>
-      <ListPage
-        load={load}
-        drawn={
-          <div className="wmap-stage">
-            <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
-            <LiveUnder agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path} />
-          </div>
-        }
-        listed={!drawn}
-        noun="work"
-        kind="work"
-        placeholder="Name, question or person"
-        filter={{
-          ...filter,
-          filtering: filter.filtering || kind !== ALL,
-          clear() {
-            filter.clear();
-            setKind(ALL);
-          },
-        }}
-        narrow={
-          narrowings.length > 1 && (
-            <Tabs
+    <ListPage
+      load={load}
+      // The cycle stands where every other page's title line stands, its one move beside
+      // it, and after that the one word that narrows the map and the one that starts work.
+      lede={(ends) => <CycleHead shell={shell} cycle={cycle} onSaved={cycles.reload} ends={ends} />}
+      reset={
+        only || chosen
+          ? () => {
+              filter.reset();
+              setKind(ALL);
+              setChosen(undefined);
+            }
+          : undefined
+      }
+      drawn={
+        <div className="wmap-stage">
+          <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
+          <LiveUnder agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path} />
+        </div>
+      }
+      listed={!drawn}
+      noun="work"
+      kind="work"
+      placeholder="Name, question or person"
+      filter={{
+        ...filter,
+        filtering: filter.filtering || kind !== ALL,
+        clear() {
+          filter.clear();
+          setKind(ALL);
+        },
+      }}
+      narrow={
+        <>
+          {all.length > 1 && (
+            <Chips
+              label="Research cycle"
+              options={all.map((item) => ({
+                value: item.id,
+                label: item.name,
+                count: words(item.workflow.state),
+              }))}
+              value={cycle!.id}
+              onChange={setChosen}
+            />
+          )}
+          {narrowings.length > 1 && (
+            <Chips
               label="Kind of work"
               options={[[ALL, 'All'] as const, ...narrowings].map(([value, label]) => ({
                 value,
@@ -428,85 +452,81 @@ function WaveList({ shell }: { shell: ShellData }) {
               value={kind}
               onChange={setKind}
             />
-          )
-        }
-        emptyTitle="No work yet"
-        create={
-          // Under its own tab the thing to start is a reflection; anywhere else, a cycle.
-          kind === 'reflections'
-            ? {
-                label: 'New reflection',
-                shown: actor.role === 'operator' || actor.role === 'producer',
-                form: () => (
-                  <CreateReflection
-                    onCreated={(wave) => navigate(`${wavesRow!.path}/${wave.id}`)}
-                  />
-                ),
-              }
-            : cyclesRow && {
-                label: 'New cycle',
-                shown: actor.role === 'operator' || actor.role === 'producer',
-                form: (close) => (
-                  <CreateResearch
-                    onSaved={() => {
-                      close();
-                      cycles.reload();
-                    }}
-                  />
-                ),
-              }
-        }
-        line={(item) => {
-          const review = newestReview(reviews.data, item.id);
-          const said = reviewClause(review, nameOf(review?.reviewerId));
-          const who = nameOf(item.owner);
-          return {
-            kind: item.kind,
-            name: (
-              <span className="chain" style={step(item)}>
-                {item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
-                <Link
-                  className={cx('row-link', item.id === filter.openId && 'row-open')}
-                  to={item.to}
-                >
-                  <strong>{item.name}</strong>
-                </Link>
-              </span>
-            ),
-            standing: (
-              <div className="chain chain--under" style={step(item)}>
-                <ThreeStates
-                  stage={<StageMark shapes={shell.workflows} workflow={item.flow} />}
-                  // A review is a record of its own, so the clause is the way to its verdict.
-                  review={
-                    said && review && reviewsPath
-                      ? { ...said, to: `${reviewsPath}/${review.id}` }
-                      : (said ?? undefined)
-                  }
-                  outcome={
-                    firstSentence(item.outcome)
-                      ? { detail: firstSentence(item.outcome) }
-                      : undefined
-                  }
-                  meta={
-                    <>
-                      {who && `${who} · `}
-                      <Ago at={item.at} />
-                    </>
-                  }
+          )}
+        </>
+      }
+      emptyTitle="No work yet"
+      create={
+        // Under its own tab the thing to start is a reflection; anywhere else, a cycle.
+        kind === 'reflections'
+          ? {
+              label: 'New reflection',
+              shown: actor.role === 'operator' || actor.role === 'producer',
+              form: () => (
+                <CreateReflection onCreated={(wave) => navigate(`${wavesRow!.path}/${wave.id}`)} />
+              ),
+            }
+          : cyclesRow && {
+              label: 'New cycle',
+              shown: actor.role === 'operator' || actor.role === 'producer',
+              form: (close) => (
+                <CreateResearch
+                  onSaved={() => {
+                    close();
+                    cycles.reload();
+                  }}
                 />
-                {/* A line of its own: in the narrow pane it would crowd the owner and the time. */}
-                {item.waits.length > 0 && (
-                  <p className="chain-waits">Waits on {item.waits.join(', ')}</p>
-                )}
-                {/* Who is on it and where, each the way to that agent's or machine's sidebar. */}
-                <LiveLines id={item.id} />
-              </div>
-            ),
-          };
-        }}
-      />
-    </>
+              ),
+            }
+      }
+      line={(item) => {
+        const review = newestReview(reviews.data, item.id);
+        const said = reviewClause(review, nameOf(review?.reviewerId));
+        const who = nameOf(item.owner);
+        return {
+          kind: item.kind,
+          name: (
+            <span className="chain" style={step(item)}>
+              {item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
+              <Link
+                className={cx('row-link', item.id === filter.openId && 'row-open')}
+                to={item.to}
+              >
+                <strong>{item.name}</strong>
+              </Link>
+            </span>
+          ),
+          standing: (
+            <div className="chain chain--under" style={step(item)}>
+              <ThreeStates
+                stage={<StageMark shapes={shell.workflows} workflow={item.flow} />}
+                // A review is a record of its own, so the clause is the way to its verdict.
+                review={
+                  said && review && reviewsPath
+                    ? { ...said, to: `${reviewsPath}/${review.id}` }
+                    : (said ?? undefined)
+                }
+                outcome={
+                  firstSentence(item.outcome) ? { detail: firstSentence(item.outcome) } : undefined
+                }
+                meta={
+                  <>
+                    {who && `${who} · `}
+                    <Ago at={item.at} />
+                  </>
+                }
+              />
+              {/* A line of its own: in the narrow pane it would crowd the owner and the time. */}
+              {item.waits.length > 0 && (
+                <p className="chain-waits">Waits on {item.waits.join(', ')}</p>
+              )}
+              {/* Who is on it and where, each the way to that agent's or machine's sidebar. */}
+              <LiveLines id={item.id} />
+            </div>
+          ),
+        };
+      }}
+    />
   );
 }
 
@@ -618,48 +638,31 @@ export function CycleMove({
 /** The cycle that frames the wave: what it is called, where it stands, its one move. */
 function CycleHead({
   shell,
-  chosen,
-  onChoose,
+  cycle,
+  onSaved,
+  ends,
 }: {
   shell: ShellData;
-  chosen?: string;
-  onChoose: (id: string) => void;
+  cycle?: ResearchRecord;
+  onSaved(): void;
+  /** What the page hangs at the end of its title line: its filter, and what it can start. */
+  ends: ReactNode;
 }) {
   const { actor } = useSession();
   const cyclesRow = shell.rows.find((row) => row.view.kind === 'research');
-  const cycles = useTool<ResearchRecord[]>(
-    cyclesRow ? 'research.list' : null,
-    {},
-    { every: 10000 },
-  );
-  const all = newest(cycles.data ?? [], (cycle) => cycle.workflow.updatedAt);
-  const cycle = all.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
-  // With no cycle the page is its title: the absent switch already says there is none.
-  if (!cycle || !cyclesRow) return <PageHeader title="Work" />;
+  // With no cycle the page is its title.
+  if (!cycle || !cyclesRow) return <PageHeader title="Work" actions={ends} />;
   const writable =
     actor.role === 'operator' || (actor.role === 'producer' && cycle.ownerId === actor.id);
   return (
     <PageHeader
       title={<Link to={`${cyclesRow.path}/${cycle.id}`}>{cycle.name}</Link>}
       actions={
-        <div className="cluster">
+        <>
           <StatusPill value={cycle.workflow.state} />
-          {writable && <CycleMove cycle={cycle} shell={shell} onSaved={cycles.reload} />}
-        </div>
-      }
-      summary={
-        all.length > 1 && (
-          <Chips
-            label="Research cycle"
-            options={all.map((item) => ({
-              value: item.id,
-              label: item.name,
-              count: words(item.workflow.state),
-            }))}
-            value={cycle.id}
-            onChange={onChoose}
-          />
-        )
+          {writable && <CycleMove cycle={cycle} shell={shell} onSaved={onSaved} />}
+          {ends}
+        </>
       }
     />
   );

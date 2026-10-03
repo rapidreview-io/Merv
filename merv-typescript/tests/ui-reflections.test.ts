@@ -179,7 +179,7 @@ test('before its report a wave opens on its first lens, and an address it cannot
   assert.deepEqual(read(), ['The evidence lens']);
 });
 
-test('where the map is drawn the Work page lists nothing under it, and the filter row narrows the map', async (t) => {
+test('the Work page is its title line and the map: nothing is listed, and Filter narrows what is drawn', async (t) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const global = globalThis as any;
   global.ResizeObserver = class {
@@ -239,7 +239,18 @@ test('where the map is drawn the Work page lists nothing under it, and the filte
   // As the page opens: the open work, drawn once and listed nowhere.
   assert.deepEqual(cards().sort(), ['work:wf_sweep', 'work:wf_wave']);
   assert.equal(document.querySelector('ul.rows'), null);
-  assert.ok(document.querySelector('.controls + .wmap-stage, .controls ~ .wmap-stage'));
+  // No row of tabs and chips stands over the map: one word in the title line opens them.
+  assert.equal(document.querySelector('.action-row, .tabs--strip'), null);
+  const word = (name: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>('.page-actions button')].find(
+      (button) => button.textContent === name,
+    );
+  assert.equal(document.querySelector('.narrowing-panel'), null);
+  assert.equal(word('Reset'), undefined, 'nothing is narrowed yet');
+  await act(async () => word('Filter')!.click());
+  assert.ok(
+    document.querySelector('.narrowing-panel [aria-label="Search work"], .narrowing-panel input'),
+  );
   const press = async (label: string, name: string) => {
     const button = [...document.querySelectorAll(`[aria-label="${label}"] button`)].find((item) =>
       item.textContent?.startsWith(name),
@@ -254,6 +265,11 @@ test('where the map is drawn the Work page lists nothing under it, and the filte
   await press('State of work', 'done');
   assert.deepEqual(cards(), ['work:wf_pin']);
   assert.equal(document.querySelector('ul.rows'), null);
+  // Narrowed, the word is lit and Reset is the way back to how the page opens.
+  assert.ok(word('Filter')!.classList.contains('btn--on'));
+  await act(async () => word('Reset')!.click());
+  assert.deepEqual(cards().sort(), ['work:wf_sweep', 'work:wf_wave']);
+  assert.equal(word('Reset'), undefined);
 });
 
 test('with no room to draw, the Work page lists the same work as rows, a reflection among them', async (t) => {

@@ -1071,6 +1071,44 @@ details.stack > summary {
   border-color: var(--active-fill);
   background: color-mix(in srgb, var(--active-fill) 85%, #000000);
 }
+/* A word at the end of a title line: a control that waits to be wanted, in the muted ink
+   until the pointer or the list's own state lights it. */
+.btn--quiet {
+  border-color: transparent;
+  background: none;
+  color: var(--muted);
+}
+.btn--quiet.btn--on {
+  color: var(--text);
+}
+/* The controls that narrow a page, in a panel under the one word that opens them. */
+.narrowing {
+  position: relative;
+  display: flex;
+  gap: var(--space-1);
+}
+.narrowing-panel {
+  position: absolute;
+  top: calc(100% + var(--space-2));
+  right: 0;
+  z-index: 5;
+  /* A grid, not a column of flex items: the controls keep the heights they have in a row. */
+  display: grid;
+  gap: var(--space-3);
+  width: min(440px, 92vw);
+  padding: var(--space-3);
+  background: var(--bg-elev);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.narrowing-panel > * {
+  justify-self: start;
+}
+.narrowing-panel > .search {
+  justify-self: stretch;
+  max-width: none;
+}
 .btn--sm {
   padding: 3px 9px;
   font-size: var(--text-xs);
