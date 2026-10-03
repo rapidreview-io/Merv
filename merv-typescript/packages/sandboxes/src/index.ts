@@ -41,6 +41,7 @@ import { nativeRoutes } from './native-api.js';
 import { NativeMachineReader, type NativeMachineReads } from './native-machines.js';
 
 export type {
+  SandboxCheckCleanup,
   Sandboxes,
   SandboxCheckHandle,
   SandboxChecks,

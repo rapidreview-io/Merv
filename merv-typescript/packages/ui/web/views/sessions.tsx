@@ -527,7 +527,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
             />
           ),
         })}
-        after={selectedAgent && <AgentDetail agent={selectedAgent} close={close} />}
+        after={selectedAgent && <AgentDetail agent={selectedAgent} rowId={row.id} close={close} />}
       />
     </>
   );

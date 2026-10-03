@@ -3,14 +3,20 @@
  * blank a list that is still correct, call a lease lapsed on a clock its data
  * never saw, hide its own subject, or report a halt it cannot vouch for.
  */
-import test from 'node:test';
+import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { click, jump, mount, serve, settle, text, unmount } from './ui-render.js';
+import type { AgentSummary } from '@merv/contracts/types';
+import { click, jump, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
-const { createElement } = await import('react');
+const { createElement, useState } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { AgentsPage } = await import('../packages/ui/web/views/sessions.js');
+const { setProject, setToken } = await import('../packages/ui/web/api.js');
+const { AgentDetail } = await import('../packages/ui/web/views/agent-sessions-panel.js');
+
+// Every test opens a fresh account scope, including the shared tool-result cache.
+beforeEach(() => setToken('ui-sessions-fixture'));
 
 const row = {
   id: 'sessions',
@@ -274,15 +280,21 @@ test('a failed lease shows both the outcome and the runner exit reason', async (
     tools: [],
   };
   serve('/tools/ui.read', () => read({ sessions: [ended] }));
-  serve('/sessions/agents/agent_1/observation', {
-    body: {
-      agent: status().agents[0],
-      assignments: [ended],
-      toolCalls: [],
-      toolCallTotal: 0,
-      tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
-      tokenAccounting: { kind: 'estimate', method: 'test' },
-    },
+  serve('/tools/ui.read', (_count, input) => {
+    if (!input.params) return read({ sessions: [ended] });
+    assert.deepEqual(input, { rowId: 'sessions', params: { agentId: 'agent_1' } });
+    return {
+      body: {
+        result: {
+          agent: status().agents[0],
+          assignments: [ended],
+          toolCalls: [],
+          toolCallTotal: 0,
+          tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
+          tokenAccounting: { kind: 'estimate', method: 'test' },
+        },
+      },
+    };
   });
   await mount(page());
   const opener = document.querySelector<HTMLButtonElement>('.agent-select')!;
@@ -439,15 +451,21 @@ test('choosing an agent brings its panel to the top of the view, and again once 
   };
   t.after(() => delete proto.scrollIntoView);
   serve('/tools/ui.read', () => read());
-  serve('/sessions/agents/agent_1/observation', {
-    body: {
-      agent: status().agents[0],
-      assignments: [],
-      toolCalls: [],
-      toolCallTotal: 0,
-      tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
-      tokenAccounting: { kind: 'estimate', method: 'test' },
-    },
+  serve('/tools/ui.read', (_count, input) => {
+    if (!input.params) return read();
+    assert.deepEqual(input, { rowId: 'sessions', params: { agentId: 'agent_1' } });
+    return {
+      body: {
+        result: {
+          agent: status().agents[0],
+          assignments: [],
+          toolCalls: [],
+          toolCallTotal: 0,
+          tokenStats: { inputTokens: 0, outputTokens: 0, completedCalls: 0, totalCalls: 0 },
+          tokenAccounting: { kind: 'estimate', method: 'test' },
+        },
+      },
+    };
   });
   await mount(page());
   // The lease over the list names the same agent, so the row is found by what it is.
@@ -506,4 +524,122 @@ test('an agent a runner started is named for that runner, as the Runners table n
     'qa-launcher',
   ]);
   assert.ok(!text().includes(runner) && !text().includes(gone), 'a raw runner id names nobody');
+});
+
+const agent = (id: string) =>
+  ({
+    id,
+    name: `Agent ${id}`,
+    status: 'active',
+    createdAt: new Date().toISOString(),
+  }) as AgentSummary;
+const observation = (id: string, tool: string) => ({
+  agent: agent(id),
+  assignments: [],
+  toolCalls: [
+    {
+      id: 'call',
+      tool,
+      status: 'succeeded',
+      startedAt: new Date().toISOString(),
+      durationMs: 20,
+      inputTokens: 1,
+      outputTokens: 2,
+    },
+  ],
+  toolCallTotal: 1,
+  tokenStats: { inputTokens: 1, outputTokens: 2, completedCalls: 1, totalCalls: 1 },
+});
+
+test('agent observation keeps its last good read on failure, pauses while hidden, and refreshes on return', async (t) => {
+  t.after(unmount);
+  let hidden = false;
+  const original = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+  Object.defineProperty(document, 'visibilityState', {
+    configurable: true,
+    get: () => (hidden ? 'hidden' : 'visible'),
+  });
+  t.after(() =>
+    original
+      ? Object.defineProperty(document, 'visibilityState', original)
+      : Reflect.deleteProperty(document, 'visibilityState'),
+  );
+  let reads = 0;
+  serve('/tools/ui.read', (_count, input) => {
+    assert.deepEqual(input, { rowId: 'sessions', params: { agentId: 'first' } });
+    reads++;
+    return reads === 2
+      ? { network: true }
+      : {
+          body: { result: observation('first', reads === 1 ? 'retained.call' : 'refreshed.call') },
+        };
+  });
+  await mount(createElement(AgentDetail, { agent: agent('first'), rowId: 'sessions', close() {} }));
+  assert.match(text(), /retained.call/);
+  hidden = true;
+  await settle(4200);
+  assert.equal(reads, 2);
+  assert.match(text(), /Could not refresh/);
+  assert.match(text(), /retained.call/, 'a failed poll does not blank the last observation');
+  await settle(4200);
+  assert.equal(reads, 2, 'hidden tabs stop polling');
+  hidden = false;
+  await act(async () => document.dispatchEvent(new window.Event('visibilitychange')));
+  await settle();
+  assert.equal(reads, 3);
+  assert.match(text(), /refreshed.call/);
+  assert.doesNotMatch(text(), /Could not refresh/);
+  assert.ok(requests.every((request) => !request.includes('/sessions/agents/')));
+});
+
+test('late observations cannot replace the selected agent or survive a project change', async (t) => {
+  t.after(unmount);
+  const fixtureFetch = globalThis.fetch;
+  t.after(() => {
+    globalThis.fetch = fixtureFetch;
+  });
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = async (...args) => {
+    const response = await fixtureFetch(...args);
+    if (JSON.parse(String(args[1]?.body ?? '{}')).params?.agentId === 'first') await delayed;
+    return response;
+  };
+  serve('/tools/ui.read', (_count, input) => ({
+    body: {
+      result: observation(
+        String((input.params as { agentId: string }).agentId),
+        `${(input.params as { agentId: string }).agentId}.call`,
+      ),
+    },
+  }));
+  function Selected() {
+    const [selected, select] = useState('first');
+    return createElement(
+      'div',
+      {},
+      createElement('button', { onClick: () => select('second') }, 'Choose second'),
+      createElement(AgentDetail, { agent: agent(selected), rowId: 'sessions', close() {} }),
+    );
+  }
+  await mount(createElement(Selected));
+  await click('Choose second');
+  assert.match(text(), /second.call/);
+  release();
+  await settle();
+  assert.match(text(), /second.call/);
+  assert.doesNotMatch(text(), /first.call/);
+  serve('/tools/ui.read', {
+    status: 404,
+    body: { error: { code: 'agent_not_found', message: 'Agent not found in this project' } },
+  });
+  await act(async () => setProject('another-project'));
+  await settle();
+  assert.doesNotMatch(text(), /second.call/, 'old project activity is discarded');
+  assert.match(
+    document.querySelector('[role="alert"]')?.textContent ?? '',
+    /Agent not found in this project/,
+  );
 });

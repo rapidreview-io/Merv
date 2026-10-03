@@ -205,6 +205,22 @@ class RecoveryTests(unittest.TestCase):
         self.assertEqual([p.parent.name for p in self.r.bucket.glob('*/COMPLETE.json')], [first])
         self.assertTrue(self.r.control['State']['Running'])
 
+    def test_cleanup_queue_blocks_capture_even_with_older_host_configuration(self):
+        self.r.idle()  # Pre-v3 schema remains supported.
+        self.write('CREATE TABLE audit.code_base_cleanup(sandbox_id text, next_at text);')
+        self.r.idle()
+        # Unknown ownership and slow retries both remain outstanding, even with no
+        # active base handle and with the old explicit idle_tables configuration.
+        for values in ("NULL,NULL", "'sbx_pending','2099-01-01T00:00:00Z'"):
+            self.write(f'INSERT INTO audit.code_base_cleanup VALUES ({values});')
+            with self.assertRaisesRegex(m.Failure, 'pending Code cleanup'):
+                self.r.create()
+            self.assertTrue(self.r.control['State']['Running'])
+            self.assertFalse(self.r.resume.exists())
+            self.assertFalse(any(self.r.bucket.glob('*/COMPLETE.json')))
+            self.write('DELETE FROM audit.code_base_cleanup;')
+        self.r.idle()
+
     def test_incomplete_upload_does_not_publish_or_prune(self):
         first = self.r.create()['snapshot']
         self.r.fail_upload = True

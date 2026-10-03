@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import type { CodeCheckSpec } from '@merv/contracts';
 import type {
   SandboxCheckHandle,
+  SandboxCheckCleanup,
   SandboxCheckPlan,
   SandboxCheckSpec,
   SandboxCheckVerdict,
@@ -12,6 +13,8 @@ import type {
 import { checkScript } from '@merv/sandboxes';
 import { checkBriefSections, checkResolutionCheck } from '@merv/code-research/base-check';
 import { baseFixture } from './fixtures/code-bases.js';
+import { migrateBases } from '@merv/code/base-schema';
+import { openState } from './fixtures/state.js';
 
 /**
  * The project check of a base, end to end against a scripted adapter. Nothing here executes
@@ -99,7 +102,7 @@ function scripted(verdicts: SandboxCheckVerdict[] = [], readyAfter = 1) {
         }
       );
     },
-    async release(_projectId: string, handle: SandboxCheckHandle) {
+    async release(_projectId: string, handle: SandboxCheckCleanup) {
       log.push(`release ${handle.sandboxId} ${handle.jobId} ${handle.objectId}`);
     },
   };
@@ -148,6 +151,20 @@ const row = async (f: Fixture, key: string) =>
       key,
     ),
   ))!;
+
+const pending = async (f: Fixture) =>
+  await f.state.read((sql) =>
+    sql.all<{
+      cleanup_id: string;
+      execution_epoch: number | string | null;
+      sandbox_id: string | null;
+      job_id: string | null;
+      object_id: string | null;
+      attempts: number | string;
+      reason: string | null;
+      next_at: string | null;
+    }>('SELECT * FROM code_base_cleanup WHERE project_id=? ORDER BY cleanup_id', f.projectId),
+  );
 
 const held = (f: Fixture, key: string) =>
   execFileSync(
@@ -350,7 +367,12 @@ test('a suspended check gives its machine back, and a quarantine keeps a recorde
   });
   const suspended = await row(f, base.key);
   assert.equal(suspended.check_state, 'none', 'a check with no verdict is put back');
-  assert.ok(suspended.check_job_json, 'and the handle stays so the machine can be reclaimed');
+  assert.equal(
+    suspended.check_job_json,
+    null,
+    'the stopped execution gives cleanup ownership away',
+  );
+  assert.equal((await pending(f))[0].sandbox_id, 'sbx_1', 'the cleanup record retains its machine');
   await f.bases.work(f.projectId);
   assert.ok(
     adapter.log.some((line) => line.startsWith('release sbx_1')),
@@ -535,7 +557,7 @@ test('an interrupted first step rents nothing twice, and no command means no mac
   assert.equal(quiet.machines(), 0, 'no command, no machine');
 });
 
-test('an unbound adapter keeps the handle, and withdrawing the command seals the base', async (t) => {
+test('an unbound adapter keeps cleanup ownership, and withdrawing the command seals the base', async (t) => {
   const f = await baseFixture(t);
   const adapter = scripted([], 1000);
   f.bases.checks = adapter.checks;
@@ -545,8 +567,8 @@ test('an unbound adapter keeps the handle, and withdrawing the command seals the
   await settle(f, 2);
   const machine = (await row(f, base.key)).check_job_json;
   assert.ok(machine, 'a machine is named on the row');
-  // The sandboxes plugin is disposed while the machine is out. The handle is the only
-  // name Merv holds for it, so a drain with no adapter must not forget it.
+  // The sandboxes plugin is disposed while the machine is out. Cleanup ownership
+  // survives without an adapter, independently of the stopped execution.
   f.bases.checks = undefined;
   await f.bases.control(f.scope, f.admin, {
     key: base.key,
@@ -555,10 +577,11 @@ test('an unbound adapter keeps the handle, and withdrawing the command seals the
     requestId: 'req-unbound',
   });
   await settle(f, 2);
-  assert.equal(
-    (await row(f, base.key)).check_job_json,
-    machine,
-    'the rented machine is still nameable when an adapter comes back',
+  assert.equal((await row(f, base.key)).check_job_json, null);
+  assert.deepEqual(
+    (await pending(f)).map((cleanup) => [cleanup.sandbox_id, cleanup.object_id]),
+    [[JSON.parse(machine).sandboxId, JSON.parse(machine).objectId]],
+    'all cleanup identifiers survive while the adapter is absent',
   );
 
   // An operator who turns verification off mid-check has said no verification is wanted;
@@ -645,4 +668,332 @@ test('a failing check replaces both Git headings in the brief with what has to p
     null,
     'a Git conflict keeps Git’s own headings',
   );
+});
+
+test('the populated cleanup migration retains legacy ownership without inventing identifiers', async (t) => {
+  const state = await openState();
+  t.after(() => state.close());
+  const migrate = state.migrate.bind(state);
+  state.migrate = (component, migrations) =>
+    migrate(
+      component,
+      migrations.filter((m) => m.version <= 2),
+    );
+  await migrateBases(state);
+  state.migrate = migrate;
+  const warnings = [
+    'code_check_unreclaimed: sandbox sbx_old could not be given back (503)',
+    'code_check_unreclaimed: sandbox unnamed could not be given back (503)',
+    'code_check_unreclaimed: lost historical identity',
+  ];
+  await state.transaction(async (tx) => {
+    for (const [i, warning] of warnings.entries())
+      await tx.run(
+        "INSERT INTO code_bases(project_id,base_key,members_json,left_key,right_key,engine,state,created_at,updated_at,execution_epoch,blocker) VALUES ('project',?,'[]','left','right','old','cancelled',?,?,9,?)",
+        String(i),
+        '2026-01-01T00:00:00.000Z',
+        '2026-01-02T00:00:00.000Z',
+        warning,
+      );
+  });
+  await migrateBases(state);
+  await migrateBases(state);
+  state.migrate = (component, migrations) =>
+    migrate(
+      component,
+      migrations.filter((m) => m.version <= 2),
+    );
+  await assert.rejects(
+    migrateBases(state),
+    { code: 'migration_ahead' },
+    'the old image cannot silently ignore the new cleanup owner',
+  );
+  state.migrate = migrate;
+  const rows = await state.read((sql) =>
+    sql.all<{
+      sandbox_id: string | null;
+      execution_epoch: number | null;
+      job_id: string | null;
+      object_id: string | null;
+      reason: string;
+      next_at: string | null;
+    }>('SELECT * FROM code_base_cleanup ORDER BY base_key'),
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.sandbox_id, row.execution_epoch, row.job_id, row.object_id]),
+    [
+      ['sbx_old', null, null, null],
+      [null, null, null, null],
+      [null, null, null, null],
+    ],
+  );
+  assert.deepEqual(
+    rows.map((row) => row.reason),
+    warnings,
+    'the original evidence remains intact',
+  );
+  assert.deepEqual(
+    rows.map((row) => row.next_at),
+    ['2026-01-02T00:00:00.000Z', null, null],
+  );
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.all('SELECT state,execution_epoch,blocker FROM code_bases ORDER BY base_key'),
+    ),
+    warnings.map(() => ({ state: 'cancelled', execution_epoch: 9, blocker: null })),
+  );
+});
+
+test('cleanup survives restart and replacement epochs, retaining resources until release acknowledges them', async (t) => {
+  const f = await baseFixture(t);
+  t.mock.method(f.bases, 'soon', () => {});
+  const adapter = scripted([], 1000);
+  const released: SandboxCheckCleanup[] = [];
+  let accept = false;
+  adapter.checks.release = async (_project, resources) => {
+    released.push({ ...resources });
+    if (!accept) throw new Error('source deletion refused');
+  };
+  f.bases.checks = adapter.checks;
+  await configure(f, SPEC);
+  const base = await f.state.transaction((tx) =>
+    f.bases.ensure(tx, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  await settle(f, 2);
+  const original = JSON.parse((await row(f, base.key)).check_job_json!);
+  const control = async (action: string) =>
+    f.bases.control(f.scope, f.admin, {
+      key: base.key,
+      action,
+      reason: 'change execution',
+      requestId: `control-${action}-${released.length}`,
+    });
+  await control('suspend');
+  await settle(f, 4);
+  assert.equal(Number((await pending(f))[0].attempts), 4);
+  const reservation = async (epoch: number) =>
+    f.state.read((sql) =>
+      sql.get<{ settled_at: string | null }>(
+        "SELECT settled_at FROM session_service_work WHERE provider='code.check' AND operation_id=? AND execution_epoch=?",
+        `${f.projectId}:${base.key}`,
+        epoch,
+      ),
+    );
+  assert.equal(
+    (await reservation(original.epoch))?.settled_at,
+    null,
+    'fast cleanup still holds original capacity',
+  );
+  await settle(f, 1);
+  assert.ok(
+    (await reservation(original.epoch))?.settled_at,
+    'fifth refusal settles the original check',
+  );
+  const next = (await pending(f))[0].next_at;
+  await control('resume');
+  await settle(f, 2);
+  const replacement = JSON.parse((await row(f, base.key)).check_job_json!);
+  assert.notEqual(replacement.epoch, original.epoch);
+  assert.equal((await reservation(replacement.epoch))?.settled_at, null);
+  assert.equal(
+    (await pending(f))[0].next_at,
+    next,
+    'operator actions do not reset cleanup backoff',
+  );
+  let standing = await f.state.read((sql) => f.bases.checkOf(sql, f.projectId, base.key));
+  assert.equal(standing?.sandboxId, 'sbx_2');
+  assert.deepEqual(standing?.cleanupSandboxIds, ['sbx_1']);
+  assert.deepEqual(standing?.unreclaimed, { sandboxId: 'sbx_1' });
+  await control('suspend');
+  assert.equal((await pending(f)).length, 2, 'earlier ownership coexists with replacement cleanup');
+  await f.bases.close();
+  const restarted = f.worker();
+  restarted.checks = adapter.checks;
+  await restarted.initialize();
+  await restarted.work(f.projectId);
+  assert.equal(
+    released.filter((r) => r.sandboxId === 'sbx_1').length,
+    5,
+    'restart honors persisted slow retry',
+  );
+  assert.equal(
+    (await reservation(replacement.epoch))?.settled_at,
+    null,
+    'old cleanup cannot settle the replacement',
+  );
+  f.advance(5 * 60_000);
+  accept = true;
+  await restarted.work(f.projectId);
+  assert.deepEqual(
+    released.filter((r) => r.sandboxId === 'sbx_1').at(-1),
+    { sandboxId: 'sbx_1', jobId: null, objectId: 'obj_1' },
+    'slow retries retain the source ID',
+  );
+  assert.deepEqual(await pending(f), []);
+  standing = await f.state.read((sql) => restarted.checkOf(sql, f.projectId, base.key));
+  assert.equal(standing?.unreclaimed, null);
+  const record = await f.state.read((sql) =>
+    restarted.find(sql, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  assert.equal(record?.blocker, null, 'no obsolete cleanup warning survives verified release');
+  assert.ok((await reservation(replacement.epoch))?.settled_at);
+});
+
+test('a late machine start fenced by an operator durably transfers its cleanup before returning', async (t) => {
+  const f = await baseFixture(t);
+  t.mock.method(f.bases, 'soon', () => {});
+  const adapter = scripted();
+  const start = adapter.checks.start;
+  let entered!: () => void;
+  const entering = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let resume!: () => void;
+  const resumed = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  adapter.checks.start = async (project, spec) => {
+    const result = await start(project, spec);
+    entered();
+    await resumed;
+    return result;
+  };
+  adapter.checks.release = async () => {
+    throw new Error('cannot release yet');
+  };
+  f.bases.checks = adapter.checks;
+  await configure(f, SPEC);
+  const base = await f.state.transaction((tx) =>
+    f.bases.ensure(tx, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  await settle(f, 1);
+  const work = f.bases.work(f.projectId);
+  await entering;
+  await f.bases.control(f.scope, f.admin, {
+    key: base.key,
+    action: 'cancel',
+    reason: 'stop',
+    requestId: 'stop-late',
+  });
+  resume();
+  await work;
+  assert.equal((await row(f, base.key)).check_job_json, null);
+  assert.deepEqual(
+    (await pending(f)).map((r) => [r.sandbox_id, r.object_id, Number(r.execution_epoch)]),
+    [['sbx_1', 'obj_1', 1]],
+  );
+  assert.equal((await row(f, base.key)).state, 'cancelled');
+});
+
+test('unknown legacy cleanup stays visible across operator actions and never releases empty identifiers', async (t) => {
+  const f = await baseFixture(t);
+  t.mock.method(f.bases, 'soon', () => {});
+  const adapter = scripted();
+  f.bases.checks = adapter.checks;
+  const base = await f.state.transaction(async (tx) => {
+    const base = await f.bases.ensure(tx, f.projectId, [f.commits.a, f.commits.b]);
+    await tx.run(
+      "INSERT INTO code_base_cleanup(project_id,base_key,cleanup_id,attempts,reason) VALUES (?,?,'legacy',5,'lost historical identity')",
+      f.projectId,
+      base.key,
+    );
+    return base;
+  });
+  for (const action of ['suspend', 'resume', 'cancel'])
+    await f.bases.control(f.scope, f.admin, {
+      key: base.key,
+      action,
+      reason: 'operator decision',
+      requestId: action,
+    });
+  await settle(f, 2);
+  assert.ok(!adapter.log.some((line) => line.startsWith('release')));
+  assert.equal((await pending(f)).length, 1);
+  const standing = await f.state.read((sql) => f.bases.checkOf(sql, f.projectId, base.key));
+  assert.deepEqual(standing?.unreclaimed, { sandboxId: null });
+  const record = await f.state.read((sql) =>
+    f.bases.find(sql, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  assert.match(record?.blocker ?? '', /lost historical identity/);
+  assert.equal(record?.state, 'cancelled');
+});
+
+test('cleanup transfer and acknowledgement roll back without losing resource ownership', async (t) => {
+  const f = await baseFixture(t);
+  t.mock.method(f.bases, 'soon', () => {});
+  const changed = f.hooks.changed;
+  let reject = false;
+  t.mock.method(f.hooks, 'changed', async () => {
+    if (reject) throw new Error('projection rejected');
+    await changed();
+  });
+  const adapter = scripted([], 1000);
+  f.bases.checks = adapter.checks;
+  await configure(f, SPEC);
+  const base = await f.state.transaction((tx) =>
+    f.bases.ensure(tx, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  await settle(f, 2);
+  const original = (await row(f, base.key)).check_job_json;
+  const cancel = () =>
+    f.bases.control(f.scope, f.admin, {
+      key: base.key,
+      action: 'cancel',
+      reason: 'stop',
+      requestId: 'cancel-atomic',
+    });
+  reject = true;
+  await assert.rejects(cancel(), /projection rejected/);
+  assert.equal(
+    (await row(f, base.key)).check_job_json,
+    original,
+    'rollback restores the execution owner',
+  );
+  assert.deepEqual(await pending(f), []);
+  reject = false;
+  await cancel();
+  assert.equal((await row(f, base.key)).check_job_json, null);
+  assert.equal((await pending(f)).length, 1);
+  reject = true;
+  await assert.rejects(f.bases.work(f.projectId), /projection rejected/);
+  assert.equal(
+    (await pending(f)).length,
+    1,
+    'an uncommitted acknowledgement keeps cleanup retryable',
+  );
+  reject = false;
+  await f.bases.work(f.projectId);
+  assert.equal(
+    adapter.log.filter((line) => line.startsWith('release sbx_1')).length,
+    2,
+    'release is safely repeated after a failure between service acknowledgement and commit',
+  );
+  assert.deepEqual(await pending(f), []);
+});
+
+test('cancelling before allocation creates no unknown cleanup and calls no sandbox adapter', async (t) => {
+  const f = await baseFixture(t);
+  t.mock.method(f.bases, 'soon', () => {});
+  const adapter = scripted();
+  f.bases.checks = adapter.checks;
+  await configure(f, SPEC);
+  const base = await f.state.transaction((tx) =>
+    f.bases.ensure(tx, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  await settle(f, 1);
+  assert.equal((await row(f, base.key)).check_state, 'queued');
+  assert.equal((await row(f, base.key)).check_job_json, null);
+  await f.bases.control(f.scope, f.admin, {
+    key: base.key,
+    action: 'cancel',
+    reason: 'before renting',
+    requestId: 'cancel-before-rent',
+  });
+  await settle(f, 1);
+  assert.deepEqual(adapter.log, []);
+  assert.deepEqual(await pending(f), []);
+  const record = await f.state.read((sql) =>
+    f.bases.find(sql, f.projectId, [f.commits.a, f.commits.b]),
+  );
+  assert.equal(record?.blocker, null);
 });

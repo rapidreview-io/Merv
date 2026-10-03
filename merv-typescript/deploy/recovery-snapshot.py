@@ -138,6 +138,11 @@ class Recovery:
                 require(self.exists(table), 'configured idle census table missing')
                 require(self.sql(f'SELECT count(*) FROM "{schema}"."{table}" WHERE {condition};') == '0',
                         'active work: snapshot skipped; previous recovery points unchanged')
+        # v3 cleanup owns resources independently of the current base execution. Older
+        # schemas have no queue; existing host idle_tables must not silently omit it.
+        if self.exists('code_base_cleanup'):
+            require(self.sql(f'SELECT count(*) FROM "{schema}".code_base_cleanup;') == '0',
+                    'pending Code cleanup: snapshot skipped; previous recovery points unchanged')
 
     def inventory(self, root, database=None):
         schema = self.c['schema']
