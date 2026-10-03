@@ -7,6 +7,13 @@ prepared invocation belongs to the registration that admitted it: withdrawing or
 even with the same provider, prevents later dispatch, and cleanup still goes to the original provider. A handler
 already admitted may finish. Its `@merv/sessions/api` adapter (config row `sessions-api`) injects `sessions` and `api`: it mounts `/sessions` and registers the session (`ms_`, POST `/mcp` only), managed-runner (`mr_`, its control routes only) and enrollment (`me_`) credentials, all withdrawn with it. Its optional `/ui` adapter injects `sessions` and `ui`, and its optional `/tools` adapter injects `sessions` and `tools` for usage, dispatch, observation and session messaging. It launches no processes.
 
+The UI adapter's `ui.read` row returns project status without parameters, or agent
+activity with `{rowId: 'sessions', params: {agentId}}`. The inspector uses the shared
+browser polling hook at four-second intervals, retaining the last successful read
+on a refresh failure and pausing further polls while hidden. This read works without
+the optional Sessions tools adapter and keeps the same project-reader authorization
+and leased-worker denial as the observation HTTP endpoint.
+
 `session.find` resolves a work item's current session. `session.message` queues an operator
 message for that session; `session.messages` and the worker-only `session.message.ack`
 retain receipt and an optional reply. Pending messages are surfaced at the next Merv tool
