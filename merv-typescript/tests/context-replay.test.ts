@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService, digest } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { legacyTaskPolicy } from './fixtures/legacy-task-policy.js';
@@ -302,7 +303,7 @@ test('structured binary evidence remains reviewable and replay cannot bypass rev
     const producer = await issue('Producer', 'producer');
     const reviewer = await issue('Reviewer', 'reviewer');
     const replacement = await issue('Replacement', 'reviewer');
-    const task = await app.ctx.tasks.create(producer, {
+    const task = await historicalTask(app.ctx, producer, {
       title: 'Retain bytes',
       goal: 'Retain binary evidence.',
       checks: ['The recorded bytes are available.'],

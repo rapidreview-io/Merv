@@ -48,8 +48,7 @@ test('default configuration includes session enforcement and API adds tool trans
   assert.ok(
     core.entries.every(
       (entry) =>
-        entry.required === !['feed', 'code', 'code-research'].includes(entry.id) &&
-        entry.disabled === (entry.id === 'feed'),
+        entry.required === (entry.id !== 'feed') && entry.disabled === (entry.id === 'feed'),
     ),
   );
   assert.deepEqual(core.entries.find((entry) => entry.id === 'state')?.config, {
@@ -196,7 +195,7 @@ test('Feed is kept but off by default, its tools and page with it, and the rest 
   assert.ok(
     loaded.entries
       .filter((entry) => ['code-tools', 'code-research-api'].includes(entry.id))
-      .every((entry) => !entry.required),
+      .every((entry) => entry.required),
   );
 });
 

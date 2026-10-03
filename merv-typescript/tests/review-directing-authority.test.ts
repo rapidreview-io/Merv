@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 /**
  * Decision 5: a worker is its directing authority's hand. Work a person (or their Agent, which
  * acts as them) delivered at the desk carries no provenance, and a worker that person directs
@@ -65,7 +66,7 @@ async function fixture(t: TestContext) {
     };
   };
   const create = async (by: Caller) =>
-    await app.ctx.tasks.create(by, {
+    await historicalTask(app.ctx, by, {
       title: `Task ${++seq}`,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],

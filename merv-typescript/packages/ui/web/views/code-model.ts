@@ -119,7 +119,7 @@ const refused = (unit: CodeUnit) =>
  */
 function unitWord(unit: CodeUnit, conflicted: boolean): string {
   if (refused(unit)) return 'quarantined';
-  if (unit.acceptance) return 'accepted';
+  if (unit.acceptance) return unit.acceptance.reference ? 'accepted' : 'artifacts only';
   if (!unit.baseStatus) return 'ended';
   if (unit.baseStatus.status === 'blocked') return conflicted ? 'conflicted' : 'blocked';
   if (unit.baseStatus.status !== 'pinned') return unit.baseStatus.status;

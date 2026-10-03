@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -46,7 +47,11 @@ async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
+  const code = await createService(
+    new CodeService(state, scope, sessions, artifacts, workflows, undefined, undefined, {
+      config: { root: join(directory, 'code'), reservedFreeBytes: 1 },
+    }),
+  );
   const unbindCode = tasks.bindCode(code);
   const boot = await scope.bootstrap({ projectName: 'Git tasks', actorName: 'Owner' });
   const source: Caller = {
@@ -64,14 +69,24 @@ async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
   };
   let sequence = 0;
   const request = () => `request-${++sequence}`;
-  const create = async (extra: Data = {}) =>
-    await tasks.create(source, {
+  // Existing central-base and scratch tasks remain executable after the upgrade.
+  const input = (extra: Data = {}) =>
+    ({
       title: `Harness ${++sequence}`,
       goal: 'Build the evaluation harness as a repository.',
       checks: ['The harness runs end to end'],
       requestId: request(),
       ...extra,
-    } as Parameters<typeof tasks.create>[1]);
+    }) as Parameters<typeof tasks.create>[1];
+  const create = (extra: Data = {}) =>
+    historicalTask(
+      { state, artifacts, tasks },
+      source,
+      input(extra),
+      undefined,
+      extra.baseTaskId ? 30 : extra.workspace === 'git' ? 29 : 28,
+    );
+  const createCurrent = (extra: Data = {}) => tasks.create(source, input(extra));
   const run = async <T>(
     caller: Caller,
     tool: string,
@@ -189,7 +204,7 @@ async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
   };
   t.after(async () => {
     unbindCode();
-    code.close();
+    await code.close();
     await sessions.close();
     tasks.dispose();
     await events.close();
@@ -210,6 +225,7 @@ async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
     reviewer,
     request,
     create,
+    createCurrent,
     run,
     lease,
     leaseReview,
@@ -236,7 +252,7 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
     checks: ['The note exists'],
     requestId: f.request(),
   };
-  const scratch = await f.tasks.create(f.source, scratchInput);
+  const scratch = await historicalTask(f, f.source, scratchInput);
   assert.equal(scratch.workflow.version, 28);
   assert.equal(Object.hasOwn(scratch, 'workspace'), false);
   assert.equal(Object.hasOwn(scratch.workflow.data, 'workspace'), false);
@@ -259,7 +275,7 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
     workspace: 'git' as const,
     requestId: f.request(),
   };
-  const git = await f.tasks.create(f.source, gitInput);
+  const git = await historicalTask(f, f.source, gitInput, undefined, 29);
   assert.equal(git.workflow.version, 29);
   assert.equal(git.workspace, 'git');
   assert.deepEqual(await f.tasks.create(f.source, gitInput), git);
@@ -290,20 +306,27 @@ test('A task’s workflow version carries its Git workspace and the scratch vers
   const assignment = await f.workflows.assignment(f.source, git.id);
   assert.match(assignment.brief, /This is a Git task/);
 
-  await assert.rejects(async () => await f.create({ baseTaskId: git.id, dependsOn: [git.id] }), {
-    code: 'invalid_workspace',
-  });
-  await assert.rejects(async () => await f.create({ workspace: 'git', baseTaskId: git.id }), {
-    code: 'invalid_workspace_base',
-  });
   await assert.rejects(
-    async () =>
-      await f.create({ workspace: 'git', baseTaskId: scratch.id, dependsOn: [scratch.id] }),
-    { code: 'invalid_workspace_base' },
+    async () => await f.createCurrent({ baseTaskId: git.id, dependsOn: [git.id] }),
+    {
+      code: 'incompatible_workspace',
+    },
   );
   await assert.rejects(
-    async () => await f.create({ workspace: 'git', baseTaskId: 'missing', dependsOn: [git.id] }),
-    { code: 'invalid_workspace_base' },
+    async () => await f.createCurrent({ workspace: 'git', baseTaskId: git.id }),
+    {
+      code: 'incompatible_workspace',
+    },
+  );
+  await assert.rejects(
+    async () =>
+      await f.createCurrent({ workspace: 'git', baseTaskId: scratch.id, dependsOn: [scratch.id] }),
+    { code: 'incompatible_workspace' },
+  );
+  await assert.rejects(
+    async () =>
+      await f.createCurrent({ workspace: 'git', baseTaskId: 'missing', dependsOn: [git.id] }),
+    { code: 'incompatible_workspace' },
   );
   const based = await f.create({ workspace: 'git', baseTaskId: git.id, dependsOn: [git.id] });
   assert.equal(based.workflow.version, 30);
@@ -439,7 +462,7 @@ test('A Git task delivers only its own worker’s receipted commit, and a scratc
 
   // Without Code a Git task cannot move, while its record and every scratch task still read.
   f.unbindCode();
-  await assert.rejects(async () => await f.create({ workspace: 'git' }), {
+  await assert.rejects(async () => await f.createCurrent({ workspace: 'git' }), {
     code: 'code_unavailable',
   });
   assert.equal((await f.tasks.get(f.source, task.id)).workspace, 'git');
@@ -890,13 +913,14 @@ test('A project imported into Code while a Git task is under way lets that task 
   );
 
   // Reject the legacy form before it can silently select a Fleet-incompatible checkout.
-  const hosted = await f.create({ workspace: 'git' });
+  const hosted = await f.createCurrent({ workspace: 'git' });
   assert.equal(hosted.workflow.version, 31);
   await assert.rejects(
-    async () => await f.create({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] }),
+    async () =>
+      await f.createCurrent({ workspace: 'git', baseTaskId: task.id, dependsOn: [task.id] }),
     { code: 'incompatible_workspace' },
   );
-  assert.equal((await f.create()).workflow.version, 28);
+  assert.equal((await f.createCurrent()).workflow.version, 31);
   // Main is named but Code does not hold it, so the hosted task is blocked, never launched.
   await assert.rejects(async () => await f.lease(hosted), { code: 'code_base_pending' });
   await f.state.transaction(async (tx) => {

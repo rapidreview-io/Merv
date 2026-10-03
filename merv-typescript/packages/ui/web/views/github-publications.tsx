@@ -33,19 +33,21 @@ const request = <T,>(path = '', body?: unknown) =>
 
 /** Merv's own word for where a publication stands; it also says where its verdict stands. */
 export const status = (p: CodePublication) =>
-  p.lastError
-    ? 'blocked'
-    : p.pull?.merged
-      ? 'merged'
-      : p.review && p.review.verdict !== 'pass'
-        ? 'returned'
-        : p.pull?.state === 'closed'
-          ? 'closed'
-          : p.review?.verdict === 'pass' && p.pull && !p.pull.draft
-            ? 'ready'
-            : p.pull
-              ? 'draft'
-              : 'pending';
+  p.destination === 'local' && p.verified
+    ? 'integrated'
+    : p.lastError
+      ? 'blocked'
+      : p.pull?.merged
+        ? 'merged'
+        : p.review && p.review.verdict !== 'pass'
+          ? 'returned'
+          : p.pull?.state === 'closed'
+            ? 'closed'
+            : p.review?.verdict === 'pass' && p.pull && !p.pull.draft
+              ? 'ready'
+              : p.pull
+                ? 'draft'
+                : 'pending';
 
 /** One read of the publications for the whole page, so the graph and the rows agree. */
 export function usePublications() {
@@ -271,7 +273,8 @@ export function GitHubPublications({
   };
   const row = (p: CodePublication) => {
     const d = details[p.proposalId] ?? null;
-    const merged = !!p.pull?.merged;
+    const local = p.destination === 'local';
+    const merged = !!p.pull?.merged || (local && !!p.verified);
     const commits = d ? d.commits.length : null;
     const add = d?.files.reduce((sum, file) => sum + file.additions, 0) ?? 0;
     const del = d?.files.reduce((sum, file) => sum + file.deletions, 0) ?? 0;
@@ -295,7 +298,7 @@ export function GitHubPublications({
         </div>
         <div className="pr-line">
           <span>
-            {merged ? 'Merged' : 'Merges'}
+            {local ? (merged ? 'Integrated' : 'Integrates') : merged ? 'Merged' : 'Merges'}
             {commits === null ? '' : ` ${commits} commit${commits === 1 ? '' : 's'}`} into
           </span>
           <span className="branch branch--ref">{p.baseBranch}</span>
@@ -330,7 +333,9 @@ export function GitHubPublications({
             {merger && (
               <>
                 <span className="sep">·</span>
-                <span>merged by {merger}</span>
+                <span>
+                  {local ? 'integrated' : 'merged'} by {merger}
+                </span>
               </>
             )}
           </div>
@@ -399,12 +404,17 @@ export function GitHubPublications({
           <Summary>Details</Summary>
           <KV
             rows={[
-              ['Repository', p.repository],
+              ['Repository', p.destination === 'local' ? 'Merv managed Git' : p.repository],
               ['Reviewed head', <Short value={p.headOid} />],
               [p.merge ? 'Base at merge' : 'Base', <Short value={d?.pull.base.sha ?? p.baseOid} />],
               !!p.pull?.mergeCommitSha && ['Merge commit', <Short value={p.pull.mergeCommitSha} />],
               ['Manifest SHA-256', <Short value={p.manifestHash} />],
-              ['Published branch', <span className="mono">{p.branch}</span>],
+              [
+                local ? 'Retained ref' : 'Published branch',
+                <span className="mono">
+                  {local ? `refs/merv/proposals/${p.proposalId}` : p.branch}
+                </span>,
+              ],
             ]}
           />
         </details>
@@ -412,10 +422,10 @@ export function GitHubPublications({
     );
   };
   return (
-    <section className="stack" aria-label="Pull requests">
+    <section className="stack" aria-label="Integrations">
       <div className="cluster cluster--between">
         <h2 className="section-title">
-          Pull requests <span className="section-n">{rows.length}</span>
+          Integrations <span className="section-n">{rows.length}</span>
         </h2>
         {!!rows.length && operator && (
           <button
@@ -428,7 +438,7 @@ export function GitHubPublications({
               })
             }
           >
-            Sync with GitHub
+            Refresh integrations
           </button>
         )}
       </div>

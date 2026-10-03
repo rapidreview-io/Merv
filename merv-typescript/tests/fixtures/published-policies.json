@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file \u2014 restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12\u201319 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Task@20-27 and experiment@17-24 definitions and execution policies verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12–19 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Task@20-27 and experiment@17-24 definitions and execution policies verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c.",
   "definitions": [
     {
       "name": "consolidation",
@@ -3352,6 +3352,24 @@
       "type": "project.reflection",
       "version": 2,
       "hash": "d7292405d3f33c5014a31c7e369d59d38cd034866e8969b9688cd24aea9f9dd4",
+      "published": false
+    },
+    {
+      "type": "reflection.lens",
+      "version": 12,
+      "hash": "f432b5c371abd610fcc2cd19dee6cccb1040b4be376e3d91510d77fcc8a4ec1c",
+      "published": false
+    },
+    {
+      "type": "reflection.synthesis",
+      "version": 13,
+      "hash": "de7351e2b9857e810d949f619cea445c8d4922fa99be3fdca0bc6aef3d2adbb2",
+      "published": false
+    },
+    {
+      "type": "reflection.review",
+      "version": 13,
+      "hash": "2b6e14f05a6cbabea3ac35fa1227c14a611fd4ca643da6a3f552297e2d112391",
       "published": false
     }
   ]

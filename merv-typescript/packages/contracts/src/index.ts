@@ -2262,9 +2262,9 @@ export interface TaskCreate {
   typeVersion?: number;
   contextInputs?: Record<string, string[]>;
   dependsOn?: string[] | string | null;
-  /** Omission preserves the original scratch task and its command hash. */
+  /** New tasks always use Git. Retired values remain typed for historical request replay. */
   workspace?: 'none' | 'git';
-  /** A Git task only: an accepted Git task, also a prerequisite, whose delivered commit is the base. */
+  /** Historical request replay only; new work derives its base from dependsOn. */
   baseTaskId?: string;
 }
 export interface TaskDelivery {

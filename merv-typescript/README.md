@@ -2,6 +2,11 @@
 
 A small, durable Merv built from real [Cordis](https://github.com/cordiverse/cordis) plugins. Create a task, pin its brief, submit immutable evidence, and have a different actor review the submission. Verdicts and task transitions commit together; work survives a server restart.
 
+Every new task and experiment uses managed Git, even without GitHub. Projects
+get a durable repository automatically; reviewed consolidation integrates locally
+through the existing review gate. Connecting GitHub later imports and reconciles both
+histories without replacing either. See [managed Git](docs/ALWAYS_GIT.md).
+
 ```mermaid
 flowchart LR
   B["Immutable brief"] --> T["Task: in_progress"]
@@ -92,7 +97,7 @@ A JSON configuration has a `plugins` array. Each entry has a stable `id`, a modu
 
 `${directory}`, `${host}`, and `${port}` are the supported substitutions inside configuration values. An exact `${port}` retains its numeric type. Command-line host/port values supply substitutions; literal plugin values stay literal. State, blobs, registry, and API also validate their own configuration before acquiring resources or publishing services. `init` and `actor` keep their minimal State/Scope composition and do not accept `--config`.
 
-Cordis's loader waits for the whole dependency tree. Merv then checks required entries and their activation errors before reporting readiness. An entry defaults to required; disabled entries are intentional absences. Feed, its tool adapter and its page are kept but disabled in the default configuration; clear `disabled` on all three to switch Feed on. Code, CodeResearch and their adapters are also optional; [the no-Code configuration](config/no-code.example.json) supports research without Git. Existing Git obligations remain pending when their provider is unavailable. Other custom optional failures remain visible in status. Dependencies are never silently installed to repair an invalid composition.
+Cordis's loader waits for the whole dependency tree. Merv then checks required entries and their activation errors before reporting readiness. An entry defaults to required; disabled entries are intentional absences. Feed, its tool adapter and its page are kept but disabled in the default configuration; clear `disabled` on all three to switch Feed on. Code and CodeResearch are required in the default composition. All new tasks and experiments use managed Git, independently of GitHub. The [no-Code configuration](config/no-code.example.json) is for compatibility reads and existing non-Git work; it cannot create new research work. See [Always-on Git](docs/ALWAYS_GIT.md). Existing Git obligations remain pending when their provider is unavailable. Other custom optional failures remain visible in status. Dependencies are never silently installed to repair an invalid composition.
 
 Startup JSON includes `plugins` status without configuration values. In an embedded application, `app.status()` returns current entry IDs, module names, lifecycle states, readiness requirements, and missing dependencies; `app.getFiber(id)` resolves the current Cordis handle. `app.setEnabled(id, false)` and `app.setEnabled(id, true)` operate through the loader and await completion. Runtime toggles are in-memory; edit the JSON configuration to retain a choice across restarts. Source-file watching and automatic code reload are not enabled by this step.
 
@@ -462,7 +467,7 @@ npm test
 | `tests/feed.test.ts`               | Independent feed, reviewer communication, project/attachment permissions, immutable posts, atomic deduplication, cursor reads and persistence                          |
 | `tests/feed-unload.test.ts`        | Real Cordis provider removal during an admitted MCP call, automatic adapter suspension/reactivation, task completion while feed is absent, retained posts and activity |
 
-The separate live acceptance runner launches **three new Codex CLI processes** with synthetic data and separate producer, reviewer, and reader credentials:
+The historical-protocol live acceptance runner launches **three new Codex CLI processes** with a seeded artifact-only task and separate producer, reviewer, and reader credentials. It tests recovery and credential boundaries for existing work; it does not test new managed-Git work. For that path use `tests/runner-code-v2-integration.test.ts` or the opt-in `scripts/live-experiments.ts`:
 
 ```sh
 npm run test:live
@@ -474,7 +479,7 @@ It requires an installed, authenticated `codex` CLI, network access to its confi
 
 Each session uses an empty workspace, a read-only filesystem sandbox, disabled shell tools and app connectors, and an allowlist of the scenario's MCP tools. Per-tool approvals apply only to that child process and the synthetic server. Persistent Codex settings are unchanged. Merv still enforces producer/reviewer/reader permissions, including the deliberately refused operations. These settings use the documented [Codex MCP tool policy](https://learn.chatgpt.com/docs/extend/mcp).
 
-The producer creates a brief and arithmetic delivery, enters review, and attempts a forbidden self-review. The server restarts; the reviewer inspects retained evidence and submits a verdict. After another restart, the reader checks the final task and history and attempts a forbidden administrative mutation. The runner checks three distinct session IDs, server permission-denial codes, the exact expected task, and transcript arguments proving the reviewer read every pinned artifact before submitting. It also asserts durable task state, revisions, and identities through the application services.
+The producer reads the seeded immutable brief, creates an arithmetic delivery, enters review, and attempts a forbidden self-review. The server restarts; the reviewer inspects retained evidence and submits a verdict. After another restart, the reader checks the final task and history and attempts a forbidden administrative mutation. The runner checks three distinct session IDs, server permission-denial codes, the exact expected task, and transcript arguments proving the reviewer read every pinned artifact before submitting. It also asserts durable task state, revisions, and identities through the application services.
 
 Results go to a new `live-runs/<timestamp>/` directory by default. Inspect each phase's `.jsonl`, `.stderr.log`, and `.final.txt`; `report.json` is written only after the runner's checks and final shutdown succeed. A runtime failure writes `failure.json`. The directory also retains its synthetic credentials and is excluded from Git; the synthetic data stays in the run's schema until you drop it. See [the recorded verification](VERIFICATION.md) for the automated and live acceptance results.
 

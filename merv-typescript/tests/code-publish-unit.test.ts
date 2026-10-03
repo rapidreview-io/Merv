@@ -30,6 +30,23 @@ async function fixture(t: TestContext, connected = false) {
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
   const branches = remote?.branches ?? new Map<string, string>();
+  const legacy = await createService(
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
+  );
+  await legacy.close();
+  const source = gitSource(t);
+  const bare = repositories.paths(f.admin.projectId).repository;
+  const root0 = source.commit({ 'shared.txt': 'root\n', 'own.txt': 'root\n' });
+  const feature = source.commit({ 'own.txt': 'feature\n' });
+  source.git('checkout', '--detach', root0);
+  const moved = source.commit({ 'shared.txt': 'moved\n' });
+  source.git('checkout', '--detach', root0);
+  const clashing = source.commit({ 'own.txt': 'clashing\n' });
+  const publish = (name: string, commit: string) =>
+    source.git('push', bare, `${commit}:refs/heads/${name}`);
+  for (const [name, commit] of Object.entries({ root0, feature, moved, clashing }))
+    publish(name, commit);
+  await boundProject(f.state, f.admin.projectId, root0, 'repository');
   const code = await createService(
     new CodeService(
       f.state,
@@ -56,19 +73,6 @@ async function fixture(t: TestContext, connected = false) {
     ),
   );
   const bases = (code as unknown as { baseStore: CodeBaseService }).baseStore;
-  const source = gitSource(t);
-  const bare = repositories.paths(f.admin.projectId).repository;
-  const root0 = source.commit({ 'shared.txt': 'root\n', 'own.txt': 'root\n' });
-  const feature = source.commit({ 'own.txt': 'feature\n' });
-  source.git('checkout', '--detach', root0);
-  const moved = source.commit({ 'shared.txt': 'moved\n' });
-  source.git('checkout', '--detach', root0);
-  const clashing = source.commit({ 'own.txt': 'clashing\n' });
-  const publish = (name: string, commit: string) =>
-    source.git('push', bare, `${commit}:refs/heads/${name}`);
-  for (const [name, commit] of Object.entries({ root0, feature, moved, clashing }))
-    publish(name, commit);
-  await boundProject(f.state, f.admin.projectId, root0, 'repository');
   const setMain = async (oid: string) =>
     await f.state.transaction((tx) =>
       tx.run(
@@ -486,7 +490,7 @@ test('acceptedSince names the accepted work main does not hold, and nothing else
 });
 
 test('a quarantine never reaches work that has ended, but a publication wait does', async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, true);
   const publishing = await f.declare('Publishing');
   await f.publishes(publishing);
   await f.pin(publishing);
@@ -776,3 +780,78 @@ test('with Code unloaded nothing about publication can be asked or declared', as
   await assert.rejects(f.code.acceptedSince(f.admin), { code: 'code_unavailable' });
   await assert.rejects(f.publishes(work), { code: 'code_unavailable' });
 });
+
+test('reviewed local work reaches main without GitHub and keeps the exact reviewed commit', async (t) => {
+  const f = await fixture(t);
+  const work = await f.declare('Local integration');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  const before = await f.code.unit(f.admin, work.id);
+  assert.equal(before.publication?.state, 'pending');
+  await f.sync();
+  assert.equal((await f.code.status(f.admin)).project?.main.oid, f.feature);
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'published');
+  assert.deepEqual(await f.blockers(work.id), []);
+  await f.sync();
+  assert.equal((await f.code.status(f.admin)).project?.main.oid, f.feature);
+  const wakes = (await f.state.events(f.admin.projectId)).filter(
+    (event) => event.type === 'code.publication_verified',
+  );
+  assert.equal(wakes.length, 1, 'local completion wakes automatic research once');
+  assert.equal(wakes[0].data.destination, 'local');
+});
+
+test('local integration refuses a main that moved after review', async (t) => {
+  const f = await fixture(t);
+  const work = await f.declare('Local integration');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  await f.setMain(f.moved);
+  await f.sync();
+  assert.equal((await f.code.status(f.admin)).project?.main.oid, f.moved);
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'stale');
+});
+
+test('a reviewed delivery with unchanged source can integrate the existing commit', async (t) => {
+  const f = await fixture(t);
+  const work = await f.declare('Evidence-only delivery');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.root0);
+  await f.sync();
+  assert.equal((await f.code.status(f.admin)).project?.main.oid, f.root0);
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'published');
+  const [publication] = await f.code.publications(f.admin);
+  assert.equal(publication.destination, 'local');
+  assert.equal(publication.verified, true);
+  assert.equal(
+    git(f.bare, ['rev-parse', `refs/merv/proposals/${publication.proposalId}`]),
+    f.root0,
+  );
+});
+
+for (const movedMain of [false, true]) {
+  test(`local consolidation uses pinned main, not its derived dependency base (diverged=${movedMain})`, async (t) => {
+    const f = await fixture(t);
+    const dependency = await f.declare('Accepted implementation');
+    await f.accept(dependency, f.feature);
+    const main = movedMain ? f.moved : f.root0;
+    await f.setMain(main);
+    const work = await f.declare('Consolidate implementation', [dependency.id]);
+    await f.publishes(work);
+    await f.bases.work(f.admin.projectId);
+    const base = await f.pin(work);
+    assert.notEqual(base.reference, main);
+    await f.accept(work, base.reference);
+    const [sealed] = await f.code.publications(f.admin);
+    assert.equal(sealed.baseOid, base.reference);
+    assert.equal(sealed.approval?.integrationBase, main);
+    const [integrated] = await f.sync();
+    assert.equal(integrated.verified, true);
+    assert.equal(integrated.merge?.expectedBase, main);
+    assert.equal((await f.code.status(f.admin)).project!.main.oid, base.reference);
+    assert.deepEqual(await f.blockers(work.id), []);
+  });
+}

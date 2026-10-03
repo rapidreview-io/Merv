@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -85,7 +86,7 @@ async function fixture(t: TestContext) {
 
   let sequence = 0;
   const create = async (title: string, extra: Partial<TaskCreate> = {}) =>
-    await app.ctx.tasks.create(producer.caller, {
+    await historicalTask(app.ctx, producer.caller, {
       title,
       goal: `Finish ${title.toLowerCase()} so the draft can cite it.`,
       checks: ['Every reference resolves.', 'The index is rebuilt from scratch.'],

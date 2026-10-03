@@ -1,3 +1,4 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -180,7 +181,7 @@ test('Experiments strict transport keeps scoped records, replay, attempts and cu
   );
 });
 
-test('Production Experiment MCP completes both reviews, pins exact evidence and survives provider unload', async (t) => {
+test('Historical Experiment MCP completes both reviews, pins exact evidence and survives provider unload', async (t) => {
   const f = await fixture(t),
     producer = await f.connect(f.producer.token),
     reviewer = await f.connect(f.reviewer.token);
@@ -208,6 +209,11 @@ test('Production Experiment MCP completes both reviews, pins exact evidence and 
     intent: 'A improves held-out accuracy over B.',
     requestId: 'experiment',
   };
+  await historicalExperiment(
+    f.app.ctx,
+    { ...f.source, actorId: f.producer.actor.id, credentialId: f.producer.credential.id },
+    create,
+  );
   let e = await f.call(producer, 'experiment.create', create);
   const original = structuredClone(e);
   const attach = async (role: string, path: string, content: string, resultFormat?: string) => {

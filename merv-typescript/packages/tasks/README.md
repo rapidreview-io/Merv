@@ -53,12 +53,14 @@ failure. Task reads include `dependencies` and `dependents`; assignment context
 includes forward prerequisites, while reverse links remain live navigation data.
 See [dependency behavior and parity](../../docs/WORK_ITEM_DEPENDENCIES.md).
 
-`task.create` with `workspace: "git"` gives the producer a private Git checkout
-and lets it deliver a commit in place of, or beside, files; the reviewer's leased
-read-only checkout is pinned to that commit, and only that leased review, once its
-runner has attached at that commit, can pass the task. Nobody else may claim such a
-review until `review_rounds` is used up. `baseTaskId` bases the checkout on another Git task's accepted commit.
-Code is bound optionally: only Git tasks ask for it. See
+Every new `task.create` uses the project's managed Git repository. The producer
+receives its own checkout and delivers a retained commit, with optional artifacts;
+the independent reviewer receives that exact commit read-only. An unchanged-source
+delivery may retain the existing commit. GitHub credentials are not needed.
+Code is required for creation; storage failure blocks work instead of selecting a
+scratch workspace. Use `dependsOn` for accepted code dependencies. The retired
+`baseTaskId` and scratch policies remain readable for existing work only. See
+[managed Git](../../docs/ALWAYS_GIT.md) and
 [delivering a commit](../../docs/STRUCTURED_TASK_EVIDENCE.md#delivering-a-commit).
 
 See [structured task evidence](../../docs/STRUCTURED_TASK_EVIDENCE.md) for the versioned contract, server-generated briefs, binary references, stable context replay and remaining review work.

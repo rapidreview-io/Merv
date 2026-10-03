@@ -314,11 +314,10 @@ test('code-import brings a local branch into a served project, in steps, as its 
     git(source.repository, ['for-each-ref']) + git(source.repository, ['status', '--porcelain']);
   const url = app.ctx.api.url!;
 
-  await assert.rejects(
-    importRepository({ url, repository: source.repository, ref: 'v1', token: boot.token }),
-    { code: 'code_import_refused', message: /code_project_unbound/ },
-  );
-  await boundProject(app.ctx.state, owner.projectId, two, 'operator-repository');
+  await app.ctx.state.transaction((tx) => app.ctx.codeResearch.ensureRepository(owner, tx));
+  const code = app.ctx.codeResearch as unknown as { store: { maintain(): Promise<void> } };
+  await code.store.maintain();
+  const root = (await app.ctx.codeResearch.status(owner)).project!.main.oid;
   const producer = await app.ctx.scope.issueActor(owner, { name: 'Producer', role: 'producer' });
   await assert.rejects(
     importRepository({ url, repository: source.repository, ref: 'v1', token: producer.token }),
@@ -351,7 +350,7 @@ test('code-import brings a local branch into a served project, in steps, as its 
   );
   assert.ok(first.bytes! > PART);
   let status = (await app.ctx.codeResearch.status(owner)) as CodeProjectStatus;
-  assert.deepEqual([status.project!.durability, status.project!.main.stored], ['code', false]);
+  assert.deepEqual([status.project!.durability, status.project!.main.stored], ['code', true]);
   // An acceptance kept only in a runner's repository names a commit the next import may
   // deliver as history rather than as its tip; what the import turns out to hold is recorded
   // with it, because no bundle can be cut at an ancestor of a tip already imported.
@@ -384,7 +383,7 @@ test('code-import brings a local branch into a served project, in steps, as its 
   status = (await app.ctx.codeResearch.status(owner)) as CodeProjectStatus;
   assert.deepEqual(
     [status.project!.main.stored, status.store!.tips.sort(), status.operations],
-    [true, [one, two].sort(), []],
+    [true, [root, one, two].sort(), []],
   );
   await assert.rejects(
     importRepository({ url, repository: source.repository, ref: 'main', token: boot.token }),
@@ -431,16 +430,14 @@ test('a server configured with no repository root keeps none, and everything els
     { code: 'code_store_unavailable', status: 503 },
   );
   assert.equal(existsSync(join(directory, 'code')), false);
-  assert.equal(
-    (
-      await app.ctx.tasks.create(owner, {
-        title: 'T',
-        goal: 'G',
-        checks: ['C'],
-        workspace: 'git',
-        requestId: 't',
-      })
-    ).workspace,
-    'git',
+  await assert.rejects(
+    app.ctx.tasks.create(owner, {
+      title: 'T',
+      goal: 'G',
+      checks: ['C'],
+      workspace: 'git',
+      requestId: 't',
+    }),
+    { code: 'code_store_unavailable' },
   );
 });

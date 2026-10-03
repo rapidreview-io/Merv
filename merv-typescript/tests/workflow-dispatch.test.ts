@@ -1,3 +1,5 @@
+// Historical scratch records exercise the original assignment and recovery contract.
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -519,7 +521,7 @@ test('Tasks contribute source-aware queue labels and recipe availability without
     role: 'reviewer',
   });
   const reviewer: Caller = { ...source, actorId: reviewerActor.actor.id };
-  const task = await app.ctx.tasks.create(producer, {
+  const task = await historicalTask(app.ctx, producer, {
     title: 'Produce evidence',
     goal: 'Verify.',
     checks: ['Verified.'],
@@ -541,7 +543,7 @@ test('Tasks contribute source-aware queue labels and recipe availability without
     },
   };
   const disposeType = await app.ctx.tasks.registerType(type);
-  const custom = await app.ctx.tasks.create(producer, {
+  const custom = await historicalTask(app.ctx, producer, {
     title: 'Unavailable recipe',
     goal: 'Verify.',
     checks: ['Verified.'],

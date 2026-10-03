@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -209,9 +210,18 @@ test('the engine names no program in what it says', () => {
     assert.doesNotMatch(readFileSync(new URL(file, source), 'utf8'), /\bresearch\./, file);
 });
 
-test('workspace-free tasks work with Code absent and task manifests retain their published hashes', async (t) => {
+test('historical workspace-free tasks survive without Code, new tasks require it, and published hashes remain', async (t) => {
   const f = await resolutionFixture(t);
-  const task = await f.tasks.create(f.admin, {
+  await assert.rejects(
+    f.tasks.create(f.admin, {
+      title: 'New',
+      goal: 'Use Git',
+      checks: ['Git retained'],
+      requestId: 'new',
+    }),
+    { code: 'code_unavailable' },
+  );
+  const task = await historicalTask(f, f.admin, {
     title: 'Note',
     goal: 'Write a note.',
     checks: ['The note exists.'],

@@ -60,7 +60,7 @@ const workspace = z.discriminatedUnion('provider', [
   z.object({ provider: z.literal('none') }).strict(),
   z.object({ provider: z.literal('code'), version: z.literal(1) }).strict(),
 ]);
-const changeSpecSchema = z
+const legacyChangeSpecSchema = z
   .object({
     version: z.literal(2),
     changes: text(8000),
@@ -90,6 +90,15 @@ const changeSpecSchema = z
       .max(CHANGE_SPEC_LIMITS.rejected),
   })
   .strict();
+
+// Old approved plans remain readable. New plans have no storage-policy choice.
+const changeSpecSchema = z.discriminatedUnion('version', [
+  legacyChangeSpecSchema,
+  legacyChangeSpecSchema.extend({
+    version: z.literal(3),
+    items: z.array(z.discriminatedUnion('kind', [task, experiment])).max(CHANGE_SPEC_LIMITS.items),
+  }),
+]);
 
 // Two checks are the same one by folded(), which Tasks uses too. A pair Tasks would refuse is
 // refused while the author can still reword it, not after the plan is approved and can only be

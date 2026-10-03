@@ -1,3 +1,5 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { managedServices } from './fixtures/managed-services.js';
 import { createService } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
@@ -46,13 +48,15 @@ async function fixture(limits?: { reviewRounds: number }) {
   const tasks = await createService(
     new TaskService(state, scope, artifacts, workflows, reviews, builder, limits, paper),
   );
+  const managed = await managedServices({ state, scope, artifacts, workflows }, path, operator);
+  tasks.bindCode(managed.code);
   const brief = await artifacts.create(producer, {
     title: 'Brief',
     content:
       '# Goal\nBuild an adder.\n# Done when\n- Adds two numbers.\n- Handles negative inputs.',
   });
   const create = async () =>
-    await tasks.create(producer, {
+    await historicalTask({ state, artifacts, tasks }, producer, {
       title: 'Adder',
       goal: 'Build an adder.',
       checks: ['Adds two numbers.', 'Handles negative inputs.'],
@@ -65,6 +69,7 @@ async function fixture(limits?: { reviewRounds: number }) {
       content: `${label}\nAdds two numbers. Verified add(2,3)=5.\nHandles negative inputs. Verified add(-2,1)=-1.`,
     });
   const cleanup = async () => {
+    await managed.close();
     tasks.dispose();
     paper.close();
     await state.close();
@@ -90,6 +95,7 @@ async function fixture(limits?: { reviewRounds: number }) {
     create,
     delivery,
     cleanup,
+    managed,
   };
 }
 const code = (expected: string) => (error: unknown) =>
@@ -262,7 +268,7 @@ test('a format-2 context lists a PDF context input and task background without r
     title: 'Knowledge notes',
     content: 'The adder must handle negative inputs.',
   });
-  const task = await f.tasks.create(f.producer, {
+  const task = await historicalTask(f, f.producer, {
     title: 'Adder',
     goal: 'Build an adder.',
     checks: ['Adds two numbers.', 'Handles negative inputs.'],
@@ -317,7 +323,7 @@ test('a format-2 context names an artifact by its ID when its title shows nothin
     title: '\u0085',
     content: '# Goal\nBuild an adder.\n# Done when\n- Adds two numbers.',
   });
-  const task = await f.tasks.create(f.producer, {
+  const task = await historicalTask(f, f.producer, {
     title: 'Adder',
     goal: 'Build an adder.',
     checks: ['Adds two numbers.'],
@@ -1192,6 +1198,7 @@ test('task and pinned review resume after the state reopens', async () => {
     const snapshot = await f.reviews.start(f.reviewer, pending.reviewId!);
     const beforeRestart = await f.tasks.get(f.producer, task.id);
     f.tasks.dispose();
+    await f.managed.close();
     await f.state.close();
     reopened = await openState(f.path);
     const scope = await createService(new ProjectScope(reopened)),
@@ -1383,7 +1390,7 @@ test('brief text rejects invalid UTF-8 while structured deliveries can cite bina
       title: 'Valid brief',
       content: 'Goal: Validate bytes.\nCheck: /w',
     });
-    const task = await f.tasks.create(f.producer, {
+    const task = await historicalTask(f, f.producer, {
       title: 'Bytes',
       goal: 'Validate bytes.',
       checks: ['/w'],
@@ -1412,7 +1419,7 @@ test('a rendered brief is checked as written, without reading it back', async (t
   const f = await fixture();
   t.after(f.cleanup);
   t.mock.method(f.artifacts, 'read', () => assert.fail('A rendered brief is not read back'));
-  const task = await f.tasks.create(f.producer, {
+  const task = await historicalTask(f, f.producer, {
     title: 'Adder',
     goal: 'Build an adder.',
     checks: ['Adds two numbers.'],

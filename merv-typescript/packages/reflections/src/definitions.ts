@@ -200,12 +200,28 @@ const HIERARCHICAL_RECIPES: TaskTypeDefinition[] = DEPENDENCY_SAFE_RECIPES.map((
  * always embedded; every other source is embedded whole, highest priority first, while it fits,
  * and otherwise listed by one line, so a mature paper never crowds out the assignment.
  */
-export const ITEM_RECIPES: TaskTypeDefinition[] = HIERARCHICAL_RECIPES.map((definition, i) => ({
+const LEGACY_ITEM_RECIPES: TaskTypeDefinition[] = HIERARCHICAL_RECIPES.map((definition, i) => ({
   ...definition,
   version: definition.version + 1,
   recipe: {
     ...definition.recipe,
     instructions: `${DEPENDENCY_SAFE_RECIPES[i]!.recipe.instructions} Each context section shows a source either whole, under its own heading, or as one line naming the tool that retrieves it; whole bodies are included highest priority first while they fit. A source shown by its line is still evidence to open with its retrieval tool, and a section with sources left unlisted for lack of room says how many and which tools reach them. ${liveRecords}`,
     format: 2,
+  },
+}));
+
+/** Current instructions remove the workspace decision; every newly created item uses Git. */
+export const ITEM_RECIPES: TaskTypeDefinition[] = LEGACY_ITEM_RECIPES.map((definition) => ({
+  ...definition,
+  version: definition.version + 1,
+  recipe: {
+    ...definition.recipe,
+    instructions: definition.recipe.instructions.replace(
+      / Every version-2 plan item declares workspace:.*?Dependencies determine the base:/,
+      ' Every new task and experiment has managed Git storage, independently of GitHub. Submit a version-3 plan without workspace fields. Dependencies determine the base:',
+    ),
+    outputInstructions: definition.recipe.outputInstructions
+      .replace('{version: 2,', '{version: 3,')
+      .replaceAll('dependsOn, rationale, workspace}', 'dependsOn, rationale}'),
   },
 }));

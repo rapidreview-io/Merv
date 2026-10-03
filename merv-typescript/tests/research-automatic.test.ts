@@ -1,3 +1,5 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { historicalExperiment } from './fixtures/historical-experiment.js';
 import {
   createService,
   MervError,
@@ -127,7 +129,7 @@ async function fixture(t: TestContext, plugin = false) {
       ],
     });
   const task = async (dependsOn: string[] = [], caller = owner) =>
-    await app.ctx.tasks.create(caller, {
+    await historicalTask(app.ctx, caller, {
       title: id(),
       goal: 'Provide verified input.',
       checks: ['The input is available and verified'],
@@ -135,7 +137,7 @@ async function fixture(t: TestContext, plugin = false) {
       requestId: id(),
     });
   const experiment = async (dependsOn: string[] = [], caller = owner) =>
-    await app.ctx.experiments.create(caller, {
+    await historicalExperiment(app.ctx, caller, {
       name: id(),
       intent: 'Test the available input.',
       dependsOn,

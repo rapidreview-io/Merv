@@ -18,7 +18,7 @@ import { pendingMerge, pinMerge, verifyResolution } from '../packages/code/src/p
 import { git } from './fixtures/code-store.js';
 import { writerFixture } from './fixtures/code-writers.js';
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, unrelated = false) {
   // The writer lock is covered by the repository suite. Everything after that lock is real.
   t.mock.method(
     CodeRepositories.prototype as unknown as { acquire(): Promise<void> },
@@ -28,9 +28,13 @@ async function fixture(t: TestContext) {
   const f = await writerFixture(t);
   const left = f.source.commit({ 'README.md': 'left\n' });
   assert.equal((await f.deliver(f.source.bundle(left, [f.root]))).status, 'completed');
-  f.source.git('checkout', '--detach', f.root);
+  if (unrelated) f.source.git('checkout', '--orphan', 'unrelated');
+  else f.source.git('checkout', '--detach', f.root);
   const right = f.source.commit({ 'README.md': 'right\n' });
-  assert.equal((await f.deliver(f.source.bundle(right, [f.root]))).status, 'completed');
+  assert.equal(
+    (await f.deliver(f.source.bundle(right, unrelated ? [] : [f.root]))).status,
+    'completed',
+  );
   await f.state.transaction(async (tx) => {
     await tx.run(
       'UPDATE code_projects SET main_json=? WHERE project_id=?',
@@ -354,4 +358,27 @@ test('the machine cache is re-keyed by a rebind and bricked only by a changed ob
     },
   );
   assert.deepEqual(during, ['preparing'], 'the row said preparing while the repository was built');
+});
+
+test('a reviewed repository integration can join unrelated histories without replacing either', async (t) => {
+  const f = await fixture(t, true);
+  await f.lease('join');
+  const machine = f.machine();
+  const work = await machine.prepare('join');
+  await f.event('session.workspace_attached', 'join');
+  await machine.command('join', f.left, 'start');
+  writeFileSync(join(work.path, 'README.md'), 'Reconciled both histories\n');
+  const completed = await machine.command('join', f.left, 'complete');
+  assert.equal(
+    git(work.path, ['show', '-s', '--format=%P', completed.receipt.headOid]),
+    `${f.left} ${f.right}`,
+  );
+  assert.equal(
+    git(work.path, ['merge-base', '--is-ancestor', f.left, completed.receipt.headOid]),
+    '',
+  );
+  assert.equal(
+    git(work.path, ['merge-base', '--is-ancestor', f.right, completed.receipt.headOid]),
+    '',
+  );
 });

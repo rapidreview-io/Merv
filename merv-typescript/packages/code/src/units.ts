@@ -91,6 +91,7 @@ export interface BaseBody {
 }
 /** The publication facts of one unit, read by the id its acceptance sealed. */
 export interface PublicationRow {
+  record_json: string;
   pull_json: string | null;
   merge_json: string | null;
   incident_json: string | null;
@@ -376,6 +377,7 @@ export class CodeUnitStore {
     const binding = JSON.parse(row.binding_json) as {
       boundBy: string;
       boundAt: string;
+      managed?: boolean;
       previous?: CodeProjectBinding['previous'];
     };
     const main = JSON.parse(row.main_json) as CodeProjectBinding['main'];
@@ -393,7 +395,7 @@ export class CodeUnitStore {
       },
       // Once imported a project stays with Code's repository: a main it does not hold yet
       // blocks work, it never sends new work back to a runner's own repository.
-      durability: row.store_json === null ? 'legacy-local' : 'code',
+      durability: row.store_json === null && !binding.managed ? 'legacy-local' : 'code',
     };
   }
 
@@ -456,11 +458,14 @@ export class CodeUnitStore {
       // Declared to publish, accepted, and nothing opened: its own facts could not be sealed.
       return row.publishes_at && row.acceptance_json ? { state: 'unsealed' } : null;
     const publication = await sql.get<PublicationRow>(
-      'SELECT pull_json,merge_json,incident_json,stale,verified FROM code_publications WHERE proposal_id=? AND project_id=?',
+      'SELECT record_json,pull_json,merge_json,incident_json,stale,verified FROM code_publications WHERE proposal_id=? AND project_id=?',
       row.publication_id,
       projectId,
     );
     if (!publication) return null;
+    const { destination } = JSON.parse(publication.record_json) as {
+      destination?: 'local' | 'github';
+    };
     const pull = publication.pull_json
       ? (JSON.parse(publication.pull_json) as GitHubPullRequest)
       : null;
@@ -479,6 +484,7 @@ export class CodeUnitStore {
             : 'pending';
     return {
       state,
+      ...(destination ? { destination } : {}),
       ...(pull ? { pull: { number: pull.number, url: pull.url } } : {}),
       ...(state === 'published' && mergeCommit ? { mergeCommit } : {}),
     };

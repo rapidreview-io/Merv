@@ -15,9 +15,9 @@ export interface ExperimentCreate {
   intent: string;
   details?: string;
   dependsOn?: string[];
-  /** Omission preserves the original scratch program and command hashes. */
+  /** New experiments always use Git. Retired values remain typed for historical request replay. */
   workspace?: 'none' | 'git';
-  /** A Git task among dependsOn whose accepted delivered commit is the base of the checkout. */
+  /** Historical request replay only; new work derives its base from dependsOn. */
   baseTaskId?: string;
   requestId: string;
 }

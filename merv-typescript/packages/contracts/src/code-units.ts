@@ -42,6 +42,8 @@ export interface CodeAcceptedSince {
  * `unsealed` is the accepted unit whose facts could not open a publication at all.
  */
 export interface CodeUnitPublication {
+  /** Omitted on historical GitHub publications. */
+  destination?: 'local' | 'github';
   state:
     | 'pending'
     | 'stale'

@@ -670,7 +670,7 @@ test('Git failing to read a resolution lineage is not a verdict on the resolutio
   assert.deepEqual(await f.bases.due(), []);
 });
 
-test('Code unload preserves an existing system prerequisite and blocker while workspace-free work proceeds', async (t) => {
+test('Code unload preserves existing blockers and refuses new work', async (t) => {
   const f = await fixture(t);
   const waiter = await f.waiter();
   await f.bases.work(f.admin.projectId);
@@ -692,18 +692,15 @@ test('Code unload preserves an existing system prerequisite and blocker while wo
   await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
     code: 'dependencies_pending',
   });
-  const note = await f.tasks.create(f.admin, {
-    title: 'Note',
-    goal: 'Write a note.',
-    checks: ['The note exists.'],
-    requestId: 'unloaded-note',
-  });
-  assert.equal(note.workflow.version, 28);
-  assert.equal(
-    await f.workflows.leaseRole(f.admin, { instanceId: note.id, expectedRevision: 0 }),
-    'producer',
+  await assert.rejects(
+    f.tasks.create(f.admin, {
+      title: 'Note',
+      goal: 'Write a note.',
+      checks: ['The note exists.'],
+      requestId: 'unloaded-note',
+    }),
+    { code: 'code_unavailable' },
   );
-  assert.deepEqual((await f.workflows.evaluate(f.admin, note.id)).blockers, []);
 });
 test('one resolution task serves concurrent, indirect, and future waiters', async (t) => {
   const f = await fixture(t);

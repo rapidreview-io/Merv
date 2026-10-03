@@ -215,8 +215,10 @@ export async function codeStoreFixture(
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  await open();
+  // This fixture represents an existing runner-local binding, predating managed initialization.
+  code = await createService(new CodeService(state, scope, seen, artifacts, workflows));
   await boundProject(state, admin.projectId, mainOid, 'fixture-repository');
+  await open();
   const paths = new CodeRepositories({ root, quotaBytes: 0, reservedFreeBytes: 0 }).paths(
     admin.projectId,
   );

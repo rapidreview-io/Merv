@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -90,7 +91,7 @@ async function fixture(t: TestContext, api = false) {
       events: await app.ctx.state.events(operator.projectId),
     }));
   const pendingTask = async () => {
-    const task = await app.ctx.tasks.create(producer.caller, {
+    const task = await historicalTask(app.ctx, producer.caller, {
       title: 'Verified arithmetic',
       goal: 'Verify the result.',
       checks: ['The result is correct.'],

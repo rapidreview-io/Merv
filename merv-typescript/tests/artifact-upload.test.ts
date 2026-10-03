@@ -1,3 +1,4 @@
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -36,6 +37,14 @@ test('file upload uses normal MCP session authority and returns a verified small
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
+  await waitForManagedCode(app.ctx.codeResearch, owner);
+  await app.ctx.sessions.heartbeatRunner(owner, {
+    runnerId: 'file-test',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
   const task = await app.ctx.tasks.create(owner, {
     title: 'File proof',
     goal: 'Retain generated evidence.',

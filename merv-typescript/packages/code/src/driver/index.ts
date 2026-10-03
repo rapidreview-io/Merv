@@ -1124,6 +1124,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
           ...MERGE_SETTINGS,
           'merge-tree',
           '--write-tree',
+          // Both parents are frozen by Code; connecting a remote may join separate roots.
+          '--allow-unrelated-histories',
           pending.firstParent,
           pending.secondParent,
         ],

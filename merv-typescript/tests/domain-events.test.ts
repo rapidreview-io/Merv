@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
@@ -129,7 +130,7 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
       title: 'Brief',
       content: 'Goal. Check.',
     });
-    const task = await app.ctx.tasks.create(producer, {
+    const task = await historicalTask(app.ctx, producer, {
       title: 'Task',
       goal: 'Goal.',
       checks: ['Check.'],

@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -203,7 +204,7 @@ test(
 
     let sequence = 0;
     const task = async () =>
-      await tasks.create(producer, {
+      await historicalTask({ state, artifacts, tasks }, producer, {
         title: `Lease candidate ${++sequence}`,
         goal: 'Produce evidence',
         checks: ['Evidence is independently verifiable.'],

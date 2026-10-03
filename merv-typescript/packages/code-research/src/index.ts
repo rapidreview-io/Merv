@@ -65,8 +65,14 @@ export const codePlugin = {
       ctx.inject(['sandboxes'], (ctx) => {
         ctx.effect(() => service.bindChecks(ctx.sandboxes));
       });
-      // The cursor starts now because the start-up pass below covers everything before it;
-      // afterwards the consumer catches up on whatever ended while Code was unloaded.
+      // New projects initialize automatically; old unbound projects initialize on new work.
+      yield await ctx.domainEvents.subscribe({
+        id: 'code.projects.v1',
+        types: ['project.created'],
+        from: 'now',
+        handle: async (event, tx) => await service.projectCreated(event.projectId, tx),
+      });
+      // The startup pass covers earlier transitions; this cursor retains later ones.
       yield await ctx.domainEvents.subscribe({
         id: 'code.reconcile.v1',
         types: ['workflow.transition'],

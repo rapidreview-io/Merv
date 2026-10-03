@@ -21,6 +21,7 @@ import type { Caller } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import { createApp } from './fixtures/app.js';
+import { historicalTask } from './fixtures/historical-task.js';
 import { loadConfiguration } from '../src/config.js';
 
 const executable = fileURLToPath(new URL('./fixtures/runner-worker.mjs', import.meta.url));
@@ -88,6 +89,8 @@ async function until(
     await delay(50);
   }
 }
+// These controller/recovery tests replay historical scratch tasks. Managed Git execution is
+// covered independently by the Code driver and managed application tests.
 async function fixture(t: TestContext, args: string[] = [], managed = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-runner-integration-'));
   const managedSecretEnv = `MERV_RUNNER_MANAGED_${randomUUID().replaceAll('-', '')}`;
@@ -112,7 +115,7 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const task = await app.ctx.tasks.create(source, {
+  const task = await historicalTask(app.ctx, source, {
     title: 'Prove an actual child runs',
     goal: 'Retain evidence through the session MCP boundary.',
     checks: ['A real child created attributed evidence.'],
@@ -319,7 +322,7 @@ test(
     assert.equal(runner.snapshot().launches[0].exitCode, 0);
     assert.equal(childResults(assignmentRoot).length, 1);
     const firstLeaseCount = leases;
-    await f.app.ctx.tasks.create(f.source, {
+    await historicalTask(f.app.ctx, f.source, {
       title: 'Second task',
       goal: 'Must wait for another machine',
       checks: ['No second launch on the original machine'],
@@ -1133,7 +1136,7 @@ test(
     )!;
     assert.equal(firstSession.status, 'active');
 
-    const second = await f.app.ctx.tasks.create(f.source, {
+    const second = await historicalTask(f.app.ctx, f.source, {
       title: 'A separate worker to cancel',
       goal: 'Exercise cancellation before a process is launched.',
       checks: ['The unrelated worker continues running.'],

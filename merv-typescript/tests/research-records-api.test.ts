@@ -1,3 +1,4 @@
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -177,6 +178,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     expectedSummary: '',
     requestId: 'intro',
   });
+  await waitForManagedCode(f.app.ctx.codeResearch, f.caller);
   const task = await f.app.ctx.tasks.create(f.caller, {
     title: 'Retain source data',
     goal: 'Keep the exact input.',
@@ -284,11 +286,19 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
 
 test('A real Task worker cannot edit project intent through HTTP or MCP, even by guessing the tool name', async (t) => {
   const f = await fixture(t);
+  await waitForManagedCode(f.app.ctx.codeResearch, f.caller);
   const task = await f.app.ctx.tasks.create(f.caller, {
     title: 'Check retained input',
     goal: 'Check input.',
     checks: ['The input is checked.'],
     requestId: 'task',
+  });
+  await f.app.ctx.sessions.heartbeatRunner(f.caller, {
+    runnerId: 'acceptance-runner',
+    capacity: 1,
+    capabilities: ['code.v2'],
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
   });
   const secret = 'ms_' + randomBytes(32).toString('base64url');
   await f.app.ctx.sessions.offer(f.caller, {

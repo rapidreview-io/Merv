@@ -192,6 +192,7 @@ type ExperimentCode = Pick<
   | 'reserveWriter'
   | 'writerStatus'
   | 'source'
+  | 'ensureRepository'
 >;
 
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
@@ -747,39 +748,28 @@ export class ExperimentService implements Experiments {
           );
         }
         check(
-          input.baseTaskId === undefined || input.workspace === 'git',
+          input.workspace === undefined || input.workspace === 'git',
           'invalid_workspace',
-          'baseTaskId is only for workspace "git": omit it for workspace "none"',
+          'New experiments always use Git. Omit workspace or use git.',
         );
-        // A prerequisite succeeds before work starts, so the base commit is final by then.
         check(
-          input.baseTaskId === undefined ||
-            (input.dependsOn.includes(input.baseTaskId) &&
-              (await this.workflows.get(caller, input.baseTaskId, tx)).data.workspace === 'git'),
-          'invalid_workspace_base',
-          'baseTaskId must be a Git task among dependsOn',
+          input.baseTaskId === undefined,
+          'incompatible_workspace',
+          'Use dependsOn for accepted code dependencies; baseTaskId is retired.',
+          409,
         );
         const owner = await this.scope.authorityActor(caller, tx);
+        check(this.code, 'code_unavailable', 'New experiments require managed Code storage', 503);
+        await this.code.ensureRepository(caller, tx);
         check(
-          input.workspace !== 'git' || this.code,
-          'code_unavailable',
-          'Git experiments require Code captures',
-          503,
-        );
-        const hosted = input.workspace === 'git' && (await this.code!.hosted(caller, tx));
-        check(
-          !hosted || input.baseTaskId === undefined,
-          'incompatible_workspace',
-          'Hosted Code cannot use the legacy baseTaskId workspace. Omit baseTaskId and keep the prerequisite in dependsOn; Code derives its accepted commit using the Fleet-supported driver.',
+          await this.code.hosted(caller, tx),
+          'code_store_required',
+          'Import the existing project repository into Code before creating work',
           409,
         );
         const workflow = await (
           await this.program.handleFor(
             programVersion(
-              input.workspace,
-              input.baseTaskId,
-              // Once Code keeps the project's history, new Git work lives there and nowhere else.
-              hosted,
               this.artifacts.largeUploadAvailable,
               !!(await this.nativeWork?.connected(caller.projectId, tx)),
             ),
@@ -792,9 +782,8 @@ export class ExperimentService implements Experiments {
             dependsOn: input.dependsOn,
             // What waits on this experiment names it, so the instance carries the name.
             data: {
-              workspace: input.workspace ?? 'none',
+              workspace: 'git',
               name: input.name,
-              ...(input.baseTaskId === undefined ? {} : { baseTaskId: input.baseTaskId }),
             },
           },
           tx,
@@ -813,7 +802,7 @@ export class ExperimentService implements Experiments {
           caller.actorId,
           createdAt,
           '[]',
-          input.workspace ?? 'none',
+          'git',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
         if (nativeExperiment(workflow.version)) {

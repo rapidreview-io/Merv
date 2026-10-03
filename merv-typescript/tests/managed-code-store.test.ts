@@ -52,6 +52,7 @@ test('managed Code transfers are fenced to one session even for the same source 
   });
   const first = managed('session_first');
   const other = managed('session_other');
+  await boundProject(state, owner.projectId, head);
   const store = await createService(
     new CodeStore(
       state,
@@ -75,7 +76,6 @@ test('managed Code transfers are fenced to one session even for the same source 
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  await boundProject(state, owner.projectId, head);
   const bundle = source.bundle(head);
   const imported = await store.importRepository(owner, {
     source: 'bundle',

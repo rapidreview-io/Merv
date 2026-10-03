@@ -3,7 +3,7 @@ import type { GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { accountRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
-import { EmptyState, LoadState, StatusPill } from '../components';
+import { EmptyState, LoadState, Short, StatusPill } from '../components';
 import { recordNames, type NamedHome } from '../markdown';
 import { useSession } from '../session';
 import { usePageFacts } from '../shell';
@@ -91,13 +91,18 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
   const unlinked = !!github && (github.status === 'disconnected' || !github.repository);
   // With no repository and nothing Merv made, the page has one thing to say and one
   // thing to offer, and counts nothing.
-  const bare = unlinked && !read.error && !model.lanes.length && !published.rows.length;
+  const bare =
+    unlinked &&
+    !read.error &&
+    !read.data?.status?.project &&
+    !model.lanes.length &&
+    !published.rows.length;
   // The counts stand on the line the shell titles the page with, beside its name.
   usePageFacts(
     bare || !settled
       ? []
       : [
-          ['Branches', read.data ? model.lanes.length : EM],
+          ['Work histories', read.data ? model.lanes.length : EM],
           ['Merges', read.data ? merges : EM],
         ],
   );
@@ -172,7 +177,10 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
           was made over, so it stays on the page; a missing one is a pill and the way to mend it. */}
       {unlinked ? (
         <p className="cluster">
-          <StatusPill value={github.status === 'disconnected' ? 'disconnected' : 'no repository'} />
+          <span>
+            {read.data?.status?.project?.durability === 'code' ? 'Managed Git · ' : ''}GitHub not
+            connected
+          </span>
           {mends && connect(label)}
         </p>
       ) : (
@@ -201,6 +209,13 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
         </div>
       )}
       <LoadState loading={read.loading} error={read.error} data={read.data} />
+      {model.lanes.length === 0 && read.data?.status?.project && (
+        <p className="cluster" aria-label="Managed main">
+          <span className="branch">main</span>
+          <Short value={read.data.status.project.main.oid} />
+          <StatusPill value={read.data.status.project.main.stored ? 'ready' : 'initializing'} />
+        </p>
+      )}
       {model.lanes.length > 0 && (
         <div className="code-plane">
           <BranchCanvas model={model} selected={selected} onSelect={select} lit={lit} card={card} />
@@ -212,7 +227,7 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
         reload={published.reload}
         operator={signedIn}
         named={named}
-        controls={read.data?.status?.publication?.controls}
+        controls={unlinked ? undefined : read.data?.status?.publication?.controls}
         onControlled={read.reload}
       />
       <CodeOperations status={read.data?.status} manages={manages} onDone={read.reload} />

@@ -1,3 +1,5 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { managedServices } from './fixtures/managed-services.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
@@ -104,6 +106,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     workflows = await createService(new WorkflowsService(state, scope)),
     reviews = await createService(new ReviewService(state, scope, artifacts)),
     contextBuilder = await createService(new RecipeContextBuilder(state, scope, artifacts));
+  const managed = await managedServices({ state, scope, artifacts, workflows }, dir, operator);
   let experiments = await createService(
       new ExperimentService(
         state,
@@ -112,20 +115,30 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
         workflows,
         reviews,
         contextBuilder,
-        undefined,
+        managed.code,
         await createService(new PaperService(state, scope, artifacts)),
         limits,
       ),
     ),
     sequence = 0;
   const id = () => `request-${++sequence}`;
-  const create = async (name = `Experiment-${sequence + 1}`, extra: Record<string, unknown> = {}) =>
-    await experiments.create(producer, {
-      name,
-      intent: 'Test the hypothesis.',
-      requestId: id(),
-      ...extra,
-    });
+  const create = async (
+    name = `Experiment-${sequence + 1}`,
+    extra: Record<string, unknown> = {},
+    version = 25,
+  ) =>
+    await historicalExperiment(
+      { state, experiments },
+      producer,
+      {
+        name,
+        intent: 'Test the hypothesis.',
+        requestId: id(),
+        ...extra,
+      },
+      undefined,
+      version,
+    );
   const attach = async (
     experiment: Experiment,
     role: ExperimentAttach['role'],
@@ -204,6 +217,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     return await transition(e, 'submit_results');
   };
   t.after(async () => {
+    await managed.close();
     experiments.close();
     contextBuilder.close();
     workflows.close();
@@ -246,7 +260,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
           workflows,
           reviews,
           contextBuilder,
-          undefined,
+          managed.code,
           await createService(new PaperService(state, scope, artifacts)),
         ),
       );
@@ -622,23 +636,30 @@ test('The longest requestId the tools accept still names the requests an experim
 });
 test('Active cap, name uniqueness and same-project dependencies fail atomically', async (t) => {
   const f = await fixture(t);
-  const initial = await f.create('Case-name');
-  await assert.rejects(async () => await f.create('case-NAME'), code('experiment_name_conflict'));
+  const create = (name: string, extra: Record<string, unknown> = {}) =>
+    f.experiments.create(f.producer, {
+      name,
+      intent: 'Test the hypothesis.',
+      requestId: f.id(),
+      ...extra,
+    });
+  const initial = await create('Case-name');
+  await assert.rejects(async () => await create('case-NAME'), code('experiment_name_conflict'));
   // An ordering between two experiments is a task in between (founder, 2026-09-18).
   await assert.rejects(
-    async () => await f.create('Chained', { dependsOn: [initial.id] }),
+    async () => await create('Chained', { dependsOn: [initial.id] }),
     code('invalid_dependency'),
   );
   const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' }),
     caller = { actorId: other.actor.id, projectId: other.project.id };
   await assert.rejects(
-    async () => await f.create('Retired-field', { testedClaimIds: ['claim_retired'] }),
+    async () => await create('Retired-field', { testedClaimIds: ['claim_retired'] }),
     code('invalid_experiment_input'),
   );
-  for (let i = 0; i < 6; i++) await f.create(`Active-${i}`);
-  await assert.rejects(async () => await f.create('Eighth'), code('experiment_limit'));
+  for (let i = 0; i < 6; i++) await create(`Active-${i}`);
+  await assert.rejects(async () => await create('Eighth'), code('experiment_limit'));
   await f.transition(initial, 'abandon', { evidence: { reason: 'Stop this line of work.' } });
-  assert.ok(await f.create('Replacement'));
+  assert.ok(await create('Replacement'));
   assert.equal((await f.experiments.list(caller)).length, 0);
 });
 test('Missing bytes and invalid scoped figure references cannot seal a review', async (t) => {
@@ -885,7 +906,7 @@ test('native experiments pin only new work, retain service captures and change p
   const legacy = await f.create('Legacy');
   const native = nativeWorkFixture();
   t.after(f.experiments.bindNativeWork(native.service));
-  let experiment = await f.create('Native');
+  let experiment = await f.create('Native', {}, 33);
   assert.equal(legacy.workflow.version, 25);
   assert.equal(experiment.workflow.version, 33);
   assert.equal((await f.experiments.get(f.producer, legacy.id)).workflow.version, 25);

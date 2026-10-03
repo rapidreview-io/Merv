@@ -1,5 +1,7 @@
 # Runner Git workspaces
 
+Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document older workflow versions. See [Always-on Git](ALWAYS_GIT.md).
+
 Runner prepares a private Git checkout for a frozen workflow step, preserves its final work, and reports an immutable snapshot to Sessions. A live writable worker can request a named commit through `code.commit` when its fixed tool policy permits it, then read the receipt through `code.operation`. The independent Code service queues that request; the existing Runner executes the fixed Git operation. Final WIP capture still happens after the process group stops. Neither operation publishes code to a central branch. See [Code operations](CODE_OPERATIONS.md).
 
 ## Configuration and responsibility

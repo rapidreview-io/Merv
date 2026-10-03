@@ -1,3 +1,4 @@
+import { waitForManagedCode } from './fixtures/managed-code.js';
 /**
  * The 2026-09-22 retirement on PostgreSQL, and the 2026-09-25 retirement of experiment.plan tasks:
  * a database seeded with an instance of every workflow version that can no longer start, and an
@@ -223,7 +224,9 @@ async function prepare(
   try {
     const bootstrap = async (projectName: string) => {
       const credentials = await app.ctx.scope.bootstrap({ projectName, actorName: 'Operator' });
-      return { projectId: credentials.project.id, actorId: credentials.actor.id };
+      const caller = { projectId: credentials.project.id, actorId: credentials.actor.id };
+      await waitForManagedCode(app.ctx.codeResearch, caller);
+      return caller;
     };
     const liveProject = await bootstrap('Live work');
     live = liveProject;
@@ -548,15 +551,15 @@ test('retiring the versions that can no longer start deletes their records and n
   // Every flow that can start still does, and nothing left is on an unregistered version.
   const { tasks, experiments, research, reflections, workflows } = app.ctx;
   const input = { goal: 'Still works.', checks: ['It runs.'] };
-  const scratch = await tasks.create(live, { ...input, title: 'Scratch', requestId: 'scratch' });
-  assert.equal(scratch.workflow.version, 28);
+  const managed = await tasks.create(live, { ...input, title: 'Managed', requestId: 'managed' });
+  assert.equal(managed.workflow.version, 31);
   const git = await tasks.create(live, {
     ...input,
     title: 'Git',
     workspace: 'git',
     requestId: 'git',
   });
-  assert.equal(git.workflow.version, 29);
+  assert.equal(git.workflow.version, 31);
   const work = await tasks.create(live, {
     ...input,
     title: 'Work 4',
@@ -570,7 +573,7 @@ test('retiring the versions that can no longer start deletes their records and n
     intent: 'Still testing.',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 25);
+  assert.equal(experiment.workflow.version, 28);
   await research.create(live, { name: 'After the release', requestId: 'research' });
   // The retired open wave held the project's only open-wave slot.
   await reflections.create(live, { requestId: 'wave' });

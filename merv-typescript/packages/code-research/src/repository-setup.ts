@@ -5,6 +5,7 @@ import type {
   Caller,
   CodeRepositoryPreparation,
   CodeRepositoryPrepareInput,
+  CodeStoreOperation,
 } from '@merv/contracts';
 import type { Code } from './types.js';
 import type { GitHubBinding } from '@merv/code/github';
@@ -33,6 +34,7 @@ export async function prepareRepository(
   code: PreparationHost,
   caller: Caller,
   value: CodeRepositoryPrepareInput,
+  reconcile?: (operation: CodeStoreOperation) => Promise<CodeRepositoryPreparation>,
 ): Promise<CodeRepositoryPreparation> {
   caller = structuredClone(caller);
   const input = parseCodeInput(repositoryPrepareSchema, value);
@@ -56,6 +58,34 @@ export async function prepareRepository(
     'Repository storage is not configured on this server',
     503,
   );
+  if (before.project?.durability === 'code') {
+    check(reconcile, 'code_sync_unavailable', 'Managed repository integration is unavailable', 503);
+    const operation = await code.importRepository(caller, {
+      source: 'github',
+      ref: `refs/heads/${input.baseBranch}`,
+      expectedHead: input.headOid,
+      githubBinding: {
+        revision: connection.revision,
+        repositoryId: connection.repository.id,
+        baseBranch: input.baseBranch,
+      },
+      requestId: `${input.requestId}:import`,
+    });
+    if (operation.status !== 'completed')
+      return {
+        state: operation.status === 'prepared' ? 'importing' : 'failed',
+        baseBranch: input.baseBranch,
+        headOid: input.headOid,
+        operation,
+      };
+    check(
+      operation.head === input.headOid,
+      'code_branch_changed',
+      'The imported head differs from the selected head',
+      409,
+    );
+    return reconcile(operation);
+  }
   const repositoryId = `github:${connection.repository.id}`;
   check(
     !before.project || before.project.repositoryId === repositoryId,

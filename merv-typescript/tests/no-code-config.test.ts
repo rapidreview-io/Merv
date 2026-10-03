@@ -18,7 +18,7 @@ test('the no-Code example is the default composition without its Code entries', 
   });
 });
 
-test('documented no-Code server and runner compose usable research without Git plugins', async (t) => {
+test('a no-Code compatibility server can read history but refuses new work', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-no-code-config-'));
   const app = await createApp({
     directory,
@@ -40,13 +40,15 @@ test('documented no-Code server and runner compose usable research without Git p
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const task = await app.ctx.tasks.create(caller, {
-    title: 'Compare observations',
-    goal: 'Explain the evidence',
-    checks: ['Evidence retained'],
-    requestId: 'task',
-  });
-  assert.equal(task.workflow.state, 'in_progress');
+  await assert.rejects(
+    app.ctx.tasks.create(caller, {
+      title: 'Compare observations',
+      goal: 'Explain the evidence',
+      checks: ['Evidence retained'],
+      requestId: 'task',
+    }),
+    { code: 'code_unavailable' },
+  );
   const shell = (await app.ctx.tools.call('ui.shell', caller, {})) as { rows: { id: string }[] };
   assert.ok(!shell.rows.some((row) => row.id === 'code'));
   assert.ok(!(await app.ctx.tools.list()).some((tool) => tool.name.startsWith('code.')));

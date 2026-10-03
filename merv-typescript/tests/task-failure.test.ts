@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -40,7 +41,7 @@ async function fixture(api = false) {
   });
   let sequence = 0;
   const create = async () =>
-    await app.ctx.tasks.create(producer.caller, {
+    await historicalTask(app.ctx, producer.caller, {
       title: 'Withdrawable work',
       goal: 'Goal.',
       checks: ['Check.'],

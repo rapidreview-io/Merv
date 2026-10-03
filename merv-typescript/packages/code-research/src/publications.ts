@@ -154,8 +154,15 @@ export class CodePublicationService implements CodePublicationApi {
   async openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction) {
     ({ caller, input } = structuredClone({ caller, input }));
     this.state.assertTransaction(tx);
+    const connection = await tx.get<{ repository_json: string | null }>(
+      'SELECT repository_json FROM code_github WHERE project_id=?',
+      caller.projectId,
+    );
+    const destination =
+      connection?.repository_json && connection.repository_json !== 'null' ? 'github' : 'local';
     const at = now();
     const record: CodePublication = {
+      destination,
       proposalId: input.publicationId,
       instanceId: input.unitId,
       manifestHash: input.approval.acceptanceHash,
@@ -396,6 +403,54 @@ export class CodePublicationService implements CodePublicationApi {
       return this.decode(await this.row(caller, row.proposal_id, tx));
     });
   }
+  /** A reviewed local integration needs no remote, but retains the same review certificate. */
+  private async publishLocal(caller: Caller, row: Row, lock: string) {
+    const record = this.decode(row);
+    check(this.host, 'code_store_unavailable', 'Managed repository storage is required', 503);
+    await this.host.verifyLocal(caller, record);
+    await this.state.transaction(async (tx) => {
+      const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
+      await this.scope.require(caller, 'write', tx);
+      await this.host!.check(caller, current, tx);
+      const project = await tx.get<{ main_json: string }>(
+        'SELECT main_json FROM code_projects WHERE project_id=?',
+        caller.projectId,
+      );
+      const main = project && JSON.parse(project.main_json).oid;
+      // The checkout base may already merge accepted dependencies with main.
+      // CAS the pinned integration main, not that derived checkout commit.
+      const expectedMain = current.approval!.integrationBase;
+      if (main !== expectedMain && main !== current.headOid) {
+        await tx.run(
+          "UPDATE code_publications SET stale=1,settled=1,error='code_main_changed' WHERE proposal_id=?",
+          row.proposal_id,
+        );
+        await this.host!.apply(caller, current, 'stale', tx);
+        return;
+      }
+      await tx.run(
+        'UPDATE code_publications SET merge_json=?,verified=1,settled=1,error=NULL WHERE proposal_id=?',
+        canonical({
+          requestId: `local:${record.proposalId}`,
+          actorId: caller.actorId,
+          expectedBase: expectedMain,
+          requestedAt: now(),
+          commitSha: record.headOid,
+          mainParent: expectedMain,
+        }),
+        row.proposal_id,
+      );
+      await this.host!.main(caller, record.headOid, tx);
+      await this.host!.apply(caller, current, 'published', tx);
+      await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
+        destination: 'local',
+        unitId: record.instanceId,
+        previousMain: main,
+        commitSha: record.headOid,
+      });
+    });
+  }
+
   async syncPublications(caller: Caller) {
     caller = structuredClone(caller);
     check(
@@ -421,6 +476,10 @@ export class CodePublicationService implements CodePublicationApi {
     for (const record of records) {
       try {
         await this.locked(caller, record.proposalId, async (row, lock) => {
+          if (this.decode(row).destination === 'local') {
+            await this.publishLocal(caller, row, lock);
+            return;
+          }
           if (row.binding_json === 'null') {
             row = await this.state.transaction(async (tx) => {
               await this.owned(caller, row.proposal_id, lock, tx);

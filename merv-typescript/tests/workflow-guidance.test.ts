@@ -1,3 +1,5 @@
+// Historical scratch records exercise the original assignment and recovery contract.
+import { historicalTask } from './fixtures/historical-task.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -370,7 +372,7 @@ test('task guidance follows caller, evidence, review claims, recovery, context, 
       title: 'Brief',
       content: 'Goal. Check.',
     });
-    const task = await app.ctx.tasks.create(producer, {
+    const task = await historicalTask(app.ctx, producer, {
       title: 'Guided task',
       goal: 'Goal.',
       checks: ['Check.'],
@@ -526,7 +528,7 @@ test('task guidance follows caller, evidence, review claims, recovery, context, 
     assert.equal((await guidance(producer)).terminal, true);
     await app.setEnabled('tasks', true);
     assert.deepEqual(await guidance(producer), finished);
-    const failed = await app.ctx.tasks.create(producer, {
+    const failed = await historicalTask(app.ctx, producer, {
       title: 'Fail case',
       goal: 'Goal.',
       checks: ['Check.'],

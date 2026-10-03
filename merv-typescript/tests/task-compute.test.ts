@@ -1,3 +1,5 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { historicalTask } from './fixtures/historical-task.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createService, MervError, type Caller } from '@merv/contracts';
@@ -95,7 +97,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const task = await tasks.create(producer, {
+  const task = await historicalTask({ state, artifacts, tasks }, producer, {
     title: 'GPU smoke',
     goal: 'Run bounded GPU smoke.',
     checks: ['Output captured.'],
@@ -172,7 +174,7 @@ test('tasks and experiments share GPU admission, recover runs, and enforce work 
   assert.equal(submitted.length, 1);
   assert.equal(submitted[0]!.spec.idempotencyKey.length > 10, true);
   assert.deepEqual(submitted[0]!.spec.outputs, input.outputs);
-  const experiment = await experiments.create(caller, {
+  const experiment = await historicalExperiment({ state, experiments }, caller, {
     name: randomUUID(),
     intent: 'Independent GPU work alongside task runs.',
     requestId: randomUUID(),

@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -31,7 +32,7 @@ async function fixture(api = false) {
     reviewer2 = await issue('reviewer');
   let sequence = 0;
   const pending = async () => {
-    const task = await app.ctx.tasks.create(producer.caller, {
+    const task = await historicalTask(app.ctx, producer.caller, {
       title: 'Check adder',
       goal: 'Verify addition.',
       checks: ['Positive inputs work.', 'Negative inputs work.'],

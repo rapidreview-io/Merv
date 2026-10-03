@@ -1,3 +1,4 @@
+import { historicalTask } from '../tests/fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -154,13 +155,22 @@ export async function runMountUnloadScenario(
       title: 'Brief',
       content: 'Goal: Keep native work available.\nCheck: Task reaches done.',
     });
-    const task = await native(producer, 'task.create', {
-      title: 'Work during mount removal',
-      goal: 'Keep native work available.',
-      checks: ['Task reaches done.'],
-      briefId: brief.id,
-      requestId: 'mount-task',
-    });
+    // Replay work created before managed Git became mandatory.
+    const task = await historicalTask(
+      running.ctx,
+      {
+        ...caller,
+        actorId: identity.producer.actor.id,
+        credentialId: identity.producer.credential.id,
+      },
+      {
+        title: 'Work during mount removal',
+        goal: 'Keep native work available.',
+        checks: ['Task reaches done.'],
+        briefId: brief.id,
+        requestId: 'mount-task',
+      },
+    );
     const post = await native(producer, 'feed.post', {
       body: 'Remote mount ready.',
       requestId: 'mount-before',

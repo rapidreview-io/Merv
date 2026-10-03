@@ -1,3 +1,4 @@
+import { historicalTask } from '../tests/fixtures/historical-task.js';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ import { beating, mcp, seedRunning } from './ui-demo-running.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
- * two tasks (one reviewed and done, one awaiting delivery) and a pinned review.
+ * historical artifact-only tasks and a pinned review. New Git work uses --git.
  * Type `disable <id>`, `enable <id>` (a plugin entry, such as `ui`) or `quit` on stdin.
  *
  * The Running page gets its own work last (scripts/ui-demo-running.ts): tasks waiting, worked
@@ -76,6 +77,7 @@ async function main() {
       if (body.error) throw new Error(`${name}: ${body.error.code} ${body.error.message}`);
       return body.result;
     };
+  const producerCaller = { actorId: producer.actor.id, projectId: operator.projectId };
   const p = as(producer.token);
   const r = as(reviewer.token);
 
@@ -93,7 +95,7 @@ async function main() {
     ].join('\n'),
     mediaType: 'text/markdown',
   });
-  const task = await p('task.create', {
+  const task = await historicalTask(app.ctx, producerCaller, {
     title: 'Reproduce grokking on modular addition',
     goal: 'Show the delayed generalization curve with our training harness.',
     checks: [
@@ -188,7 +190,7 @@ async function main() {
     content:
       'Goal: Find where the grokking step moves as decay grows.\nSweep weight decay in {0.1, 0.3, 1.0, 3.0}.\nDone when:\n- Four runs complete\n- Grokking step reported per run',
   });
-  const sweepTask = await p('task.create', {
+  const sweepTask = await historicalTask(app.ctx, producerCaller, {
     title: 'Sweep weight decay across four settings',
     goal: 'Find where the grokking step moves as decay grows.',
     checks: ['Four runs complete', 'Grokking step reported per run'],
@@ -209,7 +211,7 @@ async function main() {
     return { agent, token };
   };
   const previous = await joinAgent('Demo · prior research agent', 'demo-prior-agent');
-  const historical = await app.ctx.tasks.create(owner, {
+  const historical = await historicalTask(app.ctx, owner, {
     title: 'Check training configuration',
     goal: 'Verify the training configuration.',
     checks: ['Configuration recorded.'],
@@ -266,6 +268,7 @@ async function main() {
     owner,
     token: boot.token,
     producer: p,
+    producerCaller,
     reviewer: r,
     joinAgent,
     sweep: {

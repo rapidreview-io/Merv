@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -172,7 +173,7 @@ test(
       checks: ['The sum is 20.'],
       requestId: 'create-task',
     };
-    const task = await app.ctx.tasks.create(producer, create);
+    const task = await historicalTask(app.ctx, producer, create);
     assert.deepEqual(await app.ctx.tasks.create(producer, create), task);
     await assert.rejects(app.ctx.tasks.create(producer, { ...create, title: 'Changed input' }), {
       code: 'request_conflict',

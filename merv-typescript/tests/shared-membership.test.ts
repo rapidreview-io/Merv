@@ -1,3 +1,5 @@
+// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -734,7 +736,7 @@ test('human task context and review claims integrate with role-loss and remove/r
     const operator = await app.ctx.scope.caller(owner, project.id);
     const producer = await app.ctx.scope.caller(producerUser, project.id);
     let reviewer = await app.ctx.scope.caller(reviewerUser, project.id);
-    const task = await app.ctx.tasks.create(producer, {
+    const task = await historicalTask(app.ctx, producer, {
       title: 'Member task',
       goal: 'Verify the result.',
       checks: ['The result is reproducible.'],

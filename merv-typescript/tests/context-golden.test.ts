@@ -42,6 +42,8 @@ interface Golden {
   /** Owner sign-offs for pinned prompts a renderer change deliberately altered. */
   signoffs: string[];
   recipes: Record<string, Record<string, Pin>>;
+  /** Retired recipe versions keep their original pins as history. */
+  historicalRecipes?: Record<string, Record<string, Pin>>;
 }
 
 const fixture = new URL('./fixtures/context-golden.json', import.meta.url);
@@ -287,7 +289,14 @@ test('every registered context recipe renders its pinned prompts', async (t) => 
 
   const golden = JSON.parse(readFileSync(fixture, 'utf8')) as Golden;
   if (process.env.MERV_UPDATE_CONTEXT_GOLDEN === '1') {
-    writeFileSync(fixture, `${JSON.stringify({ ...golden, recipes: pins }, null, 2)}\n`);
+    const historicalRecipes = {
+      ...golden.historicalRecipes,
+      ...Object.fromEntries(Object.entries(golden.recipes).filter(([name]) => !pins[name])),
+    };
+    writeFileSync(
+      fixture,
+      `${JSON.stringify({ ...golden, recipes: pins, historicalRecipes }, null, 2)}\n`,
+    );
     return;
   }
   const changed = [

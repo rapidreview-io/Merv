@@ -189,9 +189,15 @@ export function UnitCode({
           // one fact that ends it; a publication stopped rather than in flight is read in
           // the refusal's colour, as everything stopped on this page is.
           !!publication && [
-            'Publication',
+            publication.destination === 'local' ? 'Integration' : 'Publication',
             <span className={cx('cluster', refused(publication.state) && 'code-refusal')}>
-              <StatusPill value={publication.state} />
+              <StatusPill
+                value={
+                  publication.destination === 'local' && publication.state === 'published'
+                    ? 'integrated'
+                    : publication.state
+                }
+              />
               {!!publication.pull && (
                 <a
                   className="btn-text"

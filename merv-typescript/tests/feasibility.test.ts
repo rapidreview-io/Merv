@@ -1,3 +1,4 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -196,7 +197,7 @@ const code = (value: string) => ({ code: value });
 test('a design cannot be submitted without a feasibility statement that admits it', async (t) => {
   const f = await fixture(t);
   const experiments = f.app.ctx.experiments;
-  const e = await experiments.create(f.owner, {
+  const e = await historicalExperiment({ state: f.app.ctx.state, experiments }, f.owner, {
     name: 'Gated',
     intent: 'Compare two methods.',
     requestId: f.id(),
@@ -271,7 +272,7 @@ test('a design cannot be submitted without a feasibility statement that admits i
 test('a design review cannot waive feasibility, and its finding cites the statement', async (t) => {
   const f = await fixture(t);
   const experiments = f.app.ctx.experiments;
-  const e = await experiments.create(f.owner, {
+  const e = await historicalExperiment({ state: f.app.ctx.state, experiments }, f.owner, {
     name: 'Reviewed',
     intent: 'Compare two methods.',
     requestId: f.id(),

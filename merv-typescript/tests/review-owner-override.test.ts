@@ -1,3 +1,5 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { historicalTask } from './fixtures/historical-task.js';
 /**
  * The founder's ruling of 2026-09-25: a review is decided by an independent agent by default,
  * and the person who owns the project may still decide any review, as owner. The override is a
@@ -85,7 +87,7 @@ async function fixture(t: TestContext) {
   const call = async <T>(name: string, caller: Caller, input: Data) =>
     (await tools.call(name, caller, input)) as T;
   const task = async (by: Caller) =>
-    await app.ctx.tasks.create(by, {
+    await historicalTask(app.ctx, by, {
       title: `Task ${++seq}`,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
@@ -299,7 +301,7 @@ test('no worker, machine actor, non-operator member or other person decides as o
 test('the owner decides an experiment’s design and its results as owner', async (t) => {
   const f = await fixture(t);
   const { experiments, artifacts } = f.app.ctx;
-  let experiment = await experiments.create(f.founder, {
+  let experiment = await historicalExperiment(f.app.ctx, f.founder, {
     name: 'Owner-decided',
     intent: 'Test the hypothesis.',
     requestId: 'experiment',

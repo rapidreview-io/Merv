@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -52,7 +53,7 @@ async function fixture(t: TestContext) {
     rmSync(directory, { recursive: true, force: true });
   });
   const create = async (requestId: string) =>
-    await tasks.create(producer, {
+    await historicalTask({ state, artifacts, tasks }, producer, {
       title: requestId,
       goal: 'Measure the output.',
       checks: ['The retained measurement is reproducible.'],

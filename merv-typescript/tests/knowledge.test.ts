@@ -1,3 +1,5 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { historicalExperiment } from './fixtures/historical-experiment.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
@@ -53,7 +55,11 @@ async function fixture(t: TestContext) {
     );
     events = await createService(new DurableEvents(state));
     sessions = await createService(new LeasedSessions(state, scope, workflows, events));
-    code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
+    code = await createService(
+      new CodeService(state, scope, sessions, artifacts, workflows, undefined, undefined, {
+        config: { root: join(directory, 'code'), reservedFreeBytes: 1 },
+      }),
+    );
     experiments = await createService(
       new ExperimentService(
         state,
@@ -102,13 +108,13 @@ async function fixture(t: TestContext) {
   let sequence = 0;
   const id = () => `knowledge-fixture-${++sequence}`;
   const createExperiment = async (name?: string) =>
-    await experiments.create(producer, {
+    await historicalExperiment({ state, experiments }, producer, {
       name: name ?? `Experiment-${sequence + 1}`,
       intent: 'Test the treatment.',
       requestId: id(),
     });
   const createTask = async () =>
-    await tasks.create(producer, {
+    await historicalTask({ state, artifacts, tasks }, producer, {
       title: 'Research support',
       goal: 'Check the retained output.',
       checks: ['Retain reproducible evidence.'],

@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -96,14 +97,8 @@ async function fixture(t: TestContext) {
     checks: ['The evidence records an independently verifiable result.'],
     requestId: 'create-task',
   };
-  const createdTask = await http<{ result: Task }>(
-    '/tools/task.create',
-    key.token,
-    taskInput,
-    project.id,
-  );
-  assert.equal(createdTask.status, 200, JSON.stringify(createdTask.body));
-  const task = createdTask.body.result;
+  // Retained pre-Git work; transport, review and restart still use the real services.
+  const task = await historicalTask(app.ctx, await source(), taskInput);
   async function offer(target = task, requestId = randomUUID(), secret = freshSecret()) {
     const input = {
       instanceId: target.id,

@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -34,7 +35,7 @@ test('one agent can produce successive tasks and review other work, but cannot r
     secret: token,
   });
   const createTask = async (requestId: string, by = owner) =>
-    await app.ctx.tasks.create(by, {
+    await historicalTask(app.ctx, by, {
       title: requestId,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
@@ -173,7 +174,7 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
         content: '結果'.repeat(160),
       })),
     });
-  const task = await app.ctx.tasks.create(owner, {
+  const task = await historicalTask(app.ctx, owner, {
     title: 'Survey',
     goal: 'Summarize the paper.',
     checks: ['Cites every section it relies on.'],
@@ -221,7 +222,7 @@ test('an agent route closes a session as what happened to it, and a closed sessi
     credentialId: boot.credential.id,
   };
   const createTask = async (requestId: string) =>
-    await app.ctx.tasks.create(owner, {
+    await historicalTask(app.ctx, owner, {
       title: requestId,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],

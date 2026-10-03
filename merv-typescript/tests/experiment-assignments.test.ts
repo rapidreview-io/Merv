@@ -1,3 +1,5 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { historicalExperiment } from './fixtures/historical-experiment.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
@@ -62,7 +64,11 @@ async function fixture(t: TestContext) {
       sweepIntervalMs: 60_000,
     }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, artifacts, workflows));
+  const code = await createService(
+    new CodeService(state, scope, sessions, artifacts, workflows, undefined, undefined, {
+      config: { root: join(directory, 'code'), reservedFreeBytes: 1 },
+    }),
+  );
   const boot = await scope.bootstrap({ projectName: 'Experiment assignments', actorName: 'Owner' });
   const source: Caller = {
     actorId: boot.actor.id,
@@ -92,14 +98,24 @@ async function fixture(t: TestContext) {
     };
   };
   const reviewer = await issue('reviewer');
-  const create = async (dependsOn: string[] = [], workspace?: 'git') =>
-    await experiments.create(source, {
-      name: `experiment-${++sequence}`,
-      intent: 'Test the hypothesis using matched evidence.',
-      dependsOn,
-      ...(workspace ? { workspace } : {}),
-      requestId: request(),
-    });
+  const create = async (
+    dependsOn: string[] = [],
+    workspace?: 'git',
+    version = workspace ? 26 : 25,
+  ) =>
+    await historicalExperiment(
+      { state, experiments },
+      source,
+      {
+        name: `experiment-${++sequence}`,
+        intent: 'Test the hypothesis using matched evidence.',
+        dependsOn,
+        ...(workspace ? { workspace } : {}),
+        requestId: request(),
+      },
+      undefined,
+      version,
+    );
   const attach = async (
     experiment: Experiment,
     role: ExperimentAttach['role'],
@@ -254,7 +270,7 @@ async function fixture(t: TestContext) {
 }
 test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
-  const prerequisite = await f.tasks.create(f.source, {
+  const prerequisite = await historicalTask(f, f.source, {
     title: 'Prerequisite',
     goal: 'Retain a prerequisite result.',
     checks: ['Result is present.'],
@@ -1178,7 +1194,7 @@ test('Git experiments retain the central-base protocol and wait for their exact 
     intent: 'Preserve prior create normalization.',
     requestId: f.request(),
   };
-  const old = await f.experiments.create(f.source, oldInput);
+  const old = await historicalExperiment(f, f.source, oldInput);
   const oldPolicy = (await f.workflows.assignment(f.source, old.id)).execution;
   assert.equal(old.workflow.version, 25);
   assert.equal(Object.hasOwn(old, 'workspace'), false);
@@ -1521,14 +1537,20 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
   t.after(f.tasks.bindCode(f.code));
   await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
   const head = 'b'.repeat(40);
-  const task = await f.tasks.create(f.source, {
-    title: 'Evaluation harness',
-    goal: 'Build the harness as a repository.',
-    checks: ['The harness runs end to end'],
-    workspace: 'git',
-    requestId: f.request(),
-  });
-  const scratch = await f.tasks.create(f.source, {
+  const task = await historicalTask(
+    f,
+    f.source,
+    {
+      title: 'Evaluation harness',
+      goal: 'Build the harness as a repository.',
+      checks: ['The harness runs end to end'],
+      workspace: 'git',
+      requestId: f.request(),
+    },
+    undefined,
+    29,
+  );
+  const scratch = await historicalTask(f, f.source, {
     title: 'Notes',
     goal: 'Write the notes.',
     checks: ['The notes exist'],
@@ -1550,12 +1572,12 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
       }),
     {
       code: 'invalid_workspace',
-      message: 'baseTaskId is only for workspace "git": omit it for workspace "none"',
+      message: 'New experiments always use Git. Omit workspace or use git.',
     },
   );
   await assert.rejects(
     async () => await f.experiments.create(f.source, { ...input, baseTaskId: task.id }),
-    { code: 'invalid_workspace_base' },
+    { code: 'incompatible_workspace' },
   );
   await assert.rejects(
     async () =>
@@ -1564,10 +1586,10 @@ test('A Git experiment may start from the commit an accepted Git task delivered'
         baseTaskId: scratch.id,
         dependsOn: [scratch.id],
       }),
-    { code: 'invalid_workspace_base' },
+    { code: 'incompatible_workspace' },
   );
   const based = { ...input, baseTaskId: task.id, dependsOn: [task.id] };
-  const experiment = await f.experiments.create(f.source, based);
+  const experiment = await historicalExperiment(f, f.source, based, undefined, 27);
   assert.equal(experiment.workflow.version, 27);
   assert.equal(experiment.baseTaskId, task.id);
   assert.deepEqual(await f.experiments.create(f.source, based), experiment);
@@ -1740,13 +1762,19 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   const f = await fixture(t);
   t.after(f.tasks.bindCode(f.code));
   await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
-  const prerequisite = await f.tasks.create(f.source, {
-    title: 'Retained baseline',
-    goal: 'Keep the baseline in Git',
-    checks: ['Evidence retained'],
-    workspace: 'git',
-    requestId: f.request(),
-  });
+  const prerequisite = await historicalTask(
+    f,
+    f.source,
+    {
+      title: 'Retained baseline',
+      goal: 'Keep the baseline in Git',
+      checks: ['Evidence retained'],
+      workspace: 'git',
+      requestId: f.request(),
+    },
+    undefined,
+    29,
+  );
   await f.state.transaction(async (tx) => {
     await tx.run(
       'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
@@ -1764,7 +1792,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   };
   await assert.rejects(f.experiments.create(f.source, { ...input, baseTaskId: prerequisite.id }), {
     code: 'incompatible_workspace',
-    message: /Omit baseTaskId.*dependsOn/,
+    message: /dependsOn.*baseTaskId/,
   });
   const rows = await f.state.read((sql) =>
     sql.all('SELECT id FROM experiments WHERE project_id=?', f.source.projectId),
@@ -1782,11 +1810,17 @@ test('A Git experiment created once Code keeps the project’s history names Cod
     intent: 'Run the harness against the matched evidence.',
     workspace: 'git' as const,
   };
-  const before = await f.experiments.create(f.source, {
-    ...input,
-    name: 'runner-kept',
-    requestId: f.request(),
-  });
+  const before = await historicalExperiment(
+    f,
+    f.source,
+    {
+      ...input,
+      name: 'runner-kept',
+      requestId: f.request(),
+    },
+    undefined,
+    26,
+  );
   assert.equal(before.workflow.version, 26);
   await f.state.transaction(async (tx) => {
     await tx.run(
@@ -1832,7 +1866,7 @@ test('native experiment leases dynamically admit verified captures and revoke ea
   const f = await fixture(t);
   const native = nativeWorkFixture();
   f.experiments.bindNativeWork(native.service);
-  const experiment = await f.create();
+  const experiment = await f.create([], undefined, 33);
   const first = await f.offer(experiment);
   assert.equal(first.session.execution.references.sandboxProfile, 'check');
   assert.equal(first.session.execution.references.sandboxAttempt, '1:planned');

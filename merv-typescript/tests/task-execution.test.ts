@@ -1,3 +1,5 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import type { TaskService } from '@merv/tasks';
 import { test, type TestContext } from 'node:test';
@@ -49,13 +51,19 @@ async function fixture(t: TestContext, api = false) {
     input: Data,
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ) => await sessions.run(await sessions.prepare(worker, tool, input), handler);
-  const create = async (requestId: string) =>
-    await app.ctx.tasks.create(operator, {
-      title: 'Verify execution boundaries',
-      goal: 'Keep workflow execution confined to its assignment.',
-      checks: ['Only permitted sources and the current claim can be used.'],
-      requestId,
-    });
+  const create = async (requestId: string, version = 28) =>
+    await historicalTask(
+      app.ctx,
+      operator,
+      {
+        title: 'Verify execution boundaries',
+        goal: 'Keep workflow execution confined to its assignment.',
+        checks: ['Only permitted sources and the current claim can be used.'],
+        requestId,
+      },
+      undefined,
+      version,
+    );
   const pending = async () => {
     const { session, worker } = await offer(await create('review-task'));
     const proof = await run(
@@ -89,6 +97,9 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
   });
   const { worker } = await offer(task);
   const reads = t.mock.method(app.ctx.artifacts, 'bytes');
+  // Finish asynchronous project initialization before measuring this read-only boundary.
+  await waitForManagedCode(app.ctx.codeResearch, operator);
+  await app.ctx.domainEvents.drain();
   // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
   const written = countWrites(app.ctx.state as PostgresState);
   const writes = async () => {
@@ -321,12 +332,12 @@ test('metadata admission avoids rendering, binds each session to its own record 
   }
 });
 
-test('new native task leases pin trusted scope, preserve handoffs and admit registered capture evidence', async (t) => {
+test('historical native task leases pin trusted scope, preserve handoffs and admit registered capture evidence', async (t) => {
   const { app, operator, offer, release, run, create } = await fixture(t);
   const old = await create('legacy-before-connection');
   const native = nativeWorkFixture();
   t.after((app.ctx.tasks as TaskService).bindNativeWork(native.service));
-  const task = await create('native-connected');
+  const task = await create('native-connected', 36);
   assert.equal(old.workflow.version, 28);
   assert.equal(task.workflow.version, 36);
   assert.equal((await app.ctx.tasks.get(operator, old.id)).workflow.version, 28);

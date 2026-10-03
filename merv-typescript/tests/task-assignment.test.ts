@@ -1,3 +1,5 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -27,7 +29,7 @@ async function fixture(api = false) {
     reader = await issue('reader');
   let sequence = 0;
   const create = async (extra: Partial<TaskCreate> = {}) =>
-    await app.ctx.tasks.create(producer.caller, {
+    await historicalTask(app.ctx, producer.caller, {
       title: 'Check addition',
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
@@ -51,6 +53,9 @@ async function fixture(api = false) {
   };
   const begin = async (caller: Caller, id: string, revision = 0) =>
     await app.ctx.workflows.begin(caller, { instanceId: id, expectedRevision: revision });
+  // Repository initialization is asynchronous; finish its writes before measuring assignments.
+  await waitForManagedCode(app.ctx.codeResearch, operator);
+  await app.ctx.domainEvents.drain();
   // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
   const written = countWrites(app.ctx.state as PostgresState);
   const writes = async () => {
@@ -174,6 +179,10 @@ test('work assignment preserves operator access and fences other actors, stale r
         ),
       { code: 'not_found' },
     );
+    await waitForManagedCode(f.app.ctx.codeResearch, {
+      projectId: foreign.project.id,
+      actorId: foreign.actor.id,
+    });
     const dependent = await f.create({ dependsOn: [task.id] });
     const before = await f.writes();
     await assert.rejects(
@@ -398,7 +407,11 @@ test('experiment.plan is retired: no version of it can be created', async () => 
     for (const typeVersion of [undefined, 1, 2])
       await assert.rejects(
         async () =>
-          await f.create({
+          await f.app.ctx.tasks.create(f.producer.caller, {
+            title: 'Unavailable type',
+            goal: 'Reject retired types.',
+            checks: ['No work created.'],
+            requestId: `retired-${typeVersion}`,
             type: 'experiment.plan',
             ...(typeVersion ? { typeVersion } : {}),
             contextInputs: {},

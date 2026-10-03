@@ -1,4 +1,5 @@
 import { OperationJournal } from '../operation-journal.js';
+import { initializeManagedProjects } from './managed.js';
 import {
   canonical,
   check,
@@ -172,7 +173,12 @@ interface OperationRow {
 type Bundle = { sha256: string; bytes: number };
 type ImportPayload = { format: 1; actorId: string } & (
   | { source: 'bundle'; tip: string; bundle: Bundle }
-  | { source: 'github'; ref: string; githubBinding?: CodeRepositoryImportInput['githubBinding'] }
+  | {
+      source: 'github';
+      ref: string;
+      expectedHead?: string;
+      githubBinding?: CodeRepositoryImportInput['githubBinding'];
+    }
 );
 /**
  * An upload pins everything its later calls are compared with: who began it, from which
@@ -370,6 +376,10 @@ export class CodeStore {
       this.woken = false;
       void (async () => {
         await this.maintaining?.catch(() => {});
+        // A wake can arrive inside a transaction that outlasts this timer interval.
+        // Cross the writer barrier before reading the journal, so that declaration
+        // has either committed or rolled back. No Git runs inside the barrier.
+        await this.state.transaction(async () => {});
         await this.maintain(false);
       })().catch(() => {});
     }, 200);
@@ -395,6 +405,7 @@ export class CodeStore {
             actorId: caller.actorId,
             source: 'github',
             ref: input.ref!,
+            ...(input.expectedHead ? { expectedHead: input.expectedHead } : {}),
             ...(input.githubBinding ? { githubBinding: input.githubBinding } : {}),
           };
     const inputHash = digest(body);
@@ -1375,7 +1386,7 @@ export class CodeStore {
       // here with the transfers: nothing else would show that it is open, who opened it, or
       // that a later request superseded it.
       open: await sql.all<OperationRow>(
-        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND phase IS NOT NULL AND kind IN ('import','upload','accept-ref','rebind') ORDER BY created_at,id LIMIT 100`,
+        `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND phase IS NOT NULL AND kind IN ('initialize','import','upload','accept-ref','rebind') ORDER BY created_at,id LIMIT 100`,
         projectId,
       ),
       failed: await sql.all<OperationRow>(
@@ -1383,7 +1394,7 @@ export class CodeStore {
         projectId,
       ),
       imports: await sql.all<{ result_json: string }>(
-        "SELECT result_json FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' ORDER BY completed_at DESC,id LIMIT 50",
+        "SELECT result_json FROM code_operations WHERE project_id=? AND kind IN ('initialize','import') AND status='completed' ORDER BY completed_at DESC,id LIMIT 50",
         projectId,
       ),
     }));
@@ -1391,7 +1402,7 @@ export class CodeStore {
       ? (JSON.parse(read.project.store_json) as {
           objectFormat: ObjectFormat;
           rootOid: string;
-          source: 'bundle' | 'github';
+          source: 'bundle' | 'github' | 'managed';
         })
       : null;
     return {
@@ -1418,6 +1429,7 @@ export class CodeStore {
     if (this.closed) return;
     this.maintaining ??= this.owned(async () => {
       try {
+        await initializeManagedProjects(this.state, this.repositories, this.hooks.imported);
         await this.hooks.maintained?.();
         const rows = await this.state.read(
           async (sql) =>
@@ -1608,7 +1620,10 @@ export class CodeStore {
   private view(row: OperationRow): CodeStoreOperation {
     const payload = JSON.parse(row.payload_json) as { tip?: string };
     const progress = JSON.parse(row.progress_json ?? '{}') as Progress;
-    const detail = JSON.parse(row.detail_json ?? '{}') as { findings?: CodeFinding[] };
+    const detail = JSON.parse(row.detail_json ?? '{}') as {
+      findings?: CodeFinding[];
+      message?: string;
+    };
     return {
       id: row.id,
       kind: row.kind,
@@ -1620,7 +1635,9 @@ export class CodeStore {
       bytes: this.declared(row),
       partBytes: this.config.partBytes,
       head: progress.target ?? payload.tip ?? null,
-      error: row.error,
+      error:
+        row.error ??
+        (row.kind === 'initialize' && detail.message ? 'code_initialization_failed' : null),
       findings: detail.findings ?? [],
       waiting: row.status === 'prepared' ? (progress.waiting ?? null) : null,
       createdAt: row.created_at,
@@ -2278,6 +2295,15 @@ export class CodeStore {
     const oid = (await git.ok(['rev-parse', '--verify', 'refs/merv/fetched^{commit}'], { env }))
       .toString('utf8')
       .trim();
+    if (payload.expectedHead && oid !== payload.expectedHead) {
+      await this.fail(
+        row,
+        'code_branch_changed',
+        null,
+        'The selected remote ref moved before it was imported',
+      );
+      return null;
+    }
     const tips = (
       await git.ok(['for-each-ref', '--format=%(objectname)', '--count=50', 'refs/merv/imports'], {
         env: this.repositories.environment(row.project_id),
