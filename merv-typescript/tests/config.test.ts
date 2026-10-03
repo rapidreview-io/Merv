@@ -29,7 +29,7 @@ test('default configuration includes session enforcement and API adds tool trans
       'reflections',
       'knowledge',
       'experiments',
-      'code-research',
+      'code-work',
       'code',
       'secrets',
       'sessions',
@@ -71,15 +71,7 @@ test('default configuration includes session enforcement and API adds tool trans
   const requirements: Record<string, string[]> = {
     api: ['tools', 'scope', 'identity'],
     code: ['state', 'scope'],
-    'code-research': [
-      'code',
-      'state',
-      'scope',
-      'sessions',
-      'artifacts',
-      'workflows',
-      'domain-events',
-    ],
+    'code-work': ['code', 'state', 'scope', 'sessions', 'artifacts', 'workflows', 'domain-events'],
     knowledge: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews'],
     experiments: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'context-builder'],
     sessions: ['state', 'scope', 'workflows', 'domain-events'],
@@ -109,10 +101,10 @@ test('default configuration includes session enforcement and API adds tool trans
     'scope',
     'workflows',
   ]) {
-    requirements[`${name}-tools`] = [name === 'code' ? 'code-research' : name, 'tools'];
+    requirements[`${name}-tools`] = [name === 'code' ? 'code-work' : name, 'tools'];
     assert.equal(
       full.entries.find((entry) => entry.id === `${name}-tools`)?.name,
-      `@merv/${name === 'code' ? 'code-research' : name}/tools`,
+      `@merv/${name === 'code' ? 'code-work' : name}/tools`,
     );
   }
   for (const [consumer, providers] of Object.entries(requirements))
@@ -180,21 +172,16 @@ test('Feed is kept but off by default, its tools and page with it, and the rest 
     loaded.entries
       .filter(
         (entry) =>
-          ![
-            'feed',
-            'feed-tools',
-            'code',
-            'code-research',
-            'code-tools',
-            'code-research-api',
-          ].includes(entry.id) && !browser(entry.id),
+          !['feed', 'feed-tools', 'code', 'code-work', 'code-tools', 'code-work-api'].includes(
+            entry.id,
+          ) && !browser(entry.id),
       )
       .every((entry) => entry.required),
   );
   assert.ok(loaded.entries.filter((entry) => browser(entry.id)).every((entry) => !entry.required));
   assert.ok(
     loaded.entries
-      .filter((entry) => ['code-tools', 'code-research-api'].includes(entry.id))
+      .filter((entry) => ['code-tools', 'code-work-api'].includes(entry.id))
       .every((entry) => entry.required),
   );
 });

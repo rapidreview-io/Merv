@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { codePlugin as code } from '@merv/code';
-import { codePlugin as research } from '@merv/code-research';
+import { codePlugin as research } from '@merv/code-work';
 import { CodeStore } from '@merv/code/store/operations';
 import { codeStoreFixture } from './fixtures/code-store.js';
 

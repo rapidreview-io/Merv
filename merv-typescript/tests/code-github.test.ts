@@ -15,7 +15,7 @@ import {
   type GitHubConfig,
 } from '../packages/code/src/github-client.js';
 import { ApiServer } from '../packages/api/src/http.js';
-import { mountCode, type CodeRoutes } from '../packages/code-research/src/api.js';
+import { mountCode, type CodeRoutes } from '../packages/code-work/src/api.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { openState, schemaFor } from './fixtures/state.js';
 import { deferred } from './fixtures/deferred.js';

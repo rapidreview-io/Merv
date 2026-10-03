@@ -9,7 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import type { WorkflowExecutionPolicy } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
-import type {} from '@merv/code-research/types';
+import type {} from '@merv/code-work/types';
 
 test(
   'a lost dispatch reply followed by worker closure is reconciled and acknowledged across controller restart',
@@ -220,7 +220,7 @@ test(
       assert.ok(Date.now() < deadline, JSON.stringify(runner.snapshot()));
       await delay(40);
     }
-    const operation = (await app.ctx.codeResearch.list(source))[0];
+    const operation = (await app.ctx.codeWork.list(source))[0];
     assert.equal(operation.status, 'failed');
     assert.equal(operation.error, 'workspace_process_not_running');
     assert.equal(

@@ -1,4 +1,4 @@
-import type { Code } from '@merv/code-research/types';
+import type { Code } from '@merv/code-work/types';
 import {
   check,
   clip,
@@ -1899,9 +1899,9 @@ export const researchPlugin = {
           await service.wakeAutomatic();
         });
       });
-      ctx.inject(['codeResearch'], (ctx) => {
+      ctx.inject(['codeWork'], (ctx) => {
         ctx.effect(async function* () {
-          yield service.bindCode(ctx.codeResearch);
+          yield service.bindCode(ctx.codeWork);
           await service.wakeAutomatic();
         });
       });

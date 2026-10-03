@@ -77,7 +77,7 @@ import { types as nodeTypes } from 'node:util';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
-import type { Code, CodeCapture } from '@merv/code-research/types';
+import type { Code, CodeCapture } from '@merv/code-work/types';
 import type { SandboxCompute, ComputeOutputs } from '@merv/sandboxes/types';
 import { ManagedCompute, initializeManagedCompute } from '@merv/sandboxes/managed-compute';
 import { WorkMachines, rentalGuidance } from '@merv/sandboxes/managed-compute';
@@ -3342,8 +3342,8 @@ export const tasksPlugin = {
         ctx.paper,
       ),
     );
-    ctx.inject(['codeResearch'], (ctx) => {
-      ctx.effect(() => tasks.bindCode(ctx.codeResearch));
+    ctx.inject(['codeWork'], (ctx) => {
+      ctx.effect(() => tasks.bindCode(ctx.codeWork));
     });
     ctx.inject(['sandboxes'], (ctx) => {
       if (ctx.sandboxes.compute) ctx.effect(() => tasks.bindCompute(ctx.sandboxes.compute!));

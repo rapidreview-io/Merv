@@ -166,7 +166,7 @@ test(
       actorId: boot.actor.id,
       credentialId: boot.credential.id,
     };
-    const { codeResearch: code, tasks, sessions, state } = app.ctx;
+    const { codeWork: code, tasks, sessions, state } = app.ctx;
     await boundProject(state, owner.projectId, main, 'fixture-repository');
 
     // Two Git tasks made before the import, which are the versions a legacy machine serves.

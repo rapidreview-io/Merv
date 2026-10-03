@@ -1,6 +1,6 @@
 import type { Caller, Project, TaskRecord, Transaction } from '@merv/contracts';
 import type { Experiment } from '@merv/experiments/types';
-import type { CodeCapture } from '@merv/code-research/types';
+import type { CodeCapture } from '@merv/code-work/types';
 import type {} from 'cordis';
 
 /** No publication writer exists yet. */

@@ -53,7 +53,7 @@ async function fixture(t: TestContext, reflections?: object) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  await waitForManagedCode(app.ctx.codeResearch, owner);
+  await waitForManagedCode(app.ctx.codeWork, owner);
   const actor = async (name: string, role: 'producer' | 'reviewer' | 'operator' = 'producer') => {
     const issued = await app.ctx.scope.issueActor(owner, { name, role });
     return {

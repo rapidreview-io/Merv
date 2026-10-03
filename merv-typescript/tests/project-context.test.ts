@@ -524,7 +524,7 @@ test('Task contexts freeze the Introduction at lease offer and retain saved pack
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  await waitForManagedCode(app.ctx.codeResearch, source);
+  await waitForManagedCode(app.ctx.codeWork, source);
   await app.ctx.sessions.heartbeatRunner(source, {
     runnerId: 'context-test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },

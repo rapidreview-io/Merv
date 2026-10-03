@@ -1,4 +1,4 @@
-import type { CodeProjectStatus } from '@merv/contracts/code-research-models';
+import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, scopeVersion, useScopeVersion } from '../api';

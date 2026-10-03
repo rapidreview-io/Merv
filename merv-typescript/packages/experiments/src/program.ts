@@ -39,7 +39,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Paper, PaperContextSection } from '@merv/paper/types';
-import type { Code, CodeCapture } from '@merv/code-research/types';
+import type { Code, CodeCapture } from '@merv/code-work/types';
 import type { Experiment, ExperimentEvidence, ExperimentSubmission } from './types.js';
 import type { FeasibilityStatement } from './evidence.js';
 

@@ -83,7 +83,7 @@ export class CodeService extends CodeCommandService implements Code {
         typeof receipt?.headOid === 'string' &&
         typeof receipt?.treeOid === 'string',
       'code_source_unavailable',
-      'A succeeded commit for this experiment is required',
+      'A succeeded commit for this work unit is required',
       409,
     );
     const store = this.requireStore();

@@ -121,7 +121,7 @@ test('a mark holds its key on the board, reaches every nodes() as include, colou
   };
   const answer = await board(
     {
-      owner: 'code-research',
+      owner: 'code-work',
       marks: async () => [
         { key: 'work:T', ...merge },
         { key: 'work:gone', says: ['Nothing draws this'] },
@@ -169,7 +169,7 @@ test('a quiet mark replaces the line without the red, needs nobody, sorts by ran
   const quiet = { says: ['Ready · launch failed 2 times, retrying'], quiet: true as const };
   const answer = await board(
     {
-      owner: 'code-research',
+      owner: 'code-work',
       marks: async () => [{ key: 'work:Q', ...quiet }],
     },
     {
@@ -364,7 +364,7 @@ test('each part is read alone and one at a time, and an owner whose adapter is n
       },
     },
   ]);
-  const absent = ['sessions', 'code-research', 'sandboxes', 'paper', 'constructor'];
+  const absent = ['sessions', 'code-work', 'sandboxes', 'paper', 'constructor'];
   const answer = await runningBoard({ ...walk, isolated, absent: () => absent }, caller);
   assert.deepEqual(order, [
     'fleet.marks',
@@ -378,9 +378,9 @@ test('each part is read alone and one at a time, and an owner whose adapter is n
     'tasks.summary',
   ]);
   // Sessions registered after all; Paper and whatever else draws nothing are not the board's.
-  assert.deepEqual(answer.lanes.work.failed, ['broken', 'code-research']);
+  assert.deepEqual(answer.lanes.work.failed, ['broken', 'code-work']);
   assert.deepEqual(answer.lanes.sessions.failed, []);
-  assert.deepEqual(answer.lanes.hardware.failed, ['code-research', 'sandboxes']);
+  assert.deepEqual(answer.lanes.hardware.failed, ['code-work', 'sandboxes']);
   assert.deepEqual(keys(answer, 'sessions'), ['fleet:F', 'session:S']);
 
   order.length = 0;
@@ -570,26 +570,26 @@ test('the registry checks each contribution, refuses a second one per owner, and
   ])
     assert.throws(() => registry.contribute(invalid as never), { code: 'invalid_contribution' });
   const disposeTasks = registry.contribute({ owner: 'tasks' });
-  registry.contribute({ owner: 'code-research' });
+  registry.contribute({ owner: 'code-work' });
   assert.throws(() => registry.contribute({ owner: 'tasks' }), {
     code: 'contribution_conflict',
     status: 409,
   });
   assert.deepEqual(
     registry.contributions().map(({ owner }) => owner),
-    ['code-research', 'tasks'],
+    ['code-work', 'tasks'],
   );
   disposeTasks();
   const disposeNewer = registry.contribute({ owner: 'tasks' });
   disposeTasks();
   assert.deepEqual(
     registry.contributions().map(({ owner }) => owner),
-    ['code-research', 'tasks'],
+    ['code-work', 'tasks'],
   );
   disposeNewer();
   assert.deepEqual(
     registry.contributions().map(({ owner }) => owner),
-    ['code-research'],
+    ['code-work'],
   );
 });
 
@@ -851,20 +851,14 @@ test('sections read what needs a person first, then by place, with code before c
     { owner: 'tasks', sections: [section('Brief', 'content'), section('Details', 'details')] },
     { owner: 'fleet', sections: [section('Fleet notes', 'content')] },
     {
-      owner: 'code-research',
+      owner: 'code-work',
       sections: [section('Code', 'code'), section('Needs', 'details', { attention: true })],
     },
     { owner: 'reviews', sections: 'not a list' },
   ]);
   assert.deepEqual(
     composed.map(({ title, owner }) => `${owner}:${title}`),
-    [
-      'code-research:Needs',
-      'code-research:Code',
-      'tasks:Brief',
-      'fleet:Fleet notes',
-      'tasks:Details',
-    ],
+    ['code-work:Needs', 'code-work:Code', 'tasks:Brief', 'fleet:Fleet notes', 'tasks:Details'],
   );
   assert.equal(
     compose([
@@ -949,7 +943,7 @@ test('a sidebar comes from its owner, the owners of what it absorbed add section
     },
   };
   const code: RunningContribution = {
-    owner: 'code-research',
+    owner: 'code-work',
     sections: async (_read, keys) => {
       calls.push(`code.sections ${keys.join(',')}`);
       return [facts('Workspace', 'code'), facts('Needs', 'details', 'Needs')].map((section, at) =>
@@ -967,9 +961,9 @@ test('a sidebar comes from its owner, the owners of what it absorbed add section
   assert.deepEqual(
     panel.sections.map(({ owner, title }) => `${owner}:${title}`),
     [
-      'code-research:Needs',
+      'code-work:Needs',
       'sessions:Merv calls',
-      'code-research:Workspace',
+      'code-work:Workspace',
       'sessions:Machine',
       'fleet:Fleet machine',
     ],
@@ -1026,7 +1020,7 @@ test('a sidebar belongs to the first owner of its kind that answers; a 404 means
   assert.deepEqual(panel.aliases, []);
   assert.equal(panel.route, undefined);
 
-  const refusing = owner('code-research', ['work'], async () => {
+  const refusing = owner('code-work', ['work'], async () => {
     throw refusal(403);
   });
   await assert.rejects(runningPanel(sources([refusing, tasks]), caller, 'work:T'), {

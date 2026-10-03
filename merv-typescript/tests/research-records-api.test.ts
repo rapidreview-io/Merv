@@ -178,7 +178,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     expectedSummary: '',
     requestId: 'intro',
   });
-  await waitForManagedCode(f.app.ctx.codeResearch, f.caller);
+  await waitForManagedCode(f.app.ctx.codeWork, f.caller);
   const task = await f.app.ctx.tasks.create(f.caller, {
     title: 'Retain source data',
     goal: 'Keep the exact input.',
@@ -286,7 +286,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
 
 test('A real Task worker cannot edit project intent through HTTP or MCP, even by guessing the tool name', async (t) => {
   const f = await fixture(t);
-  await waitForManagedCode(f.app.ctx.codeResearch, f.caller);
+  await waitForManagedCode(f.app.ctx.codeWork, f.caller);
   const task = await f.app.ctx.tasks.create(f.caller, {
     title: 'Check retained input',
     goal: 'Check input.',

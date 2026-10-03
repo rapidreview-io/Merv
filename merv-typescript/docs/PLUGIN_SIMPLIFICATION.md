@@ -32,7 +32,7 @@ The remaining boundaries have actual consumers and distinct state, authority or 
 | `artifacts`       | Keep immutable metadata, provenance and authorized downloads separate from byte storage.                                                                                           |
 | `blobs`           | Keep disk/S3 byte, digest and stream handling independent of research records.                                                                                                     |
 | `code`            | Keep the single durable repository/writer/GitHub owner. Core Git remains available when Research unloads.                                                                          |
-| `code-research`   | Keep workflow/session provenance, accepted bases and reviewed publication separate from generic Git ownership; remove duplicate owners and cleanup representations within it.      |
+| `code-work`       | Keep workflow/session provenance, accepted bases and reviewed publication separate from generic Git ownership; remove duplicate owners and cleanup representations within it.      |
 | `context-builder` | Keep registered recipes, deterministic bounded rendering, source references and frozen leased context.                                                                             |
 | `contracts`       | Keep shared schemas and portable model modules. Browser-safe imports must not pull server crypto or lifecycle code into the browser. Remove proven-unused competing declarations.  |
 | `domain-events`   | Keep durable consumer cursors and reload catch-up separate from State's event storage. In-memory notification alone cannot replace delivery progress.                              |

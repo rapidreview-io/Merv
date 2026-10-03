@@ -17,7 +17,7 @@
     "artifacts": 12,
     "blobs": 3,
     "code": 1,
-    "codeResearch": 7,
+    "codeWork": 7,
     "contextBuilder": 3,
     "domainEvents": 7,
     "experiments": 4,
@@ -132,10 +132,36 @@
       "defaultConfiguration": true
     },
     {
-      "plugin": "merv-code-research",
-      "source": "packages/code-research/src/index.ts",
+      "plugin": "merv-code-tools",
+      "source": "packages/code-work/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "codeWork",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-code-ui",
+      "source": "packages/code-work/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "codeWork",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-code-work",
+      "source": "packages/code-work/src/index.ts",
       "provides": [
-        "codeResearch"
+        "codeWork"
       ],
       "requires": [
         "code",
@@ -154,41 +180,15 @@
       "defaultConfiguration": true
     },
     {
-      "plugin": "merv-code-research-api",
-      "source": "packages/code-research/src/api.ts",
+      "plugin": "merv-code-work-api",
+      "source": "packages/code-work/src/api.ts",
       "provides": [],
       "requires": [
-        "codeResearch",
+        "codeWork",
         "api"
       ],
       "optional": [],
       "kind": "api",
-      "runtime": "server",
-      "defaultConfiguration": true
-    },
-    {
-      "plugin": "merv-code-tools",
-      "source": "packages/code-research/src/tools.ts",
-      "provides": [],
-      "requires": [
-        "codeResearch",
-        "tools"
-      ],
-      "optional": [],
-      "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": true
-    },
-    {
-      "plugin": "merv-code-ui",
-      "source": "packages/code-research/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "codeResearch",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
       "runtime": "server",
       "defaultConfiguration": true
     },
@@ -239,7 +239,7 @@
         "domainEvents"
       ],
       "optional": [
-        "codeResearch",
+        "codeWork",
         "sandboxes"
       ],
       "kind": "service",
@@ -404,7 +404,7 @@
         "workflows"
       ],
       "optional": [
-        "codeResearch"
+        "codeWork"
       ],
       "kind": "service",
       "runtime": "server",
@@ -654,7 +654,7 @@
         "tasks",
         "experiments",
         "artifacts",
-        "codeResearch"
+        "codeWork"
       ],
       "kind": "service",
       "runtime": "server",
@@ -970,7 +970,7 @@
         "domainEvents"
       ],
       "optional": [
-        "codeResearch",
+        "codeWork",
         "sandboxes"
       ],
       "kind": "service",

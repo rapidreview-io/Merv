@@ -1,4 +1,4 @@
-import type { CodeUnitPublication } from './code-research-publication-models.js';
+import type { CodeUnitPublication } from './code-work-publication-models.js';
 
 /**
  * Which of Code's blockers a person reads, and what each one asks of them.

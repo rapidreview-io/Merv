@@ -38,7 +38,7 @@ async function fixture(t: TestContext, store = false) {
     research.bindTasks(app.ctx.tasks);
     research.bindExperiments(app.ctx.experiments);
     if (digests) research.bindArtifacts(app.ctx.artifacts);
-    research.bindCode(app.ctx.codeResearch);
+    research.bindCode(app.ctx.codeWork);
     return research;
   };
   let research = await service(),
@@ -52,7 +52,7 @@ async function fixture(t: TestContext, store = false) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  await waitForManagedCode(app.ctx.codeResearch, owner);
+  await waitForManagedCode(app.ctx.codeWork, owner);
   const id = () => `research-test-${++sequence}`;
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const record = await app.ctx.scope.issueActor(owner, { name: id(), role });
@@ -180,7 +180,7 @@ async function fixture(t: TestContext, store = false) {
     /** This service is not the plugin's, so what Cordis would rebind for it is rebound here. */
     async code(enabled: boolean) {
       await app.setEnabled('code', enabled);
-      const bound = research.bindCode(app.ctx.codeResearch);
+      const bound = research.bindCode(app.ctx.codeWork);
       if (!enabled) bound();
     },
     async restart() {
@@ -761,7 +761,7 @@ test('an ended cycle digests its reason and the selected work it leaves unfinish
 
 test('a digest reads selected experiments only and preserves chronological record order', async (t) => {
   const f = await fixture(t);
-  await waitForManagedCode(f.app.ctx.codeResearch, f.owner);
+  await waitForManagedCode(f.app.ctx.codeWork, f.owner);
   const experiments = [];
   for (const name of ['earlier-selected', 'unrelated', 'later-selected'])
     experiments.push(
@@ -1845,7 +1845,7 @@ for (const firstCode of ['task', 'experiment'] as const)
 
 test('a materialised hosted experiment waits on its hosted task and pins no base before its acceptance', async (t) => {
   const f = await fixture(t, true);
-  const { codeResearch: code, tasks } = f.app.ctx;
+  const { codeWork: code, tasks } = f.app.ctx;
   const { command } = await reflected(f, workspacePlan());
   const done = await f.research.advance(f.owner, command('create'));
   const successor = await f.research.get(f.owner, done.successorId!);

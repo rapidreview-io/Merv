@@ -1,4 +1,4 @@
-# Code research integration
+# Code work integration
 
 This optional adapter connects research decisions to the [Code utility](../code/README.md).
 Research owners decide dependencies, accepted outcomes, review requirements and publication
@@ -6,21 +6,21 @@ obligations. The adapter translates those decisions into exact code pins, isolat
 retained evidence, dependency blockers, conflict-resolution work and publication operations.
 It never makes Code itself depend on a research service.
 
-It provides `ctx.codeResearch`; Tasks, Experiments, Research, Consolidation and Knowledge
+It provides `ctx.codeWork`; Tasks, Experiments, Research, Consolidation and Knowledge
 bind to that capability only when present. Reviews and Sandboxes are optional collaborators.
 A review-dependent action remains unavailable while its provider is absent; a missing plugin
 never grants acceptance or erases an existing Git obligation.
 
-| Module                      | Dependencies        | Interface                                                    |
-| --------------------------- | ------------------- | ------------------------------------------------------------ |
-| `@merv/code-research/tools` | CodeResearch, Tools | `code.*` tools                                               |
-| `@merv/code-research/ui`    | CodeResearch, UI    | Repository connection, selected base and retained operations |
-| `@merv/code-research/api`   | CodeResearch, API   | The `/code/*` machine and GitHub routes                      |
+| Module                  | Dependencies    | Interface                                                    |
+| ----------------------- | --------------- | ------------------------------------------------------------ |
+| `@merv/code-work/tools` | CodeWork, Tools | `code.*` tools                                               |
+| `@merv/code-work/ui`    | CodeWork, UI    | Repository connection, selected base and retained operations |
+| `@merv/code-work/api`   | CodeWork, API   | The `/code/*` machine and GitHub routes                      |
 
-The API adapter mounts `/code`, with GitHub's OAuth callback public. Unloading CodeResearch withdraws those routes, which then answer 503, without stopping the API.
+The API adapter mounts `/code`, with GitHub's OAuth callback public. Unloading CodeWork withdraws those routes, which then answer 503, without stopping the API.
 
-The default composition enables the integration, with both Code and CodeResearch optional.
-Disable Code to suspend all its adapters, or disable CodeResearch to retain a standalone Git
+The default composition enables the integration, with both Code and CodeWork optional.
+Disable Code to suspend all its adapters, or disable CodeWork to retain a standalone Git
 utility. Use [the no-Code configuration](../../config/no-code.example.json) to start research
 without any Code entries. Existing Git work waits for restoration; code-free research can
 complete its full review and reflection lifecycle.
@@ -40,4 +40,4 @@ and durable repository holds, without interpreting research workflow state. Comp
 backfill preserves historical record bodies and receipts and keeps repository changes fenced
 until technical projections and publication holds have been restored in one transaction.
 
-See the [ownership boundary and upgrade behavior](../../docs/CODE_RESEARCH_BOUNDARY.md).
+See the [ownership boundary and upgrade behavior](../../docs/CODE_WORK_BOUNDARY.md).

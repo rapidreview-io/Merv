@@ -37,7 +37,7 @@ test('file upload uses normal MCP session authority and returns a verified small
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  await waitForManagedCode(app.ctx.codeResearch, owner);
+  await waitForManagedCode(app.ctx.codeWork, owner);
   await app.ctx.sessions.heartbeatRunner(owner, {
     runnerId: 'file-test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },

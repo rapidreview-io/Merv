@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { createService, type SqlValue } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
-import { CodeUnitService } from '@merv/code-research/units';
-import { postgresMigrations } from '@merv/code-research/legacy-units.postgres';
+import { CodeUnitService } from '@merv/code-work/units';
+import { postgresMigrations } from '@merv/code-work/legacy-units.postgres';
 import { CodeWriterService } from '@merv/code/writers';
 import { openState } from './fixtures/state.js';
 

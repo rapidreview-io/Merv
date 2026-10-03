@@ -5,7 +5,7 @@ import type {} from './types.js';
 
 export const codeUiPlugin = {
   name: 'merv-code-ui',
-  inject: ['codeResearch', 'ui'],
+  inject: ['codeWork', 'ui'],
   apply(ctx: Context) {
     ctx.effect(() =>
       ctx.ui.register({
@@ -18,15 +18,15 @@ export const codeUiPlugin = {
         // `commands` are the commit receipts; the store transfers of the same name are
         // inside status. A sealed proposal is read on the record that made it, not here.
         read: async (caller) => {
-          const commands = await ctx.codeResearch.list(caller);
-          const status = await ctx.codeResearch.status(caller);
+          const commands = await ctx.codeWork.list(caller);
+          const status = await ctx.codeWork.status(caller);
           return {
             commands,
             status,
             // Hosted status already carries the publications in this snapshot. Older
             // runner-owned projects have them too, without hosted publication controls.
             ...(!status.publication
-              ? { publications: await ctx.codeResearch.publications(caller) }
+              ? { publications: await ctx.codeWork.publications(caller) }
               : {}),
           } as unknown as Json;
         },
@@ -35,18 +35,18 @@ export const codeUiPlugin = {
     // The Running page: the work Code holds for a person, its check machines, and the Code
     // section of work with a unit. The marks and the lane line are one read per answer.
     const holds = (read: RunningRead) =>
-      read.once('holds', () => ctx.codeResearch.runningHolds(read.caller));
+      read.once('holds', () => ctx.codeWork.runningHolds(read.caller));
     ctx.effect(() =>
       ctx.ui.contribute({
-        owner: 'code-research',
+        owner: 'code-work',
         kinds: ['check'],
         lanes: ['hardware'],
         marks: async (read) => (await holds(read)).marks,
         // A read that failed is already named where its marks stand, in the work lane.
         summary: async (read) => (await holds(read).catch(() => null))?.summary ?? null,
-        nodes: async (read) => ({ nodes: await ctx.codeResearch.runningChecks(read.caller) }),
-        panel: async (read, key) => await ctx.codeResearch.runningPanel(read.caller, key),
-        sections: async (read, keys) => await ctx.codeResearch.runningCode(read.caller, keys),
+        nodes: async (read) => ({ nodes: await ctx.codeWork.runningChecks(read.caller) }),
+        panel: async (read, key) => await ctx.codeWork.runningPanel(read.caller, key),
+        sections: async (read, keys) => await ctx.codeWork.runningCode(read.caller, keys),
       }),
     );
   },

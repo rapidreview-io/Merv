@@ -10,7 +10,7 @@ import {
   ResearchUnitRecords,
   type AcceptanceBody,
   type BaseBody,
-} from '@merv/code-research/unit-store';
+} from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { CodeStore } from '@merv/code/store/operations';
 import { gitSource } from './fixtures/code-store.js';

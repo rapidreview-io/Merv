@@ -137,9 +137,9 @@ set('ui', {});
 // Code keeps one Git repository per project beside the state, on the data volume: /tmp is a
 // small tmpfs, and the repositories must survive the container.
 set('code', { repositories: { root: '/var/lib/merv-ts/code' } });
-set('code-research', {});
+set('code-work', {});
 // Code's HTTP routes: without them a deployment that runs Code serves no /code at all.
-set('code-research-api', {});
+set('code-work-api', {});
 // Rows and acts published by merv-sandboxes. Absent until the operator names the service, so
 // a deployment that has not connected one composes exactly the plugins it composed before.
 let connections = [];

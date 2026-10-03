@@ -18,11 +18,7 @@ const researchTables =
 test('Code runtime neither imports research nor queries research-owned records', () => {
   for (const path of sources(join(root, 'packages/code/src'))) {
     const source = readFileSync(path, 'utf8');
-    assert.doesNotMatch(
-      source,
-      /(?:from\s*|import\s*\()\s*['"]@merv\/code-research(?:\/|['"])/,
-      path,
-    );
+    assert.doesNotMatch(source, /(?:from\s*|import\s*\()\s*['"]@merv\/code-work(?:\/|['"])/, path);
     const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
     const visit = (node: ts.Node): void => {
       if (ts.isStringLiteralLike(node) || ts.isTemplateExpression(node)) {
@@ -47,7 +43,7 @@ test('technical contract modules do not import research policy', () => {
     const source = readFileSync(join(root, 'packages/contracts/src', name), 'utf8');
     assert.doesNotMatch(
       source,
-      /from ['"]\.\/(?:code-research-models|workflow-guidance|code-publication-models)\.js['"]/,
+      /from ['"]\.\/(?:code-work-models|workflow-guidance|code-publication-models)\.js['"]/,
       name,
     );
     assert.doesNotMatch(
@@ -59,7 +55,7 @@ test('technical contract modules do not import research policy', () => {
 });
 
 test('research composes core services without inheriting their implementation', () => {
-  for (const path of sources(join(root, 'packages/code-research/src'))) {
+  for (const path of sources(join(root, 'packages/code-work/src'))) {
     const source = readFileSync(path, 'utf8');
     const ast = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true);
     const coreImports = new Set<string>();

@@ -4,7 +4,7 @@ import type {
   CodeRepositoryPreparation,
   CodeRepositoryPrepareInput,
 } from '@merv/contracts/code-store';
-import type { CodeProjectStatus } from '@merv/contracts/code-research-models';
+import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 import { accountRequest, call, useTool } from '../api';
 import { useCommand } from '../mutations';

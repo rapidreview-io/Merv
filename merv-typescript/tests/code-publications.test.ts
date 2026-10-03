@@ -1,11 +1,11 @@
 import { createService } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import type { PublicationHost } from '../packages/code-research/src/publication-host.js';
+import type { PublicationHost } from '../packages/code-work/src/publication-host.js';
 import {
   CodePublicationService,
   type CodeUnitPublicationSeal,
-} from '../packages/code-research/src/publications.js';
+} from '../packages/code-work/src/publications.js';
 import {
   baseOid,
   githubFixture,

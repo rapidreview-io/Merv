@@ -32,7 +32,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
-import type { Code, CodeCaptureRef } from '@merv/code-research/types';
+import type { Code, CodeCaptureRef } from '@merv/code-work/types';
 import type { SandboxCompute } from '@merv/sandboxes/types';
 import { ExperimentCompute, type ComputeRunning } from './compute.js';
 import { initializeManagedCompute } from '@merv/sandboxes/managed-compute';
@@ -1857,8 +1857,8 @@ export const experimentsPlugin = {
         config.limits,
       ),
     );
-    ctx.inject(['codeResearch'], (ctx) => {
-      ctx.effect(() => experiments.bindCode(ctx.codeResearch));
+    ctx.inject(['codeWork'], (ctx) => {
+      ctx.effect(() => experiments.bindCode(ctx.codeWork));
     });
     ctx.inject(['sandboxes'], (ctx) => {
       if (ctx.sandboxes.compute) ctx.effect(() => experiments.bindCompute(ctx.sandboxes.compute!));

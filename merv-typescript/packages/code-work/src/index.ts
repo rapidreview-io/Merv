@@ -29,7 +29,7 @@ const configuration = z
   .default({});
 
 export const codePlugin = {
-  name: 'merv-code-research',
+  name: 'merv-code-work',
   Config: configuration,
   inject: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
   async apply(ctx: Context, config: z.infer<typeof configuration> = {}) {
@@ -81,7 +81,7 @@ export const codePlugin = {
         handle: async (event, tx) => await service.sessionChanged(event, tx),
       });
       await service.reconcileAll();
-      yield ctx.provide('codeResearch', service);
+      yield ctx.provide('codeWork', service);
     });
   },
 };

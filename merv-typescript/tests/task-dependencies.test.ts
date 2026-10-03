@@ -20,7 +20,7 @@ async function fixture(api = false) {
     projectName: 'Dependency tests',
     actorName: 'Operator',
   });
-  await waitForManagedCode(app.ctx.codeResearch, {
+  await waitForManagedCode(app.ctx.codeWork, {
     actorId: boot.actor.id,
     projectId: boot.project.id,
   });

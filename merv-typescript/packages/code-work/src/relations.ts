@@ -6,12 +6,11 @@ import {
 } from '@merv/contracts';
 
 /**
- * A dependency as code-research reads it: the workflow's own classification plus whether any
+ * A dependency as code-work reads it: the workflow's own classification plus whether any
  * state of that workflow version declared a workspace. The second is read from the pinned
  * execution manifests, so it holds with the owning plugin unloaded.
  */
 export interface WorkflowProviderDependency extends WorkflowDependency {
-  goal?: string;
   declaresWorkspace: boolean;
 }
 export interface WorkflowProviderRelations {
@@ -21,8 +20,9 @@ export interface WorkflowProviderRelations {
 }
 
 /**
- * A unit and both directions of its edges, each with its version's workspace fact, and the
- * unit with the goal its data records. Null when the project holds no such instance.
+ * A unit and both directions of its edges, each with its version's workspace fact. A unit is
+ * known by the generic name and id Workflows gives it; its data belongs to the domain that owns
+ * it. Null when the project holds no such instance.
  */
 export async function providerRelations(
   workflows: Workflows,
@@ -39,12 +39,9 @@ export async function providerRelations(
       (await workflows.pinned(item.workflow, item.version, tx))?.execution ?? {},
     ).some((manifest) => (manifest?.workspace?.mode ?? 'none') !== 'none'),
   });
-  const { data, ...instance } = relations.instance;
+  const { data: _data, ...instance } = relations.instance;
   return {
-    instance: {
-      ...(await extend(instance)),
-      ...(typeof data.goal === 'string' ? { goal: data.goal } : {}),
-    },
+    instance: await extend(instance),
     dependencies: await mapAsync(relations.dependencies, extend),
     dependents: await mapAsync(relations.dependents, extend),
   };

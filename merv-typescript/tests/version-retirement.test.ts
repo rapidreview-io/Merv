@@ -225,7 +225,7 @@ async function prepare(
     const bootstrap = async (projectName: string) => {
       const credentials = await app.ctx.scope.bootstrap({ projectName, actorName: 'Operator' });
       const caller = { projectId: credentials.project.id, actorId: credentials.actor.id };
-      await waitForManagedCode(app.ctx.codeResearch, caller);
+      await waitForManagedCode(app.ctx.codeWork, caller);
       return caller;
     };
     const liveProject = await bootstrap('Live work');

@@ -5,8 +5,8 @@ import type {
   CodeBaseControlInput,
   CodeBaseRecord,
   CodeUnit,
-} from '@merv/contracts/code-research-models';
-import type { CodeProjectStatus } from '@merv/contracts/code-research-models';
+} from '@merv/contracts/code-work-models';
+import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { CodePublication } from '@merv/contracts/types';
 import {
   Ago,

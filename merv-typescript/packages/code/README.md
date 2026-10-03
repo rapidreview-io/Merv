@@ -11,17 +11,17 @@ transaction. Retention keys preserve every commit across repository transfers an
 Core checks integrity and concurrency; it does not decide research acceptance, scheduling,
 review requirements, or which experiment's work belongs in a project.
 
-The optional [Code research integration](../code-research/README.md) provides those connections
+The optional [Code work integration](../code-work/README.md) provides those connections
 and the user-facing tools, machine API and UI. Research can run without either plugin.
 GitHub is separately optional: a local repository does not require a GitHub connection.
 
 ## Composition and ownership
 
-| Component              | Responsibilities                                                                                   | Required services                                      |
-| ---------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `@merv/code`           | Repository ownership, retained Git facts, fencing, GitHub connection                               | State, Scope                                           |
-| `@merv/code-research`  | Research dependencies, evidence, review provenance, workspace handoff and publication coordination | Code, State, Scope, Sessions, Workflows, Domain Events |
-| Code research adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeResearch plus Tools, API or UI                     |
+| Component          | Responsibilities                                                                                   | Required services                                      |
+| ------------------ | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `@merv/code`       | Repository ownership, retained Git facts, fencing, GitHub connection                               | State, Scope                                           |
+| `@merv/code-work`  | Research dependencies, evidence, review provenance, workspace handoff and publication coordination | Code, State, Scope, Sessions, Workflows, Domain Events |
+| Code work adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeWork plus Tools, API or UI                         |
 
 The utility owns repository locks and the GitHub client. The integration releases its own
 operations when unloaded. Technical changes to bindings and writers notify optional
@@ -45,4 +45,4 @@ cross-machine handoff. The [Runner](../runner/README.md) loads it only when enab
 
 See [Code operations](../../docs/CODE_OPERATIONS.md),
 [GitHub connections](../../docs/GITHUB_REPOSITORIES.md), and the
-[ownership boundary and upgrade behavior](../../docs/CODE_RESEARCH_BOUNDARY.md).
+[ownership boundary and upgrade behavior](../../docs/CODE_WORK_BOUNDARY.md).

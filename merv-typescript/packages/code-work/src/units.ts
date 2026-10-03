@@ -1189,9 +1189,7 @@ export class CodeUnitService extends ResearchUnitRecords implements CodeUnits {
       const title = facts?.instance.name ?? 'Accepted work';
       titles.set(accepted.code.commit, [...(titles.get(accepted.code.commit) ?? []), title]);
       const entries = names.get(accepted.code.commit) ?? [];
-      entries.push(
-        `${facts?.instance.name ?? unit.unit_id} (${unit.unit_id}): ${facts?.instance.goal ?? 'No goal was recorded.'}`,
-      );
+      entries.push(`${facts?.instance.name ?? unit.unit_id} (${unit.unit_id})`);
       names.set(accepted.code.commit, entries);
     }
     const side = (key: string) =>

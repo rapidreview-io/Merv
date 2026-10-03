@@ -117,7 +117,7 @@ export async function seedGit(
   operator: Caller,
 ): Promise<{ report: Record<string, unknown>; writer: GitWriter }> {
   const ctx = app.ctx;
-  const code = ctx.codeResearch;
+  const code = ctx.codeWork;
   const root = join(app.directory, 'git');
   mkdirSync(root, { recursive: true });
   let requests = 0;

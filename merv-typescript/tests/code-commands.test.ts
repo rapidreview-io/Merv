@@ -19,7 +19,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeCommandService } from '../packages/code-research/src/commands.js';
+import { CodeCommandService } from '../packages/code-work/src/commands.js';
 import { openState } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
 

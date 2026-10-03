@@ -243,7 +243,7 @@ const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 
 async function stand(app: App, label: string, withGitHub: boolean) {
   const ctx = app.ctx as any;
-  const code = ctx.codeResearch;
+  const code = ctx.codeWork;
   const root = join(app.directory, `git-${label}`);
   mkdirSync(root, { recursive: true });
   let sequence = 0;

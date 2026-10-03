@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller } from '@merv/contracts';
-import type { Code } from '@merv/code-research/types';
+import type { Code } from '@merv/code-work/types';
 
 /** Await the real project-created consumer and Git journal, without bypassing admission. */
 export async function waitForManagedCode(code: Pick<Code, 'status'>, caller: Caller) {

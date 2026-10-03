@@ -11,7 +11,7 @@ import type { ApplicationConfig } from '../src/config.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import { scopeRoutes } from '../packages/scope/src/api.js';
 import type { Tools } from '../packages/api/src/types.js';
-import { mountCode, type CodeRoutes } from '../packages/code-research/src/api.js';
+import { mountCode, type CodeRoutes } from '../packages/code-work/src/api.js';
 import { mountSessions, type SessionRoutes } from '../packages/sessions/src/api.js';
 
 async function fixture(t: TestContext) {

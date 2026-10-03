@@ -214,11 +214,11 @@ function codeRoutes(code: CodeRoutes): MountHandler {
 export const mountCode = (api: Pick<Api, 'mount'>, code: CodeRoutes) =>
   api.mount('/code', codeRoutes(code), { public: ['/code/github/callback'] });
 
-export const codeResearchApiPlugin = {
-  name: 'merv-code-research-api',
-  inject: ['codeResearch', 'api'],
+export const codeWorkApiPlugin = {
+  name: 'merv-code-work-api',
+  inject: ['codeWork', 'api'],
   apply(ctx: Context) {
-    ctx.effect(() => mountCode(ctx.api, ctx.codeResearch));
+    ctx.effect(() => mountCode(ctx.api, ctx.codeWork));
   },
 };
-export default codeResearchApiPlugin;
+export default codeWorkApiPlugin;

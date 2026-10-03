@@ -219,6 +219,6 @@ export interface Code
 }
 declare module 'cordis' {
   interface Context {
-    codeResearch: Code;
+    codeWork: Code;
   }
 }

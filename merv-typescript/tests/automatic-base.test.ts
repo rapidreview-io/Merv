@@ -19,10 +19,10 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeWriterService } from '@merv/code/writers';
-import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-research/src/bases.js';
+import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-work/src/bases.js';
 import { openState } from './fixtures/state.js';
 
 const oid = (char: string) => char.repeat(40);

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setImmediate } from 'node:timers/promises';
 import { enqueueMirror, type MirrorTransport } from '@merv/code/store/mirror';
-import type { CodeService } from '@merv/code-research/service';
+import type { CodeService } from '@merv/code-work/service';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { boundProject } from './fixtures/code-binding.js';
@@ -29,10 +29,10 @@ test(
       'artifacts',
       'sessions',
       'code',
-      'code-research',
+      'code-work',
     ]);
     config.plugins = config.plugins.filter(({ id }) => ids.has(id));
-    config.plugins.find(({ id }) => id === 'code-research')!.config = {
+    config.plugins.find(({ id }) => id === 'code-work')!.config = {
       repositories: { autoMerge: false, mirrorSeconds: 0 },
     };
     const app = await createApp({ directory, config });
@@ -55,7 +55,7 @@ test(
       credentialId: boot.credential.id,
     };
     await boundProject(ctx.state, caller.projectId, head, 'repository');
-    const bridge = ctx.codeResearch as CodeService;
+    const bridge = ctx.codeWork as CodeService;
     assert.equal(bridge.github, core.github);
     const githubStatus = await core.github.status(caller);
     const bundle = source.bundle(head);
@@ -112,17 +112,17 @@ test(
     await entered.promise;
     assert.equal(pushes, 1, 'the push finished before the held journal write');
     let unloaded = false;
-    const unloading = app.setEnabled('code-research', false).then(() => {
+    const unloading = app.setEnabled('code-work', false).then(() => {
       unloaded = true;
     });
     await setImmediate();
     await setImmediate();
-    assert.equal(app.status().find(({ id }) => id === 'code-research')?.state, 'unloading');
+    assert.equal(app.status().find(({ id }) => id === 'code-work')?.state, 'unloading');
     assert.equal(unloaded, false, 'withdrawal must join the final journal, not just the push');
     release.resolve();
     await Promise.all([unloading, mirroring]);
     ctx.state.transaction = transaction;
-    assert.equal(ctx.get('codeResearch'), undefined);
+    assert.equal(ctx.get('codeWork'), undefined);
     await assert.rejects(bridge.fenceUnit(caller, { unitId: unit.id, requestId: 'stale-fence' }), {
       code: 'code_unavailable',
     });
@@ -138,11 +138,11 @@ test(
     await repositories.run(caller.projectId, () =>
       repositories.git.ok(['update-ref', 'refs/merv/core-survives', head], { env }),
     );
-    await app.setEnabled('code-research', true);
-    assert.equal(app.status().find(({ id }) => id === 'code-research')?.state, 'active');
+    await app.setEnabled('code-work', true);
+    assert.equal(app.status().find(({ id }) => id === 'code-work')?.state, 'active');
     assert.equal(ctx.code.repositories, repositories);
-    assert.notEqual(ctx.codeResearch, bridge);
-    assert.equal((ctx.codeResearch as CodeService).github, core.github);
+    assert.notEqual(ctx.codeWork, bridge);
+    assert.equal((ctx.codeWork as CodeService).github, core.github);
     assert.deepEqual(await core.github.status(caller), githubStatus);
     assert.equal(
       (await repositories.git.ok(['rev-parse', 'refs/merv/core-survives'], { env }))
@@ -151,9 +151,9 @@ test(
       head,
     );
     (
-      ctx.codeResearch as unknown as { mirrorStore: { transport: MirrorTransport } }
+      ctx.codeWork as unknown as { mirrorStore: { transport: MirrorTransport } }
     ).mirrorStore.transport = transport;
-    await (ctx.codeResearch as CodeService).mirrorStep();
+    await (ctx.codeWork as CodeService).mirrorStep();
     assert.equal(pushes, 1, 'the completed journal is not republished after reload');
   },
 );

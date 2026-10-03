@@ -99,7 +99,7 @@ export async function exerciseRuntime(start) {
     // Code keeps one Git repository per project on the data volume. This image must carry a
     // Git the server can run, and the repository root must be writable where the volume is.
     checkpoint('code-repository');
-    await waitForManagedCode(app.ctx.codeResearch, owner);
+    await waitForManagedCode(app.ctx.codeWork, owner);
     const codeStatus = await call(operator, 'code.status');
     assert.ok(codeStatus.store, 'This image must keep Code repositories');
     assert.equal(codeStatus.store.hosted, true, 'A new project has managed Git without an import');
@@ -112,7 +112,7 @@ export async function exerciseRuntime(start) {
       requestId: 'managed-git',
     });
     assert.equal(managed.workspace, 'git');
-    const unit = await app.ctx.codeResearch.unit(owner, managed.id);
+    const unit = await app.ctx.codeWork.unit(owner, managed.id);
     assert.notEqual(unit.baseStatus?.status, 'blocked');
     assert.ok(codeStatus.store.quotaBytes > 0);
     assert.equal(codeStatus.mirror.state, 'off', 'Nothing is published for a synthetic project');

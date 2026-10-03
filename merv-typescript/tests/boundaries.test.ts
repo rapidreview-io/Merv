@@ -122,7 +122,7 @@ const capabilities: Record<string, readonly string[]> = {
   secrets: ['state'],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
   code: ['state', 'scope'],
-  codeResearch: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
+  codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
   runner: [],
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
   // Legacy transport stands alone; native connection owners are conditional below.
@@ -143,8 +143,8 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   sandboxes: ['api', 'artifacts', 'scope', 'sessions', 'state'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
-  codeResearch: ['reviews', 'sandboxes'],
-  experiments: ['codeResearch', 'sandboxes'],
+  codeWork: ['reviews', 'sandboxes'],
+  experiments: ['codeWork', 'sandboxes'],
   research: [
     'domainEvents',
     'paper',
@@ -152,14 +152,14 @@ const optionalCapabilities: Record<string, readonly string[]> = {
     'tasks',
     'experiments',
     'artifacts',
-    'codeResearch',
+    'codeWork',
   ],
-  knowledge: ['codeResearch'],
+  knowledge: ['codeWork'],
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
   sessions: ['tools', 'blobs', 'secrets'],
-  tasks: ['codeResearch', 'sandboxes'],
+  tasks: ['codeWork', 'sandboxes'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */
@@ -207,7 +207,7 @@ const adapterKind = (path: string) =>
   undefined;
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
-const capabilityOf = (owner: string) => (owner === 'code-research' ? 'codeResearch' : owner);
+const capabilityOf = (owner: string) => (owner === 'code-work' ? 'codeWork' : owner);
 
 /**
  * Contracts belongs to no component. Besides its index, a component may run only these shared
@@ -434,7 +434,7 @@ function assertComponentReferences(
     const { specifier, typeOnly } = reference;
     if (specifier.startsWith('@merv/') && !sharedContract(specifier)) {
       const utility =
-        owner === 'code-research' &&
+        owner === 'code-work' &&
         specifier.startsWith('@merv/code/') &&
         codeUtilityExports.has(specifier.slice('@merv/code/'.length));
       // Identity's credential store is a public shared authority, also usable by standalone services.
@@ -515,7 +515,7 @@ test('Pi SDK imports stay in the sandbox worker, outside every server entrypoint
 function assertCodeUtility(source: ts.SourceFile): void {
   for (const { specifier } of moduleReferences(source))
     assert.ok(
-      !/^@merv\/(?:sessions|workflows|reviews|sandboxes|code-research)(?:\/|$)/.test(specifier),
+      !/^@merv\/(?:sessions|workflows|reviews|sandboxes|code-work)(?:\/|$)/.test(specifier),
       `${source.fileName}: Code must not depend on a research service: ${specifier}`,
     );
   visit(source, (node) => {
@@ -524,7 +524,7 @@ function assertCodeUtility(source: ts.SourceFile): void {
         !/^(?:Workflows?|Reviews?|Sessions|Sandboxes)(?:$|[A-Z])/.test(node.text) ||
           (node.text === 'WorkflowWorkspacePolicy' &&
             /[/\\]driver[/\\]index\.ts$/.test(source.fileName)),
-        `${source.fileName}: research service or policy type ${node.text} belongs in Code Research`,
+        `${source.fileName}: research service or policy type ${node.text} belongs in Code Work`,
       );
     if (
       ts.isStringLiteralLike(node) ||
@@ -581,7 +581,7 @@ test('the Code boundary rejects service aliases, private SQL and lifecycle coupl
   assert.doesNotThrow(() => verify("const endpoint = '/pulls/42/reviews';"));
   for (const code of [
     "import type { Sessions } from '@merv/sessions/types';",
-    "export type { Code } from '@merv/code-research/types';",
+    "export type { Code } from '@merv/code-work/types';",
     "const owner = import('@merv/workflows');",
     "import type { Workflows as Work } from '@merv/contracts';",
     "type Policy = import('@merv/contracts').ReviewRequest;",
@@ -592,7 +592,7 @@ test('the Code boundary rejects service aliases, private SQL and lifecycle coupl
     "if (state === 'awaiting_publication') publish();",
     "subscribe({ type: 'workflow.transition' });",
   ])
-    assert.throws(() => verify(code), /research|Code Research/);
+    assert.throws(() => verify(code), /research|Code Work/);
 });
 
 test('public contract imports resolve genuine type-only modules without runtime or implementation bypasses', (t) => {
@@ -683,13 +683,13 @@ test('optional capabilities cannot escape their Cordis child injection', () => {
       [],
       new Set(),
     );
-  assert.doesNotThrow(() => verify("ctx.inject(['codeResearch'], (ctx) => ctx.codeResearch);"));
+  assert.doesNotThrow(() => verify("ctx.inject(['codeWork'], (ctx) => ctx.codeWork);"));
   assert.throws(
-    () => verify("ctx.inject(['codeResearch'], (ctx) => ctx.codeResearch); ctx.codeResearch;"),
+    () => verify("ctx.inject(['codeWork'], (ctx) => ctx.codeWork); ctx.codeWork;"),
     /undeclared dependency/,
   );
   assert.throws(
-    () => verify("ctx.inject(['codeResearch'], (ctx) => ctx.sessions);"),
+    () => verify("ctx.inject(['codeWork'], (ctx) => ctx.sessions);"),
     /undeclared dependency/,
   );
 });
@@ -776,7 +776,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
   const expected: Record<keyof typeof adapterKinds, string[]> = {
     tools: [
       'artifacts',
-      'code-research',
+      'code-work',
 
       'experiments',
       'feed',
@@ -797,7 +797,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
     ],
     ui: [
       'artifacts',
-      'code-research',
+      'code-work',
 
       'experiments',
       'feed',
@@ -812,7 +812,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'sessions',
       'tasks',
     ],
-    api: ['code-research', 'pi', 'scope', 'secrets', 'sessions'],
+    api: ['code-work', 'pi', 'scope', 'secrets', 'sessions'],
   };
   for (const kind of Object.keys(adapterKinds) as (keyof typeof adapterKinds)[]) {
     const registry = adapterKinds[kind];

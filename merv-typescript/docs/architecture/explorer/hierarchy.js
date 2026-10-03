@@ -87,7 +87,7 @@ function createPluginHierarchy({ data, select }) {
     make(
       'p',
       '',
-      'Sandboxes currently combines an upstream client with optional session, evidence and API integration. That is a candidate boundary to separate. Code Research and Reviews currently collaborate within L4. We should settle those contracts before enforcing a strict lower-layer-only rule.',
+      'Sandboxes currently combines an upstream client with optional session, evidence and API integration. That is a candidate boundary to separate. Code Work and Reviews currently collaborate within L4. We should settle those contracts before enforcing a strict lower-layer-only rule.',
     ),
     make(
       'p',

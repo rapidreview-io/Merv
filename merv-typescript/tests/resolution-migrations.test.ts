@@ -3,7 +3,7 @@ import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createService } from '@merv/contracts';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 import {
   migratePendingMerges,
   pendingMerge,

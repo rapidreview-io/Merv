@@ -13,13 +13,13 @@ import {
   type WorkflowSnapshot,
   type Transaction,
 } from '@merv/contracts';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeCapture } from '@merv/code-research/types';
+import type { CodeCapture } from '@merv/code-work/types';
 import type { SandboxCheckHandle } from '@merv/sandboxes';
 import { enqueueMirror, CodeMirrorService } from '@merv/code/store/mirror';
-import { CodeBaseService } from '../packages/code-research/src/bases.js';
-import type { CodeUnitService } from '../packages/code-research/src/units.js';
+import { CodeBaseService } from '../packages/code-work/src/bases.js';
+import type { CodeUnitService } from '../packages/code-work/src/units.js';
 import { git, seededSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
@@ -556,7 +556,9 @@ test('a resolution title names the contributing work on an intermediate union wi
   assert.match(task.title, /and 3 more/);
   assert.ok(task.title.length <= 200);
   assert.ok(task.goal.includes('Prepare the dataset'));
-  assert.ok(task.goal.includes('Implement D'));
+  // Contributing work is named by its generic name and id; its domain data is never read.
+  assert.match(task.goal, /\bD \(wf_/);
+  assert.ok(!task.goal.includes('Implement'));
   assert.deepEqual(
     (await f.workflows.dependencies(f.admin, waiter.id)).dependencies
       .filter((edge) => edge.kind === 'system')
@@ -720,8 +722,8 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
   assert.equal(task.workflow.version, 6);
   assert.match(task.title, /^Merge ‘[AC]’ with ‘[AC]’$/);
   assert.ok(!task.title.includes(base.key.slice(0, 12)));
-  assert.match(task.goal, /Implement A/);
-  assert.match(task.goal, /Implement C/);
+  assert.match(task.goal, /\bA \(wf_/);
+  assert.match(task.goal, /\bC \(wf_/);
   assert.match(task.goal, /f.txt/);
   const [left] = await f.state.read((sql) => f.bases.inputs(sql, f.admin.projectId, base));
   const status = await f.state.transaction((tx) => f.code.baseStatus(f.admin, task.id, tx));

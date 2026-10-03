@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import type { CodeUnit } from '@merv/contracts/code-research-models';
+import type { CodeUnit } from '@merv/contracts/code-work-models';
 import { call, refreshTools, scopeVersion, useTool, type Loaded } from '../api';
 import { UploadIcon } from '../icons';
 import { recordRoutes } from '../list-filters';

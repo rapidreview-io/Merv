@@ -24,7 +24,7 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { TaskService } from '@merv/tasks';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';

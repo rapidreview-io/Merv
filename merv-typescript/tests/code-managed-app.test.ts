@@ -18,9 +18,9 @@ test('the default application creates Git without GitHub and offers new work fro
     actorName: 'Owner',
   });
   const caller = { projectId: boot.project.id, actorId: boot.actor.id };
-  const status = await waitForManagedCode(app.ctx.codeResearch, caller);
+  const status = await waitForManagedCode(app.ctx.codeWork, caller);
   assert.equal(status.store?.source, 'managed');
-  assert.equal((await app.ctx.codeResearch.github.status(caller)).repository, null);
+  assert.equal((await app.ctx.codeWork.github.status(caller)).repository, null);
   const tasks = await Promise.all(
     ['one', 'two'].map((requestId) =>
       app.ctx.tasks.create(caller, {
@@ -35,10 +35,10 @@ test('the default application creates Git without GitHub and offers new work fro
     assert.equal(task.workspace, 'git');
     const assignment = await app.ctx.workflows.assignment(caller, task.id);
     assert.ok(assignment);
-    const unit = await app.ctx.codeResearch.unit(caller, task.id);
+    const unit = await app.ctx.codeWork.unit(caller, task.id);
     assert.notEqual(unit.baseStatus?.status, 'blocked');
   }
-  const after = await app.ctx.codeResearch.status(caller);
+  const after = await app.ctx.codeWork.status(caller);
   assert.equal(after.project?.main.oid, status.project!.main.oid);
   assert.deepEqual(after.store?.tips, [status.project!.main.oid]);
 });

@@ -21,7 +21,7 @@ Implementation contract:
   force-push away either history. Publication still uses the existing reviewed
   GitHub protocol and its concurrency checks.
 - Keep repository storage/recovery in Code and research-specific acceptance in
-  Code Research. Simplify the creation paths and contracts rather than moving
+  Code Work. Simplify the creation paths and contracts rather than moving
   research policy into the storage plugin. GitHub setup no longer owns creation
   of the local repository.
 

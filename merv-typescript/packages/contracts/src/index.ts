@@ -128,7 +128,7 @@ export {
   codeCommandRecordSchema,
   codeLocalBindInputSchema,
 } from './code.js';
-import type { CodeUnit } from './code-research-models.js';
+import type { CodeUnit } from './code-work-models.js';
 export type {
   CodeAcceptedSince,
   CodeUnitAcceptInput,
@@ -143,7 +143,7 @@ export type {
   CodeBaseStatus,
   CodeUnit,
   CodeProjectStatus,
-} from './code-research-models.js';
+} from './code-work-models.js';
 export type { CodeWriterState, CodeWriterStatus } from './code-units.js';
 export type {
   CodeLocalBindInput,
@@ -2455,10 +2455,10 @@ export {
   codeCheckSpecSchema,
   codeStoreLimitsSchema,
   codeRepositoryConfigureInputSchema,
-} from './code-research-store.js';
+} from './code-work-store.js';
 export type {
   CodeCheckSpec,
   CodeStoreLimits,
   CodeRepositoryConfigureInput,
-  CodeResearchStoreStatus,
-} from './code-research-store.js';
+  CodeWorkStoreStatus,
+} from './code-work-store.js';

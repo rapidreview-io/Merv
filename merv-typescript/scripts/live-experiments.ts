@@ -7,7 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller, ReviewRequest } from '@merv/contracts';
-import type { CodeCapture } from '@merv/code-research/types';
+import type { CodeCapture } from '@merv/code-work/types';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { programVersion } from '@merv/experiments/program';
@@ -109,11 +109,11 @@ try {
   assert.equal(created.evidence.length, 0);
   assert.equal((await app.ctx.artifacts.list(source)).length, 0);
   const initializationDeadline = Date.now() + 30000;
-  while (!(await app.ctx.codeResearch.status(source)).project?.main.stored) {
+  while (!(await app.ctx.codeWork.status(source)).project?.main.stored) {
     assert.ok(Date.now() < initializationDeadline, 'Managed repository initialization timed out');
     await delay(50);
   }
-  initialOid = (await app.ctx.codeResearch.status(source)).project!.main.oid;
+  initialOid = (await app.ctx.codeWork.status(source)).project!.main.oid;
   runner = new MachineRunner(
     {
       directory: join(directory, 'machine'),
@@ -318,7 +318,7 @@ try {
   if (gitMode) {
     assert.ok(results.codeCaptureRef?.kind === 'session-final');
     assert.equal(results.codeCaptureRef.sessionId, sessions[2].id);
-    const capture = await app.ctx.codeResearch.capture(source, results.codeCaptureRef);
+    const capture = await app.ctx.codeWork.capture(source, results.codeCaptureRef);
     assert.equal(capture.status, 'ready');
     const captured = capture.workspace!;
     assert.ok(captured.treeOid);
@@ -332,7 +332,7 @@ try {
     assert.equal(sessions[3].workspace!.attachment.treeOid, captured.treeOid);
     assert.equal(sessions[3].workspace!.result!.headOid, captured.headOid);
     assert.equal(sessions[3].workspace!.result!.treeOid, captured.treeOid);
-    assert.equal((await app.ctx.codeResearch.status(source)).project?.main.oid, initialOid);
+    assert.equal((await app.ctx.codeWork.status(source)).project?.main.oid, initialOid);
     const bare = app.ctx.code.repositories!.paths(source.projectId).repository;
     assert.equal(
       localGit(bare, 'rev-parse', `${captured.headOid}^{tree}`).trim(),

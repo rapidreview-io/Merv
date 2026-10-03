@@ -30,7 +30,7 @@ import { TaskService } from '@merv/tasks';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 import type {
   Experiment,
   ExperimentAttach,

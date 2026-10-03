@@ -171,7 +171,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
   assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
   // The unit tools are the project's, never a worker's: an actor key reads them and may not bind.
   // The default composition initializes managed Git before any work.
-  const unbound = await waitForManagedCode(app.ctx.codeResearch, source);
+  const unbound = await waitForManagedCode(app.ctx.codeWork, source);
   assert.equal(unbound.store?.source, 'managed');
   assert.deepEqual((await ok('/tools/code.status', {})).result, unbound);
   assert.deepEqual((await ok('/tools/ui.read', { rowId: 'code' })).result.status, unbound);
@@ -193,7 +193,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
   assert.equal(queued.status, 'queued');
   assert.equal(queued.command.actorId, session.actorId);
   assert.deepEqual(await commands(), [queued]);
-  const originalProvider = app.ctx.codeResearch;
+  const originalProvider = app.ctx.codeWork;
   const originalSessions = app.ctx.sessions;
   const eventTypes = async () =>
     (await app.ctx.state.events(boot.project.id))
@@ -202,10 +202,10 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
 
   await app.setEnabled('code', false);
   assert.equal(app.status().find((entry) => entry.id === 'code')?.state, 'disabled');
-  for (const id of ['code-tools', 'code-ui', 'code-research-api']) {
+  for (const id of ['code-tools', 'code-ui', 'code-work-api']) {
     const entry = app.status().find((entry) => entry.id === id);
     assert.equal(entry?.state, 'pending', id);
-    assert.deepEqual(entry?.missingDependencies, ['codeResearch'], id);
+    assert.deepEqual(entry?.missingDependencies, ['codeWork'], id);
   }
   for (const id of ['state', 'scope', 'sessions', 'workflows', 'api', 'ui'])
     assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
@@ -230,7 +230,7 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
   });
 
   await app.setEnabled('code', true);
-  assert.notEqual(app.ctx.codeResearch, originalProvider);
+  assert.notEqual(app.ctx.codeWork, originalProvider);
   assert.deepEqual(await catalog(), ['code.commit', 'code.operation', 'session.message.ack']);
   assert.equal((await rows()).filter((row) => row.id === 'code').length, 1);
   assert.deepEqual(await commands(), [queued]);

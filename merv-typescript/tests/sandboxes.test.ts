@@ -627,10 +627,9 @@ test('a deployment composes the sandboxes plugins only when the service is named
   writeFileSync(
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
-      plugins:
-        'state scope blobs secrets identity api ui code code-research code-research-api sessions'
-          .split(' ')
-          .map((id) => ({ id, name: id })),
+      plugins: 'state scope blobs secrets identity api ui code code-work code-work-api sessions'
+        .split(' ')
+        .map((id) => ({ id, name: id })),
     }),
   );
   const output = join(directory, 'rendered.json');

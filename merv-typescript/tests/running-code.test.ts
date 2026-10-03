@@ -4,10 +4,10 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
-import { CodeService } from '@merv/code-research/service';
-import type { CodeCapture } from '@merv/code-research/types';
-import codeUiPlugin from '@merv/code-research/ui';
-import { checkNode, hasCheck, OVERDUE_GRACE_MS } from '@merv/code-research/running';
+import { CodeService } from '@merv/code-work/service';
+import type { CodeCapture } from '@merv/code-work/types';
+import codeUiPlugin from '@merv/code-work/ui';
+import { checkNode, hasCheck, OVERDUE_GRACE_MS } from '@merv/code-work/running';
 import { CodeRepositories } from '@merv/code/store/repository';
 import {
   createService,
@@ -267,7 +267,7 @@ async function fixture(t: TestContext) {
   const ctx = new Context();
   const ui = new UiRegistry();
   ctx.provide('ui', ui);
-  ctx.provide('codeResearch', code);
+  ctx.provide('codeWork', code);
   await ctx.plugin(codeUiPlugin);
   f.beforeClose.unshift(async () => await ctx.fiber.dispose());
   /** Code's contribution as registered, beside the other owners a test stands in for. */
@@ -334,7 +334,7 @@ const tasks = (drawn: string[] = []): RunningContribution => ({
 });
 
 const codeOf = (sections: RunningSection[]) =>
-  sections.find((section) => section.owner === 'code-research' && section.title === 'Code');
+  sections.find((section) => section.owner === 'code-work' && section.title === 'Code');
 
 test('done work whose pull request waits for a merge is held on the board in the Code page’s own words, and only a signed-in operator is offered the merge', async (t) => {
   const f = await fixture(t);
@@ -461,7 +461,7 @@ test('done work whose pull request waits for a merge is held on the board in the
     title: 'Code',
     place: 'code',
     attention: true,
-    owner: 'code-research',
+    owner: 'code-work',
     kind: 'facts',
     rows: rows(true),
   });
@@ -586,7 +586,7 @@ test('a move that is nobody’s holds nothing, open work is marked whatever its 
   assert.equal(answer.lanes.work.nodes.length, 22);
   assert.deepEqual(
     answer.lanes.work.summaries.map(({ owner, attention }) => ({ owner, attention })),
-    [{ owner: 'code-research', attention: summary!.attention }],
+    [{ owner: 'code-work', attention: summary!.attention }],
   );
   assert.equal(answer.lanes.work.needsYou, 23);
 });
@@ -840,8 +840,8 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
   assert.deepEqual(
     sidebar.sections.map(({ title, owner }) => [title, owner]),
     [
-      ['Check', 'code-research'],
-      ['Checking', 'code-research'],
+      ['Check', 'code-work'],
+      ['Checking', 'code-work'],
       ['Machine', 'sandboxes'],
     ],
   );

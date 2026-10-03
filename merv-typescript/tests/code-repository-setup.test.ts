@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { codeRepositoryImportInputSchema } from '@merv/contracts';
 import type { Caller, CodeRepositoryPrepareInput, CodeStoreOperation } from '@merv/contracts';
-import type { Code } from '../packages/code-research/src/types.js';
-import { prepareRepository } from '../packages/code-research/src/repository-setup.js';
+import type { Code } from '../packages/code-work/src/types.js';
+import { prepareRepository } from '../packages/code-work/src/repository-setup.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
 

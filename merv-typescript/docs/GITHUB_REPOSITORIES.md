@@ -51,8 +51,8 @@ The previously verified production deployment had metadata-only permissions. Do 
 | Code `github.ts` / `github-client.ts` | Connection, authority, bounded GitHub API operations and scoped token minting     |
 | Code `store/mirror.ts`                | Copies Merv's refs to the linked repository, never forcing a ref                  |
 | Code workspace driver (`driver/`)     | Runner checkouts prepared from, and uploaded to, Code's repository as bundles     |
-| Code research `publications.ts`       | Durable unit-publication-to-PR binding, reconciliation and explicit guarded merge |
-| Code research `publication-host.ts`   | Approval, branch-rule and merged-tree checks against Code's repository            |
+| Code work `publications.ts`           | Durable unit-publication-to-PR binding, reconciliation and explicit guarded merge |
+| Code work `publication-host.ts`       | Approval, branch-rule and merged-tree checks against Code's repository            |
 | Existing API / UI adapters            | Authenticated transport and repository/PR views                                   |
 
 ## HTTP controls

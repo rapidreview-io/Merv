@@ -27,7 +27,7 @@
 --   C4  Research survivors whose predecessor or automation root is in R (research@7 re-links them),
 --       and surviving cycles staged on a wave in R (must be empty; the migrations refuse).
 --   C5  Records the migrations refuse to leave behind outside R. Every count must be 0.
---   C6  Code lineage and code-research rows of R. Kept; report only. An accepted unit of R whose
+--   C6  Code lineage and code-work rows of R. Kept; report only. An accepted unit of R whose
 --       commit main lacks is history: no research cycle integrates it after the release.
 --   C7  Pending paper proposals in surviving experiment submissions. 0 lets paperProposal go.
 --   C8  Rows each migration deletes, re-links or drops. The verification compares against them.

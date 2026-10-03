@@ -55,7 +55,7 @@
         "members": [
           "paper",
           "reviews",
-          "codeResearch",
+          "codeWork",
           "pi"
         ]
       },
@@ -113,7 +113,7 @@
         "purpose": "API and route adapters expose existing capabilities. They are not a research layer.",
         "members": [
           "api",
-          "merv-code-research-api",
+          "merv-code-work-api",
           "merv-pi-api",
           "merv-scope-api",
           "merv-secrets-api",
@@ -181,7 +181,7 @@
     "upward": [],
     "peers": [
       {
-        "from": "codeResearch",
+        "from": "codeWork",
         "to": "reviews",
         "optional": true
       }
@@ -233,7 +233,7 @@
         "reflections",
         "research"
       ],
-      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Research."
+      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
     {
       "id": "coordination",
@@ -291,7 +291,7 @@
       "label": "New providers",
       "caption": "Discovered in source",
       "members": [
-        "codeResearch",
+        "codeWork",
         "fleet",
         "fleetWorkflow",
         "pi",
@@ -505,10 +505,124 @@
       "exposedTools": []
     },
     {
-      "plugin": "merv-code-research",
-      "source": "packages/code-research/src/index.ts",
+      "plugin": "merv-code-tools",
+      "source": "packages/code-work/src/tools.ts",
+      "provides": [],
+      "requires": [
+        "codeWork",
+        "tools"
+      ],
+      "optional": [],
+      "kind": "tools",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-code-tools",
+      "group": "front",
+      "owner": "codeWork",
+      "label": "Code Work · tools adapter",
+      "purpose": "Connects Code Work to the Tools registry. This adapter owns no domain state.",
+      "exposedTools": [
+        {
+          "name": "code.commit",
+          "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.local.bind",
+          "description": "Bind this project to a repository identity and name the commit of its main before importing history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. Use the existing runner repositoryId when importing legacy acceptances. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.merge",
+          "description": "Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt.",
+          "readOnly": false
+        },
+        {
+          "name": "code.mirror.retry",
+          "description": "Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted and base refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
+          "name": "code.operation",
+          "description": "Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.",
+          "readOnly": true
+        },
+        {
+          "name": "code.publication.control",
+          "description": "Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.merge",
+          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.",
+          "readOnly": false
+        },
+        {
+          "name": "code.publication.sync",
+          "description": "Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.",
+          "readOnly": false
+        },
+        {
+          "name": "code.repository.configure",
+          "description": "Set what this project’s repository refuses beyond the fixed limits, and the one command that proves a merged base works. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. check is the project check and must be stated on every call: null turns verification off, and an object gives command, timeoutSeconds and image (provider, offerId and an optional snapshotId). The command runs against the merged tree in a machine this server rents for the occasion and never on this server; it is given no Merv credential and no environment, the machine has network access and a writable copy of the source, and every base record says so beside its verdict. A failing check is treated as a conflict and resolved by the one reviewed task a Git conflict is resolved by. Without a sandbox connection a configured command leaves each base unsealed and blocked with code_check_unavailable for an operator. Only a project administrator may call it. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
+          "name": "code.repository.import",
+          "description": "Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker. New projects already have a managed repository; code.local.bind is retained for importing legacy projects. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.",
+          "readOnly": false
+        },
+        {
+          "name": "code.repository.prepare",
+          "description": "Prepare the linked GitHub repository using its selected base branch and exact head. A signed-in project administrator selects the connection revision, branch head and current main (if already bound). Imports the selected history without replacing Merv main or its repository identity. If the remote adds history, creates one integration task requiring independent review. Retry the same input after the task passes to advance Merv main with compare-and-swap; a moved local or remote head requires a new preparation. Ready means integrated locally; publication to GitHub remains separately gated. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.",
+          "readOnly": false
+        },
+        {
+          "name": "code.repository.rebind",
+          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
+          "readOnly": false
+        },
+        {
+          "name": "code.status",
+          "description": "Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; each base also carries its project check — the verdict, the command, the machine it ran in, what that machine could not isolate, and what the command printed; code.base.retry, code.base.suspend/resume, code.base.cancel, code.base.quarantine, code.base.release and code.base.repair handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, the repositories it was bound to before with when, by whom and why each was left, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
+          "readOnly": true
+        },
+        {
+          "name": "code.unit.fence",
+          "description": "End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.",
+          "readOnly": false
+        },
+        {
+          "name": "code.unit.get",
+          "description": "Read what Code holds about one unit of work, named by its work unit id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository; storage code means Code’s own repository holds it, and receipt names the operation that made it durable. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.",
+          "readOnly": true
+        }
+      ]
+    },
+    {
+      "plugin": "merv-code-ui",
+      "source": "packages/code-work/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "codeWork",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-code-ui",
+      "group": "front",
+      "owner": "codeWork",
+      "label": "Code Work · ui adapter",
+      "purpose": "Connects Code Work to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-code-work",
+      "source": "packages/code-work/src/index.ts",
       "provides": [
-        "codeResearch"
+        "codeWork"
       ],
       "requires": [
         "code",
@@ -525,10 +639,10 @@
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
-      "id": "codeResearch",
+      "id": "codeWork",
       "group": "other",
-      "owner": "codeResearch",
-      "label": "Code Research",
+      "owner": "codeWork",
+      "label": "Code Work",
       "purpose": "Owns research-to-code mappings, exact captures, dependency and base selection, acceptance and review provenance, merge-check configuration and publication policy. Composes generic Code APIs; atomically projects retention requests, repository holds and mirror eligibility, preserving obligations when the adapter is unloaded.",
       "exposedTools": [
         {
@@ -583,7 +697,7 @@
         },
         {
           "name": "code.repository.prepare",
-          "description": "Prepare the linked GitHub repository for research using its selected base branch and exact head. A signed-in project administrator selects the connection revision, branch head and current main (if already bound). Imports the selected history without replacing Merv main or its repository identity. If the remote adds history, creates one integration task requiring independent review. Retry the same input after the task passes to advance Merv main with compare-and-swap; a moved local or remote head requires a new preparation. Ready means integrated locally; publication to GitHub remains separately gated. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.",
+          "description": "Prepare the linked GitHub repository using its selected base branch and exact head. A signed-in project administrator selects the connection revision, branch head and current main (if already bound). Imports the selected history without replacing Merv main or its repository identity. If the remote adds history, creates one integration task requiring independent review. Retry the same input after the task passes to advance Merv main with compare-and-swap; a moved local or remote head requires a new preparation. Ready means integrated locally; publication to GitHub remains separately gated. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.",
           "readOnly": false
         },
         {
@@ -603,142 +717,28 @@
         },
         {
           "name": "code.unit.get",
-          "description": "Read what Code holds about one unit of work, named by its task or experiment id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository; storage code means Code’s own repository holds it, and receipt names the operation that made it durable. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.",
+          "description": "Read what Code holds about one unit of work, named by its work unit id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository; storage code means Code’s own repository holds it, and receipt names the operation that made it durable. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.",
           "readOnly": true
         }
       ]
     },
     {
-      "plugin": "merv-code-research-api",
-      "source": "packages/code-research/src/api.ts",
+      "plugin": "merv-code-work-api",
+      "source": "packages/code-work/src/api.ts",
       "provides": [],
       "requires": [
-        "codeResearch",
+        "codeWork",
         "api"
       ],
       "optional": [],
       "kind": "api",
       "runtime": "server",
       "defaultConfiguration": true,
-      "id": "merv-code-research-api",
+      "id": "merv-code-work-api",
       "group": "front",
-      "owner": "codeResearch",
-      "label": "Code Research · api adapter",
-      "purpose": "Connects Code Research to the API registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
-      "plugin": "merv-code-tools",
-      "source": "packages/code-research/src/tools.ts",
-      "provides": [],
-      "requires": [
-        "codeResearch",
-        "tools"
-      ],
-      "optional": [],
-      "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-code-tools",
-      "group": "front",
-      "owner": "codeResearch",
-      "label": "Code Research · tools adapter",
-      "purpose": "Connects Code Research to the Tools registry. This adapter owns no domain state.",
-      "exposedTools": [
-        {
-          "name": "code.commit",
-          "description": "Request a Git checkpoint of this active writable session’s assigned checkout. Read its current HEAD with local Git first. Supply that full expectedHead, a commit message and a stable requestId. The owning runner performs fixed Git operations; this does not publish central or submit a proposal. Returns a durable operation. If queued or dispatched, inspect code.operation with the returned command.id. Reusing the same request with different input is refused.",
-          "readOnly": false
-        },
-        {
-          "name": "code.local.bind",
-          "description": "Bind this project to a repository identity and name the commit of its main before importing history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. Use the existing runner repositoryId when importing legacy acceptances. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.",
-          "readOnly": false
-        },
-        {
-          "name": "code.merge",
-          "description": "Start materializes the frozen merge in a clean checkout. Complete commits its resolution with the current checkpoint and frozen second parent. Supply expectedHead, message and a stable requestId; poll code.operation for the receipt.",
-          "readOnly": false
-        },
-        {
-          "name": "code.mirror.retry",
-          "description": "Put one blocked publication of a Code ref back in the queue, named by the operationId code.status reports under mirror.blockedRefs. Publishing to GitHub is the server’s own asynchronous work: it never blocks a session, a handoff or an acceptance, so a blocked ref means only that the published repository has not received a commit Code already holds. A ref blocked after repeated failures is simply queued again. A ref blocked with code_mirror_diverged holds a commit Code did not write, which is somebody’s work: keep it somewhere first, then call this with acknowledgeRemote set to exactly that commit. Nothing here ever forces or deletes a published ref; work branches only ever fast-forward and accepted and base refs are only ever created. Only a project administrator may call it, never a leased worker. Supply a stable requestId.",
-          "readOnly": false
-        },
-        {
-          "name": "code.operation",
-          "description": "Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.",
-          "readOnly": true
-        },
-        {
-          "name": "code.publication.control",
-          "description": "Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.",
-          "readOnly": false
-        },
-        {
-          "name": "code.publication.merge",
-          "description": "Signed-in human administrator: merge the independently approved proposal at its exact reviewed head. Code checks current main, rules and status, imports the merge, and completes only after verifying its parents and reviewed tree.",
-          "readOnly": false
-        },
-        {
-          "name": "code.publication.sync",
-          "description": "Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.",
-          "readOnly": false
-        },
-        {
-          "name": "code.repository.configure",
-          "description": "Set what this project’s repository refuses beyond the fixed limits, and the one command that proves a merged base works. denyGlobs are paths no admitted history may contain; secretExemptGlobs are paths the credential patterns skip, for fixtures that are shaped like tokens. A glob is matched against the whole path from the repository root: a literal matches itself, ? one character and * any run within one segment, ** any run across segments. Both lists replace what was set. check is the project check and must be stated on every call: null turns verification off, and an object gives command, timeoutSeconds and image (provider, offerId and an optional snapshotId). The command runs against the merged tree in a machine this server rents for the occasion and never on this server; it is given no Merv credential and no environment, the machine has network access and a writable copy of the source, and every base record says so beside its verdict. A failing check is treated as a conflict and resolved by the one reviewed task a Git conflict is resolved by. Without a sandbox connection a configured command leaves each base unsealed and blocked with code_check_unavailable for an operator. Only a project administrator may call it. Supply a stable requestId.",
-          "readOnly": false
-        },
-        {
-          "name": "code.repository.import",
-          "description": "Bring history into the repository Code keeps for this project on the server, which is what makes the project hosted: new Git work is then kept by Code and can be resumed or reviewed on another machine. Only a project administrator may call it, never a leased worker. New projects already have a managed repository; code.local.bind is retained for importing legacy projects. source bundle promises one Git bundle: tip is the commit it delivers, and bundle gives its sha256 and size; the call returns an operation, and the bundle is then sent in parts to PUT /code/v2/uploads/{id}/parts/{offset} and admitted with POST /code/v2/uploads/{id}/complete, which the code-import command does for you. source github reads one ref of the linked GitHub repository on the server. A bundle may build only on commits the repository already holds (store.tips in code.status), so a history larger than one transfer is imported in steps. Everything the transfer introduces is examined: integrity and connectivity, sizes and counts, paths, modes, symbolic links, submodules, the project’s deny globs and a short list of unmistakable credentials. Findings refuse the whole import and are listed on the operation without the matched text. Supply a stable requestId: the same request replays its operation, a changed one is refused.",
-          "readOnly": false
-        },
-        {
-          "name": "code.repository.prepare",
-          "description": "Prepare the linked GitHub repository for research using its selected base branch and exact head. A signed-in project administrator selects the connection revision, branch head and current main (if already bound). Imports the selected history without replacing Merv main or its repository identity. If the remote adds history, creates one integration task requiring independent review. Retry the same input after the task passes to advance Merv main with compare-and-swap; a moved local or remote head requires a new preparation. Ready means integrated locally; publication to GitHub remains separately gated. Retry the same request and input while importing or after an uncertain answer. Failed imports report findings; correct them before starting a new request. Existing work keeps its pinned base.",
-          "readOnly": false
-        },
-        {
-          "name": "code.repository.rebind",
-          "description": "Bind this hosted project to a different repository identity after proving Code can carry its history. Only a signed-in project administrator may call it; an API key or a leased worker is refused. This changes the identity the project stamps into new work; it moves no object, and it does not change or touch the GitHub repository this project is linked to. Before anything is written, Code checks that its own repository holds every commit this project has retained as authoritative — main, every accepted commit including historical reviewed rounds, every unit head, every commit a unit’s base is pinned to and every resolved base — and a commit it does not hold refuses the whole rebind and is listed. A project whose repository was never imported into Code cannot be rebound. mainOid is the commit main becomes; if it is not ahead of the main being left behind, name that old main exactly as acknowledgePreviousMain. A rebind is refused while any base is unresolved or its project check is running, any writer generation is reserved, active or closing, any session holds a workspace, any transfer is unfinished or any publication is unsettled, and it names them. It is refused for the repository the project is already bound to; code.local.bind moves main. Acceptances and base pins made under the previous repository stay valid because the binding retains every repository it has been bound to. Give a reason and a stable requestId: the same request replays its operation, a changed one is refused, and a new one supersedes an unfinished rebind of yours.",
-          "readOnly": false
-        },
-        {
-          "name": "code.status",
-          "description": "Read retained bases with frozen sponsors, execution epochs, admission blockers and operator reasons; each base also carries its project check — the verdict, the command, the machine it ran in, what that machine could not isolate, and what the command printed; code.base.retry, code.base.suspend/resume, code.base.cancel, code.base.quarantine, code.base.release and code.base.repair handle recovery. Read this project’s Code binding (repository, main and whether Code’s own repository holds it, the repositories it was bound to before with when, by whom and why each was left, and durability: legacy-local while accepted code stays on the runner, code once the project was imported), its newest 200 units with their base pins and acceptances, and every blocker Code has published for work whose base cannot be pinned yet; each blocker carries next, the recovery action. store describes the project’s repository on the server: whether it is hosted, its object format and root, the newest imported tips, its disk use against its quota, and its deny and exempt globs. operations lists every unfinished transfer, oldest first, with its phase, bytes received and, under waiting, why it is not moving and what would move it, followed by the newest refused ones with their findings. mirror says how the project’s work reaches the GitHub repository it is published to: off while nothing is linked or write automation is off (blockedBy says which), otherwise idle, pending, retrying or blocked, with how many refs are waiting, since when, the last error and every ref that waits for an operator under blockedRefs, each with the operationId code.mirror.retry takes. Publishing is the server’s own asynchronous work and is never on anybody’s path: a mirror that is behind or blocked stops no session, handoff or acceptance. warnings carries the same trouble as plain statements about the repository.",
-          "readOnly": true
-        },
-        {
-          "name": "code.unit.fence",
-          "description": "End the writer generation of a unit that will not end by itself: its machine never handed over a final capture (code_recovery_required), or the final capture is quarantined (code_capture_quarantined; read the findings in code.status first). The unit closes at the last commit Code admitted, anything the old generation was still sending is kept on the server’s disk and never admitted, and the next lease continues from that commit as the next generation. Refused with code_operation_unresolved while an admitted upload of the unit is unfinished. Only a signed-in project administrator may call it. Supply a stable requestId.",
-          "readOnly": false
-        },
-        {
-          "name": "code.unit.get",
-          "description": "Read what Code holds about one unit of work, named by its task or experiment id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage legacy-local means the accepted code is retained only in the runner’s repository; storage code means Code’s own repository holds it, and receipt names the operation that made it durable. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.",
-          "readOnly": true
-        }
-      ]
-    },
-    {
-      "plugin": "merv-code-ui",
-      "source": "packages/code-research/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "codeResearch",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-code-ui",
-      "group": "front",
-      "owner": "codeResearch",
-      "label": "Code Research · ui adapter",
-      "purpose": "Connects Code Research to the UI registry. This adapter owns no domain state.",
+      "owner": "codeWork",
+      "label": "Code Work · api adapter",
+      "purpose": "Connects Code Work to the API registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -800,7 +800,7 @@
         "domainEvents"
       ],
       "optional": [
-        "codeResearch",
+        "codeWork",
         "sandboxes"
       ],
       "kind": "service",
@@ -1277,7 +1277,7 @@
         "workflows"
       ],
       "optional": [
-        "codeResearch"
+        "codeWork"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1856,7 +1856,7 @@
         "tasks",
         "experiments",
         "artifacts",
-        "codeResearch"
+        "codeWork"
       ],
       "kind": "service",
       "runtime": "server",
@@ -1865,7 +1865,7 @@
       "group": "research",
       "owner": "research",
       "label": "Research",
-      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Research bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Research publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff.",
+      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Work publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff.",
       "exposedTools": [
         {
           "name": "reflection.create",
@@ -2770,7 +2770,7 @@
         "domainEvents"
       ],
       "optional": [
-        "codeResearch",
+        "codeWork",
         "sandboxes"
       ],
       "kind": "service",
@@ -3170,58 +3170,8 @@
       "optional": false
     },
     {
-      "from": "codeResearch",
-      "to": "code",
-      "optional": false
-    },
-    {
-      "from": "codeResearch",
-      "to": "state",
-      "optional": false
-    },
-    {
-      "from": "codeResearch",
-      "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "codeResearch",
-      "to": "sessions",
-      "optional": false
-    },
-    {
-      "from": "codeResearch",
-      "to": "workflows",
-      "optional": false
-    },
-    {
-      "from": "codeResearch",
-      "to": "domainEvents",
-      "optional": false
-    },
-    {
-      "from": "codeResearch",
-      "to": "reviews",
-      "optional": true
-    },
-    {
-      "from": "codeResearch",
-      "to": "sandboxes",
-      "optional": true
-    },
-    {
-      "from": "merv-code-research-api",
-      "to": "codeResearch",
-      "optional": false
-    },
-    {
-      "from": "merv-code-research-api",
-      "to": "api",
-      "optional": false
-    },
-    {
       "from": "merv-code-tools",
-      "to": "codeResearch",
+      "to": "codeWork",
       "optional": false
     },
     {
@@ -3231,12 +3181,62 @@
     },
     {
       "from": "merv-code-ui",
-      "to": "codeResearch",
+      "to": "codeWork",
       "optional": false
     },
     {
       "from": "merv-code-ui",
       "to": "ui",
+      "optional": false
+    },
+    {
+      "from": "codeWork",
+      "to": "code",
+      "optional": false
+    },
+    {
+      "from": "codeWork",
+      "to": "state",
+      "optional": false
+    },
+    {
+      "from": "codeWork",
+      "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "codeWork",
+      "to": "sessions",
+      "optional": false
+    },
+    {
+      "from": "codeWork",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "codeWork",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
+      "from": "codeWork",
+      "to": "reviews",
+      "optional": true
+    },
+    {
+      "from": "codeWork",
+      "to": "sandboxes",
+      "optional": true
+    },
+    {
+      "from": "merv-code-work-api",
+      "to": "codeWork",
+      "optional": false
+    },
+    {
+      "from": "merv-code-work-api",
+      "to": "api",
       "optional": false
     },
     {
@@ -3301,7 +3301,7 @@
     },
     {
       "from": "experiments",
-      "to": "codeResearch",
+      "to": "codeWork",
       "optional": true
     },
     {
@@ -3471,7 +3471,7 @@
     },
     {
       "from": "knowledge",
-      "to": "codeResearch",
+      "to": "codeWork",
       "optional": true
     },
     {
@@ -3726,7 +3726,7 @@
     },
     {
       "from": "research",
-      "to": "codeResearch",
+      "to": "codeWork",
       "optional": true
     },
     {
@@ -4016,7 +4016,7 @@
     },
     {
       "from": "tasks",
-      "to": "codeResearch",
+      "to": "codeWork",
       "optional": true
     },
     {

@@ -225,7 +225,7 @@ test(
       actorId: boot.actor.id,
       credentialId: boot.credential.id,
     };
-    const { codeResearch: code, tasks, sessions, reviews, state } = app.ctx;
+    const { codeWork: code, tasks, sessions, reviews, state } = app.ctx;
 
     const initial = await waitForManagedCode(code, owner);
     const main = initial.project!.main.oid;

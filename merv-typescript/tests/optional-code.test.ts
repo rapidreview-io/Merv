@@ -44,7 +44,7 @@ async function fixture(t: TestContext, enabled: boolean) {
     actorId: issued.actor.id,
     credentialId: issued.credential.id,
   };
-  if (enabled) await waitForManagedCode(app.ctx.codeResearch, owner);
+  if (enabled) await waitForManagedCode(app.ctx.codeWork, owner);
   const source = await app.ctx.artifacts.create(owner, {
     title: 'Source',
     content: 'Retained research findings.',

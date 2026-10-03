@@ -135,10 +135,9 @@ function renderer(t) {
   writeFileSync(
     join(directory, 'dist/config/default.json'),
     JSON.stringify({
-      plugins:
-        'state scope blobs secrets identity api ui code code-research code-research-api sessions'
-          .split(' ')
-          .map((id) => ({ id, name: id })),
+      plugins: 'state scope blobs secrets identity api ui code code-work code-work-api sessions'
+        .split(' ')
+        .map((id) => ({ id, name: id })),
     }),
   );
   const output = join(directory, 'rendered.json');
@@ -159,8 +158,8 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.deepEqual(config.plugins.find((p) => p.id === 'code').config, {
     repositories: { root: '/var/lib/merv-ts/code' },
   });
-  assert.equal(config.plugins.find((p) => p.id === 'code-research').required, true);
-  assert.equal(config.plugins.find((p) => p.id === 'code-research-api').required, true);
+  assert.equal(config.plugins.find((p) => p.id === 'code-work').required, true);
+  assert.equal(config.plugins.find((p) => p.id === 'code-work-api').required, true);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts');
   assert.equal(statSync(output).mode & 0o077, 0);
   assert.equal(

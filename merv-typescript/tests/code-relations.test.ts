@@ -8,12 +8,13 @@ import type {
   WorkflowRelations,
   Workflows,
 } from '@merv/contracts';
-import { providerRelations } from '@merv/code-research/relations';
+import { providerRelations } from '@merv/code-work/relations';
 
 /**
- * Code-research's view of a unit's edges, composed over the engine's domain-free relations()
+ * Code-work's view of a unit's edges, composed over the engine's domain-free relations()
  * and pinned(). The engine's side of both reads is pinned in workflow-blockers.test.ts; this
- * pins only what code-research adds: the goal from data and each version's workspace fact.
+ * pins only what code-work adds: each version's workspace fact. A unit's domain data is never
+ * read; the generic name and id are all code-work knows of it.
  */
 
 const tx = {} as Transaction;
@@ -50,7 +51,7 @@ const engine = (
     pinned: async (workflow: string, version: number) => pinned[`${workflow}@${version}`] ?? null,
   }) as unknown as Workflows;
 
-test('a provider view adds the goal and each version’s workspace fact to the engine’s edges', async () => {
+test('a provider view adds each version’s workspace fact and never reads the domain’s data', async () => {
   const workflows = engine(
     {
       top: {
@@ -64,11 +65,6 @@ test('a provider view adds the goal and each version’s workspace fact to the e
         ],
         dependents: [item('above', 'coded', { kind: 'declared' })],
       },
-      untitled: {
-        instance: { ...item('untitled', 'build'), data: { goal: 7 } },
-        dependencies: [],
-        dependents: [],
-      },
     },
     {
       'build@1': contract({ building: manifest() }),
@@ -81,11 +77,7 @@ test('a provider view adds the goal and each version’s workspace fact to the e
 
   const view = await providerRelations(workflows, 'project', 'top', tx);
   assert.ok(view);
-  assert.deepEqual(view.instance, {
-    ...item('top', 'build'),
-    goal: 'Ship the build',
-    declaresWorkspace: false,
-  });
+  assert.deepEqual(view.instance, { ...item('top', 'build'), declaresWorkspace: false });
   assert.equal('data' in view.instance, false);
   assert.deepEqual(
     Object.fromEntries(view.dependencies.map((each) => [each.id, each.declaresWorkspace])),
@@ -96,8 +88,5 @@ test('a provider view adds the goal and each version’s workspace fact to the e
     [['above', true]],
   );
 
-  // Only a string goal is a goal.
-  const untitled = await providerRelations(workflows, 'project', 'untitled', tx);
-  assert.equal(untitled && 'goal' in untitled.instance, false);
   assert.equal(await providerRelations(workflows, 'project', 'missing', tx), null);
 });

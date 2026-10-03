@@ -26,7 +26,7 @@
       "label": "Research",
       "caption": "The work & what we learn",
       "members": ["tasks", "experiments", "knowledge", "paper", "reflections", "research"],
-      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Research."
+      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
     {
       "id": "coordination",
@@ -167,14 +167,14 @@
     },
     "research": {
       "label": "Research",
-      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Research bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Research publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff."
+      "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Work publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff."
     },
     "merv-legacy-history-ui": {
       "label": "Legacy history \u00b7 UI adapter",
       "purpose": "Optional read-only browser for research imported from the previous backend. Requires State, Scope and UI; preserves historical records without resuming old workflows."
     },
-    "codeResearch": {
-      "label": "Code Research",
+    "codeWork": {
+      "label": "Code Work",
       "purpose": "Owns research-to-code mappings, exact captures, dependency and base selection, acceptance and review provenance, merge-check configuration and publication policy. Composes generic Code APIs; atomically projects retention requests, repository holds and mirror eligibility, preserving obligations when the adapter is unloaded."
     },
     "fleet": {
@@ -229,7 +229,7 @@
         "id": "domain",
         "label": "Domain & agent capabilities",
         "purpose": "Build reviewed research documents, research Git operations and interactive agents.",
-        "members": ["paper", "reviews", "codeResearch", "pi"]
+        "members": ["paper", "reviews", "codeWork", "pi"]
       },
       {
         "id": "work",

@@ -20,7 +20,7 @@ import { TaskService } from '@merv/tasks';
 import { ExperimentService } from '@merv/experiments';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '../packages/code-research/src/service.js';
+import { CodeService } from '../packages/code-work/src/service.js';
 import { KnowledgeService } from '../packages/knowledge/src/index.js';
 import type { Caller } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';

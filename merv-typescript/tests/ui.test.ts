@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { researchUiPlugin } from '@merv/research/ui';
-import { codeUiPlugin } from '@merv/code-research/ui';
+import { codeUiPlugin } from '@merv/code-work/ui';
 import { buildNavigation } from '../packages/ui/web/navigation.js';
 import type { Row } from '../packages/ui/web/shell-types.js';
 import { createApp } from './fixtures/app.js';
@@ -412,7 +412,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   for (const id of ['tasks', 'experiments'])
     assert.equal(shell.rows.find((entry) => entry.id === id)?.readable, true);
   // New projects expose their real managed root even before any work or GitHub connection.
-  await waitForManagedCode(app.ctx.codeResearch, {
+  await waitForManagedCode(app.ctx.codeWork, {
     projectId: credentials.project.id,
     actorId: credentials.actor.id,
     credentialId: credentials.credential.id,
@@ -436,7 +436,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // decide whether its graph and integrations can be read. Both retain the same ACL.
   assert.deepEqual(managedCode.status.publication.records, []);
   assert.equal('publications' in managedCode, false, 'hosted records appear only once');
-  for (const id of ['code-tools', 'code-research-api']) await app.setEnabled(id, false);
+  for (const id of ['code-tools', 'code-work-api']) await app.setEnabled(id, false);
   assert.equal((await tool('code.status', reader)).status, 404);
   assert.equal(
     (await fetch(`${url}/code/publications`, { headers: { authorization: `Bearer ${reader}` } }))
@@ -449,7 +449,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     assert.deepEqual(read.body.result, managedCode);
   }
   assert.equal((await tool('ui.read', 'invalid', { rowId: 'code' })).status, 401);
-  for (const id of ['code-tools', 'code-research-api']) await app.setEnabled(id, true);
+  for (const id of ['code-tools', 'code-work-api']) await app.setEnabled(id, true);
   // A reader sees the rows, and no row asks for a number it cannot answer for
   // this caller. A failing status reports itself instead of failing the shell;
   // the registry test above covers that path.
@@ -730,7 +730,7 @@ test('Code UI reuses hosted publications and reads the same ordered records for 
   let status: object = hosted;
   let publicationReads = 0;
   let failed = false;
-  const codeResearch = {
+  const codeWork = {
     list: async (input: unknown) => {
       assert.deepEqual(input, caller);
       return [];
@@ -746,7 +746,7 @@ test('Code UI reuses hosted publications and reads the same ordered records for 
       return records;
     },
   };
-  codeUiPlugin.apply({ codeResearch, ui, effect: (fn: () => unknown) => fn() } as never);
+  codeUiPlugin.apply({ codeWork, ui, effect: (fn: () => unknown) => fn() } as never);
   assert.deepEqual(await ui.read(caller, 'code'), { commands: [], status: hosted });
   assert.equal(publicationReads, 0, 'hosted status already queried the records');
   status = { project: { durability: 'legacy-local' } };

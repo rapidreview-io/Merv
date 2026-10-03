@@ -10,7 +10,7 @@ import {
 } from '@merv/contracts';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 
 /** Real Code storage for isolated owner-service tests of new-work creation. */
 export async function managedServices(

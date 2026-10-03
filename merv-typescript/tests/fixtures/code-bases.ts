@@ -10,10 +10,10 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeRepositories } from '@merv/code/store/repository';
-import { CodeBaseService } from '@merv/code-research/bases';
+import { CodeBaseService } from '@merv/code-work/bases';
 import { openState } from './state.js';
 
 /**

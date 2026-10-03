@@ -1,8 +1,8 @@
-import type { CodeUnitPublication } from './code-research-publication-models.js';
-export type { CodeUnitPublication } from './code-research-publication-models.js';
+import type { CodeUnitPublication } from './code-work-publication-models.js';
+export type { CodeUnitPublication } from './code-work-publication-models.js';
 import type { CodeCaptureRef } from './code-models.js';
 import type { WorkflowProvidedBlockerInput, WorkflowProvidedBlocker } from './workflow-guidance.js';
-import type { CodeResearchStoreStatus } from './code-research-store.js';
+import type { CodeWorkStoreStatus } from './code-work-store.js';
 import type { CodeWriterState } from './code-units.js';
 import type { CodeProjectBinding } from './code.js';
 import type { CodePublication, CodePublicationControls } from './code-publication-models.js';
@@ -215,7 +215,7 @@ export interface CodeProjectStatus {
   bases?: CodeBaseRecord[];
   project: CodeProjectBinding | null;
   /** Null when this server keeps no repositories. */
-  store: CodeResearchStoreStatus | null;
+  store: CodeWorkStoreStatus | null;
   /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
   operations: CodeStoreOperation[];
   /** How the project's work reaches the repository it is published to; null with no store. */

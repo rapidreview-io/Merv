@@ -54,7 +54,7 @@ async function fixture(api = false) {
   const begin = async (caller: Caller, id: string, revision = 0) =>
     await app.ctx.workflows.begin(caller, { instanceId: id, expectedRevision: revision });
   // Repository initialization is asynchronous; finish its writes before measuring assignments.
-  await waitForManagedCode(app.ctx.codeResearch, operator);
+  await waitForManagedCode(app.ctx.codeWork, operator);
   await app.ctx.domainEvents.drain();
   // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
   const written = countWrites(app.ctx.state as PostgresState);
@@ -179,7 +179,7 @@ test('work assignment preserves operator access and fences other actors, stale r
         ),
       { code: 'not_found' },
     );
-    await waitForManagedCode(f.app.ctx.codeResearch, {
+    await waitForManagedCode(f.app.ctx.codeWork, {
       projectId: foreign.project.id,
       actorId: foreign.actor.id,
     });

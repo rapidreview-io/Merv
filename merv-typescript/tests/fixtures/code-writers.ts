@@ -7,7 +7,7 @@ import {
   type WorkflowDefinition,
   type WorkflowPolicy,
 } from '@merv/contracts';
-import type { CodeStoreOptions } from '@merv/code-research/service';
+import type { CodeStoreOptions } from '@merv/code-work/service';
 import { codeStoreFixture, gitSource, type Bundle } from './code-store.js';
 
 const definition: WorkflowDefinition = {

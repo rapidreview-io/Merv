@@ -2,7 +2,7 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { digest, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
-import { restoreResearchCompatibility } from '@merv/code-research/compatibility';
+import { restoreResearchCompatibility } from '@merv/code-work/compatibility';
 import type { FaultPoint } from '@merv/code/store/operations';
 import { codeStoreFixture, faultAt, git, gitSource } from './fixtures/code-store.js';
 

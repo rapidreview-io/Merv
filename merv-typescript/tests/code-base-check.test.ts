@@ -11,9 +11,9 @@ import type {
   SandboxChecks,
 } from '@merv/sandboxes';
 import { checkScript } from '@merv/sandboxes';
-import { checkBriefSections, checkResolutionCheck } from '@merv/code-research/base-check';
+import { checkBriefSections, checkResolutionCheck } from '@merv/code-work/base-check';
 import { baseFixture } from './fixtures/code-bases.js';
-import { migrateBases } from '@merv/code-research/base-schema';
+import { migrateBases } from '@merv/code-work/base-schema';
 import { openState } from './fixtures/state.js';
 
 /**

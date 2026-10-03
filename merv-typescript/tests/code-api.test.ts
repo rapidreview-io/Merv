@@ -20,7 +20,7 @@ import {
 import { ApiServer } from '../packages/api/src/http.js';
 import { ToolRegistry } from '../packages/api/src/registry.js';
 import { apiPlugin } from '@merv/api';
-import { codeResearchApiPlugin, mountCode, type CodeRoutes } from '@merv/code-research/api';
+import { codeWorkApiPlugin, mountCode, type CodeRoutes } from '@merv/code-work/api';
 import { mountSessions, type SessionRoutes } from '@merv/sessions/api';
 import { identityPlugin } from '@merv/identity';
 import { openState } from './fixtures/state.js';
@@ -356,9 +356,9 @@ test(
   { timeout: 10_000 },
   async (t) => {
     const f = await fixture(t);
-    await f.ctx.plugin(codeResearchApiPlugin);
+    await f.ctx.plugin(codeWorkApiPlugin);
     const provider = await f.ctx.plugin((ctx: Context) => {
-      ctx.provide('codeResearch', {
+      ctx.provide('codeWork', {
         ...f.provider,
         commit: () => {
           throw new Error('Not a transport operation');

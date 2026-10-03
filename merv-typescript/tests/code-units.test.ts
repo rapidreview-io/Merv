@@ -11,8 +11,8 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
-import { CodeService } from '@merv/code-research/service';
-import { CodeCommandService } from '@merv/code-research/commands';
+import { CodeService } from '@merv/code-work/service';
+import { CodeCommandService } from '@merv/code-work/commands';
 import { workBranch } from '@merv/code/store/refs';
 import { openState } from './fixtures/state.js';
 

@@ -294,7 +294,7 @@ export const RETIRED: (Instance & { reason: string })[] = [
 
 /**
  * Records the release keeps although they name a retired instance (plan §1, §11 C6): Code
- * lineage and code-research rows, service work, paper history and feed posts. seedRetirement
+ * lineage and code-work rows, service work, paper history and feed posts. seedRetirement
  * writes one of each; the release must leave them byte for byte.
  */
 export const KEPT_TABLES = [

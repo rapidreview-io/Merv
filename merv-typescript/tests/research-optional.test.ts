@@ -20,7 +20,7 @@ async function fixture(t: TestContext, coreOnly = false) {
       : !['api', 'identity', 'ui'].includes(id) && !/-(api|ui)$/.test(id),
   );
   const app = await createApp({ directory, config });
-  if (!coreOnly) assert.ok(app.ctx.codeResearch, 'The full fixture must activate Code research');
+  if (!coreOnly) assert.ok(app.ctx.codeWork, 'The full fixture must activate Code work');
   t.after(async () => {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });

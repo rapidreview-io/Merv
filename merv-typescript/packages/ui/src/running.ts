@@ -82,7 +82,7 @@ const STANDS = new Map<string, readonly RunningLaneName[]>([
   ['tasks', ['work']],
   ['experiments', ['work', 'hardware']],
   ['reflections', ['work']],
-  ['code-research', ['work', 'hardware']],
+  ['code-work', ['work', 'hardware']],
   ['sessions', ['work', 'sessions']],
   ['fleet', ['sessions']],
   ['sandboxes', ['hardware']],

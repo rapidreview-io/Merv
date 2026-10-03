@@ -3,12 +3,12 @@ import test from 'node:test';
 import { createService } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { CodeService } from '@merv/code/service';
-import { postgresMigrations } from '@merv/code-research/legacy-units.postgres';
-import { migrateBases } from '@merv/code-research/base-schema';
-import { migratePublications } from '@merv/code-research/publications-schema';
-import { initializeResearchRecords } from '@merv/code-research/research-schema';
-import { initializeResearchHolds } from '@merv/code-research/repository-holds';
-import { restoreResearchCompatibility } from '@merv/code-research/compatibility';
+import { postgresMigrations } from '@merv/code-work/legacy-units.postgres';
+import { migrateBases } from '@merv/code-work/base-schema';
+import { migratePublications } from '@merv/code-work/publications-schema';
+import { initializeResearchRecords } from '@merv/code-work/research-schema';
+import { initializeResearchHolds } from '@merv/code-work/repository-holds';
+import { restoreResearchCompatibility } from '@merv/code-work/compatibility';
 import { openState } from './fixtures/state.js';
 
 test('legacy upgrade retains writer ownership and research history, rolls back on failure, and survives restart', async (t) => {

@@ -9,7 +9,7 @@ import {
 import type { SandboxCompute } from '@merv/sandboxes/types';
 import { WorkMachines } from '@merv/sandboxes/managed-compute';
 import { ManagedCompute, type ManagedComputeRunning } from '@merv/sandboxes/managed-compute';
-import type { Code } from '@merv/code-research/types';
+import type { Code } from '@merv/code-work/types';
 import type { ComputeInput } from './types.js';
 
 export interface ComputeRunning extends Omit<ManagedComputeRunning, 'ownerId' | 'generation'> {

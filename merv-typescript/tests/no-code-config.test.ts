@@ -33,7 +33,7 @@ test('a no-Code compatibility server can read history but refuses new work', asy
   for (const id of ['research', 'tasks', 'experiments', 'reflections', 'reviews', 'api', 'ui'])
     assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
   assert.equal(app.ctx.get('code'), undefined);
-  assert.equal(app.ctx.get('codeResearch'), undefined);
+  assert.equal(app.ctx.get('codeWork'), undefined);
   const boot = await app.ctx.scope.bootstrap({ projectName: 'No Git', actorName: 'Researcher' });
   const caller = {
     projectId: boot.project.id,

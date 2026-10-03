@@ -693,7 +693,7 @@ test("folded into a Code check, a machine adds its cost and size to the check's 
   await service(t);
   const { board, panel, filled, own } = await composed(t);
   const code: RunningContribution = {
-    owner: 'code-research',
+    owner: 'code-work',
     kinds: ['check'],
     lanes: ['hardware'],
     nodes: async () => ({
@@ -737,7 +737,7 @@ test("folded into a Code check, a machine adds its cost and size to the check's 
   const sidebar = await panel('check:base', operator, code);
   assert.deepEqual(
     sidebar.sections.map(({ title, owner }) => `${owner} ${title}`),
-    ['code-research Check', 'sandboxes Now', 'sandboxes Machine'],
+    ['code-work Check', 'sandboxes Now', 'sandboxes Machine'],
   );
   assert.deepEqual(
     rows(sidebar, 'Now').map(({ label }) => label),

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import { ExperimentService } from '@merv/experiments';
-import { CodeService } from '@merv/code-research/service';
+import { CodeService } from '@merv/code-work/service';
 import {
   declareManagedProject,
   initializeManagedProjects,

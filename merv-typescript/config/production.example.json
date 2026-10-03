@@ -62,20 +62,20 @@
     },
     {
       "id": "code-tools",
-      "name": "@merv/code-research/tools"
+      "name": "@merv/code-work/tools"
     },
     {
       "id": "code-ui",
-      "name": "@merv/code-research/ui",
+      "name": "@merv/code-work/ui",
       "required": false
     },
     {
-      "id": "code-research-api",
-      "name": "@merv/code-research/api"
+      "id": "code-work-api",
+      "name": "@merv/code-work/api"
     },
     {
-      "id": "code-research",
-      "name": "@merv/code-research"
+      "id": "code-work",
+      "name": "@merv/code-work"
     },
     {
       "id": "code",

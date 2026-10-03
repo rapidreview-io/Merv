@@ -7,7 +7,7 @@ Accepted Git units marked for publication use an independently reviewed pull req
 ## Plugin boundaries
 
 Code/Git is optional for the research stack. Experiments, Tasks, Knowledge and Research
-bind Code through the `code-research` service. Unloading it preserves their non-Git
+bind Code through the `code-work` service. Unloading it preserves their non-Git
 work and stored records. Git work that needs captures, repository admission, or
 publication reports `code_unavailable` until Code returns. The dedicated
 Consolidation plugin has been retired; current Research uses an ordinary Git task
@@ -22,13 +22,13 @@ Code. Its adapters are optional for startup and remain pending until Code return
 No workflow is silently converted from Git to non-Git, and no agent is restarted
 merely because this optional service changes.
 
-| Plugin            | Direct Cordis dependencies     | Responsibility                                                                             |
-| ----------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
-| Code              | State, Scope, Sessions         | Durable command identity, worker admission, source ownership and immutable receipts        |
-| code-tools        | Code, Tools                    | `code.commit` and `code.operation`                                                         |
-| code-research-api | Code, API                      | Source-authenticated command retrieval and completion over `/code`                         |
-| code-ui           | Code, UI                       | Recent operations and publications in the Code page                                        |
-| Runner            | None; separate machine context | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts |
+| Plugin        | Direct Cordis dependencies     | Responsibility                                                                             |
+| ------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
+| Code          | State, Scope, Sessions         | Durable command identity, worker admission, source ownership and immutable receipts        |
+| code-tools    | Code, Tools                    | `code.commit` and `code.operation`                                                         |
+| code-work-api | Code, API                      | Source-authenticated command retrieval and completion over `/code`                         |
+| code-ui       | Code, UI                       | Recent operations and publications in the Code page                                        |
+| Runner        | None; separate machine context | Poll command controls over HTTP, execute bounded Git operations, retain and retry receipts |
 
 Code does not inject Runner. Runner uses common command schemas and the API, with no Code implementation import. No new guardian process, agent credential or execution socket is introduced. Cordis removal suspends Code's adapters while keeping unrelated domain providers available; the command records remain in State.
 
@@ -247,7 +247,7 @@ session, review and acceptance goes on exactly as before.
 ## The machine protocol on the wire
 
 Machines reach all of this under `/code/v2/`, which Code's API adapter
-(`@merv/code-research/api`) mounts beside `/code/commands/*`: a leased worker's credential is
+(`@merv/code-work/api`) mounts beside `/code/commands/*`: a leased worker's credential is
 confined to `POST /mcp` and can never reach it. The adapter forwards opaque JSON bodies (at most
 64 KiB) and the bytes of one part (`application/octet-stream`, at most 4 MiB) and reads neither;
 only Code interprets them. `workspace` gives a machine the manifest of what to prepare,

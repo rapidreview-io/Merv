@@ -10,7 +10,7 @@ import {
   configureResearchRepository,
   initializeResearchCheckConfiguration,
   researchCheck,
-} from '@merv/code-research/check-configuration';
+} from '@merv/code-work/check-configuration';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
 import { boundProject } from './fixtures/code-binding.js';

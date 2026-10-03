@@ -90,7 +90,7 @@ async function fixture(t: TestContext, plugin = false) {
           research.bindTasks(app.ctx.tasks);
           research.bindExperiments(app.ctx.experiments);
           research.bindArtifacts(app.ctx.artifacts);
-          research.bindCode(app.ctx.codeResearch);
+          research.bindCode(app.ctx.codeWork);
           return research;
         });
   let research = await service();

@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { openState } from './fixtures/state.js';
-import { CodeCommandService } from '../packages/code-research/src/commands.js';
-import { CodeService } from '../packages/code-research/src/service.js';
+import { CodeCommandService } from '../packages/code-work/src/commands.js';
+import { CodeService } from '../packages/code-work/src/service.js';
 
 test('completed legacy checkpoints replay exactly without reopening the retired transport', async () => {
   const state = await openState();

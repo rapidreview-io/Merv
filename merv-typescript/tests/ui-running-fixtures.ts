@@ -182,7 +182,7 @@ export function board(now = Date.now()): RunningBoard {
       ],
       links: [{ to: 'work:wf_table', verb: 'checks' }],
       aliases: ['sandbox:sbx_check'],
-      owner: 'code-research',
+      owner: 'code-work',
     }),
     node({
       key: 'compute:c0ffee',

@@ -34,10 +34,10 @@ base. The UI shows the selected branch, import progress and recovery, and linked
 
 - Keep `code` at `@merv/code` with repository root/quota/free-space settings.
 - Move writer grace to core `finalizeGraceSeconds` (default 900 seconds).
-- Add `code-research` at `@merv/code-research`. Its `repositories` settings own sweep/drain,
+- Add `code-work` at `@merv/code-work`. Its `repositories` settings own sweep/drain,
   automatic bases, mirror cadence and backup configuration.
-- Point `code-tools`, `code-api` and `code-ui` to `@merv/code-research/{tools,api,ui}`.
-- Research consumers bind optional `codeResearch`; standalone utilities bind `code`.
+- Point `code-tools`, `code-api` and `code-ui` to `@merv/code-work/{tools,api,ui}`.
+- Research consumers bind optional `codeWork`; standalone utilities bind `code`.
 - Use `config/no-code.example.json` and runner `workspaceDrivers: []` for no-Git execution.
 
 The actual staging configuration used only core `repositories.root`, so it has no operational
@@ -77,7 +77,7 @@ the release acceptance expectation for the current reflection-approval gate.
 - Independent dependency audit found no remaining Workflows/Reviews/research imports
   in core Code. Runtime core dependencies are State and Scope; the research adapter
   owns workflow integration and optionally binds Reviews and Sandboxes.
-- A full no-Code research cycle, scratch execution without Git, durable obligations
+- A full no-Code work cycle, scratch execution without Git, durable obligations
   through provider outages, exact review evidence, selected-branch replay/recovery,
   generic-owner isolation and unload/recovery are covered by the regression suite.
 - Core imports and rebinds without research tables. Technical base schema remains
