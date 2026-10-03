@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import assert from 'node:assert/strict';
@@ -47,10 +48,17 @@ async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
-  const code = await createService(
-    new CodeService(state, scope, sessions, artifacts, workflows, undefined, undefined, {
-      config: { root: join(directory, 'code'), reservedFreeBytes: 1 },
+  const core = await createService(
+    new CoreCodeService(state, scope, {
+      repositories: {
+        root: join(directory, 'code'),
+        quotaBytes: 10 * 1024 ** 3,
+        reservedFreeBytes: 1,
+      },
     }),
+  );
+  const code = await createService(
+    new CodeService(state, scope, sessions, artifacts, workflows, core),
   );
   const unbindCode = tasks.bindCode(code);
   const boot = await scope.bootstrap({ projectName: 'Git tasks', actorName: 'Owner' });
@@ -205,6 +213,7 @@ async function fixture(t: TestContext, limits?: { reviewRounds: number }) {
   t.after(async () => {
     unbindCode();
     await code.close();
+    await core.close();
     await sessions.close();
     tasks.dispose();
     await events.close();

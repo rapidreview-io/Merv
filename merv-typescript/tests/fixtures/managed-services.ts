@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { join } from 'node:path';
 import {
   createService,
@@ -21,17 +22,17 @@ export async function managedServices(
   const sessions = await createService(
     new LeasedSessions(host.state, host.scope, host.workflows, events),
   );
+  const core = await createService(
+    new CoreCodeService(host.state, host.scope, {
+      repositories: {
+        root: join(directory, 'code'),
+        quotaBytes: 10 * 1024 ** 3,
+        reservedFreeBytes: 1,
+      },
+    }),
+  );
   const code = await createService(
-    new CodeService(
-      host.state,
-      host.scope,
-      sessions,
-      host.artifacts,
-      host.workflows,
-      undefined,
-      undefined,
-      { config: { root: join(directory, 'code'), reservedFreeBytes: 1 } },
-    ),
+    new CodeService(host.state, host.scope, sessions, host.artifacts, host.workflows, core),
   );
   await host.state.transaction((tx) => code.ensureRepository(caller, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();
@@ -39,6 +40,7 @@ export async function managedServices(
     code,
     async close() {
       await code.close();
+      await core.close();
       await sessions.close();
       await events.close();
     },

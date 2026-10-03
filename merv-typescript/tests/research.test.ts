@@ -35,7 +35,6 @@ async function fixture(t: TestContext, store = false) {
     );
     research.bindPaper(app.ctx.paper);
     research.bindReflections(app.ctx.reflections);
-    research.bindKnowledge(app.ctx.knowledge);
     research.bindTasks(app.ctx.tasks);
     research.bindExperiments(app.ctx.experiments);
     if (digests) research.bindArtifacts(app.ctx.artifacts);
@@ -275,7 +274,6 @@ test('a failed Research activation holds nothing that blocks the next one', asyn
     );
     research.bindPaper(f.app.ctx.paper);
     research.bindReflections(f.app.ctx.reflections);
-    research.bindKnowledge(f.app.ctx.knowledge);
     research.bindTasks(f.app.ctx.tasks);
     return research;
   };
@@ -735,6 +733,16 @@ test('an ended cycle digests its reason and the selected work it leaves unfinish
     dependsOn: [task.id],
     requestId: f.id(),
   });
+  // Unrelated project records must not be materialized while digesting this cycle.
+  t.mock.method(f.app.ctx.knowledge, 'records', async () => {
+    throw new Error('Cycle digest must not depend on the project-wide read model');
+  });
+  t.mock.method(f.app.ctx.tasks, 'records', async () => {
+    throw new Error('Cycle digest must read selected tasks only');
+  });
+  t.mock.method(f.app.ctx.experiments, 'list', async () => {
+    throw new Error('A task-only cycle must not load experiments');
+  });
   const reason = 'The corpus was withdrawn before the survey finished.';
   const ended = await f.research.end(f.owner, {
     researchId: cycle.id,
@@ -749,6 +757,78 @@ test('an ended cycle digests its reason and the selected work it leaves unfinish
   assert.equal(digest.reflection, null);
   assert.deepEqual(digest.tasks, [{ id: task.id, title: task.title, state: task.workflow.state }]);
   assert.deepEqual(digest.carriedOver, [task.id]);
+});
+
+test('a digest reads selected experiments only and preserves chronological record order', async (t) => {
+  const f = await fixture(t);
+  await waitForManagedCode(f.app.ctx.codeResearch, f.owner);
+  const experiments = [];
+  for (const name of ['earlier-selected', 'unrelated', 'later-selected'])
+    experiments.push(
+      await f.app.ctx.experiments.create(f.owner, {
+        name,
+        intent: 'Retain experiment metadata for a bounded cycle.',
+        requestId: f.id(),
+      }),
+    );
+  const selected = [experiments[0], experiments[2]];
+  const cycle = await f.research.create(f.owner, {
+    name: 'Selected experiment digest',
+    dependsOn: selected.map((entry) => entry.id).reverse(),
+    requestId: f.id(),
+  });
+  t.mock.method(f.app.ctx.knowledge, 'records', async () => {
+    throw new Error('No project-wide aggregation');
+  });
+  t.mock.method(f.app.ctx.experiments, 'list', async () => {
+    throw new Error('No all-experiments scan');
+  });
+  t.mock.method(f.app.ctx.tasks, 'records', async () => {
+    throw new Error('No all-tasks scan');
+  });
+  // A target may have both declared and provider-owned edges; retain one record.
+  const dependencies = f.app.ctx.workflows.dependencies.bind(f.app.ctx.workflows);
+  t.mock.method(
+    f.app.ctx.workflows,
+    'dependencies',
+    async (...args: Parameters<typeof dependencies>) => {
+      const result = await dependencies(...args);
+      return args[1] === cycle.id
+        ? {
+            ...result,
+            dependencies: [
+              ...result.dependencies,
+              { ...result.dependencies[0], kind: 'system' as const, owner: 'test-provider' },
+            ],
+          }
+        : result;
+    },
+  );
+  const reads = t.mock.method(f.app.ctx.experiments, 'get');
+  const ended = await f.research.end(f.owner, {
+    researchId: cycle.id,
+    expectedRevision: cycle.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'Stop without inference.',
+    requestId: f.id(),
+  });
+  const { digest } = await digestOf(f, ended);
+  assert.deepEqual(
+    digest.experiments,
+    selected.map((entry) => ({
+      id: entry.id,
+      name: entry.name,
+      state: entry.workflow.state,
+      attempts: entry.attempts.length,
+      submissions: entry.submissions.length,
+      conclusion: null,
+    })),
+  );
+  assert.deepEqual(
+    reads.mock.calls.map((call) => call.arguments[1]).sort(),
+    selected.map((entry) => entry.id).sort(),
+  );
+  assert.deepEqual(digest.tasks, []);
 });
 
 test('a digest stays within its bound by leaving entries out and counting them', async (t) => {

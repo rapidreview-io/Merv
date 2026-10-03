@@ -42,6 +42,8 @@ test(
     const f = await codeStoreFixture(t, {}, first);
     assert.equal((await f.deliver(source.bundle(first))).status, 'completed');
     await f.code.close();
+    // Release the original core before replacing it with the instrumented repository owner.
+    await f.core.close();
     const git = new HeldGit(join(f.root, 'tmp'));
     const repositories = new CodeRepositories(
       { root: f.root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 },

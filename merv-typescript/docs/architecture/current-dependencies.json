@@ -1,17 +1,17 @@
 {
   "snapshot": "2026-10-03",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 70,
+  "pluginCount": 68,
   "serviceProviders": 31,
   "toolAdapters": 18,
-  "uiAdapters": 16,
+  "uiAdapters": 14,
   "apiAdapters": 5,
-  "defaultEntries": 52,
+  "defaultEntries": 50,
   "apiEntries": 39,
-  "serverPlugins": 69,
+  "serverPlugins": 67,
   "machinePlugins": 1,
-  "directDependencyCount": 195,
-  "optionalDependencyCount": 24,
+  "directDependencyCount": 190,
+  "optionalDependencyCount": 23,
   "directConsumers": {
     "api": 8,
     "artifacts": 13,
@@ -25,7 +25,7 @@
     "fleet": 4,
     "fleetWorkflow": 0,
     "identity": 1,
-    "knowledge": 3,
+    "knowledge": 1,
     "mounts": 1,
     "nisa": 1,
     "paper": 6,
@@ -35,13 +35,13 @@
     "reviews": 7,
     "runner": 0,
     "sandboxes": 6,
-    "scope": 27,
+    "scope": 26,
     "secrets": 2,
     "sessions": 6,
     "state": 21,
     "tasks": 4,
     "tools": 24,
-    "ui": 16,
+    "ui": 14,
     "web": 1,
     "workflows": 8
   },
@@ -425,19 +425,6 @@
       "defaultConfiguration": true
     },
     {
-      "plugin": "merv-knowledge-ui",
-      "source": "packages/knowledge/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "knowledge",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": true
-    },
-    {
       "plugin": "merv-mounts",
       "source": "packages/mounts/src/index.ts",
       "provides": [
@@ -651,7 +638,6 @@
         "domainEvents",
         "paper",
         "reflections",
-        "knowledge",
         "tasks",
         "experiments",
         "artifacts",
@@ -826,19 +812,6 @@
       ],
       "optional": [],
       "kind": "tools",
-      "runtime": "server",
-      "defaultConfiguration": true
-    },
-    {
-      "plugin": "merv-scope-ui",
-      "source": "packages/scope/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "scope",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
       "runtime": "server",
       "defaultConfiguration": true
     },

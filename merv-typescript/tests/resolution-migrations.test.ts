@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -23,10 +24,14 @@ test('pending-merge migration preserve populated owner databases and enforce wri
   f.state.migrate = async (component, migrations) => {
     if (component !== 'code_pending_merges') await migrate(component, migrations);
   };
+  const core = await createService(new CoreCodeService(f.state, f.scope, {}));
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core),
   );
-  f.beforeClose.push(() => code.close());
+  f.beforeClose.push(async () => {
+    await code.close();
+    await core.close();
+  });
   f.state.migrate = migrate;
   await migratePendingMerges(f.state);
   assert.deepEqual(await f.tasks.get(f.admin, task.id), beforeTask);

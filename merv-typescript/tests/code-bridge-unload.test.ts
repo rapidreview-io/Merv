@@ -56,6 +56,8 @@ test(
     };
     await boundProject(ctx.state, caller.projectId, head, 'repository');
     const bridge = ctx.codeResearch as CodeService;
+    assert.equal(bridge.github, core.github);
+    const githubStatus = await core.github.status(caller);
     const bundle = source.bundle(head);
     const imported = await bridge.importRepository(caller, {
       source: 'bundle',
@@ -122,6 +124,7 @@ test(
     ctx.state.transaction = transaction;
     assert.equal(ctx.get('codeResearch'), undefined);
     assert.equal(ctx.code, core);
+    assert.deepEqual(await core.github.status(caller), githubStatus);
     const journal = await ctx.state.read((sql) =>
       sql.get<{ status: string; phase: string }>(
         "SELECT status,phase FROM code_operations WHERE kind='mirror-accepted'",
@@ -136,6 +139,8 @@ test(
     assert.equal(app.status().find(({ id }) => id === 'code-research')?.state, 'active');
     assert.equal(ctx.code.repositories, repositories);
     assert.notEqual(ctx.codeResearch, bridge);
+    assert.equal((ctx.codeResearch as CodeService).github, core.github);
+    assert.deepEqual(await core.github.status(caller), githubStatus);
     assert.equal(
       (await repositories.git.ok(['rev-parse', 'refs/merv/core-survives'], { env }))
         .toString()

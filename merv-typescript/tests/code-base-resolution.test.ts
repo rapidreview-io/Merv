@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
@@ -28,8 +29,9 @@ import { boundProject } from './fixtures/code-binding.js';
 async function fixture(t: TestContext, human = false) {
   const f = await resolutionFixture(t, { human });
   await f.sessions.setDispatch(f.admin, { enabled: true });
+  const core = await createService(new CoreCodeService(f.state, f.scope, {}));
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows),
+    new CodeService(f.state, f.scope, f.sessions, f.artifacts, f.workflows, core),
   );
   const units = (code as unknown as { unitStore: CodeUnitService }).unitStore;
   const root = join(f.directory, 'code');
@@ -367,6 +369,7 @@ async function fixture(t: TestContext, human = false) {
     unbind();
     await bases.close();
     await code.close();
+    await core.close();
   });
   return {
     ...f,

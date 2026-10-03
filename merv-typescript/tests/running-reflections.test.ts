@@ -31,7 +31,6 @@ const earliest = (instants: string[]) =>
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-running-reflections-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const { plugins } = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as { plugins: { id: string; config?: unknown }[] };
@@ -49,7 +48,10 @@ async function fixture(t: TestContext) {
       ) as never,
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const boot = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Owner' });
   const owner: Caller = {
     projectId: boot.project.id,

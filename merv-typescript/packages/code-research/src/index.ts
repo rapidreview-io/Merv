@@ -42,18 +42,12 @@ export const codePlugin = {
           ctx.sessions,
           ctx.artifacts,
           ctx.workflows,
-          undefined,
-          undefined,
-          ctx.code.repositories &&
-            (({ mirrorSeconds, autoMerge, ...store }) => ({
-              config: {
-                ...ctx.code.repositories!.config,
-                ...store,
-              },
-              autoMerge,
-              ...(mirrorSeconds === undefined ? {} : { mirrorConfig: { mirrorSeconds } }),
-            }))(config.repositories ?? {}),
           ctx.code,
+          (({ mirrorSeconds, autoMerge, ...store }) => ({
+            config: store,
+            autoMerge,
+            ...(mirrorSeconds === undefined ? {} : { mirrorConfig: { mirrorSeconds } }),
+          }))(config.repositories ?? {}),
         ),
       );
       yield () => service.close();

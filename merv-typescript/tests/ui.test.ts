@@ -168,9 +168,8 @@ function plugins(assets: string, extra: Entry[] = []): Entry[] {
   ];
 }
 
-test('human readers can open People and read active project membership without actor administration', async (t) => {
+test('human readers can read Settings membership without a People row or actor administration', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-members-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const assets = join(directory, 'bundle');
   mkdirSync(assets);
   writeFileSync(join(assets, 'index.html'), '<!doctype html><title>Members</title>');
@@ -206,7 +205,10 @@ test('human readers can open People and read active project membership without a
       ),
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const operatorToken = await issueToken('operator-user');
   const readerToken = await issueToken('reader-user');
   const operator = await app.ctx.scope.acceptVerifiedIdentity(
@@ -227,9 +229,14 @@ test('human readers can open People and read active project membership without a
   const shellData = (await shell.json()) as {
     result: { rows: { id: string; label: string; status: object }[] };
   };
-  const people = shellData.result.rows.find((row) => row.id === 'people');
-  assert.equal(people?.label, 'People');
-  assert.deepEqual(people?.status, {}, 'a human reader does not need operator-only actor listing');
+  assert.equal(
+    shellData.result.rows.some((row) => row.id === 'people'),
+    false,
+  );
+  assert.equal(
+    shellData.result.rows.some((row) => row.id === 'settings'),
+    true,
+  );
   const members = await fetch(`${app.ctx.api.url}/projects/${project.id}/members`, { headers });
   assert.equal(members.status, 200);
   const listed = (await members.json()) as { memberships: { subject: string; active: boolean }[] };
@@ -261,7 +268,6 @@ test('human readers can open People and read active project membership without a
 
 test('the assembled application serves the bundle, lists rows per active plugin, and survives feed and UI removal', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const assets = join(directory, 'bundle');
   mkdirSync(join(assets, 'assets'), { recursive: true });
   writeFileSync(
@@ -275,7 +281,10 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     config: { plugins: plugins(assets) },
     feed: true,
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const url = app.ctx.api.url!;
   const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
   const operator = credentials.token;
@@ -351,13 +360,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(
     shell.rows.map((entry) => entry.id),
     [
-      'people',
       'research',
 
       'tasks',
       'experiments',
       'paper',
-      'knowledge',
       'reviews',
 
       'running',
@@ -369,9 +376,10 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       'settings',
     ],
   );
-  // One word per thing: the inventory is Knowledge, and retained artifacts are Files.
+  // Retained artifacts are Files; the retired Knowledge page registers no row.
   const named = (id: string) => shell.rows.find((entry) => entry.id === id)?.label;
-  assert.deepEqual([named('knowledge'), named('artifacts')], ['Knowledge', 'Files']);
+  assert.equal(named('artifacts'), 'Files');
+  assert.equal(named('knowledge'), undefined);
   // Every row above keeps its registration, its record routes and its ui.read; the
   // rail is a separate table of kinds, and these are the places it lists.
   assert.deepEqual(
@@ -387,10 +395,9 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       ['Feed', ['Feed']],
     ],
   );
-  // Every count in the chrome means open work; rows that are inventories report none.
+  // Every count in the chrome means open work.
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'tasks')?.status, { count: 0 });
-  for (const id of ['people', 'knowledge'])
-    assert.deepEqual(shell.rows.find((entry) => entry.id === id)?.status, {});
+  assert.equal(named('people'), undefined);
   assert.equal(shell.rows.find((entry) => entry.id === 'settings')?.group, 'settings');
   // Running counts nothing in the chrome and has no row read: its page reads ui.running.
   const running = shell.rows.find((entry) => entry.id === 'running');
@@ -425,19 +432,25 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal(shell.plugins.length, plugins(assets).length);
   assert.ok(shell.plugins.every((entry) => entry.state === 'active'));
   // A reader sees the rows, and no row asks for a number it cannot answer for
-  // this caller: People is a directory and reports nothing. (A status that does
-  // fail still reports itself instead of failing the shell; the registry test
-  // above covers that path.)
+  // this caller. A failing status reports itself instead of failing the shell;
+  // the registry test above covers that path.
   const readerShell = (await tool('ui.shell', reader)).body.result.rows as {
     id: string;
     status: { state?: string };
   }[];
-  assert.deepEqual(readerShell.find((entry) => entry.id === 'people')?.status, {});
+  assert.equal(
+    readerShell.some((entry) => entry.id === 'people'),
+    false,
+  );
   assert.ok(readerShell.every((entry) => entry.status.state !== 'unavailable'));
   assert.equal(
     (await tool('ui.read', operator, { rowId: 'knowledge' })).body.error.code,
     'row_unreadable',
   );
+  // Paper still resolves scoped references through Knowledge without a UI adapter.
+  const references = await tool('project.references', reader, { refs: ['artifact:missing'] });
+  assert.equal(references.status, 200);
+  assert.equal(references.body.result[0].status, 'missing');
   assert.equal((await tool('ui.read', operator, { rowId: 'absent' })).status, 404);
   // Now and the rail share one read, and a part this caller may not read is null rather
   // than a failure that would take the page with it.
@@ -459,13 +472,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // Feed removal drops exactly the feed rows; everything else keeps working; restoration adds no duplicates.
   await app.setEnabled('feed', false);
   assert.deepEqual(await rowIds(), [
-    'people',
     'research',
 
     'tasks',
     'experiments',
     'paper',
-    'knowledge',
     'reviews',
 
     'running',
@@ -480,13 +491,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal((await tool('task.list', operator)).status, 200);
   await app.setEnabled('feed', true);
   assert.deepEqual(await rowIds(), [
-    'people',
     'research',
 
     'tasks',
     'experiments',
     'paper',
-    'knowledge',
     'reviews',
 
     'running',
@@ -505,14 +514,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal((await tool('ui.shell', operator)).body.error.code, 'unknown_tool');
   assert.equal((await tool('task.list', operator)).status, 200);
   for (const id of [
-    'scope-ui',
-
     'research-ui',
     'paper-ui',
     'reflections-ui',
 
     'experiments-ui',
-    'knowledge-ui',
     'tasks-ui',
     'reviews-ui',
     'artifacts-ui',
@@ -524,13 +530,11 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   await app.setEnabled('ui', true);
   assert.equal((await raw(url, '/ui/')).status, 200);
   assert.deepEqual(await rowIds(), [
-    'people',
     'research',
 
     'tasks',
     'experiments',
     'paper',
-    'knowledge',
     'reviews',
 
     'running',
@@ -545,12 +549,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
 
 test('an unbuilt bundle reports itself instead of a blank page', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-unbuilt-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const app = await createApp({
     directory: join(directory, 'data'),
     config: { plugins: plugins(join(directory, 'nowhere')) },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const response = await raw(app.ctx.api.url!, '/ui/');
   assert.equal(response.status, 503);
   assert.equal(JSON.parse(response.body).error.code, 'ui_not_built');
@@ -558,7 +564,6 @@ test('an unbuilt bundle reports itself instead of a blank page', async (t) => {
 
 test('ui.shell reports a rejected optional configuration as failed, as readiness does', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-plugins-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const app = await createApp({
     directory: join(directory, 'data'),
     config: {
@@ -572,7 +577,10 @@ test('ui.shell reports a rejected optional configuration as failed, as readiness
       ]),
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
   const response = await fetch(`${app.ctx.api.url}/tools/ui.shell`, {
     method: 'POST',
@@ -592,7 +600,6 @@ test('ui.shell reports a rejected optional configuration as failed, as readiness
 
 test('the Connections row reports mount health and serves mount status through ui.read', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-mounts-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const remote = new RemoteFixture();
   await remote.start();
   t.after(() => remote.close());
@@ -627,7 +634,10 @@ test('the Connections row reports mount health and serves mount status through u
       ]),
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   // createApp does not wait for optional upstreams: wait until both mounts finish a round.
   const settled = () => app.ctx.mounts.status().every((mount) => mount.state !== 'connecting');
   for (let wait = 0; wait < 800 && !settled(); wait++)

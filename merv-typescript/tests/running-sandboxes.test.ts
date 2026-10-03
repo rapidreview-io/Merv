@@ -867,7 +867,6 @@ test("the shipped fake's machines read the way the design draws them", async (t)
 test('the assembled application draws the machines from memory inside the read-only tools, with controls only for writers', async (t) => {
   const remote = await service(t);
   const directory = mkdtempSync(join(tmpdir(), 'merv-running-sandboxes-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const { plugins } = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as { plugins: { id: string; config?: unknown }[] };
@@ -883,7 +882,10 @@ test('the assembled application draws the machines from memory inside the read-o
       ) as never,
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const credentials = await app.ctx.scope.bootstrap({ projectName: 'Machines', actorName: 'Op' });
   const owner = { actorId: credentials.actor.id, projectId: credentials.project.id };
   const token = async (role: 'producer' | 'reader') =>

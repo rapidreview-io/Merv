@@ -87,7 +87,6 @@ async function fixture(t: TestContext, plugin = false) {
         ).then((research) => {
           research.bindPaper(app.ctx.paper);
           research.bindReflections(app.ctx.reflections);
-          research.bindKnowledge(app.ctx.knowledge);
           research.bindTasks(app.ctx.tasks);
           research.bindExperiments(app.ctx.experiments);
           research.bindArtifacts(app.ctx.artifacts);

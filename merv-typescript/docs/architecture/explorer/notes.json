@@ -34,7 +34,7 @@
         "consolidation",
         "research"
       ],
-      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds Paper, Reflections, Knowledge and Consolidation optionally. Only stages that use a missing provider wait. Selected code changes use Consolidation, which requires Code."
+      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Research."
     },
     {
       "id": "coordination",

@@ -1,5 +1,4 @@
-import type { Caller } from '@merv/contracts';
-import type { Knowledge } from '@merv/knowledge/types';
+import type { Artifacts, Caller } from '@merv/contracts';
 import type { ResearchRecord } from '@merv/research/types';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -341,7 +340,7 @@ test('a withdrawn optional provider cannot commit results returned after an awai
   finalUnbind();
 });
 
-test('an approved current cycle completes while Knowledge is absent and retains its reflection', async (t) => {
+test('an approved current cycle retains its reflection and digest without Knowledge', async (t) => {
   const f = await fixture(t);
   await f.define();
   const record = await f.advance(await f.advance(await f.create()));
@@ -350,33 +349,33 @@ test('an approved current cycle completes while Knowledge is absent and retains 
   const completed = await f.advance(record);
   assert.equal(completed.workflow.state, 'complete');
   assert.equal(completed.reflectionId, record.reflectionId);
-  assert.equal(completed.digest, null);
+  assert.ok(completed.digest);
 });
 
-test('Knowledge withdrawal during current cycle digest rolls back the completion and same-request retry works', async (t) => {
+test('Artifacts withdrawal during current cycle digest rolls back the completion and same-request retry works', async (t) => {
   const f = await fixture(t);
   await f.define();
   const record = await f.advance(await f.advance(await f.create()));
   await f.approve(record);
   const input = f.command(record);
-  const knowledge = f.app.ctx.knowledge;
+  const artifacts = f.app.ctx.artifacts;
   const entered = pending(),
     release = pending();
-  const delayed: Knowledge = {
-    ...knowledge,
-    records: async (...args) => {
-      const records = await knowledge.records(...args);
+  const delayed: Artifacts = {
+    ...artifacts,
+    create: async (...args) => {
+      const artifact = await artifacts.create(...args);
       entered.resolve();
       await release.promise;
-      return records;
+      return artifact;
     },
   };
-  const unbind = f.research.bindKnowledge(delayed);
+  const unbind = f.research.bindArtifacts(delayed);
   const operation = f.research.advance(f.owner, input);
-  const rejected = assert.rejects(operation, { code: 'knowledge_unavailable' });
+  const rejected = assert.rejects(operation, { code: 'artifacts_unavailable' });
   await entered.promise;
   unbind();
-  f.research.bindKnowledge(knowledge);
+  f.research.bindArtifacts(artifacts);
   release.resolve();
   await rejected;
   assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
@@ -385,22 +384,22 @@ test('Knowledge withdrawal during current cycle digest rolls back the completion
   assert.ok(result.digest);
 });
 
-test('replacing Reflections during Knowledge await invalidates current cycle completion', async (t) => {
+test('replacing Reflections during artifact creation invalidates current cycle completion', async (t) => {
   const f = await fixture(t);
   await f.define();
   const record = await f.advance(await f.advance(await f.create()));
   await f.approve(record);
   const input = f.command(record);
-  const knowledge = f.app.ctx.knowledge;
+  const artifacts = f.app.ctx.artifacts;
   const entered = pending(),
     release = pending();
-  f.research.bindKnowledge({
-    ...knowledge,
-    records: async (...args) => {
-      const records = await knowledge.records(...args);
+  f.research.bindArtifacts({
+    ...artifacts,
+    create: async (...args) => {
+      const artifact = await artifacts.create(...args);
       entered.resolve();
       await release.promise;
-      return records;
+      return artifact;
     },
   });
   const operation = f.research.advance(f.owner, input);
@@ -410,7 +409,7 @@ test('replacing Reflections during Knowledge await invalidates current cycle com
   release.resolve();
   await rejected;
   assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-  f.research.bindKnowledge(knowledge);
+  f.research.bindArtifacts(artifacts);
   assert.equal((await f.research.advance(f.owner, input)).workflow.state, 'complete');
 });
 

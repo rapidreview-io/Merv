@@ -1,3 +1,4 @@
+import { CodeService as CoreCodeService } from '@merv/code/service';
 import assert from 'node:assert/strict';
 import { createService, type Caller, type CodeStoreOperation } from '@merv/contracts';
 import { execFileSync } from 'node:child_process';
@@ -189,20 +190,33 @@ export async function codeStoreFixture(
   );
   const seen = Object.assign(Object.create(sessions) as Sessions, played);
   let code: CodeService | undefined;
+  let core: CoreCodeService | undefined;
   /** Code as a new process would start it, on the same database and the same directory. */
-  const open = async (
-    options: Omit<CodeStoreOptions, 'config'> & { config?: Partial<CodeStoreConfig> } = {},
-  ) => {
+  const open = async (options: CodeStoreOptions & { finalizeGraceSeconds?: number } = {}) => {
     await code?.close();
-    code = new CodeService(state, scope, seen, artifacts, workflows, undefined, undefined, {
+    await core?.close();
+    core = await createService(
+      new CoreCodeService(state, scope, {
+        finalizeGraceSeconds: options.finalizeGraceSeconds,
+        repositories: {
+          root,
+          quotaBytes: 10 * 1024 ** 3,
+          reservedFreeBytes: 1,
+          ...config,
+          ...options.config,
+        },
+      }),
+    );
+    code = new CodeService(state, scope, seen, artifacts, workflows, core, {
       ...options,
-      config: { root, settleMs: 60_000, reservedFreeBytes: 1, ...config, ...options.config },
+      config: { settleMs: 60_000, ...config, ...options.config },
     });
     await code.initialize();
     return code;
   };
   t.after(async () => {
     await code?.close();
+    await core?.close();
     await sessions.close();
     await events.close();
     workflows.close();
@@ -216,7 +230,8 @@ export async function codeStoreFixture(
     credentialId: boot.credential.id,
   };
   // This fixture represents an existing runner-local binding, predating managed initialization.
-  code = await createService(new CodeService(state, scope, seen, artifacts, workflows));
+  core = await createService(new CoreCodeService(state, scope, {}));
+  code = await createService(new CodeService(state, scope, seen, artifacts, workflows, core));
   await boundProject(state, admin.projectId, mainOid, 'fixture-repository');
   await open();
   const paths = new CodeRepositories({ root, quotaBytes: 0, reservedFreeBytes: 0 }).paths(
@@ -249,6 +264,9 @@ export async function codeStoreFixture(
     open,
     get code() {
       return code!;
+    },
+    get core() {
+      return core!;
     },
     /** Refs of the project's repository as `name oid` lines. */
     refs: () =>

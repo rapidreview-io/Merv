@@ -1057,7 +1057,6 @@ async function assembled(
   extra: { id: string; name: string; required?: boolean }[] = [],
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-running-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const { plugins } = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as { plugins: { id: string; config?: unknown }[] };
@@ -1075,7 +1074,10 @@ async function assembled(
         .concat(extra) as never,
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const credentials = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Op' });
   const reader = (
     await app.ctx.scope.issueActor(

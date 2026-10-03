@@ -46,7 +46,7 @@
         "consolidation",
         "research"
       ],
-      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds Paper, Reflections, Knowledge and Consolidation optionally. Only stages that use a missing provider wait. Selected code changes use Consolidation, which requires Code."
+      "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Research."
     },
     {
       "id": "coordination",
@@ -1145,25 +1145,6 @@
       ]
     },
     {
-      "plugin": "merv-knowledge-ui",
-      "source": "packages/knowledge/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "knowledge",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-knowledge-ui",
-      "group": "front",
-      "owner": "knowledge",
-      "label": "Knowledge · ui adapter",
-      "purpose": "Connects Knowledge to the UI registry. This adapter owns no domain state.",
-      "exposedTools": []
-    },
-    {
       "plugin": "merv-mounts",
       "source": "packages/mounts/src/index.ts",
       "provides": [
@@ -1667,7 +1648,6 @@
         "domainEvents",
         "paper",
         "reflections",
-        "knowledge",
         "tasks",
         "experiments",
         "artifacts",
@@ -2170,25 +2150,6 @@
           "readOnly": true
         }
       ]
-    },
-    {
-      "plugin": "merv-scope-ui",
-      "source": "packages/scope/src/ui.ts",
-      "provides": [],
-      "requires": [
-        "scope",
-        "ui"
-      ],
-      "optional": [],
-      "kind": "ui",
-      "runtime": "server",
-      "defaultConfiguration": true,
-      "id": "merv-scope-ui",
-      "group": "front",
-      "owner": "scope",
-      "label": "Scope · ui adapter",
-      "purpose": "Connects Scope to the UI registry. This adapter owns no domain state.",
-      "exposedTools": []
     },
     {
       "plugin": "merv-secrets",
@@ -3324,16 +3285,6 @@
       "optional": false
     },
     {
-      "from": "merv-knowledge-ui",
-      "to": "knowledge",
-      "optional": false
-    },
-    {
-      "from": "merv-knowledge-ui",
-      "to": "ui",
-      "optional": false
-    },
-    {
       "from": "mounts",
       "to": "tools",
       "optional": false
@@ -3545,11 +3496,6 @@
     },
     {
       "from": "research",
-      "to": "knowledge",
-      "optional": true
-    },
-    {
-      "from": "research",
       "to": "tasks",
       "optional": true
     },
@@ -3711,16 +3657,6 @@
     {
       "from": "merv-scope-tools",
       "to": "tools",
-      "optional": false
-    },
-    {
-      "from": "merv-scope-ui",
-      "to": "scope",
-      "optional": false
-    },
-    {
-      "from": "merv-scope-ui",
-      "to": "ui",
       "optional": false
     },
     {
@@ -3920,10 +3856,10 @@
     }
   ],
   "counts": {
-    "plugins": 70,
+    "plugins": 68,
     "providers": 31,
-    "adapters": 39,
-    "dependencies": 195
+    "adapters": 37,
+    "dependencies": 190
   },
   "network": [
     {
