@@ -7,7 +7,7 @@ import { createService, type SqlValue } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { CodeUnitService } from '@merv/code-research/units';
-import { ResearchCodeWriters as CodeWriterService } from '@merv/code-research/writers';
+import { CodeWriterService } from '@merv/code/writers';
 import { openState } from './fixtures/state.js';
 
 const oid = (char: string) => char.repeat(40);

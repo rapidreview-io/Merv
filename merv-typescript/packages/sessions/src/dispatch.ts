@@ -143,6 +143,38 @@ const deferredReasons = new Set(['preparation_deferred', 'machine_retired']);
 /** How long three deferred closes in a row must run before an operator is told about them. */
 const deferredRun = 3;
 const deferredSinceMs = 7 * 24 * 3600_000;
+
+/** The latest closes, not the latest deferred closes: one other outcome breaks the run.
+ * Callers supply the targets their own read admits; this does not load or authorize work. */
+function deferredRuns<T extends Failure>(
+  closes: T[],
+  waiting: { has(key: string): boolean },
+  failing: ReadonlySet<string>,
+  since: string,
+): Map<string, T[]> {
+  const runs = new Map<string, T[]>();
+  for (const close of closes) {
+    const key = targetKey(close);
+    if (!close.closedAt || close.closedAt <= since || !waiting.has(key) || failing.has(key))
+      continue;
+    const run = runs.get(key) ?? [];
+    run.push(close);
+    runs.set(key, run);
+  }
+  for (const [key, run] of runs) {
+    const last = run
+      .sort((a, b) => (a.closedAt! < b.closedAt! ? 1 : a.closedAt === b.closedAt ? 0 : -1))
+      .slice(0, deferredRun);
+    if (
+      last.length < deferredRun ||
+      !last.every((close) => deferredReasons.has(close.outcome ?? ''))
+    )
+      runs.delete(key);
+    else runs.set(key, last);
+  }
+  return runs;
+}
+
 /**
  * Refusals that say who asked, what they sent or what raced, never that the offer cannot be
  * built. Counting them would let a revoked key, a replayed secret or a lost race hold every
@@ -1228,25 +1260,18 @@ export class SessionDispatch {
     // counter above would ever show it. A run of deferred closes is what says it is not
     // simply quiet: where that work's history lives has been away, busy or full since then.
     const deferred = new Set<string>();
-    const runs = new Map<string, Session[]>();
-    for (const row of await tx.all<SessionRow>(
+    const recent = new Date(now - deferredSinceMs).toISOString();
+    const closes = await tx.all<SessionRow>(
       "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('released','expired') AND (session_json::jsonb #>> '{closedAt}')>?",
       projectId,
-      new Date(now - deferredSinceMs).toISOString(),
+      recent,
+    );
+    for (const [key, last] of deferredRuns<Session>(
+      closes.map((row) => JSON.parse(row.session_json)),
+      waiting,
+      failing,
+      recent,
     )) {
-      const session: Session = JSON.parse(row.session_json);
-      const key = `${session.instanceId}:${session.expectedRevision}`;
-      if (!waiting.has(key) || failing.has(key)) continue;
-      const run = runs.get(key) ?? [];
-      run.push(session);
-      runs.set(key, run);
-    }
-    for (const [key, sessions] of runs) {
-      const last = sessions
-        .sort((a, b) => (a.closedAt! < b.closedAt! ? 1 : a.closedAt === b.closedAt ? 0 : -1))
-        .slice(0, deferredRun);
-      if (last.length < deferredRun || !last.every((s) => deferredReasons.has(s.outcome ?? '')))
-        continue;
       const item = waiting.get(key)!,
         newest = last[0];
       deferred.add(key);
@@ -1577,38 +1602,24 @@ export class SessionDispatch {
     );
     const failing = new Set(holds.map((row) => `${row.instance_id}:${row.revision}`));
     const closes = admissible
-      ? await tx.all<{
-          instance_id: string;
-          revision: number;
-          outcome: string | null;
-          closed_at: string | null;
-        }>(
+      ? await tx.all<Failure>(
           // Read in the select list, so only the closes still standing are ever parsed.
-          `SELECT s.instance_id,s.revision,(s.session_json::jsonb #>> '{outcome}') AS outcome,(s.session_json::jsonb #>> '{closedAt}') AS closed_at
+          `SELECT s.instance_id AS "instanceId",s.revision AS "expectedRevision",(s.session_json::jsonb #>> '{outcome}') AS outcome,(s.session_json::jsonb #>> '{closedAt}') AS "closedAt"
             FROM worker_sessions s JOIN wf_instances w ON w.id=s.instance_id AND w.project_id=s.project_id AND w.revision=s.revision
             WHERE s.project_id=? AND s.status IN ('released','expired') AND ${unheld}`,
           projectId,
         )
       : [];
-    const runs = new Map<string, { instanceId: string; closes: typeof closes }>();
-    const recent = new Date(now - deferredSinceMs).toISOString();
-    for (const row of closes) {
-      const key = `${row.instance_id}:${row.revision}`;
-      if (!row.closed_at || row.closed_at <= recent || failing.has(key) || !offered.has(key))
-        continue;
-      const run = runs.get(key) ?? { instanceId: row.instance_id, closes: [] };
-      run.closes.push(row);
-      runs.set(key, run);
-    }
-    const deferred: DispatchReading['deferred'] = [];
-    for (const [key, run] of runs) {
-      const last = run.closes
-        .sort((a, b) => (a.closed_at! < b.closed_at! ? 1 : a.closed_at === b.closed_at ? 0 : -1))
-        .slice(0, deferredRun);
-      if (last.length < deferredRun || !last.every((row) => deferredReasons.has(row.outcome ?? '')))
-        runs.delete(key);
-      else deferred.push({ instanceId: run.instanceId, attempts: last.length });
-    }
+    const runs = deferredRuns(
+      closes,
+      offered,
+      failing,
+      new Date(now - deferredSinceMs).toISOString(),
+    );
+    const deferred: DispatchReading['deferred'] = [...runs.values()].map((last) => ({
+      instanceId: last[0].instanceId,
+      attempts: last.length,
+    }));
     const quiet: DispatchReading['quiet'] = [];
     const incompatible = new Set(
       localGitBlocked(
