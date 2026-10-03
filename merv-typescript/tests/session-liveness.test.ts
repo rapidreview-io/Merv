@@ -1204,6 +1204,47 @@ test('a run of deferred preparations is shown as work nobody could take, with it
   assert.match(report.items[0].next, /code\.status/);
 });
 
+test('both dispatch views require three consecutive recent deferred closes at the current revision', async (t) => {
+  const f = await fixture(t);
+  f.wallClock();
+  await f.sessions.heartbeatRunner(f.source, presence());
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  const target = await f.instance();
+  const deferred = async () => {
+    const report = await f.sessions.stuck(f.owner);
+    const { marks } = await f.sessions.runningMarks(f.owner);
+    return [
+      report.items.filter((item) => item.kind === 'work_deferred').map((item) => item.instanceId),
+      marks.filter((mark) => mark.says[0] === 'Ready · ').map((mark) => mark.key),
+    ];
+  };
+  for (let index = 0; index < 3; index++) {
+    await f.fail('machine', 'preparation_deferred');
+    await f.pastBackoff();
+  }
+  assert.deepEqual(await deferred(), [[target.id], [`work:${target.id}`]]);
+
+  // An ordinary release that leaves the workflow in place breaks the run. Looking only at
+  // deferred outcomes would incorrectly keep the older three on both views.
+  const active = await f.active();
+  await f.sessions.release(f.source, {
+    sessionId: active.id,
+    runnerId: 'machine',
+  });
+  assert.deepEqual(await deferred(), [[], []]);
+  for (let index = 0; index < 3; index++) {
+    await f.pastBackoff();
+    await f.fail('machine', 'preparation_deferred');
+  }
+  assert.deepEqual(await deferred(), [[target.id], [`work:${target.id}`]]);
+
+  // The window is open at its lower boundary. At exactly seven days after the oldest close,
+  // only two qualify, even though all three still stand at the current workflow revision.
+  f.advance(7 * 24 * 60 * minute - 2 * 30_001);
+  await f.sessions.heartbeatRunner(f.source, presence());
+  assert.deepEqual(await deferred(), [[], []]);
+});
+
 test('Fleet local-Git incompatibility is immediate, per target, and clears with an own runner', async (t) => {
   const f = await fixture(t, {
     workspace: {

@@ -123,6 +123,9 @@ test(
     await Promise.all([unloading, mirroring]);
     ctx.state.transaction = transaction;
     assert.equal(ctx.get('codeResearch'), undefined);
+    await assert.rejects(bridge.fenceUnit(caller, { unitId: unit.id, requestId: 'stale-fence' }), {
+      code: 'code_unavailable',
+    });
     assert.equal(ctx.code, core);
     assert.deepEqual(await core.github.status(caller), githubStatus);
     const journal = await ctx.state.read((sql) =>

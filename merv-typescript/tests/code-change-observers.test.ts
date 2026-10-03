@@ -110,6 +110,69 @@ test('direct core binding changes update research and detached adapters reconcil
   assert.equal((await f.blockers())[0]?.key, 'main');
 });
 
+test('research unload retains the core writer and replays session changes after reload', async (t) => {
+  const f = await fixture(t);
+  const core = f.ctx.code;
+  const previous = f.ctx.codeResearch as CodeService;
+  const event = {
+    projectId: f.caller.projectId,
+    actorId: f.caller.actorId,
+    subjectId: 'writer',
+    type: 'session.closed',
+    data: {},
+  };
+  await f.ctx.state.transaction(async (tx) => {
+    await previous.pinBase(f.caller, { unitId: f.unitId, leaseId: 'writer' }, tx);
+    await previous.reserveWriter(f.caller, { unitId: f.unitId, leaseId: 'writer' }, tx);
+  });
+  await f.app.setEnabled('code-research', false);
+  for (const call of [
+    () => f.ctx.state.transaction((tx) => previous.writerStatus(f.caller, f.unitId, tx)),
+    () =>
+      f.ctx.state.transaction((tx) =>
+        previous.reserveWriter(f.caller, { unitId: f.unitId, leaseId: 'stale' }, tx),
+      ),
+    () => f.ctx.state.transaction((tx) => previous.sessionChanged(event as StoredEvent, tx)),
+  ])
+    await assert.rejects(call(), { code: 'code_unavailable' });
+
+  // Core can still account for a session while the research projection is detached.
+  await f.ctx.state.transaction((tx) =>
+    core.writers.sessionChanged(f.caller.projectId, 'writer', 'attached', tx),
+  );
+  const status = () =>
+    f.ctx.state.transaction((tx) => core.writers.writerStatus(f.caller, f.unitId, tx));
+  assert.equal((await status()).state, 'active');
+  await f.ctx.state.transaction((tx) => f.ctx.state.appendEvent(tx, event));
+  await f.ctx.domainEvents.drain();
+  assert.equal((await status()).state, 'active', 'detached research consumes no session event');
+
+  await f.app.setEnabled('code-research', true);
+  await f.ctx.domainEvents.drain();
+  assert.equal(f.ctx.code, core);
+  assert.deepEqual(await status(), {
+    generation: 1,
+    state: 'closing',
+    blocked: {
+      code: 'code_writer_busy',
+      message: 'The last writer of this unit has not handed over its final capture yet',
+    },
+  });
+  // Replayed attachment or close observations cannot reopen it or reset final-capture grace.
+  const before = await f.ctx.state.read((sql) =>
+    core.writers.row(sql, f.caller.projectId, f.unitId),
+  );
+  await f.ctx.state.transaction(async (tx) => {
+    await core.writers.sessionChanged(f.caller.projectId, 'writer', 'attached', tx);
+    await (f.ctx.codeResearch as CodeService).sessionChanged(event as StoredEvent, tx);
+  });
+  const after = await f.ctx.state.read((sql) =>
+    core.writers.row(sql, f.caller.projectId, f.unitId),
+  );
+  assert.equal(after?.writer_state, 'closing');
+  assert.equal(after?.writer_changed_at, before?.writer_changed_at);
+});
+
 test('direct core writer changes and research blockers commit or roll back together', async (t) => {
   const f = await fixture(t);
   await f.ctx.state.transaction(async (tx) => {

@@ -111,6 +111,30 @@ export class CodeWriterService {
     return row ? this.view(row) : { generation: 0, state: 'idle', blocked: null };
   }
 
+  /** Apply an owning session's attachment or end; the current generation alone may move. */
+  async sessionChanged(
+    projectId: string,
+    sessionId: string,
+    change: 'attached' | 'closed',
+    tx: Transaction,
+  ): Promise<void> {
+    this.assertOpen();
+    this.state.assertTransaction(tx);
+    const row = await tx.get<WriterRow>(
+      `SELECT ${writerColumns} FROM code_units WHERE project_id=? AND writer_session_id=?`,
+      projectId,
+      sessionId,
+    );
+    if (!row) return;
+    if (change === 'attached') {
+      if (row.writer_state === 'reserved') await this.move(tx, row, 'active');
+      return;
+    }
+    // A never-attached checkout needs no capture; an attached one waits for its final handoff.
+    if (row.writer_state === 'reserved') await this.move(tx, row, 'closed');
+    else if (row.writer_state === 'active') await this.move(tx, row, 'closing');
+  }
+
   /** A generation whose final capture never came is shown as needing an operator. */
   async expire(): Promise<void> {
     if (this.closed) return;
@@ -396,7 +420,7 @@ export class CodeWriterService {
     };
   }
 
-  protected async move(tx: Transaction, row: WriterRow, to: CodeWriterState): Promise<void> {
+  private async move(tx: Transaction, row: WriterRow, to: CodeWriterState): Promise<void> {
     await tx.run(
       'UPDATE code_units SET writer_state=?,writer_changed_at=? WHERE project_id=? AND unit_id=?',
       to,

@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { refused, writerFixture } from './fixtures/code-writers.js';
-import { ResearchCodeWriters as CodeWriterService } from '@merv/code-research/writers';
+import { CodeWriterService } from '@merv/code/writers';
 import { faultAt, git } from './fixtures/code-store.js';
 
 const fixture = writerFixture;

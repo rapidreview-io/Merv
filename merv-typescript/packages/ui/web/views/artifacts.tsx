@@ -83,11 +83,7 @@ export async function fileInput(file: File) {
 
 type UploadPlan = {
   uploadId: string;
-  partSize: number;
-  partCount: number;
-  parts: { partNumber: number; url: string; size: number; headers: Record<string, string> }[];
-  completedParts: number[];
-  nextPart: number | null;
+  parts: { url: string; headers: Record<string, string> }[];
 };
 
 async function fileHash(file: File, progress: (value: number) => void): Promise<string> {
@@ -99,25 +95,26 @@ async function fileHash(file: File, progress: (value: number) => void): Promise<
   return Array.from(hash.digest(), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-function putPart(
-  part: UploadPlan['parts'][number],
-  blob: Blob,
+function putFile(
+  upload: UploadPlan['parts'][number],
+  file: File,
   progress: (loaded: number) => void,
 ) {
   return new Promise<void>((resolve, reject) => {
     const request = new XMLHttpRequest();
-    request.open('PUT', part.url);
-    for (const [name, value] of Object.entries(part.headers)) request.setRequestHeader(name, value);
+    request.open('PUT', upload.url);
+    for (const [name, value] of Object.entries(upload.headers))
+      request.setRequestHeader(name, value);
     request.upload.onprogress = (event) => progress(event.loaded);
     request.onerror = () => reject(new Error('Object storage is unreachable'));
-    request.onabort = () => reject(new Error('Part upload was interrupted'));
+    request.onabort = () => reject(new Error('File upload was interrupted'));
+    // The signed PUT is conditional: 412 means another upload stored this content address.
+    // upload_complete still verifies storage before recording or returning the artifact.
     request.onload = () =>
-      request.status >= 200 && request.status < 300
+      (request.status >= 200 && request.status < 300) || request.status === 412
         ? resolve()
-        : reject(
-            new Error(`Object storage refused part ${part.partNumber} (HTTP ${request.status})`),
-          );
-    request.send(blob);
+        : reject(new Error(`Object storage refused the file (HTTP ${request.status})`));
+    request.send(file);
   });
 }
 
@@ -159,27 +156,12 @@ export function UploadForm({ available, close }: { available: boolean; close(): 
           });
           pending.current = { file, uploadId: plan.uploadId };
         }
-        let sent = 0;
-        while (true) {
-          for (const part of plan.parts) {
-            if (plan.completedParts.includes(part.partNumber)) {
-              sent += part.size;
-              continue;
-            }
-            setMessage(`Uploading part ${part.partNumber} of ${plan.partCount}…`);
-            const start = (part.partNumber - 1) * plan.partSize;
-            await putPart(part, file.slice(start, start + part.size), (loaded) =>
-              setFraction(0.1 + 0.9 * ((sent + loaded) / file.size)),
-            );
-            sent += part.size;
-            setFraction(0.1 + 0.9 * (sent / file.size));
-          }
-          if (plan.nextPart === null) break;
-          plan = await call<UploadPlan>('artifact.upload_resume', {
-            uploadId: plan.uploadId,
-            startPart: plan.nextPart,
-          });
+        const upload = plan.parts[0];
+        if (upload) {
+          setMessage('Uploading file…');
+          await putFile(upload, file, (loaded) => setFraction(0.1 + 0.9 * (loaded / file.size)));
         }
+        setFraction(1);
         setMessage('Verifying file…');
         await call('artifact.upload_complete', { uploadId: plan.uploadId });
       }

@@ -22,6 +22,7 @@ import type {
   CodeAcceptedSince,
   Scope,
   State,
+  StoredEvent,
   Transaction,
   Workflows,
 } from '@merv/contracts';
@@ -47,7 +48,7 @@ import { CodeTransportService } from './transport.js';
 import type { Code } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
 import { archiveCommit } from './base-check.js';
-import { ResearchCodeWriters as CodeWriterService } from './writers.js';
+import type { CodeWriterService } from '@merv/code/writers';
 
 /** Research operations over the repositories owned by the core Code service. */
 export interface CodeStoreOptions {
@@ -113,7 +114,7 @@ export class CodeService extends CodeCommandService implements Code {
   private proposalStore!: CodeProposalService;
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
-  private writerStore!: CodeWriterService;
+  private readonly writerStore: CodeWriterService;
   private store?: CodeStore;
   private mirrorStore?: CodeMirrorService;
   private baseStore?: CodeBaseService;
@@ -144,7 +145,7 @@ export class CodeService extends CodeCommandService implements Code {
     sessions: Sessions,
     artifacts: Artifacts,
     workflows: Workflows,
-    utility: Pick<CodeUtility, 'github' | 'writers' | 'changes' | 'repositories'>,
+    utility: Pick<CodeUtility, 'github' | 'writers' | 'repositories'>,
     repositories: CodeStoreOptions = {},
   ) {
     rejectRetiredBackup(repositories.config);
@@ -152,6 +153,7 @@ export class CodeService extends CodeCommandService implements Code {
     this.storage = state;
     this.baseScope = scope;
     this.github = utility.github;
+    this.writerStore = utility.writers;
     this.transport = new CodeTransportService(state, sessions, this, this.github);
     this.publicationHost = new PublicationHost(
       state,
@@ -198,12 +200,6 @@ export class CodeService extends CodeCommandService implements Code {
       try {
         this.proposalStore = await createService(
           new CodeProposalService(this, state, scope, sessions, artifacts),
-        );
-        this.writerStore = new CodeWriterService(
-          state,
-          scope,
-          utility.writers.finalizeGraceSeconds,
-          utility.changes,
         );
         this.unitStore = await createService(
           new CodeUnitService(state, scope, workflows, this, this.writerStore, sessions),
@@ -450,13 +446,22 @@ export class CodeService extends CodeCommandService implements Code {
       throw new MervError('code_store_unavailable', 'This server keeps no Code repositories', 503);
     return await this.mirrorStore.retry(caller, input);
   }
-  async sessionChanged(...args: Parameters<CodeWriterService['sessionChanged']>) {
-    await this.writerStore.sessionChanged(...args);
+  async sessionChanged(event: StoredEvent, tx: Transaction) {
+    check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
+    if (event.type === 'session.workspace_attached' || event.type === 'session.closed')
+      await this.writerStore.sessionChanged(
+        event.projectId,
+        event.subjectId,
+        event.type === 'session.workspace_attached' ? 'attached' : 'closed',
+        tx,
+      );
   }
   async reserveWriter(...args: Parameters<CodeWriterService['reserveWriter']>) {
+    check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
     return await this.writerStore.reserveWriter(...args);
   }
   async writerStatus(...args: Parameters<CodeWriterService['writerStatus']>) {
+    check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
     return await this.writerStore.writerStatus(...args);
   }
   /** Every admitted upload of the unit is first given the chance to finish; then the fence. */
@@ -464,9 +469,10 @@ export class CodeService extends CodeCommandService implements Code {
     const store = this.requireStore();
     caller = structuredClone(caller);
     await store.maintain(false);
-    const status = await this.storage.transaction(
-      async (tx) => await this.writerStore.fence(caller, input, tx),
-    );
+    const status = await this.storage.transaction(async (tx) => {
+      check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
+      return await this.writerStore.fence(caller, input, tx);
+    });
     // What the fenced generation had only begun to send is kept where no route serves it.
     await store.maintain();
     return status;
@@ -649,7 +655,6 @@ export class CodeService extends CodeCommandService implements Code {
     this.captureReader?.close();
     this.proposalStore?.close();
     this.unitStore?.close();
-    this.writerStore?.close();
     super.close();
     // Every read is refused from here on. Running admissions still reach the database, which
     // outlives Code, and are waited for before the writer lock is given up.
