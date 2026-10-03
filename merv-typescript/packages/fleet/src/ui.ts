@@ -59,12 +59,13 @@ const record: UiRecordSpec = {
 /** Uses the existing collection view; no browser bundle or research dependency. */
 export const fleetUiPlugin = {
   name: 'merv-fleet-ui',
-  inject: ['fleet', 'ui'],
+  inject: ['fleet', 'scope', 'ui'],
   apply(ctx: Context) {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'fleet',
-        label: 'Fleet',
+        // Not in the rail: reached from the Agents and machines page and a machine's sidebar.
+        label: 'Fleet requests',
         group: 'operations',
         order: 20,
         path: '/fleet',
@@ -94,7 +95,16 @@ export const fleetUiPlugin = {
       }),
     );
     // The Running page draws each open machine until a session binds it.
-    ctx.effect(() => ctx.ui.contribute(fleetRunning(ctx.fleet)));
+    ctx.effect(() =>
+      ctx.ui.contribute(
+        fleetRunning(ctx.fleet, (caller) =>
+          ctx.scope.require(caller, 'admin').then(
+            () => true,
+            () => false,
+          ),
+        ),
+      ),
+    );
   },
 };
 export default fleetUiPlugin;

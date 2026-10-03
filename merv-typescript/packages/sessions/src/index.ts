@@ -1356,20 +1356,6 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     return await this.dispatcher.projectStatus(caller);
   }
-  /** The rail's number on its own: no runner scan, no candidate enumeration, no blobs. */
-  async liveSessionCount(caller: Caller): Promise<number> {
-    this.ordinary(caller);
-    caller = structuredClone(caller);
-    this.ensureOpen();
-    return await this.transaction(async (tx) => {
-      check(!caller.session, 'forbidden', 'Leased workers cannot read project dispatch', 403);
-      await this.scope.require(caller, 'read', tx);
-      return (await tx.get<{ n: number }>(
-        "SELECT COUNT(*) AS n FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
-        caller.projectId,
-      ))!.n;
-    });
-  }
   async running(caller: Caller) {
     this.ordinary(caller);
     this.ensureOpen();

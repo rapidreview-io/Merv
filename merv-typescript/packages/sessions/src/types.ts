@@ -345,8 +345,6 @@ export interface Sessions {
     tx?: Transaction,
   ): Promise<SessionWorkspaceObservation>;
   projectStatus(caller: Caller): Promise<SessionsProjectStatus>;
-  /** The rail's one number, read on its own rather than by computing a whole status. */
-  liveSessionCount(caller: Caller): Promise<number>;
   /**
    * The Running page's Sessions lane: a node for every offered or active lease of the project,
    * whoever offered it, with where it runs and the work it is on. Read-only, never for a

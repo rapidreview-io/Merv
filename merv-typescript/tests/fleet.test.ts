@@ -559,6 +559,7 @@ test('the Fleet page lists open work and bounded history in plain words', async 
   const ctx = new Context();
   const ui = new UiRegistry();
   ctx.provide('fleet', f.fleet);
+  ctx.provide('scope', f.scope);
   ctx.provide('ui', ui);
   await ctx.plugin(fleetUiPlugin);
   t.after(() => ctx.fiber.dispose());

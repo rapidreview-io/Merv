@@ -381,8 +381,9 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     [
       ['Research', ['Files']],
       ['Work', ['Work', 'Reflections']],
-      // What is running is drawn on the Work page; its registration is no place of its own.
-      ['Agents', ['Sessions', 'Code']],
+      // What is running, and the agents and machines it runs on, are reached from the Work
+      // page; their registrations are no places of their own.
+      ['Agents', ['Code']],
       ['Feed', ['Feed']],
     ],
   );

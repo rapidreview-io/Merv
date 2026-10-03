@@ -1,6 +1,8 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { Context } from 'cordis';
 import { FleetService } from '@merv/fleet';
+import fleetToolsPlugin from '@merv/fleet/tools';
+import fleetUiPlugin from '@merv/fleet/ui';
 import piPlugin from '@merv/pi';
 import piApiPlugin from '@merv/pi/api';
 import piToolsPlugin from '@merv/pi/tools';
@@ -246,6 +248,8 @@ export async function seedAgent(app: Awaited<ReturnType<typeof createApp>>, url:
     ],
     agentMoves: true,
   });
-  for (const plugin of [piToolsPlugin, piApiPlugin, piUiPlugin]) app.ctx.plugin(plugin);
+  // Fleet's own tools and sidebar too, so the agent's machine stands on Work as it does in production.
+  for (const plugin of [fleetToolsPlugin, fleetUiPlugin, piToolsPlugin, piApiPlugin, piUiPlugin])
+    app.ctx.plugin(plugin);
   await pi.await();
 }

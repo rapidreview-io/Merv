@@ -1104,7 +1104,6 @@ test('dispatch controls and observations retain their original authorization', a
     setRunnerSettings: (caller) =>
       f.sessions.setRunnerSettings(caller, { runnerId: runner.id, settings: { platforms: [] } }),
     projectStatus: (caller) => f.sessions.projectStatus(caller),
-    liveSessionCount: (caller) => f.sessions.liveSessionCount(caller),
     workspaceObservation: (caller) => f.sessions.workspaceObservation(caller, session.id),
     agentObservation: (caller) => f.sessions.agentObservation(caller, session.agentId!),
   };

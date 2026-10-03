@@ -14,7 +14,7 @@ const { AgentsPage } = await import('../packages/ui/web/views/sessions.js');
 
 const row = {
   id: 'sessions',
-  label: 'Sessions',
+  label: 'Agents and machines',
   group: 'work',
   order: 24,
   path: '/sessions',
@@ -118,6 +118,28 @@ test('the page states its subject without a click, in one liveness vocabulary', 
     assert.ok(shown.includes(fact), `${fact} is not on the page: ${shown.slice(0, 800)}`);
   // What waits for an agent is on the Work page's map, and is not listed here a second time.
   assert.ok(!shown.includes('Ready to assign'));
+  // The rail does not list this page: it is a step under Work, and says the way back.
+  const links = () =>
+    [...document.querySelectorAll('.sessions-ops > p a')].map((link) => [
+      link.textContent,
+      link.getAttribute('href'),
+    ]);
+  assert.deepEqual(links(), [['← Work', '/work']]);
+  // Where Fleet serves, every machine it was asked for is one step further.
+  await unmount();
+  const fleet = { ...row, id: 'fleet', label: 'Fleet requests', path: '/fleet' };
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/sessions'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(AgentsPage as any, { row, shell: { ...shell, rows: [row, fleet] }, me: 'x' }),
+    ),
+  );
+  assert.deepEqual(links(), [
+    ['← Work', '/work'],
+    ['Fleet requests', '/fleet'],
+  ]);
   assert.ok(!shown.includes('Operations'), 'the subject must not sit behind a fold');
   assert.ok(!shown.includes('Extend'), 'no control the system cannot honour');
 });

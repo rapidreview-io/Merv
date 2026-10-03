@@ -1,8 +1,10 @@
 import {
   keyId,
+  type Caller,
   type Json,
   runningKey,
   runningKeyPattern,
+  type RunningAction,
   type RunningAttention,
   type RunningFact,
   type RunningKey,
@@ -18,7 +20,8 @@ import type { Fleet, FleetAllocation, FleetPhase } from './types.js';
  * Fleet's one view: its words and the redacted allocation its page and tools show, and Fleet's
  * part of the Running page. Every open allocation is a machine in the sessions lane until a
  * session binds it; then the session's node absorbs it and the Fleet machine section follows the
- * session's sidebar. Fleet adds no controls there, and no size or price.
+ * session's sidebar. Fleet adds no controls there, where halting the lease releases the machine,
+ * and no size or price; a machine in hand by itself can be finished or stopped from its sidebar.
  */
 
 /** A person's word for a phase: waiting has no machine yet; starting is preparing one. */
@@ -146,8 +149,42 @@ export function fleetNode(a: FleetAllocation): RunningNode {
  * An allocation's sidebar. Absorbed by the session it runs, only the Fleet machine section
  * is kept, without what the session already says: that it runs, and when it was asked for.
  */
-export function fleetPanel(a: FleetAllocation, absorbedBy?: string): RunningPanelPart {
+export function fleetPanel(
+  a: FleetAllocation,
+  absorbedBy?: string,
+  allowed = false,
+): RunningPanelPart {
   const status = statusOf(a);
+  const input = { id: a.id };
+  // What its own page offers, for the same intents: finish what it runs, or stop at once.
+  const actions: RunningAction[] =
+    absorbedBy || !open(a) || a.intent === 'stop'
+      ? []
+      : [
+          ...(a.intent === 'run'
+            ? [
+                {
+                  label: 'Finish and release',
+                  verb: 'release' as const,
+                  tool: 'fleet.drain',
+                  input,
+                  allowed,
+                },
+              ]
+            : []),
+          {
+            label: 'Stop now',
+            verb: 'halt',
+            tool: 'fleet.halt',
+            input,
+            allowed,
+            guard: {
+              title: 'Stop this agent?',
+              consequence:
+                'Any machine it holds is deleted. Work that has not been saved may be lost.',
+            },
+          },
+        ];
   const need = attention(a);
   const red = need?.quiet ? undefined : need;
   const rows: RunningFact[] = [];
@@ -190,14 +227,20 @@ export function fleetPanel(a: FleetAllocation, absorbedBy?: string): RunningPane
       ...(red ? { attention: red } : {}),
     },
     sections,
-    actions: [],
+    actions,
     route: `/fleet/${encodeURIComponent(a.id)}`,
     live: open(a),
   };
 }
 
-/** Fleet's part of the Running page, read through the service's own permission checks. */
-export const fleetRunning = (fleet: Fleet): RunningContribution => ({
+/**
+ * Fleet's part of the Running page, read through the service's own permission checks. `manages`
+ * says whether the reader may finish or stop a machine, which Fleet asks of an administrator.
+ */
+export const fleetRunning = (
+  fleet: Fleet,
+  manages: (caller: Caller) => Promise<boolean>,
+): RunningContribution => ({
   owner: 'fleet',
   kinds: ['fleet'],
   lanes: ['sessions'],
@@ -206,5 +249,9 @@ export const fleetRunning = (fleet: Fleet): RunningContribution => ({
     nodes: (await fleet.list(read.caller, 0)).filter(open).map(fleetNode),
   }),
   panel: async (read, key, absorbedBy) =>
-    fleetPanel(await fleet.inspect(read.caller, keyId(key)), absorbedBy),
+    fleetPanel(
+      await fleet.inspect(read.caller, keyId(key)),
+      absorbedBy,
+      !absorbedBy && (await manages(read.caller)),
+    ),
 });

@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   runningKey,
   type RunningBoard,
@@ -563,7 +563,7 @@ export function WorkMap({
  * lane's own line with its one control — for sessions, how dispatch stands — and then
  * whatever is live and on no unit of work: a machine nobody is using, an agent between two.
  */
-function LiveHead({ board, now }: { board: RunningBoard; now: Clock }) {
+function LiveHead({ board, now, agents }: { board: RunningBoard; now: Clock; agents?: string }) {
   const lanes = LANES.map((name) => board.lanes[name]);
   const needsYou = lanes.reduce((sum, lane) => sum + lane.needsYou, 0);
   const sessions = board.lanes.sessions;
@@ -600,6 +600,12 @@ function LiveHead({ board, now }: { board: RunningBoard; now: Clock }) {
               ))}
             </span>
           )),
+        )}
+        {/* Every agent, machine and lease there has been, and what is rarely needed of them. */}
+        {agents && (
+          <Link className="live-more" to={agents}>
+            Agents and machines
+          </Link>
         )}
       </div>
       {lanes.flatMap((lane) =>
@@ -760,8 +766,11 @@ export function WorkPlane({ nameOf, children }: Named & { children: ReactNode })
   );
 }
 
-/** What stands between the map and the list: the board's own lines, once it has answered. */
-export function LiveUnder() {
+/**
+ * What stands between the map and the list: the board's own lines, once it has answered, and
+ * the way to the page of agents and machines (`agents`), which the rail no longer shows.
+ */
+export function LiveUnder({ agents }: { agents?: string }) {
   const live = useContext(LiveContext);
-  return live?.board ? <LiveHead board={live.board} now={live.now} /> : null;
+  return live?.board ? <LiveHead board={live.board} now={live.now} agents={agents} /> : null;
 }

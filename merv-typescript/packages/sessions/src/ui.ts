@@ -10,13 +10,12 @@ export const sessionsUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'sessions',
-        label: 'Sessions',
+        // Reached from the Work page, which shows what is live; the rail does not list it.
+        label: 'Agents and machines',
         group: 'work',
         order: 24,
         path: '/sessions',
         view: { kind: 'sessions' },
-        // The rail asks for one integer on every shell poll, so it is read as one.
-        status: async (caller) => ({ count: await ctx.sessions.liveSessionCount(caller) }),
         read: async (caller) => (await ctx.sessions.projectStatus(caller)) as unknown as Json,
       }),
     );

@@ -511,7 +511,7 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
   );
 });
 
-test('status states its own clock and its own limits, and the rail costs one count', async (t) => {
+test('status states its own clock and its own limits, and the shell reads nothing of dispatch', async (t) => {
   const f = await fixture(t);
   await f.http('/sessions/runners/heartbeat', f.key.token, f.heartbeat, f.project.id);
   const before = Date.now();
@@ -532,7 +532,7 @@ test('status states its own clock and its own limits, and the rail costs one cou
   assert.equal(typeof ui.body.result.observedAt, 'string');
   assert.equal(typeof ui.body.result.runnerTotal, 'number');
 
-  // The rail's integer must not pay for a whole status: no candidate enumeration.
+  // The page is no row of the rail, so the shell counts nothing for it and enumerates nothing.
   const workflows = f.app.ctx.workflows as unknown as {
     dispatchCandidates: (...args: unknown[]) => Promise<unknown>;
   };
@@ -546,11 +546,11 @@ test('status states its own clock and its own limits, and the rail costs one cou
     workflows.dispatchCandidates = enumerate;
   });
   const shell = await f.http('/tools/ui.shell', f.operator, {}, f.project.id);
-  assert.equal(
-    shell.body.result.rows.find((entry: { id: string }) => entry.id === 'sessions').status.count,
-    0,
+  assert.deepEqual(
+    shell.body.result.rows.find((entry: { id: string }) => entry.id === 'sessions').status,
+    {},
   );
-  assert.equal(enumerations, 0, 'ui.shell must not enumerate dispatch candidates for a count');
+  assert.equal(enumerations, 0, 'ui.shell must not enumerate dispatch candidates');
   await f.http('/tools/ui.read', f.operator, { rowId: 'sessions' }, f.project.id);
   assert.ok(enumerations >= 1, 'the page itself still reads the queue');
 });

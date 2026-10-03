@@ -27,6 +27,7 @@ import {
 } from '../components';
 import { ArrowRightIcon } from '../icons';
 import { ListPage, Segments, useListFilter } from '../list-filters';
+import { WORK } from '../navigation';
 import { ThreeStates } from '../states';
 import {
   clock,
@@ -271,6 +272,8 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
       : experiments.data?.some((experiment) => experiment.id === instanceId)
         ? { to: `${experimentRow!.path}/${instanceId}`, kind: 'experiments' }
         : undefined;
+  // Every machine Fleet was asked for, the ended ones too: its own page, a step further.
+  const fleet = shell.rows.find((entry) => entry.id === 'fleet');
   const retired = agents.filter((agent) => agent.status === 'retired').length;
   const filter = useListFilter(agents, {
     stateOf: activity,
@@ -328,6 +331,11 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
           nothing is its name and a zero. What waits for an agent is on the Work page's map. */}
       {status && (
         <div className="page-stage stack stack--lg sessions-ops">
+          {/* Work shows what is live; this is everything there is and has been, a step under it. */}
+          <p className="cluster muted">
+            <Link to={WORK.path}>← Work</Link>
+            {fleet && <Link to={fleet.path}>Fleet requests</Link>}
+          </p>
           <section className="stack" aria-label="Dispatch">
             <div className="dispatch">
               <h2 className="section-title">Dispatch</h2>

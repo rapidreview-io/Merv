@@ -379,7 +379,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
       {map && (
         <div className="wmap-stage">
           <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
-          <LiveUnder />
+          <LiveUnder agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path} />
         </div>
       )}
       <ListPage

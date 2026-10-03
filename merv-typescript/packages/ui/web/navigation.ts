@@ -17,7 +17,6 @@ export interface NavSection {
 const SECTION_OF_VIEW: Record<string, string> = {
   artifacts: 'research',
   reflections: 'work',
-  sessions: 'operations',
   code: 'operations',
   feed: 'activity',
   'legacy-history': 'research',
@@ -28,10 +27,14 @@ const SECTION_OF_VIEW: Record<string, string> = {
  * serves its record routes and its ui.read: the wave of work is one
  * Work page now, with what is running on it drawn there, the reference
  * lookup is a control on Paper, and people and connections are Settings.
+ * Agents, their machines and Fleet's requests are reached from the line under
+ * the Work map, and from the sidebar of whichever of them is in hand.
  */
 const HIDDEN = new Set(
-  'research tasks experiments reviews knowledge people connections running'.split(' '),
+  'research tasks experiments reviews knowledge people connections running sessions'.split(' '),
 );
+/** Fleet's page is a collection like any published one, so it is named by its row. */
+const HIDDEN_ROWS = new Set(['fleet']);
 
 /** The one row the shell owns: the current wave of work, framed by its cycle. */
 export const WORK: Row = {
@@ -53,7 +56,9 @@ export const topRows = (rows: Row[]) => rows.filter((row) => row.view.kind === '
 
 /** An archive with nothing in it is not a place; one that reports records is. */
 const shows = (row: Row) =>
-  row.view.kind === 'legacy-history' ? !!row.status.count : !HIDDEN.has(row.view.kind);
+  row.view.kind === 'legacy-history'
+    ? !!row.status.count
+    : !HIDDEN.has(row.view.kind) && !HIDDEN_ROWS.has(row.id);
 
 const SECTION_LABELS: Record<string, string> = {
   research: 'Research',
