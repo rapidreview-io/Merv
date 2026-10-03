@@ -771,6 +771,12 @@
       "version": 1,
       "hash": "20bb7afa2dc67ad965818904e24c1c2d1f7e508d8988aa757772a8cafcd692cb",
       "published": false
+    },
+    {
+      "component": "sandboxes-native",
+      "version": 2,
+      "hash": "dc316a6787960ca3cd117dc8201a4389c6856c14cc3c3761ef6bd8e96b537f42",
+      "published": false
     }
   ]
 }
