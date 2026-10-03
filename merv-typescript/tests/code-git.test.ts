@@ -184,11 +184,19 @@ test('timeout, abort, and close promptly end Git command descendants', async (t)
     const parentFile = join(directory, `${mode}.parent`);
     const childFile = join(directory, `${mode}.child`);
     try {
-      await waitFor(() => existsSync(parentFile) && existsSync(childFile));
+      await waitFor(() =>
+        [parentFile, childFile].every(
+          (file) => existsSync(file) && /^[1-9]\d*\n$/.test(readFileSync(file, 'utf8')),
+        ),
+      );
       const parent = Number(readFileSync(parentFile, 'utf8').trim());
       const child = Number(readFileSync(childFile, 'utf8').trim());
-      assert.ok(stillRunning(parent));
-      assert.ok(stillRunning(child));
+      // A busy runner may observe the PID files after the automatic timeout fired.
+      // Explicit abort/close still require live processes before cancellation.
+      if (mode !== 'timeout') {
+        assert.ok(stillRunning(parent));
+        assert.ok(stillRunning(child));
+      }
       if (mode === 'abort') controller.abort();
       if (mode === 'close') git.close();
       await promptly(
