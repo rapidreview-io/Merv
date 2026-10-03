@@ -170,7 +170,6 @@ function plugins(assets: string, extra: Entry[] = []): Entry[] {
 
 test('human readers can read Settings membership without a People row or actor administration', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-members-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const assets = join(directory, 'bundle');
   mkdirSync(assets);
   writeFileSync(join(assets, 'index.html'), '<!doctype html><title>Members</title>');
@@ -206,7 +205,10 @@ test('human readers can read Settings membership without a People row or actor a
       ),
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const operatorToken = await issueToken('operator-user');
   const readerToken = await issueToken('reader-user');
   const operator = await app.ctx.scope.acceptVerifiedIdentity(
@@ -266,7 +268,6 @@ test('human readers can read Settings membership without a People row or actor a
 
 test('the assembled application serves the bundle, lists rows per active plugin, and survives feed and UI removal', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const assets = join(directory, 'bundle');
   mkdirSync(join(assets, 'assets'), { recursive: true });
   writeFileSync(
@@ -280,7 +281,10 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     config: { plugins: plugins(assets) },
     feed: true,
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const url = app.ctx.api.url!;
   const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
   const operator = credentials.token;
@@ -545,12 +549,14 @@ test('the assembled application serves the bundle, lists rows per active plugin,
 
 test('an unbuilt bundle reports itself instead of a blank page', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-unbuilt-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const app = await createApp({
     directory: join(directory, 'data'),
     config: { plugins: plugins(join(directory, 'nowhere')) },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const response = await raw(app.ctx.api.url!, '/ui/');
   assert.equal(response.status, 503);
   assert.equal(JSON.parse(response.body).error.code, 'ui_not_built');
@@ -558,7 +564,6 @@ test('an unbuilt bundle reports itself instead of a blank page', async (t) => {
 
 test('ui.shell reports a rejected optional configuration as failed, as readiness does', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-plugins-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const app = await createApp({
     directory: join(directory, 'data'),
     config: {
@@ -572,7 +577,10 @@ test('ui.shell reports a rejected optional configuration as failed, as readiness
       ]),
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
   const response = await fetch(`${app.ctx.api.url}/tools/ui.shell`, {
     method: 'POST',
@@ -592,7 +600,6 @@ test('ui.shell reports a rejected optional configuration as failed, as readiness
 
 test('the Connections row reports mount health and serves mount status through ui.read', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-mounts-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const remote = new RemoteFixture();
   await remote.start();
   t.after(() => remote.close());
@@ -627,7 +634,10 @@ test('the Connections row reports mount health and serves mount status through u
       ]),
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   // createApp does not wait for optional upstreams: wait until both mounts finish a round.
   const settled = () => app.ctx.mounts.status().every((mount) => mount.state !== 'connecting');
   for (let wait = 0; wait < 800 && !settled(); wait++)

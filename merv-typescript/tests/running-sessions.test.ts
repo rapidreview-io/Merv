@@ -924,7 +924,6 @@ test('a Fleet machine that refuses work is named as one, never by its hostname',
 /** The default composition over HTTP: the real tools, the real adapters, one snapshot each. */
 test('through ui.running and ui.running_panel, operators and readers see a lease, and only an operator its brief and halt', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-running-sessions-'));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const { plugins } = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as { plugins: { id: string; config?: unknown }[] };
@@ -940,7 +939,10 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
       ) as never,
     },
   });
-  t.after(() => app.stop());
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const credentials = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Op' });
   const operator: Caller = {
     actorId: credentials.actor.id,
