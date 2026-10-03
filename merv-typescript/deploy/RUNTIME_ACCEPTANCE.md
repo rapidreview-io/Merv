@@ -70,10 +70,10 @@ sanitized failures, synthetic identifiers, and aggregate results. Record its SHA
 the exact image ID, and the successful final JSON alongside the release evidence.
 
 The check exercises all default plugins, compiled UI assets, actual MCP artifact and
-task calls, an independent review and idempotent verdict replay, one continuing agent
+new managed Git task admission without GitHub, historical task delivery, an independent review and idempotent verdict replay, one continuing agent
 across two assignments, five tool-call observations with numeric token estimates, a
 signed private file download, research advancing into a five-lens reflection wave,
-and persistence after a full application stop/restart. The second task and reflection
+and persistence after a full application stop/restart. The managed admission task, second historical task and reflection
 wave intentionally remain unfinished in the isolated smoke project. Token counts are
 payload estimates, not model billing. Shared Supabase login and public HTTPS routing
 require their separate acceptance checks; this script uses synthetic actor/session

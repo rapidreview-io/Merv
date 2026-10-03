@@ -15,6 +15,8 @@ import { Client as PostgresClient } from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from '../dist/src/app.js';
+import { historicalTask } from '../dist/tests/fixtures/historical-task.js';
+import { waitForManagedCode } from '../dist/tests/fixtures/managed-code.js';
 
 let stage = 'preflight';
 function checkpoint(value) {
@@ -97,9 +99,21 @@ export async function exerciseRuntime(start) {
     // Code keeps one Git repository per project on the data volume. This image must carry a
     // Git the server can run, and the repository root must be writable where the volume is.
     checkpoint('code-repository');
+    await waitForManagedCode(app.ctx.codeResearch, owner);
     const codeStatus = await call(operator, 'code.status');
     assert.ok(codeStatus.store, 'This image must keep Code repositories');
-    assert.equal(codeStatus.store.hosted, false, 'A synthetic project imports nothing');
+    assert.equal(codeStatus.store.hosted, true, 'A new project has managed Git without an import');
+    assert.equal(codeStatus.store.source, 'managed');
+    assert.equal(codeStatus.project.main.stored, true);
+    const managed = await call(operator, 'task.create', {
+      title: 'Managed Git admission',
+      goal: 'Retain source without GitHub',
+      checks: ['A managed checkout is available'],
+      requestId: 'managed-git',
+    });
+    assert.equal(managed.workspace, 'git');
+    const unit = await app.ctx.codeResearch.unit(owner, managed.id);
+    assert.notEqual(unit.baseStatus?.status, 'blocked');
     assert.ok(codeStatus.store.quotaBytes > 0);
     assert.equal(codeStatus.mirror.state, 'off', 'Nothing is published for a synthetic project');
     console.log(
@@ -117,8 +131,10 @@ export async function exerciseRuntime(start) {
       requestId: 'register',
       secret,
     });
+    // Existing artifact-only work still supports the continuing-agent protocol.
+    // New managed work was admitted above; its leased Git execution has separate worker gates.
     const createTask = (requestId) =>
-      call(operator, 'task.create', {
+      historicalTask(app.ctx, owner, {
         title: `Synthetic ${requestId}`,
         goal: 'Verify the sum.',
         checks: ['Two plus three equals five.'],
