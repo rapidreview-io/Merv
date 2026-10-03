@@ -4812,9 +4812,12 @@ del.cut {
 .running-plane[data-full] {
   grid-template-columns: minmax(0, 1fr);
 }
+/* It scrolls with the page: a scroller of its own that never overflows would keep the wheel. */
 .running-plane[data-full] .running-panel {
   position: static;
   max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
   padding-left: var(--page-pad-x);
   border-left: 0;
 }
