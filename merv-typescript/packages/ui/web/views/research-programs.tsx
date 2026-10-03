@@ -1,9 +1,8 @@
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { useTool } from '../api';
 import {
-  Ago,
   Failure,
   Field,
   LoadState,
@@ -11,33 +10,29 @@ import {
   StatusPill,
   Submit,
   Summary,
-  cx,
   words,
 } from '../components';
-import { ListPage, Tabs, splitRoutes, useListFilter } from '../list-filters';
+import { Tabs, splitRoutes } from '../list-filters';
 import { useCommand } from '../mutations';
+import { WORK } from '../navigation';
 import { Gate, StageMark } from '../process';
-import { useScopeKey, useSession } from '../session';
-import type { ShellData } from '../shell-types';
-import { ThreeStates } from '../states';
 import { ArtifactBody, type Artifact } from './artifacts';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 import { ReviewSummary } from './reviews';
-
-/** Where the waves live when no row says otherwise, as the plugin registers them. */
-const REFLECTIONS = '/reflections';
+import { WorkList } from './work';
 
 // Browser read models intentionally omit server services and authentication types.
 interface Workflow {
   workflow: string;
   state: string;
   revision: number;
-  updatedAt?: string;
+  updatedAt: string;
 }
-interface Reflection {
+export interface Reflection {
   id: string;
   title: string;
+  ownerId: string;
   attempt: number;
   createdAt: string;
   workflow: Workflow;
@@ -67,7 +62,7 @@ function WaveGate({ id, children }: { id: string; children?: ReactNode }) {
   return <Gate graph={process.error ? undefined : process.data}>{children}</Gate>;
 }
 
-function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void }) {
+export function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void }) {
   const [title, setTitle] = useState('');
   const command = useCommand<Reflection>({
     tool: 'reflection.create',
@@ -99,73 +94,6 @@ function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void
   );
 }
 
-/** A reflection wave in the list. */
-interface Phase {
-  id: string;
-  kind: 'reflections';
-  name: string;
-  state: string;
-  flow: Workflow;
-  to: string;
-  meta: ReactNode;
-}
-
-/** Reflection waves; research tracks any resulting consolidation as an ordinary task. */
-function ReflectionList({ shell }: { shell: ShellData }) {
-  const list = useTool<Reflection[]>('reflection.list', {}, { every: 8000 });
-  const { actor } = useSession();
-  const navigate = useNavigate();
-  // The list is mounted from both rows, so it asks the shell where the waves live.
-  const waves = shell.rows.find((entry) => entry.view.kind === 'reflections')?.path ?? REFLECTIONS;
-  const items: Phase[] = (list.data ?? []).map((wave) => ({
-    id: wave.id,
-    kind: 'reflections',
-    name: wave.title,
-    state: wave.workflow.state,
-    flow: wave.workflow,
-    to: `${waves}/${wave.id}`,
-    meta: (
-      <>
-        {wave.lenses.filter((lens) => lens.artifact).length} of {wave.lenses.length} lenses ·{' '}
-        <Ago at={wave.createdAt} />
-      </>
-    ),
-  }));
-  const filter = useListFilter(items, {
-    stateOf: (item) => item.state,
-    labels: (item) => [item.name],
-    ids: (item) => [item.id],
-  });
-  return (
-    <ListPage
-      load={list}
-      noun="reflections"
-      placeholder="Title"
-      filter={filter}
-      emptyTitle="No reflection waves yet"
-      create={{
-        label: 'New reflection',
-        shown: actor.role === 'producer' || actor.role === 'operator',
-        form: () => <CreateReflection onCreated={(wave) => navigate(`${waves}/${wave.id}`)} />,
-      }}
-      line={(item) => ({
-        kind: item.kind,
-        name: (
-          <Link className={cx('row-link', item.id === filter.openId && 'row-open')} to={item.to}>
-            <strong>{item.name}</strong>
-          </Link>
-        ),
-        standing: (
-          <ThreeStates
-            stage={<StageMark shapes={shell.workflows} workflow={item.flow} />}
-            meta={item.meta}
-          />
-        ),
-      })}
-    />
-  );
-}
-
 /**
  * A wave read aggregated first: its report, the synthesis, as the document it is with
  * the change specification under it, then a tab for each lens on its own — who wrote
@@ -181,7 +109,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   if (!wave)
     return (
       <div className="page-stage">
-        <LoadState {...data} back={{ to: row.path, label: row.label }} />
+        <LoadState {...data} back={{ to: WORK.path, label: 'Work' }} />
       </div>
     );
   const tabs = [
@@ -200,7 +128,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   };
   return (
     <RecordPage
-      back={<Link to={row.path}>← {row.label}</Link>}
+      back={<Link to={WORK.path}>← Work</Link>}
       kind={row.view.kind}
       name={wave.title}
       state={<StageMark shapes={shell?.workflows} workflow={wave.workflow} />}
@@ -269,7 +197,5 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   );
 }
 
-const ReflectionRoutes = splitRoutes(ReflectionList, ReflectionDetail);
-export const ReflectionsView = (props: ViewProps) => (
-  <ReflectionRoutes key={useScopeKey()} {...props} />
-);
+/** A wave is a row of the Work list, so its record opens beside that list. */
+export const ReflectionsView = splitRoutes(WorkList, ReflectionDetail, WORK.path);

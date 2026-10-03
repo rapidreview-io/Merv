@@ -16,7 +16,6 @@ export interface NavSection {
 /** Known views map to user jobs; unknown views keep their declared group. */
 const SECTION_OF_VIEW: Record<string, string> = {
   artifacts: 'research',
-  reflections: 'work',
   code: 'operations',
   feed: 'activity',
   'legacy-history': 'research',
@@ -27,11 +26,14 @@ const SECTION_OF_VIEW: Record<string, string> = {
  * serves its record routes and its ui.read: the wave of work is one
  * Work page now, with what is running on it drawn there, the reference
  * lookup is a control on Paper, and people and connections are Settings.
+ * A reflection is a unit of that work: a row of the Work list like a task.
  * Agents, their machines and Fleet's requests are reached from the line under
  * the Work map, and from the sidebar of whichever of them is in hand.
  */
 const HIDDEN = new Set(
-  'research tasks experiments reviews knowledge people connections running sessions'.split(' '),
+  'research tasks experiments reviews reflections knowledge people connections running sessions'.split(
+    ' ',
+  ),
 );
 /** Fleet's page is a collection like any published one, so it is named by its row. */
 const HIDDEN_ROWS = new Set(['fleet']);

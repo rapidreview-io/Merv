@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import type { CodeProjectStatus } from '@merv/contracts/code';
@@ -16,6 +16,7 @@ import { ArrowRightIcon } from '../icons';
 import { newest, useHome, type Flow } from './map-data';
 import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
+import { CreateReflection, type Reflection } from './research-programs';
 import type { Review } from './reviews';
 import type { Task } from './tasks';
 import {
@@ -40,12 +41,13 @@ import {
 /** The tab that narrows nothing: every kind of work the wave holds. */
 const ALL = 'all';
 /** Open work, in the union of the two kinds' own words for having stopped. */
-const isOpen = (state: string) => !['done', 'failed', 'complete', 'abandoned'].includes(state);
+const isOpen = (state: string) =>
+  !['done', 'failed', 'complete', 'approved', 'abandoned'].includes(state);
 
 /** One row of the wave, whichever kind of record it is. */
 interface Item {
   id: string;
-  kind: 'tasks' | 'experiments';
+  kind: 'tasks' | 'experiments' | 'reflections';
   name: string;
   to: string;
   state: string;
@@ -260,6 +262,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
   const tasksRow = rowOf('tasks');
   const experimentsRow = rowOf('experiments');
   const cyclesRow = rowOf('research');
+  const wavesRow = rowOf('reflections');
   const reviewsPath = rowOf('reviews')?.path;
   const tasks = useTool<Task[]>(tasksRow ? 'task.list' : null, {}, { every: 8000 });
   const experiments = useTool<Experiment[]>(
@@ -270,6 +273,8 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
   // Review clauses move with the record beside the list: a claim or a verdict must show.
   const reviews = useTool<Review[]>(rowOf('reviews') ? 'review.list' : null, {}, { every: 8000 });
   const cycles = useTool<ResearchRecord[]>(cyclesRow ? 'research.list' : null);
+  const waves = useTool<Reflection[]>(wavesRow ? 'reflection.list' : null, {}, { every: 8000 });
+  const navigate = useNavigate();
   // The cycle the head shows is the one the narrowing means.
   const cycle = cycles.data?.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
   // The work the cycle itself names: its own prerequisites, and nothing inferred.
@@ -308,6 +313,23 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
         depth: 0,
         waits: [],
       })),
+      // A reflection is a unit of the wave like the work it reflects on.
+      ...(waves.data ?? []).map((wave): Item => ({
+        id: wave.id,
+        kind: 'reflections',
+        name: wave.title,
+        to: `${wavesRow!.path}/${wave.id}`,
+        state: wave.workflow.state,
+        flow: wave.workflow,
+        at: wave.workflow.updatedAt,
+        mine: wave.ownerId === actor.id,
+        outcome: `${wave.lenses.filter((lens) => lens.artifact).length} of ${wave.lenses.length} lenses written`,
+        named: cycle?.reflectionId === wave.id,
+        labels: [wave.title, nameOf(wave.ownerId)],
+        owner: wave.ownerId,
+        depth: 0,
+        waits: [],
+      })),
     ],
     tasks.data ?? [],
   );
@@ -330,6 +352,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
     [
       ['tasks', 'Tasks'],
       ['experiments', 'Experiments'],
+      ['reflections', 'Reflections'],
       ['cycle', 'In this cycle'],
     ] as const
   ).filter(([value]) => items.some(under(value)) || kind === value);
@@ -411,18 +434,29 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
         }
         emptyTitle="No work yet"
         create={
-          cyclesRow && {
-            label: 'New cycle',
-            shown: actor.role === 'operator' || actor.role === 'producer',
-            form: (close) => (
-              <CreateResearch
-                onSaved={() => {
-                  close();
-                  cycles.reload();
-                }}
-              />
-            ),
-          }
+          // Under its own tab the thing to start is a reflection; anywhere else, a cycle.
+          kind === 'reflections'
+            ? {
+                label: 'New reflection',
+                shown: actor.role === 'operator' || actor.role === 'producer',
+                form: () => (
+                  <CreateReflection
+                    onCreated={(wave) => navigate(`${wavesRow!.path}/${wave.id}`)}
+                  />
+                ),
+              }
+            : cyclesRow && {
+                label: 'New cycle',
+                shown: actor.role === 'operator' || actor.role === 'producer',
+                form: (close) => (
+                  <CreateResearch
+                    onSaved={() => {
+                      close();
+                      cycles.reload();
+                    }}
+                  />
+                ),
+              }
         }
         line={(item) => {
           const review = newestReview(reviews.data, item.id);

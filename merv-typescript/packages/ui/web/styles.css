@@ -4565,8 +4565,11 @@ del.cut {
   flex-direction: column;
   gap: var(--space-3);
 }
-.pi-message {
-  max-width: min(100%, 72ch);
+/* Everything in the transcript is as wide as the column the bar and the composer keep
+   (founder, 2026-10-02: an answer fills the width it is given, not a messaging bubble's):
+   a measure wider than any column leaves the column itself as the only limit. */
+.pi-messages .md {
+  --md-measure: 100vw;
 }
 /* Where the machine changed between two turns: one quiet line across the transcript. */
 .pi-divider {
@@ -4590,7 +4593,6 @@ del.cut {
   display: grid;
   justify-items: start;
   gap: var(--space-2);
-  max-width: min(100%, 72ch);
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
@@ -4643,7 +4645,6 @@ del.cut {
 /* How a call the person ran came out: one quiet line, in its card or on the agent's side, never a
    bubble of the person's, with its result unfolding under it. */
 .pi-receipt {
-  max-width: min(100%, 72ch);
   font-size: var(--text-sm);
   color: var(--muted);
 }
@@ -4666,6 +4667,7 @@ del.cut {
    on the page itself. */
 .pi-message--user {
   align-self: flex-end;
+  max-width: 100%;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--bg-soft);

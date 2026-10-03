@@ -41,10 +41,11 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     sections.map((section) => section.id),
     ['research', 'work', 'activity'],
   );
-  // The wave of work is one row the shell owns; the kinds inside it are not places.
+  // The wave of work is one row the shell owns; the kinds inside it, a reflection among
+  // them, are not places.
   assert.deepEqual(
     sections.find((section) => section.id === 'work')!.rows.map((entry) => entry.id),
-    ['work', 'reflections'],
+    ['work'],
   );
   // The paper stands with Home and Now, so it is not one of the sections' rows.
   assert.deepEqual(
@@ -57,6 +58,7 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     'jobs',
     'trials',
     'verdicts',
+    'reflections',
     'people',
     'connections',
     'paper',
@@ -76,7 +78,7 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
   // Work appears only with the work it opens; the archive only when it holds records.
   const listed = (entries: Row[]) =>
     buildNavigation(entries).flatMap((section) => section.rows.map((entry) => entry.id));
-  assert.deepEqual(listed([row('reflections', 'reflections', 'work', 35)]), ['reflections']);
+  assert.deepEqual(listed([row('reflections', 'reflections', 'work', 35)]), []);
   const archive = row('legacy-history', 'legacy-history', 'work', 19);
   assert.deepEqual(listed([archive]), []);
   archive.status = { count: 412 };

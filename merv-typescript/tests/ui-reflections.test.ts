@@ -17,6 +17,7 @@ const { act } = await import('react-dom/test-utils');
 await import('../packages/ui/web/components.js');
 const { ReflectionDetail } = await import('../packages/ui/web/views/research-programs.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
+const { WorkList } = await import('../packages/ui/web/views/work.js');
 
 const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
 const actor = { id: 'actor_op', projectId: project.id, name: 'Operator', role: 'operator' };
@@ -175,4 +176,60 @@ test('before its report a wave opens on its first lens, and an address it cannot
   assert.deepEqual(pressed(), ['Evidence']);
   assert.ok(document.querySelector('section[aria-label="Lenses"]'));
   assert.deepEqual(read(), ['The evidence lens']);
+});
+
+test('a reflection is a row of the Work list, under its own tab, with New reflection there', async (t) => {
+  t.after(async () => await unmount());
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', {
+    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
+  });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  serve('/tools/actor.list', { body: { result: [] } });
+  const at = { revision: 1, updatedAt: '2026-10-01T09:00:00Z' };
+  serve('/tools/task.list', {
+    body: {
+      result: [
+        {
+          id: 'wf_task',
+          title: 'Seed sweep',
+          goal: 'Sweep the seeds',
+          producerId: actor.id,
+          workflow: { workflow: 'task', state: 'done', ...at },
+        },
+      ],
+    },
+  });
+  serve('/tools/reflection.list', {
+    body: {
+      result: [
+        {
+          ...wave(),
+          ownerId: actor.id,
+          workflow: { workflow: 'reflection', state: 'reflecting', ...at },
+        },
+      ],
+    },
+  });
+  const rows = [{ ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } }, row];
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/work'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(SessionProvider, null, createElement(WorkList as any, { shell: { rows } })),
+    ),
+  );
+  await settle(20);
+  const link = document.querySelector<HTMLAnchorElement>('a[href="/reflections/wf_wave"]');
+  assert.equal(link?.textContent, 'Mid-point reflection');
+  assert.ok(link!.closest('li, tr, .row')?.textContent?.includes('4 of 5 lenses written'));
+  const tab = [...document.querySelectorAll('[aria-label="Kind of work"] button')].find((button) =>
+    button.textContent?.startsWith('Reflections'),
+  ) as HTMLButtonElement;
+  assert.ok(tab, text());
+  assert.ok(!text().includes('New reflection'));
+  await act(async () => tab.click());
+  assert.ok(!document.querySelector('a[href="/tasks/wf_task"]'));
+  assert.ok(text().includes('New reflection'));
 });

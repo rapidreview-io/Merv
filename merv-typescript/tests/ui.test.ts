@@ -380,7 +380,8 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     ]),
     [
       ['Research', ['Files']],
-      ['Work', ['Work', 'Reflections']],
+      // A reflection is a unit of the work: a row of the Work list, not a place beside it.
+      ['Work', ['Work']],
       // What is running, and the agents and machines it runs on, are reached from the Work
       // page; their registrations are no places of their own.
       ['Agents', ['Code']],
