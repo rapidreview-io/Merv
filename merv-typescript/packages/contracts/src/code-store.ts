@@ -319,13 +319,3 @@ export const codeMirrorRetryInputSchema = z
   .object({ operationId: id, acknowledgeRemote: oid.optional(), requestId: id })
   .strict();
 export type CodeMirrorRetryInput = z.infer<typeof codeMirrorRetryInputSchema>;
-
-/** Why a machine could not prepare a workspace yet, when nothing about the launch was wrong. */
-export const codeDeferralCauseSchema = z.enum([
-  'code_unavailable',
-  'transport_unavailable',
-  'store_busy',
-  'local_recovery',
-  'base_pending',
-]);
-export type CodeDeferralCause = z.infer<typeof codeDeferralCauseSchema>;

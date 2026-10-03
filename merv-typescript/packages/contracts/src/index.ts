@@ -57,7 +57,6 @@ export {
   codeDownloadReadSchema,
   codeUnitFenceInputSchema,
   codeMirrorRetryInputSchema,
-  codeDeferralCauseSchema,
 } from './code-store.js';
 export type {
   CodeFinding,
@@ -80,7 +79,6 @@ export type {
   CodeDownloadRead,
   CodeUnitFenceInput,
   CodeMirrorRetryInput,
-  CodeDeferralCause,
 } from './code-store.js';
 export type {
   UiManifest,

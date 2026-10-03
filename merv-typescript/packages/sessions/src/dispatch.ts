@@ -1211,7 +1211,7 @@ export class SessionDispatch {
         since,
         code: 'idle',
         why: 'No recent Merv activity: the session is alive and has made no Merv tool call since then. That is not evidence the work is stuck — it may be computing locally, waiting on a remote job or using another service, none of which the server sees.',
-        next: `Check the worker before acting. Nothing closes a session for silence; it ends at its lease deadline, or when an admin halts it with POST /sessions/halt {"sessionId":"${session.id}"}. Halting the worker does not stop a remote job it started, and the retry may start that job again.`,
+        next: `Check the worker before acting. Nothing closes a session for silence; it ends at its lease deadline, or when an admin halts it with POST /sessions/${encodeURIComponent(session.id)}/halt {}. Halting the worker does not stop a remote job it started, and the retry may start that job again.`,
       });
     }
     // A target with a live session is being tried right now, so it is not waiting on anyone.

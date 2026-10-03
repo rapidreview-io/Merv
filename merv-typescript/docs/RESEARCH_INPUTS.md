@@ -4,14 +4,16 @@ Current creation policy: all new tasks and experiments use managed Git, without 
 
 Scope supplies current project intent. Knowledge assembles project records from
 the existing domain services. Code resolves exact machine observations. These are
-working prerequisites for Reflection; they do not create a reflection wave or a
-published research baseline.
+read capabilities used by Reflection and Research. They do not themselves create
+a reflection wave or a published research baseline.
 
 ## Current intent and frozen agent context
 
 `project.get` returns Scope's project record, including `summary` (the
 Introduction) and `contextRevision`. `project.context.update` accepts
-`{summary, expectedSummary, requestId}`. Ordinary operators and producers may
+`{summary, expectedContextRevision, requestId}`, with the revision copied from
+`project.get`. The existing text-baseline form uses `expectedSummary` instead;
+exactly one baseline is required. Ordinary operators and producers may
 edit it; worker sessions and credentialless worker actors cannot. An empty
 Introduction is allowed and creates no workflow gate.
 
@@ -23,8 +25,10 @@ its four sections under Markdown headings, cut to fit with a note pointing at
 caller, and is skipped when the text would not change. An operator's edit lasts
 until the next cycle starts; agents are told not to write it.
 
-New text is trimmed and bounded to 16,000 UTF-8 bytes. `expectedSummary` must
-match the exact stored text, including existing whitespace. An accepted new
+New text is trimmed and bounded to 16,000 UTF-8 bytes. Revision mode detects
+intervening edits even when the text returns to its earlier value. Text mode
+requires `expectedSummary` to match the exact stored text, including existing
+whitespace. An accepted new
 command advances `contextRevision`, even if its text is unchanged. Repeating
 identical normalized input with the same project/actor/request ID returns the
 original receipt. Changed input conflicts, and current write authority is
@@ -34,9 +38,9 @@ commit together.
 New Task and Experiment lease offers capture the project Introduction in their
 server-owned context inputs. An already offered worker keeps that input across
 refreshes and reloads; a later edit becomes input to a later offer. Existing
-frozen packets that lack the new field remain unchanged. Experiment uses its
-existing `experiment` JSON context section, so the four recipe definitions keep
-version 1. The recipe hash identifies the registered formula, not a promise
+frozen packets that lack the new field remain unchanged. Published recipe
+versions and hashes remain immutable. The recipe hash identifies the registered
+formula, not a promise
 that every future offer contains the same project facts.
 
 Implementation: [Scope](../packages/scope/src/project-context.ts),
@@ -59,16 +63,17 @@ next actions. Domain services retain ownership of their records; Knowledge
 passes one State transaction through their public read contracts.
 
 Reference input supports record IDs and explicit `task:`, `experiment:`,
-`artifact:`, `review:`, `code-proposal:`, `code-commit:` and `session-final:`
+`reflection:`, `research:`, `artifact:`, `review:`, `code-proposal:`,
+`code-commit:` and `session-final:`
 prefixes. The resolver distinguishes `resolved`, `missing`,
-`unsupported` and `unpublished`. A foreign-project ID is missing in this
+`unsupported` and `unavailable`. A foreign-project ID is missing in this
 project. Unsupported services are not fabricated. A resolved code-capture
 reference can still have a `pending` capture status: resolving the identity
 does not imply that final code has been reported.
 
-The optional Knowledge UI is the **Research records** page. Its data comes from
-these live reads. Introduction editing remains a Scope operation, separate from
-research publication.
+Knowledge has no separate UI registration. Work views read their owning domain
+services; agents use these two tools for inventory and reference resolution.
+Introduction editing remains a Scope operation, separate from research publication.
 
 Research claims are retired: each existing claim was converted into a Markdown text artifact titled `Claim: …`, which resolves like any other artifact. A `claim:` reference is now an unknown kind and resolves as `unsupported`.
 
@@ -113,10 +118,12 @@ can read a persisted observation after its source credential or actor is
 revoked. This does not restore the old worker's access or authorize a new report.
 `Code.operation` retains its existing worker-only boundary.
 
-These are source-authenticated machine observations. The server does not inspect
-Git objects, and the Runner repository ID identifies its private replica, not a
-global repository authority. Object transport, access on another machine,
-approval and permission to advance central are separate concerns.
+Historical runner-owned captures are source-authenticated machine observations;
+the Runner repository ID identifies its private replica. Current managed Git
+also validates and admits objects into the server-owned repository. Capture,
+object admission, independent review and permission to advance main remain
+separate facts; a legacy capture alone is not proof of current admission. See
+[Always-on Git](ALWAYS_GIT.md) and [Code operations](CODE_OPERATIONS.md).
 
 ## Git Experiments without rewriting version 1
 
@@ -157,7 +164,11 @@ create a consolidation proposal, merge branches or advance central. See
 [Code operations](CODE_OPERATIONS.md) and
 [publication ordering](CODE_PUBLICATION_PLAN.md).
 
-## Python correspondence and remaining work
+## Historical Python comparison and initial acceptance
+
+The following comparison records the initial implementation, before the current
+Reflection and Research programs. It is not a description of missing features
+in the current server.
 
 Python separates current project facts, a reflection's frozen corpus and the
 latest published wave's coverage. Its corpus selects all terminal work and all
@@ -174,7 +185,7 @@ delta, reflection-debt gate or literature-maintenance program is supplied
 here. The existing Experiment cap is not the future
 reflection scheduler's reserved-slot policy.
 
-## Verification scope
+## Historical verification scope
 
 Focused checks cover Scope Introduction authority/replay, frozen worker context,
 complete metadata selection, immutable corpus receipts, missing/foreign refs,
