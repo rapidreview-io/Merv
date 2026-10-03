@@ -9,7 +9,7 @@ import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '
 import { Chips, ListPage, Tabs, useListFilter } from '../list-filters';
 import { RecordPicker, useWorkPicks } from '../record-picker';
 import { useSession } from '../session';
-import { ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
+import { OPEN, ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import type { ShellData } from '../shell-types';
 import { Dependency, StageMark } from '../process';
 import { ArrowRightIcon } from '../icons';
@@ -250,8 +250,8 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
 /**
  * The list the wave is made of. It is the same list wherever it is mounted: the
  * Work page, and the left pane of every record it opens, so a record's siblings
- * stay on screen beside it. On the Work page the map of the same work stands over it,
- * drawn from the records this list already read.
+ * stay on screen beside it. On the Work page the same records are drawn as the map, under
+ * the same row that narrows them, and are listed only where there is no room to draw.
  */
 function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
   const [chosen, setChosen] = useState<string>();
@@ -364,20 +364,25 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
     data: items.length ? items : undefined,
     loadedAt: tasks.loadedAt ?? experiments.loadedAt,
   };
-  // Where the map is drawn its lines say what waits on what, so the rows do not say it again.
-  const [drawn, setDrawn] = useState(false);
+  // Where the map is drawn it is the page's one view of the work, and no row is listed under it.
+  const [drawn, setDrawn] = useState(!!map);
   // One step in for each thing the row waits behind, on the name and on the line under it.
-  const step = (item: Item) => ({ '--depth': drawn ? 0 : item.depth }) as CSSProperties;
-  // What the map draws: every record still open or named by the cycle, and every line
-  // between two of them, each said once by the task at one end of it.
+  const step = (item: Item) => ({ '--depth': item.depth }) as CSSProperties;
+  // What the map draws, and every line between two of them, each said once by the task at one
+  // end of it. As the page opens that is every record still open or named by the cycle, with
+  // what the board holds in flight; once the page is narrowed it is the kept rows and no other.
+  const only =
+    filter.state !== OPEN || !!filter.query || filter.scope !== 'everyone' || kind !== ALL;
+  const kept = new Set(filter.rows);
   const wave: Wave = {
-    items: items.map(({ id, kind, name, flow, at, state, named }) => ({
-      id,
-      kind,
-      name,
-      flow,
-      at,
-      held: isOpen(state) || named,
+    only,
+    items: items.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      name: item.name,
+      flow: item.flow,
+      at: item.at,
+      held: only ? kept.has(item) : isOpen(item.state) || item.named,
     })),
     edges: (tasks.data ?? []).flatMap((task) => [
       ...(task.dependencies ?? []).map((on) => ({
@@ -399,14 +404,17 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
       <div className="page-lede">
         <CycleHead shell={shell} chosen={chosen} onChoose={setChosen} />
       </div>
-      {map && (
-        <div className="wmap-stage">
-          <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
-          <LiveUnder agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path} />
-        </div>
-      )}
       <ListPage
         load={load}
+        drawn={
+          map && (
+            <div className="wmap-stage">
+              <WorkMap shapes={shell.workflows} wave={wave} onDrawn={setDrawn} />
+              <LiveUnder agents={shell.rows.find((row) => row.view.kind === 'sessions')?.path} />
+            </div>
+          )
+        }
+        listed={!map || !drawn}
         noun="work"
         kind="work"
         placeholder="Name, question or person"
@@ -466,7 +474,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
             kind: item.kind,
             name: (
               <span className="chain" style={step(item)}>
-                {!drawn && item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
+                {item.depth > 0 && <span className="chain-elbow" aria-hidden="true" />}
                 <Link
                   className={cx('row-link', item.id === filter.openId && 'row-open')}
                   to={item.to}
@@ -498,7 +506,7 @@ function WaveList({ shell, map }: { shell: ShellData; map?: boolean }) {
                   }
                 />
                 {/* A line of its own: in the narrow pane it would crowd the owner and the time. */}
-                {!drawn && item.waits.length > 0 && (
+                {item.waits.length > 0 && (
                   <p className="chain-waits">Waits on {item.waits.join(', ')}</p>
                 )}
                 {/* Who is on it and where, each the way to that agent's or machine's sidebar. */}
@@ -674,7 +682,7 @@ export function WorkList({ shell }: { shell: ShellData }) {
   return useLiveAbove() ? list : <LiveProvider nameOf={nameOf}>{list}</LiveProvider>;
 }
 
-/** The Work page: the map of the wave, what is live on it, and the list under both. */
+/** The Work page: the row that narrows the wave, its map, and what is live under it. */
 export const WorkView = ({ shell }: { shell: ShellData }) => (
   <WorkPlane nameOf={useActorNames()}>
     <WaveList shell={shell} map />

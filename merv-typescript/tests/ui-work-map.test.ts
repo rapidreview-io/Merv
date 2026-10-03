@@ -548,6 +548,16 @@ test('the map joins the wave’s records to the board by key, and says who is on
     'b>c',
     'd>c',
   ]);
+  // Narrowed by the page, the map is the kept records alone: no prerequisite beside them and
+  // nothing the board holds in flight, and a kept record still wears the board's card.
+  const narrowed = mapOf(given, {
+    only: true,
+    items: [record('c', true), record('a'), { ...record('wf_ablate', true), name: 'Ablate' }],
+    edges: chain,
+  });
+  assert.deepEqual(narrowed.units.map((unit) => unit.key).sort(), ['work:c', 'work:wf_ablate']);
+  assert.ok(narrowed.units.find((unit) => unit.key === 'work:wf_ablate')!.node);
+  assert.deepEqual(narrowed.edges, []);
   // Who is on a unit: its sessions, the machines that serve it, never what it waits on.
   const on = (key: string) => liveOf(given, key).map((node) => node.key);
   assert.deepEqual(on('work:wf_ablate'), ['session:session_ablate', 'compute:c0ffee']);

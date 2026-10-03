@@ -17,7 +17,8 @@ const { act } = await import('react-dom/test-utils');
 await import('../packages/ui/web/components.js');
 const { ReflectionDetail } = await import('../packages/ui/web/views/research-programs.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
-const { WorkList } = await import('../packages/ui/web/views/work.js');
+const { WorkList, WorkView } = await import('../packages/ui/web/views/work.js');
+const { emptyBoard } = await import('./ui-running-fixtures.js');
 
 const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
 const actor = { id: 'actor_op', projectId: project.id, name: 'Operator', role: 'operator' };
@@ -232,4 +233,79 @@ test('a reflection is a row of the Work list, under its own tab, with New reflec
   await act(async () => tab.click());
   assert.ok(!document.querySelector('a[href="/tasks/wf_task"]'));
   assert.ok(text().includes('New reflection'));
+});
+
+test('where the map is drawn the Work page lists nothing under it, and the filter row narrows the map', async (t) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const global = globalThis as any;
+  global.ResizeObserver = class {
+    constructor(private ran: (entries: { contentRect: { width: number } }[]) => void) {}
+    observe() {
+      this.ran([{ contentRect: { width: 1200 } }]);
+    }
+    disconnect() {}
+  };
+  t.after(async () => {
+    delete global.ResizeObserver;
+    await unmount();
+  });
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', {
+    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
+  });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  serve('/tools/actor.list', { body: { result: [] } });
+  serve('/tools/ui.running', { body: { result: emptyBoard() } });
+  const at = { revision: 1, updatedAt: '2026-10-01T09:00:00Z' };
+  const task = (id: string, title: string, state: string) => ({
+    id,
+    title,
+    goal: title,
+    producerId: actor.id,
+    workflow: { workflow: 'task', state, ...at },
+  });
+  serve('/tools/task.list', {
+    body: {
+      result: [task('wf_sweep', 'Seed sweep', 'in_progress'), task('wf_pin', 'Pin seeds', 'done')],
+    },
+  });
+  serve('/tools/reflection.list', {
+    body: {
+      result: [
+        {
+          ...wave(),
+          ownerId: actor.id,
+          workflow: { workflow: 'reflection', state: 'reflecting', ...at },
+        },
+      ],
+    },
+  });
+  const rows = [{ ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } }, row];
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/work'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(SessionProvider, null, createElement(WorkView as any, { shell: { rows } })),
+    ),
+  );
+  await settle(20);
+  const cards = () =>
+    [...document.querySelectorAll('.wmap-node')].map((card) => card.getAttribute('data-key'));
+  // As the page opens: the open work, drawn once and listed nowhere.
+  assert.deepEqual(cards().sort(), ['work:wf_sweep', 'work:wf_wave']);
+  assert.equal(document.querySelector('ul.rows'), null);
+  assert.ok(document.querySelector('.controls + .wmap-stage, .controls ~ .wmap-stage'));
+  const press = async (label: string, name: string) => {
+    const button = [...document.querySelectorAll(`[aria-label="${label}"] button`)].find((item) =>
+      item.textContent?.startsWith(name),
+    ) as HTMLButtonElement;
+    await act(async () => button.click());
+  };
+  await press('Kind of work', 'Reflections');
+  assert.deepEqual(cards(), ['work:wf_wave']);
+  await press('Kind of work', 'All');
+  await press('State of work', 'done');
+  assert.deepEqual(cards(), ['work:wf_pin']);
+  assert.equal(document.querySelector('ul.rows'), null);
 });

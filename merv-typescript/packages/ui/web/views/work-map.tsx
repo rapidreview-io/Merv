@@ -126,6 +126,8 @@ export interface Wave {
   }[];
   /** Every prerequisite and what waits on it, by record. */
   edges: MapEdge[];
+  /** The page narrowed the wave: what it holds is drawn, and nothing beside it. */
+  only?: boolean;
 }
 
 /**
@@ -151,11 +153,12 @@ export function mapOf(
       .filter((edge) => edge.verb === 'waits on')
       .map((edge) => ({ from: edge.to, to: edge.from, waiting: edge.waiting })),
   ];
-  const keys = new Set(nodes.keys());
+  const keys = new Set(wave?.only ? [] : nodes.keys());
   const later = [...items].sort(([, a], [, b]) => b.at.localeCompare(a.at));
   for (const [key, item] of later) if (item.held) keys.add(key);
-  for (const edge of edges.filter((edge) => keys.has(edge.to)))
-    if (items.has(edge.from) || nodes.has(edge.from)) keys.add(edge.from);
+  if (!wave?.only)
+    for (const edge of edges.filter((edge) => keys.has(edge.to)))
+      if (items.has(edge.from) || nodes.has(edge.from)) keys.add(edge.from);
   return {
     units: [...keys].map((key) => {
       const [item, node] = [items.get(key), nodes.get(key)];
@@ -430,7 +433,7 @@ export function WorkMap({
 }: {
   shapes: WorkflowShape[] | undefined;
   wave: Wave;
-  /** Told whether the map is drawn, so the list under it does not say its lines again. */
+  /** Told whether the map is drawn, once its room is known: where it is, the page lists nothing. */
   onDrawn?(drawn: boolean): void;
 }) {
   const live = useContext(LiveContext);
@@ -440,7 +443,7 @@ export function WorkMap({
   const [hover, setHover] = useState<RunningKey | null>(null);
   useEffect(() => {
     const element = frame.current;
-    if (!element || typeof ResizeObserver === 'undefined') return;
+    if (!element || typeof ResizeObserver === 'undefined') return setWidth(-1);
     const observer = new ResizeObserver(([entry]) => setWidth(entry!.contentRect.width));
     observer.observe(element);
     return () => observer.disconnect();
@@ -453,7 +456,8 @@ export function WorkMap({
     width,
   );
   const drawn = !!layout;
-  useEffect(() => void onDrawn?.(drawn), [drawn, onDrawn]);
+  // Unmeasured, nobody knows yet: saying so would flash the rows the drawing replaces.
+  useEffect(() => void (width && onDrawn?.(drawn)), [drawn, width, onDrawn]);
   const names = new Map(units.map((unit) => [unit.key, unit.name]));
   // The unit in hand: itself, or the one a session or a machine in hand serves. It, or the
   // one under the pointer, stays lit with what it waits on and holds up.

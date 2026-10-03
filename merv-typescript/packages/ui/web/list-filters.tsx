@@ -373,6 +373,8 @@ export function ListPage<T extends { id: string }>({
   emptyTitle,
   emptyHint,
   columns = 2,
+  drawn,
+  listed = true,
   after,
 }: {
   load: { loading: boolean; error?: ApiError; data?: unknown; loadedAt?: string };
@@ -402,6 +404,10 @@ export function ListPage<T extends { id: string }>({
   emptyHint?: string;
   /** How many columns the skeleton draws while the read is in flight; two lines by default. */
   columns?: number;
+  /** Where a page draws the kept rows itself: the drawing, under the control row. */
+  drawn?: ReactNode;
+  /** False while that drawing shows every kept row, so the rows are not said twice. */
+  listed?: boolean;
   /** What a page states after its rows, where it holds a second list of another kind. */
   after?: ReactNode;
 }) {
@@ -540,9 +546,11 @@ export function ListPage<T extends { id: string }>({
           }
         />
       )}
+      {drawn}
       {/* A failed refresh degrades to the one stale line LoadState renders above; it
           never blanks rows that are still correct. */}
-      {rows.length > 0 &&
+      {listed &&
+        rows.length > 0 &&
         (cards ? (
           <div className={cards.className}>{rows.map((item) => cards.render(item))}</div>
         ) : (
