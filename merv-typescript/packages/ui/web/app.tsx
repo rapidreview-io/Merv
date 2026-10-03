@@ -4,9 +4,8 @@ import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
 import { EmptyState, LoadState, StatusPill } from './components';
 import { Icon } from './icons';
-import { dormantOwner, humanizeGroup } from './navigation';
+import { WORK, dormantOwner, humanizeGroup } from './navigation';
 import { MOVED, VIEW_KINDS, viewFor } from './views';
-import { MapView } from './views/map';
 import { OverviewView } from './views/overview';
 import { PiProvider } from './views/pi';
 import { PiDock } from './views/pi-dock';
@@ -37,9 +36,9 @@ function NotFound({ shell }: { shell: ShellData }) {
           )
         }
         action={
-          <Link className="btn" to="/">
-            <Icon name="home" />
-            Home
+          <Link className="btn" to={WORK.path}>
+            <Icon name={WORK.view.kind} />
+            Work
           </Link>
         }
       />
@@ -92,8 +91,8 @@ function Workspace() {
         <PageLede rows={shell.data ? rows : []}>
           {shell.data ? (
             <Routes>
-              {/* The map is the home; the standing line it summarises stays one click away. */}
-              <Route path="/" element={<MapView shell={shell.data} />} />
+              {/* A project opens on its work; what needs the reader is one row away. */}
+              <Route path="/" element={<Navigate to={WORK.path} replace />} />
               <Route path="/now" element={<OverviewView shell={shell.data} />} />
               {/* The wave of work is the shell's own page: no one plugin owns it. */}
               <Route path="/work" element={<WorkView shell={shell.data} />} />

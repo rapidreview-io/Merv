@@ -979,7 +979,6 @@ details.stack > summary {
   color: var(--kind, var(--muted));
 }
 .stack,
-.map,
 .signin-card,
 .guard {
   display: flex;
@@ -1015,8 +1014,7 @@ details.stack > summary {
 }
 .muted,
 .states-word,
-.states-detail,
-.map-now-count {
+.states-detail {
   color: var(--muted);
 }
 .mono {
@@ -2538,16 +2536,6 @@ select.input,
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* The bar over the page already says the project's name, so Home's title, which
-     is that name, is kept for whoever hears the page and not drawn under it. */
-  .map > .page-title {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
   /* No hover on a phone: the project switch stays visible. */
   .rail-switch {
     opacity: 1;
@@ -2967,9 +2955,7 @@ select.input,
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* A quiet line under what it belongs to: a note under a plane, the open body of
-   a reference. */
-.plane-note,
+/* A quiet line under what it belongs to: the open body of a reference. */
 .ref-open {
   font-size: var(--text-sm);
   color: var(--muted);
@@ -3149,131 +3135,11 @@ a.states-clause {
   outline-offset: -2px;
 }
 
-/* Map (home) -------------------------------------------------------------
-   The project at a glance: planes of counts above and below, the records in
-   the middle as an object graph. A plane is a labelled band under a hairline,
-   a record on the graph is a card because there the card is the object, and
-   the only accent is the one way out of the map. */
-/* Whose move the open work is. The whole strip is the way to the standing line,
-   so it lights as one thing and ends in the arrow that says so. */
-.map-now {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-4);
-  flex-wrap: wrap;
-  margin-inline: calc(-1 * var(--space-2));
-  padding: 10px var(--space-2);
-  border-radius: var(--radius-md);
-  font-size: var(--text-sm);
-}
-.map-now:hover {
-  background: var(--bg-soft);
-}
-.map-now-count b {
-  color: var(--text);
-  font-size: var(--text-lg);
-  font-variant-numeric: tabular-nums;
-  margin-right: 4px;
-}
-.map-now-go {
-  align-self: center;
-  margin-left: auto;
-  color: var(--muted);
-}
-.map-now:hover .map-now-go {
-  color: var(--active);
-}
-/* Every plane stands on one grid of three columns, and every tile on a grid of
-   three inside its plane, with one gap between them all: a number in any plane is
-   straight above or below the numbers of every other. The plane that closes a band
-   of two takes the other two columns, and six tiles across. */
-.map-band {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  align-items: start;
-  gap: var(--space-4);
-}
+/* A band under a hairline: the Code canvas's branches where it has no room to draw. */
 .plane {
   padding-top: var(--space-3);
   border-top: 1px solid var(--line);
   min-width: 0;
-}
-.plane--wide {
-  grid-column: span 2;
-}
-.plane-title {
-  font-size: var(--text-xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--muted);
-}
-.plane-tiles {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-3) var(--space-4);
-  margin-top: var(--space-3);
-}
-.plane--wide .plane-tiles {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-/* A metric is its number, large, over its name. The number's line is as tall in a
-   tile that states a standing instead, so the names under them stay on one line. */
-.tile {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-.plane-value {
-  display: flex;
-  align-items: center;
-  min-height: 28px;
-  font-size: var(--text-xl);
-  font-weight: 600;
-  line-height: 28px;
-  font-variant-numeric: tabular-nums;
-}
-.tile small {
-  color: var(--muted);
-  font-size: var(--text-xs);
-  overflow-wrap: anywhere;
-}
-a.tile:hover small {
-  color: inherit;
-}
-/* An integration states how it stands, and the way to mend it sits beside that. */
-.tile--state {
-  display: grid;
-  grid-column: span 2;
-  grid-template-columns: auto auto;
-  justify-content: start;
-  align-items: center;
-  column-gap: var(--space-3);
-}
-.tile--state > .btn {
-  grid-area: 1 / 2 / span 2;
-}
-/* The cycle the work belongs to, on one line under the plane's numbers. */
-.plane-note {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: var(--space-1) var(--space-2);
-}
-/* Narrower than three planes can stand side by side, they stack; being one width,
-   their tiles still share one grid, as many across as the page has room for. */
-@media (max-width: 1200px) {
-  .map-band {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .plane--wide {
-    grid-column: auto;
-  }
-  .plane-tiles,
-  .plane--wide .plane-tiles {
-    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-  }
 }
 /* A branch said as a card where the Code canvas has no room to draw (code-canvas.tsx):
    the card is the object the pointer picks up, and its hairline darkens under it. */
@@ -3320,7 +3186,7 @@ a.tile:hover small {
   grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr));
   gap: var(--space-2);
 }
-.map-graph--stacked > :is(.plane-title, .code-card) {
+.map-graph--stacked > .code-card {
   grid-column: 1 / -1;
 }
 .map-graph--stacked .map-node-foot {
@@ -3349,8 +3215,7 @@ a.tile:hover small {
   font-weight: 500;
 }
 /* Motion earns its place by directing attention: a breath only on what is live right
-   now, focus that dims what is not connected, and a number that moves only when its
-   record moved. Nothing here animates because a poll happened, and all of it goes still
+   now, and focus that dims what is not connected. Nothing here animates because a poll happened, and all of it goes still
    on request. */
 @keyframes map-rise {
   from {
@@ -3363,14 +3228,7 @@ a.tile:hover small {
     opacity: 0.3;
   }
 }
-@keyframes map-roll {
-  from {
-    opacity: 0;
-    transform: translateY(-6px);
-  }
-}
-.plane,
-.map-now {
+.plane {
   animation: map-rise 260ms ease-out both;
 }
 .map-node {
@@ -3383,9 +3241,6 @@ a.tile:hover small {
    ring on the chosen card is what says which one is chosen. */
 .map-node.dim {
   opacity: 0.72;
-}
-.plane-value.changed {
-  animation: map-roll 380ms ease-out;
 }
 /* Work lists: split pane and scope. -------------------------------------- */
 /* Above 1080px a record opens beside the list that sent you to it. Nothing is

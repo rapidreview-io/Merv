@@ -8,6 +8,8 @@ import {
   headed,
   holds,
   topRows,
+  working,
+  WORK,
 } from '../packages/ui/web/navigation.js';
 import type { PluginState, Row } from '../packages/ui/web/shell-types.js';
 
@@ -40,15 +42,13 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
   const sections = buildNavigation(rows);
   assert.deepEqual(
     sections.map((section) => section.id),
-    ['research', 'work', 'activity'],
+    ['research', 'activity'],
   );
-  // The wave of work is one row the shell owns; the kinds inside it, a reflection among
-  // them, are not places.
-  assert.deepEqual(
-    sections.find((section) => section.id === 'work')!.rows.map((entry) => entry.id),
-    ['work'],
-  );
-  // The paper stands with Home and Now, so it is not one of the sections' rows.
+  // The wave of work is one row the shell owns, leading the rail over every section; the
+  // kinds inside it, a reflection among them, are not places.
+  assert.equal(working(rows), true);
+  assert.equal(working([row('feed', 'feed', 'activity', 30)]), false);
+  // The paper stands with Work and Now, so it is not one of the sections' rows.
   assert.deepEqual(
     topRows(rows).map((entry) => entry.id),
     ['paper'],
@@ -67,20 +67,17 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     assert.ok(!shown.includes(hidden), `${hidden} is registered but not a place`);
   // Every row the rail does show is the registration itself, untouched.
   for (const entry of sections.flatMap((section) => section.rows))
-    if (entry.id !== 'work')
-      assert.equal(
-        entry,
-        rows.find((original) => original.id === entry.id),
-      );
-  const work = sections.find((section) => section.id === 'work')!.rows[0];
-  assert.deepEqual({ path: work.path, kind: work.view.kind }, { path: '/work', kind: 'work' });
-  assert.ok(!rows.includes(work), 'no plugin registered the Work row');
+    assert.equal(
+      entry,
+      rows.find((original) => original.id === entry.id),
+    );
+  assert.deepEqual({ path: WORK.path, kind: WORK.view.kind }, { path: '/work', kind: 'work' });
   assert.deepEqual(rows, before);
   // No page is nowhere: a record of the work, and the agents behind it, light the Work row.
   const lit = (pathname: string) =>
-    sections.flatMap((section) =>
-      section.rows.filter((entry) => holds(entry, pathname, rows)).map((entry) => entry.id),
-    );
+    [WORK, ...sections.flatMap((section) => section.rows)]
+      .filter((entry) => holds(entry, pathname, rows))
+      .map((entry) => entry.id);
   assert.deepEqual(lit('/work'), ['work']);
   assert.deepEqual(lit('/task-browser/wf_1'), ['work']);
   assert.deepEqual(lit('/reflections/wf_2'), ['work']);
@@ -143,16 +140,16 @@ test('plugin removal removes only its rows and re-addition restores navigation w
   const extension = row('custom', 'unrecognized', 'extensions', 30);
   const all = [tasks, feed, artifacts, extension];
   const initial = buildNavigation(all);
-  // Files belong to Research; the tasks row is not a place, but Work opens on it.
+  // Files belong to Research; the tasks row is not a place.
   assert.deepEqual(initial[0].rows, [artifacts]);
   assert.deepEqual(
     initial.map((section) => section.id),
-    ['research', 'work', 'activity', 'extensions'],
+    ['research', 'activity', 'extensions'],
   );
   const removed = buildNavigation([tasks, extension]);
   assert.deepEqual(
     removed.flatMap((section) => section.rows.map((entry) => entry.id)),
-    ['work', 'custom'],
+    ['custom'],
   );
   assert.ok(!removed.some((section) => section.id === 'activity'));
   assert.deepEqual(buildNavigation([extension, artifacts, tasks, feed]), initial);

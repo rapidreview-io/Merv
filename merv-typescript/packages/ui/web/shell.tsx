@@ -14,6 +14,8 @@ import {
   headed,
   holds as held,
   topRows,
+  working,
+  WORK,
 } from './navigation';
 import { stepped } from './record-picker';
 import { needsYou } from './views/overview';
@@ -198,7 +200,7 @@ function AccountFoot() {
 }
 
 /**
- * The one navigation. Home, Now and the paper first, then every other registered
+ * The one navigation. Work, Now and the paper first, then every other registered
  * collection as its own row under the heading of the section it belongs to, then
  * Settings and the account at the foot. Nothing is hidden behind a row or a title.
  */
@@ -238,7 +240,9 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         )}
       </div>
       <nav className="rail-nav">
-        <RailRow to="/" icon="home" label="Home" active={pathname === '/'} />
+        {working(rows) && (
+          <RailRow to={WORK.path} icon={iconOf(WORK)} label={WORK.label} active={holds(WORK)} />
+        )}
         <RailRow to="/now" icon="now" label="Now" active={pathname === '/now'} count={needsYou} />
         {topRows(rows).map((row) => (
           <RailRow

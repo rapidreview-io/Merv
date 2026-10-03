@@ -1,8 +1,8 @@
-import { clip, type Caller, type Data, type Json } from '@merv/contracts';
+import { clip, type Caller, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { UiRow } from './types.js';
 
-/** What the home pages draw, and the read-only tool that owns each part. */
+/** What Now and the rail read, and the read-only tool that owns each part. */
 const PARTS: [string, string][] = [
   ['project', 'project.get'],
   ['actors', 'actor.list'],
@@ -10,18 +10,11 @@ const PARTS: [string, string][] = [
   ['tasks', 'task.list'],
   ['reviews', 'review.list'],
   ['cycles', 'research.list'],
-  ['files', 'artifact.list'],
   // Without an instance, this one answers for every workflow in the project at once.
   ['workflows', 'workflow.status_and_next'],
 ];
 /** The rows whose own read the page draws, and what each of them is asked for. */
-const READS: [string, string, Record<string, unknown>?][] = [
-  ['reflections', 'reflections'],
-  ['paper', 'paper'],
-  ['sessions', 'sessions'],
-  ['connections', 'connections'],
-  ['archive', 'legacy-history', { action: 'summary' }],
-];
+const READS: [string, string][] = [['reflections', 'reflections']];
 
 /** A part whose tool is absent, or whose answer this caller may not read, is null. */
 const answer = async (fn: () => Promise<unknown>): Promise<Json> => {
@@ -47,7 +40,7 @@ export async function identityOf(tools: Tools, caller: Caller): Promise<Record<s
 }
 
 /**
- * Everything the home pages draw, in one answer. Read-only tools run in one snapshot
+ * Everything Now and the rail read, in one answer. Read-only tools run in one snapshot
  * scope, so this is a single consistent read of the project rather than twenty round
  * trips at a browser's latency. A part whose plugin is not loaded, or whose answer this
  * caller may not read, is null: the page draws what it has and never fails whole.
@@ -68,9 +61,9 @@ export async function homeRead(
     ]),
   );
   const reads = await Promise.all(
-    READS.map(async ([key, kind, params]) => {
+    READS.map(async ([key, kind]) => {
       const row = rows.find((item) => item.view.kind === kind && item.read);
-      return [key, row ? await answer(async () => await read(caller, row.id, params)) : null];
+      return [key, row ? await answer(async () => await read(caller, row.id)) : null];
     }),
   );
   return Object.fromEntries(
@@ -79,8 +72,8 @@ export async function homeRead(
 }
 
 /**
- * What the map draws of each record, and nothing else: the page polls this answer,
- * and a project's full session history, findings and evidence were most of its weight.
+ * What the pages read of each record, and nothing else: they poll this answer, and a
+ * record's findings and evidence would be most of its weight.
  * An absent key is an answer of null, kept as it is.
  */
 const KEEP: Record<string, string[]> = {
@@ -98,11 +91,9 @@ const KEEP: Record<string, string[]> = {
   ],
   reviews: ['id', 'subjectId', 'status', 'reviewerId', 'claimable', 'verdict', 'createdAt'],
   cycles: ['id', 'name', 'ownerId', 'workflow'],
-  files: ['size'],
   reflections: ['id', 'title', 'ownerId', 'workflow'],
-  connections: ['state'],
 };
-/** The map shows a summary of each record's prose; the record's page has all of it. */
+/** A summary of each record's prose is enough here; the record's page has all of it. */
 const brief = (value: Json): Json =>
   typeof value === 'string' && value.length > 400
     ? `${clip(value, 399)}…`
@@ -121,42 +112,5 @@ const pick = (record: Json, keys: string[]): Json =>
     : record;
 function trim(key: string, value: Json): Json {
   const keys = KEEP[key];
-  if (keys && Array.isArray(value)) return value.map((item) => pick(item, keys));
-  // The map draws each paper document's sections and whether it is published; the page
-  // itself reads the paper, with its citations and proposals and every section in full.
-  if (key === 'paper' && value && typeof value === 'object' && !Array.isArray(value)) {
-    const documents = (value as { documents?: Record<string, Json> }).documents;
-    return {
-      documents: Object.fromEntries(
-        Object.entries(documents ?? {}).map(([kind, document]) => {
-          const { current, published } = document as Record<string, Json>;
-          return [
-            kind,
-            {
-              current: {
-                ...(pick(current, ['kind', 'revision', 'updatedAt', 'updatedBy']) as Data),
-                sections: Array.isArray((current as Record<string, Json>)?.sections)
-                  ? ((current as Record<string, Json>).sections as Json[]).map((section) =>
-                      pick(section, ['id', 'title', 'content']),
-                    )
-                  : [],
-              },
-              published: published ? pick(published as Json, ['publication']) : (published ?? null),
-            },
-          ];
-        }),
-      ),
-    };
-  }
-  if (key === 'sessions' && value && typeof value === 'object' && !Array.isArray(value)) {
-    const { sessions: _sessions, agents, runners, ...rest } = value as Record<string, Json>;
-    return {
-      ...rest,
-      agents: Array.isArray(agents) ? agents.map((agent) => pick(agent, ['id', 'status'])) : agents,
-      runners: Array.isArray(runners)
-        ? runners.map((runner) => pick(runner, ['id', 'live']))
-        : runners,
-    };
-  }
-  return value;
+  return keys && Array.isArray(value) ? value.map((item) => pick(item, keys)) : value;
 }
