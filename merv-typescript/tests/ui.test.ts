@@ -381,8 +381,6 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     ]),
     [
       ['Research', ['Files']],
-      // A reflection is a unit of the work: a row of the Work list, not a place beside it.
-      ['Work', ['Work']],
       // What is running, and the agents and machines it runs on, are reached from the Work
       // page; their registrations are no places of their own.
       ['Agents', ['Code']],
@@ -441,22 +439,16 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'row_unreadable',
   );
   assert.equal((await tool('ui.read', operator, { rowId: 'absent' })).status, 404);
-  // The home page is one read, and a part this caller may not read is null rather
+  // Now and the rail share one read, and a part this caller may not read is null rather
   // than a failure that would take the page with it.
   const home = (await tool('ui.home', operator)).body.result as Record<string, unknown>;
   assert.deepEqual(Object.keys(home).sort(), [
     'actors',
-    'archive',
-
-    'connections',
     'cycles',
     'experiments',
-    'files',
-    'paper',
     'project',
     'reflections',
     'reviews',
-    'sessions',
     'tasks',
     'workflows',
   ]);

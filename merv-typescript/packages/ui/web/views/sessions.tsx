@@ -482,7 +482,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
               </div>
             )}
           </section>
-          {/* The number is the agents there are, as Home counts them; the ones that have
+          {/* The number is the agents there are; the ones that have
               retired stay in the list under their own state word. */}
           <h2 className="section-title">
             Agents{' '}

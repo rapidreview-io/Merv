@@ -133,7 +133,7 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
   const lit = chips.find((item) => item.label === chip)?.lights ?? null;
 
   const label = github?.status === 'disconnected' ? 'Connect GitHub' : 'Select repository';
-  // The way to Integrations is offered to whoever can do something there, as on Home:
+  // The way to Integrations is offered to whoever can do something there:
   // a server with no GitHub app, or a reader who may not manage it, is shown no door
   // to a room that holds nothing for them.
   const mends = !!github?.configured && !!github.canManage;

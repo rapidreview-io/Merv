@@ -15,7 +15,6 @@ const { MemoryRouter, Routes, Route } = await import('react-router-dom');
 await import('../packages/ui/web/components.js');
 const { NeedsYou, needsYou, recordSentence, reviewSentence } =
   await import('../packages/ui/web/views/overview.js');
-const { plural, share, verdictWord } = await import('../packages/ui/web/views/map-data.js');
 
 const row = (kind: string) => ({
   id: kind,
@@ -392,20 +391,6 @@ test('with nothing to do the page says so once, and an unwell row still needs so
   await mount(standing([]));
   assert.equal(document.querySelector('.empty-state'), null);
   assert.ok(text().includes('The task store is read-only'));
-});
-
-test('a word agrees with its number, a whole is said once, and a verdict is what happened', () => {
-  assert.equal(plural(1, 'Review', 'Reviews'), 'Review');
-  assert.equal(plural(0, 'Review', 'Reviews'), 'Reviews');
-  assert.equal(plural(2, 'Review', 'Reviews'), 'Reviews');
-  assert.equal(plural(undefined, 'File', 'Files'), 'Files', 'a count not yet read is many');
-  assert.equal(share(2, 2), '2');
-  assert.equal(share(1, 2), '1/2');
-  assert.equal(share(0, 0), '0');
-  assert.equal(verdictWord('pass'), 'passed');
-  assert.equal(verdictWord('fail'), 'failed');
-  assert.equal(verdictWord('needs_changes'), 'asked for changes');
-  assert.equal(verdictWord('something_else'), 'something else');
 });
 
 test('a Code blocker whose next move is a person’s stands on Now, in the person’s words', () => {

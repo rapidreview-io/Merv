@@ -212,8 +212,8 @@ test('a mistyped address is a page not found, with the way home and no word abou
   assert.equal(document.title, 'Page not found · Grokking replication · Merv');
   assert.ok(!/plugin|registered/i.test(document.querySelector('.main')!.textContent ?? ''));
   const home = document.querySelector<HTMLAnchorElement>('.empty-state a.btn')!;
-  assert.equal(home.textContent, 'Home');
-  assert.equal(home.getAttribute('href'), '/');
+  assert.equal(home.textContent, 'Work');
+  assert.equal(home.getAttribute('href'), '/work');
 });
 
 test('an address whose plugin is switched off says which, and how it stands', async (t) => {
@@ -224,7 +224,7 @@ test('an address whose plugin is switched off says which, and how it stands', as
   assert.ok(page.textContent!.includes('Feed is switched off'));
   assert.ok(page.textContent!.includes('feed-ui'));
   assert.ok(page.querySelector('.status'), 'the state is a state word, not a sentence');
-  assert.ok(page.querySelector('a.btn[href="/"]'));
+  assert.ok(page.querySelector('a.btn[href="/work"]'));
 });
 
 test('Settings keeps its title in every room, and folds its diagnostics under one line each', async (t) => {
@@ -545,4 +545,26 @@ test('an address this app moved elsewhere opens there, whether or not a plugin r
   boot('Operator');
   await open('/knowledge');
   assert.equal(document.querySelector('h1')!.textContent, 'Paper');
+});
+
+test('a project opens on Work, which leads the rail over Now and the paper; there is no Home', async (t) => {
+  t.after(async () => await unmount());
+  boot('Operator', { rows: [...rows, row('tasks', 'tasks', 'work', 10, 'Tasks')] });
+  await open('/');
+  const links = [...rail().querySelectorAll('.rail-nav a')];
+  assert.deepEqual(
+    links
+      .slice(0, 3)
+      .map((link) => [
+        link.querySelector('.rail-label')?.textContent ?? link.textContent,
+        link.getAttribute('href'),
+      ]),
+    [
+      ['Work', '/work'],
+      ['Now', '/now'],
+      ['Paper', '/paper'],
+    ],
+  );
+  assert.ok(!links.some((link) => link.getAttribute('href') === '/'));
+  assert.equal(rail().querySelector('[aria-current="page"]')?.getAttribute('href'), '/work');
 });

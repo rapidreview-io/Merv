@@ -1085,12 +1085,6 @@ test('the assembled application offers the stuck report as a read tool and the g
     ['dispatch_disabled'],
   );
   assert.equal(report.total, 1);
-  // The home read trims the sessions row to its facts; the stuck counts are one of them.
-  const home = (await app.ctx.tools.call('ui.home', owner, {})) as {
-    sessions: { stuck: Pick<StuckReport, 'total' | 'counts'>; sessions?: unknown };
-  };
-  assert.deepEqual(home.sessions.stuck, { total: 1, counts: report.counts });
-  assert.equal(home.sessions.sessions, undefined);
   const release = {
     instanceId: task.id,
     expectedRevision: task.workflow.revision,

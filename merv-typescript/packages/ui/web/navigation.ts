@@ -50,8 +50,12 @@ export const WORK: Row = {
   readable: false,
 };
 
+/** Work leads the rail, and a project opens on it, wherever the work it draws is registered. */
+export const working = (rows: Row[]) =>
+  rows.some((row) => ['tasks', 'experiments'].includes(row.view.kind));
+
 /**
- * The paper stands with Home and Now rather than inside a section: it is what the
+ * The paper stands with Work and Now rather than inside a section: it is what the
  * project is writing, not one collection among the others.
  */
 export const topRows = (rows: Row[]) => rows.filter((row) => row.view.kind === 'paper');
@@ -92,12 +96,10 @@ export const humanizeGroup = (group: string) =>
  * Build sections from registered rows. Deterministic: rows sort by the
  * server-declared order (id as tiebreaker), known sections keep a fixed
  * order, and unknown sections follow in the order their first row appears.
- * Every non-settings row the rail shows lands in exactly one section, and the
- * shell's own Work row joins them wherever the work it opens is registered.
+ * Every non-settings row the rail shows under a heading lands in exactly one section.
  */
 export function buildNavigation(rows: Row[]): NavSection[] {
-  const working = rows.some((row) => ['tasks', 'experiments'].includes(row.view.kind));
-  const sorted = [...(working ? [WORK] : []), ...rows]
+  const sorted = rows
     .filter((row) => row.group !== 'settings' && shows(row) && row.view.kind !== 'paper')
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const sections = new Map<string, NavSection>();
@@ -140,8 +142,8 @@ export function accountLines(name: string | undefined, role: string): string[] {
 
 /**
  * What the browser's tab, its history and a screen reader's page announcement say:
- * the page's own heading, then the project, then the app — each once, so Home, whose
- * heading is the project's name, does not say it twice.
+ * the page's own heading, then the project, then the app — each once, so a
+ * page whose heading is the project's name does not say it twice.
  */
 export const documentTitle = (heading: string | undefined, project: string): string =>
   [heading?.trim(), project.trim(), 'Merv']

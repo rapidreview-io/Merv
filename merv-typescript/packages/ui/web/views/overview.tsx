@@ -34,7 +34,7 @@ import { newest, useHome, type Flow, type HomeData } from './map-data';
  * a publication nobody has merged is a wait on a human and not a record that is running.
  * Whose hands everything else is in, and what it waits on, is the Work page's map. Every
  * card is gated on its owning ui.shell row, so it goes quiet with its plugin, and every
- * fact on the page comes from the one read the rail and Home share. An absent value is
+ * fact on the page comes from the one read the rail shares. An absent value is
  * never rendered as zero and an error is never rendered as empty.
  */
 
