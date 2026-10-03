@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
 import assert from 'node:assert/strict';
@@ -1662,7 +1663,7 @@ test('a target that returns after more than 200 released allocations gets a new 
 type Hosted = Awaited<ReturnType<typeof hosted>>;
 /** A task someone delivered at the desk, awaiting its review. */
 async function delivered(h: Hosted, by: Caller, requestId: string) {
-  const task = await h.tasks.create(by, {
+  const task = await historicalTask(h, by, {
     title: requestId,
     goal: 'Verify addition.',
     checks: ['Two plus three equals five.'],
@@ -1804,7 +1805,7 @@ test('Fleet produces Pi-directed work and its review director reviews the ownerâ
     conversation: { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'runtime' },
   };
   const review = await delivered(h, caller, 'human');
-  const producing = await h.tasks.create(pi, {
+  const producing = await historicalTask(h, pi, {
     title: 'Producing',
     goal: 'Add.',
     checks: ['It adds.'],

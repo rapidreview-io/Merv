@@ -223,6 +223,7 @@ const sharedContract = (specifier: string) =>
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */
 const codeUtilityExports = new Set([
+  'store/managed',
   'base-merge',
   'base-plan',
   'base-schema',
@@ -1086,19 +1087,19 @@ test('each service boots with only its declared dependency closure and without A
                 ).status,
                 'requested',
               );
-            if (target === 'tasks')
-              assert.equal(
-                (
-                  await ctx.tasks.create(caller, {
-                    title: 'Standalone task',
-                    goal: 'Run alone.',
-                    checks: ['The service works.'],
-                    briefId: artifact.id,
-                    requestId: 'task',
-                  })
-                ).workflow.state,
-                'in_progress',
+            if (target === 'tasks') {
+              assert.deepEqual(await ctx.tasks.list(caller), []);
+              await assert.rejects(
+                ctx.tasks.create(caller, {
+                  title: 'Standalone task',
+                  goal: 'Run alone.',
+                  checks: ['The service works.'],
+                  briefId: artifact.id,
+                  requestId: 'task',
+                }),
+                { code: 'code_unavailable' },
               );
+            }
             if (target === 'feed')
               assert.equal(
                 (

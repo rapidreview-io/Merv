@@ -1,3 +1,6 @@
+// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -87,7 +90,7 @@ async function assembled(t: TestContext) {
   let sequence = 0;
   const request = () => `request-${++sequence}`;
   const create = async (name: string, dependsOn: string[] = []) =>
-    await app.ctx.experiments.create(operator, {
+    await historicalExperiment(app.ctx, operator, {
       name,
       intent: `Does ${name} change held-out accuracy?`,
       dependsOn,
@@ -217,7 +220,7 @@ async function seedRun(
 test('an open experiment is a work card that says where it stands and what it waits on, read without evaluating a gate', async (t) => {
   const f = await assembled(t);
   const producer = f.operator;
-  const prerequisite = await f.app.ctx.tasks.create(producer, {
+  const prerequisite = await historicalTask(f.app.ctx, producer, {
     title: 'Clean held-out set',
     goal: 'Remove leaked examples.',
     checks: ['No example appears in both splits.'],

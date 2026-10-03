@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -27,7 +28,7 @@ async function fixture(api = false) {
     reader = await issue('reader');
   let sequence = 0;
   const create = async (extra: Partial<TaskCreate> = {}) =>
-    await app.ctx.tasks.create(producer.caller, {
+    await historicalTask(app.ctx, producer.caller, {
       title: 'Check addition',
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
@@ -398,7 +399,11 @@ test('experiment.plan is retired: no version of it can be created', async () => 
     for (const typeVersion of [undefined, 1, 2])
       await assert.rejects(
         async () =>
-          await f.create({
+          await f.app.ctx.tasks.create(f.producer.caller, {
+            title: 'Unavailable type',
+            goal: 'Reject retired types.',
+            checks: ['No work created.'],
+            requestId: `retired-${typeVersion}`,
             type: 'experiment.plan',
             ...(typeVersion ? { typeVersion } : {}),
             contextInputs: {},

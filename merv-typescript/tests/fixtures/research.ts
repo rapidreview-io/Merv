@@ -1,4 +1,12 @@
-import type { Caller, CodeUnit, CodeUnitPublication, State, Tasks } from '@merv/contracts';
+import { historicalTask } from './historical-task.js';
+import type {
+  Artifacts,
+  Caller,
+  CodeUnit,
+  CodeUnitPublication,
+  State,
+  Tasks,
+} from '@merv/contracts';
 import type { ResearchService } from '@merv/research';
 
 /** What the test says main lacks and where a unit's publication stands; changed as it goes. */
@@ -15,7 +23,7 @@ export interface Main {
  */
 export function hostedCode(
   research: ResearchService,
-  ctx: { state: State; tasks: Tasks },
+  ctx: { state: State; tasks: Tasks; artifacts: Artifacts },
   owner: Caller,
   main: Main,
 ): string[] {
@@ -38,7 +46,8 @@ export function hostedCode(
   });
   const serviceTasks = (): ReturnType<Tasks['serviceTasks']> => ({
     create: async (input, tx) =>
-      await ctx.tasks.create(
+      await historicalTask(
+        ctx,
         owner,
         {
           title: input.title,

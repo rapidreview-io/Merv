@@ -1,3 +1,4 @@
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { MervError } from '@merv/contracts';
 import { UiRegistry } from '@merv/ui';
 import { SignJWT } from 'jose';
@@ -404,41 +405,25 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   // A record page reads its record and the gate it stands at in one answer.
   for (const id of ['tasks', 'experiments'])
     assert.equal(shell.rows.find((entry) => entry.id === id)?.readable, true);
-  const emptyCode = {
-    commands: [],
-    status: {
-      project: null,
-      // The default composition keeps repositories; this project has imported nothing.
-      store: {
-        hosted: false,
-        objectFormat: null,
-        rootOid: null,
-        source: null,
-        tips: [],
-        diskBytes: 0,
-        quotaBytes: 10 * 1024 * 1024 * 1024,
-        limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
-        // The default composition configures no off-host copy, so there is none to report.
-      },
-      operations: [],
-      // Nothing is published while no GitHub repository is linked, and that is quiet.
-      mirror: {
-        state: 'off',
-        repository: null,
-        blockedBy: 'github_unconfigured',
-        pending: 0,
-        oldestPendingAt: null,
-        lastError: null,
-        blockedRefs: [],
-      },
-      warnings: [],
-      units: [],
-      bases: [],
-      blockers: [],
-    },
-  };
-  assert.deepEqual((await tool('ui.read', operator, { rowId: 'code' })).body.result, emptyCode);
-  assert.deepEqual((await tool('ui.read', reader, { rowId: 'code' })).body.result, emptyCode);
+  // New projects expose their real managed root even before any work or GitHub connection.
+  await waitForManagedCode(app.ctx.codeResearch, {
+    projectId: credentials.project.id,
+    actorId: credentials.actor.id,
+    credentialId: credentials.credential.id,
+  });
+  const managedCode = (await tool('ui.read', operator, { rowId: 'code' })).body.result;
+  assert.equal(managedCode.status.project.repositoryId, `merv:${credentials.project.id}`);
+  assert.equal(managedCode.status.project.main.stored, true);
+  assert.equal(managedCode.status.store.hosted, true);
+  assert.deepEqual(managedCode.status.units, []);
+  assert.deepEqual(managedCode.status.bases, []);
+  assert.equal(managedCode.status.mirror.state, 'off');
+  assert.deepEqual(
+    managedCode.status.operations,
+    [],
+    'completed initialization is not active work',
+  );
+  assert.deepEqual((await tool('ui.read', reader, { rowId: 'code' })).body.result, managedCode);
   assert.equal(shell.plugins.length, plugins(assets).length);
   assert.ok(shell.plugins.every((entry) => entry.state === 'active'));
   // A reader sees the rows, and no row asks for a number it cannot answer for

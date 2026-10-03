@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createService } from '@merv/contracts';
@@ -11,7 +12,7 @@ import { resolutionFixture } from './fixtures/resolution.js';
 
 test('pending-merge migration preserve populated owner databases and enforce write-once facts', async (t) => {
   const f = await resolutionFixture(t);
-  const task = await f.tasks.create(f.admin, {
+  const task = await historicalTask(f, f.admin, {
     title: 'Existing task',
     goal: 'Keep the existing work readable.',
     checks: ['Existing evidence is retained.'],

@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -73,21 +74,21 @@ async function fixture(t: TestContext) {
   );
   const key = (await http('/account/keys', operator, { projectId: project.id })).body;
   const readerKey = (await http('/account/keys', reader, { projectId: project.id })).body;
-  const createTask = async (requestId: string) => {
-    const result = await http(
-      '/tools/task.create',
-      key.token,
+  // Historical work keeps these dispatch tests independent of Git worker capabilities.
+  const createTask = async (requestId: string) =>
+    historicalTask(
+      app.ctx,
+      await app.ctx.scope.caller(
+        { kind: 'key', key: await app.ctx.scope.authenticateKey(key.token) },
+        project.id,
+      ),
       {
         title: 'Bounded scheduled work',
         goal: 'Produce evidence',
         checks: ['Evidence is independently verifiable.'],
         requestId,
       },
-      project.id,
     );
-    assert.equal(result.status, 200, JSON.stringify(result));
-    return result.body.result;
-  };
   const task = await createTask('first-task');
   const heartbeat = {
     runnerId: 'machine-local-id',

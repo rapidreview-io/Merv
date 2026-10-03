@@ -28,7 +28,8 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
     tool: 'code.repository.prepare',
     idempotent: true,
     validate: (value) =>
-      ['ready', 'importing', 'failed'].includes(value?.state) && !!value.operation,
+      ['ready', 'importing', 'review_required', 'failed'].includes(value?.state) &&
+      !!value.operation,
     onSuccess: setResult,
   });
   useEffect(() => {
@@ -39,7 +40,11 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
     return () => clearTimeout(timer);
   }, [result, command.busy, command.error, input]);
   const prepare = async () => {
-    if (input && (command.retry || result?.state === 'importing')) {
+    if (
+      input &&
+      (command.retry ||
+        (!command.error && ['importing', 'review_required'].includes(result?.state ?? '')))
+    ) {
       await command.submit({ ...input });
       return;
     }
@@ -79,12 +84,13 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
         <div>
           <h3>Research setup</h3>
           <p className="muted">
-            Start new work from <strong>{status.baseBranch}</strong>.
+            Import <strong>{status.baseBranch}</strong> and review its integration with Merv main.
           </p>
         </div>
         {result?.state === 'ready' ? (
           <p>
-            Ready at <Short value={result.headOid} />. <Link to="/code">View changes</Link>
+            Integrated locally at <Short value={result.mainOid ?? result.headOid} />.{' '}
+            <Link to="/code">View changes</Link>
           </p>
         ) : (
           <button
@@ -96,14 +102,25 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
               ? 'Preparing…'
               : command.retry
                 ? 'Retry same preparation'
-                : result?.state === 'importing'
-                  ? 'Check preparation'
-                  : result?.state === 'failed'
-                    ? 'Start preparation again'
-                    : 'Prepare repository'}
+                : command.error
+                  ? 'Prepare current heads'
+                  : result?.state === 'review_required'
+                    ? 'Check integration review'
+                    : result?.state === 'importing'
+                      ? 'Check preparation'
+                      : result?.state === 'failed'
+                        ? 'Start preparation again'
+                        : 'Prepare repository'}
           </button>
         )}
       </div>
+      {result?.state === 'review_required' && (
+        <p role="status">
+          Both histories are retained.{' '}
+          <Link to={`/tasks/${result.taskId}`}>Review the integration task</Link> before Merv main
+          advances. GitHub publication follows separately.
+        </p>
+      )}
       {result?.state === 'importing' && (
         <p role="status">
           Importing {result.baseBranch}. This updates automatically.{' '}

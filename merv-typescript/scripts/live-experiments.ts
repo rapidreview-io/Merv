@@ -9,6 +9,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller, ReviewRequest } from '@merv/contracts';
 import type { CodeCapture } from '@merv/code-research/types';
 import { MachineRunner } from '@merv/runner';
+import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { programVersion } from '@merv/experiments/program';
 import { createApp } from '../src/app.js';
 import { useRunSchema } from './database.js';
@@ -16,7 +17,8 @@ import { useRunSchema } from './database.js';
 // Explicit native acceptance of the production Experiments program, with controlled data.
 // No synthetic workflow, review owner, tool, or artifact/evidence writer is registered here.
 const args = process.argv.slice(2);
-const gitMode = args.includes('--git');
+// --git is accepted for older invocations; every new run uses managed Git.
+const gitMode = true;
 const destinations = args.filter((arg) => arg !== '--git');
 assert.ok(
   destinations.length <= 1 && destinations.every((arg) => !arg.startsWith('--')),
@@ -39,7 +41,6 @@ const launchedSource = readFileSync(new URL('./live-experiments.ts', import.meta
 writeFileSync(join(directory, 'launched-script.ts'), launchedSource, { mode: 0o600 });
 const introduction =
   'INTRO_NATIVE_CAPTURE_2026: This project checks exact evidence, conservative claims, and independently reviewed code on a fixed synthetic study.';
-const repository = join(directory, 'source');
 const gitEnv = {
   PATH: process.env.PATH,
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -47,26 +48,7 @@ const gitEnv = {
 };
 const localGit = (path: string, ...args: string[]) =>
   execFileSync('git', ['-C', path, ...args], { encoding: 'utf8', env: gitEnv });
-const initialCode =
-  '# Replace this scaffolding with the actual approved experiment.\nraise SystemExit("No experiment implementation has been authored yet")\n';
 let initialOid: string | null = null;
-if (gitMode) {
-  mkdirSync(repository);
-  localGit(repository, 'init', '-b', 'main');
-  writeFileSync(join(repository, 'calculate.py'), initialCode);
-  localGit(repository, 'add', 'calculate.py');
-  localGit(
-    repository,
-    '-c',
-    'user.name=Acceptance Fixture',
-    '-c',
-    'user.email=fixture@example.test',
-    'commit',
-    '-m',
-    'Empty experiment scaffolding',
-  );
-  initialOid = localGit(repository, 'rev-parse', 'HEAD').trim();
-}
 
 const protocol =
   `This is a bounded local validation of a real research lifecycle using deliberately synthetic data. Do not use network, external research, GPU resources, additional tasks or additional agents. A passing run establishes only the calculation and workflow behavior on this specified data, not general scientific superiority.
@@ -86,7 +68,7 @@ All workers: use only your current fixed Merv tool grants. Read current assignme
   (gitMode
     ? `
 
-Git mode: this is production experiment@6. Planning and design review use scratch; only execution receives the persistent private Git checkout and attempt review receives its exact captured commit. There are no direct Git-writing tools or publication instructions. Executor: replace the tracked calculate.py scaffold with your actual calculation. Run python3 calculate.py, retain its exact file bytes as result.code and its actual stdout as result.stdout, and write the same stdout to a new local observations.json file. Do not run git add or git commit; leave the tracked calculation modification and untracked observations file for the Runner to capture after submit_results. Before handoff, run a successful local command that checks git status --porcelain and prints one JSON record with workspace_evidence:true, tracked_code_modified:true, local_result_untracked:true, head:the actual full Git HEAD, and codeSha256:SHA256 of calculate.py, setting booleans only after checking the actual status entries. This must precede submit_results.
+Managed Git mode: use the current production experiment policy. Planning and design review use scratch; only execution receives the persistent private Git checkout and attempt review receives its exact captured commit. There are no direct Git-writing tools or publication instructions. Executor: create calculate.py in the initially empty managed checkout with your actual calculation. Run python3 calculate.py, retain its exact file bytes as result.code and its actual stdout as result.stdout, and write the same stdout to a new local observations.json file. Do not run git add or git commit; leave the new calculation and observations files for the Runner to capture after submit_results. Before handoff, run a successful local command that checks git status --porcelain and prints one JSON record with workspace_evidence:true, source_file_present:true, local_result_untracked:true, head:the actual full Git HEAD, and codeSha256:SHA256 of calculate.py, setting booleans only after checking the actual status entries. This must precede submit_results.
 Attempt reviewer: in addition to all existing review requirements, read calculate.py and observations.json from your actual read-only checkout. Verify git rev-parse HEAD and HEAD^{tree} against the producing-session codeCapture in your context. Compare calculate.py bytes to retained result.code, observations.json to retained result.stdout, then actually reexecute python3 calculate.py without writing files. Independently recompute the study separately as already required. In the successful checks JSON also include checkout_head, checkout_tree, checkout_code_sha256, checkout_code_matches_retained:true, and checkout_reexecution_matches_retained_stdout:true, only after these exact file/object checks pass. Never replace a missing file with code copied from artifacts. Stop after review.submit.
 `
     : '');
@@ -120,31 +102,42 @@ try {
     intent:
       'Test the predefined training-only OLS versus training-mean baseline hypothesis on matched, fixed held-out synthetic data.',
     details: protocol,
-    ...(gitMode ? { workspace: 'git' as const } : {}),
     requestId: 'experiment',
   });
   assert.equal(created.workflow.state, 'planned');
   assert.equal(created.attempt.startedAt, null);
   assert.equal(created.evidence.length, 0);
   assert.equal((await app.ctx.artifacts.list(source)).length, 0);
-  runner = new MachineRunner({
-    directory: join(directory, 'machine'),
-    baseUrl: app.ctx.api.url!,
-    projectId: source.projectId,
-    credentialEnv,
-    capacity: 1,
-    ...(gitMode ? { workspace: { repository, baseRef: 'refs/heads/main' } } : {}),
-    pollIntervalMs: 500,
-    profiles: [
-      {
-        name: 'native-codex',
-        harness: 'codex',
-        executable: process.env.MERV_CODEX_BIN ?? 'codex',
-        enabled: true,
-        parallelism: 1,
-      },
-    ],
-  });
+  const initializationDeadline = Date.now() + 30000;
+  while (!(await app.ctx.codeResearch.status(source)).project?.main.stored) {
+    assert.ok(Date.now() < initializationDeadline, 'Managed repository initialization timed out');
+    await delay(50);
+  }
+  initialOid = (await app.ctx.codeResearch.status(source)).project!.main.oid;
+  runner = new MachineRunner(
+    {
+      directory: join(directory, 'machine'),
+      baseUrl: app.ctx.api.url!,
+      projectId: source.projectId,
+      credentialEnv,
+      capacity: 1,
+      pollIntervalMs: 500,
+      profiles: [
+        {
+          name: 'native-codex',
+          harness: 'codex',
+          executable: process.env.MERV_CODEX_BIN ?? 'codex',
+          enabled: true,
+          parallelism: 1,
+        },
+      ],
+    },
+    {
+      drivers: [
+        { name: 'code.v2', create: (host, transport) => new CodeWorkspaceDriver(host, transport) },
+      ],
+    },
+  );
   await runner.start();
   await app.ctx.sessions.setDispatch(source, { enabled: true });
   const deadline = Date.now() + 20 * 60_000;
@@ -205,7 +198,7 @@ try {
     'Every offered worker must receive the frozen Project Introduction',
   );
   // Ask the program for its current version rather than pinning the frozen history.
-  assert.equal(final.workflow.version, programVersion(gitMode ? 'git' : undefined));
+  assert.equal(final.workflow.version, programVersion());
   assert.equal(new Set(sessions.map((session) => session.actorId)).size, 4);
   assert.deepEqual(
     sessions.map((session) => session.expectedRevision),
@@ -319,8 +312,7 @@ try {
     capture: CodeCapture;
     initialOid: string;
     codeSha256: string;
-    sourceUnchanged: true;
-    centralUnchanged: true;
+    mainUnchanged: true;
     capturedObservationsMatch: true;
   } | null = null;
   if (gitMode) {
@@ -340,10 +332,8 @@ try {
     assert.equal(sessions[3].workspace!.attachment.treeOid, captured.treeOid);
     assert.equal(sessions[3].workspace!.result!.headOid, captured.headOid);
     assert.equal(sessions[3].workspace!.result!.treeOid, captured.treeOid);
-    assert.equal(localGit(repository, 'rev-parse', 'HEAD').trim(), initialOid);
-    assert.equal(readFileSync(join(repository, 'calculate.py'), 'utf8'), initialCode);
-    const bare = join(directory, 'machine/workspaces/repository.git');
-    assert.equal(localGit(bare, 'rev-parse', 'refs/merv/central').trim(), initialOid);
+    assert.equal((await app.ctx.codeResearch.status(source)).project?.main.oid, initialOid);
+    const bare = app.ctx.code.repositories!.paths(source.projectId).repository;
     assert.equal(
       localGit(bare, 'rev-parse', `${captured.headOid}^{tree}`).trim(),
       captured.treeOid,
@@ -371,8 +361,7 @@ try {
       capture,
       initialOid: initialOid!,
       codeSha256: sha(resultData.code),
-      sourceUnchanged: true,
-      centralUnchanged: true,
+      mainUnchanged: true,
       capturedObservationsMatch: true,
     };
   }
@@ -493,11 +482,11 @@ try {
           )
           .find(
             ({ value }) =>
-              value.tracked_code_modified === true && value.local_result_untracked === true,
+              value.source_file_present === true && value.local_result_untracked === true,
           );
         assert.ok(
           proof,
-          'Native executor must prove its tracked modification and untracked output before handoff',
+          'Native executor must prove its source file and untracked output before handoff',
         );
         assert.equal(proof.value.head, initialOid);
         assert.equal(proof.value.codeSha256, gitProof.codeSha256);
@@ -609,7 +598,7 @@ try {
   report = {
     passed: true,
     schema,
-    mode: gitMode ? 'git' : 'scratch',
+    mode: 'managed-git',
     introduction,
     frozenIntroductionsVerified: 4,
     git: gitProof,
@@ -641,9 +630,7 @@ try {
       'Production Experiments/Workflows/Reviews/ContextBuilder/Sessions and MachineRunner; fixture setup creates only the owner and empty experiment.',
       'Four fresh native agents complete one planned/design_review/running/experiment_review attempt; negative return/recovery paths are separately tested, not exercised by this positive run.',
       'The fixed tiny noiseless synthetic data validate this calculation and lifecycle, not a general scientific performance claim.',
-      gitMode
-        ? 'Actual private persistent producer checkout, stopped-worker Git capture, and exact read-only reviewer checkout; no Git publication, remote object transport, cloud runner, reflection or automatic claim assessment.'
-        : 'Scratch workspaces only; no Git publication, cloud runner, reflection or automatic claim assessment is exercised.',
+      'Actual managed producer checkout, stopped-worker Git capture, object transfer and exact read-only reviewer checkout; no GitHub publication, cloud runner, reflection or automatic claim assessment.',
       'Component rendering from retained records is separate from this process/MCP acceptance; this report is not browser proof.',
     ],
   };
@@ -671,7 +658,7 @@ try {
     try {
       const workspaceRows = ledger
         .prepare(
-          'SELECT w.launch_id,w.path,w.policy_json,w.status,w.result_json,l.session_id FROM runner_workspaces w JOIN launches l ON l.id=w.launch_id',
+          'SELECT w.launch_id,w.path,w.policy_json,w.status,w.result_json,l.session_id FROM runner_workspaces w JOIN launches l ON l.id=w.launch_id UNION ALL SELECT w.launch_id,w.path,w.policy_json,w.status,w.result_json,l.session_id FROM code_v2_workspaces w JOIN launches l ON l.id=w.launch_id',
         )
         .all();
       const workspaces = workspaceRows.map((row) => {

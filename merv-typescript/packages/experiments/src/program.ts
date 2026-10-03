@@ -104,16 +104,8 @@ const referencedBase = (version: number) => base(version) === 7 || derivedBase(v
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
 export const derivedBase = (version: number) => base(version) === 8;
 const CODE_DRIVER = 'code.v2';
-export const programVersion = (
-  workspace?: string,
-  baseTaskId?: string,
-  hosted = false,
-  largeUploads = false,
-  native = false,
-): number =>
-  (native ? 8 : 0) +
-  (workspace !== 'git' ? 25 : baseTaskId !== undefined ? 27 : hosted ? 28 : 26) +
-  (largeUploads ? 4 : 0);
+export const programVersion = (largeUploads = false, native = false): number =>
+  (native ? 8 : 0) + 28 + (largeUploads ? 4 : 0);
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.
  * Every registered version submits a design with a feasibility statement, and its review cannot

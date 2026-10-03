@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -300,7 +301,7 @@ for (const loss of ['role-loss', 'remove-rejoin'] as const) {
       await scope.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
       const operator = await scope.caller(owner, project.id);
       const reviewer = await scope.caller(reviewerUser, project.id);
-      const task = await tasks.create(operator, {
+      const task = await historicalTask({ state, artifacts, tasks }, operator, {
         title: 'Review authority',
         goal: 'Verify the result.',
         checks: ['The result is reproducible.'],

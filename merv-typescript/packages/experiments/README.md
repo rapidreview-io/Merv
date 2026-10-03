@@ -88,7 +88,9 @@ terminal corpus capture. Reflection waves and code consolidation remain separate
 implementation work.
 This program does not publish code.
 
-Omitting create `workspace`, or choosing `"none"`, selects the scratch program,
+New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). The following describes historical versions only.
+
+Previously, omitting create `workspace`, or choosing `"none"`, selected the scratch program,
 `experiment@5`; omitted input stays absent in command hashes. Explicit
 `workspace: "git"` selects version 6, or 8 in a project Code hosts: scratch
 planning/design review, persistent private execution, and read-only ephemeral

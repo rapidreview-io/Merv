@@ -1,6 +1,8 @@
 import type { GitHubPullRequest } from './github-models.js';
 
 export interface CodePublication {
+  /** Frozen when the reviewed work is sealed; linking GitHub never retargets it. */
+  destination?: 'local' | 'github';
   proposalId: string;
   instanceId: string;
   manifestHash: string;

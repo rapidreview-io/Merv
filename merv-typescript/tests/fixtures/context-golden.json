@@ -652,6 +652,395 @@
         "error": "blob_not_found"
       }
     },
+    "reflection.lens@12": {
+      "items/text": {
+        "prompt": "a41c10a2643834a818aef034449c4c11843ecbd36a91f068f2a0a2ecf288ac11",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "4b7fd946fb60e586b1b3bfc5e5f26b7b0ecfe744712d449c12b132a25ada287e",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "1f1805d673d45801dde886f5aec7d5c58af887bbd509555f11dedbfae8b8fffc",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "41e78d533808b7498821ed9ec39707885597a239b7ed25634a9636c28edc9b81",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "94b4a98cd878e70351748bcc6ee74a3d6db9da78ec52065d79977a6b1ad32453",
+        "omitted": [
+          "assignment:many:179",
+          "assignment:many:180",
+          "assignment:many:181",
+          "assignment:many:182",
+          "assignment:many:183",
+          "assignment:many:184",
+          "assignment:many:185",
+          "assignment:many:186",
+          "assignment:many:187",
+          "assignment:many:188",
+          "assignment:many:189",
+          "assignment:many:190",
+          "assignment:many:191",
+          "assignment:many:192",
+          "assignment:many:193",
+          "assignment:many:194",
+          "assignment:many:195",
+          "assignment:many:196",
+          "assignment:many:197",
+          "assignment:many:198",
+          "assignment:many:199",
+          "assignment:many:200",
+          "assignment:many:201",
+          "assignment:many:202",
+          "assignment:many:203",
+          "assignment:many:204",
+          "assignment:many:205",
+          "assignment:many:206",
+          "assignment:many:207",
+          "assignment:many:208",
+          "assignment:many:209",
+          "assignment:many:210",
+          "assignment:many:211",
+          "assignment:many:212",
+          "assignment:many:213"
+        ],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "151c586f550926511cb38685786e7ccf3598af788ba99eac96be094001533ada",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "e10919ec099e79518ad79e73c287f13cf6d5192d51131fa1f55f8b1df803c7a2",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "reflection.review@13": {
+      "items/text": {
+        "prompt": "6a4d23fa4fcfaa48024b41777db68d3fc631bee6618dfa58d6f6fca12cbfbc25",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "09c6f4e2581ff361c022ed38de9190a00fe8374ee11a30b0be064c995dce0231",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "d31b72e58f83dea10153433ff2f630d2b243e45cf59b933a9ea923bc7be42bd5",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "babd6bb205401727b1e5308314ff98a89050ec3fab08a75acde2f630b6168d89",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "f9712aa3146f9cf23262a69b62b28c1a3f6a8f237f457b7e690afff7757bcdc9",
+        "omitted": [
+          "assignment:many:167",
+          "assignment:many:168",
+          "assignment:many:169",
+          "assignment:many:170",
+          "assignment:many:171",
+          "assignment:many:172",
+          "assignment:many:173",
+          "assignment:many:174",
+          "assignment:many:175",
+          "assignment:many:176",
+          "assignment:many:177",
+          "assignment:many:178",
+          "assignment:many:179",
+          "assignment:many:180",
+          "assignment:many:181",
+          "assignment:many:182",
+          "assignment:many:183",
+          "assignment:many:184",
+          "assignment:many:185",
+          "assignment:many:186",
+          "assignment:many:187",
+          "assignment:many:188",
+          "assignment:many:189",
+          "assignment:many:190",
+          "assignment:many:191",
+          "assignment:many:192",
+          "assignment:many:193",
+          "assignment:many:194",
+          "assignment:many:195",
+          "assignment:many:196",
+          "assignment:many:197",
+          "assignment:many:198",
+          "assignment:many:199",
+          "assignment:many:200",
+          "assignment:many:201",
+          "assignment:many:202",
+          "assignment:many:203",
+          "assignment:many:204",
+          "assignment:many:205",
+          "assignment:many:206",
+          "assignment:many:207",
+          "assignment:many:208",
+          "assignment:many:209",
+          "assignment:many:210",
+          "assignment:many:211",
+          "assignment:many:212",
+          "assignment:many:213"
+        ],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "5b2e4d5d48794f27249590bcfc40750796acf0065c8e41f32e31cf04314881fb",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "d1b55adc58573a01d1dfcf2736ed9dc8be1441558df810433e5a44ffefc82297",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "reflection.synthesis@13": {
+      "items/text": {
+        "prompt": "7f06e67dfc80cbc07855a437c8ee5d25228b37c81d36c59e429a450579cfc4c3",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "61d03a4de0da1e36cf740d1b8c390e338ea2166e46446da26e7d40f938aa0c14",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "3329adc9110fd841ec76971795af5012a13c9361a72838be9b7613c90f14f32d",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "713424f53d81718c1722b9f7a82dafde4aefc6792df37cb3f9951845229b157f",
+        "omitted": ["assignment:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "6155e210254c63b6aa63fb238b0c2b7537ebbc9fd08ab77bb140396a6c3cbdcd",
+        "omitted": [
+          "assignment:many:167",
+          "assignment:many:168",
+          "assignment:many:169",
+          "assignment:many:170",
+          "assignment:many:171",
+          "assignment:many:172",
+          "assignment:many:173",
+          "assignment:many:174",
+          "assignment:many:175",
+          "assignment:many:176",
+          "assignment:many:177",
+          "assignment:many:178",
+          "assignment:many:179",
+          "assignment:many:180",
+          "assignment:many:181",
+          "assignment:many:182",
+          "assignment:many:183",
+          "assignment:many:184",
+          "assignment:many:185",
+          "assignment:many:186",
+          "assignment:many:187",
+          "assignment:many:188",
+          "assignment:many:189",
+          "assignment:many:190",
+          "assignment:many:191",
+          "assignment:many:192",
+          "assignment:many:193",
+          "assignment:many:194",
+          "assignment:many:195",
+          "assignment:many:196",
+          "assignment:many:197",
+          "assignment:many:198",
+          "assignment:many:199",
+          "assignment:many:200",
+          "assignment:many:201",
+          "assignment:many:202",
+          "assignment:many:203",
+          "assignment:many:204",
+          "assignment:many:205",
+          "assignment:many:206",
+          "assignment:many:207",
+          "assignment:many:208",
+          "assignment:many:209",
+          "assignment:many:210",
+          "assignment:many:211",
+          "assignment:many:212",
+          "assignment:many:213"
+        ],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "64ba868999e1abc23ffab91249e4a2668b85473de33e2a55c9172a31c929787e",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "536d4a23abb601ec093697102a176b92b4841a678b6775fe11166f85ca433dff",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "task.review@5": {
+      "items/text": {
+        "prompt": "3ad52b5ff943882174fde4b8ce09eceacf7a22c414b2b91b09569a7f457e5cce",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "a0286505234a074dc072609e06b8fe73087a27b334f4a04c732804c94998b6ef",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "1f0ded804a303ee6d9d7b60390630e2c873d2fa8fdd3d80330aa3a9d66b2284a",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "fa755bf4071ba719167234559cfea8b7282f6f43ee2feedce4494b1e0bffb903",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "31a4a482bfeca98dcb5e0bca0cf5fed51a27564535d340d53df1ed1078b38ba8",
+        "omitted": [],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "49f8fc46332c23b60c6d5a592135812a6833f7c097bcb3c543df8a89ae8959ac",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "7c9114c4935d3e0f0a59cbdaaa65bfd7a290ce6229e5e1b0c79f2675c44626fb",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    },
+    "task.work@4": {
+      "items/text": {
+        "prompt": "db3a0ffbb8cd5d33c432c88d94d1cd469edcf424b60e8100f84c22c5e64fe30c",
+        "omitted": [],
+        "sources": []
+      },
+      "items/artifacts": {
+        "prompt": "d0f3a87451649e421de840fbf276b7dde4a37e18b85ac15be7b91154f5ec36b6",
+        "omitted": [],
+        "sources": [
+          "artifact_golden_text",
+          "artifact_golden_json",
+          "artifact_golden_png",
+          "artifact_golden_latin1"
+        ]
+      },
+      "items/duplicate": {
+        "prompt": "8187061c10ab8f76ba1388d9007d937d1681f36ebfdc9ceda456e0abd29f421f",
+        "omitted": [],
+        "sources": []
+      },
+      "items/not-fit": {
+        "prompt": "111552c21554b6651cbcc873a90ba934ca33f836c0fbe2fd25e8b8735d812017",
+        "omitted": ["task:long"],
+        "sources": []
+      },
+      "items/overflow": {
+        "prompt": "4cde7722252afc2313ce4a62752882876c5a934a169085e40aacca652dc427ff",
+        "omitted": [],
+        "sources": []
+      },
+      "items/line-breaks": {
+        "prompt": "68e1945011840d3b19e2e98827e2567f359e53706d1d28178cc182a338c5a494",
+        "omitted": [],
+        "sources": []
+      },
+      "items/read-error/blob_corrupt/fit": {
+        "prompt": "d09db2ffc6bbb3300da78e6d18c1b344eeefeb8d721c5fa00cb565966d66801b",
+        "omitted": [],
+        "sources": ["artifact_golden_blob_corrupt"]
+      },
+      "items/read-error/blob_corrupt/always": {
+        "error": "blob_corrupt"
+      },
+      "items/read-error/blob_not_found/fit": {
+        "error": "blob_not_found"
+      },
+      "items/read-error/blob_not_found/always": {
+        "error": "blob_not_found"
+      }
+    }
+  },
+  "historicalRecipes": {
     "reflection.lens@11": {
       "items/text": {
         "prompt": "a41c10a2643834a818aef034449c4c11843ecbd36a91f068f2a0a2ecf288ac11",
@@ -926,108 +1315,6 @@
       },
       "items/read-error/blob_corrupt/fit": {
         "prompt": "dcbd56b69f15bd3061f062067e850c1df7c80de9b22218eaacee656a1a0cd8c4",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
-      "items/read-error/blob_not_found/fit": {
-        "error": "blob_not_found"
-      },
-      "items/read-error/blob_not_found/always": {
-        "error": "blob_not_found"
-      }
-    },
-    "task.review@5": {
-      "items/text": {
-        "prompt": "3ad52b5ff943882174fde4b8ce09eceacf7a22c414b2b91b09569a7f457e5cce",
-        "omitted": [],
-        "sources": []
-      },
-      "items/artifacts": {
-        "prompt": "a0286505234a074dc072609e06b8fe73087a27b334f4a04c732804c94998b6ef",
-        "omitted": [],
-        "sources": [
-          "artifact_golden_text",
-          "artifact_golden_json",
-          "artifact_golden_png",
-          "artifact_golden_latin1"
-        ]
-      },
-      "items/duplicate": {
-        "prompt": "1f0ded804a303ee6d9d7b60390630e2c873d2fa8fdd3d80330aa3a9d66b2284a",
-        "omitted": [],
-        "sources": []
-      },
-      "items/not-fit": {
-        "prompt": "fa755bf4071ba719167234559cfea8b7282f6f43ee2feedce4494b1e0bffb903",
-        "omitted": ["task:long"],
-        "sources": []
-      },
-      "items/overflow": {
-        "prompt": "31a4a482bfeca98dcb5e0bca0cf5fed51a27564535d340d53df1ed1078b38ba8",
-        "omitted": [],
-        "sources": []
-      },
-      "items/line-breaks": {
-        "prompt": "49f8fc46332c23b60c6d5a592135812a6833f7c097bcb3c543df8a89ae8959ac",
-        "omitted": [],
-        "sources": []
-      },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "7c9114c4935d3e0f0a59cbdaaa65bfd7a290ce6229e5e1b0c79f2675c44626fb",
-        "omitted": [],
-        "sources": ["artifact_golden_blob_corrupt"]
-      },
-      "items/read-error/blob_corrupt/always": {
-        "error": "blob_corrupt"
-      },
-      "items/read-error/blob_not_found/fit": {
-        "error": "blob_not_found"
-      },
-      "items/read-error/blob_not_found/always": {
-        "error": "blob_not_found"
-      }
-    },
-    "task.work@4": {
-      "items/text": {
-        "prompt": "db3a0ffbb8cd5d33c432c88d94d1cd469edcf424b60e8100f84c22c5e64fe30c",
-        "omitted": [],
-        "sources": []
-      },
-      "items/artifacts": {
-        "prompt": "d0f3a87451649e421de840fbf276b7dde4a37e18b85ac15be7b91154f5ec36b6",
-        "omitted": [],
-        "sources": [
-          "artifact_golden_text",
-          "artifact_golden_json",
-          "artifact_golden_png",
-          "artifact_golden_latin1"
-        ]
-      },
-      "items/duplicate": {
-        "prompt": "8187061c10ab8f76ba1388d9007d937d1681f36ebfdc9ceda456e0abd29f421f",
-        "omitted": [],
-        "sources": []
-      },
-      "items/not-fit": {
-        "prompt": "111552c21554b6651cbcc873a90ba934ca33f836c0fbe2fd25e8b8735d812017",
-        "omitted": ["task:long"],
-        "sources": []
-      },
-      "items/overflow": {
-        "prompt": "4cde7722252afc2313ce4a62752882876c5a934a169085e40aacca652dc427ff",
-        "omitted": [],
-        "sources": []
-      },
-      "items/line-breaks": {
-        "prompt": "68e1945011840d3b19e2e98827e2567f359e53706d1d28178cc182a338c5a494",
-        "omitted": [],
-        "sources": []
-      },
-      "items/read-error/blob_corrupt/fit": {
-        "prompt": "d09db2ffc6bbb3300da78e6d18c1b344eeefeb8d721c5fa00cb565966d66801b",
         "omitted": [],
         "sources": ["artifact_golden_blob_corrupt"]
       },

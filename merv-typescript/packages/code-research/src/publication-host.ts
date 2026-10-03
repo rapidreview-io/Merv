@@ -72,26 +72,28 @@ export class PublicationHost {
     return review;
   }
   async check(caller: Caller, record: CodePublication, tx: Transaction) {
-    const controls = await this.controls(caller.projectId, tx);
-    check(
-      !controls.disabled,
-      'code_publication_disabled',
-      'A stale-merge canary failed. An operator must repair enforcement and clear the publication disablement.',
-      409,
-    );
-    check(
-      controls.canary &&
-        !controls.canary.staleMerged &&
-        controls.canary.bindingHash ===
-          digest({
-            repositoryId: record.repositoryId,
-            revision: record.connectionRevision,
-            baseBranch: record.baseBranch,
-          }),
-      'code_publication_canary_required',
-      'Run the release matrix with this App and rules, then record the successful canary before enabling publication.',
-      409,
-    );
+    if (record.destination !== 'local') {
+      const controls = await this.controls(caller.projectId, tx);
+      check(
+        !controls.disabled,
+        'code_publication_disabled',
+        'A stale-merge canary failed. An operator must repair enforcement and clear the publication disablement.',
+        409,
+      );
+      check(
+        controls.canary &&
+          !controls.canary.staleMerged &&
+          controls.canary.bindingHash ===
+            digest({
+              repositoryId: record.repositoryId,
+              revision: record.connectionRevision,
+              baseBranch: record.baseBranch,
+            }),
+        'code_publication_canary_required',
+        'Run the release matrix with this App and rules, then record the successful canary before enabling publication.',
+        409,
+      );
+    }
     const envelope = record.approval!;
     check(
       envelope.source === 'unit',
@@ -168,7 +170,7 @@ export class PublicationHost {
     );
     return result.code === 0;
   }
-  async snapshot(caller: Caller, record: CodePublication) {
+  private async retainSnapshot(caller: Caller, record: CodePublication) {
     const repos = this.repositories();
     const ref = `refs/merv/proposals/${record.proposalId}`;
     await repos.run(caller.projectId, async () => {
@@ -186,6 +188,9 @@ export class PublicationHost {
           env,
         });
     });
+  }
+  async snapshot(caller: Caller, record: CodePublication) {
+    await this.retainSnapshot(caller, record);
     const mirror = this.mirror();
     const remote = `refs/heads/${record.branch}`;
     const current = await mirror.lsRemote(caller.projectId, remote);
@@ -221,6 +226,33 @@ export class PublicationHost {
     );
     await this.changed(caller.projectId, tx);
   }
+  async verifyLocal(caller: Caller, record: CodePublication) {
+    check(
+      record.destination === 'local',
+      'publication_conflict',
+      'This is not a local integration',
+      409,
+    );
+    const repos = this.repositories();
+    const tree = (
+      await repos.git.ok(['rev-parse', `${record.headOid}^{tree}`], {
+        env: repos.environment(caller.projectId),
+      })
+    )
+      .toString()
+      .trim();
+    check(
+      tree === record.treeOid &&
+        (await this.ancestor(caller.projectId, record.baseOid, record.headOid)) &&
+        (await this.ancestor(caller.projectId, record.approval!.integrationBase, record.headOid)),
+      'publication_conflict',
+      'The reviewed tree must retain the previous main history',
+      409,
+    );
+    // Both destinations retain the same immutable snapshot before acknowledging publication.
+    await this.retainSnapshot(caller, record);
+  }
+
   async verify(caller: Caller, record: CodePublication, oid: string) {
     await this.import(caller, record, oid);
     const repos = this.repositories();

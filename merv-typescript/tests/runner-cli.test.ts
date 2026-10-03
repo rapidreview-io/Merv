@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -221,7 +222,7 @@ test('runner CLI retains the default Code driver and supports explicit opt-in', 
 });
 
 test(
-  'workspace-free CLI runs real MCP children without Code or Git and drains them on both signals',
+  'historical scratch work runs real MCP children without Code and drains them on both signals',
   { timeout: 45_000 },
   async (t) => {
     const directory = mkdtempSync(join(tmpdir(), 'merv-runner-cli-live-'));
@@ -246,7 +247,7 @@ test(
     };
     symlinkSync(process.execPath, join(directory, 'relative-node'));
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      const task = await app.ctx.tasks.create(caller, {
+      const task = await historicalTask(app.ctx, caller, {
         title: signal,
         goal: 'Prove CLI shutdown.',
         checks: ['Real child used MCP.'],

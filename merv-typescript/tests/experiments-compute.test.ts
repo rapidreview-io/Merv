@@ -1,3 +1,4 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -76,7 +77,7 @@ async function fixture(t: TestContext, since = '2000-01-01T00:00:00Z') {
   };
   const unbind = experiments.bindCompute(adapter);
   const createRunning = async (who = caller) => {
-    const experiment = await experiments.create(who, {
+    const experiment = await historicalExperiment({ state, experiments }, who, {
       name: randomUUID(),
       intent: 'Measure a GPU experiment.',
       requestId: randomUUID(),
@@ -259,7 +260,7 @@ test('projects before switch-on and attempts outside running cannot rent compute
     code('compute_not_entitled'),
   );
   const current = await fixture(t);
-  const planned = await current.experiments.create(current.caller, {
+  const planned = await historicalExperiment(current, current.caller, {
     name: randomUUID(),
     intent: 'Plan compute.',
     requestId: randomUUID(),

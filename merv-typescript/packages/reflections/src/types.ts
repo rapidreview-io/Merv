@@ -47,10 +47,16 @@ interface ChangeSpecBody {
   carriedOver: { workflowId: string; reason: string }[];
   rejected: { title: string; reason: string }[];
 }
-export type ChangeSpec = ChangeSpecBody & {
-  version: 2;
-  items: (WorkItem & { workspace: { provider: 'none' } | { provider: 'code'; version: 1 } })[];
-};
+export type ChangeSpec = ChangeSpecBody &
+  (
+    | {
+        version: 2;
+        items: (WorkItem & {
+          workspace: { provider: 'none' } | { provider: 'code'; version: 1 };
+        })[];
+      }
+    | { version: 3; items: WorkItem[] }
+  );
 export interface ReflectionLens {
   id: string;
   reflectionId: string;

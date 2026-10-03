@@ -1,3 +1,5 @@
+// Historical scratch records exercise the original assignment and recovery contract.
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -34,7 +36,7 @@ async function fixture(t: TestContext) {
     };
   };
   const producer = await issue('producer');
-  const task = await app.ctx.tasks.create(producer.caller, {
+  const task = await historicalTask(app.ctx, producer.caller, {
     title: 'Retain the result',
     goal: 'Retain a verified arithmetic result.',
     checks: ['The sum of 2 and 3 is 5.'],

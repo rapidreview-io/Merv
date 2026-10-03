@@ -1,3 +1,4 @@
+import { historicalTask } from '../tests/fixtures/historical-task.js';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
@@ -65,7 +66,6 @@ const phaseWrites: Record<Phase, string[]> = {
   producer: [
     'workflow.begin',
     'artifact.create',
-    'task.create',
     'task.context',
     'task.submit_delivery',
     'review.start',
@@ -209,7 +209,6 @@ async function codexViaProxy(phase: Phase, token: string, url: string, prompt: s
       'workflow.begin',
       'artifact.create',
       'artifact.read',
-      'task.create',
       'task.context',
       'task.submit_delivery',
       'task.get',
@@ -364,14 +363,36 @@ async function run() {
       JSON.stringify({ operator, producer, reviewer, observer }, null, 2) + '\n',
       { mode: 0o600 },
     );
+    // The shell-disabled harness verifies old artifact-only work and credential recovery.
+    // Managed Git is exercised through the actual workspace driver in the new-work harness.
+    const seedCaller: Caller = userKeys
+      ? await app.ctx.scope.caller(
+          { kind: 'key', key: await app.ctx.scope.authenticateKey(producer.token) },
+          caller.projectId,
+        )
+      : sharedIdentity
+        ? await app.ctx.scope.caller(owners.get(producer.actor.id)!.principal, caller.projectId)
+        : {
+            actorId: producer.actor.id,
+            projectId: caller.projectId,
+            credentialId: producer.credential!.id,
+          };
+    const historical = await historicalTask(app.ctx, seedCaller, {
+      title: 'Verify arithmetic evidence',
+      goal: 'Verify the sum and mean of 2, 4, 6, 8.',
+      checks: ['Sum equals 20', 'Mean equals 5'],
+      requestId: 'historical-arithmetic',
+    });
     await codex(
       'producer',
       producer.token,
       app.ctx.api.url!,
-      'You are the producer. Create one task titled "Verify arithmetic evidence". Its goal is "Verify the sum and mean of 2, 4, 6, 8." Its two Done-when checks are exactly "Sum equals 20" and "Mean equals 5". Create the task without briefId so the server renders its immutable numbered brief; read the returned brief through artifact.read. Before doing the work, call workflow.assignment for the task and inspect its complete context preview. Follow guidance by calling workflow.begin with instanceId and expectedRevision; use the returned context, then repeat workflow.begin with identical inputs to verify the same first-start identity and unchanged revision. Also call task.context with purpose work, this taskId, expectedRevision and a stable requestId, and use the returned starting context. Compute the result yourself. Store a separate immutable Markdown delivery explaining the calculation. Submit it for independent review with one structured confirmation per numbered acceptance check. Each confirmation must include checkNumber, status "met" only if verified, the delivery artifact ID in evidenceIds, and nonblank notes explaining how you verified that check. Use artifactIds for your evidence; the server appends its generated assessment. After submission, call task.get explicitly to verify the persisted task is in_review, then refresh workflow.status_and_next. Attempt review.start as this producer, confirm access is refused, and leave the task awaiting a separate reviewer. Use stable unique request IDs and the current task revision. Do not create actor credentials.',
+      'You are the producer. Continue the existing historical task "Verify arithmetic evidence" (taskId: ' +
+        historical.id +
+        '). Read it with task.get and read its immutable numbered brief through artifact.read. This is an existing artifact-only task, so it retains its original delivery contract. Before doing the work, call workflow.assignment for the task and inspect its complete context preview. Follow guidance by calling workflow.begin with instanceId and expectedRevision; use the returned context, then repeat workflow.begin with identical inputs to verify the same first-start identity and unchanged revision. Also call task.context with purpose work, this taskId, expectedRevision and a stable requestId, and use the returned starting context. Compute the result yourself. Store a separate immutable Markdown delivery explaining the calculation. Submit it for independent review with one structured confirmation per numbered acceptance check. Each confirmation must include checkNumber, status "met" only if verified, the delivery artifact ID in evidenceIds, and nonblank notes explaining how you verified that check. Use artifactIds for your evidence; the server appends its generated assessment. After submission, call task.get explicitly to verify the persisted task is in_review, then refresh workflow.status_and_next. Attempt review.start as this producer, confirm access is refused, and leave the task awaiting a separate reviewer. Use stable unique request IDs and the current task revision. Do not create actor credentials.',
     );
     let task = (await app.ctx.tasks.list(caller))[0];
-    assert.ok(task, 'Producer did not create a task');
+    assert.equal(task?.id, historical.id, 'Producer must continue the exact historical task');
     assert.equal(task.workflow.state, 'in_review');
     assert.ok(task.reviewId);
     const firstTaskId = task.id,

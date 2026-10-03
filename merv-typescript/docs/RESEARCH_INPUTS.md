@@ -1,5 +1,7 @@
 # Research inputs and exact code captures
 
+Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document older workflow versions. See [Always-on Git](ALWAYS_GIT.md).
+
 Scope supplies current project intent. Knowledge assembles project records from
 the existing domain services. Code resolves exact machine observations. These are
 working prerequisites for Reflection; they do not create a reflection wave or a

@@ -118,6 +118,8 @@ export const codeRepositoryImportInputSchema = z
         (value) => importBranch.safeParse(value.replace(/^refs\/(?:heads|tags)\//, '')).success,
       )
       .optional(),
+    /** Refuse a moving remote ref instead of importing an unselected head. */
+    expectedHead: oid.optional(),
     /** Freeze the selected GitHub connection when preparation spans retries. */
     githubBinding: z
       .object({
@@ -136,7 +138,8 @@ export const codeRepositoryImportInputSchema = z
         ? value.tip !== undefined &&
           value.bundle !== undefined &&
           value.ref === undefined &&
-          value.githubBinding === undefined
+          value.githubBinding === undefined &&
+          value.expectedHead === undefined
         : value.ref !== undefined && value.tip === undefined && value.bundle === undefined,
     'A bundle import names tip and bundle; a GitHub import names ref',
   );
@@ -151,7 +154,9 @@ export interface CodeRepositoryPrepareInput {
   requestId: string;
 }
 export interface CodeRepositoryPreparation {
-  state: 'ready' | 'importing' | 'failed';
+  state: 'ready' | 'importing' | 'review_required' | 'failed';
+  mainOid?: string;
+  taskId?: string;
   baseBranch: string;
   headOid: string;
   operation: CodeStoreOperation;
@@ -203,7 +208,7 @@ export interface CodeStoreStatus {
   hosted: boolean;
   objectFormat: 'sha1' | 'sha256' | null;
   rootOid: string | null;
-  source: 'bundle' | 'github' | null;
+  source: 'bundle' | 'github' | 'managed' | null;
   /** The newest commits imports delivered; an importer excludes what it already finds here. */
   tips: string[];
   /** Everything this project keeps on disk: objects, quarantine, held bundles and exports. */

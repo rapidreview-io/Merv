@@ -1,9 +1,11 @@
+import { historicalTask } from '../tests/fixtures/historical-task.js';
+import { historicalExperiment } from '../tests/fixtures/historical-experiment.js';
 import type { Caller } from '@merv/contracts';
 
 /**
  * What the Running page draws, seeded in the demo server's own process: work in every state a
- * card can be in, two machines with agents on them, and the calls those agents make. Nothing
- * is written around a service. Machines report themselves on the runner heartbeat route, the
+ * card can be in, two machines with agents on them, and the calls those agents make.
+ * Historical scratch records are explicitly seeded; subsequent actions use real services. Machines report themselves on the runner heartbeat route, the
  * producer and the reviewer act through the tool API with their own tokens, and each agent
  * calls the MCP endpoint with the credential it was registered with, so every call it makes
  * is admitted and observed the way a real one is.
@@ -135,6 +137,7 @@ export async function seedRunning(
     /** The operator's own token: a runner authenticates with the key it was registered under. */
     token: string;
     producer: Tool;
+    producerCaller: Caller;
     reviewer: Tool;
     joinAgent: (
       name: string,
@@ -185,7 +188,14 @@ export async function seedRunning(
     notes: string[] = [],
   ) => {
     const brief = await p('artifact.create', briefOf(title, goal, checks, notes));
-    return await p('task.create', { title, goal, checks, briefId: brief.id, requestId, ...extra });
+    return await historicalTask(ctx, input.producerCaller, {
+      title,
+      goal,
+      checks,
+      briefId: brief.id,
+      requestId,
+      ...extra,
+    });
   };
   /** A delivery that claims every check, submitted by the producer who did the work. */
   const deliver = async (created: any, title: string, lines: string[], requestId: string) => {
@@ -307,7 +317,7 @@ export async function seedRunning(
   // An experiment whose design passed review and which an agent on the lab machine runs.
   const name = 'decay-sensitivity-p113';
   const intent = 'Does the grokking step move with weight decay at p = 113 as it does at p = 97?';
-  const experiment = await p('experiment.create', {
+  const experiment = await historicalExperiment(ctx, input.producerCaller, {
     name,
     intent,
     details: 'The same one-layer transformer and harness as the p = 97 reproduction.',
@@ -410,7 +420,7 @@ export async function seedRunning(
   );
 
   // An experiment planned on the cleaned split: a dashed card that waits on the cleaning.
-  await p('experiment.create', {
+  await historicalExperiment(ctx, input.producerCaller, {
     name: 'embedding-width-ablation',
     intent: 'Does halving the embedding width delay grokking on the cleaned split?',
     dependsOn: [clean.id],

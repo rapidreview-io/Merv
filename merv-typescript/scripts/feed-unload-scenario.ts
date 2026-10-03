@@ -1,3 +1,4 @@
+import { historicalTask } from '../tests/fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FiberState } from 'cordis';
@@ -88,13 +89,18 @@ export async function runFeedUnloadScenario(
       title: 'Brief',
       content: 'Goal: Survive feed removal.\nCheck: Task reaches done.',
     });
-    const task = await call(p, 'task.create', {
-      title: 'Cordis unload',
-      goal: 'Survive feed removal.',
-      checks: ['Task reaches done.'],
-      briefId: brief.id,
-      requestId: 'create-task',
-    });
+    // Replay work created before managed Git became mandatory.
+    const task = await historicalTask(
+      app.ctx,
+      { ...operator, actorId: producer.actor.id, credentialId: producer.credential.id },
+      {
+        title: 'Cordis unload',
+        goal: 'Survive feed removal.',
+        checks: ['Task reaches done.'],
+        briefId: brief.id,
+        requestId: 'create-task',
+      },
+    );
     const cursor = (await app.ctx.state.events(operator.projectId)).at(-1)!.id;
     const originalServices = {
       state: app.ctx.state,

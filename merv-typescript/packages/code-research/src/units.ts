@@ -61,11 +61,20 @@ function publicationBlockers(publication: CodeUnitPublication): WorkflowProvided
   const related = pull ? [{ kind: 'pull-request', id: pull.url, label: `#${pull.number}` }] : [];
   const said = {
     pending: {
-      code: 'code_publication_pending',
-      message: 'waiting on publication: a signed-in operator merges the pull request',
-      next: pull
-        ? `A signed-in project operator merges pull request #${pull.number} with code.publication.merge; nothing here is owed by an agent.`
-        : 'Nothing: the publication journal opens the pull request, and a signed-in operator merges it.',
+      code:
+        publication.destination === 'local'
+          ? 'code_publication_local_pending'
+          : 'code_publication_pending',
+      message:
+        publication.destination === 'local'
+          ? 'waiting for the reviewed commit to be integrated into Merv main'
+          : 'waiting on publication: a signed-in operator merges the pull request',
+      next:
+        publication.destination === 'local'
+          ? 'The publication sync integrates the reviewed commit locally; refresh integrations with code.publication.sync if needed. No GitHub connection is required.'
+          : pull
+            ? `A signed-in project operator merges pull request #${pull.number} with code.publication.merge; nothing here is owed by an agent.`
+            : 'Nothing: the publication journal opens the pull request, and a signed-in operator merges it.',
     },
     stale: {
       code: 'code_publication_stale',
@@ -111,7 +120,7 @@ type Derived =
   | { status: 'ready'; body: BaseBody; merge?: string[] };
 const PROVIDER = 'code';
 const EXPLICIT_BASE =
-  'Recreate this work with baseTaskId naming one accepted Git task, which is the explicit form of a base';
+  'Import the project repository into managed Code, then create new work with accepted code prerequisites in dependsOn';
 const IMPORT = 'An administrator imports it with `merv code-import`';
 
 /** Research policy for durable Code records; absent deployments do not install this integration. */
@@ -406,9 +415,9 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
   }
 
   /**
-   * Seals the publication of an accepted unit from its own facts: an immutable snapshot, a pull request against main
-   * carrying the approval status on exactly this head, and a signed-in operator's merge. The
-   * unit is done either way; what is left is a wait on a human, not more work.
+   * Seals an immutable snapshot and the exact independent review. Local integration retains
+   * that head on Merv main; GitHub publication adds a pull request and a signed-in operator's
+   * merge. The accepted unit remains done while its integration is reconciled.
    *
    * A unit whose facts cannot open a publication is still accepted. Acceptance is the record
    * of work that was done and reviewed, and `publishes_at` is write-once, so refusing here
@@ -462,8 +471,9 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
 
   /**
    * Records, once, that this unit's accepted code goes to main. It is a declaration and not a
-   * power: the merge itself still waits for a signed-in operator, and the declaration is the
-   * operator's or the directing agent's, never the worker's own. It has to come before the
+   * power: integration requires independent review, and GitHub merges also require a signed-in
+   * operator. The declaration is the operator's or directing agent's, never the worker's own.
+   * It has to come before the
    * first lease, because main joins the base at derivation and a pin is immutable.
    */
   async publishOnAcceptance(
@@ -679,6 +689,21 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
       operationId: string;
       stored?: boolean;
     };
+    const missingMain = async () => {
+      const initializing = await tx.get(
+        "SELECT id FROM code_operations WHERE project_id=? AND kind='initialize' AND status='prepared'",
+        projectId,
+      );
+      return pending(
+        initializing ? 'initialization' : 'main',
+        initializing
+          ? 'Merv is initializing the project’s Git repository'
+          : 'Code’s repository does not hold the commit that is main',
+        initializing
+          ? 'Initialization retries automatically. Check Code operations for a storage error if it remains pending; no GitHub connection or manual import is required.'
+          : `${IMPORT}, or names an imported commit as main with code.local.bind.`,
+      );
+    };
     const publishing = !!(await this.row(tx, projectId, relations.instance.id))?.publishes_at;
     const fixed = await tx.get<{ reference: string }>(
       'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
@@ -783,14 +808,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     // with main becomes an ordinary resolution task instead of a stale publication. A unit
     // with no code-bearing dependency already starts from main, below.
     if (publishing && commits.size) {
-      if (main.stored !== true)
-        blockers.push(
-          pending(
-            'main',
-            'Code’s repository does not hold the commit that is main, which this unit publishes to',
-            `${IMPORT}, or names an imported commit as main with code.local.bind.`,
-          ),
-        );
+      if (main.stored !== true) blockers.push(await missingMain());
       else if (!commits.has(main.oid)) commits.set(main.oid, { sources: [], units: [] });
     }
     const blocked = blockers.filter(
@@ -940,13 +958,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
     if (!accepted && main.stored !== true)
       return {
         status: 'blocked',
-        blockers: [
-          pending(
-            'main',
-            'Code’s repository does not hold the commit that is main',
-            `${IMPORT}, or names an imported commit as main with code.local.bind.`,
-          ),
-        ],
+        blockers: [await missingMain()],
       };
     return {
       status: 'ready',
@@ -1416,6 +1428,7 @@ export class CodeUnitService extends CodeUnitStore implements CodeUnits {
   ): Promise<CodeUnitPublication | null> {
     const publication = await super.publicationOf(sql, projectId, row);
     if (publication?.state !== 'pending') return publication;
+    if (publication.destination === 'local') return publication;
     const controls = await sql.get<{ record_json: string }>(
       'SELECT record_json FROM code_publication_controls WHERE project_id=?',
       projectId,

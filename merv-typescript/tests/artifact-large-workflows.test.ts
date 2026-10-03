@@ -8,6 +8,7 @@ import type { Caller } from '@merv/contracts';
 import type { ApplicationConfig } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
 import { s3Blobs } from './fixtures/s3-blobs.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 
 /** The default composition, over S3 blobs when `s3` is set and its own disk blobs otherwise. */
 async function app(t: TestContext, s3: boolean) {
@@ -26,6 +27,7 @@ async function app(t: TestContext, s3: boolean) {
   });
   const boot = await started.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  await waitForManagedCode(started.ctx.codeResearch, owner);
   return { app: started, owner };
 }
 
@@ -64,7 +66,7 @@ test('without signed uploads, new tasks keep the version that grants none', asyn
     checks: ['Result retained'],
     requestId: 'original',
   });
-  assert.equal(ordinary.workflow.version, 28);
+  assert.equal(ordinary.workflow.version, 31);
 });
 
 test('S3 blobs give new producers upload grants while reviewers stay read-only', async (t) => {
@@ -75,13 +77,13 @@ test('S3 blobs give new producers upload grants while reviewers stay read-only',
     checks: ['Rows retained'],
     requestId: 'large',
   });
-  assert.equal(task.workflow.version, 32);
+  assert.equal(task.workflow.version, 35);
   const experiment = await s3.ctx.experiments.create(owner, {
     name: 'large_experiment',
     intent: 'Analyze retained rows',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 29);
+  assert.equal(experiment.workflow.version, 32);
   const taskPolicy = await s3.ctx.workflows.assignment(owner, task.id);
   const experimentPolicy = await s3.ctx.workflows.assignment(owner, experiment.id);
   for (const assignment of [taskPolicy, experimentPolicy]) {

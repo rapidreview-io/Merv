@@ -1,3 +1,4 @@
+import { waitForManagedCode } from '../tests/fixtures/managed-code.js';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -143,10 +144,19 @@ export async function seedGit(
     credentialId: issued.credential.id,
   };
 
+  // Extend the project's managed root: demo setup must preserve its existing history too.
+  const managed = await waitForManagedCode(code, human);
+  const paths = new CodeRepositories({
+    root: join(app.directory, 'code'),
+    quotaBytes: 0,
+    reservedFreeBytes: 0,
+  }).paths(operator.projectId);
   // The operator's own repository, and the three commits its main carries.
   const source = join(root, 'source');
   mkdirSync(source);
   git(source, ['init', '--quiet', '--object-format=sha1', '--initial-branch=main']);
+  git(source, ['fetch', '--quiet', paths.repository, 'refs/merv/initial']);
+  git(source, ['checkout', '--quiet', '-B', 'main', 'FETCH_HEAD']);
   const write = (where: string, files: Record<string, string>) => {
     for (const [path, content] of Object.entries(files)) {
       mkdirSync(dirname(join(where, path)), { recursive: true });
@@ -192,13 +202,7 @@ export async function seedGit(
     };
   };
 
-  // Bind, then import: the binding names main, and the import is what makes Code's own
-  // repository hold it, which is what `durability: code` means.
-  await code.bindLocal(human, {
-    repositoryId: 'demo-repository',
-    mainOid: main,
-    requestId: id('bind'),
-  });
+  // Import this descendant before advancing the same repository's demo base with CAS.
   const imported = bundle(source, main, []);
   const begun = await code.importRepository(human, {
     source: 'bundle',
@@ -208,6 +212,12 @@ export async function seedGit(
   });
   await code.v2.putPart(human, begun.id, 0, imported.content);
   await code.v2.call(human, `uploads/${begun.id}/complete`, {});
+  await code.bindLocal(human, {
+    repositoryId: managed.project!.repositoryId,
+    mainOid: main,
+    expectedMainOid: managed.project!.main.oid,
+    requestId: id('bind'),
+  });
 
   // GitHub, faked at both its seams: its HTTP API in this process, and the repository it
   // publishes to as a bare repository this machine can push to.
@@ -228,11 +238,6 @@ export async function seedGit(
     reason: 'The demo release matrix passed with this App and its rules.',
     requestId: id('canary'),
   });
-  const paths = new CodeRepositories({
-    root: join(app.directory, 'code'),
-    quotaBytes: 0,
-    reservedFreeBytes: 0,
-  }).paths(operator.projectId);
   // What the project publishes to, as a repository on this machine. Code's own transport may
   // speak only https, so the demo puts a local one in its place — the same seam a test replaces
   // — and every push below is a real push that moves a real ref.

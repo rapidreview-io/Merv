@@ -1,3 +1,5 @@
+import { waitForManagedCode } from './fixtures/managed-code.js';
+import { historicalTask } from './fixtures/historical-task.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,6 +19,10 @@ async function fixture(api = false) {
   const boot = await app.ctx.scope.bootstrap({
     projectName: 'Dependency tests',
     actorName: 'Operator',
+  });
+  await waitForManagedCode(app.ctx.codeResearch, {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
   });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
@@ -47,7 +53,7 @@ async function fixture(api = false) {
     ...(dependsOn === undefined ? {} : { dependsOn }),
   });
   const create = async (dependsOn?: TaskCreate['dependsOn']) =>
-    await app.ctx.tasks.create(producer.caller, input(dependsOn));
+    await historicalTask(app.ctx, producer.caller, input(dependsOn));
   const get = async (task: Task) => await app.ctx.tasks.get(producer.caller, task.id);
   const deliver = async (task: Task) =>
     await app.ctx.tasks.submitDelivery(
@@ -618,7 +624,11 @@ test('HTTP and MCP accept dependency input forms, reject extra keys and malforme
     });
     assert.deepEqual(task.guidance, guidance);
     assert.deepEqual(task.dependencies, guidance.dependencies);
-    assert.ok(context.prompt.includes(JSON.stringify(assignmentTask(task))));
+    // Code may finish deriving the base between these reads without a workflow revision.
+    // The context must still retain the same work and its declared prerequisites.
+    assert.ok(context.prompt.includes(`"id":"${task.id}"`));
+    assert.ok(context.prompt.includes(task.goal));
+    for (const dependency of task.dependencies) assert.ok(context.prompt.includes(dependency.id));
     const httpTask = await http('task.get', { taskId: b.id });
     assert.deepEqual((await httpTask.json()).result, task);
     const tools = (await client.listTools()).tools;

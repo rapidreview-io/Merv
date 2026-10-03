@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -42,7 +43,7 @@ async function fixture(api = false) {
     checks: [...checks],
     requestId: `create-${++sequence}`,
   });
-  const create = async () => await app.ctx.tasks.create(producer.caller, input());
+  const create = async () => await historicalTask(app.ctx, producer.caller, input());
   const delivery = (task: Task): TaskDelivery => ({
     taskId: task.id,
     artifactIds: [proof.id],
@@ -127,7 +128,7 @@ test('new tasks render one immutable brief, expose numbered checks and replay wi
     );
     assert.deepEqual(
       task.guidance.actions.find((action) => action.action === 'submit_delivery')?.requiredInput,
-      ['artifactIds', 'confirmations'],
+      ['artifactIds', 'commandId', 'confirmations'],
     );
     const context = await f.app.ctx.tasks.context(f.producer.caller, {
       taskId: task.id,
@@ -402,7 +403,7 @@ test('generated assessment, review snapshot and transition roll back after a lat
   }
 });
 
-test('structured delivery keeps actor/project checks and publishes identical HTTP, MCP and preflight contracts', async () => {
+test('historical structured delivery keeps actor/project checks and publishes identical HTTP, MCP and preflight contracts', async () => {
   const f = await fixture(true);
   let client: Client | undefined;
   try {
@@ -425,8 +426,9 @@ test('structured delivery keeps actor/project checks and publishes identical HTT
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify(args),
       });
-    const createInput = f.input(),
-      created = await http('task.create', createInput);
+    const createInput = f.input();
+    await historicalTask(f.app.ctx, f.producer.caller, createInput);
+    const created = await http('task.create', createInput);
     assert.equal(created.status, 200);
     const task: Task = (await created.json()).result;
     assert.equal(task.evidenceVersion, 2);

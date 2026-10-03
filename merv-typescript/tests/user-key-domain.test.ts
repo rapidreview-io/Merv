@@ -1,3 +1,5 @@
+// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
+import { historicalTask } from './fixtures/historical-task.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -42,7 +44,7 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
     key: await scope.authenticateKey(r.token),
   });
   const head = await state.eventHead();
-  const task = await tasks.create(producerCaller, {
+  const task = await historicalTask(app.ctx, producerCaller, {
     title: 'Evidence',
     goal: 'Verify a result',
     checks: ['The result is verified'],

@@ -1,3 +1,5 @@
+// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
+import { historicalTask } from './fixtures/historical-task.js';
 import {
   createService,
   MervError,
@@ -1070,7 +1072,7 @@ test('the assembled application offers the stuck report as a read tool and the g
       ['session.stuck', true],
     ],
   );
-  const task = await app.ctx.tasks.create(owner, {
+  const task = await historicalTask(app.ctx, owner, {
     title: 'Waiting',
     goal: 'Wait for a runner.',
     checks: ['It waited.'],

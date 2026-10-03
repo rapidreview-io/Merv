@@ -178,6 +178,8 @@ export interface CodeWriters {
 }
 /** The project's repository on the server's disk; refused where the server keeps none. */
 export interface CodeRepositoryControls {
+  /** Declare the project repository before creating new work. */
+  ensureRepository(caller: Caller, tx: Transaction): Promise<void>;
   prepareRepository(
     caller: Caller,
     input: import('@merv/contracts').CodeRepositoryPrepareInput,

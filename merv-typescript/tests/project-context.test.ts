@@ -1,3 +1,4 @@
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -523,6 +524,14 @@ test('Task contexts freeze the Introduction at lease offer and retain saved pack
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
+  await waitForManagedCode(app.ctx.codeResearch, source);
+  await app.ctx.sessions.heartbeatRunner(source, {
+    runnerId: 'context-test',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
   const first = await app.ctx.scope.updateProjectContext(source, update('INTRO_AT_OFFER_731'));
   const task = await app.ctx.tasks.create(source, {
     title: 'Observe intent',

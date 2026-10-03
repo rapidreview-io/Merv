@@ -2,6 +2,7 @@ import { CodeGitHubService, type GitHubBinding } from '@merv/code/github';
 import type { GitHubConfig } from '@merv/code/github-client';
 import { parseCodeInput } from '@merv/code/input';
 import { rejectRetiredBackup } from '@merv/code/configuration';
+import { declareManagedProject } from '@merv/code/store/managed';
 import type { CodeService as CodeUtility } from '@merv/code/service';
 import {
   CodeMirrorService,
@@ -40,7 +41,8 @@ import { CodeProposalService } from './proposals.js';
 import { CodeWorkspaceProtocol } from './protocol.js';
 import { PublicationHost } from './publication-host.js';
 import { CodePublicationService } from './publications.js';
-import { prepareRepository } from './repository-setup.js';
+import { migrateRepositorySync, reconcileRepository } from './repository-sync.js';
+import { prepareRepository, repositoryPrepareSchema } from './repository-setup.js';
 import { CodeRunningReader } from './running.js';
 import { CodeTransportService } from './transport.js';
 import type { Code } from './types.js';
@@ -266,6 +268,7 @@ export class CodeService extends CodeCommandService implements Code {
         this.mirrorStore?.initialize();
         await this.transport.initialize();
         await this.publicationStore.initialize();
+        await migrateRepositorySync(state);
       } catch (error) {
         await this.close();
         throw error;
@@ -508,6 +511,18 @@ export class CodeService extends CodeCommandService implements Code {
   async hosted(...args: Parameters<CodeUnitService['hosted']>) {
     return await this.unitStore.hosted(...args);
   }
+  async ensureRepository(caller: Caller, tx: Transaction): Promise<void> {
+    await this.baseScope.require(caller, 'write', tx);
+    if (await this.unitStore.hosted(caller, tx)) return;
+    const store = this.requireStore();
+    await declareManagedProject(tx, caller.projectId);
+    store.wake();
+  }
+  async projectCreated(projectId: string, tx: Transaction): Promise<void> {
+    if (!this.store) return;
+    await declareManagedProject(tx, projectId);
+    this.store.wake();
+  }
   async unit(...args: Parameters<CodeUnitService['unit']>) {
     return await this.unitStore.unit(...args);
   }
@@ -541,8 +556,25 @@ export class CodeService extends CodeCommandService implements Code {
   async importRepository(caller: Caller, input: unknown) {
     return await this.requireStore().importRepository(caller, input);
   }
-  prepareRepository(caller: Caller, input: import('@merv/contracts').CodeRepositoryPrepareInput) {
-    return prepareRepository(this, caller, input);
+  async prepareRepository(
+    caller: Caller,
+    input: import('@merv/contracts').CodeRepositoryPrepareInput,
+  ) {
+    caller = structuredClone(caller);
+    input = parseCodeInput(repositoryPrepareSchema, input);
+    await this.storage.transaction((tx) => this.ensureRepository(caller, tx));
+    await this.requireStore().maintain(false);
+    return prepareRepository(this, caller, input, (operation) =>
+      reconcileRepository(
+        this.storage,
+        this.requireStore().repositories,
+        this.github,
+        this.unitStore,
+        caller,
+        input,
+        operation,
+      ),
+    );
   }
   async rebindRepository(caller: Caller, input: unknown) {
     return await this.requireStore().rebindRepository(caller, input);

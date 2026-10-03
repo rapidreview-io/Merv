@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -956,14 +957,13 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
     });
     return { status: response.status, body: (await response.json()) as any };
   };
-  const created = await tool('task.create', credentials.token, {
+  const task = await historicalTask(app.ctx, operator, {
     title: 'Rebuild citation index',
     goal: 'Every citation key maps to one retained file.',
     checks: ['Every key resolves.'],
     requestId: 'running-sessions',
   });
-  assert.equal(created.status, 200, JSON.stringify(created.body));
-  const task = created.body.result;
+
   await app.ctx.sessions.heartbeatRunner(operator, presence('desk', 'mac-studio'));
   const input = { runnerId: 'desk', requestId: request(), secret: secret() };
   const offered = await app.ctx.sessions.offer(operator, {

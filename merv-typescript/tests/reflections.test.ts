@@ -1,3 +1,6 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { mapAsync } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -26,8 +29,6 @@ async function fixture(t: TestContext, reflections?: object) {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   );
-  // These domain tests need Code's contracts, not its socket-backed repository store.
-  config.plugins.find((entry: { id: string }) => entry.id === 'code').config = {};
   config.plugins = config.plugins.filter(
     (entry: { id: string }) =>
       entry.id !== 'api' &&
@@ -52,6 +53,7 @@ async function fixture(t: TestContext, reflections?: object) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
+  await waitForManagedCode(app.ctx.codeResearch, owner);
   const actor = async (name: string, role: 'producer' | 'reviewer' | 'operator' = 'producer') => {
     const issued = await app.ctx.scope.issueActor(owner, { name, role });
     return {
@@ -269,7 +271,7 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
   );
   const reports = wave.lenses.map((lens) => lens.artifact!.id);
   const synthesis = (await f.app.ctx.workflows.assignment(f.owner, wave.id)).context!;
-  assert.equal(synthesis.typeVersion, 12);
+  assert.equal(synthesis.typeVersion, 13);
   assert.ok(synthesis.prompt.length <= 32_000);
   assert.ok(synthesis.prompt.includes(`\n### reflection:${wave.id}:wave:`));
   assert.ok(synthesis.prompt.includes(`"reflectionId":"${wave.id}"`));
@@ -296,7 +298,7 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
     expectedRevision: wave.workflow.revision,
     requestId: 'assign-synthesis',
   });
-  assert.equal(session.assignment.context!.typeVersion, 12);
+  assert.equal(session.assignment.context!.typeVersion, 13);
   assert.ok(reports.every((id) => session.execution.references.artifacts.includes(id)));
   await f.app.ctx.sessions.releaseAgentAssignment(secret, session.id);
 
@@ -556,8 +558,8 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
   assert.equal(wave.workflow.version, 4);
   assert.ok(wave.lenses.every((lens) => lens.workflow.version === 3));
   const assignment = await f.app.ctx.workflows.assignment(f.owner, wave.id);
-  assert.match(JSON.stringify(assignment), /version: 2/);
-  assert.match(JSON.stringify(assignment), /deliverable is code in the project's repository/);
+  assert.match(JSON.stringify(assignment), /version: 3/);
+  assert.match(JSON.stringify(assignment), /Every new task and experiment has managed Git storage/);
   assert.match(
     JSON.stringify(assignment),
     /Done-when checks must be achievable and independently reviewable before any work that depends on it starts/,
@@ -634,10 +636,7 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
     await f.actor('Preview reviewer', 'reviewer'),
     wave.id,
   );
-  assert.match(
-    JSON.stringify(reviewContext),
-    /Verify that each declaration matches its deliverable/,
-  );
+  assert.match(JSON.stringify(reviewContext), /Dependencies determine the base/);
   assert.match(
     JSON.stringify(reviewContext),
     /design submission and review belong to that experiment's own gate/,
@@ -715,7 +714,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.equal(wave.attempt, 2);
   const lens = wave.lenses[0]!;
   const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.equal(lensContext.typeVersion, 11);
+  assert.equal(lensContext.typeVersion, 12);
   assert.ok(lensContext.prompt.includes(`review:${firstReview}`));
   assert.ok(lensContext.prompt.includes(`review:${secondReview}`));
   assert.match(lensContext.prompt, /"verdict":"needs_changes"/);
@@ -1430,13 +1429,13 @@ test('a leased lens reads research added after assignment through existing tools
     checks: ['Report outcome'],
     requestId: 'existing-task',
   };
-  const task = await f.app.ctx.tasks.create(f.owner, taskInput);
+  const task = await historicalTask(f.app.ctx, f.owner, taskInput);
   const experimentInput = {
     name: 'existing-experiment',
     intent: 'Test feasibility',
     requestId: 'existing-experiment',
   };
-  const experiment = await f.app.ctx.experiments.create(f.owner, experimentInput);
+  const experiment = await historicalExperiment(f.app.ctx, f.owner, experimentInput);
   const tools = (await f.app.ctx.tools.list()).map((tool) => tool.name);
   assert.equal(tools.filter((name) => name === 'reflection.create').length, 1);
   const wave = (await f.app.ctx.tools.call('reflection.create', f.owner, {

@@ -1,3 +1,5 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { historicalTask } from './fixtures/historical-task.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -109,7 +111,7 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
     });
     return { session, worker: await app.ctx.sessions.authenticate(secret) };
   };
-  const task = await tasks.create(operator, {
+  const task = await historicalTask(app.ctx, operator, {
     title: 'GPU handoff canary',
     goal: 'Retain a shared GPU environment for verification.',
     checks: ['The environment is available to an independent reviewer.'],
@@ -316,7 +318,7 @@ test('experiment planning, both reviewers and execution share the work-owned ren
     await app.ctx.sessions.release(operator, { sessionId, runnerId: 'handoff' });
     await app.ctx.domainEvents.drain();
   };
-  let experiment = await experiments.create(operator, {
+  let experiment = await historicalExperiment({ state: app.ctx.state, experiments }, operator, {
     name: 'shared-feasibility-environment',
     intent: 'Use the same retained environment for a small comparison.',
     requestId: randomUUID(),

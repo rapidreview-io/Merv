@@ -1,3 +1,6 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import type { Caller, TaskReview } from '@merv/contracts';
 import type { Reflection } from '@merv/reflections/types';
 import type { ResearchRecord } from '@merv/research/types';
@@ -22,8 +25,8 @@ async function fixture(t: TestContext, enabled: boolean) {
       !['api', 'identity', 'ui'].includes(id) && !id.endsWith('-api') && !id.endsWith('-ui'),
   );
   config.plugins.find(({ id }) => id === 'code')!.disabled = !enabled;
-  // Optional-provider lifecycle needs Code's services, not the repository writer socket.
-  config.plugins.find(({ id }) => id === 'code')!.config = {};
+  // Explicit compatibility composition; normal deployments require the Code plugins.
+  for (const entry of config.plugins) if (entry.id.startsWith('code')) entry.required = false;
   const app = await createApp({ directory, config });
   t.after(async () => {
     await app.stop();
@@ -41,17 +44,23 @@ async function fixture(t: TestContext, enabled: boolean) {
     actorId: issued.actor.id,
     credentialId: issued.credential.id,
   };
+  if (enabled) await waitForManagedCode(app.ctx.codeResearch, owner);
   const source = await app.ctx.artifacts.create(owner, {
     title: 'Source',
     content: 'Retained research findings.',
   });
   const experiment = async (name: string, workspace: 'none' | 'git' = 'none') =>
-    await app.ctx.experiments.create(owner, {
-      name,
-      intent: 'Compare observations.',
-      workspace,
-      requestId: name,
-    });
+    workspace === 'none'
+      ? await historicalExperiment(app.ctx, owner, {
+          name,
+          intent: 'Compare observations.',
+          requestId: name,
+        })
+      : await app.ctx.experiments.create(owner, {
+          name,
+          intent: 'Compare observations.',
+          requestId: name,
+        });
   const active = () => {
     for (const id of ['experiments', 'knowledge', 'reflections', 'research', 'tasks', 'sessions'])
       assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
@@ -145,7 +154,7 @@ async function fixture(t: TestContext, enabled: boolean) {
   };
 }
 
-test('server boots without Code and completes no-code research after reflection approval', async (t) => {
+test('explicit compatibility configuration completes historical scratch work without Code', async (t) => {
   const f = await fixture(t, false);
   f.active();
   assert.equal(f.app.status().find((entry) => entry.id === 'code-tools')?.state, 'pending');
@@ -182,14 +191,17 @@ test('server boots without Code and completes no-code research after reflection 
   await assert.rejects(async () => await f.experiment('Needs-code', 'git'), {
     code: 'code_unavailable',
   });
-  // Only a Git task asks for Code: a task that delivers files runs to done without it.
+  // Old scratch work remains executable, while every new task requires Code.
   const task = { title: 'Notes', goal: 'Write the notes.', checks: ['The notes exist'] };
   await assert.rejects(
     async () =>
       await f.app.ctx.tasks.create(f.owner, { ...task, workspace: 'git', requestId: 'git-task' }),
     { code: 'code_unavailable' },
   );
-  const scratchTask = await f.app.ctx.tasks.create(f.owner, { ...task, requestId: 'scratch-task' });
+  const scratchTask = await historicalTask(f.app.ctx, f.owner, {
+    ...task,
+    requestId: 'scratch-task',
+  });
   const delivered = await f.app.ctx.tasks.submitDelivery(f.owner, {
     ...confirmedDelivery({ taskId: scratchTask.id, artifactIds: [f.source.id] }),
     expectedRevision: 0,
@@ -264,9 +276,9 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     workspace: 'git',
     requestId: 'git-task',
   });
-  // Unhosted projects keep the production versions, without a derived-base blocker.
-  assert.equal(git.workflow.version, 26);
-  assert.equal(gitTask.workflow.version, 29);
+  // New work uses managed Git; historical scratch assignments retain their original policy.
+  assert.equal(git.workflow.version, 28);
+  assert.equal(gitTask.workflow.version, 31);
   assert.deepEqual(await f.app.ctx.workflows.blockers(f.owner), []);
   const secret = `ms_${randomBytes(32).toString('base64url')}`;
   const session = await f.app.ctx.sessions.offer(f.owner, {
@@ -320,7 +332,7 @@ test('Code unload leaves live non-Git assignments and providers intact; reload r
     await f.app.setEnabled('code', true);
     assert.equal(f.app.ctx.experiments, providers.experiments);
     assert.deepEqual(await f.app.ctx.workflows.blockers(f.owner), []);
-    assert.equal(await f.app.ctx.tasks.codeUnit(f.owner, gitTask.id), null);
+    assert.equal((await f.app.ctx.tasks.codeUnit(f.owner, gitTask.id))?.unitId, gitTask.id);
     assert.match((await f.app.ctx.workflows.assignment(f.owner, gitTask.id)).brief, /Git task/);
     assert.equal(
       (await f.app.ctx.workflows.assignment(f.owner, git.id)).context?.type,

@@ -4,6 +4,7 @@ import { codeRepositoryImportInputSchema } from '@merv/contracts';
 import type { Caller, CodeRepositoryPrepareInput, CodeStoreOperation } from '@merv/contracts';
 import type { Code } from '../packages/code-research/src/types.js';
 import { prepareRepository } from '../packages/code-research/src/repository-setup.js';
+import { boundProject } from './fixtures/code-binding.js';
 import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
 
 const caller: Caller = { actorId: 'admin', projectId: 'project', credentialId: 'admin-key' };
@@ -144,6 +145,8 @@ test('preparing a Unicode research branch imports its actual Git history and ret
     requestId: 'unicode-project',
   });
   const human = await f.scope.caller(principal, project.id);
+  // An imported legacy project still preserves its pre-managed binding.
+  await boundProject(f.state, project.id, head, 'github:42');
   await f.open({
     remote: {
       read: async (_caller, use, binding) => {
@@ -169,6 +172,7 @@ test('preparing a Unicode research branch imports its actual Git history and ret
     expectedRevision: 3,
     baseBranch,
     headOid: head,
+    expectedMainOid: head,
     requestId: 'unicode-prepare',
   });
   assert.equal(result.state, 'ready');

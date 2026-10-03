@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -169,20 +170,24 @@ test(
     await boundProject(state, owner.projectId, main, 'fixture-repository');
 
     // Two Git tasks made before the import, which are the versions a legacy machine serves.
-    const create = async (requestId: string) =>
-      await tasks.create(owner, {
+    const create = async (requestId: string, legacy = false) => {
+      const input = {
         title: `Work ${requestId}`,
         goal: 'Do the work.',
         checks: ['It is done'],
-        workspace: 'git',
+        workspace: 'git' as const,
         requestId,
-      });
-    const legacyWork = await create('legacy-one');
-    const alsoLegacy = await create('legacy-two');
+      };
+      return legacy
+        ? historicalTask(app.ctx, owner, input, undefined, 29)
+        : tasks.create(owner, input);
+    };
+    const legacyWork = await create('legacy-one', true);
+    const alsoLegacy = await create('legacy-two', true);
     assert.deepEqual(
       [legacyWork.workflow.version, alsoLegacy.workflow.version],
       [29, 29],
-      'before the import, new Git work is the version a legacy machine knows',
+      'existing work retains the version a legacy machine knows',
     );
 
     const issue = async (name: string) =>

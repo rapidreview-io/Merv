@@ -81,6 +81,12 @@ const subject = (blocker: CodeBlocker, names?: NameLookup) => {
 export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove | null {
   const message = blocker.message ?? '';
   switch (blocker.code) {
+    case 'code_publication_local_pending':
+      return {
+        sentence: 'Waiting for the reviewed commit to reach Merv main',
+        who: 'The server',
+        whose: 'nobody',
+      };
     case 'code_publication_pending': {
       // Between acceptance and the first sync there is no pull request yet, and the blocker
       // says so by carrying none. Nothing is merged in that window and nobody is owed it,
@@ -153,6 +159,12 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
       };
     }
     case 'code_base_pending':
+      if (blocker.key === 'initialization')
+        return {
+          sentence: 'Merv is initializing this project’s Git repository',
+          who: 'The server',
+          whose: 'nobody',
+        };
       // Every other pending base names work that has not been accepted yet, which is that
       // record's own business; only main waits on somebody binding or importing it.
       return blocker.key === 'main'
@@ -197,7 +209,10 @@ const PUBLICATION: Partial<Record<CodeUnitPublication['state'], string>> = {
 export function publicationBlocker(
   publication: CodeUnitPublication | null | undefined,
 ): CodeBlocker | null {
-  const code = publication && PUBLICATION[publication.state];
+  const code =
+    publication?.destination === 'local' && publication.state === 'pending'
+      ? 'code_publication_local_pending'
+      : publication && PUBLICATION[publication.state];
   if (!code) return null;
   const pull = publication!.pull;
   return {

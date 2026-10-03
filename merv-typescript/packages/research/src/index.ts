@@ -747,11 +747,13 @@ export class ResearchService implements Research {
     const pull = publication?.pull ? ` ${publication.pull.url}` : '';
     throw new MervError(
       'publication_pending',
-      publication?.state === 'pending'
-        ? `The consolidation task ${taskId} is accepted; a signed-in operator merges its pull request${pull} before the cycle completes`
-        : publication?.state === 'setup_required'
-          ? `The consolidation task ${taskId} is accepted; an operator completes publication setup before its pull request can be merged${pull}`
-          : `The consolidation task ${taskId} is accepted, but its publication is ${publication?.state ?? 'not open'}; a signed-in operator clears or investigates it${pull} before the cycle completes`,
+      publication?.destination === 'local' && publication.state === 'pending'
+        ? `The consolidation task ${taskId} is accepted; publication sync must integrate its reviewed commit into Merv main before the cycle completes. Run code.publication.sync to retry it.`
+        : publication?.state === 'pending'
+          ? `The consolidation task ${taskId} is accepted; a signed-in operator merges its pull request${pull} before the cycle completes`
+          : publication?.state === 'setup_required'
+            ? `The consolidation task ${taskId} is accepted; an operator completes publication setup before its pull request can be merged${pull}`
+            : `The consolidation task ${taskId} is accepted, but its publication is ${publication?.state ?? 'not open'}; a signed-in operator clears or investigates it${pull} before the cycle completes`,
       409,
     );
   }
@@ -875,7 +877,7 @@ export class ResearchService implements Research {
       const provenance = `\n\nWhy: ${item.rationale}${origin(approved, pinned('change specification', approved.changeSpec), `item ${item.key}`)}`;
       const dependsOn = item.dependsOn.map((key) => created.get(key)!);
       const itemRequestId = childRequest(caller, 'research', `item:${item.key}`, requestId);
-      const workspace = item.workspace.provider === 'code' ? ('git' as const) : undefined;
+      // Storage is platform policy, including new work generated from retained older plans.
       const work =
         item.kind === 'task'
           ? await this.use('tasks', checks, (service) =>
@@ -886,7 +888,7 @@ export class ResearchService implements Research {
                   goal: `${item.goal}${provenance}`,
                   checks: item.checks,
                   dependsOn,
-                  ...(workspace ? { workspace } : {}),
+                  workspace: 'git',
                   requestId: itemRequestId,
                 },
                 tx,
@@ -900,7 +902,7 @@ export class ResearchService implements Research {
                   intent: item.question,
                   details: `${item.details}${provenance}`.trimStart(),
                   dependsOn,
-                  ...(workspace ? { workspace } : {}),
+                  workspace: 'git',
                   requestId: itemRequestId,
                 },
                 tx,
@@ -1616,7 +1618,7 @@ export class ResearchService implements Research {
     } catch (error) {
       // Git is asked outside every transaction, so the same advance runs again on its own.
       if (error instanceof MervError && error.code === 'integration_candidates_unavailable')
-        this.soon(caller, automatic, input, automaticBlocker(error));
+        this.soon(caller, automatic, input, automaticBlocker(error), stoppedByLimit);
       throw error;
     }
     await this.event(
@@ -1650,11 +1652,26 @@ export class ResearchService implements Research {
     row: AutomaticRow,
     input: ResearchAdvance,
     marker: ResearchAutomation['blocker'],
+    stoppedByLimit: boolean,
   ): void {
     if (this.closed) return;
     const run = async () => {
       try {
-        await this.advance(caller, input);
+        const advanced = await this.advance(caller, input);
+        // The out-of-transaction Git retry bypasses reconcileAutomatic's return
+        // value. Preserve its terminal limit explanation on this path as well.
+        if (stoppedByLimit && advanced.workflow.state === 'complete')
+          await this.state.transaction(async (tx) => {
+            const current = await tx.get<AutomaticRow>(
+              'SELECT * FROM research_automation WHERE research_id=?',
+              row.research_id,
+            );
+            if (!current || current.blocker_json !== null) return;
+            await recordBlocker(this.state, tx, current, {
+              code: 'research_cycle_limit',
+              message: `Finished the authorized ${current.max_cycles} research cycles; no further wave was created`,
+            });
+          });
       } catch (error) {
         if (
           this.closed ||

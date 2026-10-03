@@ -1,3 +1,4 @@
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -89,6 +90,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
       title: 'Task brief',
       content: 'Goal: Keep task durable.\nDone when: Survive workflow removal.',
     });
+    await waitForManagedCode(app.ctx.codeResearch, caller);
     const task = await call(client, 'task.create', {
       title: 'Durable task',
       goal: 'Keep task durable.',

@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -611,7 +612,7 @@ test('Tasks reject supplied routes before command replay and agree with workflow
       title: 'Proof',
       content: '42 was independently verified.',
     });
-    const task = await app.ctx.tasks.create(producer, {
+    const task = await historicalTask(app.ctx, producer, {
       title: 'Verify',
       goal: 'Verify the result.',
       checks: ['The result is correct.'],

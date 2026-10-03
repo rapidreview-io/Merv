@@ -1,3 +1,6 @@
+// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
+import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -70,7 +73,7 @@ async function fixture(t: TestContext) {
   const reader = await issue('reader');
   let sequence = 0;
   const task = async () =>
-    await app.ctx.tasks.create(producer.caller, {
+    await historicalTask(app.ctx, producer.caller, {
       title: `Check adder ${++sequence}`,
       goal: 'Verify addition.',
       checks: ['Positive inputs work.', 'Negative inputs work.'],
@@ -341,7 +344,7 @@ test('an experiment names the gate each review read, in the standing and in ever
     '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports the retained observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.';
   let sequence = 0;
   const request = () => `experiment-${++sequence}`;
-  let experiment = await f.app.ctx.experiments.create(f.operator, {
+  let experiment = await historicalExperiment(f.app.ctx, f.operator, {
     name: 'ablate-retrieval-depth',
     intent: 'Does retrieval depth change held-out accuracy?',
     requestId: request(),

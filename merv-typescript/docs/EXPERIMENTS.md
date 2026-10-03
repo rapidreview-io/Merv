@@ -1,5 +1,7 @@
 # Experiments
 
+Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document older workflow versions. See [Always-on Git](ALWAYS_GIT.md).
+
 The production Experiments plugin connects a research question to design review,
 execution, result review and an explicit conclusion. It retains every attempt
 and submitted evidence selection. A completed experiment means its research was

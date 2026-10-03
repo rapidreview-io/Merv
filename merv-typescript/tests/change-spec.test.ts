@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { MervError } from '@merv/contracts';
 import { ordered } from '@merv/contracts';
 import { parseChangeSpec } from '../packages/reflections/src/change-spec.js';
-import type { ChangeSpec } from '../packages/reflections/src/types.js';
+import type { ChangeSpec as AnyChangeSpec } from '../packages/reflections/src/types.js';
 
+type ChangeSpec = Extract<AnyChangeSpec, { version: 2 }>;
 type Item = ChangeSpec['items'][number];
 const task = (key: string, dependsOn: string[] = []): Extract<Item, { kind: 'task' }> => ({
   key,
@@ -94,7 +95,7 @@ test('every field may reach its limit, and the whole stays small enough to revie
 test('a malformed, extended or wrongly versioned change specification is refused by field', () => {
   refused('{not json', /valid JSON/);
   refused({ ...plan(), extra: true }, /extra|input/i);
-  refused({ ...plan(), version: 3 }, /version/);
+  refused({ ...plan(), version: 4 }, /version/);
   // The first plan format, which declared no workspaces, is no longer accepted anywhere.
   refused({ ...plan(), version: 1 }, /version/);
   refused(plan({ items: [{ ...task('a'), type: 'task.work' } as Item] }), /items\.0/);
@@ -196,4 +197,16 @@ test('every item declares its workspace, and no item can smuggle a base', () => 
         /items/,
       );
   }
+});
+
+test('version 3 plans omit workspace choice while version 2 remains readable', () => {
+  const old = plan();
+  const current = {
+    ...old,
+    version: 3,
+    items: old.items.map(({ workspace: _workspace, ...item }) => item),
+  };
+  assert.deepEqual(parseChangeSpec(JSON.stringify(current)), current);
+  assert.deepEqual(parseChangeSpec(JSON.stringify(old)), old);
+  refused({ ...current, items: old.items }, /workspace/);
 });

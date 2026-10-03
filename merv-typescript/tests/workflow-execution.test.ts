@@ -1,3 +1,5 @@
+// Historical scratch records exercise the original assignment and recovery contract.
+import { historicalTask } from './fixtures/historical-task.js';
 import { admitDispatch, createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -647,7 +649,7 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     });
     return { session, worker: await sessions.authenticate(secret) };
   };
-  const task = await tasks.create(operator, {
+  const task = await historicalTask(app.ctx, operator, {
     title: 'Task',
     goal: 'Prove it.',
     checks: ['It passed.'],

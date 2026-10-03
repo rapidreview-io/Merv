@@ -18,8 +18,8 @@ import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { createApp } from './fixtures/app.js';
-import { boundProject } from './fixtures/code-binding.js';
-import { git, gitSource, importBundle } from './fixtures/code-store.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
+import { git } from './fixtures/code-store.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;
@@ -210,12 +210,10 @@ function machine(
 }
 
 test(
-  'a task in Code’s repository is worked on one machine, reviewed at exactly its delivered commit on another, resumed there with what the first left, and accepted with a receipt',
+  'a default task without GitHub crosses machines, resumes retained changes, passes independent review and integrates into managed main',
   { timeout: 3 * waitMs },
   async (t) => {
     const root = mkdtempSync(join(tmpdir(), 'merv-v2-'));
-    const operator = gitSource(t);
-    const main = operator.commit({ 'README.md': 'The project.\n' }, 'Initial');
     const app = await createApp({ directory: join(root, 'server'), api: true, port: 0 });
     t.after(async () => {
       await app.stop();
@@ -229,16 +227,16 @@ test(
     };
     const { codeResearch: code, tasks, sessions, reviews, state } = app.ctx;
 
-    await boundProject(state, owner.projectId, main, 'fixture-repository');
-    await importBundle(code, owner, operator.bundle(main));
-    // Naming main again records that Code holds it, which is what new work starts from.
+    const initial = await waitForManagedCode(code, owner);
+    const main = initial.project!.main.oid;
+    assert.equal(initial.store?.source, 'managed');
+    assert.equal((await code.github.status(owner)).repository, null);
     assert.equal((await code.status(owner)).project?.durability, 'code');
 
     const task = await tasks.create(owner, {
       title: 'Harness',
       goal: 'Build the harness.',
       checks: ['It runs'],
-      workspace: 'git',
       requestId: 'hosted',
     });
     assert.equal(
@@ -246,6 +244,8 @@ test(
       31,
       'new Git work lives in Code once the project is hosted',
     );
+
+    await state.transaction((tx) => code.publishOnAcceptance(owner, { unitId: task.id }, tx));
 
     let finalizes = 0;
     let dropped = false;
@@ -395,7 +395,7 @@ test(
         : undefined,
     );
 
-    // Nothing was counted against the work, and the operator's repository was only ever read.
+    // The work's retries and handoffs did not count as execution failures.
     const all = await sessions.list(owner);
     assert.deepEqual(
       all.map((session) => session.outcome).filter((outcome) => outcome !== 'completed'),
@@ -405,8 +405,14 @@ test(
       await state.read(async (sql) => await sql.all('SELECT * FROM session_dispatch_holds')),
       [],
     );
-    assert.equal(operator.git('rev-parse', 'HEAD'), main);
-    assert.equal(operator.git('status', '--porcelain'), '');
+    await code.syncPublications(owner);
+    await a.until('reviewed local integration', async () =>
+      (await code.status(owner)).project?.main.oid === revised.receipt.headOid ? true : undefined,
+    );
+    const [publication] = await code.publications(owner);
+    assert.equal(publication.destination, 'local');
+    assert.equal(publication.verified, true);
+    assert.equal((await code.github.status(owner)).repository, null);
     const finals = await state.read(
       async (sql) =>
         await sql.all<{ data_json: string }>(

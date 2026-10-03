@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { createService } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
@@ -200,7 +201,7 @@ test('task types supply distinct recipes; checkpoints and revoked review recover
       /Missing required context: experiments/,
     );
     const contextInputs = { experiments: [research.id], projectKnowledge: [constraints.id] };
-    const task = await app.ctx.tasks.create(producer, { ...create, contextInputs });
+    const task = await historicalTask(app.ctx, producer, { ...create, contextInputs });
     assert.deepEqual(task.checks, ['Define the controls.']);
     const checkpoint = await app.ctx.tasks.checkpoint(producer, {
       taskId: task.id,

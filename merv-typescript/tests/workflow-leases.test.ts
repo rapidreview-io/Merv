@@ -1,3 +1,5 @@
+// Historical scratch records exercise the original assignment and recovery contract.
+import { historicalTask } from './fixtures/historical-task.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -40,7 +42,7 @@ async function fixture(t: TestContext) {
     projectId: authenticated.projectId,
     credentialId: authenticated.credential.id,
   };
-  const task = await app.ctx.tasks.create(source, {
+  const task = await historicalTask(app.ctx, source, {
     title: 'Verify',
     goal: 'Verify a result.',
     checks: ['The result is 42.'],

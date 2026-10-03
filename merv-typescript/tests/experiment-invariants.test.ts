@@ -1,3 +1,4 @@
+import { historicalExperiment } from './fixtures/historical-experiment.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
@@ -73,7 +74,7 @@ async function fixture(t: TestContext) {
   let sequence = 0;
   const request = () => `invariant-${++sequence}`;
   const create = async () =>
-    await experiments.create(source, {
+    await historicalExperiment({ state, experiments }, source, {
       name: `invariant-${++sequence}`,
       intent: 'Measure the effect.',
       requestId: request(),

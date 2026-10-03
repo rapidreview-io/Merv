@@ -1,3 +1,5 @@
+import { historicalTask } from './fixtures/historical-task.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import type { Caller, ReviewApplication } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from '@merv/reflections/types';
@@ -20,8 +22,6 @@ async function fixture(t: TestContext, store = false) {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   );
-  // These domain tests need Code's contracts, not its socket-backed repository store.
-  if (!store) config.plugins.find((entry: { id: string }) => entry.id === 'code').config = {};
   config.plugins = config.plugins.filter(
     (entry: { id: string }) =>
       !['api', 'identity', 'ui', 'research', 'research-tools', 'research-ui'].includes(entry.id) &&
@@ -53,6 +53,7 @@ async function fixture(t: TestContext, store = false) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
+  await waitForManagedCode(app.ctx.codeResearch, owner);
   const id = () => `research-test-${++sequence}`;
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const record = await app.ctx.scope.issueActor(owner, { name: id(), role });
@@ -290,7 +291,7 @@ test('a failed Research activation holds nothing that blocks the next one', asyn
   }
 });
 
-test('new no-code research completes after approved reflection without consolidation or paper assignments', async (t) => {
+test('an empty research cycle completes after approved reflection without consolidation or paper assignments', async (t) => {
   const f = await fixture(t);
   let record = await f.create();
   assert.equal(record.workflow.state, 'defining');
@@ -353,7 +354,7 @@ async function hosted(f: Awaited<ReturnType<typeof fixture>>, main: Main) {
 }
 /** A finished task standing for accepted code main lacks. */
 const work = async (f: Awaited<ReturnType<typeof fixture>>) => {
-  const task = await f.app.ctx.tasks.create(f.owner, {
+  const task = await historicalTask(f.app.ctx, f.owner, {
     title: 'Accepted work',
     goal: 'Deliver code main will need.',
     checks: ['It is delivered'],
@@ -723,7 +724,7 @@ test('completing a cycle digests what it decided, once, without naming anyone', 
 
 test('an ended cycle digests its reason and the selected work it leaves unfinished', async (t) => {
   const f = await fixture(t);
-  const task = await f.app.ctx.tasks.create(f.owner, {
+  const task = await historicalTask(f.app.ctx, f.owner, {
     title: 'Survey the corpus',
     goal: 'List what the frozen corpus contains.',
     checks: ['The list exists'],
@@ -756,7 +757,7 @@ test('a digest stays within its bound by leaving entries out and counting them',
   for (let index = 0; index < 60; index++)
     dependsOn.push(
       (
-        await f.app.ctx.tasks.create(f.owner, {
+        await historicalTask(f.app.ctx, f.owner, {
           title: `${'A long title that fills the digest. '.repeat(8)}${index}`,
           goal: 'Fill the digest.',
           checks: ['It is full'],
@@ -1129,7 +1130,7 @@ test('a wave that cannot finish is abandoned by its owner, which lifts the pause
     requestId: f.id(),
   });
   const task = () =>
-    f.app.ctx.tasks.create(f.owner, {
+    historicalTask(f.app.ctx, f.owner, {
       title: 'Next step',
       goal: 'Start once the wave is over.',
       checks: ['Recorded'],
@@ -1335,7 +1336,7 @@ test('the advance that injects consolidation needs no next-wave choice, even whe
 
 test('completing a cycle with nextWave create opens the approved plan as work and the next cycle', async (t) => {
   const f = await fixture(t);
-  const carried = await f.app.ctx.tasks.create(f.owner, {
+  const carried = await historicalTask(f.app.ctx, f.owner, {
     title: 'Work already under way',
     goal: 'Finish what the last wave started.',
     checks: ['It is finished'],
@@ -1533,7 +1534,7 @@ test('a stop plan and a text change specification complete as before and ignore 
 
 test('what would refuse the plan is reported before the advance, and skip is always a way on', async (t) => {
   const f = await fixture(t);
-  const carried = await f.app.ctx.tasks.create(f.owner, {
+  const carried = await historicalTask(f.app.ctx, f.owner, {
     title: 'Work already under way',
     goal: 'Finish what the last wave started.',
     checks: ['It is finished'],
@@ -1574,7 +1575,7 @@ test('what would refuse the plan is reported before the advance, and skip is alw
 
 test('failed carried-over work remains evidence, while a project full of experiments refuses the plan', async (t) => {
   const f = await fixture(t);
-  const dead = await f.app.ctx.tasks.create(f.owner, {
+  const dead = await historicalTask(f.app.ctx, f.owner, {
     title: 'Work that will die',
     goal: 'Be carried over and then fail.',
     checks: ['It is finished'],
@@ -1692,7 +1693,7 @@ const workspacePlan = (): Extract<ChangeSpec, { version: 2 }> => ({
     })),
 });
 
-test('a mixed workspace plan is atomic, replayable and uses legacy Git until hosted', async (t) => {
+test('a retained mixed-workspace plan creates only managed Git work atomically and replayably', async (t) => {
   const f = await fixture(t);
   const { record, command } = await reflected(f, workspacePlan());
   const before = await counts(f);
@@ -1703,7 +1704,7 @@ test('a mixed workspace plan is atomic, replayable and uses legacy Git until hos
       assert.ok(done.successorId);
       throw new Error('caller rollback');
     }),
-    /caller rollback/,
+    { code: 'integration_candidates_unavailable' },
   );
   assert.deepEqual(await counts(f), before);
   const rolledBack = await f.research.get(f.owner, record.id);
@@ -1715,12 +1716,12 @@ test('a mixed workspace plan is atomic, replayable and uses legacy Git until hos
   const plain = await f.app.ctx.tasks.get(f.owner, ids.corpus);
   const coded = await f.app.ctx.tasks.get(f.owner, ids.harness);
   const experiment = await f.app.ctx.experiments.get(f.owner, ids.ordering);
-  assert.equal(plain.workspace, undefined);
+  assert.equal(plain.workspace, 'git');
   assert.equal(coded.workspace, 'git');
-  assert.equal(coded.workflow.version, 29);
+  assert.equal(coded.workflow.version, 31);
   assert.equal(coded.baseTaskId, undefined);
   assert.equal(experiment.workspace, 'git');
-  assert.equal(experiment.workflow.version, 26);
+  assert.equal(experiment.workflow.version, 28);
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.deepEqual(
     (await f.app.ctx.workflows.dependencies(f.owner, experiment.id)).dependencies.map(
@@ -1764,11 +1765,7 @@ for (const firstCode of ['task', 'experiment'] as const)
 
 test('a materialised hosted experiment waits on its hosted task and pins no base before its acceptance', async (t) => {
   const f = await fixture(t, true);
-  const source = gitSource(t);
-  const main = source.commit({ 'README.md': 'Research harness\n' });
   const { codeResearch: code, tasks } = f.app.ctx;
-  await boundProject(f.app.ctx.state, f.owner.projectId, main, 'fixture-repository');
-  await importBundle(code, f.owner, source.bundle(main), f.id());
   const { command } = await reflected(f, workspacePlan());
   const done = await f.research.advance(f.owner, command('create'));
   const successor = await f.research.get(f.owner, done.successorId!);
@@ -1795,7 +1792,7 @@ test('a materialised hosted experiment waits on its hosted task and pins no base
 test('an automatic v2 wave exposes Code absence and rolls back before retry', async (t) => {
   const f = await fixture(t);
   await f.definition();
-  const input = await f.app.ctx.tasks.create(f.owner, {
+  const input = await historicalTask(f.app.ctx, f.owner, {
     title: 'Unavailable input',
     goal: 'Find input data.',
     checks: ['Data is available'],

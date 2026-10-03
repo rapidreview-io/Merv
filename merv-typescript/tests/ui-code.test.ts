@@ -179,9 +179,9 @@ test('connected with nothing made, a section is its name and a zero', async (t) 
   serve('/code/github', connected());
   await mount(page());
   assert.equal(document.querySelector('.empty-state'), null);
-  assert.ok(text().includes('Branches 0'), text());
+  assert.ok(text().includes('Work histories 0'), text());
   assert.ok(text().includes('Merges 0'), text());
-  assert.ok(text().includes('Pull requests 0'), text());
+  assert.ok(text().includes('Integrations 0'), text());
   assert.ok(!/No (branches|pull requests)/.test(text()), text());
   // The repository it is linked to is named, and is the way to it.
   const linked = [...document.querySelectorAll('a')].filter(
@@ -191,6 +191,36 @@ test('connected with nothing made, a section is its name and a zero', async (t) 
     linked.map((a) => a.getAttribute('href')),
     ['https://github.com/lab/grokking'],
   );
+});
+
+test('an empty managed repository is visible before GitHub is connected', async (t) => {
+  t.after(unmount);
+  nothingMade();
+  serve('/code/github', github());
+  serve('/tools/ui.read', {
+    body: {
+      result: {
+        commands: [],
+        status: {
+          project: {
+            mode: 'local',
+            repositoryId: 'merv:project',
+            durability: 'code',
+            main: { oid: 'a'.repeat(40), stored: true },
+          },
+          units: [],
+          bases: [],
+          blockers: [],
+        },
+      },
+    },
+  });
+  await mount(page());
+  assert.equal(document.querySelector('.empty-state'), null);
+  assert.match(text(), /Managed Git/);
+  assert.match(text(), /Work histories 0/);
+  assert.ok(document.querySelector('[aria-label="Managed main"]'));
+  assert.doesNotMatch(text(), /Record canary/);
 });
 
 /* The model ---------------------------------------------------------------- */
@@ -879,12 +909,12 @@ test('the page builds its model from what it reads, and titles nothing twice', a
   // its name, so the page draws no heading and no band of its own under it.
   const lede = document.querySelector('.page-lede');
   assert.ok(lede?.textContent?.includes('Code'), text().slice(0, 200));
-  assert.ok(lede?.textContent?.includes('Branches 3'), lede?.textContent);
+  assert.ok(lede?.textContent?.includes('Work histories 3'), lede?.textContent);
   assert.ok(lede?.textContent?.includes('Merges 1'), lede?.textContent);
   assert.equal(document.querySelectorAll('h1').length, 1, text().slice(0, 200));
   assert.ok(!document.querySelector('.page-stage h1'), 'the page itself titles nothing');
   // Only one of the two says the pull request count: the section that lists them.
-  assert.equal(text().match(/Pull requests/g)?.length, 1, text());
+  assert.equal(text().match(/Integrations/g)?.length, 1, text());
   const labels = [...document.querySelectorAll('.bg-name')].map((node) => node.textContent);
   assert.ok(
     labels.some((label) => label?.includes('Pin the tokenizer')),
@@ -1461,7 +1491,7 @@ test('the release canary is recorded by the signed-in operator where publication
     return { body: { result: { canary: { staleMerged: false } } } };
   });
   await mount(page());
-  const section = () => document.querySelector('[aria-label="Pull requests"]')!.textContent!;
+  const section = () => document.querySelector('[aria-label="Integrations"]')!.textContent!;
   assert.ok(/Canary\s*missing/i.test(section()), section());
   await click('Record canary');
   // Nothing can be recorded without the evidence it rests on.
@@ -2358,8 +2388,54 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     assert.equal(sent.length, 2);
     assert.deepEqual(sent[1], sent[0]);
     assert.equal(sent[0].headOid, 'a'.repeat(40));
-    assert.match(text(), /Ready at/);
+    assert.match(text(), /Integrated locally at/);
     assert.match(text(), /View changes/);
+  });
+
+  test('a confirmed stale integration can select current heads after its review', async (t) => {
+    t.after(unmount);
+    const local = 'a'.repeat(40),
+      remote = 'b'.repeat(40),
+      moved = 'c'.repeat(40);
+    serve('/tools/code.status', { body: { result: { project: { main: { oid: local } } } } });
+    serve('/code/github/branches', {
+      body: { branches: [{ name: status.baseBranch, sha: remote }] },
+    });
+    const sent: Record<string, unknown>[] = [];
+    serve('/tools/code.repository.prepare', (_count, body) => {
+      sent.push(body);
+      return sent.length === 2
+        ? {
+            status: 409,
+            body: {
+              error: { code: 'code_branch_changed', message: 'GitHub main moved during review' },
+            },
+          }
+        : {
+            body: {
+              result: {
+                state: 'review_required',
+                taskId: 'integration-task',
+                mainOid: local,
+                headOid: body.headOid,
+                operation: { id: 'imported', status: 'completed' },
+              },
+            },
+          };
+    });
+    await mount(createElement(MemoryRouter, null, createElement(GitHubPreparation, { status })));
+    await click('Prepare repository');
+    assert.match(text(), /Both histories are retained/);
+    await click('Check integration review');
+    serve('/code/github/branches', {
+      body: { branches: [{ name: status.baseBranch, sha: moved }] },
+    });
+    await click('Prepare current heads');
+    assert.equal(sent.length, 3);
+    assert.equal(sent[0].headOid, remote);
+    assert.equal(sent[1].headOid, remote);
+    assert.equal(sent[2].headOid, moved);
+    assert.notEqual(sent[2].requestId, sent[0].requestId);
   });
 
   test('a branch response from an earlier repository connection cannot replace the new selection', async (t) => {
@@ -2396,3 +2472,29 @@ test('the same move drawn inside the canvas offers no control back to the canvas
     assert.equal(document.querySelectorAll('select').length, 1);
   });
 }
+
+test('a local integration waits on the server without promising a GitHub pull request', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.home', { body: { result: {} } });
+  assert.deepEqual(publicationBlocker({ state: 'pending', destination: 'local' }), {
+    code: 'code_publication_local_pending',
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/tasks/u-local'] },
+      createElement(UnitCode, {
+        unit: unit('u-local', {
+          acceptance: accepted('c-local'),
+          baseStatus: null,
+          publication: { state: 'pending', destination: 'local' },
+        }),
+        named: () => undefined,
+        signedIn: true,
+      }),
+    ),
+  );
+  assert.match(text(), /Waiting for the reviewed commit to reach Merv main/);
+  assert.match(text(), /The server/);
+  assert.doesNotMatch(text(), /pull request|signed-in operator|Merge reviewed proposal/);
+});

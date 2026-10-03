@@ -204,16 +204,8 @@ const workspaces: Record<number, TaskWorkspace> = {
 };
 export const nativeTask = (version: number) => version >= 36 && version <= 43;
 export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
-const taskVersion = (
-  workspace: TaskCreate['workspace'],
-  baseTaskId: string | undefined,
-  hosted: boolean,
-  largeUploads = false,
-  native = false,
-): number =>
-  (native ? 8 : 0) +
-  (workspace !== 'git' ? 28 : baseTaskId !== undefined ? 30 : hosted ? 31 : 29) +
-  (largeUploads ? 4 : 0);
+const taskVersion = (largeUploads = false, native = false): number =>
+  (native ? 8 : 0) + 31 + (largeUploads ? 4 : 0);
 /** Whether Code derives and pins the base, rather than the creator naming a task. */
 const derivedBase = (version: number) =>
   [5, 10, 15, 19, 23, 27, 31, 35, 39, 43].includes(version) || serviceOwned(version);
@@ -285,6 +277,7 @@ type TaskCode = Pick<
   | 'reserveWriter'
   | 'writerStatus'
   | 'bindServiceTasks'
+  | 'ensureRepository'
 >;
 interface TaskRow {
   id: string;
@@ -1607,39 +1600,24 @@ export class TaskService implements Tasks {
           409,
         );
         check(
-          input.workspace === undefined || input.workspace === 'none' || input.workspace === 'git',
+          input.workspace === undefined || input.workspace === 'git',
           'invalid_workspace',
-          'A task workspace is none or git',
+          'New tasks always use Git. Omit workspace or use git.',
         );
         check(
-          input.baseTaskId === undefined || input.workspace === 'git',
-          'invalid_workspace',
-          'Only a Git task can start from another task’s delivered commit',
-        );
-        const git = input.workspace === 'git';
-        if (git) this.requireCode();
-        const hosted = input.workspace === 'git' && (await this.requireCode().hosted(caller, tx));
-        check(
-          !hosted || input.baseTaskId === undefined,
+          input.baseTaskId === undefined,
           'incompatible_workspace',
-          'Hosted Code cannot use the legacy baseTaskId workspace. Omit baseTaskId and keep the prerequisite in dependsOn; Code derives its accepted commit using the Fleet-supported driver.',
+          'Use dependsOn for accepted code dependencies; baseTaskId is retired.',
           409,
         );
-        if (input.baseTaskId !== undefined) {
-          const base = await tx.get<{ id: string }>(
-            'SELECT id FROM tasks WHERE id=? AND project_id=?',
-            input.baseTaskId,
-            caller.projectId,
-          );
-          const delivered = base ? await this.workflows.get(caller, base.id, tx) : null;
-          check(
-            delivered &&
-              taskWorkspace(delivered.version) !== 'none' &&
-              delivered.state !== 'failed',
-            'invalid_workspace_base',
-            'baseTaskId must name a Git task of this project that has not failed',
-          );
-        }
+        const git = true;
+        await this.requireCode().ensureRepository(caller, tx);
+        check(
+          await this.requireCode().hosted(caller, tx),
+          'code_store_required',
+          'Import the existing project repository into Code before creating work',
+          409,
+        );
         const contextInputs = input.contextInputs ?? {};
         check(
           contextInputs && typeof contextInputs === 'object' && !Array.isArray(contextInputs),
@@ -1737,9 +1715,6 @@ export class TaskService implements Tasks {
             ? 11
             : TASK_WORKFLOW_SERVICE.version
           : taskVersion(
-              input.workspace,
-              input.baseTaskId,
-              hosted,
               this.artifacts.largeUploadAvailable,
               !!(await this.nativeWork?.connected(caller.projectId, tx)),
             );
@@ -1760,20 +1735,10 @@ export class TaskService implements Tasks {
               briefId: brief.id,
               evidenceVersion: 2,
               // Other plugins read a Git task's choice and base here without injecting Tasks.
-              ...(git ? { workspace: 'git' } : {}),
-              ...(input.baseTaskId === undefined ? {} : { baseTaskId: input.baseTaskId }),
+              workspace: 'git',
             },
           },
           tx,
-        );
-        // Only a prerequisite is sure to be accepted, and its commit final, before work starts.
-        check(
-          input.baseTaskId === undefined ||
-            (await this.workflows.dependencies(caller, workflow.id, tx)).dependencies.some(
-              (dependency) => dependency.id === input.baseTaskId,
-            ),
-          'invalid_workspace_base',
-          'baseTaskId must also be one of the task’s dependsOn prerequisites',
         );
         await tx.run(
           'INSERT INTO tasks (id, project_id, title, goal, checks, producer_id, brief_id, created_at,type_name,type_version,context_inputs,evidence_version) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2)',

@@ -1,3 +1,4 @@
+import { historicalTask } from '../tests/fixtures/historical-task.js';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { finished } from 'node:stream/promises';
@@ -201,17 +202,14 @@ try {
       { kind: 'key', key: await app!.ctx.scope.authenticateKey(key.token) },
       project.id,
     );
-  const { result: task } = await post<{ result: Task }>(
-    '/tools/task.create',
-    key.token,
-    {
-      title: 'Verify small arithmetic independently',
-      goal: 'Produce and independently review reproducible evidence for two arithmetic results.',
-      checks: ['Show that adding 2 and 3 gives 5.', 'Show that multiplying 6 by 7 gives 42.'],
-      requestId: 'task',
-    },
-    project.id,
-  );
+  // This read-only model harness exercises recovery of pre-managed-Git sessions.
+  // New-work acceptance uses live-experiments.ts and runner-code-v2-integration.test.ts.
+  const task = await historicalTask(app.ctx, await source(), {
+    title: 'Verify small arithmetic independently',
+    goal: 'Produce and independently review reproducible evidence for two arithmetic results.',
+    checks: ['Show that adding 2 and 3 gives 5.', 'Show that multiplying 6 by 7 gives 42.'],
+    requestId: 'task',
+  });
   const offered: Session[] = [];
   const dispatchChecks: string[] = [];
   const runnerId = automatic ? 'live-dispatch' : 'live-sessions';

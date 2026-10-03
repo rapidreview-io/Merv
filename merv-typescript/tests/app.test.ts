@@ -1,3 +1,4 @@
+import { historicalTask } from './fixtures/historical-task.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +33,7 @@ async function call(c: Client, name: string, args: Record<string, unknown> = {})
   assert.equal(result.isError, undefined, JSON.stringify(contents));
   return JSON.parse(contents[0].text);
 }
-test('assembled Cordis application completes MCP task review across two full restarts', async () => {
+test('assembled Cordis application completes historical MCP task review across two full restarts', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
   let app = await createApp({ directory, api: true, port: 0 });
   let producer: Client | undefined, reviewer: Client | undefined;
@@ -110,15 +111,20 @@ test('assembled Cordis application completes MCP task review across two full res
       title: 'Brief',
       content: 'Goal: Verify arithmetic.\nDone when: Sum is 20.',
     });
-    const task = await call(producer, 'task.create', {
-      title: 'Arithmetic',
-      goal: 'Verify arithmetic.',
-      checks: ['Sum is 20.'],
-      briefId: brief.id,
-      requestId: 'create',
-    });
+    const task = await historicalTask(
+      app.ctx,
+      { ...caller, actorId: p.actor.id, credentialId: p.credential.id },
+      {
+        title: 'Arithmetic',
+        goal: 'Verify arithmetic.',
+        checks: ['Sum is 20.'],
+        briefId: brief.id,
+        requestId: 'create',
+      },
+    );
     const guidance = await call(producer, 'workflow.status_and_next', { instanceId: task.id });
     assert.deepEqual(guidance, task.guidance);
+    assert.ok(guidance.nextAction);
     assert.equal(guidance.nextAction.tool, 'workflow.begin');
     assert.equal(guidance.nextAction.status, 'ready');
     const httpGuidance = await fetch(`${app.ctx.api.url}/tools/workflow.status_and_next`, {
