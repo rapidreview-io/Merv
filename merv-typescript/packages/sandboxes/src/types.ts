@@ -140,6 +140,9 @@ export interface SandboxCheckPlan {
 export interface SandboxCheckSpec extends SandboxCheckPlan {
   source: { bytes: Uint8Array; sha256: string };
 }
+/** Retained resources to release; no execution or environment needs to be fabricated. */
+export type SandboxCheckCleanup = Pick<SandboxCheckHandle, 'sandboxId' | 'jobId' | 'objectId'>;
+
 /**
  * Everything one check has durably reached. Each field is null until its own step ran, which
  * is what lets a crash resume from the handle instead of renting a second machine.
@@ -185,7 +188,7 @@ export interface SandboxChecks {
   ): Promise<SandboxCheckHandle>;
   follow(projectId: string, handle: SandboxCheckHandle): Promise<SandboxCheckVerdict>;
   /** Cancel, delete the machine and delete the source. Safe twice and safe after a crash. */
-  release(projectId: string, handle: SandboxCheckHandle): Promise<void>;
+  release(projectId: string, resources: SandboxCheckCleanup): Promise<void>;
 }
 
 export interface SandboxComputeSpec {

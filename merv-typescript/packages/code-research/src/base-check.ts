@@ -22,9 +22,8 @@ import type { ServerGit } from '@merv/code/git';
  */
 
 /**
- * The durable handle: the sandbox side's own, plus the epoch it belongs to and how many
- * times the service has refused to take the machine back, so a refusal that never stops
- * being a refusal is eventually named to an operator instead of retried forever.
+ * The durable handle and its execution epoch. releaseAttempts is read only from handles
+ * written before durable cleanup ownership; new attempts live in code_base_cleanup.
  */
 export type CheckHandle = SandboxCheckHandle & { epoch: number; releaseAttempts?: number };
 

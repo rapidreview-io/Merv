@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import { keyId, keyKind, type Json } from '@merv/contracts';
+import { check, keyId, keyKind, type Json } from '@merv/contracts';
 import type { RunningRead } from '@merv/ui/types';
 import type {} from './types.js';
 
@@ -16,7 +16,17 @@ export const sessionsUiPlugin = {
         order: 24,
         path: '/sessions',
         view: { kind: 'sessions' },
-        read: async (caller) => (await ctx.sessions.projectStatus(caller)) as unknown as Json,
+        read: async (caller, params) => {
+          if (params?.agentId !== undefined) {
+            check(
+              typeof params.agentId === 'string',
+              'invalid_input',
+              'params.agentId names the agent',
+            );
+            return (await ctx.sessions.agentObservation(caller, params.agentId)) as unknown as Json;
+          }
+          return (await ctx.sessions.projectStatus(caller)) as unknown as Json;
+        },
       }),
     );
     // The Running page's Sessions lane, the lease sidebars and the Sessions rows on work. The

@@ -663,15 +663,18 @@ test('a check holding a machine is a hardware node that takes in its sandbox and
     handle({ sandboxId: 'sbx_stuck' }),
     ago(OVERDUE_GRACE_MS + 60_000),
   );
-  // A machine Code stopped asking back for: the handle is gone, and only the blocker Code
-  // wrote in the same breath names it (bases.ts reclaim).
-  await insert(
-    key('4'),
-    'suspended',
-    'none',
-    null,
-    deadline,
-    'code_check_unreclaimed: sandbox sbx_lost could not be given back (the service answered 503)',
+  // Slow cleanup owns this machine independently of the stopped check.
+  await insert(key('4'), 'suspended', 'none', null);
+  await f.state.transaction((tx) =>
+    tx.run(
+      'INSERT INTO code_base_cleanup(project_id,base_key,cleanup_id,sandbox_id,attempts,reason,next_at) VALUES (?,?,?,?,5,?,?)',
+      f.admin.projectId,
+      key('4'),
+      'epoch:1',
+      'sbx_lost',
+      'the service answered 503',
+      deadline,
+    ),
   );
   // Not in flight: a check that ended, one whose base stopped before it rented anything, and
   // a base that never had a check.
@@ -1029,7 +1032,7 @@ async function keptMachine(t: TestContext, action: 'suspend' | 'cancel') {
   return { f, base, command, service, standing };
 }
 
-test('a machine Code stops asking back for stays on its check, red, named by the blocker Code wrote', async (t) => {
+test('a machine still refused after five attempts stays on its check, red, owned by cleanup', async (t) => {
   const { f, base, command, standing } = await keptMachine(t, 'suspend');
 
   // While Code still asks, each refusal is said in ink, and nobody is asked to move.
@@ -1040,7 +1043,7 @@ test('a machine Code stops asking back for stays on its check, red, named by the
     quiet: true,
   });
 
-  // The fifth refusal lets go of the handle; the check stays, red, and takes in the machine.
+  // The fifth refusal schedules slow retries; the check stays red and takes in the machine.
   await f.bases.work(f.projectId);
   const given = (await standing())!;
   assert.equal(given.phase, null);
@@ -1071,7 +1074,7 @@ test('a machine Code let go of is asked for again every few minutes, even on a c
   assert.equal(service.asked.length, asked);
   assert.equal((await f.bases.due()).includes(f.projectId), false);
 
-  // Five minutes on, the machine is asked for by its name alone; still refused, still red.
+  // Five minutes on, cleanup asks for all retained resources again; still refused, still red.
   f.advance(5 * 60_000);
   assert.ok((await f.bases.due()).includes(f.projectId), 'it is due again');
   await f.bases.work(f.projectId);

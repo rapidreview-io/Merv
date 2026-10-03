@@ -10,6 +10,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Data, WorkflowExecutionPolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
+import { sessionsUiPlugin } from '@merv/sessions/ui';
+import { uiPlugin } from '@merv/ui';
 import { CredentialStore } from '@merv/identity/credentials';
 import { Bindings } from '../packages/mounts/src/credentials.js';
 import { Invocations } from '../packages/mounts/src/upstream.js';
@@ -964,6 +966,8 @@ test('an external agent explicitly changes assignments over HTTP and keeps its M
 
 test('project observers see real MCP call metadata and failures, without worker capabilities or payloads', async (t) => {
   const f = await fixture(t);
+  await f.app.ctx.plugin(uiPlugin);
+  const sessionsUi = await f.app.ctx.plugin(sessionsUiPlugin);
   f.app.ctx.tools.register({
     name: 'checked.echo',
     description: 'Observed echo',
@@ -983,6 +987,23 @@ test('project observers see real MCP call metadata and failures, without worker 
   const path = `/sessions/agents/${offer.session.agentId}/observation`;
   const response = await f.http(path, reader.token);
   assert.equal(response.status, 200);
+  await f.app.setEnabled('sessions-tools', false);
+  assert.equal(
+    (await f.app.ctx.tools.list()).some((tool) => tool.name === 'session.observe'),
+    false,
+  );
+  const observe = (token: string) =>
+    f.http('/tools/ui.read', token, {
+      rowId: 'sessions',
+      params: { agentId: offer.session.agentId },
+    });
+  const tool = await observe(reader.token);
+  assert.equal(tool.status, 200);
+  assert.deepEqual(
+    tool.body.result,
+    response.body,
+    'the UI-owned read works without Sessions tools and returns the same observation',
+  );
   assert.equal(response.body.agent.id, offer.session.agentId);
   assert.equal(response.body.agent.currentExecutionId, offer.session.id);
   assert.deepEqual(
@@ -1002,12 +1023,22 @@ test('project observers see real MCP call metadata and failures, without worker 
   ])
     assert.equal(json.includes(privateValue), false);
   assert.equal((await f.http(path, offer.secret)).status, 403);
+  assert.equal((await observe(offer.secret)).status, 403);
   const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
   assert.equal((await f.http(path, other.token)).status, 404);
+  assert.equal((await observe(other.token)).status, 404);
   assert.equal((await f.http(`${path}?unknown=true`, reader.token)).status, 400);
   assert.equal((await f.http(path, reader.token, {}, undefined, 'POST')).status, 404);
   await f.app.ctx.scope.revokeActor(f.source, reader.actor.id);
   assert.notEqual((await f.http(path, reader.token)).status, 200);
+  assert.notEqual((await observe(reader.token)).status, 200);
+  assert.equal(
+    (await f.http('/tools/ui.read', f.boot.token, { rowId: 'sessions', params: { agentId: 123 } }))
+      .status,
+    400,
+  );
+  await sessionsUi.dispose();
+  assert.equal((await observe(f.boot.token)).body.error.code, 'row_unreadable');
 });
 
 test('mounted tool errors and invalid output envelopes are recorded as failed calls', async (t) => {

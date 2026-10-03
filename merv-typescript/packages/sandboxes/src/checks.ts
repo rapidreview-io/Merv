@@ -2,6 +2,7 @@ import { check, MervError } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import type {
   SandboxCheckHandle,
+  SandboxCheckCleanup,
   SandboxCheckPlan,
   SandboxCheckSpec,
   SandboxCheckVerdict,
@@ -351,7 +352,13 @@ export class SandboxCheckRunner implements SandboxChecks {
   }
 
   /** Every call is safe twice and safe after a crash, so reclamation never needs a receipt. */
-  async release(projectId: string, handle: SandboxCheckHandle): Promise<void> {
+  async release(projectId: string, handle: SandboxCheckCleanup): Promise<void> {
+    check(
+      handle.sandboxId || handle.jobId || handle.objectId,
+      'code_check_cleanup_unknown',
+      'No retained resource identifiers are available for this check',
+      409,
+    );
     const entry = this.connectionFor(projectId);
     const gone = (error: unknown) => {
       if (!(error instanceof MervError) || error.code !== 'sandbox_not_found') throw error;

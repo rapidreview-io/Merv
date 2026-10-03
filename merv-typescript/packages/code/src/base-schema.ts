@@ -74,6 +74,34 @@ IF OLD.check_json IS NOT NULL AND NEW.check_json IS DISTINCT FROM OLD.check_json
 RETURN NEW; END $$ LANGUAGE plpgsql;
 CREATE TRIGGER code_bases_check BEFORE UPDATE ON code_bases FOR EACH ROW EXECUTE FUNCTION code_bases_check_guard();`;
 
+/** Cleanup outlives the execution that rented the resources, including operator retries. */
+const postgresCleanup = `
+CREATE TABLE code_base_cleanup (
+  project_id TEXT NOT NULL,
+  base_key TEXT NOT NULL,
+  cleanup_id TEXT NOT NULL,
+  execution_epoch BIGINT,
+  deadline TEXT,
+  sandbox_id TEXT,
+  job_id TEXT,
+  object_id TEXT,
+  attempts BIGINT NOT NULL DEFAULT 0 CHECK (attempts>=0),
+  reason TEXT,
+  next_at TEXT,
+  PRIMARY KEY (project_id,base_key,cleanup_id),
+  FOREIGN KEY (project_id,base_key) REFERENCES code_bases(project_id,base_key)
+);
+CREATE INDEX code_base_cleanup_due ON code_base_cleanup(next_at) WHERE next_at IS NOT NULL;
+-- The old warning discarded the handle and epoch. Recover only what it actually names;
+-- unknown or malformed identities stay visible, unscheduled, rather than releasing nothing.
+INSERT INTO code_base_cleanup(project_id,base_key,cleanup_id,sandbox_id,attempts,reason,next_at)
+SELECT project_id,base_key,'legacy',
+  CASE WHEN blocker ~ '^code_check_unreclaimed: sandbox [^ ]+ could not be given back ' AND split_part(blocker,' ',3)<>'unnamed' THEN split_part(blocker,' ',3) END,
+  5,blocker,
+  CASE WHEN blocker ~ '^code_check_unreclaimed: sandbox [^ ]+ could not be given back ' AND split_part(blocker,' ',3)<>'unnamed' THEN updated_at END
+FROM code_bases WHERE blocker LIKE 'code_check_unreclaimed:%';
+UPDATE code_bases SET blocker=NULL WHERE blocker LIKE 'code_check_unreclaimed:%';`;
+
 /** Keep deployed migration text unchanged; the research adapter supplies execution policy. */
 export async function migrateBases(state: State): Promise<void> {
   await state.migrate('code_bases', [
@@ -82,5 +110,6 @@ export async function migrateBases(state: State): Promise<void> {
     // constraints admit. Inventing a verdict for work nobody checked would be permanent,
     // because the verdict of a base is recorded once.
     { version: 2, sql: postgresChecks },
+    { version: 3, sql: postgresCleanup },
   ]);
 }

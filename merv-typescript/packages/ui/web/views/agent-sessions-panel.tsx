@@ -1,6 +1,6 @@
 import type { AgentSummary, AgentObservation as Observation } from '@merv/contracts/types';
 import { useEffect, useRef, useState } from 'react';
-import { accountRequest, scopeVersion } from '../api';
+import { useTool } from '../api';
 import {
   Ago,
   KV,
@@ -237,62 +237,29 @@ function AgentObservation({ observation, now }: { observation: Observation; now:
  * reduce. The row that opened it holds the way back: Escape and the close control
  * both return the cursor there.
  */
-export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): void }) {
-  const [observation, setObservation] = useState<Observation>();
-  const [loadedAt, setLoadedAt] = useState<string>();
-  const [error, setError] = useState<string>();
+export function AgentDetail({
+  agent,
+  rowId,
+  close,
+}: {
+  agent: AgentSummary;
+  rowId: string;
+  close(): void;
+}) {
   const panel = useRef<HTMLElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const selected = agent.id;
+  const {
+    data: observation,
+    loadedAt,
+    error,
+  } = useTool<Observation>('ui.read', { rowId, params: { agentId: selected } }, { every: 4000 });
   // The panel reads its own payload, so it keeps its own clock: durations are
   // measured from when this observation arrived, and a verdict stops short of
   // what that read did not see.
   const now = clock(undefined, loadedAt, useNow(1000), 12_000);
   useEffect(() => {
-    setObservation(undefined);
-    setError(undefined);
     heading.current?.focus({ preventScroll: true });
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let waiting = false;
-    const version = scopeVersion();
-    const live = () => !cancelled && version === scopeVersion();
-    const hidden = () => document.visibilityState === 'hidden';
-    const refresh = async () => {
-      try {
-        const result = await accountRequest<Observation>(
-          `/sessions/agents/${encodeURIComponent(selected)}/observation`,
-          { scoped: true },
-        );
-        if (live()) {
-          setObservation(result);
-          setLoadedAt(new Date().toISOString());
-          setError(undefined);
-        }
-      } catch (failure) {
-        // A failed poll degrades to one line beside the activity that is still
-        // correct; it never wipes what the last good read returned.
-        if (live())
-          setError(failure instanceof Error ? failure.message : 'Could not load agent activity.');
-      } finally {
-        if (live()) {
-          if (hidden()) waiting = true;
-          else timer = setTimeout(() => void refresh(), 4000);
-        }
-      }
-    };
-    const resume = () => {
-      if (!waiting || hidden()) return;
-      waiting = false;
-      void refresh();
-    };
-    void refresh();
-    document.addEventListener('visibilitychange', resume);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', resume);
-    };
   }, [selected]);
   // A page cannot scroll past its own foot, and until its read lands the panel is one
   // line tall: its head is brought up as it opens, and again once it has its height.
@@ -333,7 +300,7 @@ export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): vo
       {loaded && observation ? (
         <>
           {error && (
-            <p className="muted agent-help" role="status" title={error}>
+            <p className="muted agent-help" role="status" title={error.message}>
               Could not refresh. Showing the state that loaded{' '}
               {loadedAt ? <Ago at={loadedAt} /> : 'last'}.
             </p>
@@ -341,7 +308,7 @@ export function AgentDetail({ agent, close }: { agent: AgentSummary; close(): vo
           <AgentObservation key={observation.agent.id} observation={observation} now={now} />
         </>
       ) : error ? (
-        <p role="alert">{error}</p>
+        <p role="alert">{error.message}</p>
       ) : (
         <LoadState loading />
       )}

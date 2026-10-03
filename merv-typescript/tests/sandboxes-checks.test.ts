@@ -321,3 +321,33 @@ test('a resumed upload sends only the parts still owed, sliced by their own part
     'and the part offered carries its own slice, not the head of the source',
   );
 });
+
+test('cleanup needs only retained resources, keeps source deletion retryable, and refuses unknown ownership', async (t) => {
+  let refuse = true;
+  const { runner, calls } = transport(t, () =>
+    refuse
+      ? Response.json(
+          { error: { code: 'unavailable', message: 'retry source deletion' } },
+          { status: 503 },
+        )
+      : Response.json({ deleted: true }),
+  );
+  const source = { sandboxId: null, jobId: null, objectId: 'obj_retained' };
+  await assert.rejects(runner.release(connection.projectId, source));
+  refuse = false;
+  await runner.release(connection.projectId, source);
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'DELETE').map((call) => new URL(call.url).pathname),
+    ['/v1/storage/objects/obj_retained', '/v1/storage/objects/obj_retained'],
+  );
+  const before = calls.length;
+  await assert.rejects(
+    runner.release(connection.projectId, { sandboxId: null, jobId: null, objectId: null }),
+    { code: 'code_check_cleanup_unknown' },
+  );
+  assert.equal(
+    calls.length,
+    before,
+    'an empty release never pretends the service acknowledged cleanup',
+  );
+});

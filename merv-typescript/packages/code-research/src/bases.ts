@@ -71,46 +71,41 @@ interface BaseRow {
   check_job_json: string | null;
   check_json: string | null;
   updated_at: string;
+  cleanup_json: string;
 }
 const columns =
-  'project_id,base_key,members_json,left_key,right_key,engine,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,execution_epoch,deadline,sponsors_json,blocker,operator_reason,resume_state,check_state,check_job_json,check_json,updated_at';
+  'project_id,base_key,members_json,left_key,right_key,engine,state,health,result_json,conflict_json,resolution_task_id,resolution_error,resolution_commit,attempts,next_at,execution_epoch,deadline,sponsors_json,blocker,operator_reason,resume_state,check_state,check_job_json,check_json,updated_at' +
+  `,COALESCE((SELECT json_agg(c ORDER BY c.cleanup_id)::text FROM code_base_cleanup c WHERE c.project_id=code_bases.project_id AND c.base_key=code_bases.base_key),'[]') AS cleanup_json`;
 const RETRIES = 5;
 /** How many consecutive refusals to take a machine back before an operator is told about it. */
 const RECLAIM_ATTEMPTS = 5;
 /** Only these two say a machine may still be Merv's; anything else is a handle to give back. */
 const IN_FLIGHT = "check_state IN ('queued','running')";
 const now = () => new Date().toISOString();
-/**
- * The blocker a check writes when it stops asking for its machine back and lets go of the
- * handle. It is the one trace left of a machine that is still rented, so it names it.
- */
-const UNRECLAIMED = 'code_check_unreclaimed: sandbox ';
-const unreclaimedBlocker = (sandboxId: string | null, reason: string) =>
-  `${UNRECLAIMED}${sandboxId ?? 'unnamed'} could not be given back (${reason})`;
-/** The machine such a blocker names; null for any other blocker. */
-function unreclaimedOf(blocker: string | null): { sandboxId: string | null } | null {
-  if (!blocker?.startsWith(UNRECLAIMED)) return null;
-  const named = blocker.slice(UNRECLAIMED.length).split(' ', 1)[0];
-  return { sandboxId: named && named !== 'unnamed' ? named : null };
+/** After five refusals retain ownership and retry slowly, including after a restart. */
+const CLEANUP_RETRY_MS = 5 * 60_000;
+interface CleanupRow {
+  project_id: string;
+  base_key: string;
+  cleanup_id: string;
+  execution_epoch: number | string | null;
+  deadline: string | null;
+  sandbox_id: string | null;
+  job_id: string | null;
+  object_id: string | null;
+  attempts: number | string;
+  reason: string | null;
+  next_at: string | null;
 }
-/**
- * How long Code waits before asking again for a machine it let go of. The machine is still
- * Code's to give back, whatever became of its base, so it keeps asking until the service
- * has it; but slowly, because the service has already refused it several times in a row.
- */
-const UNRECLAIMED_ASK_MS = 5 * 60_000;
-/** All a blocker still knows of the machine it names, which is all it takes to give it back. */
-const namedMachine = (sandboxId: string): CheckHandle => ({
-  sandboxId,
-  jobId: null,
-  objectId: null,
-  restoreJobId: null,
-  sha256: null,
-  ready: false,
-  environment: null,
-  isolation: { network: 'on', sourceReadOnly: false, imagePinned: 'offer', facts: [] },
-  epoch: 0,
-});
+const cleanups = (row: BaseRow): CleanupRow[] => JSON.parse(row.cleanup_json);
+const cleanupWarning = (pending: CleanupRow[]) =>
+  pending
+    .filter((row) => Number(row.attempts) >= RECLAIM_ATTEMPTS)
+    .map(
+      (row) =>
+        `code_check_unreclaimed: sandbox ${row.sandbox_id ?? 'unnamed'} could not be given back (${row.reason ?? 'resource identifiers unavailable'})`,
+    )
+    .join('; ') || null;
 
 /**
  * Whether a check still owns its machine: its base is running and healthy, the check is
@@ -143,12 +138,10 @@ export interface CodeCheckStanding {
   sandboxId: string | null;
   /** How many times in a row the service refused to take the machine back. */
   releaseAttempts: number;
-  /**
-   * A machine Code stopped asking the service to take back, and let go of: still rented,
-   * and nobody's to give back now but a person's. Read from the base's blocker, for as long
-   * as that names it; null otherwise.
-   */
+  /** Cleanup still refused after five attempts; slow retries continue durably. */
   unreclaimed: { sandboxId: string | null } | null;
+  /** Every retained machine, including earlier epochs while another check is running. */
+  cleanupSandboxIds: string[];
   /** When the check must have its verdict: the hand-off, plus its timeout and slack. */
   deadline: string | null;
 }
@@ -161,6 +154,9 @@ function standing(row: BaseRow): CodeCheckStanding {
     // A handle nobody can read names no machine; advanceChecks stops that check itself.
   }
   const mine = ours(row, handle);
+  const pending = cleanups(row);
+  const returning = pending.find((row) => Number(row.attempts) < RECLAIM_ATTEMPTS);
+  const refused = pending.find((row) => Number(row.attempts) >= RECLAIM_ATTEMPTS);
   return {
     key: row.base_key,
     members: JSON.parse(row.members_json) as string[],
@@ -168,14 +164,15 @@ function standing(row: BaseRow): CodeCheckStanding {
       ? handle?.sandboxId && handle.ready
         ? 'running'
         : 'starting'
-      : handle
+      : handle || returning
         ? 'returning'
         : null,
     checkState: row.check_state,
     base: row.health === 'quarantined' ? 'quarantined' : row.state,
-    sandboxId: handle?.sandboxId ?? null,
-    releaseAttempts: handle?.releaseAttempts ?? 0,
-    unreclaimed: unreclaimedOf(row.blocker),
+    sandboxId: handle?.sandboxId ?? returning?.sandbox_id ?? null,
+    releaseAttempts: handle?.releaseAttempts ?? Number(returning?.attempts ?? 0),
+    unreclaimed: refused ? { sandboxId: refused.sandbox_id } : null,
+    cleanupSandboxIds: pending.flatMap((row) => (row.sandbox_id ? [row.sandbox_id] : [])),
     deadline: row.deadline,
   };
 }
@@ -216,8 +213,6 @@ export class CodeBaseService {
   private readonly busy = new Map<string, Promise<void>>();
   private closed = false;
   private readonly executions = new Map<string, AbortController>();
-  /** When Code last asked for each machine it let go of, by project and base. */
-  private readonly asked = new Map<string, number>();
   constructor(
     private readonly state: State,
     private readonly repositories: CodeRepositories,
@@ -286,7 +281,7 @@ export class CodeBaseService {
       executionEpoch: Number(row.execution_epoch),
       deadline: row.deadline,
       sponsors: JSON.parse(row.sponsors_json ?? '[]') as string[],
-      blocker: row.blocker,
+      blocker: [row.blocker, cleanupWarning(cleanups(row))].filter(Boolean).join('; ') || null,
       operatorReason: row.operator_reason,
       updatedAt: row.updated_at,
     };
@@ -888,13 +883,12 @@ export class CodeBaseService {
   /**
    * The checks that hold a machine or are about to: the rows advanceChecks steps, less a
    * check that lost its base before it rented anything, which holds nothing; and every base
-   * whose blocker still names a machine it could not give back. A pure read.
+   * with pending cleanup from any earlier execution. A pure read.
    */
   async checking(sql: Sql, projectId: string): Promise<CodeCheckStanding[]> {
     const rows = await sql.all<BaseRow>(
-      `SELECT ${columns} FROM code_bases WHERE project_id=? AND (${IN_FLIGHT} OR check_job_json IS NOT NULL OR blocker LIKE ?) ORDER BY base_key`,
+      `SELECT ${columns} FROM code_bases WHERE project_id=? AND (${IN_FLIGHT} OR check_job_json IS NOT NULL OR EXISTS (SELECT 1 FROM code_base_cleanup c WHERE c.project_id=code_bases.project_id AND c.base_key=code_bases.base_key)) ORDER BY base_key`,
       projectId,
-      `${UNRECLAIMED}%`,
     );
     return rows.map(standing).filter((check) => check.phase !== null || check.unreclaimed);
   }
@@ -994,7 +988,8 @@ export class CodeBaseService {
         // stopped running, is nobody's: it goes back before anything else, because nothing
         // will ever read its answer and it is still being paid for.
         if (!mine) {
-          if (handle) await this.reclaim(projectId, base, handle);
+          if (handle)
+            await this.state.transaction((tx) => this.queueCleanup(tx, projectId, base, handle));
           continue;
         }
         await this.checkStep(projectId, base, handle);
@@ -1002,123 +997,122 @@ export class CodeBaseService {
         await this.checkStopped(projectId, base, error).catch(() => undefined);
       }
     }
-    await this.askAgain(projectId);
+    await this.releaseCleanup(projectId);
   }
 
-  /**
-   * Ask again, every few minutes, for each machine a blocker says Code let go of, whatever
-   * its base has become since. The service's answer is the only way to know the machine is
-   * gone: once it takes the machine back, or says it is already stopped or not there at all,
-   * the blocker is cleared and nobody is asked to release it any more. While the service still
-   * refuses, the blocker stays and names the machine, as it did.
-   */
-  private async askAgain(projectId: string): Promise<void> {
-    const checks = this.checks;
-    if (!checks || this.closed) return;
-    const rows = await this.state.read((sql) =>
-      sql.all<Pick<BaseRow, 'base_key' | 'blocker'>>(
-        'SELECT base_key,blocker FROM code_bases WHERE project_id=? AND blocker LIKE ? ORDER BY base_key',
-        projectId,
-        `${UNRECLAIMED}%`,
-      ),
-    );
-    for (const row of rows) {
-      const sandboxId = unreclaimedOf(row.blocker)?.sandboxId;
-      if (this.closed) return;
-      if (!sandboxId || !this.askable(projectId, row.base_key)) continue;
-      this.asked.set(`${projectId}:${row.base_key}`, this.clock());
-      try {
-        // The service answers the deletion of a machine already stopped or deleting with its
-        // record, and release takes one it does not know as gone, so an answer at all means
-        // the machine is no longer held. Its source, which the blocker does not name, is left
-        // to the retention it was shipped with.
-        await checks.release(projectId, namedMachine(sandboxId));
-        await this.state.transaction(async (tx) => {
-          const cleared = await tx.run(
-            'UPDATE code_bases SET blocker=NULL,updated_at=? WHERE project_id=? AND base_key=? AND blocker=?',
-            now(),
-            projectId,
-            row.base_key,
-            row.blocker,
-          );
-          // Work that waits on this base was held by the blocker too.
-          if (cleared.changes) await this.hooks.changed(tx, projectId);
-        });
-        this.asked.delete(`${projectId}:${row.base_key}`);
-      } catch {
-        // Every row is its own failure here too: a refusal is the answer until the next ask.
-      }
-    }
-  }
-
-  /** Whether a machine Code let go of is due to be asked for again. */
-  private askable(projectId: string, key: string): boolean {
-    const at = this.asked.get(`${projectId}:${key}`);
-    return at === undefined || this.clock() - at >= UNRECLAIMED_ASK_MS;
-  }
-
-  /** Cancel, delete and forget one machine. Every call is safe twice and safe after a crash. */
-  private async reclaim(
+  /** Transfer ownership before forgetting the handle, even if an operator fenced its write. */
+  private async queueCleanup(
+    tx: Transaction,
     projectId: string,
     base: CodeBaseRecord,
     handle: CheckHandle,
   ): Promise<void> {
-    // With no adapter there is nothing to give the machine back to, and forgetting the
-    // handle would leave a rented machine nobody can name. It waits for an adapter.
-    if (!this.checks) return;
-    let refused: string | null = null;
-    try {
-      await this.checks.release(projectId, handle);
-    } catch (error) {
-      const attempts = (handle.releaseAttempts ?? 0) + 1;
-      const reason = error instanceof Error ? error.message : 'the service refused';
-      // A machine the service will not take back now is tried again next pass. The handle
-      // stays until it is gone: losing it would leave a rented machine nobody can name.
-      // After enough identical refusals, retrying in silence is what hides it, so the
-      // machine is named in the blocker and the handle is let go in the same breath.
-      if (attempts < RECLAIM_ATTEMPTS) {
-        await this.state.transaction((tx) =>
-          tx.run(
-            'UPDATE code_bases SET check_job_json=?,updated_at=? WHERE project_id=? AND base_key=? AND check_job_json=?',
-            JSON.stringify({ ...handle, releaseAttempts: attempts }),
-            now(),
-            projectId,
-            base.key,
-            JSON.stringify(handle),
-          ),
-        );
-        return;
-      }
-      refused = unreclaimedBlocker(handle.sandboxId, reason);
-      // It has just refused, so the slow asking begins a whole wait from now.
-      this.asked.set(`${projectId}:${base.key}`, this.clock());
-    }
-    await this.state.transaction(async (tx) => {
-      // The reservation of an epoch nobody will finish goes back with the machine. Without
-      // this an operator's suspend would hold the project's capacity until the check's own
-      // deadline ran out, and every other base would wait for a machine nobody is using.
-      // A reservation the expiry sweep already settled, or one that never existed, is no
-      // trouble here: what this undoes is capacity, and that is already given back.
-      await this.hooks.serviceWork
-        ?.settle(
-          tx,
-          {
-            ...this.execution(projectId, base, 'code.check'),
-            executionEpoch: handle.epoch,
-            deadline: base.deadline ?? new Date(this.clock()).toISOString(),
-          },
-          'cancelled',
-        )
-        .catch(() => undefined);
-      await tx.run(
-        `UPDATE code_bases SET check_job_json=NULL${refused ? ',blocker=?' : ''},updated_at=? WHERE project_id=? AND base_key=? AND check_job_json=?`,
-        ...(refused ? [refused] : []),
-        now(),
+    const known = !!(handle.sandboxId || handle.jobId || handle.objectId);
+    await tx.run(
+      `INSERT INTO code_base_cleanup(project_id,base_key,cleanup_id,execution_epoch,deadline,sandbox_id,job_id,object_id,attempts,reason,next_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT (project_id,base_key,cleanup_id) DO UPDATE SET
+       sandbox_id=COALESCE(EXCLUDED.sandbox_id,code_base_cleanup.sandbox_id),
+       job_id=COALESCE(EXCLUDED.job_id,code_base_cleanup.job_id),
+       object_id=COALESCE(EXCLUDED.object_id,code_base_cleanup.object_id)`,
+      projectId,
+      base.key,
+      `epoch:${handle.epoch}`,
+      handle.epoch,
+      base.deadline,
+      handle.sandboxId,
+      handle.jobId,
+      handle.objectId,
+      known ? (handle.releaseAttempts ?? 0) : RECLAIM_ATTEMPTS,
+      known ? null : 'No retained resource identifiers are available for this check',
+      known ? new Date(this.clock()).toISOString() : null,
+    );
+    await tx.run(
+      'UPDATE code_bases SET check_job_json=NULL,updated_at=? WHERE project_id=? AND base_key=? AND check_job_json=?',
+      now(),
+      projectId,
+      base.key,
+      JSON.stringify(handle),
+    );
+  }
+
+  /** One durable retry path for all orphaned resources, independent of the current check. */
+  private async releaseCleanup(projectId: string): Promise<void> {
+    const checks = this.checks;
+    if (!checks || this.closed) return;
+    const pending = await this.state.read((sql) =>
+      sql.all<CleanupRow>(
+        'SELECT * FROM code_base_cleanup WHERE project_id=? AND next_at<=? ORDER BY base_key,cleanup_id',
         projectId,
-        base.key,
-        JSON.stringify(handle),
-      );
-    });
+        new Date(this.clock()).toISOString(),
+      ),
+    );
+    for (const row of pending) {
+      if (this.closed) return;
+      let reason: string | null = null;
+      try {
+        check(
+          row.sandbox_id || row.job_id || row.object_id,
+          'code_check_cleanup_unknown',
+          'No retained resource identifiers are available for this check',
+          409,
+        );
+        await checks.release(projectId, {
+          sandboxId: row.sandbox_id,
+          jobId: row.job_id,
+          objectId: row.object_id,
+        });
+      } catch (error) {
+        reason = error instanceof Error ? error.message : 'the service refused';
+      }
+      const attempts = Number(row.attempts) + 1;
+      await this.state.transaction(async (tx) => {
+        const current = await tx.get<CleanupRow>(
+          'SELECT * FROM code_base_cleanup WHERE project_id=? AND base_key=? AND cleanup_id=? FOR UPDATE',
+          projectId,
+          row.base_key,
+          row.cleanup_id,
+        );
+        if (!current || canonical(current) !== canonical(row)) return;
+
+        if (reason === null || attempts >= RECLAIM_ATTEMPTS) {
+          // The old execution gives capacity back after release or escalation. Never settle
+          // the replacement check's epoch; legacy warnings no longer know an epoch at all.
+          const base = await this.row(tx, projectId, row.base_key);
+          if (base && row.execution_epoch !== null)
+            await this.hooks.serviceWork
+              ?.settle(
+                tx,
+                {
+                  ...this.execution(projectId, this.record(base), 'code.check'),
+                  executionEpoch: Number(row.execution_epoch),
+                  deadline: row.deadline ?? new Date(this.clock()).toISOString(),
+                },
+                'cancelled',
+              )
+              .catch(() => undefined);
+        }
+        if (reason === null)
+          await tx.run(
+            'DELETE FROM code_base_cleanup WHERE project_id=? AND base_key=? AND cleanup_id=?',
+            projectId,
+            row.base_key,
+            row.cleanup_id,
+          );
+        else
+          await tx.run(
+            'UPDATE code_base_cleanup SET attempts=?,reason=?,next_at=? WHERE project_id=? AND base_key=? AND cleanup_id=?',
+            attempts,
+            reason,
+            new Date(
+              this.clock() + (attempts >= RECLAIM_ATTEMPTS ? CLEANUP_RETRY_MS : 0),
+            ).toISOString(),
+            projectId,
+            row.base_key,
+            row.cleanup_id,
+          );
+        await this.hooks.changed(tx, projectId);
+      });
+    }
   }
 
   /**
@@ -1204,19 +1198,18 @@ export class CodeBaseService {
     base: CodeBaseRecord,
     handle: CheckHandle,
   ): Promise<void> {
-    const written = await this.state.transaction((tx) =>
-      tx.run(
+    await this.state.transaction(async (tx) => {
+      const written = await tx.run(
         `UPDATE code_bases SET check_state='running',check_job_json=?,updated_at=? WHERE project_id=? AND base_key=? AND state='running' AND execution_epoch=? AND health='healthy' AND ${IN_FLIGHT}`,
         JSON.stringify(handle),
         now(),
         projectId,
         base.key,
         base.executionEpoch,
-      ),
-    );
-    // The disposition changed while the machine was being made, so nothing will ever read
-    // its answer and no row would name it. It goes back now rather than staying rented.
-    if (!written.changes) await this.reclaim(projectId, base, handle);
+      );
+      // A late start/step still names real resources even when an operator fenced its epoch.
+      if (!written.changes) await this.queueCleanup(tx, projectId, base, handle);
+    });
   }
 
   /**
@@ -1260,14 +1253,13 @@ export class CodeBaseService {
         base.key,
         base.executionEpoch,
       );
+      if (handle) await this.queueCleanup(tx, projectId, base, handle);
       if (!changed.changes) return await this.hooks.serviceWork?.settle(tx, input, 'cancelled');
       await this.hooks.serviceWork?.settle(tx, input, 'completed');
       if (result) await this.hooks.resolved?.(tx, projectId, base.key, result.commit);
       await this.promote(tx, projectId);
       await this.hooks.changed(tx, projectId);
     });
-    // The handle outlives the seal so that a crash here still finds the machine to return.
-    if (handle) await this.reclaim(projectId, base, handle);
   }
 
   /**
@@ -1446,10 +1438,10 @@ export class CodeBaseService {
                 : action === 'suspend'
                   ? 'suspended'
                   : 'cancelled';
+      if (row.check_job_json)
+        await this.queueCleanup(tx, caller.projectId, base, JSON.parse(row.check_job_json));
       await tx.run(
-        // The handle stays: the check pass needs it to reclaim the machine this disposition
-        // just orphaned. Only a check that never reached a verdict is put back to none, or
-        // quarantining a resolved base would break the verdict-and-receipt pairing.
+        // A recorded verdict is never replaced by an operator's disposition.
         `UPDATE code_bases SET state=?,health=?,resume_state=?,operator_reason=?,blocker=NULL,attempts=?,next_at=NULL,execution_epoch=execution_epoch+1,check_state=CASE WHEN check_json IS NULL THEN 'none' ELSE check_state END,updated_at=? WHERE project_id=? AND base_key=?`,
         state,
         action === 'quarantine' ? 'quarantined' : action === 'release' ? 'healthy' : row.health,
@@ -1510,30 +1502,20 @@ export class CodeBaseService {
    * A machine still named on a row nominates its project whatever that row's state and health
    * are, because a crash between an operator's cancel, quarantine or suspend and the next
    * drain leaves a rented machine that only a drain of that project can give back; and so
-   * does a machine Code let go of, once it is time to ask for it again.
+   * does any durable cleanup whose retry time has come.
    */
   async due(): Promise<string[]> {
-    const { due, letGo } = await this.state.read(async (sql) => ({
-      due: await sql.all<{ project_id: string }>(
-        "SELECT DISTINCT project_id FROM code_bases WHERE check_job_json IS NOT NULL OR (health='healthy' AND (state IN ('queued','running') OR (state='retry_wait' AND next_at<=?) OR (state='awaiting_resolution' AND resolution_commit IS NOT NULL AND resolution_error IS NULL))) ORDER BY project_id",
-        new Date(this.clock()).toISOString(),
-      ),
-      letGo: this.checks
-        ? await sql.all<{ project_id: string; base_key: string; blocker: string }>(
-            'SELECT project_id,base_key,blocker FROM code_bases WHERE blocker LIKE ?',
-            `${UNRECLAIMED}%`,
-          )
-        : [],
-    }));
-    const projects = due.map((row) => row.project_id);
-    for (const row of letGo)
-      if (
-        unreclaimedOf(row.blocker)?.sandboxId &&
-        this.askable(row.project_id, row.base_key) &&
-        !projects.includes(row.project_id)
-      )
-        projects.push(row.project_id);
-    return projects;
+    return await this.state.read(async (sql) =>
+      (
+        await sql.all<{ project_id: string }>(
+          `SELECT project_id FROM code_bases WHERE check_job_json IS NOT NULL OR (health='healthy' AND (state IN ('queued','running') OR (state='retry_wait' AND next_at<=?) OR (state='awaiting_resolution' AND resolution_commit IS NOT NULL AND resolution_error IS NULL)))
+       UNION SELECT project_id FROM code_base_cleanup WHERE next_at<=? AND CAST(? AS INTEGER)=1 ORDER BY project_id`,
+          new Date(this.clock()).toISOString(),
+          new Date(this.clock()).toISOString(),
+          this.checks ? 1 : 0,
+        )
+      ).map((row) => row.project_id),
+    );
   }
 
   async close(): Promise<void> {

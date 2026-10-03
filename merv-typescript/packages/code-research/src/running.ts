@@ -148,7 +148,7 @@ export const OVERDUE_GRACE_MS = 180_000;
 function machinesOf(check: CodeCheckStanding): string[] {
   return [
     ...new Set(
-      [check.sandboxId, check.unreclaimed?.sandboxId].flatMap((id) => {
+      [check.sandboxId, ...check.cleanupSandboxIds].flatMap((id) => {
         const key = id && runningKey('sandbox', id);
         return key && runningKeyPattern.test(key) ? [key] : [];
       }),
@@ -188,7 +188,7 @@ function phaseFace(check: CodeCheckStanding, now: number): CheckFace {
       line: ['Giving machine back'],
       look: 'quiet',
       // Code asks again on every pass, and names the machine to an operator only once it
-      // gives up; until then a refusal is nobody's move, so it is said in ink.
+      // slows its retries; until then a refusal is nobody's move, so it is said in ink.
       ...(refused
         ? {
             attention: {
@@ -227,8 +227,8 @@ function phaseFace(check: CodeCheckStanding, now: number): CheckFace {
 
 /**
  * A check's line, how it looks, its dot, and what it needs of a person, from where it stands.
- * A machine Code let go of is still rented, and nothing but a person will give it back, so
- * that outranks whatever the check itself is doing.
+ * Cleanup refused repeatedly still needs attention while slow retries continue, so
+ * that outranks whatever the current check itself is doing.
  */
 function checkFace(check: CodeCheckStanding, now: number): CheckFace {
   const face = phaseFace(check, now);
