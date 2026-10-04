@@ -17,7 +17,11 @@ import type {
   ReviewHistory,
   Transaction,
 } from '@merv/contracts';
-import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
+import type {
+  ChangeSpec,
+  Reflection,
+  ReflectionReview,
+} from '../packages/reflections/src/types.js';
 import type { ResearchLineage, ResearchRecord } from '../packages/research/src/types.js';
 import { buildLaunch } from '../packages/runner/src/profiles.js';
 import {
@@ -1352,7 +1356,7 @@ test('reflection reviewer authors paper edits with the verdict and main-agent ed
   const assignment = await f.app.ctx.workflows.assignment(reviewer, wave.id);
   assert.ok(JSON.stringify(assignment).includes('paperChanges'));
   const review = await f.app.ctx.reviews.start(reviewer, wave.review!.id);
-  const input: ReviewApplication = {
+  const input: ReflectionReview = {
     reviewId: review.id,
     claimId: review.claimId!,
     expectedRevision: wave.workflow.revision,

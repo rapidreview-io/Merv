@@ -1,6 +1,7 @@
 import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import { visible, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
+import { paperChangesSchema, parsed } from '@merv/contracts';
 import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -20,7 +21,6 @@ import {
   type ContextBuilder,
   type Data,
   type ProcessGraph,
-  type ReviewApplication,
   type Reviews,
   type RunningNode,
   type RunningPanelPart,
@@ -52,6 +52,7 @@ import type {
   ExperimentEvidence,
   ExperimentExhibit,
   ExperimentOccupancy,
+  ExperimentReview,
   Experiments,
   ExperimentSubmission,
   ExperimentTransition,
@@ -127,6 +128,9 @@ interface StandingContext {
 }
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
+/** What review.start and review.get tell the reviewer of an experiment's design or results. */
+const REVIEW_GUIDANCE =
+  'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.';
 /** The evidence, figures and exhibit a design or results submission pins. */
 interface Submission {
   evidence: ExperimentEvidence[];
@@ -256,6 +260,8 @@ export class ExperimentService implements Experiments {
             this.program.handleFor(workflow.version);
           },
           submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+          guidance: REVIEW_GUIDANCE,
+          fields: ['paperChanges'],
           // An experiment is reviewed twice, so each review is named by the gate it read.
           gates: async (reviewIds, sql) => {
             if (!reviewIds.length) return {};
@@ -1362,7 +1368,7 @@ export class ExperimentService implements Experiments {
     );
     return await this.get(caller, experiment.id, tx);
   }
-  private route(stage: 'design' | 'results', input: ReviewApplication): string {
+  private route(stage: 'design' | 'results', input: ExperimentReview): string {
     check(
       ['pass', 'needs_changes', 'fail'].includes(input.verdict),
       'invalid_verdict',
@@ -1393,12 +1399,12 @@ export class ExperimentService implements Experiments {
   }
   async submitReview(
     caller: Caller,
-    value: ReviewApplication,
+    value: ExperimentReview,
     transaction?: Transaction,
   ): Promise<Experiment> {
     this.open();
     caller = structuredClone(caller);
-    const input = plain<ReviewApplication>(value, 'invalid_experiment_input', {
+    const input = plain<ExperimentReview>(value, 'invalid_experiment_input', {
       nodes: 8192,
       depth: 20,
       bytes: 262144,
@@ -1410,6 +1416,8 @@ export class ExperimentService implements Experiments {
         'invalid_experiment_input',
         'Review input must be an object',
       );
+      if (input.paperChanges !== undefined)
+        input.paperChanges = parsed(paperChangesSchema, input.paperChanges, 'invalid_input');
       check(
         Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
         'invalid_revision',
@@ -1551,7 +1559,7 @@ export class ExperimentService implements Experiments {
   private async checkReview(
     caller: Caller,
     experiment: Experiment,
-    input: ReviewApplication,
+    input: ExperimentReview,
     tx: Transaction,
   ): Promise<void> {
     await this.scope.require(caller, 'review', tx);
@@ -1638,7 +1646,7 @@ export class ExperimentService implements Experiments {
       (!action && reviewing(experiment.workflow.state))
     ) {
       check(context.input, 'review_input_required', 'A complete verdict is required', 409);
-      const input = context.input as unknown as ReviewApplication;
+      const input = context.input as unknown as ExperimentReview;
       await this.checkReview(caller, experiment, input, tx);
       const submission = experiment.submissions.find((s) => s.reviewId === input.reviewId)!;
       check(

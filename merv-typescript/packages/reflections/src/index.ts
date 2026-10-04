@@ -11,6 +11,7 @@ import {
 import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { executionOutputs, getArtifacts, keyId, keyKind } from '@merv/contracts';
+import { paperChangesSchema, parsed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -28,7 +29,6 @@ import {
   type ContextItem,
   type ContextRegistration,
   type ProcessGraph,
-  type ReviewApplication,
   type ReviewRequest,
   type Reviews,
   type RunningKey,
@@ -63,10 +63,15 @@ import type {
   ReflectionLens,
   ReflectionLensSubmit,
   ReflectionEnd,
+  ReflectionReview,
   Reflections,
   ReflectionSubmit,
 } from './types.js';
 export type * from './types.js';
+
+/** What review.start and review.get tell the reviewer of a reflection wave's synthesis. */
+const REVIEW_GUIDANCE =
+  'Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.';
 
 interface WaveRow {
   id: string;
@@ -199,6 +204,8 @@ export class ReflectionService implements Reflections {
               review.projectId,
             )),
           submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+          guidance: REVIEW_GUIDANCE,
+          fields: ['paperChanges'],
         });
       } catch (error) {
         this.close();
@@ -1191,7 +1198,7 @@ export class ReflectionService implements Reflections {
                     c.input as Parameters<Reviews['checkSubmit']>[2],
                     c.tx,
                   );
-                  const input = c.input as unknown as ReviewApplication | undefined;
+                  const input = c.input as unknown as ReflectionReview | undefined;
                   if (input && input.paperChanges !== undefined)
                     await this.paper.checkReview(
                       c.caller,
@@ -1519,10 +1526,15 @@ export class ReflectionService implements Reflections {
   }
   private async submitReview(
     caller: Caller,
-    input: ReviewApplication,
+    input: ReflectionReview,
     tx: Transaction,
   ): Promise<Reflection> {
     await this.scope.require(caller, 'review', tx);
+    if (input.paperChanges !== undefined)
+      input = {
+        ...input,
+        paperChanges: parsed(paperChangesSchema, input.paperChanges, 'invalid_input'),
+      };
     return await this.command(caller, 'review', input, tx, async () => {
       const review = await this.reviews.get(caller, input.reviewId, tx);
       const wave = await this.row(caller, review.subjectId, tx);

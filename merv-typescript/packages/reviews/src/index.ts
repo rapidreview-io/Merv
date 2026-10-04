@@ -45,6 +45,20 @@ function freeze<T>(value: T): T {
   return value;
 }
 
+/** The verdict fields Reviews reads; an owner may name more for itself. */
+const submitFields: ReadonlySet<string> = new Set([
+  'reviewId',
+  'claimId',
+  'verdict',
+  'returnTo',
+  'notes',
+  'synopsis',
+  'findings',
+  'evidence',
+  'expectedRevision',
+  'requestId',
+]);
+
 /** Route shape is generic; allowed destinations and verdict rules belong to the owner. */
 function validateReturnTo(input: { returnTo?: unknown }): string | undefined {
   check(
@@ -361,14 +375,15 @@ export class ReviewService implements Reviews {
     );
     const descriptors = Object.getOwnPropertyDescriptors(owner);
     const optional = (['claim', 'gates'] as const).filter((key) => Object.hasOwn(owner, key));
-    const keys = ['id', 'owns', 'submit', ...optional];
+    const metadata = (['guidance', 'fields'] as const).filter((key) => Object.hasOwn(owner, key));
+    const keys = ['id', 'owns', 'submit', ...optional, ...metadata];
     check(
       Reflect.ownKeys(owner).length === keys.length &&
         keys.every(
           (key) => descriptors[key] && 'value' in descriptors[key] && descriptors[key].enumerable,
         ),
       'invalid_review_owner',
-      'Review owner requires only id, owns and submit, and may add claim and gates',
+      'Review owner requires only id, owns and submit, and may add claim, gates, guidance and fields',
     );
     check(
       typeof owner.id === 'string' &&
@@ -379,6 +394,23 @@ export class ReviewService implements Reviews {
       'invalid_review_owner',
       'Review owner requires an identifier and callbacks',
     );
+    check(
+      (owner.guidance === undefined ||
+        (typeof owner.guidance === 'string' &&
+          visible(owner.guidance) &&
+          owner.guidance.length <= 8000)) &&
+        (owner.fields === undefined ||
+          (Array.isArray(owner.fields) &&
+            owner.fields.every(
+              (field) =>
+                typeof field === 'string' &&
+                /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(field) &&
+                !submitFields.has(field),
+            ))),
+      'invalid_review_owner',
+      'Review owner guidance must be bounded text and its fields new identifiers',
+    );
+    const fields = owner.fields && Object.freeze([...owner.fields]);
     check(
       !this.owners.has(owner.id),
       'review_owner_conflict',
@@ -391,6 +423,8 @@ export class ReviewService implements Reviews {
       submit: owner.submit,
       ...(owner.claim ? { claim: owner.claim } : {}),
       ...(owner.gates ? { gates: owner.gates } : {}),
+      ...(owner.guidance === undefined ? {} : { guidance: owner.guidance }),
+      ...(fields ? { fields } : {}),
     });
     this.owners.set(registered.id, registered);
     this.ownerEpoch++;
@@ -446,6 +480,10 @@ export class ReviewService implements Reviews {
         'Multiple domains own this review',
         409,
       );
+      const extra = Object.keys(input).find(
+        (key) => !submitFields.has(key) && !matches[0].fields?.includes(key),
+      );
+      check(extra === undefined, 'invalid_review_input', `This review does not accept ${extra}`);
       // The domain's own command handles replay before current-claim checks. Checking
       // an open claim here would reject a retry after its first successful verdict.
       const result = await matches[0].submit(caller, input, tx);
@@ -453,6 +491,28 @@ export class ReviewService implements Reviews {
       await this.scope.require(caller, 'review', tx);
       return result;
     });
+  }
+
+  async guidance(
+    caller: Caller,
+    reviewId: string,
+    transaction?: Transaction,
+  ): Promise<string | undefined> {
+    caller = structuredClone(caller);
+    const review = freeze(await this.get(caller, reviewId, transaction));
+    const read = async (tx: Transaction) => {
+      const matches: Readonly<ReviewSubmitOwner>[] = [];
+      for (const owner of [...this.owners.values()])
+        if ((await owner.owns(review, tx)) === true) matches.push(owner);
+      return matches.length === 1 ? matches[0].guidance : undefined;
+    };
+    // Ownership reads in a transaction; a snapshot's is read-only and takes no writer lock.
+    const tx = transaction ?? this.state.ambient;
+    if (tx) {
+      this.state.assertTransaction(tx);
+      return await read(tx);
+    }
+    return await this.state.snapshot(() => this.state.transaction(read));
   }
 
   close(): void {

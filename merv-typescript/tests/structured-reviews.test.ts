@@ -239,9 +239,9 @@ test('synopses must be bounded plain prose and generic review observations must 
     const valid = f.submit(claimed),
       before = await f.durable();
     for (const synopsis of [
-      'The retained result art_abc establishes the requested arithmetic behavior.',
-      'The completed task_abc establishes the requested arithmetic behavior.',
-      'The completed wf_abc establishes the requested arithmetic behavior.',
+      'The retained result art_8c1f2e9a establishes the requested arithmetic behavior.',
+      'The completed task_5b7d03aa establishes the requested arithmetic behavior.',
+      'The completed wf_0e4c9b12 establishes the requested arithmetic behavior.',
       undefined,
       null,
       5,

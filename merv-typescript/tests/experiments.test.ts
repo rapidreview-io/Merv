@@ -26,6 +26,7 @@ import type {
   Experiment,
   ExperimentAttach,
   ExperimentEvidence,
+  ExperimentReview,
   ExperimentTransition,
 } from '@merv/experiments/types';
 import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
@@ -234,7 +235,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     experiment: Experiment,
     verdict: ReviewApplication['verdict'] = 'pass',
     returnTo?: string,
-  ): Promise<ReviewApplication> => {
+  ): Promise<ExperimentReview> => {
     const review = await reviews.start(reviewer, experiment.reviewId!);
     return {
       reviewId: review.id,
