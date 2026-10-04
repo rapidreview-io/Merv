@@ -430,7 +430,24 @@ export async function compileAtlas(root: string, inventory: Inventory) {
   /* ---------- plugins ---------- */
   const realms = JSON.parse(
     readFileSync(resolve(root, 'docs/architecture/atlas/realms.json'), 'utf8'),
-  ) as { research: string[]; library: string[]; labels: Record<string, string> };
+  ) as {
+    research: string[];
+    library: string[];
+    labels: Record<string, string>;
+    purposes?: Record<string, string>;
+  };
+  // Purposes and region names come from the hand-written explorer notes, keyed by service.
+  const notes = JSON.parse(
+    readFileSync(resolve(root, 'docs/architecture/explorer/notes.json'), 'utf8'),
+  ) as {
+    plugins: Record<string, { label: string; purpose: string }>;
+    hierarchy: {
+      layers: { label: string; members: string[] }[];
+      boundaries: { label: string; members: string[] }[];
+    };
+  };
+  const pkgOfKey = (key: string) =>
+    providerOf.get(key) ?? (packages.includes(key) ? key : undefined);
   const inventoryByPkg = new Map<string, InventoryPlugin[]>();
   for (const plugin of inventory.plugins) {
     const pkg = plugin.source.split('/')[1];
@@ -453,6 +470,12 @@ export async function compileAtlas(root: string, inventory: Inventory) {
           : machine
             ? 'machine'
             : 'foundation',
+      purpose:
+        [...(inventoryByPkg.get(pkg)?.flatMap((p) => p.provides) ?? []), pkg]
+          .map((key) => notes.plugins[key]?.purpose)
+          .find(Boolean) ??
+        realms.purposes?.[pkg] ??
+        '',
       loc: files.reduce((n, f) => n + f.loc, 0),
       adapters: own
         .filter((p) => p.kind !== 'service')
@@ -584,6 +607,12 @@ export async function compileAtlas(root: string, inventory: Inventory) {
     plugins,
     edges,
     stateMachines: await stateMachines(root, serverFiles),
+    regions: [...notes.hierarchy.layers, ...notes.hierarchy.boundaries]
+      .map((region) => ({
+        label: region.label,
+        members: [...new Set(region.members.map(pkgOfKey).filter((m): m is string => !!m))].sort(),
+      }))
+      .filter((region) => region.members.length),
     unmatchedEvents: [...knownEvents].filter(
       (type) => !eventsOut.some((e) => e.type === type) || !eventsIn.some((e) => e.type === type),
     ).length,

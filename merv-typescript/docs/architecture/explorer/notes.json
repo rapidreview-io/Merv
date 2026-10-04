@@ -175,7 +175,7 @@
     },
     "codeWork": {
       "label": "Code Work",
-      "purpose": "Owns research-to-code mappings, exact captures, dependency and base selection, acceptance and review provenance, merge-check configuration and publication policy. Composes generic Code APIs; atomically projects retention requests, repository holds and mirror eligibility, preserving obligations when the adapter is unloaded."
+      "purpose": "Connects Git to generic work units: exact captures, dependency and base selection, acceptance and review provenance, merge-check configuration and publication policy. Composes generic Code APIs; atomically projects retention requests, repository holds and mirror eligibility, preserving obligations when the adapter is unloaded."
     },
     "fleet": {
       "label": "Fleet",

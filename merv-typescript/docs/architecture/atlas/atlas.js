@@ -95,14 +95,37 @@
     id === RESEARCH ? 'Research' : id === '@agents' ? 'Agents' : (P.get(id) || {}).label || id;
 
   const KINDS = [
-    ['call', 'Calls a service method', 'var(--call)'],
-    ['hook', 'Calls back into a plugin that registered with it', 'var(--hook)'],
-    ['event', 'Domain event: written by one, consumed by another', 'var(--event)'],
-    ['tool', 'Calls another plugin’s tool', 'var(--tool)'],
-    ['table', 'Queries tables another plugin owns', 'var(--table)'],
-    ['http', 'Network call between processes', 'var(--http)'],
-    ['idle', 'Declared dependency, no call found in source', 'var(--idle)'],
+    ['call', 'Calls a service method', 'var(--call)', 'Calls'],
+    ['hook', 'Calls back into a plugin that registered with it', 'var(--hook)', 'Hooks'],
+    ['event', 'Domain event: written by one, consumed by another', 'var(--event)', 'Events'],
+    ['tool', 'Calls another plugin’s tool', 'var(--tool)', 'Tool calls'],
+    ['table', 'Queries tables another plugin owns', 'var(--table)', 'Table reads'],
+    ['http', 'Network call between processes', 'var(--http)', 'HTTP'],
+    ['idle', 'Declared dependency, no call found in source', 'var(--idle)', 'Unused deps'],
   ];
+  const plural = (n, one, many) => `${n.toLocaleString()} ${n === 1 ? one : many || one + 's'}`;
+  const nameList = (ids) => {
+    const names = ids.map((id) => esc(label(id)));
+    return names.length < 3
+      ? names.join(' and ')
+      : names.slice(0, -1).join(', ') + ' and ' + names.at(-1);
+  };
+  const sentence = (c) => {
+    const a = `<b>${esc(label(c.from))}</b>`,
+      b = `<b>${esc(label(c.to))}</b>`,
+      n = c.items.length;
+    if (c.kind === 'call') return `${a} calls ${plural(n, 'method')} on ${b}.`;
+    if (c.kind === 'hook')
+      return `${a} calls back into ${b} through ${plural(n, 'hook')} that ${b} registered.`;
+    if (c.kind === 'event') return `${a} emits ${plural(n, 'event')} that ${b} consumes.`;
+    if (c.kind === 'tool') return `${a} calls ${plural(n, 'tool')} that ${b} offers to agents.`;
+    if (c.kind === 'table') {
+      const runtime = c.items.filter((t) => t.runtime > 0).length;
+      return `${a} queries ${plural(n, 'table')} owned by ${b} directly${runtime ? '' : ', only in migrations'}.`;
+    }
+    if (c.kind === 'http') return `${a} reaches ${b} over the network (${esc(c.items[0].name)}).`;
+    return `${a} declares ${b} as a dependency, but no call to it was found in the code.`;
+  };
 
   const channels = [];
   for (const e of A.edges) {
@@ -220,11 +243,15 @@
     };
     anim = requestAnimationFrame(step);
   }
-  const fitTo = (b, pad = 50) => ({
-    x: (b.x0 + b.x1) / 2,
-    y: (b.y0 + b.y1) / 2,
-    k: Math.min((W - pad * 2) / (b.x1 - b.x0), (H - pad * 2) / (b.y1 - b.y0)),
-  });
+  const panelWidth = () => {
+    const g = document.getElementById('guide');
+    return g && g.querySelector('h2') && W > 900 ? g.offsetWidth + 24 : 0;
+  };
+  const fitTo = (b, pad = 50) => {
+    const left = panelWidth();
+    const k = Math.min((W - left - pad * 2) / (b.x1 - b.x0), (H - pad * 2) / (b.y1 - b.y0));
+    return { x: (b.x0 + b.x1) / 2 - left / 2 / k, y: (b.y0 + b.y1) / 2, k };
+  };
 
   /* ---------------- world ---------------- */
   const mapId = (id) => (!showResearch && (P.get(id) || {}).realm === 'research' ? RESEARCH : id);
@@ -334,6 +361,15 @@
     // Settle the layered start into a map: springs along channels, repulsion between plugins,
     // and a weak pull toward each plugin's depth so foundations stay south.
     const ROW = 120;
+    const regionsOf = new Map();
+    const placedIn = new Set();
+    for (const region of A.regions || [])
+      for (const id of region.members) {
+        const n = byId.get(mapId(id));
+        if (!n || placedIn.has(n.id)) continue;
+        placedIn.add(n.id);
+        regionsOf.set(region.label, [...(regionsOf.get(region.label) || []), n]);
+      }
     for (const n of nodes) {
       n.y = -n.level * ROW;
       n.x *= 1.6;
@@ -380,6 +416,15 @@
       for (const n of nodes) {
         n.y += (-n.level * ROW - n.y) * 0.05;
         n.x *= 0.998;
+      }
+      for (const members of regionsOf.values()) {
+        if (members.length < 2) continue;
+        const cx = members.reduce((s, n) => s + n.x, 0) / members.length;
+        const cy = members.reduce((s, n) => s + n.y, 0) / members.length;
+        for (const n of members) {
+          n.x += (cx - n.x) * 0.03 * cool;
+          n.y += (cy - n.y) * 0.015 * cool;
+        }
       }
     }
     pos.clear();
@@ -444,6 +489,43 @@
     // Land is the union of each plugin's surroundings, so close neighbours share a continent.
     for (const n of nodes) el('circle', { cx: n.x, cy: n.y, r: n.r + 78, class: 'land-b' }, landG);
     for (const n of nodes) el('circle', { cx: n.x, cy: n.y, r: n.r + 68, class: 'land-a' }, landG);
+    // Region names, like a map's: each plugin is named in its first region only.
+    const claimed = new Set();
+    const labelBoxes = [];
+    for (const region of A.regions || []) {
+      const own = region.members
+        .map(mapId)
+        .filter((id, i, all) => all.indexOf(id) === i && !claimed.has(id) && pos.has(id));
+      own.forEach((id) => claimed.add(id));
+      if (!own.length || own.includes(RESEARCH)) continue;
+      const cx = own.reduce((s, id) => s + pos.get(id).x, 0) / own.length;
+      const top = Math.min(...own.map((id) => pos.get(id).y - pos.get(id).r));
+      const bottom = Math.max(...own.map((id) => pos.get(id).y + pos.get(id).r));
+      const width = region.label.length * 11.5;
+      const clear = (x, y) =>
+        nodes.every((n) => {
+          const nx0 = n.x - Math.max(n.r, label(n.id).length * 4.5) - 6,
+            nx1 = n.x + Math.max(n.r, label(n.id).length * 4.5) + 6;
+          const ny0 = n.y - n.r - 12,
+            ny1 = n.y + n.r + 32;
+          return x + width / 2 < nx0 || x - width / 2 > nx1 || y < ny0 || y - 16 > ny1;
+        }) &&
+        labelBoxes.every((b) => Math.abs(b.x - x) > (b.w + width) / 2 || Math.abs(b.y - y) > 22);
+      const spot = [
+        [cx, top - 30],
+        [cx, bottom + 58],
+        [cx, top - 60],
+        [cx, bottom + 88],
+      ].find(([x, y]) => clear(x, y));
+      if (!spot) continue;
+      labelBoxes.push({ x: spot[0], y: spot[1], w: width });
+      const t = el(
+        'text',
+        { x: spot[0], y: spot[1], class: 'region', 'text-anchor': 'middle' },
+        landG,
+      );
+      t.textContent = region.label;
+    }
     worldEdges = [];
     const OFF = {
       call: 0,
@@ -590,9 +672,19 @@
     );
     const ext = buildScene(g, p);
     svg.classList.add('diving');
-    const k = Math.min((W - 40) / ((ext.x1 - ext.x0) * s), (H - 40) / ((ext.y1 - ext.y0) * s));
-    const to = { x: at.x + ((ext.x0 + ext.x1) / 2) * s, y: at.y + ((ext.y0 + ext.y1) / 2) * s, k };
-    focus = { id, k };
+    focus = { id, k: 1 };
+    renderGuide();
+    const left = panelWidth();
+    const k = Math.min(
+      (W - left - 40) / ((ext.x1 - ext.x0) * s),
+      (H - 40) / ((ext.y1 - ext.y0) * s),
+    );
+    const to = {
+      x: at.x + ((ext.x0 + ext.x1) / 2) * s - left / 2 / k,
+      y: at.y + ((ext.y0 + ext.y1) / 2) * s,
+      k,
+    };
+    focus.k = k;
     fly(to, 850);
     renderCrumbs();
     if (location.hash.slice(1) !== id) history.replaceState(null, '', '#' + id);
@@ -689,6 +781,11 @@
     assign(groups.right, r0);
     assign(groups.left, l0);
     assign(groups.top, t0);
+    const captions = [
+      [groups.left.filter((n) => !n.agents), 'Uses ' + p.label],
+      [groups.right, p.label + ' uses'],
+      [groups.top.filter((n) => !n.agents), 'Both ways'],
+    ];
     for (const n of nbrs) {
       const q = P.get(n.id);
       n.r = n.agents ? 26 : 12 + Math.sqrt(q ? q.loc : 400) * 0.2;
@@ -1088,6 +1185,40 @@
         }
       }
     }
+    // what each ring of neighbours means
+    for (const [list, text] of captions) {
+      if (!list.length) continue;
+      const a = cmean(list.map((n) => n.a));
+      const [x, y] = polar(RN + 30, a);
+      const out = polar(RN + Math.max(...list.map((n) => n.r)) + 150, a);
+      const t = el(
+        'text',
+        {
+          x: Math.abs(Math.cos(a)) > 0.3 ? out[0] : x,
+          y: Math.abs(Math.cos(a)) > 0.3 ? out[1] : y + (Math.sin(a) < 0 ? -95 : 95),
+          class: 'caption',
+          'text-anchor':
+            Math.abs(Math.cos(a)) > 0.3 ? (Math.cos(a) > 0 ? 'start' : 'end') : 'middle',
+        },
+        nbrG,
+      );
+      t.textContent = text;
+    }
+    const fileCaption = el(
+      'text',
+      { x: 0, y: -(R - 78) - 12, class: 'caption small', 'text-anchor': 'middle' },
+      coreG,
+    );
+    fileCaption.textContent = plural(p.files.length, 'file');
+    if (tAll.length) {
+      const [tx, ty] = polar(R - 70, tCenter);
+      const tc = el(
+        'text',
+        { x: tx, y: ty + 6, class: 'caption small table', 'text-anchor': 'middle' },
+        coreG,
+      );
+      tc.textContent = plural(tAll.length, 'table');
+    }
     // a program's own machines sit below its plugin
     const own = machinesOf(id);
     if (own.length) {
@@ -1250,7 +1381,17 @@
         { cx: x(s), cy, r: term ? 5 : 6, class: 'st' + (s === m.initial ? ' init' : '') },
         wrap,
       );
-      const t = el('text', { x: x(s), y: cy + 22, class: 'stl', 'text-anchor': 'middle' }, wrap);
+      const t = el(
+        'text',
+        {
+          x: x(s) + 3,
+          y: cy + 14,
+          class: 'stl',
+          'text-anchor': 'end',
+          transform: `rotate(-40 ${x(s) + 3} ${cy + 14})`,
+        },
+        wrap,
+      );
       t.textContent = s;
     }
     g.addEventListener('mouseenter', () => {
@@ -1292,14 +1433,40 @@
   function pluginCard(n) {
     if (!n.p)
       return `<div class="head">${icon('flask')}Research</div><div class="row">${n.members.map((id) => `<span class="chip">${dotFor(id)}${esc(label(id))}</span>`).join('')}</div>`;
-    const s = surface(n.p);
-    const max = Math.max(...A.plugins.map((q) => q.loc));
-    return `<div class="head">${esc(n.p.label)}</div>
-      <div class="row">${count('method', s.method, 'var(--call)')}${count('hook', s.hook, 'var(--hook)')}${count('tool', s.tool, 'var(--tool)')}${count('event', s.event, 'var(--event)')}${count('table', s.table, 'var(--table)')}${count('file', n.p.files.length)}</div>
-      <div class="row" title="${n.p.loc} lines"><div class="bar" style="width:${Math.max(4, (n.p.loc / max) * 240)}px"></div></div>`;
+    return `<div class="head">${esc(n.p.label)}</div>${n.p.purpose ? `<div class="purpose">${esc(n.p.purpose)}</div>` : ''}
+      <div class="row">${surfaceWords(n.p)}</div><div class="hint">Click to open it.</div>`;
+  }
+  function surfaceWords(p) {
+    const s = surface(p);
+    return (
+      [
+        [s.method, 'method', 'methods', 'var(--call)', 'method'],
+        [s.hook, 'hook', 'hooks', 'var(--hook)', 'hook'],
+        [s.tool, 'agent tool', 'agent tools', 'var(--tool)', 'tool'],
+        [s.event, 'event', 'events', 'var(--event)', 'event'],
+        [s.table, 'table', 'tables', 'var(--table)', 'table'],
+        [p.files.length, 'file', 'files', '', 'file'],
+      ]
+        .filter(([n]) => n)
+        .map(
+          ([n, one, many, color, ic]) =>
+            `<span class="ico">${icon(ic, color)}${plural(n, one, many)}</span>`,
+        )
+        .join('') + `<span class="ico">${plural(p.loc, 'line')}</span>`
+    );
   }
   function channelCard(c) {
     const kind = KINDS.find((k) => k[0] === c.kind);
+    const what =
+      c.kind === 'call' || c.kind === 'hook'
+        ? 'Methods'
+        : c.kind === 'table'
+          ? 'Tables'
+          : c.kind === 'tool'
+            ? 'Tools'
+            : c.kind === 'event'
+              ? 'Events'
+              : '';
     const items = c.items
       .slice(0, 40)
       .map(
@@ -1307,7 +1474,7 @@
           `<span class="chip">${esc(i.svc ? i.svc + '.' + i.name : i.name)}${i.count > 1 ? ' ×' + i.count : ''}</span>`,
       )
       .join('');
-    return `<div class="head"><span style="color:${kind[2]}">●</span>${esc(label(c.from))} → ${esc(label(c.to))}</div><div class="row">${items}${c.items.length > 40 ? '…' : ''}</div>${c.undeclared ? `<div class="doc">⚠ not declared as a dependency</div>` : ''}`;
+    return `<div class="head"><span style="color:${kind[2]}">●</span>${esc(kind[3])}</div><div class="purpose">${sentence(c)}</div>${what && c.items.length ? `<div class="label">${what}</div><div class="row">${items}${c.items.length > 40 ? '…' : ''}</div>` : ''}${c.undeclared ? `<div class="warn">⚠ ${esc(label(c.from))} uses ${esc(label(c.to))} without declaring it as a dependency.</div>` : ''}`;
   }
   function memberCard(m, callers) {
     const params = m.params
@@ -1319,14 +1486,12 @@
         : `<b>${esc(m.service)}.${esc(m.name)}</b>(${params}) <span class="ty">→ ${esc(m.returns)}</span>`;
     const badges = [
       m.hook
-        ? `<span class="ico" title="takes callbacks: callers plug in here">${icon('hook', 'var(--hook)')}</span>`
+        ? `<span class="ico">${icon('hook', 'var(--hook)')}Hook: callers plug in here</span>`
         : '',
       m.tx
-        ? `<span class="ico" title="runs in the caller's transaction (${m.tx})">${icon('lock')}${m.tx === 'required' ? '!' : ''}</span>`
+        ? `<span class="ico">${icon('lock')}${m.tx === 'required' ? 'Must run inside a transaction' : 'Can join a transaction'}</span>`
         : '',
-      m.caller
-        ? `<span class="ico" title="checks the caller's authority">${icon('shield')}</span>`
-        : '',
+      m.caller ? `<span class="ico">${icon('shield')}Checks the caller’s permissions</span>` : '',
     ].join('');
     const who = callers
       .map(
@@ -1334,7 +1499,8 @@
           `<span class="chip" title="${esc((x.it.sites || []).join('\n'))}">${dotFor(x.n.id)}${esc(label(x.n.id))}${x.it.count > 1 ? ' ×' + x.it.count : ''}</span>`,
       )
       .join('');
-    return `<div class="sig">${sig}</div><div class="row">${badges}${who || '<span class="ico">∅</span>'}</div>${m.doc ? `<div class="doc">${esc(m.doc)}</div>` : ''}`;
+    const users = [...new Set(callers.map((x) => x.n.id))];
+    return `<div class="sig">${sig}</div>${m.doc ? `<div class="doc">${esc(m.doc)}</div>` : ''}<div class="row">${badges}</div><div class="label">${users.length ? `Called by ${plural(users.length, 'plugin')}` : 'No other plugin calls this'}</div>${who ? `<div class="row">${who}</div>` : ''}`;
   }
   function portCard(p, pt) {
     if (pt.member) return memberCard({ ...pt.member, service: pt.svc }, pt.callers);
@@ -1342,34 +1508,142 @@
       .map((x) => `<span class="chip">${dotFor(x.n.id)}${esc(label(x.n.id))}</span>`)
       .join('');
     if (pt.kind === 'tool')
-      return `<div class="sig">${icon('tool', 'var(--tool)')} <b>${esc(pt.name)}</b>${pt.tool.readOnly ? ' <span class="ty">read-only</span>' : ''}</div><div class="doc">${esc(pt.tool.description)}</div><div class="row">${who}</div>`;
-    return `<div class="sig">${icon('event', 'var(--event)')} <b>${esc(pt.name)}</b> <span class="ty">${pt.kind === 'eout' ? '→' : '←'}</span></div><div class="row">${who || '<span class="ico">∅</span>'}</div>`;
+      return `<div class="sig">${icon('tool', 'var(--tool)')} <b>${esc(pt.name)}</b></div><div class="purpose">An agent tool${pt.tool.readOnly ? ' that only reads' : ' that can change things'}.</div><div class="doc">${esc(pt.tool.description)}</div>${who ? `<div class="label">Called by</div><div class="row">${who}</div>` : ''}`;
+    const users = pt.callers.map((x) => x.n.id);
+    return `<div class="sig">${icon('event', 'var(--event)')} <b>${esc(pt.name)}</b></div><div class="purpose">${
+      pt.kind === 'eout'
+        ? users.length
+          ? `${esc(p.label)} emits this event; ${nameList(users)} react${users.length === 1 ? 's' : ''} to it.`
+          : `${esc(p.label)} emits this event. No plugin subscribes to it (it may be read from the event log directly).`
+        : users.length
+          ? `${esc(p.label)} reacts to this event from ${nameList(users)}.`
+          : `${esc(p.label)} reacts to this event.`
+    }</div>`;
   }
   function relationCard(p, n) {
-    const chips = (list) =>
-      list
-        .map(
-          (c) =>
-            `<span class="chip"><i style="background:${KINDS.find((k) => k[0] === c.kind)[2]}"></i>${c.items.length}</span>`,
-        )
-        .join('');
-    return `<div class="head">${esc(label(n.id))}</div><div class="row"><span class="ico">→ ${esc(p.label)}</span>${chips(n.inn)}</div><div class="row"><span class="ico">← ${esc(p.label)}</span>${chips(n.out)}</div>`;
+    const q = P.get(n.id);
+    const lines = [...n.inn, ...n.out].map((c) => `<li>${sentence(c)}</li>`).join('');
+    return `<div class="head">${esc(label(n.id))}</div>${q && q.purpose ? `<div class="purpose">${esc(q.purpose)}</div>` : ''}<ul class="lines">${lines}</ul><div class="hint">Click to go there.</div>`;
   }
   function agentsCard(p) {
-    return `<div class="head">${icon('agent', 'var(--tool)')} → ${esc(p.label)}</div><div class="row">${p.tools.map((t) => `<span class="chip">${esc(t.name)}</span>`).join('')}</div>`;
+    return `<div class="head">${icon('agent', 'var(--tool)')} Agents</div><div class="purpose">Agents reach ${esc(p.label)} through ${plural(p.tools.length, 'tool')}, called over MCP through API + Tools.</div><div class="row">${p.tools.map((t) => `<span class="chip">${esc(t.name)}</span>`).join('')}</div>`;
   }
   function tableCard(p, t, readers) {
-    return `<div class="sig">${icon('table', 'var(--table)')} <b>${esc(t.name)}</b> <span class="ty">${esc(t.file)}</span></div><div class="row">${readers.map((r) => `<span class="chip" title="${esc(r.it.files.join('\n'))}">${dotFor(r.n.id)}${esc(label(r.n.id))}${r.it.runtime ? '' : ' ⟲'}</span>`).join('')}</div>`;
+    return `<div class="sig">${icon('table', 'var(--table)')} <b>${esc(t.name)}</b></div><div class="purpose">A table ${esc(p.label)} owns, created in <code>${esc(t.file)}</code>.${readers.length ? ` ${nameList(readers.map((r) => r.n.id))} also ${readers.length === 1 ? 'queries' : 'query'} it directly, bypassing ${esc(p.label)}’s service.` : ' Only its owner queries it.'}</div>${readers.length ? `<div class="row">${readers.map((r) => `<span class="chip" title="${esc(r.it.files.join('\n'))}">${dotFor(r.n.id)}${esc(label(r.n.id))}${r.it.runtime ? '' : ' (migration only)'}</span>`).join('')}</div>` : ''}`;
   }
   function fileCard(p, f) {
-    return `<div class="sig">${icon('file')} <b>${esc(f.path)}</b> <span class="ty">${f.loc}</span></div>`;
+    return `<div class="sig">${icon('file')} <b>${esc(f.path)}</b></div><div class="purpose">${plural(f.loc, 'line')}${f.imports.length ? `, imports ${plural(f.imports.length, 'other file')} in this plugin (lit up)` : ''}.</div>`;
+  }
+  // An action taken from three or more states is a common exit; show it once.
+  function transitions(m) {
+    const byAction = new Map();
+    for (const e of m.edges) byAction.set(e.action, [...(byAction.get(e.action) || []), e]);
+    const out = [];
+    for (const [action, edges] of byAction) {
+      const to = [...new Set(edges.map((e) => e.to))];
+      if (edges.length >= 3 && to.length === 1)
+        out.push(
+          `<span class="chip">any active state → ${esc(to[0])} <span class="ty">${esc(action)}</span></span>`,
+        );
+      else
+        for (const e of edges)
+          out.push(
+            `<span class="chip">${esc(e.from)} → ${esc(e.to)} <span class="ty">${esc(action)}</span></span>`,
+          );
+    }
+    return out.join('');
   }
   function machineCard(m) {
-    return `<div class="sig"><b>${esc(m.name)}</b> <span class="ty">v${m.version}</span></div><div class="row">${m.edges.map((e) => `<span class="chip">${esc(e.from)} → ${esc(e.to)}</span>`).join('')}</div>`;
+    return `<div class="head">${esc(m.name)} state machine <span class="ty">v${m.version}</span></div><div class="purpose">Registered with Workflows by ${esc(label(m.owner))}: ${plural(m.states.length, 'state')}, ${plural(m.edges.length, 'transition')}. Starts at <b>${esc(m.initial)}</b>; ends at ${m.terminal.map((t) => `<b>${esc(t)}</b>`).join(', ')}. Teal arcs go backwards (rework).</div><div class="label">Transitions</div><div class="row">${transitions(m)}</div>`;
+  }
+
+  /* ---------------- guide: how to read what is on screen ---------------- */
+  const guide = document.getElementById('guide');
+  let guideOpen = true;
+  try {
+    guideOpen = localStorage.getItem('atlas-guide') !== 'closed';
+  } catch {}
+  const key = (shape, color, text) =>
+    `<li><svg viewBox="0 0 24 24" aria-hidden="true">${shape(color)}</svg><span>${text}</span></li>`;
+  const ring = (c) => `<circle cx="12" cy="12" r="7" fill="none" stroke="${c}" stroke-width="4"/>`;
+  const dot = (c) => `<circle cx="12" cy="12" r="5" fill="${c}"/>`;
+  const hollow = (c) =>
+    `<circle cx="12" cy="12" r="5.5" fill="none" stroke="${c}" stroke-width="3"/>`;
+  const diamond = (c) => `<path d="M12 5l7 7-7 7-7-7z" fill="${c}"/>`;
+  const tri = (c) => `<path d="M7 6l11 6-11 6z" fill="${c}"/>`;
+  const cyl = (c) =>
+    `<path d="M6 7v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V7M6 7c0 1.4 2.7 2.5 6 2.5S18 8.4 18 7s-2.7-2.5-6-2.5S6 5.6 6 7" fill="none" stroke="${c}" stroke-width="2"/>`;
+  function renderGuide() {
+    if (!guideOpen) {
+      guide.innerHTML = `<button class="btn" id="guide-open" title="How to read this">?</button>`;
+      guide.querySelector('button').addEventListener('click', () => setGuide(true));
+      return;
+    }
+    let body;
+    if (!focus)
+      body = `<h2>Merv’s plugins</h2>
+        <p>Each circle is a plugin; its size is how much code it has. Plugins near the bottom are the foundations; the ones above depend on them. Named regions group plugins with a shared job.</p>
+        <p><b>Hover</b> a plugin to see who it talks to. <b>Click</b> it to open it. Turn on the eye (top right) to see every connection at once.</p>
+        <ul class="key">
+          ${key(ring, 'var(--call)', 'The coloured ring shows what a plugin offers:')}
+          ${key(dot, 'var(--call)', 'methods other plugins call')}
+          ${key(dot, 'var(--hook)', 'hooks other plugins plug into')}
+          ${key(dot, 'var(--tool)', 'tools for agents')}
+          ${key(dot, 'var(--event)', 'events it emits')}
+          ${key(dot, 'var(--table)', 'database tables it owns')}
+          ${key(dot, 'var(--table)', '<b>Red dot</b>: it queries another plugin’s tables directly')}
+          ${key(dot, 'var(--warn)', '<b>Amber dot</b>: it calls a service it never declared')}
+        </ul>
+        <p class="muted">Hatched circles are research logic; the dashed one is the shared library. Compiled from the code on ${esc(A.snapshot)}.</p>`;
+    else {
+      const p = P.get(focus.id);
+      const users = new Set(),
+        uses = new Set();
+      for (const c of channels) {
+        if (c.kind === 'hook') continue;
+        if (c.to === p.id && c.from !== p.id) users.add(c.from);
+        if (c.from === p.id && c.to !== p.id) uses.add(c.to);
+      }
+      const chips = (ids) =>
+        [...ids]
+          .sort((a, b) => label(a).localeCompare(label(b)))
+          .map((id) => `<button class="chip go" data-go="${esc(id)}">${esc(label(id))}</button>`)
+          .join('');
+      body = `<h2>${esc(p.label)}</h2>${p.purpose ? `<p>${esc(p.purpose)}</p>` : ''}
+        <div class="row">${surfaceWords(p)}</div>
+        ${users.size ? `<div class="label">Used by</div><div class="row">${chips(users)}</div>` : ''}
+        ${uses.size ? `<div class="label">Uses</div><div class="row">${chips(uses)}</div>` : ''}
+        <div class="label">How to read it</div>
+        <ul class="key">
+          ${key(hollow, 'var(--ink)', 'The big circle is the plugin. Its wall holds everything other plugins can reach:')}
+          ${key(dot, 'var(--call)', 'a method (bigger means more callers; faded means nobody else calls it)')}
+          ${key(hollow, 'var(--hook)', 'a hook, where other plugins register their own logic')}
+          ${key(diamond, 'var(--tool)', 'a tool agents can call (hollow: read-only)')}
+          ${key(tri, 'var(--event)', 'an event it emits (pointing out) or reacts to (pointing in)')}
+          ${key(cyl, 'var(--table)', 'inside: its tables; the grey circles are its files')}
+        </ul>
+        <p>Plugins on the <b>left</b> use it, plugins on the <b>right</b> are used by it, and those on <b>top</b> go both ways. Each line ends on the exact port it uses. Red lines reach straight into a table.</p>
+        <p class="muted"><b>Hover</b> anything for details, <b>click</b> a neighbour to go there, and press <b>Esc</b> to zoom back out.</p>`;
+    }
+    guide.innerHTML = `<button class="close" title="Hide" aria-label="Hide guide">×</button>${body}`;
+    guide.querySelector('.close').addEventListener('click', () => setGuide(false));
+    guide
+      .querySelectorAll('[data-go]')
+      .forEach((b) => b.addEventListener('click', () => dive(b.getAttribute('data-go'))));
+  }
+  function setGuide(open) {
+    guideOpen = open;
+    try {
+      localStorage.setItem('atlas-guide', open ? 'open' : 'closed');
+    } catch {}
+    renderGuide();
+    if (focus) dive(focus.id);
+    else fly(fitTo(worldBox), 400);
   }
 
   /* ---------------- chrome ---------------- */
   function renderCrumbs() {
+    renderGuide();
     crumbs.innerHTML = '';
     const home = document.createElement('button');
     home.className = 'btn';
@@ -1411,7 +1685,7 @@
   function buildLegend() {
     const lg = document.getElementById('legend');
     lg.innerHTML = '';
-    for (const [kind, title, color] of KINDS) {
+    for (const [kind, title, color, word] of KINDS) {
       const n = channels.filter((c) => c.kind === kind).length;
       if (!n) continue;
       const b = document.createElement('button');
@@ -1423,7 +1697,7 @@
           : kind === 'idle'
             ? 'stroke-dasharray="1 4"'
             : '';
-      b.innerHTML = `<svg viewBox="0 0 30 12" style="width:30px"><line x1="2" y1="6" x2="28" y2="6" stroke="${color}" stroke-width="${kind === 'http' ? 4 : 2.5}" stroke-linecap="round" ${dash}/>${kind !== 'idle' ? `<circle cx="22" cy="6" r="2.6" fill="${color}"/>` : ''}</svg><span class="n">${n}</span>`;
+      b.innerHTML = `<svg viewBox="0 0 30 12" style="width:30px"><line x1="2" y1="6" x2="28" y2="6" stroke="${color}" stroke-width="${kind === 'http' ? 4 : 2.5}" stroke-linecap="round" ${dash}/>${kind !== 'idle' ? `<circle cx="22" cy="6" r="2.6" fill="${color}"/>` : ''}</svg>${word}<span class="n">${n}</span>`;
       b.addEventListener('click', () => {
         svg.classList.toggle('hide-' + kind);
         buildLegend();

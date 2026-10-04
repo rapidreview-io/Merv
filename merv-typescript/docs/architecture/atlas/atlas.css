@@ -615,8 +615,8 @@ body {
 
 #card {
   position: fixed;
-  left: 14px;
-  bottom: 14px;
+  right: 14px;
+  bottom: 64px;
   max-width: min(560px, calc(100vw - 28px));
   max-height: 46vh;
   overflow: auto;
@@ -721,4 +721,162 @@ body {
   #scene {
     transition: none !important;
   }
+}
+
+/* words where they help */
+.region {
+  font: 700 15px var(--sans);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  fill: var(--muted) !important;
+  opacity: 0.75;
+}
+.caption {
+  font: 700 22px var(--sans);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  fill: var(--muted) !important;
+}
+.caption.small {
+  font-size: 15px;
+  letter-spacing: 0.12em;
+}
+.caption.table {
+  fill: var(--table) !important;
+  opacity: 0.85;
+}
+.node .name {
+  font-size: 14px;
+}
+#guide {
+  position: fixed;
+  top: 62px;
+  left: 14px;
+  width: min(340px, calc(100vw - 28px));
+  max-height: calc(100vh - 140px);
+  overflow: auto;
+}
+#guide:has(h2) {
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+#guide h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  padding-right: 24px;
+}
+#guide p {
+  margin: 0 0 8px;
+}
+#guide .muted,
+#card .hint {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+#guide .close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 20px;
+  cursor: pointer;
+  line-height: 1;
+}
+#guide {
+  position: fixed;
+}
+#guide:has(h2) .close {
+  position: absolute;
+}
+#guide .key {
+  list-style: none;
+  margin: 4px 0 10px;
+  padding: 0;
+  display: grid;
+  gap: 3px;
+}
+#guide .key li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+#guide .key svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+#guide .row,
+#card .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0 8px;
+  align-items: center;
+}
+#guide .label,
+#card .label {
+  font: 600 11px var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 8px;
+}
+#guide .chip.go {
+  font: 12px var(--sans);
+  border: 1px solid var(--panel-line);
+  background: var(--node);
+  color: var(--ink);
+  border-radius: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+#guide .chip.go:hover {
+  border-color: var(--ink);
+}
+#guide .ico,
+#card .ico {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 12px var(--sans);
+  color: var(--ink);
+}
+#guide .ico svg,
+#card .ico svg {
+  width: 14px;
+  height: 14px;
+}
+#card .purpose {
+  margin-top: 4px;
+}
+#card .warn {
+  color: var(--warn);
+  margin-top: 6px;
+}
+#card .lines {
+  margin: 6px 0;
+  padding-left: 18px;
+}
+#card code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.btn {
+  font-weight: 500;
+}
+#map.diving .region {
+  display: none;
+}
+.region {
+  paint-order: stroke;
+  stroke: var(--land-a);
+  stroke-width: 6px;
+  stroke-linejoin: round;
 }

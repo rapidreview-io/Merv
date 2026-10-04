@@ -8,5 +8,8 @@
     "domain-events": "Domain Events",
     "context-builder": "Context Builder",
     "code-work": "Code Work"
+  },
+  "purposes": {
+    "contracts": "Shared types and small helpers that every plugin imports. It is a library, not a plugin: it offers no service of its own."
   }
 }
