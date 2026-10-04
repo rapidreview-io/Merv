@@ -1756,11 +1756,8 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
   assert.doesNotMatch(servers, /enabled_tools|disabled_tools/);
   assert.match(servers, /default_tools_approval_mode="approve"/);
   // And its launch text says which to use for what.
-  assert.match(launch.stdin, /nisa\.search and nisa\.semantic_search find scholarly papers/);
-  assert.match(
-    launch.stdin,
-    /web\.search and web\.extract find and read the rest of the public web/,
-  );
+  assert.match(launch.stdin, /outside sources rather than your memory/);
+  assert.match(launch.stdin, /web\.search and web\.extract find and read the public web/);
 
   // Main lists that session both, and runs them as reads its policy never names.
   const tavily = await provider(t, () => ({ body: tavilyResults(1) }));

@@ -523,7 +523,7 @@ function assertCodeUtility(source: ts.SourceFile): void {
       assert.ok(
         !/^(?:Workflows?|Reviews?|Sessions|Sandboxes)(?:$|[A-Z])/.test(node.text) ||
           (node.text === 'WorkflowWorkspacePolicy' &&
-            /[/\\]driver[/\\]index\.ts$/.test(source.fileName)),
+            /[/\\]driver[/\\](?:index|local)\.ts$/.test(source.fileName)),
         `${source.fileName}: research service or policy type ${node.text} belongs in Code Work`,
       );
     if (

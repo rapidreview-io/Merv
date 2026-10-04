@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { DatabaseSync } from 'node:sqlite';
 import type { WorkspaceDriverFactory } from '@merv/contracts';
+import { localWorkspaceDriver } from '@merv/code/driver/local';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import { LocalLedger } from '../../packages/runner/src/ledger.js';
 
@@ -172,6 +173,7 @@ export function machine(
       autoPoll: false,
       fetch: fetcher,
       drivers,
+      ...(config.workspace ? { repositoryDriver: localWorkspaceDriver } : {}),
       resetAssignment: options.resetAssignment,
       ...(options.clock ? { clock: options.clock } : {}),
     });

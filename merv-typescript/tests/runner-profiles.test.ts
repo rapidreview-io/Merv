@@ -280,8 +280,11 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   assert.doesNotMatch(settings.mcp_servers, /enabled_tools/);
   assert.match(settings.mcp_servers, /,default_tools_approval_mode="approve",/);
   assert.match(settings.mcp_servers, /,disabled_tools=\["web\.search","web\.extract"\]\}\}$/);
-  // Its launch text sends it to Nisa for literature, and names no internet read it lacks.
-  assert.match(spec.stdin, /nisa\.search and nisa\.semantic_search find scholarly papers/);
+  // Its launch text sends it to its outside sources, and names no internet read it lacks.
+  assert.match(
+    spec.stdin,
+    /use the tools you are listed for outside sources rather than your memory/,
+  );
   assert.doesNotMatch(spec.stdin, /web\.search|web search/);
   // Codex stops waiting on a tool after 60 s by default: a web search may take longer.
   assert.match(settings.mcp_servers, /,tool_timeout_sec=180,/);
@@ -338,7 +341,7 @@ test('a hosted Codex profile calls the model through Main with its session beare
   // memory, since the rest of that text speaks of project reads.
   assert.match(
     spec.stdin,
-    /nisa\.search and nisa\.semantic_search find scholarly papers .* rather than your memory or a web search, and name each paper you cite by its arxiv identifier\. web\.search and web\.extract find and read the rest of the public web/,
+    /outside sources rather than your memory, .* web\.search and web\.extract find and read the public web/,
   );
   assert.doesNotMatch(plain.stdin, /web\.search/);
   assert.equal(JSON.stringify(spec.args).includes(secret), false);
@@ -355,7 +358,7 @@ test('a hosted Codex profile calls the model through Main with its session beare
   const review = reviewLaunch.args;
   assert.equal(review[review.indexOf('--sandbox') + 1], 'read-only');
   assert.equal(disabled(review), true);
-  assert.match(reviewLaunch.stdin, /nisa\.search/);
+  assert.match(reviewLaunch.stdin, /outside sources/);
   assert.doesNotMatch(reviewLaunch.stdin, /web\.search/);
 });
 
@@ -484,7 +487,7 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
   });
 });
 
-test('source-notation verification reaches producer and reviewer launches and Pi guidance', () => {
+test('a launch adds no research guidance of its own: source verification arrives in the assignment, and in Pi guidance', () => {
   const producer = request();
   const reviewer = request(true);
   reviewer.session.role = 'reviewer';
@@ -492,10 +495,8 @@ test('source-notation verification reaches producer and reviewer launches and Pi
   for (const profile of [codex, claude]) {
     for (const assignment of [producer, reviewer]) {
       const prompt = buildLaunch(profile, assignment, safeEnv).stdin;
-      assert.match(prompt, /Text extraction can lose superscripts and symbols/);
-      assert.match(prompt, /nearby prose or derivation/);
-      assert.match(prompt, /reviewers must independently verify pivotal claims before passing/);
-      assert.ok(prompt.indexOf('Text extraction can lose') < prompt.indexOf('Frozen assignment:'));
+      const preamble = prompt.slice(0, prompt.indexOf('Frozen assignment:'));
+      assert.doesNotMatch(preamble, /paper|experiment|scholarly|arxiv|literature/i);
     }
   }
   assert.ok(piInstructions.includes(mainAgentGuide));
@@ -550,7 +551,7 @@ test('Claude Code runs headless on the Merv server alone, reads its bearer from 
   for (const launch of [spec, reviewer]) assert.ok(!launch.args.includes('--disallowedTools'));
   // Each launch's text names the searches it is given, and a sealed review's no internet read.
   for (const launch of [spec, reviewer]) assert.match(launch.stdin, /web\.search and web\.extract/);
-  assert.match(codeReviewer.stdin, /nisa\.search/);
+  assert.match(codeReviewer.stdin, /outside sources/);
   assert.doesNotMatch(codeReviewer.stdin, /web\.search/);
   // A checkout that is thrown away afterwards is free to compute in.
   const ephemeral = buildLaunch(

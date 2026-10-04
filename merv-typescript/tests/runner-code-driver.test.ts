@@ -29,7 +29,7 @@ import {
 } from '@merv/contracts';
 import { CodeWorkspaceDriver, WorkspaceError } from '@merv/code/driver/index';
 import { LocalLedger } from '@merv/runner/ledger';
-import { GitWorkspaceManager } from '@merv/runner/workspaces';
+import { RunnerWorkspaces } from '@merv/runner/workspaces';
 import { git } from './fixtures/code-store.js';
 import { writerFixture } from './fixtures/code-writers.js';
 
@@ -161,9 +161,9 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
     directory: m.directory,
     binding: { baseUrl: 'http://127.0.0.1:7000', projectId: f.admin.projectId, sourceId: 'source' },
   });
-  const scratch = new GitWorkspaceManager(
+  const scratch = new RunnerWorkspaces(
     ledger,
-    { repository: join(m.directory, 'unused-source'), baseRef: 'refs/heads/main' },
+    undefined,
     m.assignmentWorkspaceDirectory,
     f.unitId,
     () => driver.get(reviewLaunch.id),
@@ -310,12 +310,7 @@ test('a closed scratch plan and scratch review hand their data to the first Code
     directory: m.directory,
     binding: { baseUrl: 'http://127.0.0.1:7000', projectId: f.admin.projectId, sourceId: 'source' },
   });
-  const scratch = new GitWorkspaceManager(
-    ledger,
-    { repository: join(m.directory, 'unused-source'), baseRef: 'refs/heads/main' },
-    m.assignmentWorkspaceDirectory,
-    f.unitId,
-  );
+  const scratch = new RunnerWorkspaces(ledger, undefined, m.assignmentWorkspaceDirectory, f.unitId);
   t.after(() => {
     scratch.dispose();
     ledger.close();
@@ -392,9 +387,9 @@ test('a replacement host that first reviews discards edits before writer or scra
     directory: m.directory,
     binding: { baseUrl: 'http://127.0.0.1:7000', projectId: f.admin.projectId, sourceId: 'source' },
   });
-  const scratch = new GitWorkspaceManager(
+  const scratch = new RunnerWorkspaces(
     ledger,
-    { repository: join(m.directory, 'unused-source'), baseRef: 'refs/heads/main' },
+    undefined,
     m.assignmentWorkspaceDirectory,
     f.unitId,
     () => driver.get(reviewLaunch.id),
@@ -985,7 +980,7 @@ test('the driver keeps its own tables beside an existing ledger and leaves the r
     sourceId: 'a'.repeat(64),
   };
   let ledger = new LocalLedger({ directory, binding });
-  new GitWorkspaceManager(ledger).dispose();
+  new RunnerWorkspaces(ledger).dispose();
   const schema = () => {
     const db = new DatabaseSync(ledger.path);
     try {
@@ -1008,7 +1003,7 @@ test('the driver keeps its own tables beside an existing ledger and leaves the r
   assert.deepEqual(schema(), before);
   ledger.close();
   ledger = new LocalLedger({ directory, binding });
-  new GitWorkspaceManager(ledger).dispose();
+  new RunnerWorkspaces(ledger).dispose();
   ledger.close();
   assert.ok(WorkspaceError);
 });

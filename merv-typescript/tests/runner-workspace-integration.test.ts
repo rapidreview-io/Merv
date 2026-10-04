@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
+import { localWorkspaceDriver } from '@merv/code/driver/local';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from './fixtures/app.js';
 
@@ -156,6 +157,7 @@ test(
       },
       {
         autoPoll: false,
+        repositoryDriver: localWorkspaceDriver,
         fetch: async (input, init) => {
           const response = await fetch(input, init);
           if (String(input).endsWith('/workspace-result') && response.ok) {

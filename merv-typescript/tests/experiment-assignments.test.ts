@@ -425,6 +425,7 @@ test('all four real assignments use distinct recipes; planning and execution wai
     /full experiment execution still requires independent design approval/,
   );
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
+  assert.match(planned.brief, /reviewers must independently verify pivotal claims/);
   assert.ok(
     (await f.workflows.dispatchCandidates(f.source)).some(
       (candidate) => candidate.instanceId === experiment.id,

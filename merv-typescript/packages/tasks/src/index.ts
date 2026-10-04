@@ -267,6 +267,10 @@ const GIT_CLAIM =
 const GPU_WORK =
   'If this task needs a GPU, read task.compute_offers, then call task.compute_run with this taskId and expectedRevision, a stable key, a bounded command, minutes, and maxUsd. To retain files after machine release, declare outputs with absolute file paths and a total byte ceiling; archive directories first. Read task.compute_status, use task.compute_output for fresh download URLs and verify hashes, captured files are automatically retained as one collection artifact per capture. Use the run’s artifactId and artifact.read with mode download and fileName for individual files; do not reupload them. Use task.compute_logs for bounded live stdout/stderr; emit unbuffered progress. Use task.compute_cancel when work should stop. Prioritize fast completion: balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and task requirements. GPU work counts against the project allowance; avoid duplicating the same work.';
 
+/** Said to every producer and reviewer of a task, in the assignment; the published recipes stay as they are. */
+const SOURCE_VERIFICATION =
+  'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.';
+
 /** Owns task rules and the atomic integration between generic workflow and assessment services. */
 /**
  * How often a review may return a task for changes. After that many returns the next delivery
@@ -2128,7 +2132,7 @@ export class TaskService implements Tasks {
       role: purpose === 'review' ? 'reviewer' : 'producer',
       label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
       brief:
-        `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}` +
+        `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}` +
         (nativeTask(task.workflow.version)
           ? this.nativeWork!.guidance(purpose === 'review' ? 'check' : 'execute')
           : !serviceOwned(task.workflow.version)

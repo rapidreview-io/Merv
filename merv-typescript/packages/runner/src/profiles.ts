@@ -513,12 +513,12 @@ const internet = (profile: RunnerProfile, session: LaunchRequest['session']): bo
   (profile.harness === 'claude' || (profile.harness === 'codex' && !!profile.hosted));
 
 /**
- * What a launch is told of search beyond the project, naming only the reads it is given. Tool
- * descriptions alone leave a worker answering from memory, since the rest of this text speaks of
- * project reads only, and a literature survey that names no paper by its identifier helps nobody.
+ * What a launch is told of reads beyond the project, naming the internet reads only where it is
+ * given them. Tool descriptions alone leave a worker answering from memory, since the rest of
+ * this text speaks of project reads only; what each outside source is for, its tool says.
  */
 const searching = (web: boolean): string =>
-  `For what this project does not hold, when your tools list them: nisa.search and nisa.semantic_search find scholarly papers (then nisa.paper, nisa.excerpts and nisa.related read one), so use them for literature rather than your memory${web ? ' or a web search' : ''}, and name each paper you cite by its arxiv identifier.${web ? ' web.search and web.extract find and read the rest of the public web: documentation, releases, datasets, licenses.' : ''}`;
+  `For what this project does not hold, use the tools you are listed for outside sources rather than your memory, and cite what you rely on as each tool's description says.${web ? ' web.search and web.extract find and read the public web.' : ''}`;
 
 /**
  * How long a launch whose own handoff closed its session may take to end by itself. Codex writes
@@ -659,9 +659,8 @@ export function buildLaunch(
     'Continue the same assigned work after an interruption or a returned review. Read all earlier submissions, verdicts, unmet criteria and reviewer notes in its context; inspect any omitted feedback through the referenced records. Retain verification commands, results and unresolved questions as evidence. A suspended assignment waits for a human operator; do not replace it or fail work that waits on it.',
     // Workers read the assignment's tool list as the boundary of what they may look at and
     // then invent what the project already holds. The list binds writes; reads are open.
-    'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it — the project summary and records, the other tasks and their deliveries, the experiments and their plans and results, the reviews and the living paper.',
+    'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
     'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
-    'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.',
     ...(profile.harness === 'command' ? [] : [searching(internet(profile, session))]),
     ...(profile.harness === 'codex' &&
     profile.hosted &&
@@ -676,7 +675,7 @@ export function buildLaunch(
     sealed(session)
       ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. Explicitly allowed MCP checkpoint and verdict operations remain available.'
       : session.execution.policy.readOnly
-        ? 'The workspace is yours to compute in. Run what you are judging: execute the script, recompute a hash, reproduce a number, and say in your verdict what you reproduced yourself and what you took on trust. Nothing you write there is recorded; your verdict is the only thing this lease writes.'
+        ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your verdict what you checked yourself and what you took on trust. Nothing you write there is recorded; your verdict is the only thing this lease writes.'
         : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
     ...(profile.harness === 'claude'
       ? [

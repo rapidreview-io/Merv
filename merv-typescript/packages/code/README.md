@@ -41,7 +41,9 @@ transferred their retained Git facts; standalone Code never interprets acceptanc
 
 The machine [Code workspace driver](src/driver/index.ts) supports isolated checkouts and
 cross-machine handoff. The [Runner](../runner/README.md) loads it only when enabled;
-`workspaceDrivers: []` supports research execution without Code or Git.
+`workspaceDrivers: []` supports execution without Code or Git. The
+[local repository driver](src/driver/local.ts) serves a runner configured with a `workspace`
+repository of its own: a private bare copy of it, checkouts, captures and `code.commit` receipts.
 
 See [Code operations](../../docs/CODE_OPERATIONS.md),
 [GitHub connections](../../docs/GITHUB_REPOSITORIES.md), and the

@@ -10,7 +10,11 @@ import { DatabaseSync } from 'node:sqlite';
 import type { CodeCommitCommand } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { LocalLedger, type LaunchRecord } from '../packages/runner/src/ledger.js';
-import { GitWorkspaceManager } from '../packages/runner/src/workspaces.js';
+import {
+  localWorkspaceDriver,
+  type LocalWorkspaceDriver,
+} from '../packages/code/src/driver/local.js';
+import { RunnerWorkspaces } from '../packages/runner/src/workspaces.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixture(t: TestContext) {
@@ -49,7 +53,13 @@ function fixture(t: TestContext) {
   };
   const ledger = new LocalLedger({ directory: join(directory, 'machine'), binding });
   const config = { repository, baseRef: 'refs/heads/main' };
-  let manager = new GitWorkspaceManager(ledger, config);
+  let local!: LocalWorkspaceDriver;
+  const driver = {
+    create: (...args: Parameters<typeof localWorkspaceDriver.create>) =>
+      (local = localWorkspaceDriver.create(...args)),
+  };
+  const open = () => new RunnerWorkspaces(ledger, { driver, config });
+  let manager = open();
   const db = new DatabaseSync(ledger.path);
   const bare = join(ledger.directory, 'workspaces/repository.git');
   const prepare = async (
@@ -109,7 +119,7 @@ function fixture(t: TestContext) {
     db.prepare("UPDATE launches SET status='stopped' WHERE id=?").run(record.id);
   const reopen = () => {
     manager.dispose();
-    manager = new GitWorkspaceManager(ledger, config);
+    manager = open();
     return manager;
   };
   t.after(() => {
@@ -136,6 +146,9 @@ function fixture(t: TestContext) {
     reopen,
     get manager() {
       return manager;
+    },
+    get local() {
+      return local;
     },
   };
 }
@@ -410,8 +423,8 @@ test('an uncertain unapplied ref update becomes terminal only after capture fenc
   const f = fixture(t),
     first = await f.prepare();
   writeFileSync(join(first.handle.path, 'seed.txt'), 'pending command\n');
-  const internals = f.manager as unknown as { git: (...args: unknown[]) => Promise<string> };
-  const original = internals.git.bind(f.manager);
+  const internals = f.local as unknown as { git: (...args: unknown[]) => Promise<string> };
+  const original = internals.git.bind(f.local);
   internals.git = async (...args) => {
     if (
       (args[0] as string[]).includes('update-ref') &&
@@ -446,8 +459,8 @@ test('an uncertain unapplied ref update becomes terminal only after capture fenc
 
 test('capture tombstones an unfinished initial ownership claim so a delayed arm cannot strand the next worker', async (t) => {
   const f = fixture(t);
-  const internals = f.manager as unknown as { git: (...args: unknown[]) => Promise<string> };
-  const original = internals.git.bind(f.manager);
+  const internals = f.local as unknown as { git: (...args: unknown[]) => Promise<string> };
+  const original = internals.git.bind(f.local);
   internals.git = async (...args) => {
     const argv = args[0] as string[];
     if (argv.includes('update-ref') && argv.some((arg) => arg.startsWith('refs/merv/owners/')))
