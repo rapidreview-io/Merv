@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { loadConfiguration } from '../src/config.js';
 import { writeArchitectureExplorer } from './architecture-explorer.js';
+import { writeAtlas } from './atlas.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const walk = (path: string): string[] =>
@@ -174,6 +175,7 @@ for (const plugin of plugins) {
 graph += '  runner -. "HTTP session and Code controls; not a Cordis dependency" .-> api\n';
 writeFileSync(resolve(root, 'docs/architecture/current-dependencies.mmd'), graph);
 writeArchitectureExplorer(root, data);
+await writeAtlas(root, data);
 console.log(
   JSON.stringify({
     plugins: data.pluginCount,

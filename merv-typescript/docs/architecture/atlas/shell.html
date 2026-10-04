@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Merv Atlas</title>
+    <style>
+      /* ATLAS_CSS */
+    </style>
+  </head>
+  <body>
+    <svg
+      id="map"
+      class="quiet"
+      role="application"
+      aria-label="Merv plugin atlas: drag to pan, scroll to zoom, click a plugin to dive in, Escape to zoom out"
+    >
+      <defs>
+        <pattern
+          id="hatch"
+          width="6"
+          height="6"
+          patternUnits="userSpaceOnUse"
+          patternTransform="rotate(45)"
+        >
+          <rect width="6" height="6" class="hatch-bg" />
+          <line x1="0" y1="0" x2="0" y2="6" class="hatch-line" />
+        </pattern>
+      </defs>
+      <g id="camera">
+        <g id="land"></g>
+        <g id="edges"></g>
+        <g id="nodes"></g>
+        <g id="scene"></g>
+      </g>
+    </svg>
+    <nav id="crumbs" aria-label="Where you are"></nav>
+    <div id="toolbar" role="toolbar" aria-label="View"></div>
+    <div id="legend" role="group" aria-label="Channels"></div>
+    <div id="card" hidden></div>
+    <div id="finder" hidden>
+      <input id="find" list="plugins" autocomplete="off" aria-label="Go to plugin" />
+      <datalist id="plugins"></datalist>
+    </div>
+    <script>
+      window.ATLAS = /* ATLAS_DATA */;
+    </script>
+    <script>
+      /* ATLAS_JS */
+    </script>
+  </body>
+</html>

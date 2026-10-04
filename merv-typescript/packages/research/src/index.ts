@@ -141,7 +141,7 @@ const instructions: Record<Stage, string> = {
     'The selected research, reflection and any required code integration are complete. Paper changes were handled by their scientific reviews. If the owner chose to create an approved plan, the next research cycle is referenced here.',
 };
 /** The one research version: array order is part of its published fingerprint. */
-const definition: WorkflowDefinition = {
+export const definition: WorkflowDefinition = {
   name: 'research',
   version: 6,
   initial: 'defining',

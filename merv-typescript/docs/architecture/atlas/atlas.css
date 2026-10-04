@@ -1,0 +1,724 @@
+/* A cartographic map of plugins: latitude bands are dependency depth, cities are plugins. */
+:root {
+  --bg: #e9eef0;
+  --land-a: #dde5e8;
+  --land-b: #d5dfe3;
+  --grat: #c9d4d8;
+  --ink: #1c2a30;
+  --muted: #5f7179;
+  --node: #fbfcfc;
+  --node-line: #8a9ba2;
+  --core: #f6f8f8;
+  --call: #42545c;
+  --hook: #0d8a7c;
+  --event: #7a4fd0;
+  --tool: #2d6fd8;
+  --table: #c8432c;
+  --http: #a87100;
+  --idle: #9aa9af;
+  --warn: #d58a00;
+  --file: #e3eaec;
+  --file-line: #b3c2c7;
+  --panel: rgba(251, 252, 252, 0.94);
+  --panel-line: #c7d3d7;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #0e1417;
+    --land-a: #141d21;
+    --land-b: #172227;
+    --grat: #1d282d;
+    --ink: #dce6e9;
+    --muted: #8a9da4;
+    --node: #1a2429;
+    --node-line: #4d6169;
+    --core: #142024;
+    --call: #a6b6bc;
+    --hook: #3fcab7;
+    --event: #ad90f2;
+    --tool: #6ea6ff;
+    --table: #ff7b5e;
+    --http: #e3b552;
+    --idle: #55676e;
+    --warn: #f0b03a;
+    --file: #1e2b30;
+    --file-line: #36474e;
+    --panel: rgba(20, 29, 33, 0.94);
+    --panel-line: #2c3b41;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #0e1417;
+  --land-a: #141d21;
+  --land-b: #172227;
+  --grat: #1d282d;
+  --ink: #dce6e9;
+  --muted: #8a9da4;
+  --node: #1a2429;
+  --node-line: #4d6169;
+  --core: #142024;
+  --call: #a6b6bc;
+  --hook: #3fcab7;
+  --event: #ad90f2;
+  --tool: #6ea6ff;
+  --table: #ff7b5e;
+  --http: #e3b552;
+  --idle: #55676e;
+  --warn: #f0b03a;
+  --file: #1e2b30;
+  --file-line: #36474e;
+  --panel: rgba(20, 29, 33, 0.94);
+  --panel-line: #2c3b41;
+  color-scheme: dark;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  overflow: hidden;
+}
+#map {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+#map.dragging {
+  cursor: grabbing;
+}
+#map text {
+  font-family: var(--sans);
+  fill: var(--ink);
+}
+
+/* land */
+.land-a {
+  fill: var(--land-a);
+}
+.land-b {
+  fill: var(--land-b);
+}
+.grat {
+  stroke: var(--grat);
+  stroke-width: 1;
+  fill: none;
+}
+.hatch-bg {
+  fill: var(--node);
+}
+.hatch-line {
+  stroke: var(--node-line);
+  stroke-width: 1.2;
+}
+
+/* world nodes */
+.node {
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+.node .core {
+  fill: var(--node);
+  stroke: var(--node-line);
+  stroke-width: 1.2;
+}
+.node.library .core {
+  stroke-dasharray: 4 3;
+}
+.node.machine .core {
+  stroke-width: 3.5;
+  stroke: var(--node);
+}
+.node.machine .core2 {
+  fill: none;
+  stroke: var(--node-line);
+  stroke-width: 1.2;
+}
+.node.research .core {
+  fill: url(#hatch);
+}
+.node .name {
+  font-size: 13px;
+  font-weight: 600;
+  text-anchor: middle;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+.node:hover .core,
+.node.lit-self .core {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+.seg {
+  fill: none;
+  stroke-width: 4;
+  stroke-linecap: butt;
+}
+.seg-method {
+  stroke: var(--call);
+}
+.seg-hook {
+  stroke: var(--hook);
+}
+.seg-tool {
+  stroke: var(--tool);
+}
+.seg-event {
+  stroke: var(--event);
+}
+.seg-table {
+  stroke: var(--table);
+  opacity: 0.75;
+}
+.badge-table {
+  fill: var(--table);
+}
+.badge-warn {
+  fill: var(--warn);
+}
+.dotlet {
+  fill: var(--node-line);
+}
+
+/* channels */
+.edge {
+  fill: none;
+  transition: opacity 0.2s;
+}
+.base {
+  opacity: 0.32;
+}
+.flow {
+  stroke-linecap: round;
+  stroke-dasharray: 0.1 11;
+  animation: flow 1.1s linear infinite;
+}
+@keyframes flow {
+  to {
+    stroke-dashoffset: -11.1;
+  }
+}
+.k-call {
+  stroke: var(--call);
+}
+.k-hook {
+  stroke: var(--hook);
+}
+.k-event {
+  stroke: var(--event);
+}
+.k-tool {
+  stroke: var(--tool);
+}
+.k-table {
+  stroke: var(--table);
+}
+.k-table.base {
+  stroke-dasharray: 3 4;
+  opacity: 0.6;
+}
+.k-http {
+  stroke: var(--http);
+}
+.k-http.base {
+  opacity: 0.7;
+}
+.k-idle {
+  stroke: var(--idle);
+}
+.k-idle.base {
+  stroke-dasharray: 1 5;
+  opacity: 0.9;
+  stroke-linecap: round;
+}
+.k-idle.flow {
+  display: none;
+}
+.undeclared {
+  stroke: var(--warn) !important;
+}
+
+#map.quiet #edges .edge {
+  opacity: 0;
+  pointer-events: none;
+}
+#map.quiet #edges .edge.lit {
+  opacity: 1;
+  pointer-events: stroke;
+}
+#map:not(.quiet) #edges .edge {
+  opacity: 0.55;
+}
+#map:not(.quiet) #edges .edge.lit {
+  opacity: 1;
+}
+#map.lighting #nodes .node:not(.lit) {
+  opacity: 0.18;
+}
+#map.lighting #edges .edge:not(.lit) {
+  opacity: 0.03;
+}
+#edges .edge:not(.lit) .flow,
+#map.quiet #edges .flow {
+  animation-play-state: paused;
+}
+#map:not(.quiet) #edges .flow,
+#edges .edge.lit .flow {
+  animation-play-state: running;
+}
+
+#map.hide-call .k-call,
+#map.hide-hook .k-hook,
+#map.hide-event .k-event,
+#map.hide-tool .k-tool,
+#map.hide-table .k-table,
+#map.hide-http .k-http,
+#map.hide-idle .k-idle {
+  display: none;
+}
+
+/* diving */
+#land,
+#edges,
+#nodes {
+  transition: opacity 0.45s;
+}
+#map.diving #land {
+  opacity: 0.3;
+}
+#map.diving #edges,
+#map.diving #nodes {
+  opacity: 0.025;
+  pointer-events: none;
+}
+#scene {
+  transition: opacity 0.35s;
+}
+
+/* scene */
+.wall {
+  fill: var(--core);
+  stroke: var(--ink);
+  stroke-width: 2.5;
+}
+.wall-ring {
+  fill: none;
+  stroke: var(--node-line);
+  stroke-width: 1;
+  stroke-dasharray: 2 6;
+}
+.svc-arc {
+  fill: none;
+  stroke-width: 7;
+  opacity: 0.22;
+}
+.file {
+  fill: var(--file);
+  stroke: var(--file-line);
+  stroke-width: 1;
+  cursor: default;
+}
+.file.f-tool {
+  fill: color-mix(in srgb, var(--tool) 22%, var(--file));
+}
+.file.f-table {
+  fill: color-mix(in srgb, var(--table) 20%, var(--file));
+}
+.file.f-web {
+  fill: color-mix(in srgb, var(--event) 14%, var(--file));
+}
+.file:hover,
+.file.lit {
+  stroke: var(--ink);
+  stroke-width: 2;
+}
+.imp {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.imp.lit {
+  opacity: 0.55;
+}
+.cyl {
+  fill: color-mix(in srgb, var(--table) 22%, var(--core));
+  stroke: var(--table);
+  stroke-width: 1.4;
+  cursor: default;
+}
+.port {
+  cursor: pointer;
+}
+.port .p-method {
+  fill: var(--call);
+}
+.port .p-value {
+  fill: var(--node-line);
+}
+.port .p-hook {
+  fill: var(--core);
+  stroke: var(--hook);
+  stroke-width: 3.2;
+}
+.port .p-tool {
+  fill: var(--tool);
+}
+.port .p-tool.ro {
+  fill: var(--core);
+  stroke: var(--tool);
+  stroke-width: 2.4;
+}
+.port .p-eout,
+.port .p-ein {
+  fill: var(--event);
+}
+.port.unused {
+  opacity: 0.38;
+}
+.port:hover > *:first-child,
+.port.lit > *:first-child {
+  stroke: var(--ink);
+  stroke-width: 2.5;
+}
+.plabel {
+  font-family: var(--mono) !important;
+  font-size: 15px;
+  fill: var(--ink);
+}
+.plabel.unused {
+  fill: var(--muted);
+}
+.plabel.k-tool {
+  fill: var(--tool);
+}
+.plabel.k-event {
+  fill: var(--event);
+}
+.plabel.k-hook {
+  fill: var(--hook);
+}
+.nbr {
+  cursor: pointer;
+}
+.nbr .core {
+  fill: var(--node);
+  stroke: var(--node-line);
+  stroke-width: 1.4;
+}
+.nbr.research .core {
+  fill: url(#hatch);
+}
+.nbr:hover .core,
+.nbr.lit .core {
+  stroke: var(--ink);
+  stroke-width: 2.6;
+}
+.nbr .name {
+  font-size: 18px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+}
+.nbr.agents .core {
+  fill: color-mix(in srgb, var(--tool) 16%, var(--node));
+  stroke: var(--tool);
+}
+.mdot {
+  fill: var(--call);
+  cursor: pointer;
+}
+.mdot.hook {
+  fill: var(--core);
+  stroke: var(--hook);
+  stroke-width: 2;
+}
+.mcyl {
+  fill: var(--table);
+}
+.wire {
+  fill: none;
+  transition: opacity 0.2s;
+}
+.scene.lighting .wire:not(.lit) {
+  opacity: 0.06;
+}
+.scene.lighting .port:not(.lit),
+.scene.lighting .nbr:not(.lit) {
+  opacity: 0.3;
+}
+.scene.lighting .plabel:not(.lit) {
+  opacity: 0.25;
+}
+.scene .flow {
+  stroke-dasharray: 0.1 30;
+  animation: flow30 1.8s linear infinite;
+  opacity: 0.55;
+}
+@keyframes flow30 {
+  to {
+    stroke-dashoffset: -30.1;
+  }
+}
+.scene .wire .base {
+  opacity: 0.22;
+}
+.scene .wire.lit .base {
+  opacity: 0.6;
+}
+.scene .wire.lit .flow {
+  opacity: 1;
+  stroke-dasharray: 0.1 16;
+  animation-name: flow16;
+  animation-duration: 0.9s;
+}
+@keyframes flow16 {
+  to {
+    stroke-dashoffset: -16.1;
+  }
+}
+
+/* state machines */
+.sm {
+  cursor: zoom-in;
+}
+.sm .sm-bg {
+  fill: var(--panel);
+  stroke: var(--panel-line);
+}
+.sm .st {
+  fill: var(--node);
+  stroke: var(--ink);
+  stroke-width: 1.4;
+}
+.sm .st.term {
+  stroke-width: 1.4;
+}
+.sm .st.init {
+  fill: var(--ink);
+}
+.sm .tr {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.2;
+}
+.sm .tr.back {
+  stroke: var(--hook);
+}
+.sm .stl {
+  font-family: var(--mono) !important;
+  font-size: 8px;
+  fill: var(--muted);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.sm.grown .stl {
+  opacity: 1;
+}
+.sm .smt {
+  font-family: var(--mono) !important;
+  font-size: 10px;
+  fill: var(--muted);
+}
+.sm-wrap {
+  transition: transform 0.35s;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sm.grown .sm-wrap {
+  transform: scale(2.6);
+}
+
+/* chrome */
+#crumbs {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+#toolbar {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  gap: 6px;
+}
+#legend {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 70vw;
+}
+.btn {
+  height: 36px;
+  min-width: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  border-radius: 18px;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  color: var(--ink);
+  cursor: pointer;
+  font: 600 13px var(--sans);
+}
+.btn svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+.btn[aria-pressed='true'] {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink);
+}
+.btn.off {
+  opacity: 0.4;
+}
+.btn:focus-visible {
+  outline: 2px solid var(--tool);
+  outline-offset: 2px;
+}
+.btn .n {
+  font: 500 11px var(--mono);
+  color: var(--muted);
+}
+.crumb-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+#card {
+  position: fixed;
+  left: 14px;
+  bottom: 14px;
+  max-width: min(560px, calc(100vw - 28px));
+  max-height: 46vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
+}
+#card.pinned {
+  border-color: var(--ink);
+}
+#card .sig {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  word-break: break-word;
+}
+#card .sig b {
+  font-size: 14px;
+}
+#card .sig .ty {
+  color: var(--muted);
+}
+#card .doc {
+  color: var(--muted);
+  margin-top: 6px;
+}
+#card .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  align-items: center;
+}
+#card .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: 12px var(--mono);
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+#card .chip i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  background: var(--call);
+}
+#card .ico {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 12px var(--mono);
+  color: var(--muted);
+}
+#card .ico svg {
+  width: 14px;
+  height: 14px;
+}
+#card .head {
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+#card .bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--node-line);
+}
+#finder {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+#finder input {
+  font: 15px var(--sans);
+  padding: 10px 14px;
+  width: min(360px, 80vw);
+  border-radius: 22px;
+  border: 1px solid var(--ink);
+  background: var(--panel);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flow {
+    animation: none !important;
+  }
+  .sm-wrap,
+  .edge,
+  .node,
+  #land,
+  #edges,
+  #nodes,
+  #scene {
+    transition: none !important;
+  }
+}

@@ -186,7 +186,7 @@ const absent = (error: unknown): null => {
   throw error;
 };
 const roundsFrom = (version: number) => (serviceOwned(version) ? 'in_progress' : 'in_review');
-const serviceWorkflow: WorkflowDefinition = {
+export const serviceWorkflow: WorkflowDefinition = {
   ...TASK_WORKFLOW,
   states: ['in_progress', 'in_review', 'suspended', 'done'],
   terminal: ['done'],

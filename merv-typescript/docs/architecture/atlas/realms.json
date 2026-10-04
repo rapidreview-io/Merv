@@ -1,0 +1,12 @@
+{
+  "research": ["tasks", "experiments", "knowledge", "reflections", "research", "paper"],
+  "library": ["contracts"],
+  "labels": {
+    "api": "API + Tools",
+    "ui": "UI",
+    "pi": "Pi",
+    "domain-events": "Domain Events",
+    "context-builder": "Context Builder",
+    "code-work": "Code Work"
+  }
+}
