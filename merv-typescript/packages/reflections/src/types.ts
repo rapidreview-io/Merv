@@ -1,7 +1,6 @@
 import type {
   Artifact,
   Caller,
-  ProcessGraph,
   ReviewApplication,
   ReviewRequest,
   RunningKey,
@@ -57,6 +56,7 @@ interface ChangeSpecBody {
 export type ChangeSpec = ChangeSpecBody &
   (
     | {
+        /** Approved before version 3 and read as stored; a submission must be version 3. */
         version: 2;
         items: (WorkItem & {
           workspace: { provider: 'none' } | { provider: 'code'; version: 1 };
@@ -154,8 +154,6 @@ export interface Reflections {
   approved(caller: Caller, id: string, tx?: Transaction): Promise<ApprovedReflection>;
   /** The wave still open in the project, if any: only one reflects at a time. */
   open(caller: Caller, tx?: Transaction): Promise<string | undefined>;
-  /** The wave's workflow drawn with its place in it, as Tasks.process draws a task's. */
-  process(caller: Caller, id: string): Promise<ProcessGraph>;
   /**
    * The waves on the Running page: the open one, and any other that `include` names, by its
    * key or one of its lenses' keys, because another owner holds it there. Each is one node

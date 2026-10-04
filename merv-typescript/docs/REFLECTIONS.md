@@ -14,11 +14,11 @@ The pause stays now that an approved plan can become work. That work is created 
 
 ## Context and reads
 
-A lens receives its assignment, perspective, live-read instructions and any relevant feedback. Synthesis and review receive references to submitted reports instead of their complete contents. No complete research corpus is embedded in an assignment. These contexts use lens recipe 7 and synthesis and review recipe 8; packages saved under earlier versions remain readable.
+A lens receives its assignment, perspective, live-read instructions and any relevant feedback. Synthesis and review receive references to submitted reports instead of their complete contents. No complete research corpus is embedded in an assignment. These contexts use lens recipe 12 and synthesis and review recipe 13.
 
-Version 5 adds two optional sections after `feedback`. `history` gives a lens or synthesis author every earlier rejected round of the wave, oldest first, in the bounded form described in [Rework history](RECOVERY_AND_CONTEXT.md#rework-history) (6000 characters, oldest rounds dropped first); the `feedback` section itself is unchanged, and the reviewer's recipe has no `history` section, so a reviewer is shown no earlier verdicts. `references.researchReviews` names the review of every rejected round. `previousCycle` embeds the digest of the research cycle before this wave's, under the heading "Predecessor cycle digest (decisions already made; verify before relying on it)"; all three stages receive it. It comes last, so rework feedback wins the budget: a digest that does not fit is named in `omitted` and stays in `references.artifacts` for `artifact.read`. Only such a wave's live-read instructions name `research.lineage`.
+Two optional sections follow `feedback`. `history` gives a lens or synthesis author every earlier rejected round of the wave, oldest first, in the bounded form described in [Rework history](RECOVERY_AND_CONTEXT.md#rework-history) (6000 characters, oldest rounds dropped first); the `feedback` section itself is unchanged, and the reviewer's recipe has no `history` section, so a reviewer is shown no earlier verdicts. `references.researchReviews` names the review of every rejected round. `previousCycle` embeds the digest of the research cycle before this wave's, under the heading "Predecessor cycle digest (decisions already made; verify before relying on it)"; all three stages receive it. It comes last, so rework feedback wins the budget: a digest that does not fit is named in `omitted` and stays in `references.artifacts` for `artifact.read`. Only such a wave's live-read instructions name `research.lineage`.
 
-Lens recipe 11 and synthesis and review recipe 12 are format 2, the item renderer (see the Context Builder README). The assignment and the review criteria are always embedded; every paper section (from `paper.contextSections`), lens report, submission, review round and the predecessor digest is embedded whole, highest priority first, while it fits, and is otherwise listed by one line with its retrieval tool and provenance note. When even the lines do not fit, the lowest-ranked are cut and counted. A lease freezes these items in `reflection_leases.inputs`, and a leased worker's `references.artifacts` covers every artifact they name. Earlier recipe versions are format-less and retired (owner, 2026-09-28, when no reflection wave was open), so a lease that froze their ranked items or whole sections no longer renders; their rows stay in `context_recipes` as history.
+Both recipes are format 2, the item renderer (see the Context Builder README). The assignment and the review criteria are always embedded; every paper section (from `paper.contextSections`), lens report, submission, review round and the predecessor digest is embedded whole, highest priority first, while it fits, and is otherwise listed by one line with its retrieval tool and provenance note. When even the lines do not fit, the lowest-ranked are cut and counted. A lease freezes these items in `reflection_leases.inputs` and renders them with the current recipe, and a leased worker's `references.artifacts` covers every artifact they name. Earlier recipe versions are not registered; the format-less ones were retired (owner, 2026-09-28, when no reflection wave was open), so a lease that froze their ranked items or whole sections no longer renders; their rows stay in `context_recipes` as history.
 
 The digest reaches a wave through `ReflectionCreate.previousCycleDigestId`, which Research sets when it advances a cycle that follows another. It is validated as an artifact of the project and kept in the wave's workflow start data, which no later transition rewrites. The `reflection.create` tool does not accept it: otherwise any writer could present an artifact of their choosing to every lens and reviewer as decisions already made.
 
@@ -40,9 +40,10 @@ A review may send a reflection back, to its synthesis or to its lenses, at most
 `limits.reviewReturns` times in total (Reflections config, default 2): the
 `review_returns` [loop limit](BUDGETS_AND_LIMITS.md) on the parent workflow. Restarting
 the lenses opens five more sessions, so this caps that fan-out. An escalated reflection
-has no abandon edge: its only exits are a human approval or an admin's
-`workflow.extend_limit`, and while it waits it still pauses new tasks and experiments, as
-any open wave does. Lens sessions are counted in the wave's and the cycle's usage.
+waits for a human approval or an admin's `workflow.extend_limit`, or for `reflection.end`
+on a version-4 wave (a version-3 wave has no abandon edge), and while it waits it still
+pauses new tasks and experiments, as any open wave does. Lens sessions are counted in the
+wave's and the cycle's usage.
 
 ## Structured change specification
 
@@ -50,20 +51,20 @@ The change specification has two formats, told apart by the artifact's media typ
 
 ```ts
 {
-  version: 2,
+  version: 3,
   changes: string,                    // prose scope and consolidation changes, ≤ 8000
   next: { decision: 'continue', name: string, rationale: string }
       | { decision: 'stop', reason: 'goal_met' | 'no_worthwhile_next_step' | 'needs_owner', rationale: string },
   items: (                            // ≤ 12, of which ≤ 7 experiments
-    | { key, kind: 'task', title, goal, checks: string[], dependsOn: string[], rationale, workspace }
-    | { key, kind: 'experiment', name, question, details, dependsOn: string[], rationale, workspace }
+    | { key, kind: 'task', title, goal, checks: string[], dependsOn: string[], rationale }
+    | { key, kind: 'experiment', name, question, details, dependsOn: string[], rationale }
   )[],
   carriedOver: { workflowId, reason }[],  // ≤ 20 existing tasks or experiments
   rejected: { title, reason }[],          // ≤ 20
 }
 ```
 
-Each item requires `workspace: { provider: "none" } | { provider: "code", version: 1 }`. Choose Code when the deliverable is code in the project's repository, and none for analysis, reports or work needing no checkout. The strict schema rejects `baseTaskId`, commits and branches, including inside `workspace`; dependencies determine the base. Version 1, which declared no workspaces and was written only by the retired `reflection@2`, is refused like any other version.
+Items choose no workspace: every new task and experiment has managed Git storage. The strict schema rejects `workspace`, `baseTaskId`, commits and branches; dependencies determine the base. Only version 3 is accepted. Version 1, written only by the retired `reflection@2`, and version 2, whose items each declared a workspace, are refused like any other version. Plans approved as version 2 are stored and returned as approved and never parsed again; Research ignores their workspace declarations.
 
 The whole document is at most 64,000 bytes; `goal`, `question` and `details` at most 4000 characters, each `rationale` and `reason` at most 1000, a task 1–12 one-line checks, distinct without regard to case or spacing as Tasks compares them. The limits follow what a reviewer can read from a bounded context, since the plan travels in the submission, the approval and every `reflection.get`. Keys are unique; `dependsOn` names other items' keys, never the item's own, without cycles or repeats; an experiment depends only on tasks; experiment names are unique without regard to case. `stop` carries no items and no carried-over work; `continue` carries at least one of either. Each `carriedOver.workflowId` is checked at submit to be a task or experiment in this project, named once. What depends on later project state — name conflicts, the active-experiment limit — is judged by Research when the work is created.
 
@@ -71,7 +72,7 @@ A parsed plan adds one frozen criterion to the synthesis review, covering these 
 
 `reflection.get` returns the parsed `plan` (null for a text specification), and approval retains it in the immutable `ApprovedReflection.plan`. Nothing in Reflections creates work and no tool or grant was added: synthesis still holds exactly `artifact.create` and `reflection.submit`. The project owner decides whether the plan becomes work when completing the research cycle; see [Research: Next wave](RESEARCH.md#next-wave). A standalone wave's plan is reviewed and retained but creates nothing.
 
-Synthesis and review use recipe 8, which describes version-2 plans and asks reviewers to verify each workspace declaration against its deliverable; lenses use lens workflow 2 and lens recipe 7. Synthesis and review recipe 7 are no longer registered; their text remains in the source only because recipe 8 is derived from it. The review context references the exact specification artifact, and `reflection.get` exposes every declaration in the parsed plan.
+Synthesis and review recipe 13 describes version-3 plans. The review context references the exact specification artifact, and `reflection.get` exposes the parsed plan.
 
 ## Existing tools
 

@@ -56,13 +56,11 @@ const experiment = z
     rationale: reason,
   })
   .strict();
-const workspace = z.discriminatedUnion('provider', [
-  z.object({ provider: z.literal('none') }).strict(),
-  z.object({ provider: z.literal('code'), version: z.literal(1) }).strict(),
-]);
-const legacyChangeSpecSchema = z
+// Only version 3 is accepted. Approved version-2 plans, whose items also chose a workspace, stay
+// stored as they were approved and are never parsed again.
+const changeSpecSchema = z
   .object({
-    version: z.literal(2),
+    version: z.literal(3),
     changes: text(8000),
     next: z.discriminatedUnion('decision', [
       z.object({ decision: z.literal('continue'), name: line(200), rationale: reason }).strict(),
@@ -74,14 +72,7 @@ const legacyChangeSpecSchema = z
         })
         .strict(),
     ]),
-    items: z
-      .array(
-        z.discriminatedUnion('kind', [
-          task.extend({ workspace }),
-          experiment.extend({ workspace }),
-        ]),
-      )
-      .max(CHANGE_SPEC_LIMITS.items),
+    items: z.array(z.discriminatedUnion('kind', [task, experiment])).max(CHANGE_SPEC_LIMITS.items),
     carriedOver: z
       .array(z.object({ workflowId, reason }).strict())
       .max(CHANGE_SPEC_LIMITS.carriedOver),
@@ -90,15 +81,6 @@ const legacyChangeSpecSchema = z
       .max(CHANGE_SPEC_LIMITS.rejected),
   })
   .strict();
-
-// Old approved plans remain readable. New plans have no storage-policy choice.
-const changeSpecSchema = z.discriminatedUnion('version', [
-  legacyChangeSpecSchema,
-  legacyChangeSpecSchema.extend({
-    version: z.literal(3),
-    items: z.array(z.discriminatedUnion('kind', [task, experiment])).max(CHANGE_SPEC_LIMITS.items),
-  }),
-]);
 
 // Two checks are the same one by folded(), which Tasks uses too. A pair Tasks would refuse is
 // refused while the author can still reword it, not after the plan is approved and can only be

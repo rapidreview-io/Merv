@@ -177,10 +177,7 @@ test('an open wave is one node at the head of the work lane that absorbs its len
   await assert.rejects(f.panel(f.owner, keyOf(wave.lenses[0]!.id)), {
     code: 'running_not_found',
   });
-  await assert.rejects(f.app.ctx.reflections.process(f.owner, wave.lenses[0]!.id), {
-    code: 'reflection_not_found',
-  });
-  assert.equal((await f.app.ctx.reflections.process(f.owner, wave.id)).state, 'reflecting');
+  assert.equal((await f.app.ctx.workflows.process(f.owner, wave.id)).state, 'reflecting');
 });
 
 test('a lens with an agent makes the wave solid and its row the way to that session, and letting it go restarts its wait', async (t) => {
@@ -301,7 +298,7 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   wave = await f.verdict(wave, reviewer, false);
   assert.equal(wave.workflow.state, 'synthesizing');
   const plan: ChangeSpec = {
-    version: 2,
+    version: 3,
     changes: 'Narrow the scope to the controlled setting.',
     next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
     items: [
@@ -313,7 +310,6 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
         checks: ['The measurement is recorded'],
         dependsOn: [],
         rationale: 'The methods lens found it missing.',
-        workspace: { provider: 'none' },
       },
       {
         key: 'control',
@@ -323,7 +319,6 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
         details: '',
         dependsOn: ['measure'],
         rationale: 'The evidence lens found the control missing.',
-        workspace: { provider: 'none' },
       },
     ],
     carriedOver: [],
@@ -379,7 +374,7 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
   );
 
   // A stop plan says why, and a title longer than a card holds is cut to fit.
-  const graph = await f.app.ctx.reflections.process(f.owner, wave.id);
+  const graph = await f.app.ctx.workflows.process(f.owner, wave.id);
   const stopped = wavePanel(
     {
       wave: {
@@ -554,7 +549,7 @@ test('a review no eligible reviewer can take turns the wave red until an operato
   assert.deepEqual(node.lines, [
     ['Review · waiting for a reviewer ', { since: wave.workflow.updatedAt }],
   ]);
-  const graph = await f.app.ctx.reflections.process(f.owner, wave.id);
+  const graph = await f.app.ctx.workflows.process(f.owner, wave.id);
   assert.deepEqual(wavePanel(facts, graph).header.attention, red);
   // Returns used up name the move that ends both waits; with no signal there is no red.
   assert.deepEqual(waveNode({ ...facts, exhausted: true }).attention!.says, [

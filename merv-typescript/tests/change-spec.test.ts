@@ -5,7 +5,7 @@ import { ordered } from '@merv/contracts';
 import { parseChangeSpec } from '../packages/reflections/src/change-spec.js';
 import type { ChangeSpec as AnyChangeSpec } from '../packages/reflections/src/types.js';
 
-type ChangeSpec = Extract<AnyChangeSpec, { version: 2 }>;
+type ChangeSpec = Extract<AnyChangeSpec, { version: 3 }>;
 type Item = ChangeSpec['items'][number];
 const task = (key: string, dependsOn: string[] = []): Extract<Item, { kind: 'task' }> => ({
   key,
@@ -15,7 +15,6 @@ const task = (key: string, dependsOn: string[] = []): Extract<Item, { kind: 'tas
   checks: ['The measurement is recorded'],
   dependsOn,
   rationale: 'The methods lens found the measurement missing.',
-  workspace: { provider: 'none' },
 });
 const experiment = (
   key: string,
@@ -29,10 +28,9 @@ const experiment = (
 
   dependsOn,
   rationale: 'The evidence lens found the control missing.',
-  workspace: { provider: 'none' },
 });
 const plan = (patch: Partial<ChangeSpec> = {}): ChangeSpec => ({
-  version: 2,
+  version: 3,
   changes: 'Narrow the scope to the controlled setting.',
   next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
   items: [task('measure'), experiment('control', ['measure']), task('report', ['control'])],
@@ -156,57 +154,24 @@ test('items are ordered prerequisites first, otherwise as listed', () => {
   assert.equal(ordered([task('a', ['b']), task('b', ['a'])]), undefined);
 });
 
-test('every item declares its workspace, and no item can smuggle a base', () => {
-  const spec = {
-    ...plan(),
-    items: [
-      { ...task('notes'), workspace: { provider: 'none' } },
-      { ...task('harness'), workspace: { provider: 'code', version: 1 } },
-      { ...experiment('trial', ['harness']), workspace: { provider: 'code', version: 1 } },
-    ],
-  };
-  assert.deepEqual(parseChangeSpec(JSON.stringify(spec)), spec);
-  for (const item of spec.items) {
-    for (const field of ['baseTaskId', 'commit', 'branch']) {
-      refused({ ...spec, items: [{ ...item, [field]: 'smuggled' }] }, /items/);
-      refused(
-        { ...spec, items: [{ ...item, workspace: { ...item.workspace, [field]: 'smuggled' } }] },
-        /workspace/,
-      );
-    }
-    for (const workspace of [
-      undefined,
-      {},
-      { provider: 'none', version: 1 },
-      { provider: 'code' },
-      { provider: 'code', version: 2 },
-      { provider: 'git' },
-    ])
-      refused(
-        {
-          ...spec,
-          items: [
-            {
-              ...task('one'),
-              kind: item.kind,
-              ...(item.kind === 'experiment' ? experiment('one') : {}),
-              workspace,
-            },
-          ],
-        },
-        /items/,
-      );
-  }
+test('no item can choose a workspace or smuggle a base', () => {
+  for (const item of plan().items)
+    for (const [field, value] of [
+      ['workspace', { provider: 'none' }],
+      ['workspace', { provider: 'code', version: 1 }],
+      ['baseTaskId', 'smuggled'],
+      ['commit', 'smuggled'],
+      ['branch', 'smuggled'],
+    ] as const)
+      refused(plan({ items: [{ ...item, dependsOn: [], [field]: value }] }), /items\.0/);
 });
 
-test('version 3 plans omit workspace choice while version 2 remains readable', () => {
-  const old = plan();
-  const current = {
-    ...old,
-    version: 3,
-    items: old.items.map(({ workspace: _workspace, ...item }) => item),
+test('a version-2 plan, whose items chose a workspace, is refused by its version', () => {
+  const old = {
+    ...plan(),
+    version: 2,
+    items: plan().items.map((item) => ({ ...item, workspace: { provider: 'none' } })),
   };
-  assert.deepEqual(parseChangeSpec(JSON.stringify(current)), current);
-  assert.deepEqual(parseChangeSpec(JSON.stringify(old)), old);
-  refused({ ...current, items: old.items }, /workspace/);
+  refused(old, /version/);
+  refused({ ...old, items: plan().items }, /version/);
 });

@@ -8,7 +8,7 @@ import {
   sha256Hex,
   reviewHistory,
 } from '@merv/contracts';
-import { mapAsync, someAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
+import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { executionOutputs, getArtifacts, keyId, keyKind } from '@merv/contracts';
 import { paperChangesSchema, parsed } from '@merv/contracts';
@@ -28,7 +28,6 @@ import {
   type ContextInput,
   type ContextItem,
   type ContextRegistration,
-  type ProcessGraph,
   type ReviewRequest,
   type Reviews,
   type RunningKey,
@@ -102,6 +101,10 @@ interface Submission {
   plan?: ChangeSpec;
   producerId: string;
 }
+interface Current {
+  wave: WaveRow;
+  lens: LensRow | null;
+}
 interface LeaseRow {
   id: string;
   project_id: string;
@@ -116,8 +119,24 @@ interface LeaseRow {
   released_at: string | null;
 }
 /** Every step is named as its record is: a wave by its title, a lens by its wave and perspective. */
-const named = ({ wave, lens }: { wave: WaveRow; lens: LensRow | null }) =>
+const named = ({ wave, lens }: Current) =>
   lens ? `${wave.title}: ${lens.perspective}` : wave.title;
+const submitted = (wave: WaveRow) =>
+  wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
+const summarized = (content: string) =>
+  check(
+    markdownSection(content, 'Summary'),
+    'reflection_summary_required',
+    'Lens report requires a nonempty Summary section',
+  );
+/** The paper changes a reflection verdict carries, as Paper checks and applies them. */
+const paperReview = (wave: WaveRow, review: ReviewRequest, input: ReflectionReview) => ({
+  ...input.paperChanges!,
+  source: { kind: 'reflection' as const, id: wave.id, revision: review.subjectRevision },
+  reviewId: review.id,
+  verdict: input.verdict,
+  evidenceIds: review.artifactIds,
+});
 
 /**
  * How often a review may send a reflection back, to its synthesis or to its lenses. Restarting
@@ -160,8 +179,6 @@ export class ReflectionService implements Reflections {
   private contexts = new Map<string, ContextRegistration>();
   private releaseOwner?: () => void;
   private closed = false;
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
@@ -169,49 +186,49 @@ export class ReflectionService implements Reflections {
     private paper: Paper,
     private workflows: Workflows,
     private reviews: Reviews,
-    contextBuilder: ContextBuilder,
+    private contextBuilder: ContextBuilder,
     private limits = REFLECTION_LIMITS,
-  ) {
-    this.initialize = async () => {
-      await state.migrate(
-        'reflections',
-        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-      );
-      try {
-        // Every assignment renders with these, a leased one too, so earlier versions render
-        // nothing and are not registered; their rows stay in context_recipes.
-        for (const recipe of ITEM_RECIPES)
-          this.contexts.set(recipe.name, await contextBuilder.register(recipe));
-        for (const definition of [
-          LENS_WORKFLOW,
-          LENS_WORKFLOW_ENDABLE,
-          REFLECTION_WORKFLOW,
-          REFLECTION_WORKFLOW_ENDABLE,
-        ])
-          this.handles.set(
-            `${definition.name}@${definition.version}`,
-            await workflows.register(
-              definition,
-              this.policy(definition.name === LENS_WORKFLOW.name, definition.version),
-            ),
-          );
-        this.releaseOwner = reviews.registerSubmitOwner({
-          id: 'reflections',
-          owns: async (review, tx) =>
-            !!(await tx.get(
-              'SELECT id FROM reflections WHERE id=? AND project_id=?',
-              review.subjectId,
-              review.projectId,
-            )),
-          submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
-          guidance: REVIEW_GUIDANCE,
-          fields: ['paperChanges'],
-        });
-      } catch (error) {
-        this.close();
-        throw error;
-      }
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate(
+      'reflections',
+      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+    );
+    try {
+      // Every assignment renders with these, a leased one too, so earlier versions render
+      // nothing and are not registered; their rows stay in context_recipes.
+      for (const recipe of ITEM_RECIPES)
+        this.contexts.set(recipe.name, await this.contextBuilder.register(recipe));
+      for (const definition of [
+        LENS_WORKFLOW,
+        LENS_WORKFLOW_ENDABLE,
+        REFLECTION_WORKFLOW,
+        REFLECTION_WORKFLOW_ENDABLE,
+      ])
+        this.handles.set(
+          `${definition.name}@${definition.version}`,
+          await this.workflows.register(
+            definition,
+            this.policy(definition.name === LENS_WORKFLOW.name, definition.version),
+          ),
+        );
+      this.releaseOwner = this.reviews.registerSubmitOwner({
+        id: 'reflections',
+        owns: async (review, tx) =>
+          !!(await tx.get(
+            'SELECT id FROM reflections WHERE id=? AND project_id=?',
+            review.subjectId,
+            review.projectId,
+          )),
+        submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+        guidance: REVIEW_GUIDANCE,
+        fields: ['paperChanges'],
+      });
+    } catch (error) {
+      this.close();
+      throw error;
+    }
   }
   close(): void {
     if (this.closed) return;
@@ -288,7 +305,7 @@ export class ReflectionService implements Reflections {
     lenient = false,
   ): Promise<Reflection> {
     const row = await this.row(caller, id, tx);
-    const submission = row.submission ? (JSON.parse(row.submission) as Submission) : null;
+    const submission = submitted(row);
     return {
       id,
       projectId: row.project_id,
@@ -446,9 +463,8 @@ export class ReflectionService implements Reflections {
       );
     }
   }
-  private async current(
-    context: WorkflowCheckContext,
-  ): Promise<{ wave: WaveRow; lens: LensRow | null }> {
+  /** The instance's wave and, for a lens, the lens, whichever attempt it belongs to. */
+  private async records(context: WorkflowCheckContext): Promise<Current> {
     const lens =
       context.snapshot.workflow === 'reflection.lens'
         ? await this.lensRow(context.caller, context.snapshot.id, context.tx)
@@ -458,6 +474,11 @@ export class ReflectionService implements Reflections {
       lens?.reflection_id ?? context.snapshot.id,
       context.tx,
     );
+    return { wave, lens };
+  }
+  /** The instance's records, refusing a lens of an attempt that is no longer reflecting. */
+  private async current(context: WorkflowCheckContext): Promise<Current> {
+    const { wave, lens } = await this.records(context);
     if (lens) {
       const parent = await this.workflows.get(context.caller, wave.id, context.tx);
       check(
@@ -478,25 +499,43 @@ export class ReflectionService implements Reflections {
     );
   }
   private async lease(context: WorkflowCheckContext): Promise<LeaseRow> {
-    const row = await this.activeLease(context);
+    return this.owned(context, await this.activeLease(context));
+  }
+  private owned({ caller }: WorkflowCheckContext, row: LeaseRow | undefined): LeaseRow {
     check(
-      context.caller.session &&
-        row?.id === context.caller.session.id &&
-        row.actor_id === context.caller.actorId,
+      caller.session && row?.id === caller.session.id && row.actor_id === caller.actorId,
       'stale_lease',
       'Worker no longer owns this reflection assignment',
       409,
     );
     return row;
   }
+  /** A leased worker's inputs as frozen when it acquired the lease; anyone else's as they stand. */
+  private async assignmentInputs(
+    context: WorkflowCheckContext,
+    current: Current,
+    lease?: LeaseRow,
+  ): Promise<Record<string, ContextInput>> {
+    return context.caller.session
+      ? (JSON.parse((lease ?? (await this.lease(context))).inputs) as Record<string, ContextInput>)
+      : await this.inputs(context, current);
+  }
+  /** Each lens of an attempt has its own author. */
+  private distinctAuthor(lens: LensRow, lenses: LensRow[], actorId: string): void {
+    check(
+      !lenses.some((other) => other.id !== lens.id && other.producer_id === actorId),
+      'lens_independence',
+      'Each lens requires a different agent identity',
+      403,
+    );
+  }
   /**
    * Every lens author and the synthesis author produced the wave, and a reviewer one of them
    * directs is that author's hand.
    */
   private async independent(caller: Caller, wave: WaveRow, tx: Transaction): Promise<void> {
-    const submission = wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
     const authors = [
-      submission?.producerId,
+      submitted(wave)?.producerId,
       ...(await this.lensRows(wave, tx)).map((lens) => lens.producer_id),
     ];
     const authority = (await this.scope.authorityActor(caller, tx)).id;
@@ -507,13 +546,17 @@ export class ReflectionService implements Reflections {
       403,
     );
   }
-  private async admit(context: WorkflowCheckContext, delegated = false): Promise<void> {
+  /** Admits the caller to the instance's current step; a leased worker's lease is returned. */
+  private async admit(
+    context: WorkflowCheckContext,
+    delegated = false,
+  ): Promise<Current & { lease: LeaseRow | undefined }> {
     const { caller, snapshot, tx } = context;
     const { wave, lens } = await this.current(context);
     const reviewing = snapshot.state === 'in_review';
     await this.scope.require(caller, reviewing ? 'review' : 'write', tx);
     const lease = await this.activeLease(context);
-    if (caller.session) await this.lease(context);
+    if (caller.session) this.owned(context, lease);
     else check(!lease, 'reflection_leased', 'A worker owns this reflection assignment', 409);
     if (lens) {
       check(
@@ -523,26 +566,19 @@ export class ReflectionService implements Reflections {
         409,
       );
       if (!delegated) {
-        check(
-          !(await this.lensRows(wave, tx)).some(
-            (other) => other.id !== lens.id && other.producer_id === caller.actorId,
-          ),
-          'lens_independence',
-          'Each lens requires a different agent identity',
-          403,
-        );
-        const parallel = await tx.all<{ actor_id: string; instance_id: string }>(
-          'SELECT actor_id,instance_id FROM reflection_leases WHERE project_id=? AND released_at IS NULL',
+        const lenses = await this.lensRows(wave, tx);
+        this.distinctAuthor(lens, lenses, caller.actorId);
+        const parallel = await tx.all<{ instance_id: string }>(
+          'SELECT instance_id FROM reflection_leases WHERE project_id=? AND actor_id=? AND released_at IS NULL',
           caller.projectId,
+          caller.actorId,
         );
         check(
-          !(await someAsync(
-            parallel,
-            async (entry) =>
-              entry.actor_id === caller.actorId &&
+          !parallel.some(
+            (entry) =>
               entry.instance_id !== snapshot.id &&
-              (await this.lensRows(wave, tx)).some((other) => other.id === entry.instance_id),
-          )),
+              lenses.some((other) => other.id === entry.instance_id),
+          ),
           'lens_independence',
           'An agent cannot work on two perspectives in one attempt',
           403,
@@ -585,10 +621,13 @@ export class ReflectionService implements Reflections {
         403,
       );
     }
+    return { wave, lens, lease };
   }
-  private async inputs(context: WorkflowCheckContext): Promise<Record<string, ContextInput>> {
-    const { wave, lens } = await this.current(context);
-    const submission = wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
+  private async inputs(
+    context: WorkflowCheckContext,
+    { wave, lens }: Current,
+  ): Promise<Record<string, ContextInput>> {
+    const submission = submitted(wave);
     const review =
       context.snapshot.state === 'in_review' && wave.review_id
         ? await this.reviews.get(context.caller, wave.review_id, context.tx)
@@ -768,10 +807,9 @@ export class ReflectionService implements Reflections {
     ];
   }
   private async references(context: WorkflowCheckContext) {
-    const { wave, lens } = await this.current(context);
-    const inputs = context.caller.session
-      ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
-      : await this.inputs(context);
+    const current = await this.current(context);
+    const { wave, lens } = current;
+    const inputs = await this.assignmentInputs(context, current);
     const review =
       !lens && context.snapshot.state === 'in_review' && wave.review_id
         ? await this.reviews.get(context.caller, wave.review_id, context.tx)
@@ -793,13 +831,11 @@ export class ReflectionService implements Reflections {
     };
   }
   private async build(context: WorkflowCheckContext) {
-    await this.admit(context);
-    const { wave, lens } = await this.current(context);
+    const { lease, ...current } = await this.admit(context);
+    const { wave, lens } = current;
     const stage = lens ? 'lens' : context.snapshot.state === 'in_review' ? 'review' : 'synthesis';
     const recipe = ITEM_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!;
-    const inputs = context.caller.session
-      ? (JSON.parse((await this.lease(context)).inputs) as Record<string, ContextInput>)
-      : await this.inputs(context);
+    const inputs = await this.assignmentInputs(context, current, lease);
     const preview = await this.contexts
       .get(recipe.name)!
       .preview(
@@ -898,24 +934,17 @@ export class ReflectionService implements Reflections {
         return context.snapshot.state === 'in_review' ? 'reviewer' : 'producer';
       },
       acquire: async (context) => {
-        await this.admit({ ...context, caller: context.source }, true);
-        const { wave, lens } = await this.current(context);
+        const source = { ...context, caller: context.source };
+        const { wave, lens } = await this.admit(source, true);
         if (lens)
-          check(
-            !(await this.lensRows(wave, context.tx)).some(
-              (other) => other.id !== lens.id && other.producer_id === context.caller.actorId,
-            ),
-            'lens_independence',
-            'Each lens requires a different agent identity',
-            403,
-          );
+          this.distinctAuthor(lens, await this.lensRows(wave, context.tx), context.caller.actorId);
         // Reviews refuses a worker who wrote a lens or the synthesis (review_independence), and
         // Workflows admits the worker through admit() right after this hook.
         const review =
           context.snapshot.state === 'in_review' && wave.review_id
             ? await this.reviews.start(context.caller, wave.review_id, context.tx)
             : null;
-        const inputs = await this.inputs({ ...context, caller: context.source });
+        const inputs = await this.inputs(source, { wave, lens });
         if (review) {
           const assessment = inputs.assessment;
           check(
@@ -1023,17 +1052,12 @@ export class ReflectionService implements Reflections {
             },
           }),
       assignments,
+      // Every instance is described, a lens of an earlier attempt too, so staleness is no refusal.
       describe: async (context) => {
-        const row = lens
-          ? await this.lensRow(context.caller, context.snapshot.id, context.tx)
-          : null;
-        const wave = await this.row(
-          context.caller,
-          row?.reflection_id ?? context.snapshot.id,
-          context.tx,
-        );
+        const records = await this.records(context);
+        const { wave } = records;
         return {
-          label: named({ wave, lens: row }),
+          label: named(records),
           gate: context.snapshot.state,
           waiting:
             context.snapshot.state === 'reflecting' && !lens
@@ -1129,14 +1153,8 @@ export class ReflectionService implements Reflections {
                   // submission looks at it: an answer of ready for a report that is missing,
                   // written by somebody else, or has no Summary is an answer about nothing.
                   const artifactId = c.input?.artifactId;
-                  if (typeof artifactId === 'string' && artifactId) {
-                    const report = await this.author(c.caller, artifactId, c.tx);
-                    check(
-                      markdownSection(report.content, 'Summary'),
-                      'reflection_summary_required',
-                      'Lens report requires a nonempty Summary section',
-                    );
-                  }
+                  if (typeof artifactId === 'string' && artifactId)
+                    summarized((await this.author(c.caller, artifactId, c.tx)).content);
                 },
               },
             ]
@@ -1188,10 +1206,9 @@ export class ReflectionService implements Reflections {
                   };
                 },
                 check: async (c: WorkflowCheckContext) => {
-                  await this.admit(c);
+                  const { wave } = await this.admit(c);
                   // A verdict needs the claim; before it, start_review is the step. A proposed
                   // verdict is checked as the verdict, so ready means the call will take it.
-                  const wave = await this.row(c.caller, c.snapshot.id, c.tx);
                   const review = await this.reviews.checkSubmit(
                     c.caller,
                     wave.review_id!,
@@ -1200,21 +1217,7 @@ export class ReflectionService implements Reflections {
                   );
                   const input = c.input as unknown as ReflectionReview | undefined;
                   if (input && input.paperChanges !== undefined)
-                    await this.paper.checkReview(
-                      c.caller,
-                      {
-                        ...input.paperChanges,
-                        source: {
-                          kind: 'reflection',
-                          id: wave.id,
-                          revision: review.subjectRevision,
-                        },
-                        reviewId: review.id,
-                        verdict: input.verdict,
-                        evidenceIds: review.artifactIds,
-                      },
-                      c.tx,
-                    );
+                    await this.paper.checkReview(c.caller, paperReview(wave, review, input), c.tx);
                 },
               },
               {
@@ -1311,11 +1314,7 @@ export class ReflectionService implements Reflections {
           409,
         );
         const { artifact, content } = await this.author(caller, input.artifactId, tx);
-        check(
-          markdownSection(content, 'Summary'),
-          'reflection_summary_required',
-          'Lens report requires a nonempty Summary section',
-        );
+        summarized(content);
         await this.moved(
           caller,
           {
@@ -1397,13 +1396,8 @@ export class ReflectionService implements Reflections {
         };
         const plan = await this.plan(caller, changeSpec, tx, snapshot.data.requirePlan === true);
         if (plan) submission.plan = plan;
+        // Synthesis opens only by the join, which found all five of these complete.
         const lenses = await this.lensRows(wave, tx);
-        check(
-          lenses.length === 5 && lenses.every((lens) => lens.artifact),
-          'reflection_lenses_incomplete',
-          'All five lens submissions are required',
-          409,
-        );
         const next = await this.moved(
           caller,
           {
@@ -1538,23 +1532,13 @@ export class ReflectionService implements Reflections {
     return await this.command(caller, 'review', input, tx, async () => {
       const review = await this.reviews.get(caller, input.reviewId, tx);
       const wave = await this.row(caller, review.subjectId, tx);
-      const snapshot = await this.workflows.get(caller, wave.id, tx);
+      const { state } = await this.workflows.get(caller, wave.id, tx);
       check(
-        wave.review_id === review.id &&
-          snapshot.state === 'in_review' &&
-          review.subjectRevision === snapshot.revision,
+        wave.review_id === review.id && state === 'in_review',
         'stale_review',
         'Only the exact current reflection review can be submitted',
         409,
       );
-      check(
-        snapshot.revision === input.expectedRevision,
-        'revision_conflict',
-        `Expected revision ${input.expectedRevision}, found ${snapshot.revision}`,
-        409,
-      );
-      // admit() also checks the reviewer's independence.
-      await this.admit({ caller, snapshot, tx });
       const route = input.verdict === 'pass' ? 'approved' : (input.returnTo ?? 'synthesizing');
       check(
         input.verdict === 'pass'
@@ -1563,14 +1547,14 @@ export class ReflectionService implements Reflections {
         'invalid_review_return',
         'Pass accepts no returnTo; rejections return to synthesizing or reflecting',
       );
-      await this.reviews.checkSubmit(caller, input.reviewId, input, tx);
       const action =
         route === 'approved'
           ? 'approve'
           : route === 'reflecting'
             ? 'restart_lenses'
             : 'revise_synthesis';
-      // Domain checks were completed above; generic transition still performs revision CAS.
+      // The transition checks the revision and runs the review action's check: admit(), with the
+      // reviewer's independence, then the verdict and its paper changes.
       const next = await this.moved(
         caller,
         {
@@ -1584,24 +1568,13 @@ export class ReflectionService implements Reflections {
       );
       await this.reviews.submit(caller, input, tx);
       if (input.paperChanges !== undefined)
-        await this.paper.applyReview(
-          caller,
-          {
-            ...input.paperChanges,
-            source: { kind: 'reflection', id: wave.id, revision: review.subjectRevision },
-            reviewId: review.id,
-            verdict: input.verdict,
-            evidenceIds: review.artifactIds,
-          },
-          tx,
-        );
+        await this.paper.applyReview(caller, paperReview(wave, review, input), tx);
       if (route === 'approved') {
-        const submission = JSON.parse(wave.submission!) as Submission;
         const approved: ApprovedReflection = {
           id: wave.id,
           projectId: wave.project_id,
           revision: next.revision,
-          ...submission,
+          ...submitted(wave)!,
           lenses: (await this.lensRows(wave, tx)).map((lens) => ({
             id: lens.id,
             perspective: lens.perspective,
@@ -1653,11 +1626,6 @@ export class ReflectionService implements Reflections {
         )
       )?.id;
     });
-  }
-  async process(caller: Caller, id: string): Promise<ProcessGraph> {
-    caller = structuredClone(caller);
-    await this.state.transaction(async (tx) => await this.row(caller, id, tx));
-    return await this.workflows.process(caller, id);
   }
   /** What the Running page says of one wave: its record, every lease on it, its review limit. */
   private async runningFacts(caller: Caller, id: string, tx: Transaction): Promise<WaveFacts> {

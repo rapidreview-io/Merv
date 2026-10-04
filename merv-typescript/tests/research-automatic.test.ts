@@ -24,7 +24,7 @@ import { hostedCode, type Main } from './fixtures/research.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const stop: ChangeSpec = {
-  version: 2,
+  version: 3,
   changes: 'Retain the failure and what remains untested.',
   next: {
     decision: 'stop',
@@ -36,14 +36,13 @@ const stop: ChangeSpec = {
   rejected: [],
 };
 const next = (name: string): ChangeSpec => ({
-  version: 2,
+  version: 3,
   changes: 'Try a smaller, independently verified input first.',
   next: { decision: 'continue', name, rationale: 'The earlier failure was an input limitation.' },
   items: [
     {
       key: 'input',
       kind: 'task',
-      workspace: { provider: 'none' },
       title: 'Verify smaller input',
       goal: 'Prepare a usable input.',
       checks: ['The input is available and verified'],
@@ -53,7 +52,6 @@ const next = (name: string): ChangeSpec => ({
     {
       key: 'trial',
       kind: 'experiment',
-      workspace: { provider: 'none' },
       name: `${name}-trial`,
       question: 'Does the smaller input suffice?',
       details: 'Run after input verification.',

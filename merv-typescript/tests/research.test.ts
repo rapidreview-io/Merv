@@ -1313,9 +1313,9 @@ test('a version-3 wave keeps its lenses, its path to approval and its lack of an
 });
 
 const planned = (
-  overrides: Partial<Extract<ChangeSpec, { version: 2 }>> = {},
-): Extract<ChangeSpec, { version: 2 }> => ({
-  version: 2,
+  overrides: Partial<Extract<ChangeSpec, { version: 3 }>> = {},
+): Extract<ChangeSpec, { version: 3 }> => ({
+  version: 3,
   changes: 'Narrow the comparison to the retained corpus and test the ordering effect directly.',
   next: {
     decision: 'continue',
@@ -1326,7 +1326,6 @@ const planned = (
     {
       key: 'corpus',
       kind: 'task',
-      workspace: { provider: 'none' },
       title: 'Freeze the comparison corpus',
       goal: 'Select and freeze the documents the ordering experiment will read.',
       checks: ['The corpus manifest is retained as an artifact'],
@@ -1336,7 +1335,6 @@ const planned = (
     {
       key: 'harness',
       kind: 'task',
-      workspace: { provider: 'none' },
       title: 'Show the harness runs on one document',
       goal: 'Run the harness end to end on a single document.',
       checks: ['One complete run is retained'],
@@ -1346,7 +1344,6 @@ const planned = (
     {
       key: 'ordering',
       kind: 'experiment',
-      workspace: { provider: 'none' },
       name: 'ordering-effect',
       question: 'Does input ordering change the ranking?',
       details: '',
@@ -1357,7 +1354,6 @@ const planned = (
     {
       key: 'writeup',
       kind: 'task',
-      workspace: { provider: 'none' },
       title: 'Write up the ordering result',
       goal: 'Summarise what the ordering experiment showed.',
       checks: ['The summary cites the experiment'],
@@ -1760,21 +1756,16 @@ test('a capability replaced while the plan is being created invalidates the whol
   assert.ok(done.successorId);
 });
 
-const workspacePlan = (): Extract<ChangeSpec, { version: 2 }> => ({
+const harnessPlan = (): Extract<ChangeSpec, { version: 3 }> => ({
   ...planned(),
-  version: 2,
   items: planned()
     .items.slice(0, 3)
-    .map((item, index) => ({
-      ...item,
-      dependsOn: item.kind === 'experiment' ? ['harness'] : [],
-      workspace: index === 0 ? { provider: 'none' } : { provider: 'code', version: 1 },
-    })),
+    .map((item) => ({ ...item, dependsOn: item.kind === 'experiment' ? ['harness'] : [] })),
 });
 
-test('a retained mixed-workspace plan creates only managed Git work atomically and replayably', async (t) => {
+test('a plan creates only managed Git work atomically and replayably', async (t) => {
   const f = await fixture(t);
-  const { record, command } = await reflected(f, workspacePlan());
+  const { record, command } = await reflected(f, harnessPlan());
   const before = await counts(f);
   const input = command('create');
   await assert.rejects(
@@ -1821,31 +1812,28 @@ test('a retained mixed-workspace plan creates only managed Git work atomically a
   });
 });
 
-for (const firstCode of ['task', 'experiment'] as const)
-  test(`Code absence refuses a ${firstCode} declaration without losing approval or partial work`, async (t) => {
-    const f = await fixture(t);
-    const plan = workspacePlan();
-    if (firstCode === 'experiment') plan.items[1].workspace = { provider: 'none' };
-    const { record, command } = await reflected(f, plan);
-    const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
-    const before = await counts(f);
-    await f.code(false);
-    const input = command('create');
-    await assert.rejects(f.research.advance(f.owner, input), { code: 'code_unavailable' });
-    assert.deepEqual(await counts(f), before);
-    assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
-    assert.equal(
-      (await f.research.get(f.owner, record.id)).workflow.revision,
-      record.workflow.revision,
-    );
-    await f.code(true);
-    assert.ok((await f.research.advance(f.owner, input)).successorId);
-  });
+test('Code absence refuses managed Git work without losing approval or partial work', async (t) => {
+  const f = await fixture(t);
+  const { record, command } = await reflected(f, harnessPlan());
+  const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
+  const before = await counts(f);
+  await f.code(false);
+  const input = command('create');
+  await assert.rejects(f.research.advance(f.owner, input), { code: 'code_unavailable' });
+  assert.deepEqual(await counts(f), before);
+  assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
+  assert.equal(
+    (await f.research.get(f.owner, record.id)).workflow.revision,
+    record.workflow.revision,
+  );
+  await f.code(true);
+  assert.ok((await f.research.advance(f.owner, input)).successorId);
+});
 
 test('a materialised hosted experiment waits on its hosted task and pins no base before its acceptance', async (t) => {
   const f = await fixture(t, true);
   const { codeWork: code, tasks } = f.app.ctx;
-  const { command } = await reflected(f, workspacePlan());
+  const { command } = await reflected(f, harnessPlan());
   const done = await f.research.advance(f.owner, command('create'));
   const successor = await f.research.get(f.owner, done.successorId!);
   const ids = Object.fromEntries(successor.origin!.items.map((item) => [item.key, item.id]));
@@ -1891,7 +1879,7 @@ test('an automatic v2 wave exposes Code absence and rolls back before retry', as
     requestId: f.id(),
   });
   record = await f.advance(await f.advance(record));
-  await f.reflect(record, workspacePlan());
+  await f.reflect(record, harnessPlan());
   const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
   const before = await counts(f);
   await f.code(false);

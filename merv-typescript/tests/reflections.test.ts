@@ -180,7 +180,7 @@ test('a submission reads each report once, and once more for its transition chec
     title: 'Changes',
     mediaType: 'application/json',
     content: JSON.stringify({
-      version: 2,
+      version: 3,
       changes: 'None.',
       next: { decision: 'stop', reason: 'goal_met', rationale: 'The question is answered.' },
       items: [],
@@ -531,7 +531,7 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
   });
   let wave = await f.lenses(await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' }));
   const plan: ChangeSpec = {
-    version: 2,
+    version: 3,
     changes: 'Narrow the scope to the controlled setting.',
     next: { decision: 'continue', name: 'Second wave', rationale: 'The control is cheap.' },
     items: [
@@ -543,7 +543,6 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
         checks: ['The measurement is recorded'],
         dependsOn: [],
         rationale: 'The methods lens found it missing.',
-        workspace: { provider: 'code', version: 1 },
       },
       {
         key: 'control',
@@ -554,7 +553,6 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
 
         dependsOn: ['measure'],
         rationale: 'The evidence lens found the control missing.',
-        workspace: { provider: 'code', version: 1 },
       },
     ],
     carriedOver: [{ workflowId: carried.id, reason: 'Still needed by the next cycle.' }],
@@ -584,19 +582,18 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
       mediaType: 'application/json',
       content: typeof value === 'string' ? value : JSON.stringify(value),
     });
+  // Version 2 items also chose a workspace. Plans approved in it stay readable; new ones are refused.
+  const legacy = {
+    ...plan,
+    version: 2,
+    items: plan.items.map((item) => ({ ...item, workspace: { provider: 'code', version: 1 } })),
+  };
   for (const [label, value] of [
     ['malformed', '{not json'],
     ['unknown field', { ...plan, budget: 3 }],
-    ['wrong version', { ...plan, version: 3 }],
+    ['version 2', legacy],
     // The first format, which declared no workspaces, was only ever written by reflection@2.
-    [
-      'first version',
-      {
-        ...plan,
-        version: 1,
-        items: plan.items.map(({ workspace: _workspace, ...item }) => item),
-      },
-    ],
+    ['first version', { ...plan, version: 1 }],
     ['cycle', { ...plan, items: [{ ...plan.items[0]!, dependsOn: ['measure'] }] }],
     ['missing carried work', { ...plan, carriedOver: [{ workflowId: 'task_none', reason: 'x' }] }],
     [
@@ -615,12 +612,13 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
     assert.equal(after.plan, null);
   }
   // Asking whether a refused plan is ready gives the answer the submission would.
-  const refused = await json({ ...plan, version: 3 });
+  const refused = await json(legacy);
   const refusal = await submit(refused, 'refused-preflight').then(
-    () => assert.fail('A version-3 plan is refused'),
+    () => assert.fail('A version-2 plan is refused'),
     (error: { code: string; message: string }) => error,
   );
   assert.equal(refusal.code, 'invalid_change_spec');
+  assert.match(refusal.message, /version/);
   const preflight = await f.app.ctx.workflows.evaluate(f.owner, wave.id, {
     action: 'submit',
     input: { reportArtifactId: report.id, changeSpecArtifactId: refused.id },
