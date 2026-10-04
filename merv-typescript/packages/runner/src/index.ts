@@ -31,7 +31,7 @@ import {
 } from './ledger.js';
 import { ProcessHost, usageFile } from './process-host.js';
 import { readTranscript, type TranscriptFacts } from './transcript.js';
-import { GitWorkspaceManager } from './workspaces.js';
+import { RunnerWorkspaces, type RepositoryDriverFactory } from './workspaces.js';
 import {
   buildLaunch,
   sealed,
@@ -43,6 +43,11 @@ import {
 } from './profiles.js';
 import type { Runner, RunnerSnapshot } from './types.js';
 export type * from './types.js';
+export type {
+  RepositoryDriverFactory,
+  RepositoryDriverHost,
+  RunnerRepository,
+} from './workspaces.js';
 
 /** Local machine configuration. Remote settings can tune profiles, never replace executables. */
 const configSchema = z
@@ -69,9 +74,9 @@ const configSchema = z
           ].includes(name),
       ),
     profiles: z.array(z.unknown()).max(32),
-    /** CLI composition: omit for the existing Code driver, or [] for workspace-free research. */
+    /** CLI composition: omit for the existing Code driver, or [] for work without Git. */
     workspaceDrivers: z.array(z.literal('code')).max(1).optional(),
-    /** A local source repository; the runner creates and owns its private Git copy. */
+    /** A local source repository, of which the composition's repository driver keeps a private copy. */
     workspace: z
       .object({
         repository: z
@@ -240,7 +245,7 @@ export class MachineRunner implements Runner {
   private readonly client: RunnerClient;
   private readonly ledger: LocalLedger;
   private readonly host: ProcessHost;
-  private readonly workspaces: GitWorkspaceManager;
+  private readonly workspaces: RunnerWorkspaces;
   /**
    * Whatever prepares checkouts, by the name a workspace policy gives it. The scheduler below
    * only ever speaks the driver interface; the runner's own repository serves every policy
@@ -279,11 +284,18 @@ export class MachineRunner implements Runner {
       autoPoll?: boolean;
       /** Workspace drivers other plugins own; whoever composes the machine supplies them. */
       drivers?: WorkspaceDriverFactory[];
+      /** The driver of the runner's own repository; required with `workspace`. */
+      repositoryDriver?: RepositoryDriverFactory;
       /** Trusted hosted-runtime barrier: kill all assignment descendants and clear private state. */
       resetAssignment?: () => Promise<void>;
     } = {},
   ) {
     const parsed = validateRunnerConfig(config);
+    check(
+      !parsed.workspace || options.repositoryDriver,
+      'invalid_runner_config',
+      'A runner repository requires a repository workspace driver',
+    );
     check(
       !parsed.workInstanceId || options.resetAssignment,
       'invalid_runner_config',
@@ -341,9 +353,12 @@ export class MachineRunner implements Runner {
         'invalid_runner_config',
         'Retained runner history belongs to another work item',
       );
-      this.workspaces = new GitWorkspaceManager(
+      this.workspaces = new RunnerWorkspaces(
         this.ledger,
-        this.config.workspace,
+        this.config.workspace && {
+          driver: options.repositoryDriver!,
+          config: this.config.workspace,
+        },
         this.config.assignmentWorkspaceDirectory,
         this.config.workInstanceId,
         (id) => this.previousWorkspace(id),
@@ -1171,12 +1186,15 @@ export class MachineRunner implements Runner {
 }
 
 /** The runner with the workspace drivers of other plugins, which only a composition may name. */
-export const runnerWith = (drivers: WorkspaceDriverFactory[]) => ({
+export const runnerWith = (
+  drivers: WorkspaceDriverFactory[],
+  repositoryDriver?: RepositoryDriverFactory,
+) => ({
   name: 'merv-runner',
   inject: [],
   async apply(ctx: Context, config: RunnerConfig) {
     await ctx.effect(async function* () {
-      const runner = new MachineRunner(config, { drivers });
+      const runner = new MachineRunner(config, { drivers, repositoryDriver });
       yield () => runner.stop();
       await runner.start();
       yield ctx.provide('runner', runner);

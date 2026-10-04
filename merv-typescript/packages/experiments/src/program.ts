@@ -186,6 +186,9 @@ const handoff = (state: ActiveState) =>
 // Assignment guidance is assembled at runtime; published context recipes remain immutable.
 const planningPhaseGuidance =
   ' Planning has no compute.run. If a GPU smoke test or calibration is needed, specify it as the first execution step after independent design approval. During planning, check current offer availability and estimate its cost and time from named records; do not report the design infeasible solely because this planning lease cannot run GPU code. Record actual missing data, unavailable compute or budget, and unfinished prerequisites as distinct dependencies or blockers.';
+/** Said to every planner, executor and reviewer of an experiment, in the assignment. */
+const sourceVerification =
+  'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.';
 const assignmentHandoff = (state: ActiveState) =>
   handoff(state) + (state === 'planned' ? planningPhaseGuidance : '');
 /** The shape a planner fills in, shown beside the design it is asked for. */
@@ -1053,7 +1056,7 @@ export class ExperimentProgram {
       role: reviewing(state) ? 'reviewer' : 'producer',
       label: `${recipeNames[state]}: ${experiment.name}`,
       brief:
-        `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}` +
+        `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
         (nativeExperiment(experiment.workflow.version)
           ? this.host.nativeWork!.guidance(state === 'running' ? 'execute' : 'check')
           : rentalGuidance('compute.', reviewing(state), true) +

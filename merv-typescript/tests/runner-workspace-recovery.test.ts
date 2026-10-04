@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
+import { localWorkspaceDriver } from '@merv/code/driver/local';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import type { WorkflowAssignmentRule, WorkflowExecutionPolicy } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
@@ -169,7 +170,11 @@ test(
       }
       return fetch(input, init);
     };
-    let runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });
+    let runner = new MachineRunner(config, {
+      autoPoll: false,
+      fetch: fetcher,
+      repositoryDriver: localWorkspaceDriver,
+    });
     t.after(async () => {
       unavailable = false;
       await runner.stop();
@@ -204,7 +209,11 @@ test(
     );
     assert.equal(runner.snapshot().launches.length, 1);
     await runner.stop();
-    runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });
+    runner = new MachineRunner(config, {
+      autoPoll: false,
+      fetch: fetcher,
+      repositoryDriver: localWorkspaceDriver,
+    });
     await runner.start();
     await runner.tick();
     assert.equal(
@@ -382,7 +391,11 @@ test(
       }
       return response;
     };
-    let runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });
+    let runner = new MachineRunner(config, {
+      autoPoll: false,
+      fetch: fetcher,
+      repositoryDriver: localWorkspaceDriver,
+    });
     t.after(async () => {
       await runner.stop();
       program.dispose();
@@ -409,7 +422,11 @@ test(
       'An unknown release acknowledgment keeps the checkout until the launch is settled',
     );
     assert.equal((await app.ctx.sessions.get(source, offered.id)).status, 'released');
-    runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });
+    runner = new MachineRunner(config, {
+      autoPoll: false,
+      fetch: fetcher,
+      repositoryDriver: localWorkspaceDriver,
+    });
     await runner.start();
     await runner.tick();
     const recovered = await app.ctx.sessions.get(source, offered.id);

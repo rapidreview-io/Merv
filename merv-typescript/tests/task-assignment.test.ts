@@ -144,6 +144,7 @@ test('task assignments return full recipe context; begin records one activation 
     assert.match(preview.context!.prompt, /Control the input distribution/);
     assert.match(preview.context!.prompt, /existing CPU budget/);
     assert.match(preview.brief, /Verify addition/);
+    assert.match(preview.brief, /Text extraction can lose superscripts and symbols/);
     assert.equal(preview.workStart, null);
     assert.ok(preview.references.some((ref) => ref.id === research.id));
     assert.equal(preview.context!.subject.revision, 0);

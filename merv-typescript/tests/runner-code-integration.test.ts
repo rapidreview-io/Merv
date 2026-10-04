@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
+import { localWorkspaceDriver } from '@merv/code/driver/local';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from './fixtures/app.js';
 import type {} from '@merv/code-work/types';
@@ -176,6 +177,7 @@ test(
     };
     let runner = new MachineRunner(config, {
       autoPoll: false,
+      repositoryDriver: localWorkspaceDriver,
       fetch: async (input, init) => {
         const response = await fetch(input, init);
         if (String(input).endsWith('/code/commands/complete') && response.ok) {
@@ -224,7 +226,10 @@ test(
     assert.equal(git('status', '--porcelain'), '');
     assert.equal(runner.snapshot().launches.length, 1);
     await runner.stop();
-    runner = new MachineRunner(config, { autoPoll: false });
+    runner = new MachineRunner(config, {
+      autoPoll: false,
+      repositoryDriver: localWorkspaceDriver,
+    });
     await runner.start();
     assert.equal(runner.snapshot().launches.length, 1);
     assert.equal(

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { localWorkspaceDriver } from '@merv/code/driver/local';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import type { WorkflowExecutionPolicy } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
@@ -160,7 +161,11 @@ test(
       }
       return response;
     };
-    let runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });
+    let runner = new MachineRunner(config, {
+      autoPoll: false,
+      fetch: fetcher,
+      repositoryDriver: localWorkspaceDriver,
+    });
     t.after(async () => {
       unavailable = false;
       // Cleanup is bounded: a stop that never settles (a controller tick or API request left
@@ -213,7 +218,11 @@ test(
     );
     await runner.stop();
     unavailable = false;
-    runner = new MachineRunner(config, { autoPoll: false, fetch: fetcher });
+    runner = new MachineRunner(config, {
+      autoPoll: false,
+      fetch: fetcher,
+      repositoryDriver: localWorkspaceDriver,
+    });
     await runner.start();
     while (runner.snapshot().launches[0]?.workspace?.status !== 'closed') {
       await runner.tick();

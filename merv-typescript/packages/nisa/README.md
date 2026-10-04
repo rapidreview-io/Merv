@@ -28,9 +28,9 @@ checks the caller again before handing back the result. None names a
   `mcp__merv`, Codex with no allowlist of its own), so every worker has them,
   sealed reviews included: a call reaches Nisa alone, never an address the worker chooses,
   though its query leaves Merv (see [Privacy](#privacy)). Every Codex and
-  Claude launch's text names them for literature, and names `web.search` too
-  where that launch is given it, since a worker otherwise reads its tools as
-  project reads and answers from memory;
+  Claude launch's text sends the worker to its tools for outside sources rather
+  than its memory, and names `web.search` where that launch is given it; these
+  tools' own descriptions say they are for literature and how to cite;
 - **MCP clients** list them with `readOnlyHint` and `openWorldHint` set.
 
 | Tool                   | Nisa route                                 | Input                                                                                           |

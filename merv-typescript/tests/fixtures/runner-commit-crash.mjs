@@ -1,10 +1,11 @@
 // Isolated local crash fixture: no remote API, credentials, or worker process.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { LocalLedger } from '../../packages/runner/src/ledger.ts';
-import { GitWorkspaceManager } from '../../packages/runner/src/workspaces.ts';
+import { LocalWorkspaceDriver } from '../../packages/code/src/driver/local.ts';
+import { ledgerHost } from '../../packages/runner/src/workspaces.ts';
 const settings = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const ledger = new LocalLedger({ directory: settings.directory, binding: settings.binding });
-const manager = new GitWorkspaceManager(ledger, settings.config);
+const manager = new LocalWorkspaceDriver(ledgerHost(ledger), settings.config);
 const original = manager.git.bind(manager);
 manager.git = async (...args) => {
   const result = await original(...args);

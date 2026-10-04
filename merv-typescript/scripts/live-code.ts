@@ -6,6 +6,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { check, type Data, type WorkflowAssignmentRule } from '@merv/contracts';
 import type {} from '@merv/code-work/types';
+import { localWorkspaceDriver } from '@merv/code/driver/local';
 import { MachineRunner } from '@merv/runner';
 import { createApp } from '../src/app.js';
 import { useRunSchema } from './database.js';
@@ -332,24 +333,27 @@ const handles = [
       }),
   }),
 ];
-const runner = new MachineRunner({
-  directory: join(directory, 'machine'),
-  baseUrl: app.ctx.api.url!,
-  projectId: boot.project.id,
-  credentialEnv,
-  workspace: { repository, baseRef: 'refs/heads/main' },
-  capacity: 1,
-  pollIntervalMs: 500,
-  profiles: [
-    {
-      name: 'native-codex',
-      harness: 'codex',
-      executable: process.env.MERV_CODEX_BIN ?? 'codex',
-      enabled: true,
-      parallelism: 1,
-    },
-  ],
-});
+const runner = new MachineRunner(
+  {
+    directory: join(directory, 'machine'),
+    baseUrl: app.ctx.api.url!,
+    projectId: boot.project.id,
+    credentialEnv,
+    workspace: { repository, baseRef: 'refs/heads/main' },
+    capacity: 1,
+    pollIntervalMs: 500,
+    profiles: [
+      {
+        name: 'native-codex',
+        harness: 'codex',
+        executable: process.env.MERV_CODEX_BIN ?? 'codex',
+        enabled: true,
+        parallelism: 1,
+      },
+    ],
+  },
+  { repositoryDriver: localWorkspaceDriver },
+);
 try {
   await runner.start();
   await app.ctx.sessions.setDispatch(source, { enabled: true });

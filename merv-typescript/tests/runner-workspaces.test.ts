@@ -22,8 +22,12 @@ import { DatabaseSync } from 'node:sqlite';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { LocalLedger } from '../packages/runner/src/ledger.js';
-import { GitWorkspaceManager } from '../packages/runner/src/workspaces.js';
-import { validateRunnerConfig } from '../packages/runner/src/index.js';
+import {
+  localWorkspaceDriver,
+  type LocalWorkspaceDriver,
+} from '../packages/code/src/driver/local.js';
+import { RunnerWorkspaces } from '../packages/runner/src/workspaces.js';
+import { MachineRunner, validateRunnerConfig } from '../packages/runner/src/index.js';
 
 function setup(
   t: TestContext,
@@ -89,12 +93,19 @@ function setup(
     binding: { baseUrl: 'http://127.0.0.1:7000', projectId: 'project', sourceId: 'source-digest' },
   });
   const config = { repository, baseRef: 'refs/heads/main' };
-  let manager = new GitWorkspaceManager(
-    ledger,
-    config,
-    assignmentWorkspaceDirectory,
-    options.workInstanceId,
-  );
+  let local!: LocalWorkspaceDriver;
+  const driver = {
+    create: (...args: Parameters<typeof localWorkspaceDriver.create>) =>
+      (local = localWorkspaceDriver.create(...args)),
+  };
+  const open = () =>
+    new RunnerWorkspaces(
+      ledger,
+      { driver, config },
+      assignmentWorkspaceDirectory,
+      options.workInstanceId,
+    );
+  let manager = open();
   const reserve = (id: string) =>
     ledger.reserve({
       id,
@@ -133,12 +144,7 @@ function setup(
   const stop = (id: string) => ledger.end(id, 'cancelled_before_spawn', 'reserved');
   const reopen = () => {
     manager.dispose();
-    manager = new GitWorkspaceManager(
-      ledger,
-      config,
-      assignmentWorkspaceDirectory,
-      options.workInstanceId,
-    );
+    manager = open();
     return manager;
   };
   t.after(() => {
@@ -162,6 +168,9 @@ function setup(
     ledger,
     get manager() {
       return manager;
+    },
+    get local() {
+      return local;
     },
     reserve,
     policy,
@@ -267,6 +276,21 @@ test("an isolated machine takes no runner repository: its Git checkouts are its 
   assert.throws(
     () => validateRunnerConfig({ ...isolated, workspace: { repository: '/src', baseRef: 'main' } }),
     { code: 'invalid_runner_config' },
+  );
+});
+
+test('the runner runs no Git itself: a repository of its own needs the composition to supply its driver', () => {
+  assert.throws(
+    () =>
+      new MachineRunner({
+        directory: '/tmp/merv-runner',
+        baseUrl: 'http://127.0.0.1:7000',
+        projectId: 'project',
+        credentialEnv: 'MERV_SOURCE',
+        workspace: { repository: '/src', baseRef: 'main' },
+        profiles: [],
+      }),
+    { code: 'invalid_runner_config', message: /repository workspace driver/ },
   );
 });
 
@@ -616,7 +640,7 @@ test('a failed validation after a new branch is added still records the lineage 
   const f = setup(t),
     policy = f.policy({ retain: false }),
     first = f.reserve('first');
-  const manager = f.manager as unknown as { validateCheckout(row: unknown): Promise<void> };
+  const manager = f.local as unknown as { validateCheckout(row: unknown): Promise<void> };
   const validate = manager.validateCheckout.bind(manager);
   manager.validateCheckout = async () => {
     manager.validateCheckout = validate;
@@ -1083,7 +1107,7 @@ test('a commit size check reads only what changed, however large the tree', asyn
     `100644,${plumb(['hash-object', '-w', '--stdin'], 'y\n')},changed`,
   ]);
   const tree = plumb(['write-tree']);
-  const manager = f.manager as unknown as {
+  const manager = f.local as unknown as {
     row(id: string): unknown;
     checkTreeFiles(row: unknown, parent: string, tree: string): Promise<void>;
   };
