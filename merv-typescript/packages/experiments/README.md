@@ -41,7 +41,7 @@ transaction, including the owned review transition.
 
 Evidence is retained through Artifacts before attachment. Planning accepts
 `plan` and `feasibility`; execution accepts `result` and `report`. Each input file is
-nonempty UTF-8, at most 16,000 bytes. Draft document sections may be unfinished,
+nonempty UTF-8, at most 64,000 bytes. Draft document sections may be unfinished,
 but included figures must already resolve to scoped retained image artifacts.
 Results explicitly distinguish finite JSON from qualitative text. Submission
 and exit guidance share the same document/exhibit gates; guidance creates
@@ -67,15 +67,19 @@ packages/experiments/
 ├── package.json
 ├── README.md
 └── src/
-    ├── index.ts       # Service, transactions, evidence sealing and review routing
-    ├── storage.ts     # Owned tables, migrations and immutable history
-    ├── models.ts      # Record and command DTOs
-    ├── types.ts       # Service contract and Cordis capability
-    ├── input.ts       # Strict shared tool/core schemas and safe JSON boundary
-    ├── evidence.ts    # Document, figure and metrics validation
-    ├── program.ts     # Workflow, recipes, fixed execution policy and lease hooks
-    ├── tools.ts       # Six tool registrations
-    └── ui.ts          # Optional UI registration
+    ├── index.ts              # Service: records, commands, evidence sealing, review routing, Running board
+    ├── program.ts            # Workflow, recipes, execution policy, lease hooks and review checks; the service's base class
+    ├── program.postgres.ts   # Published lease-table migrations
+    ├── storage.ts            # Owned table rows and migration registration
+    ├── storage.postgres.ts   # Published record-table migrations
+    ├── models.ts             # Record and command DTOs
+    ├── types.ts              # Service contract and Cordis capability
+    ├── input.ts              # Strict shared tool/core schemas and safe JSON boundary
+    ├── evidence.ts           # Document, figure and metrics validation
+    ├── compute.ts            # Rented GPU machines and runs for Git contracts
+    ├── running.ts            # Running page cards and sidebars
+    ├── tools.ts              # Experiment and compute tool registrations
+    └── ui.ts                 # Optional UI registration
 ```
 
 Knowledge now owns metadata inventory, exact reference resolution and immutable

@@ -16,23 +16,16 @@ import {
   now,
   type Artifact,
   type CodeUnit,
-  type Artifacts,
   type Caller,
-  type ContextBuilder,
   type Data,
   type ProcessGraph,
-  type Reviews,
   type RunningNode,
   type RunningPanelPart,
-  type Scope,
-  type State,
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowDependency,
-  type Workflows,
 } from '@merv/contracts';
-import type { Paper } from '@merv/paper/types';
-import type { Code, CodeCaptureRef } from '@merv/code-work/types';
+import type { CodeCaptureRef } from '@merv/code-work/types';
 import type { SandboxCompute } from '@merv/sandboxes/types';
 import { ExperimentCompute, type ComputeRunning } from './compute.js';
 import { initializeManagedCompute } from '@merv/sandboxes/managed-compute';
@@ -81,16 +74,19 @@ import {
 import {
   approvedSubmission,
   currentEvidence,
-  designRoles,
+  designCriteria,
   EXPERIMENT_LIMITS,
   ExperimentProgram,
+  feasibilityCriterion,
   programVersion,
   nativeExperiment,
   currentExperiment,
-  reviewedSubmission,
+  producing,
+  resultsCriteria,
   reviewing,
   rolesFor,
   TERMINAL,
+  type ExperimentCode,
 } from './program.js';
 import {
   attemptMetadata,
@@ -103,8 +99,6 @@ import {
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
-/** Where an agent designs or runs the experiment, rather than a reviewer reading it. */
-const working = new Set(['planned', 'running']);
 /** One experiment's row for the Running page: its place and the lease on it now. */
 interface StandingRow {
   id: string;
@@ -131,11 +125,12 @@ const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
 /** What review.start and review.get tell the reviewer of an experiment's design or results. */
 const REVIEW_GUIDANCE =
   'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.';
-/** The evidence, figures and exhibit a design or results submission pins. */
+/** The evidence, figures, exhibit and final capture a design or results submission pins. */
 interface Submission {
   evidence: ExperimentEvidence[];
   figureIds: string[];
   exhibit: ExperimentExhibit | null;
+  codeCaptureRef?: CodeCaptureRef;
 }
 /**
  * Ending or retrying names its reason under evidence. Guidance reaches here without the input
@@ -150,24 +145,6 @@ function reasoned(input: Data | undefined, message: string): void {
       message,
     );
 }
-/**
- * Feasibility is its own design criterion, the last, so the review can be asked never to waive it;
- * the statement's arithmetic is its author's, which is why the reviewer is told to look for what it
- * leaves out as well as for what it gets wrong.
- */
-const designCriteria = [
-  'The plan defines a testable hypothesis and an evaluation that can distinguish it from alternatives.',
-  'Controls, baselines, data, metrics and decision criteria make the proposed comparison defensible.',
-  'The limitations and possible failure modes of the proposed execution are addressed.',
-  'The feasibility statement is accurate and complete: each required and available quantity, the compute and time estimate, and the presence of every dependency were verified by the reviewer against retained records; no requirement, dependency or blocker the design implies is omitted; and no known blocker remains.',
-];
-const feasibilityCriterion = designCriteria.length;
-const resultsCriteria = [
-  'The retained execution and results follow the exact approved plan, with deviations and failures explained.',
-  'The submitted measurements agree with the retained results and any metrics exhibit, and the report selects what mattered without hiding known rework.',
-  'The report’s conclusions follow from the evidence, including negative findings and limitations.',
-];
-
 const rounds = (fallback: number) => z.number().int().min(1).max(1000).default(fallback);
 const configuration = z
   .object({
@@ -182,105 +159,50 @@ const configuration = z
   .strict()
   .default({});
 
-/** What Experiments asks of Code; a test may bind exactly this much. */
-type ExperimentCode = Pick<
-  Code,
-  | 'capture'
-  | 'acceptUnit'
-  | 'declareUnit'
-  | 'baseStatus'
-  | 'pinBase'
-  | 'basePin'
-  | 'unit'
-  | 'hosted'
-  | 'reserveWriter'
-  | 'writerStatus'
-  | 'source'
-  | 'ensureRepository'
->;
-
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
-export class ExperimentService implements Experiments {
-  private closed = false;
+export class ExperimentService extends ExperimentProgram implements Experiments {
   private codeBinding?: symbol;
   private compute?: ExperimentCompute;
-  private nativeWork?: NativeSandboxWork;
   private releaseReviewOwner?: () => void;
-  private program!: ExperimentProgram;
   /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
-  constructor(
-    private readonly state: State,
-    private readonly scope: Scope,
-    private readonly artifacts: Artifacts,
-    private readonly workflows: Workflows,
-    private readonly reviews: Reviews,
-    contextBuilder: ContextBuilder,
-    private code: ExperimentCode | undefined,
-    private readonly paper: Paper,
-    limits = EXPERIMENT_LIMITS,
-  ) {
-    this.initialize = async () => {
-      await migrateExperiments(state);
-      await initializeManagedCompute(state, true);
-      const service = this;
-      this.program = await createService(
-        new ExperimentProgram({
-          limits,
-          state,
-          scope,
-          artifacts,
-          workflows,
-          reviews,
-          contextBuilder,
-          get nativeWork() {
-            return service.nativeWork;
-          },
-          get code() {
-            return service.code;
-          },
-          paper,
-          facts: async (caller, id, tx) => await this.get(caller, id, tx),
-          checkAction: async (context) => {
-            await this.checkAction(context);
-          },
-        }),
-      );
-      try {
-        this.releaseReviewOwner = reviews.registerSubmitOwner({
-          id: 'experiments',
-          owns: async (review, tx) =>
-            !!(await tx.get(
-              'SELECT id FROM experiments WHERE id=? AND project_id=?',
-              review.subjectId,
-              review.projectId,
-            )),
-          claim: async (caller, review, tx) => {
-            const workflow = await this.workflows.get(caller, review.subjectId, tx);
-            this.program.handleFor(workflow.version);
-          },
-          submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
-          guidance: REVIEW_GUIDANCE,
-          fields: ['paperChanges'],
-          // An experiment is reviewed twice, so each review is named by the gate it read.
-          gates: async (reviewIds, sql) => {
-            if (!reviewIds.length) return {};
-            const rows = await sql.all<{ review_id: string; stage: string }>(
-              `SELECT review_id, stage FROM experiment_submissions WHERE review_id IN (${reviewIds.map(() => '?').join(',')})`,
-              ...reviewIds,
-            );
-            return Object.fromEntries(
-              rows.flatMap((row) =>
-                Object.hasOwn(GATE, row.stage) ? [[row.review_id, GATE[row.stage]!]] : [],
-              ),
-            );
-          },
-        });
-      } catch (error) {
-        this.program.dispose();
-        throw error;
-      }
-    };
+  async initialize(): Promise<void> {
+    await migrateExperiments(this.state);
+    await initializeManagedCompute(this.state, true);
+    await this.register();
+    try {
+      this.releaseReviewOwner = this.reviews.registerSubmitOwner({
+        id: 'experiments',
+        owns: async (review, tx) =>
+          !!(await tx.get(
+            'SELECT id FROM experiments WHERE id=? AND project_id=?',
+            review.subjectId,
+            review.projectId,
+          )),
+        claim: async (caller, review, tx) => {
+          const workflow = await this.workflows.get(caller, review.subjectId, tx);
+          this.handleFor(workflow.version);
+        },
+        submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+        guidance: REVIEW_GUIDANCE,
+        fields: ['paperChanges'],
+        // An experiment is reviewed twice, so each review is named by the gate it read.
+        gates: async (reviewIds, sql) => {
+          if (!reviewIds.length) return {};
+          const rows = await sql.all<{ review_id: string; stage: string }>(
+            `SELECT review_id, stage FROM experiment_submissions WHERE review_id IN (${reviewIds.map(() => '?').join(',')})`,
+            ...reviewIds,
+          );
+          return Object.fromEntries(
+            rows.flatMap((row) =>
+              Object.hasOwn(GATE, row.stage) ? [[row.review_id, GATE[row.stage]!]] : [],
+            ),
+          );
+        },
+      });
+    } catch (error) {
+      this.unregister();
+      throw error;
+    }
   }
   /** The optional Cordis child owns this binding, not the experiment lifecycle. */
   bindCode(code: ExperimentCode): () => void {
@@ -300,15 +222,6 @@ export class ExperimentService implements Experiments {
     return () => {
       if (this.nativeWork === service) this.nativeWork = undefined;
     };
-  }
-  private requireNativeWork(): NativeSandboxWork {
-    check(
-      this.nativeWork,
-      'native_compute_unavailable',
-      'Native Sandboxes integration is unavailable',
-      503,
-    );
-    return this.nativeWork;
   }
   private async nativeTransition(
     caller: Caller,
@@ -516,7 +429,7 @@ export class ExperimentService implements Experiments {
     rows: StandingRow[],
     tx: Transaction,
   ): Promise<Map<string, string>> {
-    const unheld = rows.filter((row) => !row.lease_id && working.has(row.state));
+    const unheld = rows.filter((row) => !row.lease_id && producing(row.state));
     if (!unheld.length) return new Map();
     const ended = await tx.all<{ experiment_id: string; released_at: string }>(
       `SELECT experiment_id,MAX(released_at) AS released_at FROM experiment_leases
@@ -560,7 +473,7 @@ export class ExperimentService implements Experiments {
       idleSince: released && released > row.updated_at ? released : row.updated_at,
       // A new attempt is not a return by itself, so the record's own arrivals say it.
       again:
-        working.has(row.state) &&
+        producing(row.state) &&
         enteredAgain(await this.workflows.history(caller, row.id, tx), row.state),
       blocked: context.blocked.has(row.id),
       lease: row.lease_id
@@ -641,6 +554,8 @@ export class ExperimentService implements Experiments {
           id,
         )
       ).map(submissionMetadata);
+      const nativeIds =
+        (await this.nativeWork?.artifactIds(caller.projectId, 'experiment', id, tx)) ?? [];
       return {
         id,
         projectId: row.project_id,
@@ -661,32 +576,19 @@ export class ExperimentService implements Experiments {
         submissions,
         reviewId: row.review_id,
         conclusion: row.conclusion,
-        ...(currentExperiment(workflow.version) && nativeExperiment(workflow.version)
+        ...(this.compute &&
+        !(currentExperiment(workflow.version) && nativeExperiment(workflow.version))
           ? {
-              captureArtifactIds:
-                (await this.nativeWork?.artifactIds(caller.projectId, 'experiment', id, tx)) ?? [],
+              compute: await this.compute.rows(caller.projectId, id, attempt.index, tx),
+              machines: await this.compute.machines.rows(caller.projectId, id, tx),
+              captureArtifactIds: [
+                ...new Set([
+                  ...(await this.compute.artifactIds(caller.projectId, id, tx)),
+                  ...nativeIds,
+                ]),
+              ],
             }
-          : this.compute
-            ? {
-                compute: await this.compute.rows(caller.projectId, id, attempt.index, tx),
-                machines: await this.compute.machines.rows(caller.projectId, id, tx),
-                captureArtifactIds: [
-                  ...new Set([
-                    ...(await this.compute.artifactIds(caller.projectId, id, tx)),
-                    ...((await this.nativeWork?.artifactIds(
-                      caller.projectId,
-                      'experiment',
-                      id,
-                      tx,
-                    )) ?? []),
-                  ]),
-                ],
-              }
-            : {
-                captureArtifactIds:
-                  (await this.nativeWork?.artifactIds(caller.projectId, 'experiment', id, tx)) ??
-                  [],
-              }),
+          : { captureArtifactIds: nativeIds }),
       };
     });
   }
@@ -794,13 +696,11 @@ export class ExperimentService implements Experiments {
           'Import the existing project repository into Code before creating work',
           409,
         );
-        const workflow = await (
-          await this.program.handleFor(
-            programVersion(
-              this.artifacts.largeUploadAvailable,
-              !!(await this.nativeWork?.connected(caller.projectId, tx)),
-            ),
-          )
+        const workflow = await this.handleFor(
+          programVersion(
+            this.artifacts.largeUploadAvailable,
+            !!(await this.nativeWork?.connected(caller.projectId, tx)),
+          ),
         ).start(
           caller,
           {
@@ -860,7 +760,7 @@ export class ExperimentService implements Experiments {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'attach', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
-        this.program.handleFor(experiment.workflow.version);
+        this.handleFor(experiment.workflow.version);
         this.revision(experiment, input.expectedRevision);
         check(
           experiment.attempt.index === input.attemptIndex,
@@ -868,7 +768,7 @@ export class ExperimentService implements Experiments {
           `Expected attempt ${input.attemptIndex}, the current attempt is ${experiment.attempt.index}`,
           409,
         );
-        await this.program.assertProducer(caller, experiment, tx);
+        await this.assertProducer(caller, experiment, tx);
         check(
           rolesFor(experiment.workflow.state).includes(input.role),
           'invalid_experiment_role',
@@ -878,7 +778,7 @@ export class ExperimentService implements Experiments {
         // Evidence is written against the work this experiment depends on, like the step itself.
         await this.workflows.checkDependencies(caller, experiment.id, tx);
         const artifact = await this.artifacts.get(caller, input.artifactId, tx);
-        const inherited = await this.program.pinnedRecovery(caller, experiment, tx);
+        const inherited = await this.pinnedRecovery(caller, experiment, tx);
         check(
           (await this.authoredInExecution(caller, artifact, tx)) ||
             experiment.captureArtifactIds?.includes(artifact.id) ||
@@ -937,8 +837,8 @@ export class ExperimentService implements Experiments {
     const evidence = currentEvidence(experiment, roles);
     // The worker holding this experiment sees the evidence it was offered plus its own;
     // anyone else, another record's worker included, reads what the record holds.
-    if (!caller.session || !(await this.program.holds(caller, experiment, tx))) return evidence;
-    const allowed = new Set(await this.program.allowedArtifacts(caller, experiment, tx));
+    if (!caller.session || !(await this.holds(caller, experiment, tx))) return evidence;
+    const allowed = new Set(await this.allowedArtifacts(caller, experiment, tx));
     return evidence.filter((e) => allowed.has(e.artifactId));
   }
   private one(evidence: ExperimentEvidence[], role: string): ExperimentEvidence {
@@ -973,7 +873,7 @@ export class ExperimentService implements Experiments {
   ): Promise<string[]> {
     const ids = [...new Set(markdownImageTargets(text))];
     const allowed = caller.session
-      ? new Set(await this.program.allowedArtifacts(caller, experiment, tx))
+      ? new Set(await this.allowedArtifacts(caller, experiment, tx))
       : null;
     for (const id of ids) {
       check(
@@ -992,12 +892,14 @@ export class ExperimentService implements Experiments {
     }
     return ids;
   }
+  /** The metrics exhibit of the selected `result` evidence. */
   private async buildExhibit(
     caller: Caller,
     experiment: Experiment,
+    results: ExperimentEvidence[],
     tx: Transaction,
   ): Promise<ExperimentExhibit> {
-    const sources = (await this.selected(caller, experiment, ['result'], tx)).sort((a, b) =>
+    const sources = [...results].sort((a, b) =>
       a.path < b.path ? -1 : a.path > b.path ? 1 : a.sequence - b.sequence,
     );
     const inputs = await mapAsync(sources, async (source) => ({
@@ -1042,7 +944,12 @@ export class ExperimentService implements Experiments {
         'Exhibit preview is available while running; read a pinned exhibit artifact after submission',
         409,
       );
-      return await this.buildExhibit(caller, experiment, tx);
+      return await this.buildExhibit(
+        caller,
+        experiment,
+        await this.selected(caller, experiment, ['result'], tx),
+        tx,
+      );
     });
   }
   async transition(
@@ -1057,7 +964,7 @@ export class ExperimentService implements Experiments {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'transition', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
-        this.program.handleFor(experiment.workflow.version);
+        this.handleFor(experiment.workflow.version);
         this.revision(experiment, input.expectedRevision);
         const prepared = await this.checkAction({
           caller,
@@ -1070,12 +977,10 @@ export class ExperimentService implements Experiments {
           return await this.submit(caller, experiment, input, prepared!, tx);
         if (experiment.reviewId && reviewing(experiment.workflow.state))
           await this.reviews.supersede(caller, experiment.reviewId, tx);
-        const moved = await (
-          await this.program.handleFor(experiment.workflow.version)
-        ).transition(
+        const moved = await this.move(
           caller,
+          experiment,
           {
-            instanceId: experiment.id,
             expectedRevision: input.expectedRevision,
             action: input.transition,
             input: { ...input },
@@ -1123,22 +1028,20 @@ export class ExperimentService implements Experiments {
       });
     });
   }
-  /** Read-only exit gates shared by guidance and the command writer. */
+  /** The document, figure, exhibit and authorship gates over a submission's selected evidence. */
   private async prepareSubmission(
     caller: Caller,
     experiment: Experiment,
-    stage: 'design' | 'results',
+    selection: ExperimentEvidence[],
     tx: Transaction,
   ): Promise<Submission> {
-    let evidence = await this.selected(
-      caller,
-      experiment,
-      stage === 'design' ? designRoles : ['result', 'report'],
-      tx,
-    );
+    let evidence = selection;
     let figureIds: string[] = [];
     let exhibit: ExperimentExhibit | null = null;
-    if (stage === 'design') {
+    // A result submission includes the exact approved design, never a newer plan association.
+    const approved =
+      experiment.workflow.state === 'running' ? approvedSubmission(experiment) : undefined;
+    if (!approved) {
       const plan = this.one(evidence, 'plan');
       const text = await this.text(caller, plan.artifactId, tx);
       figureIds = await this.figures(caller, text, experiment, tx);
@@ -1155,8 +1058,6 @@ export class ExperimentService implements Experiments {
         409,
       );
     } else {
-      const approved = approvedSubmission(experiment);
-      // Include the exact approved design, never a newer plan association.
       evidence = [...approved.evidence, ...evidence];
       const report = this.one(evidence, 'report');
       const text = await this.text(caller, report.artifactId, tx);
@@ -1164,15 +1065,21 @@ export class ExperimentService implements Experiments {
         ...new Set([...approved.figureIds, ...(await this.figures(caller, text, experiment, tx))]),
       ];
       for (const id of approved.figureIds) await this.artifacts.bytes(caller, id, tx);
-      exhibit = await this.buildExhibit(caller, experiment, tx);
+      exhibit = await this.buildExhibit(
+        caller,
+        experiment,
+        selection.filter((e) => e.role === 'result'),
+        tx,
+      );
       validateReport(text, {
         figures: figureIds,
         ...(exhibit.willPin ? { exhibitPath: exhibit.path } : {}),
       });
     }
-    const recovery = await this.program.pinnedRecovery(caller, experiment, tx);
-    const inherited = [...recovery];
-    if (stage === 'results') inherited.push(...approvedSubmission(experiment).evidence);
+    const inherited = [
+      ...(await this.pinnedRecovery(caller, experiment, tx)),
+      ...(approved?.evidence ?? []),
+    ];
     for (const item of evidence) {
       const metadata = await this.artifacts.get(caller, item.artifactId, tx);
       check(
@@ -1235,16 +1142,17 @@ export class ExperimentService implements Experiments {
     );
     return ref;
   }
-  /** `prepared` is what checkAction verified moments earlier in this transaction. */
+  /** The submission is what checkAction verified moments earlier in this transaction. */
   private async submit(
     caller: Caller,
     experiment: Experiment,
     input: ExperimentTransition,
-    { evidence, figureIds, exhibit }: Submission,
+    { evidence, figureIds, exhibit, codeCaptureRef: checkedRef }: Submission,
     tx: Transaction,
   ): Promise<Experiment> {
     const stage = input.transition === 'submit_design' ? 'design' : 'results';
-    const codeCaptureRef = await this.finalCaptureRef(caller, experiment, stage, tx);
+    const codeCaptureRef =
+      checkedRef ?? (await this.finalCaptureRef(caller, experiment, stage, tx));
     if (exhibit?.willPin) {
       const artifact = await this.artifacts.create(
         caller,
@@ -1272,12 +1180,10 @@ export class ExperimentService implements Experiments {
     const pinnedInputIds = (await getArtifacts(this.artifacts, caller, artifactIds, tx))
       .filter((artifact) => artifact.createdBy !== caller.actorId)
       .map((artifact) => artifact.id);
-    const moved = await (
-      await this.program.handleFor(experiment.workflow.version)
-    ).transition(
+    const moved = await this.move(
       caller,
+      experiment,
       {
-        instanceId: experiment.id,
         expectedRevision: input.expectedRevision,
         action: input.transition,
         input: { ...input },
@@ -1368,35 +1274,6 @@ export class ExperimentService implements Experiments {
     );
     return await this.get(caller, experiment.id, tx);
   }
-  private route(stage: 'design' | 'results', input: ExperimentReview): string {
-    check(
-      ['pass', 'needs_changes', 'fail'].includes(input.verdict),
-      'invalid_verdict',
-      'A supported review verdict is required',
-    );
-    if (input.verdict === 'pass') {
-      check(
-        input.returnTo === undefined,
-        'invalid_review_return',
-        'Passing reviews do not accept returnTo',
-      );
-      return stage === 'design' ? 'approve_design' : 'accept_results';
-    }
-    if (stage === 'design') {
-      check(
-        input.returnTo === undefined || input.returnTo === 'planned',
-        'invalid_review_return',
-        'A rejected design returns only to planned',
-      );
-      return 'revise_design';
-    }
-    check(
-      input.returnTo === 'planned' || input.returnTo === 'running',
-      'invalid_review_return',
-      'Both negative attempt verdicts require returnTo planned or running',
-    );
-    return input.returnTo === 'planned' ? 'revise_plan' : 'revise_execution';
-  }
   async submitReview(
     caller: Caller,
     value: ExperimentReview,
@@ -1440,9 +1317,7 @@ export class ExperimentService implements Experiments {
               ? input.evidence.conclusion.trim()
               : section || input.notes;
         }
-        const moved = await (
-          await this.program.handleFor(experiment.workflow.version)
-        ).transition(
+        const moved = await this.handleFor(experiment.workflow.version).transition(
           caller,
           {
             instanceId: experiment.id,
@@ -1556,106 +1431,16 @@ export class ExperimentService implements Experiments {
       });
     });
   }
-  private async checkReview(
-    caller: Caller,
-    experiment: Experiment,
-    input: ExperimentReview,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.scope.require(caller, 'review', tx);
-    const review = await this.reviews.get(caller, input.reviewId, tx);
-    check(
-      experiment.reviewId === review.id && reviewing(experiment.workflow.state),
-      'stale_review',
-      'This review no longer belongs to the current submission',
-      409,
-    );
-    this.revision(experiment, input.expectedRevision);
-    check(
-      review.subjectRevision === experiment.workflow.revision,
-      'revision_conflict',
-      'Review is pinned to a different experiment revision',
-      409,
-    );
-    const submission = reviewedSubmission(experiment, review.id);
-    check(
-      submission &&
-        submission.subjectRevision === review.subjectRevision &&
-        submission.producerId === review.producerId,
-      'stale_review',
-      'The review must pin this exact attempt and submission',
-      409,
-    );
-    const ids = [
-      ...new Set([
-        ...submission.evidence.map((e) => e.artifactId),
-        ...submission.figureIds,
-        ...(submission.paperProposal ? [submission.paperProposal.artifact.id] : []),
-      ]),
-    ];
-    check(
-      digest(ids) === digest(review.artifactIds),
-      'stale_review',
-      'Review evidence differs from the sealed submission',
-      409,
-    );
-    await this.program.reviewCapture(caller, experiment, tx);
-    this.route(submission.stage, input);
-    await this.reviews.checkSubmit(caller, review.id, input, tx);
-    // Reviews holds the criterion to met with some pinned evidence; only Experiments knows
-    // which artifact is the statement, and a finding citing the plan alone has not read it.
-    const statement = submission.evidence.find((e) => e.role === 'feasibility');
-    if (input.verdict === 'pass' && submission.stage === 'design' && statement)
-      check(
-        input.findings
-          ?.find((finding) => finding.criterionNumber === feasibilityCriterion)
-          ?.evidenceIds.includes(statement.artifactId),
-        'feasibility_not_cited',
-        `A passing design review cites the feasibility statement ${statement.artifactId} in the finding for criterion ${feasibilityCriterion}`,
-      );
-    if (input.paperChanges !== undefined)
-      await this.paper.checkReview(
-        caller,
-        {
-          ...input.paperChanges,
-          source: { kind: 'experiment', id: experiment.id, revision: review.subjectRevision },
-          reviewId: review.id,
-          verdict: input.verdict,
-          evidenceIds: review.artifactIds,
-        },
-        tx,
-      );
-  }
-  /** Exit readiness checks share actual submission validation; dispatch admission remains separate. */
-  /** For a submission, answers what it would submit. */
-  private async checkAction(context: WorkflowCheckContext): Promise<Submission | undefined> {
+  /**
+   * Exit readiness of an owner transition, shared by guidance and the command writer. For a
+   * submission, it answers with what would be submitted.
+   */
+  protected async checkAction(context: WorkflowCheckContext): Promise<Submission | undefined> {
     const { caller, tx } = context,
       experiment = await this.get(caller, context.snapshot.id, tx);
     const action = context.transition;
     if (context.input?.expectedRevision !== undefined)
       this.revision(experiment, context.input.expectedRevision as number);
-    if (
-      (action &&
-        [
-          'approve_design',
-          'revise_design',
-          'accept_results',
-          'revise_plan',
-          'revise_execution',
-        ].includes(action)) ||
-      (!action && reviewing(experiment.workflow.state))
-    ) {
-      check(context.input, 'review_input_required', 'A complete verdict is required', 409);
-      const input = context.input as unknown as ExperimentReview;
-      await this.checkReview(caller, experiment, input, tx);
-      const submission = experiment.submissions.find((s) => s.reviewId === input.reviewId)!;
-      check(
-        !action || this.route(submission.stage, input) === action,
-        'invalid_review_return',
-        'The verdict does not select this transition',
-      );
-      return;
-    }
     if (action === 'abandon' || action === 'mark_failed') {
       await this.scope.require(caller, 'write', tx);
       check(
@@ -1664,11 +1449,12 @@ export class ExperimentService implements Experiments {
         'The experiment is already terminal',
         409,
       );
-      await this.program.assertAdministration(caller, experiment, tx);
+      await this.assertAdministration(caller, experiment, tx);
       reasoned(context.input, 'Ending an experiment requires a reason');
       return;
     }
-    await this.program.assertProducer(caller, experiment, tx);
+    // Running work's approved plan and prerequisites are checked here as well.
+    await this.assertProducer(caller, experiment, tx);
     if (action === 'submit_design' || action === 'submit_results') {
       check(
         experiment.workflow.state === (action === 'submit_design' ? 'planned' : 'running'),
@@ -1679,7 +1465,7 @@ export class ExperimentService implements Experiments {
       const selection = await this.selected(
         caller,
         experiment,
-        action === 'submit_design' ? ['plan'] : ['result', 'report'],
+        rolesFor(experiment.workflow.state),
         tx,
       );
       const own = this.one(selection, action === 'submit_design' ? 'plan' : 'report');
@@ -1693,6 +1479,7 @@ export class ExperimentService implements Experiments {
         'The submitting worker must retain and attach its own plan or report after verifying any inherited evidence',
         403,
       );
+      let codeCaptureRef: CodeCaptureRef | undefined;
       if (action === 'submit_results') {
         check(
           selection.some((e) => e.role === 'result'),
@@ -1700,15 +1487,13 @@ export class ExperimentService implements Experiments {
           'At least one result is required',
           409,
         );
-        await this.workflows.checkDependencies(caller, experiment.id, tx);
-        if (caller.session) await this.finalCaptureRef(caller, experiment, 'results', tx);
+        if (caller.session)
+          codeCaptureRef = await this.finalCaptureRef(caller, experiment, 'results', tx);
       }
-      return await this.prepareSubmission(
-        caller,
-        experiment,
-        action === 'submit_design' ? 'design' : 'results',
-        tx,
-      );
+      return {
+        ...(await this.prepareSubmission(caller, experiment, selection, tx)),
+        codeCaptureRef,
+      };
     }
     if (action === 'retry_running') {
       check(
@@ -1721,14 +1506,6 @@ export class ExperimentService implements Experiments {
       // Without this, guidance answered `ready` for a retry the tool then refused.
       reasoned(context.input, 'Retrying an experiment requires the reason for the interruption');
     }
-  }
-  private revision(experiment: Experiment, expected: number): void {
-    check(
-      Number.isSafeInteger(expected) && experiment.workflow.revision === expected,
-      'revision_conflict',
-      'The experiment changed; read its current revision',
-      409,
-    );
   }
   private async addAttempt(
     id: string,
@@ -1858,7 +1635,7 @@ export class ExperimentService implements Experiments {
     this.compute?.close();
     this.compute = undefined;
     this.withdrawReviewOwner();
-    this.program.dispose();
+    this.unregister();
   }
 }
 export const experimentsPlugin = {

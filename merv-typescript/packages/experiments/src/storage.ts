@@ -44,26 +44,8 @@ export interface SubmissionRow {
 }
 export const submissionMetadata = (r: SubmissionRow): ExperimentSubmission => JSON.parse(r.record);
 export async function migrateExperiments(state: State): Promise<void> {
-  await state.migrate('experiments', [
-    {
-      version: 1,
-      sql: postgresMigrations[1],
-    },
-    {
-      version: 2,
-      sql: postgresMigrations[2],
-    },
-    {
-      version: 3,
-      sql: postgresMigrations[3],
-    },
-    {
-      version: 4,
-      sql: postgresMigrations[4],
-    },
-    {
-      version: 5,
-      sql: postgresMigrations[5],
-    },
-  ]);
+  await state.migrate(
+    'experiments',
+    Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+  );
 }

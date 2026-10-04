@@ -1,4 +1,3 @@
-import type { PaperProposal } from '@merv/paper/models';
 import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
 import type { SandboxComputeOutput } from '@merv/sandboxes/models';
 
@@ -34,7 +33,7 @@ export interface ExperimentAttach {
 export interface ExperimentTransition {
   experimentId: string;
   transition: ExperimentTransitionName;
-  /** JSON document changes reviewed with this result submission. */
+  /** The workflow revision the transition is made from; any other revision is refused. */
   expectedRevision: number;
   evidence?: { reason?: string; detail?: string };
   requestId: string;
@@ -58,7 +57,6 @@ export interface ExperimentEvidence {
   systemGenerated: boolean;
 }
 export interface ExperimentSubmission {
-  paperProposal?: PaperProposal;
   id: string;
   experimentId: string;
   attemptIndex: number;

@@ -1,6 +1,6 @@
 # Experiments
 
-Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document retired, read-only workflow versions. See [Always-on Git](ALWAYS_GIT.md).
+Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Retired scratch, central-base and `baseTaskId` contracts are summarized under [History](#history). See [Always-on Git](ALWAYS_GIT.md).
 
 The production Experiments plugin connects a research question to design review,
 execution, result review and an explicit conclusion. It retains every attempt
@@ -135,7 +135,7 @@ Create retained artifacts first, then attach their IDs. The role rules are:
 | `report`      | running        | Exactly one selected report, with nonempty Summary, Results, Deviations from plan, Conclusion sections |
 | `exhibit`     | System only    | Generated and pinned when a submitted result declares JSON                                             |
 
-Each input role accepts nonempty valid UTF-8 at most **16,000 bytes**. Logical
+Each input role accepts nonempty valid UTF-8 at most **64,000 bytes**. Logical
 paths are bounded relative labels: no absolute paths, traversal, empty segments,
 backslashes or URL syntax. They do not direct filesystem writes. Role and path
 form the replaceable slot within an attempt. Public attachment is refused during
@@ -310,8 +310,7 @@ other trusted components compose these commands atomically.
 The Experiments UI reads the actual plugin tools. It shows inventory and detail,
 revision/attempt, approved plan, retained evidence, review history, feedback,
 workflow blockers/dependencies and a metrics preview. Agents create and update
-experiments through tools; this page reads their records. The browser
-verification checkpoint is recorded below.
+experiments through tools; this page reads their records.
 
 Provider unload withdraws its generic review route, workflow/context registrations
 and dependent tools/UI. State and retained artifacts remain. Reload can restore
@@ -326,50 +325,41 @@ reference resolution and immutable terminal corpus snapshots; see
 scheduling and its seven-slot reservation/threshold policy, five-lens reflection,
 and production code consolidation and central publication.
 
-## Explicit Git execution
+## Git execution
 
-Omitting `workspace`, or selecting `"none"`, selects the scratch program
-(version 5). Omitted input stays absent in command hashes; existing records,
-submissions and frozen contexts are not rewritten. Creating with
-`workspace: "git"` selects the Git program (version 6). Planning/design review remain scratch;
-running uses a retained private persistent checkout, and attempt review uses an
-ephemeral read-only checkout based on an exact captured commit.
+Every current contract executes in managed Git through Code. Planning and
+design review have no checkout. `running` uses a retained private persistent
+checkout based on `reference:base`, and `experiment_review` uses an ephemeral
+read-only checkout based on `reference:code`.
 
-The Runner's trusted local configuration supplies the repository. The producing
-session must attach its workspace before result submission. `submit_results`
-seals that exact worker's future `session-final` reference in the immutable
-submission. After handoff the Runner stops the process and reports its final
-capture. Review dispatch waits for this exact observation; it then freezes
-`references.code` to that head OID, with source/worker/revision provenance in
-context. Later captures cannot substitute, and a missing reference or local Git
-object has no central fallback. New observations include a real tree OID;
-legacy reports can remain without one.
+The base is never named at creation. Code derives it from what the `dependsOn`
+tasks were accepted with and pins it when the first producing lease is acquired.
+That is normally the planner's, although planning has no checkout, so the plan is
+written against a fixed base and the `running` checkout inherits it; a revised
+plan or a new attempt keeps the same pin. While no base can be derived the
+experiment is not offered and shows `code_base_pending` or `code_merge_required`
+([workspaces](WORKSPACES.md#the-derived-base)). Each `running` lease is also a
+writer generation: until the previous writer's final capture arrives, or an
+operator fences it, execution is not offered.
 
-A Git experiment created without `baseTaskId` starts on version 8. Its base is not
-named: Code derives it from what the `dependsOn` tasks were accepted with and pins it
-when the first producing lease is acquired. That is normally the planner's, although
-planning has no checkout, so the plan is written against a fixed base and the `running`
-checkout inherits it as `reference:base`; a revised plan or a new attempt keeps the same
-pin. While no base can be derived the experiment is not offered and shows
-`code_base_pending` or `code_merge_required` ([workspaces](WORKSPACES.md#the-derived-base)).
-Version 6, based on `central`, stays registered for the experiments already on it.
+`submit_results` must come from the attached running worker session, and it seals
+that worker's future `session-final` reference in the immutable submission. After
+handoff the Runner stops the process and reports its final capture. The results
+review is not eligible until that exact capture is ready; review dispatch then
+freezes `references.code` to its head OID, with source/worker/revision provenance
+in context. Later captures cannot substitute. An accepted result is recorded with Code as the
+unit's acceptance, so later work can take its base from it.
 
-With `workspace: "git"`, optional `baseTaskId` names a Git task that is also among
-`dependsOn`; the experiment then starts on version 7, whose `running` checkout is
-based on `reference:base`, frozen to the commit that task delivered once it is
-accepted. Without `workspace: "git"` it is refused (`invalid_workspace`); a base that
-is not a Git task among the prerequisites is `invalid_workspace_base`; a base without
-an accepted delivered commit is `experiment_base_unavailable`. Experiments on
-versions 5 and 6 finish under their own versions. The objects exist only in the
-producing runner's repository, so the experiment must run there
-([workspaces](WORKSPACES.md)).
-
-This integrates captured code as reviewed experiment evidence. It supplies no
-remote compute, sandbox provisioning, object transport, code consolidation or
-central publication. Sessions/Runner still owns process and checkout lifecycle.
-The current seven-experiment cap does not implement the future reflection
+The native Sandboxes contracts (36/40) run the same graph with Sandboxes' native
+work references and guidance in place of the rented-machine `compute.*` tools.
+Experiments does not publish code; Sessions/Runner still own process and checkout
+lifecycle. The seven-experiment cap does not implement the future reflection
 scheduler's reserved slots. Exact capture and compatibility details are in
 [research inputs](RESEARCH_INPUTS.md).
+
+`workspace` and `baseTaskId` remain in the create schema only so historical
+requests replay: a `workspace` other than `git` is refused (`invalid_workspace`)
+and any `baseTaskId` is refused (`incompatible_workspace`).
 
 TypeScript deliberately adds strict bounded schemas, safe relative paths,
 explicit result formats, revision/attempt fencing and durable request receipts.
@@ -378,38 +368,17 @@ differences and remaining order are in the
 [Python reference](EXPERIMENTS_PARITY_REFERENCE.md) and
 [research-program plan](RESEARCH_PROGRAM_PARITY_PLAN.md).
 
-## Verification checkpoint
+## History
 
-The bounded independent pass completed **34 tests** across
-[evidence/input](../tests/experiment-evidence.test.ts),
-[recovery invariants](../tests/experiment-invariants.test.ts),
-[core lifecycle](../tests/experiments.test.ts), and
-[assignment/lease integration](../tests/experiment-assignments.test.ts).
-Backend typecheck passed. This includes exact recovery reattachment, inherited
-draft figures, foreign/missing/post-offer figure refusals, metadata-only admission,
-both attempt return paths, shared exit gates and restart restoration.
-
-The complete integration suite passes **610/610**, including prepared Nisa.
-Four fresh native workers completed the actual production lifecycle with **24
-successful MCP calls, zero failed calls and five shell calls**. Independent audit
-matches both review manifests, actual executed code/stdout, the reproduced
-calculation and final state. A post-run report lookup bug was repaired against
-retained evidence without repeating model execution; exact hashes are recorded.
-
-Actual browser verification on a restored copy of those records checks the gate,
-plan/evidence/reviews, attempts/evidence and plugin removal/restoration while Claims
-continues. Separate real-record component SSR checks recovery attribution and
-latest-review selection after closure. Builds, typechecks and formatting pass.
-These use tiny synthetic data and local credentials; they do not claim shared
-provider login, cloud execution or broader research parity.
-See [verification](../verification/experiments.json),
-[native evidence](../verification/experiments-live.json), and
-[the checkpoint](../VERIFICATION.md).
-
-The later Git/corpus foundation has focused service and actual local Git tests.
-Its four-agent `--git` acceptance is running at this documentation checkpoint;
-the historical 610-test/scratch-native record above does not prove the new Git
-path. Final native results will be recorded separately after inspection.
+Earlier contracts let an experiment run in scratch space (version 5), on the
+`central` base (6) or on the commit a `baseTaskId` task delivered (7); version 8
+introduced the derived base the current contracts keep. Older experiments also
+tested claims held by the retired Claims plugin. None of those contracts can start
+or run now; their stored records stay readable. The 2026-09 verification checkpoint — 34 focused tests, the
+610-test integration suite and a four-worker native run — exercised that scratch
+path, not current Git execution; see [verification](../verification/experiments.json)
+and [native evidence](../verification/experiments-live.json). Current behaviour is
+covered by the `tests/experiment*.test.ts` suites.
 
 ## Paper changes in the results review
 
