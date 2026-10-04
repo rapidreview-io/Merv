@@ -80,7 +80,7 @@ test('ordinary new tasks have managed Git and reject scratch and legacy base sel
   );
   await assert.rejects(
     f.tasks.create(f.admin, { ...input, baseTaskId: task.id, requestId: 'legacy' }),
-    { code: 'incompatible_workspace' },
+    { code: 'invalid_workspace' },
   );
 });
 

@@ -39,8 +39,6 @@ export function validateConfirmations(
   value: unknown,
   checks: string[],
   artifactIds: string[],
-  /** A Git task always delivers a commit, which backs a met claim that cites no file. */
-  commit = false,
 ): TaskConfirmation[] {
   check(
     Array.isArray(value),
@@ -84,11 +82,6 @@ export function validateConfirmations(
         item.evidenceIds.every((id: unknown) => typeof id === 'string' && artifactIds.includes(id)),
       'invalid_confirmations',
       `Check ${item.checkNumber} must refer only to distinct submitted artifact IDs`,
-    );
-    check(
-      item.status !== 'met' || commit || item.evidenceIds.length > 0,
-      'invalid_confirmations',
-      `Check ${item.checkNumber} claims met and requires retained evidence`,
     );
   }
   check(

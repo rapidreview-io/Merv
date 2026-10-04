@@ -56,6 +56,7 @@ import {
   type WorkflowPolicy,
   type Workflows,
   type WorkflowSnapshot,
+  type WorkflowTransition,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -131,6 +132,25 @@ function rejectReviewReturn(input: object): void {
     !descriptor || ('value' in descriptor && descriptor.value === undefined),
     'invalid_review_return',
     message,
+  );
+}
+
+/** A command's taskId, where given, names the workflow it moves. */
+function sameTask(snapshot: WorkflowSnapshot, input: Data | undefined): void {
+  check(
+    !input || input.taskId === undefined || input.taskId === snapshot.id,
+    'invalid_input',
+    'taskId must match this workflow',
+  );
+}
+
+/** A command's expectedRevision, where given, is the revision it moves. */
+function sameRevision(snapshot: WorkflowSnapshot, input: Data | undefined, message: string) {
+  check(
+    !input || input.expectedRevision === undefined || input.expectedRevision === snapshot.revision,
+    'revision_conflict',
+    message,
+    409,
   );
 }
 
@@ -323,6 +343,8 @@ export class TaskService implements Tasks {
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
+  /** Guards a command has run itself, by the transition it is making in that transaction. */
+  private checking = new WeakMap<Transaction, Map<string, unknown>>();
   private types = new Map<
     string,
     { definition: ContextRecipeDefinition; context: ContextRegistration }
@@ -371,9 +393,10 @@ export class TaskService implements Tasks {
           // the owner deciding as owner may shut them out.
           claim: async (caller, review, tx) => {
             const row = await this.row(tx, caller, review.subjectId);
-            this.registration((await this.workflows.get(caller, row.id, tx)).version);
+            const snapshot = await this.workflows.get(caller, row.id, tx);
+            this.registration(snapshot.version);
             if (row.review_id === review.id && !review.override)
-              await this.leasedClaim(caller, await this.workflows.get(caller, row.id, tx), tx);
+              await this.leasedClaim(caller, snapshot, tx);
           },
         });
       } catch (error) {
@@ -505,7 +528,6 @@ export class TaskService implements Tasks {
       // Version 6 is created only by the service binding; its runner remains a producer.
       if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
         await this.scope.require(caller, 'admin', tx);
-      await this.workflows.checkDependencies(caller, snapshot.id, tx);
       this.requireCode();
       await this.requireBase(caller, snapshot, tx);
       this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'work');
@@ -675,6 +697,16 @@ export class TaskService implements Tasks {
     return (await this.currentLease(caller, row.id, snapshot.revision, tx)).purpose === 'work';
   }
 
+  private async producerOrAdmin(
+    caller: Caller,
+    row: TaskRow,
+    snapshot: WorkflowSnapshot,
+    tx: Transaction,
+  ): Promise<void> {
+    if (!(await this.isProducer(caller, row, snapshot, tx)))
+      await this.scope.require(caller, 'admin', tx);
+  }
+
   private async checkpointRows(
     caller: Caller,
     taskId: string,
@@ -777,32 +809,34 @@ export class TaskService implements Tasks {
           review?.status === 'started' &&
           review.reviewerId &&
           !(await this.scope.eligible(caller.projectId, review.reviewerId, 'review', tx));
+        const [gate, waiting] =
+          snapshot.state === 'suspended'
+            ? [
+                'suspended',
+                'This service task is suspended. A signed-in human operator can resume this same task with workflow.extend_limit (review_rounds), or cancel/replan its waiters.',
+              ]
+            : snapshot.state === 'in_progress'
+              ? ['delivery_required', 'The task producer must complete and submit the delivery.']
+              : recovering
+                ? [
+                    'review_recovery_pending',
+                    'The reviewer no longer has access. Recovery must reopen the claim before another reviewer can begin.',
+                  ]
+                : review?.waiting
+                  ? ['review_provenance_blocked', review.waiting]
+                  : review?.status === 'requested'
+                    ? [
+                        'review_required',
+                        'Wait for an independent reviewer to claim this review. The producer cannot review its own work.',
+                      ]
+                    : [
+                        'independent_review',
+                        'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
+                      ];
         return {
           label: row.title,
-          gate:
-            snapshot.state === 'suspended'
-              ? 'suspended'
-              : snapshot.state === 'in_progress'
-                ? 'delivery_required'
-                : recovering
-                  ? 'review_recovery_pending'
-                  : review?.waiting
-                    ? 'review_provenance_blocked'
-                    : review?.status === 'requested'
-                      ? 'review_required'
-                      : 'independent_review',
-          waiting:
-            snapshot.state === 'suspended'
-              ? 'This service task is suspended. A signed-in human operator can resume this same task with workflow.extend_limit (review_rounds), or cancel/replan its waiters.'
-              : snapshot.state === 'in_progress'
-                ? 'The task producer must complete and submit the delivery.'
-                : recovering
-                  ? 'The reviewer no longer has access. Recovery must reopen the claim before another reviewer can begin.'
-                  : review?.waiting
-                    ? review.waiting
-                    : review?.status === 'requested'
-                      ? 'Wait for an independent reviewer to claim this review. The producer cannot review its own work.'
-                      : 'An independent review is in progress. Wait for its verdict; no producer transition is needed.',
+          gate,
+          waiting,
           references: [
             ...(dependencies ?? []).map((dependency) => ({
               kind: 'workflow',
@@ -872,7 +906,7 @@ export class TaskService implements Tasks {
           requiredInput: ['artifactIds', 'commandId', 'confirmations'],
           arguments: taskArguments,
           check: async (context) => {
-            await this.checkDelivery(context);
+            if (!this.checked(context)) await this.checkDelivery(context);
           },
         },
         {
@@ -948,7 +982,7 @@ export class TaskService implements Tasks {
             ? 'Suspend this service task with a specific reason. Its evidence and waiters are retained; a human operator can extend review_rounds to resume the same task.'
             : 'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
           check: async (context) => {
-            await this.checkFailure(context);
+            if (!this.checked(context)) await this.checkFailure(context);
           },
         },
       ],
@@ -997,15 +1031,20 @@ export class TaskService implements Tasks {
   }
 
   private async checkTaskReview(context: WorkflowCheckContext): Promise<void> {
-    await this.scope.require(context.caller, 'review', context.tx);
-    if (context.input) rejectReviewReturn(context.input);
-    const review = await this.currentReview(context);
-    await this.reviews.checkSubmit(
-      context.caller,
-      review.id,
-      context.input as unknown as Omit<TaskReview, 'requestId'> | undefined,
-      context.tx,
-    );
+    // The command making this transition has checked the review and routed the verdict itself.
+    const checked = this.checked<ReviewRequest>(context);
+    let review = checked;
+    if (!review) {
+      await this.scope.require(context.caller, 'review', context.tx);
+      if (context.input) rejectReviewReturn(context.input);
+      review = await this.currentReview(context);
+      await this.reviews.checkSubmit(
+        context.caller,
+        review.id,
+        context.input as unknown as Omit<TaskReview, 'requestId'> | undefined,
+        context.tx,
+      );
+    }
     // Only a proposed verdict asks Code: the committing transition always carries its input, so
     // this is re-checked there, while guidance read with Code unloaded still answers.
     if (context.input) {
@@ -1014,7 +1053,7 @@ export class TaskService implements Tasks {
       if (context.input.verdict === 'pass' && !review.override)
         await this.checkoutReviewer(context, review, headOid);
     }
-    if (context.input && context.transition) {
+    if (!checked && context.input && context.transition) {
       const action = await this.reviewAction(
         context,
         context.input.verdict as 'pass' | 'needs_changes' | 'fail',
@@ -1140,13 +1179,6 @@ export class TaskService implements Tasks {
       caller.projectId,
     );
     check(row, 'not_found', 'Task not found in this project', 404);
-    // Version 1 evidence was retired with its records (tasks migration 8); none can remain.
-    check(
-      row.evidence_version === 2,
-      'task_unavailable',
-      'Task evidence version 1 is retired',
-      500,
-    );
     return row;
   }
   private async projectRecord(caller: Caller, row: TaskRow, tx?: Transaction): Promise<TaskRecord> {
@@ -1521,17 +1553,11 @@ export class TaskService implements Tasks {
           409,
         );
         check(
-          input.workspace === undefined || input.workspace === 'git',
+          (input.workspace === undefined || input.workspace === 'git') &&
+            input.baseTaskId === undefined,
           'invalid_workspace',
-          'New tasks always use Git. Omit workspace or use git.',
+          'New tasks always use Git. Omit workspace or use git, and use dependsOn for accepted code dependencies; baseTaskId is retired.',
         );
-        check(
-          input.baseTaskId === undefined,
-          'incompatible_workspace',
-          'Use dependsOn for accepted code dependencies; baseTaskId is retired.',
-          409,
-        );
-        const git = true;
         await this.requireCode().ensureRepository(caller, tx);
         check(
           await this.requireCode().hosted(caller, tx),
@@ -1591,7 +1617,7 @@ export class TaskService implements Tasks {
         if (input.briefId === undefined) {
           // A brief rendered here is checked as written: its input is plain text, without NUL or
           // a lone surrogate, so it reads back unchanged. It is the producer's own text document.
-          content = renderBrief({ ...input, checks }, git);
+          content = renderBrief({ ...input, checks }, true);
           brief = await this.artifacts.create(
             caller,
             { title: clip(`Task brief: ${input.title}`, 300), content },
@@ -1850,7 +1876,6 @@ export class TaskService implements Tasks {
     // Reverse links change when downstream work is added, independently of this assignment.
     const { dependents: _dependents, ...assignmentTask } = task;
     // Worker contexts retain the offer's Introduction even if an operator later changes it.
-    // Old immutable lease receipts without this field remain exactly as they were.
     const receipt = caller.session
       ? (JSON.parse(
           (await this.currentLease(caller, task.id, task.workflow.revision, tx)).receipt,
@@ -1864,9 +1889,7 @@ export class TaskService implements Tasks {
     );
     const taskMetadata =
       JSON.stringify(assignmentTask) +
-      (project === undefined
-        ? ''
-        : `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}`) +
+      `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}` +
       (!hasProjectPaper && paper
         ? `\n\nProject paper (captured document revisions; read paper.read for abbreviated sections):\n${JSON.stringify(paper)}`
         : '');
@@ -2314,8 +2337,7 @@ export class TaskService implements Tasks {
       'Task is not awaiting producer work',
       409,
     );
-    if (!(await this.isProducer(caller, row, workflow, tx)))
-      await this.scope.require(caller, 'admin', tx);
+    await this.producerOrAdmin(caller, row, workflow, tx);
     check(
       input.claimId === undefined,
       'invalid_context',
@@ -2592,18 +2614,9 @@ export class TaskService implements Tasks {
       409,
     );
     if (!proposed) return undefined;
+    sameTask(current, proposed);
+    sameRevision(current, proposed, 'Task revision changed; refresh the task before submitting');
     const input = proposed as unknown as TaskDelivery;
-    check(
-      input.taskId === undefined || input.taskId === current.id,
-      'invalid_input',
-      'taskId must match this workflow',
-    );
-    check(
-      input.expectedRevision === undefined || current.revision === input.expectedRevision,
-      'revision_conflict',
-      'Task revision changed; refresh the task before submitting',
-      409,
-    );
     check(
       Array.isArray(input.artifactIds) &&
         new Set(input.artifactIds).size === input.artifactIds.length &&
@@ -2654,7 +2667,6 @@ export class TaskService implements Tasks {
         input.confirmations,
         JSON.parse(row.checks),
         input.artifactIds,
-        true,
       ),
     };
   }
@@ -2721,13 +2733,8 @@ export class TaskService implements Tasks {
   }: WorkflowCheckContext): Promise<void> {
     await this.scope.require(caller, 'write', tx);
     const row = await this.row(tx, caller, current.id);
-    check(
-      !input || input.taskId === undefined || input.taskId === current.id,
-      'invalid_input',
-      'taskId must match this workflow',
-    );
-    if (!(await this.isProducer(caller, row, current, tx)))
-      await this.scope.require(caller, 'admin', tx);
+    sameTask(current, input);
+    await this.producerOrAdmin(caller, row, current, tx);
     check(
       !input || (typeof input.reason === 'string' && input.reason.trim()),
       'invalid_reason',
@@ -2739,12 +2746,7 @@ export class TaskService implements Tasks {
       'Only a task awaiting review can reissue its review',
       409,
     );
-    check(
-      !input || input.expectedRevision === undefined || current.revision === input.expectedRevision,
-      'revision_conflict',
-      'Task revision changed; refresh the task before reissuing review',
-      409,
-    );
+    sameRevision(current, input, 'Task revision changed; refresh the task before reissuing review');
     const previous = await this.reviews.get(caller, row.review_id, tx);
     check(
       previous.status === 'requested' || previous.status === 'started',
@@ -2763,27 +2765,15 @@ export class TaskService implements Tasks {
   private async checkFailure({ caller, snapshot, tx, input }: WorkflowCheckContext): Promise<void> {
     await this.scope.require(caller, 'write', tx);
     const row = await this.row(tx, caller, snapshot.id);
-    if (!(await this.isProducer(caller, row, snapshot, tx)))
-      await this.scope.require(caller, 'admin', tx);
-    check(
-      !input || input.taskId === undefined || input.taskId === snapshot.id,
-      'invalid_input',
-      'taskId must match this workflow',
-    );
+    await this.producerOrAdmin(caller, row, snapshot, tx);
+    sameTask(snapshot, input);
     check(
       snapshot.state === 'in_progress' || snapshot.state === 'in_review',
       'invalid_transition',
       'Only an active task can be marked failed',
       409,
     );
-    check(
-      !input ||
-        input.expectedRevision === undefined ||
-        input.expectedRevision === snapshot.revision,
-      'revision_conflict',
-      'Task changed; refresh it before marking it failed',
-      409,
-    );
+    sameRevision(snapshot, input, 'Task changed; refresh it before marking it failed');
     check(
       !input ||
         (typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 16000),
@@ -2802,15 +2792,74 @@ export class TaskService implements Tasks {
     }
   }
 
+  /**
+   * One task command: in its transaction and under its requestId, `run` moves the task and names
+   * it, and the command answers with the task as it then stands.
+   */
+  private async taskCommand(
+    caller: Caller,
+    transaction: Transaction | undefined,
+    permission: 'write' | 'review',
+    operation: string,
+    input: { requestId: string },
+    run: (tx: Transaction) => Promise<string>,
+  ): Promise<Task> {
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, permission, tx);
+      return await this.command(tx, caller, input.requestId, operation, input, async () => {
+        const taskId = await run(tx);
+        return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
+      });
+    });
+  }
+
+  /**
+   * A command's transition and the sandbox step that follows it. `checked` is what the command
+   * found when it ran the action's guard on `current` itself: the transition runs that guard
+   * again in this transaction, and only that run takes it instead of checking twice.
+   */
+  private async advance(
+    caller: Caller,
+    current: WorkflowSnapshot,
+    transition: Omit<WorkflowTransition, 'instanceId' | 'expectedRevision'> & {
+      expectedRevision?: number;
+    },
+    tx: Transaction,
+    checked?: unknown,
+  ): Promise<WorkflowSnapshot> {
+    const key = `${current.id}@${current.revision}:${transition.action}`;
+    const pending = this.checking.get(tx) ?? new Map<string, unknown>();
+    if (checked !== undefined) this.checking.set(tx, pending.set(key, checked));
+    const moved = await this.registration(current.version)
+      .transition(
+        caller,
+        { instanceId: current.id, expectedRevision: current.revision, ...transition },
+        tx,
+      )
+      .finally(() => pending.delete(key));
+    await this.nativeTransition(caller, moved, tx);
+    return moved;
+  }
+
+  /** What the command making this transition found when it ran the action's guard itself. */
+  private checked<T>({ snapshot, transition, tx }: WorkflowCheckContext): T | undefined {
+    return this.checking.get(tx)?.get(`${snapshot.id}@${snapshot.revision}:${transition}`) as
+      T | undefined;
+  }
+
   async markFailed(
     caller: Caller,
     input: TaskMarkFailed,
     transaction?: Transaction,
   ): Promise<Task> {
     ({ caller, input } = structuredClone({ caller, input }));
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      return await this.command(tx, caller, input.requestId, 'mark_failed', input, async () => {
+    return await this.taskCommand(
+      caller,
+      transaction,
+      'write',
+      'mark_failed',
+      input,
+      async (tx) => {
         check(
           Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
           'invalid_revision',
@@ -2826,13 +2875,10 @@ export class TaskService implements Tasks {
           createdAt: now(),
           reviewId,
         };
-        const moved = await (
-          await this.registration(current.version)
-        ).transition(
+        await this.advance(
           caller,
+          current,
           {
-            instanceId: row.id,
-            expectedRevision: current.revision,
             action: 'mark_failed',
             input: { ...input, expectedRevision: current.revision },
             requestId: childRequest(caller, 'task', 'failure', input.requestId),
@@ -2843,8 +2889,8 @@ export class TaskService implements Tasks {
             },
           },
           tx,
+          true,
         );
-        await this.nativeTransition(caller, moved, tx);
         if (reviewId) await this.reviews.supersede(caller, reviewId, tx);
         await recorded(
           this.state,
@@ -2854,9 +2900,9 @@ export class TaskService implements Tasks {
           row.id,
           { ...failure },
         );
-        return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
-      });
-    });
+        return row.id;
+      },
+    );
   }
 
   async submitDelivery(caller: Caller, input: TaskDelivery): Promise<Task> {
@@ -2868,9 +2914,13 @@ export class TaskService implements Tasks {
       'Agent conversations direct tasks; a worker must submit the delivery',
       403,
     );
-    return await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      return await this.command(tx, caller, input.requestId, 'submit_delivery', input, async () => {
+    return await this.taskCommand(
+      caller,
+      undefined,
+      'write',
+      'submit_delivery',
+      input,
+      async (tx) => {
         const row = await this.row(tx, caller, input.taskId);
         const checks: string[] = JSON.parse(row.checks);
         const current = await this.workflows.get(caller, row.id, tx);
@@ -2881,7 +2931,6 @@ export class TaskService implements Tasks {
           tx,
           input: { ...input },
         }))!;
-        await this.workflows.checkDependencies(caller, row.id, tx);
         const commit = delivered.commit;
         // Reviews pins artifacts and knows nothing of commits, so the commit enters the review
         // as a rendered record: pinned and hashed like any evidence, and citable by a finding.
@@ -2915,12 +2964,10 @@ export class TaskService implements Tasks {
           headOid: commit.workspace.headOid,
           treeOid: commit.workspace.treeOid ?? null,
         };
-        const moved = await (
-          await this.registration((await this.workflows.get(caller, row.id, tx)).version)
-        ).transition(
+        const moved = await this.advance(
           caller,
+          current,
           {
-            instanceId: row.id,
             expectedRevision: input.expectedRevision,
             action: 'submit_delivery',
             input: { ...input },
@@ -2934,8 +2981,8 @@ export class TaskService implements Tasks {
             },
           },
           tx,
+          delivered,
         );
-        await this.nativeTransition(caller, moved, tx);
         const review = await this.reviews.request(
           caller,
           {
@@ -2986,16 +3033,20 @@ export class TaskService implements Tasks {
           artifactIds: deliveryIds,
           headOid: deliveryCode.headOid,
         });
-        return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
-      });
-    });
+        return row.id;
+      },
+    );
   }
 
   async reissueReview(caller: Caller, input: TaskReissue): Promise<Task> {
     ({ caller, input } = structuredClone({ caller, input }));
-    return await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      return await this.command(tx, caller, input.requestId, 'reissue_review', input, async () => {
+    return await this.taskCommand(
+      caller,
+      undefined,
+      'write',
+      'reissue_review',
+      input,
+      async (tx) => {
         const row = await this.row(tx, caller, input.taskId);
         const current = await this.workflows.get(caller, row.id, tx);
         check(
@@ -3005,13 +3056,10 @@ export class TaskService implements Tasks {
           409,
         );
         const previous = await this.reviews.get(caller, row.review_id, tx);
-        const moved = await (
-          await this.registration(current.version)
-        ).transition(
+        const moved = await this.advance(
           caller,
+          current,
           {
-            instanceId: row.id,
-            expectedRevision: current.revision,
             action: 'reissue_review',
             input: { ...input },
             requestId: childRequest(caller, 'task', 'reissue', input.requestId),
@@ -3019,7 +3067,6 @@ export class TaskService implements Tasks {
           },
           tx,
         );
-        await this.nativeTransition(caller, moved, tx);
         await this.reviews.supersede(caller, previous.id, tx);
         const review = await this.reviews.reissue(
           caller,
@@ -3042,9 +3089,9 @@ export class TaskService implements Tasks {
           reason: input.reason,
           snapshotHash: review.snapshotHash,
         });
-        return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
-      });
-    });
+        return row.id;
+      },
+    );
   }
 
   async submitReview(caller: Caller, input: TaskReview, transaction?: Transaction): Promise<Task> {
@@ -3056,9 +3103,13 @@ export class TaskService implements Tasks {
       'paper_edits_unavailable',
       'Only experiment and reflection reviewers update the paper with a verdict',
     );
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'review', tx);
-      return await this.command(tx, caller, input.requestId, 'submit_review', input, async () => {
+    return await this.taskCommand(
+      caller,
+      transaction,
+      'review',
+      'submit_review',
+      input,
+      async (tx) => {
         const review = await this.reviews.get(caller, input.reviewId, tx);
         const row = await this.row(tx, caller, review.subjectId);
         const current = await this.workflows.get(caller, row.id, tx);
@@ -3088,13 +3139,10 @@ export class TaskService implements Tasks {
         );
         await this.reviews.checkSubmit(caller, input.reviewId, input, tx);
         const action = await this.reviewAction({ caller, snapshot: current, tx }, input.verdict);
-        const moved = await (
-          await this.registration(current.version)
-        ).transition(
+        const moved = await this.advance(
           caller,
+          current,
           {
-            instanceId: row.id,
-            expectedRevision: current.revision,
             action,
             input: { ...input },
             requestId: childRequest(caller, 'task', 'review', input.requestId),
@@ -3108,18 +3156,14 @@ export class TaskService implements Tasks {
                     : input.synopsis?.trim() || input.notes
                   : null,
               revisionContext: input.verdict === 'pass' ? null : input.notes,
-              // revisionContext holds one round, so the ids of all of them are kept beside it. A
-              // task sent back before this list existed still names that round in reviewId.
+              // revisionContext holds one round, so the ids of all of them are kept beside it.
               ...(input.verdict === 'pass'
                 ? {}
                 : {
                     rejectedReviewIds: [
                       ...(Array.isArray(current.data.rejectedReviewIds)
                         ? (current.data.rejectedReviewIds as string[])
-                        : typeof current.data.revisionContext === 'string' &&
-                            typeof current.data.reviewId === 'string'
-                          ? [current.data.reviewId]
-                          : []),
+                        : []),
                       input.reviewId,
                     ].slice(-REJECTED_REVIEWS_KEPT),
                   }),
@@ -3136,8 +3180,8 @@ export class TaskService implements Tasks {
             },
           },
           tx,
+          review,
         );
-        await this.nativeTransition(caller, moved, tx);
         const submitted = await this.reviews.submit(
           caller,
           {
@@ -3172,9 +3216,9 @@ export class TaskService implements Tasks {
           verdict: submitted.verdict,
           action,
         });
-        return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
-      });
-    });
+        return row.id;
+      },
+    );
   }
 }
 
