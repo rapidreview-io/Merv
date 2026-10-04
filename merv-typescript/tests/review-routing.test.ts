@@ -207,6 +207,11 @@ test('review owner registration is closed, copied, unique and safe against stale
     { ...valid, submit: undefined },
     { ...valid, claim: true },
     { ...valid, gates: 'Design' },
+    { ...valid, guidance: ' ' },
+    { ...valid, guidance: 'x'.repeat(8001) },
+    { ...valid, fields: 'ownerInput' },
+    { ...valid, fields: ['reviewId'] },
+    { ...valid, fields: ['owner-input'] },
     Object.create(valid),
     Object.defineProperty({ ...valid }, 'id', {
       get() {
@@ -232,6 +237,46 @@ test('review owner registration is closed, copied, unique and safe against stale
   });
   drop();
   assert.equal(await reviews.apply(f.reviewer.caller, input), 'replacement');
+});
+
+test('an owner states its verdict guidance and the extra verdict fields it validates itself', async (t) => {
+  const f = await fixture(t, true),
+    reviews = f.app.ctx.reviews;
+  const received: ReviewApplication[] = [];
+  const review = await f.request('guided-subject');
+  const drop = reviews.registerSubmitOwner({
+    id: 'guided',
+    owns: async (owned) => owned.subjectId === 'guided-subject',
+    submit: async (_caller, input) => received.push(input),
+    guidance: 'Pass rejects returnTo; include ownerInput when it applies.',
+    fields: ['ownerInput'],
+  });
+  t.after(drop);
+  for (const tool of ['review.get', 'review.start'])
+    assert.equal(
+      ((await f.app.ctx.tools.call(tool, f.reviewer.caller, { reviewId: review.id })) as any)
+        .guidance,
+      'Pass rejects returnTo; include ownerInput when it applies.',
+    );
+  const other = await f.request();
+  assert.equal(await reviews.guidance(f.reviewer.caller, other.id), undefined);
+  assert.equal(
+    'guidance' in
+      ((await f.app.ctx.tools.call('review.get', f.reviewer.caller, {
+        reviewId: other.id,
+      })) as object),
+    false,
+  );
+  const input = { ...f.input(review), ownerInput: { opaque: [1, 'two'] } };
+  await assert.rejects(
+    reviews.apply(f.reviewer.caller, { ...input, unexpected: true } as ReviewApplication),
+    { code: 'invalid_review_input' },
+  );
+  assert.equal(received.length, 0);
+  await f.app.ctx.tools.call('review.submit', f.reviewer.caller, input);
+  assert.deepEqual((received[0] as ReviewApplication & { ownerInput: unknown }).ownerInput, {
+    opaque: [1, 'two'],
+  });
 });
 
 test('missing, ambiguous and throwing ownership never submit and roll back selection writes', async (t) => {

@@ -8,9 +8,9 @@ import type {
 
 /**
  * One subject's reviews as the Running sidebar reads them. Reviews owns the claim, the
- * independence rule and the verdict, so a task, an experiment and a reflection wave all say
- * how their review stands in these words. The domain names the gate a review was read at,
- * where it has more than one (an experiment's Design and Results).
+ * independence rule and the verdict, so every owning domain's subject says how its review
+ * stands in these words. The domain names the gate a review was read at, where it reviews a
+ * subject at more than one.
  */
 export interface ReviewRounds {
   /** The review that speaks for the subject now, as get() serves it to this reader. */

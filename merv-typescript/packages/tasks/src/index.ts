@@ -361,6 +361,8 @@ export class TaskService implements Tasks {
               review.projectId,
             )),
           submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+          guidance:
+            'Task reviews reject returnTo and paperChanges: pass completes the task, needs_changes returns it for work, and fail ends ordinary tasks or suspends service tasks. task.context and review checkpoints take the claimId.',
           // Only the task's own current review has a pool of leased reviewers to shut out, and
           // the owner deciding as owner may shut them out.
           claim: async (caller, review, tx) => {
@@ -3046,7 +3048,7 @@ export class TaskService implements Tasks {
     rejectReviewReturn(input);
     input = plain<TaskReview>(input);
     check(
-      input.paperChanges === undefined,
+      (input as { paperChanges?: unknown }).paperChanges === undefined,
       'paper_edits_unavailable',
       'Only experiment and reflection reviewers update the paper with a verdict',
     );

@@ -2,6 +2,7 @@ import type {
   Artifact,
   Caller,
   ProcessGraph,
+  ReviewApplication,
   ReviewRequest,
   RunningKey,
   RunningNode,
@@ -10,6 +11,12 @@ import type {
   WorkflowSnapshot,
 } from '@merv/contracts';
 import type {} from 'cordis';
+import type { PaperChanges } from '@merv/paper/types';
+
+/** A reflection verdict, with the reviewer's own Methods/Results edits. */
+export interface ReflectionReview extends ReviewApplication {
+  paperChanges?: PaperChanges;
+}
 
 export interface ChangeSpecTask {
   key: string;

@@ -1991,9 +1991,11 @@ export interface ReviewSubmit {
   evidence?: Data;
   requestId: string;
 }
+/**
+ * A verdict as the owning domain applies it. Fields the owner names in `fields` pass through
+ * Reviews unread, and the owner validates them.
+ */
 export interface ReviewApplication extends ReviewSubmit {
-  /** Reviewer-authored Methods/Results edits, applied with an experiment or reflection verdict. */
-  paperChanges?: import('./paper-models.js').PaperChanges;
   expectedRevision: number;
 }
 /** Trusted synchronous domain callbacks; ownership checks read metadata only. */
@@ -2001,11 +2003,15 @@ export interface ReviewSubmitOwner {
   id: string;
   owns(review: Readonly<ReviewRequest>, tx: Transaction): boolean | Promise<boolean>;
   submit(caller: Caller, input: ReviewApplication, tx: Transaction): Promise<unknown>;
+  /** The owner's verdict rules, shown to a reviewer reading or claiming one of its reviews. */
+  guidance?: string;
+  /** Extra top-level verdict fields the owner accepts and validates itself; others are refused. */
+  fields?: readonly string[];
   /** Refuses a claim of an owned review that the owner's rules could never let finish. */
   claim?(caller: Caller, review: Readonly<ReviewRequest>, tx: Transaction): Promise<void>;
   /**
-   * The gate each owned review among these was read at ('Design', 'Results'), for a domain
-   * whose records are reviewed at more than one. Read-only; ids it does not own are left out.
+   * The gate each owned review among these was read at, for a domain whose records are
+   * reviewed at more than one. Read-only; ids it does not own are left out.
    */
   gates?(reviewIds: readonly string[], sql: Sql): Promise<Readonly<Record<string, string>>>;
 }
@@ -2014,6 +2020,8 @@ export interface Reviews {
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void;
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;
+  /** The verdict rules of the one domain that owns this review, when it states any. */
+  guidance(caller: Caller, reviewId: string, tx?: Transaction): Promise<string | undefined>;
   request(caller: Caller, input: ReviewInput, tx?: Transaction): Promise<ReviewRequest>;
   reissue(
     caller: Caller,

@@ -11,6 +11,7 @@ import type {
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { SandboxCompute, ComputeOutputs } from '@merv/sandboxes/types';
+import type { PaperChanges } from '@merv/paper/types';
 import type {
   Experiment,
   ExperimentAttach,
@@ -21,6 +22,11 @@ import type {
   ExperimentTransition,
 } from './models.js';
 export type * from './models.js';
+
+/** An experiment verdict, with the reviewer's own Methods/Results edits. */
+export interface ExperimentReview extends ReviewApplication {
+  paperChanges?: PaperChanges;
+}
 
 export interface ComputeInput {
   experimentId: string;
@@ -76,7 +82,7 @@ export interface Experiments extends WorkComputeAccess {
   runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null>;
   /** What the optional Code plugin holds for a Git experiment; null without it. */
   codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;
-  submitReview(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<Experiment>;
+  submitReview(caller: Caller, input: ExperimentReview, tx?: Transaction): Promise<Experiment>;
   /** Withdraw generic review routing before the provider's dependent consumers drain. */
   withdrawReviewOwner(): void;
   close(): void;

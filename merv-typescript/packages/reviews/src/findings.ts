@@ -64,6 +64,9 @@ export function evidenceFrom(input: { evidence?: unknown }): Data {
   return validateEvidence(field?.value);
 }
 
+/** A generated identifier: a short lowercase prefix, then a token carrying digits (exp_3f9a1c…). */
+const entityId = /\b[a-z]{2,16}_(?=[A-Za-z]*\d)[A-Za-z0-9]{6,}/u;
+
 /** Checks the shape and provenance of an assessment, never the truth of its findings. */
 export function validateAssessment(
   review: Pick<ReviewRequest, 'criteria' | 'artifactIds' | 'requiredCriteria'>,
@@ -77,9 +80,7 @@ export function validateAssessment(
       input.synopsis.trim().length <= 420 &&
       !/[\r\n\u2028\u2029`]|\*\*|__|\]\(|<\/?[a-z]+>/iu.test(input.synopsis) &&
       !/^\s*(?:#|[-*+]\s|\d+[.)]\s|>)/u.test(input.synopsis) &&
-      !/\b(?:wf|art|review|actor|project|context|exp|task|claim|res|rver|syn|rev|lit|paper)_[A-Za-z0-9]/u.test(
-        input.synopsis,
-      ),
+      !entityId.test(input.synopsis),
     'invalid_synopsis',
     'Supply a plain single-paragraph synopsis of 40–420 characters, without entity IDs or Markdown, explaining the overall verdict',
   );

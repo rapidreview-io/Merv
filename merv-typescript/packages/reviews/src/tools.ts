@@ -1,11 +1,20 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
-import { paperChangesSchema } from '@merv/contracts';
-import type { Caller, ReviewApplication } from '@merv/contracts';
+import type { Caller, ReviewApplication, ReviewRequest, Reviews } from '@merv/contracts';
 
 const requestId = z.string().min(1).max(200);
 const id = z.string().min(1);
+
+/** The owning domain's verdict rules travel with the review the reviewer reads or claims. */
+async function guided(
+  reviews: Reviews,
+  caller: Caller,
+  review: ReviewRequest,
+): Promise<ReviewRequest & { guidance?: string }> {
+  const guidance = await reviews.guidance(caller, review.id);
+  return guidance === undefined ? review : { ...review, guidance };
+}
 
 /** Generic review transport; registered target programs apply verdicts transactionally. */
 export const reviewToolsPlugin = {
@@ -25,13 +34,11 @@ export const reviewToolsPlugin = {
       {
         name: 'review.get',
         description:
-          'Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted. Owner-certified reviews also carry pinned contributor provenance and explain when independent review is unavailable.',
+          'Read a review’s pinned artifact IDs, numbered criteria, target revision, snapshot hash and required verdict formatVersion, with its synopsis, findings, structured evidence and selected returnTo route when submitted, and the owning domain’s verdict guidance. Owner-certified reviews also carry pinned contributor provenance and explain when independent review is unavailable.',
         inputSchema: z.object({ reviewId: z.string().min(1) }).strict(),
         readOnly: true,
-        handler: async (
-          caller: Parameters<typeof ctx.reviews.get>[0],
-          input: { reviewId: string },
-        ) => await ctx.reviews.get(caller, input.reviewId),
+        handler: async (caller: Caller, input: { reviewId: string }) =>
+          await guided(ctx.reviews, caller, await ctx.reviews.get(caller, input.reviewId)),
       },
       // A claim shuts out every other reviewer, and a verdict decides the work: from a
       // conversation both are the person's to run.
@@ -39,20 +46,22 @@ export const reviewToolsPlugin = {
         name: 'review.start',
         conversation: 'propose' as const,
         description:
-          'Claim an available review as an independent reviewer. Returns a claimId required by review.submit, task.context and review checkpoints. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.',
+          'Claim an available review as an independent reviewer. Returns the review with a claimId that review.submit and the owning domain’s review steps require, and that domain’s verdict guidance: follow it in review.submit. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.',
         inputSchema: z
           .object({ reviewId: z.string().min(1), override: z.literal(true).optional() })
           .strict(),
-        handler: async (
-          caller: Parameters<typeof ctx.reviews.start>[0],
-          input: { reviewId: string; override?: true },
-        ) => await ctx.reviews.start(caller, input.reviewId, undefined, input.override),
+        handler: async (caller: Caller, input: { reviewId: string; override?: true }) =>
+          await guided(
+            ctx.reviews,
+            caller,
+            await ctx.reviews.start(caller, input.reviewId, undefined, input.override),
+          ),
       },
       {
         name: 'review.submit',
         conversation: 'propose' as const,
         description:
-          'Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work. Optional returnTo selects an explicit return route when that domain requires or permits it; follow its allowed destinations and verdict rules. Task reviews reject returnTo: pass completes the task, needs_changes returns it for work, and fail ends ordinary tasks or suspends service tasks. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. Supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Experiment plan/results and reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep plan-review paper updates brief, usually one or two sentences. Results and reflection reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes. Task and consolidation reviews do not accept paperChanges.',
+          'Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work, and which returnTo routes and extra fields it accepts: follow the guidance review.start and review.get return. Optional returnTo selects an explicit return route when that domain requires or permits it. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. Supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Any other field is passed to the owning domain, which validates it; a domain that does not accept it refuses the verdict.',
         inputSchema: z
           .object({
             reviewId: id,
@@ -80,11 +89,10 @@ export const reviewToolsPlugin = {
               .min(1)
               .optional(),
             evidence: z.record(z.unknown()).optional(),
-            paperChanges: paperChangesSchema.optional(),
             expectedRevision: z.number().int().nonnegative(),
             requestId,
           })
-          .strict(),
+          .catchall(z.unknown()),
         handler: async (caller: Caller, input: ReviewApplication) =>
           await ctx.reviews.apply(caller, input),
       },
