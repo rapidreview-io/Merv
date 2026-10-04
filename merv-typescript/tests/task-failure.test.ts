@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +24,11 @@ async function fixture(api = false) {
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const issued = await app.ctx.scope.issueActor(operator, { role, name: role });
     return {
-      caller: { actorId: issued.actor.id, projectId: boot.project.id },
+      caller: {
+        actorId: issued.actor.id,
+        projectId: boot.project.id,
+        credentialId: issued.credential.id,
+      },
       token: issued.token,
     };
   };
@@ -41,23 +45,53 @@ async function fixture(api = false) {
   });
   let sequence = 0;
   const create = async () =>
-    await historicalTask(app.ctx, producer.caller, {
+    await currentTask(app.ctx, producer.caller, {
       title: 'Withdrawable work',
       goal: 'Goal.',
       checks: ['Check.'],
       briefId: brief.id,
       requestId: `create-${++sequence}`,
     });
-  const deliver = async (task: Task) =>
-    await app.ctx.tasks.submitDelivery(
-      producer.caller,
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [evidence.id],
-        expectedRevision: task.workflow.revision,
-        requestId: `deliver-${++sequence}`,
-      }),
-    );
+  const work = currentWork(app.ctx, { directory, source: producer.caller });
+  const deliver = async (task: Task) => {
+    const held = await work.lease(task);
+    try {
+      Object.assign(
+        evidence,
+        await app.ctx.artifacts.create(held.worker, {
+          title: 'Evidence',
+          content: 'Check. Verified output.',
+        }),
+      );
+      const commandId = await work.commit(held);
+      return await work.run(
+        held,
+        'task.submit_delivery',
+        confirmedDelivery({
+          taskId: task.id,
+          artifactIds: [evidence.id],
+          commandId,
+          expectedRevision: task.workflow.revision,
+          requestId: `deliver-${++sequence}`,
+        }),
+        (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
+      );
+    } finally {
+      await work.release(held);
+    }
+  };
+  const claim = async (task: Task) => {
+    const runner = await app.ctx.scope.issueActor(operator, {
+      name: 'Independent review runner',
+      role: 'operator',
+    });
+    const held = await work.lease(task, {
+      projectId: operator.projectId,
+      actorId: runner.actor.id,
+      credentialId: runner.credential.id,
+    });
+    return { held, review: await app.ctx.reviews.get(held.worker, task.reviewId!) };
+  };
   return {
     directory,
     app,
@@ -70,7 +104,10 @@ async function fixture(api = false) {
     evidence,
     create,
     deliver,
+    claim,
+    work,
     async close() {
+      await work.close();
       await app.stop();
       rmSync(directory, { recursive: true, force: true });
     },
@@ -103,7 +140,7 @@ test('task withdrawal shares guidance guards, checks identity and reason, and re
   try {
     const task = await f.create(),
       input = failureInput(task);
-    assert.equal(task.workflow.version, 28);
+    assert.equal(task.workflow.version, 31);
     assert.equal(task.failure, null);
     assert.equal(task.guidance.nextAction?.action, 'begin');
     assert.ok(task.guidance.actions.some((action) => action.action === 'mark_failed'));
@@ -278,7 +315,7 @@ test('producer and operator withdrawal close requested or claimed reviews and fe
       for (const caller of [f.producer.caller, f.operator]) {
         const pending = await f.deliver(await f.create());
         const review = claimed
-          ? await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!)
+          ? (await f.claim(pending)).review
           : await f.app.ctx.reviews.get(f.operator, pending.reviewId!);
         const failed = await f.app.ctx.tasks.markFailed(
           caller,
@@ -365,16 +402,23 @@ test('withdrawal after needs_changes preserves the submitted assessment and its 
   const f = await fixture();
   try {
     const pending = await f.deliver(await f.create()),
-      claim = await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
-    const revised = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-      ...reviewedFindings(claim),
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      verdict: 'needs_changes',
-      notes: 'Recover the missing source before acceptance.',
-      expectedRevision: 1,
-      requestId: 'needs-changes',
-    });
+      claimed = await f.claim(pending),
+      claim = claimed.review;
+    const revised = await f.work.run(
+      claimed.held,
+      'review.submit',
+      {
+        ...reviewedFindings(claim),
+        reviewId: claim.id,
+        claimId: claim.claimId!,
+        verdict: 'needs_changes',
+        notes: 'Recover the missing source before acceptance.',
+        expectedRevision: 1,
+        requestId: 'needs-changes',
+      },
+      (caller, input) => f.app.ctx.tasks.submitReview(caller, input as never),
+    );
+    await f.work.release(claimed.held);
     const assessment = await f.app.ctx.reviews.get(f.operator, claim.id);
     const failed = await f.app.ctx.tasks.markFailed(f.producer.caller, failureInput(revised));
     assert.equal(failed.workflow.revision, 3);
@@ -398,7 +442,7 @@ test('review closure and final event faults roll back withdrawal and dedup toget
   const f = await fixture();
   try {
     const pending = await f.deliver(await f.create());
-    await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
+    await f.claim(pending);
     await f.app.ctx.domainEvents.drain();
     const input = failureInput(pending),
       before = await durableState(f.app, f.operator, pending.id);
@@ -432,7 +476,7 @@ test('review closure and final event faults roll back withdrawal and dedup toget
     }
     assert.deepEqual(await durableState(f.app, f.operator, pending.id), before);
     const failed = await f.app.ctx.tasks.markFailed(f.producer.caller, input);
-    assert.equal(failed.workflow.version, 28);
+    assert.equal(failed.workflow.version, 31);
     assert.equal(failed.workflow.state, 'failed');
     assert.equal(failed.workflow.revision, pending.workflow.revision + 1);
     assert.equal((await f.app.ctx.reviews.get(f.operator, pending.reviewId!)).status, 'superseded');

@@ -463,7 +463,13 @@ DELETE FROM component_migrations WHERE component='workflows' AND version=9;`);
         hash: digest(consolidationMigrations[version]),
       });
     }
-    for (const [name, version] of retiredVersions) {
+    // Seed definitions for the complete historical database, including versions
+    // retained by this old migration but no longer registered by today's runtime.
+    const definitions = [
+      ...retiredVersions,
+      ...[...RETIRED, ...SURVIVORS, standInDependent].map((i) => [i.workflow, i.version] as const),
+    ];
+    for (const [name, version] of definitions) {
       // Shaped like a registered definition: the service reads every stored one at startup.
       const definition = {
         name,

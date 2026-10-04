@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { managedServices } from './fixtures/managed-services.js';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,14 +46,21 @@ async function fixture(t: TestContext) {
   const tasks = await createService(
     new TaskService(state, scope, artifacts, workflows, reviews, builder),
   );
+  const managed = await managedServices(
+    { state, scope, artifacts, workflows },
+    directory,
+    operator,
+  );
+  tasks.bindCode(managed.code);
   t.after(async () => {
+    await managed.close();
     tasks.dispose();
     builder.close();
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
   const create = async (requestId: string) =>
-    await historicalTask({ state, artifacts, tasks }, producer, {
+    await tasks.create(producer, {
       title: requestId,
       goal: 'Measure the output.',
       checks: ['The retained measurement is reproducible.'],

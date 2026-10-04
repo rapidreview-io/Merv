@@ -50,62 +50,27 @@ export const reviewing = (state: string) =>
   state === 'design_review' || state === 'experiment_review';
 const producing = (state: string) => state === 'planned' || state === 'running';
 
-/**
- * Registered program versions by workspace kind. A published execution policy is immutable, so
- * any policy change publishes a new version. New experiments start on 5 or 6, or 7 with an
- * explicit accepted task as base. In a project Code hosts, Git work without an explicit base
- * starts on 8: the first producing lease pins the derived base, normally at planning, and
- * execution inherits it. Only execution reserves a writer generation. Versions 1-4 could no
- * longer start and were retired on 2026-09-22 together with their records (experiments@4).
- */
-const workspaces: Record<number, 'none' | 'git'> = {
-  5: 'none',
-  6: 'git',
-  7: 'git',
-  8: 'git',
-  9: 'none',
-  10: 'git',
-  11: 'git',
-  12: 'git',
-  13: 'none',
-  14: 'git',
-  15: 'git',
-  16: 'git',
-  17: 'none',
-  18: 'git',
-  19: 'git',
-  20: 'git',
-  21: 'none',
-  22: 'git',
-  23: 'git',
-  24: 'git',
-  25: 'none',
-  26: 'git',
-  27: 'git',
-  28: 'git',
-  29: 'none',
-  30: 'git',
-  31: 'git',
-  32: 'git',
-  33: 'none',
-  34: 'git',
-  35: 'git',
-  36: 'git',
-  37: 'none',
-  38: 'git',
-  39: 'git',
-  40: 'git',
+/** Only contracts selected by current experiment creation are executable. */
+const programVersions: Record<number, { largeUploads: boolean; native: boolean }> = {
+  28: { largeUploads: false, native: false },
+  32: { largeUploads: true, native: false },
+  36: { largeUploads: false, native: true },
+  40: { largeUploads: true, native: true },
 };
-const PROGRAM_VERSIONS = Object.keys(workspaces).map(Number);
-export const nativeExperiment = (version: number) => version >= 33 && version <= 40;
-export const programWorkspace = (version: number): 'none' | 'git' => workspaces[version] ?? 'none';
-const base = (version: number) => 5 + ((version - 5) % 4);
-const referencedBase = (version: number) => base(version) === 7 || derivedBase(version);
-/** Whether Code derives and pins the base, rather than the creator naming a task. */
-export const derivedBase = (version: number) => base(version) === 8;
+function programContract(version: number) {
+  const contract = programVersions[version];
+  check(contract, 'workflow_version_retired', `Experiment workflow ${version} is retired`, 409);
+  return contract;
+}
+export const currentExperiment = (version: number) => Object.hasOwn(programVersions, version);
+export const nativeExperiment = (version: number) => programContract(version).native;
 const CODE_DRIVER = 'code.v2';
 export const programVersion = (largeUploads = false, native = false): number =>
-  (native ? 8 : 0) + 28 + (largeUploads ? 4 : 0);
+  Number(
+    Object.entries(programVersions).find(
+      ([, contract]) => contract.largeUploads === largeUploads && contract.native === native,
+    )![0],
+  );
 /**
  * The evidence a design submission is made of, which is also what a successor planner inherits.
  * Every registered version submits a design with a feasibility statement, and its review cannot
@@ -155,7 +120,7 @@ export function reviewedSubmission(
 export const TERMINAL = ['complete', 'abandoned', 'failed'] as const;
 export const EXPERIMENT_WORKFLOW: WorkflowDefinition = {
   name: 'experiment',
-  version: 1,
+  version: 28,
   initial: 'planned',
   states: [...activeStates, ...TERMINAL],
   terminal: [...TERMINAL],
@@ -366,6 +331,7 @@ const REVIEW_HISTORY_CHARS = 8000;
 export class ExperimentProgram {
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   handleFor(version: number) {
+    programContract(version);
     const handle = this.handles.get(version);
     check(
       handle,
@@ -402,7 +368,7 @@ export class ExperimentProgram {
             activeStates.find((state) => recipeNames[state] === recipe.name)!,
             await host.contextBuilder.register(recipe),
           );
-        for (const version of PROGRAM_VERSIONS)
+        for (const version of Object.keys(programVersions).map(Number))
           this.handles.set(
             version,
             await host.workflows.register(
@@ -571,8 +537,7 @@ export class ExperimentProgram {
     experiment: Experiment,
     tx: Transaction,
   ): Promise<CodeCapture | null> {
-    if (experiment.workspace !== 'git' || experiment.workflow.state !== 'experiment_review')
-      return null;
+    if (experiment.workflow.state !== 'experiment_review') return null;
     const submission = experiment.submissions.find(
       (entry) => entry.reviewId === experiment.reviewId,
     );
@@ -594,7 +559,7 @@ export class ExperimentProgram {
         p.actorId === submission.producerId &&
         p.revision === submission.subjectRevision - 1 &&
         p.workflow.name === 'experiment' &&
-        programWorkspace(p.workflow.version) === 'git' &&
+        Object.hasOwn(programVersions, p.workflow.version) &&
         p.workflow.state === 'running' &&
         !p.readOnly,
       'experiment_capture_provenance',
@@ -612,12 +577,7 @@ export class ExperimentProgram {
 
   private async admit(context: WorkflowCheckContext): Promise<Experiment> {
     const experiment = await this.facts(context);
-    check(
-      experiment.workspace !== 'git' || this.host.code,
-      'code_unavailable',
-      'Git assignments require Code',
-      503,
-    );
+    check(this.host.code, 'code_unavailable', 'Git assignments require Code', 503);
     if (producing(context.snapshot.state)) {
       await this.assertProducer(context.caller, experiment, context.tx);
       await this.requireBase(context);
@@ -647,7 +607,6 @@ export class ExperimentProgram {
    * launched and never held; Code publishes the reason where status and the stuck report look.
    */
   private async requireBase({ caller, snapshot, tx }: WorkflowCheckContext): Promise<void> {
-    if (!derivedBase(snapshot.version)) return;
     check(this.host.code, 'code_unavailable', 'Git assignments require Code', 503);
     const base = await this.host.code.baseStatus(caller, snapshot.id, tx);
     if (base.status === 'blocked')
@@ -756,9 +715,8 @@ export class ExperimentProgram {
         details: experiment.details,
         ownerId: experiment.ownerId,
         project: own(await this.host.scope.project(caller, tx)),
-        ...(experiment.workspace === 'git'
-          ? { workspace: 'git', codeCapture: await this.reviewCapture(caller, experiment, tx) }
-          : {}),
+        workspace: 'git',
+        codeCapture: await this.reviewCapture(caller, experiment, tx),
         paperChangesFormat: {
           documents: [
             {
@@ -847,30 +805,6 @@ export class ExperimentProgram {
   }
 
   /**
-   * Experiments does not inject Tasks: the commit is read from the task's own workflow data,
-   * which only Tasks' transitions write. Done is terminal, so the OID a persistent checkout fixes
-   * at its first launch cannot move; Sessions checks its shape again at attachment.
-   */
-  private async baseCommit({ caller, snapshot, tx }: WorkflowCheckContext): Promise<string> {
-    const baseTaskId = snapshot.data.baseTaskId;
-    const base =
-      typeof baseTaskId === 'string'
-        ? await this.host.workflows.get(caller, baseTaskId, tx)
-        : undefined;
-    const headOid = (base?.data.deliveryCode as { headOid?: unknown } | undefined)?.headOid;
-    check(
-      base?.workflow === 'task' &&
-        base.state === 'done' &&
-        typeof headOid === 'string' &&
-        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(headOid),
-      'experiment_base_unavailable',
-      'The base task has not been accepted with a delivered commit',
-      409,
-    );
-    return headOid;
-  }
-
-  /**
    * A derived base is only ever read here. Until a lease has pinned one there is none to name:
    * an interactive producer has no checkout, and a leased one always finds its pin.
    */
@@ -906,12 +840,8 @@ export class ExperimentProgram {
             context.tx,
           )
         : {}),
-      ...(referencedBase(context.snapshot.version) && context.snapshot.state === 'running'
-        ? derivedBase(context.snapshot.version)
-          ? await this.pinnedBase(context)
-          : { base: await this.baseCommit(context) }
-        : {}),
-      ...(experiment.workspace === 'git' && context.snapshot.state === 'experiment_review'
+      ...(context.snapshot.state === 'running' ? await this.pinnedBase(context) : {}),
+      ...(context.snapshot.state === 'experiment_review'
         ? {
             code: (await this.reviewCapture(context.caller, experiment, context.tx))!.workspace!
               .headOid,
@@ -1090,17 +1020,15 @@ export class ExperimentProgram {
       ? await this.review(context.caller, experiment, context.tx)
       : null;
     const gitInstruction =
-      experiment.workspace === 'git'
-        ? state === 'running'
-          ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
-          : state === 'experiment_review'
-            ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
-            : '\nThis experiment will execute in a configured private Git workspace; planning and design review use scratch space.'
-        : '\nYour working directory is private, writable scratch space for this session: download, build and compute there, not in /tmp. It is discarded when the session ends, so retain what must outlive it through the declared artifact tools.';
+      state === 'running'
+        ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
+        : state === 'experiment_review'
+          ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
+          : '\nThis experiment will execute in a configured private Git workspace; planning and design review use scratch space.';
     const needsClaim = review?.status === 'requested';
     const instruction = needsClaim
       ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
-      : experiment.workflow.version >= 17 && state === 'planned'
+      : state === 'planned'
         ? handoff(state)
         : assignmentHandoff(state);
     const speedGuidance =
@@ -1128,10 +1056,8 @@ export class ExperimentProgram {
         `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}` +
         (nativeExperiment(experiment.workflow.version)
           ? this.host.nativeWork!.guidance(state === 'running' ? 'execute' : 'check')
-          : experiment.workflow.version >= 17
-            ? rentalGuidance('compute.', reviewing(state), experiment.workflow.version >= 25) +
-              `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`
-            : ''),
+          : rentalGuidance('compute.', reviewing(state), true) +
+            `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`),
       references: [
         { kind: 'experiment', id: experiment.id, label: experiment.name },
         ...preview.sources.map((artifact) => ({
@@ -1165,27 +1091,26 @@ export class ExperimentProgram {
         ? ['submit_design', 'abandon', 'mark_failed']
         : ['submit_results', 'retry_running', 'abandon', 'mark_failed'];
     const roles = state === 'planned' ? designRoles : ['result', 'report'];
-    const git = programWorkspace(version) === 'git';
     return {
       readOnly: reviewing(state),
       workspace:
-        git && state === 'running'
+        state === 'running'
           ? {
               mode: 'persistent',
               namespace: 'experiments',
-              base: referencedBase(version) ? 'reference:base' : 'central',
+              base: 'reference:base',
               perBase: false,
               retain: true,
               advancesCentral: false,
-              ...(derivedBase(version) ? { driver: CODE_DRIVER } : {}),
+              driver: CODE_DRIVER,
             }
-          : git && state === 'experiment_review'
+          : state === 'experiment_review'
             ? {
                 mode: 'ephemeral',
                 namespace: 'experiment-reviews',
                 base: 'reference:code',
                 retain: false,
-                ...(derivedBase(version) ? { driver: CODE_DRIVER } : {}),
+                driver: CODE_DRIVER,
               }
             : { mode: 'none' },
       tools: [
@@ -1196,13 +1121,13 @@ export class ExperimentProgram {
         ),
         grant('workflow.assignment', { instanceId: target('instanceId') }),
         grant('experiment.get_state', experiment),
-        ...(version > 8 && !nativeExperiment(version) ? [grant('compute.offers', {})] : []),
-        ...(version >= 17 && !nativeExperiment(version)
-          ? ['machines', 'rent', 'ssh', ...(version >= 25 ? ['extend'] : []), 'release'].map(
-              (name) => grant(`compute.${name}`, experiment),
+        ...(!nativeExperiment(version) ? [grant('compute.offers', {})] : []),
+        ...(!nativeExperiment(version)
+          ? ['machines', 'rent', 'ssh', 'extend', 'release'].map((name) =>
+              grant(`compute.${name}`, experiment),
             )
           : []),
-        ...(version >= 25 && !nativeExperiment(version) && state !== 'running'
+        ...(!nativeExperiment(version) && state !== 'running'
           ? [
               grant('compute.run', { ...experiment, purpose: { kind: 'literal', value: 'check' } }),
               grant('compute.cancel', experiment),
@@ -1222,10 +1147,7 @@ export class ExperimentProgram {
             ]
           : [
               grant('artifact.create', {}),
-              ...((version >= 13 && version <= 16) ||
-              (version >= 21 && version <= 24) ||
-              (version >= 29 && version <= 32) ||
-              version >= 37
+              ...(programContract(version).largeUploads
                 ? [
                     grant('artifact.upload_begin', {}),
                     grant('artifact.upload_resume', {}),
@@ -1250,10 +1172,10 @@ export class ExperimentProgram {
                 })),
               ),
               ...(state === 'running' ? [grant('experiment.exhibit', experiment)] : []),
-              ...(version > 8 && !nativeExperiment(version) && state === 'running'
+              ...(!nativeExperiment(version) && state === 'running'
                 ? [grant('compute.run', experiment), grant('compute.cancel', experiment)]
                 : []),
-              ...([12, 16, 20, 24, 28, 32, 36, 40].includes(version) && state === 'running'
+              ...(state === 'running'
                 ? [grant('code.commit', {}), grant('code.operation', {})]
                 : []),
             ]),
@@ -1310,7 +1232,7 @@ export class ExperimentProgram {
         // The first producing lease fixes the base, and it is normally the planner's; a later
         // one reads the same pin back, so execution inherits what the plan was written against.
         // A refused offer takes the pin back with its transaction.
-        if (producing(context.snapshot.state) && derivedBase(context.snapshot.version)) {
+        if (producing(context.snapshot.state)) {
           check(this.host.code, 'code_unavailable', 'Git assignments require Code', 503);
           await this.host.code.pinBase(
             context.source,

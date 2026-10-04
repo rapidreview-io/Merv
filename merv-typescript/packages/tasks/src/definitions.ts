@@ -105,16 +105,6 @@ export const TASK_TYPES: TaskTypeDefinition[] = [
     },
   },
 ];
-/**
- * The format-2 version a task created under a retired format-less version renders with (owner,
- * 2026-09-28). Its saved packages still replay: the builder returns them from its successor.
- */
-export const SUCCESSORS: Record<string, string> = {
-  'task.work@1': 'task.work@4',
-  'task.work@2': 'task.work@4',
-  'task.work@3': 'task.work@4',
-  'project.reflection@1': 'project.reflection@2',
-};
 export const RESERVED_CONTEXT_INPUTS = new Set([
   'task',
   'brief',

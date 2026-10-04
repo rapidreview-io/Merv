@@ -4,10 +4,7 @@ import type { AcceptanceBody, BaseBody, UnitRow } from './unit-store.js';
 import { backfillWorkHolds } from './repository-holds.js';
 
 /** Project historical work-unit facts once through the generic Code persistence API. */
-export async function restoreLegacyCompatibility(
-  state: State,
-  code: CodeUnitStore,
-): Promise<void> {
+export async function restoreLegacyCompatibility(state: State, code: CodeUnitStore): Promise<void> {
   await state.transaction(async (tx) => {
     const retain = (
       projectId: string,

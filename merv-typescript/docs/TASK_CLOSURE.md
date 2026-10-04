@@ -44,12 +44,7 @@ original response; changed input under the same request ID conflicts.
 
 ## Task versions
 
-Every task starts on `task@2` or a later version, each of which has `mark_failed` from
-`in_progress` and `in_review` in its published graph, so a withdrawal advances the revision by
-exactly one. `task@1`, which lacked that edge and needed an in-place upgrade to close, was
-retired on 2026-09-22 together with the engine's upgrade primitive: tasks migration 8 and
-workflows migration 7 deleted its instances, including those an earlier withdrawal had upgraded
-to `task@2`. Its definition row stays in `wf_definitions` as history.
+Current ordinary tasks (`task@31`, `35`, `39`, `43`) have `mark_failed` from `in_progress` and `in_review`, advancing the revision once. Current conflict-resolution service tasks (`task@6`, `11`) suspend instead. Other workflow versions are read-only history: their original records and definitions remain, but new closure commands are refused along with other mutations. Previously committed command responses remain replayable without changing history.
 
 ## Validation
 

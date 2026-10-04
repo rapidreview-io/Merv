@@ -1,6 +1,4 @@
-// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
-import { historicalExperiment } from './fixtures/historical-experiment.js';
-import { historicalTask } from './fixtures/historical-task.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -62,6 +60,14 @@ async function assembled(t: TestContext) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
+  await waitForManagedCode(app.ctx.codeWork, operator);
+  await app.ctx.sessions.heartbeatRunner(operator, {
+    runnerId: 'running-test',
+    machine: { hostname: 'test', system: 'linux', architecture: 'x64' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const issued = await app.ctx.scope.issueActor(operator, { name: role, role });
     return {
@@ -92,7 +98,7 @@ async function assembled(t: TestContext) {
   let sequence = 0;
   const request = () => `request-${++sequence}`;
   const create = async (name: string, dependsOn: string[] = []) =>
-    await historicalExperiment(app.ctx, operator, {
+    await app.ctx.experiments.create(operator, {
       name,
       intent: `Does ${name} change held-out accuracy?`,
       dependsOn,
@@ -222,7 +228,7 @@ async function seedRun(
 test('an open experiment is a work card that says where it stands and what it waits on, read without evaluating a gate', async (t) => {
   const f = await assembled(t);
   const producer = f.operator;
-  const prerequisite = await historicalTask(f.app.ctx, producer, {
+  const prerequisite = await f.app.ctx.tasks.create(producer, {
     title: 'Clean held-out set',
     goal: 'Remove leaked examples.',
     checks: ['No example appears in both splits.'],
@@ -539,12 +545,13 @@ test('a planned experiment’s sidebar draws its ladder without running a check,
     sidebar.sections.map((section) => [section.title, section.place, section.kind]),
     [
       ['Stage', 'progress', 'ladder'],
+      ['Code', 'code', 'facts'],
       ['Question', 'content', 'text'],
       ['Evidence', 'content', 'links'],
       ['Details', 'details', 'facts'],
     ],
   );
-  const [stage, question, evidence, details] = sidebar.sections;
+  const [stage, code, question, evidence, details] = sidebar.sections;
   assert.ok(stage.kind === 'ladder');
   assert.deepEqual(
     [stage.graph.state, stage.graph.currentGate, stage.graph.nodes.find((n) => n.current)?.state],

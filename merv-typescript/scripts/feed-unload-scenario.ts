@@ -1,4 +1,5 @@
-import { historicalTask } from '../tests/fixtures/historical-task.js';
+import { currentTask } from '../tests/fixtures/current-work.js';
+import { deliverCurrentTask } from '../tests/fixtures/current-task-delivery.js';
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
 import { FiberState } from 'cordis';
@@ -69,7 +70,7 @@ export async function runFeedUnloadScenario(
     });
     const reviewer = await app.ctx.scope.issueActor(operator, {
       name: 'Reviewer',
-      role: 'reviewer',
+      role: 'operator',
     });
     const url = app.ctx.api.url!;
     const p = await connect(url, producer.token);
@@ -89,8 +90,8 @@ export async function runFeedUnloadScenario(
       title: 'Brief',
       content: 'Goal: Survive feed removal.\nCheck: Task reaches done.',
     });
-    // Replay work created before managed Git became mandatory.
-    const task = await historicalTask(
+    // Keep a current Git task active across provider disposal.
+    const task = await currentTask(
       app.ctx,
       { ...operator, actorId: producer.actor.id, credentialId: producer.credential.id },
       {
@@ -182,47 +183,13 @@ export async function runFeedUnloadScenario(
     checkpoint('feed-removed', { admittedPostId: admittedPost.id, adapterState: 'PENDING' });
 
     // Finish the task while the feed service and all feed tools are absent.
-    const delivery = await call(p, 'artifact.create', {
-      title: 'Delivery',
-      content:
-        'Task reaches done. The task and review tools remain available while the feed is absent.',
-    });
-    const submitted = await call(p, 'task.submit_delivery', {
-      taskId: task.id,
-      artifactIds: [delivery.id],
-      confirmations: [
-        {
-          checkNumber: 1,
-          status: 'met',
-          evidenceIds: [delivery.id],
-          notes: 'Native task and review tools remained available while the feed was absent.',
-        },
-      ],
-      expectedRevision: 0,
-      requestId: 'deliver-without-feed',
-    });
-    await call(r, 'artifact.read', { artifactId: brief.id });
-    for (const artifactId of submitted.deliveryIds) await call(r, 'artifact.read', { artifactId });
-    const claim = await call(r, 'review.start', { reviewId: submitted.reviewId });
-    const done = await call(r, 'review.submit', {
-      reviewId: submitted.reviewId,
-      claimId: claim.claimId,
-      verdict: 'pass',
-      synopsis:
-        'The task and independent review completed successfully while the feed plugin was absent.',
-      findings: [
-        {
-          criterionNumber: 1,
-          status: 'met',
-          evidenceIds: [delivery.id],
-          notes: 'The retained delivery records the native task path continuing without feed.',
-        },
-      ],
-      notes:
-        'Verified retained evidence and successful task routing while the feed service is absent.',
-      expectedRevision: 1,
-      requestId: 'review-without-feed',
-    });
+    const { task: done, proof: delivery } = await deliverCurrentTask(
+      app.ctx,
+      directory,
+      { ...operator, actorId: producer.actor.id, credentialId: producer.credential.id },
+      task.id,
+      { ...operator, actorId: reviewer.actor.id, credentialId: reviewer.credential.id },
+    );
     assert.equal(done.workflow.state, 'done');
     for (const [name, service] of Object.entries(originalServices))
       assert.equal(app.ctx.get(name), service, `${name} was restarted or replaced`);
@@ -274,7 +241,7 @@ export async function runFeedUnloadScenario(
       pid: process.pid,
       url,
       taskId: task.id,
-      reviewId: submitted.reviewId,
+      reviewId: done.reviewId,
       postIds: posts.map((item: any) => item.id),
       checkpoints,
       checks: {

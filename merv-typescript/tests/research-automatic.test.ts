@@ -1,5 +1,8 @@
-import { historicalTask } from './fixtures/historical-task.js';
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
+import { currentWork } from './fixtures/current-work.js';
+import type { ExperimentAttach, ExperimentTransition } from '@merv/experiments/types';
+import { currentTask } from './fixtures/current-work.js';
+import { currentExperiment } from './fixtures/current-experiment.js';
 import {
   createService,
   MervError,
@@ -106,7 +109,7 @@ async function fixture(t: TestContext, plugin = false) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const issue = async (role: 'producer' | 'reviewer') => {
+  const issue = async (role: 'producer' | 'reviewer' | 'operator') => {
     const actor = await app.ctx.scope.issueActor(owner, { name: id(), role });
     return {
       projectId: owner.projectId,
@@ -115,6 +118,7 @@ async function fixture(t: TestContext, plugin = false) {
     };
   };
   const reviewer = await issue('reviewer');
+  const taskReviewer = await issue('operator');
   const define = async () =>
     await app.ctx.paper.patch(owner, {
       kind: 'problem',
@@ -128,7 +132,7 @@ async function fixture(t: TestContext, plugin = false) {
       ],
     });
   const task = async (dependsOn: string[] = [], caller = owner) =>
-    await historicalTask(app.ctx, caller, {
+    await currentTask(app.ctx, caller, {
       title: id(),
       goal: 'Provide verified input.',
       checks: ['The input is available and verified'],
@@ -136,7 +140,7 @@ async function fixture(t: TestContext, plugin = false) {
       requestId: id(),
     });
   const experiment = async (dependsOn: string[] = [], caller = owner) =>
-    await historicalExperiment(app.ctx, caller, {
+    await currentExperiment(app.ctx, caller, {
       name: id(),
       intent: 'Test the available input.',
       dependsOn,
@@ -202,21 +206,7 @@ async function fixture(t: TestContext, plugin = false) {
     return await app.ctx.reviews.apply(reviewer, input);
   };
   const finishTask = async (taskId: string) => {
-    const task = await app.ctx.tasks.get(owner, taskId);
-    const evidence = await artifact(owner, 'The input is available and verified.');
-    const submitted = await app.ctx.tasks.submitDelivery(
-      owner,
-      confirmedDelivery(
-        {
-          taskId,
-          expectedRevision: task.workflow.revision,
-          artifactIds: [evidence.id],
-          requestId: id(),
-        },
-        task.checks.length,
-      ),
-    );
-    await review(submitted.reviewId!, submitted.workflow.revision);
+    await deliverCurrentTask(app.ctx, directory, owner, taskId, taskReviewer);
   };
   const lenses = async (researchId: string) => {
     const record = await research.get(owner, researchId);
@@ -405,6 +395,8 @@ test('two automatic waves preserve dependencies and lineage, then stop at the co
   const input = await f.task();
   const first = await f.create([input.id], { maxCycles: 2 });
   await f.finishTask(input.id);
+  // This orchestration test starts from an already integrated main.
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
   await f.pump();
   await f.approve(first.id, next('second'));
   const done = await f.research.get(f.owner, first.id);
@@ -573,57 +565,76 @@ test('an accepted negative experimental finding automatically opens reflection',
   await f.enable();
   let experiment = await f.experiment();
   const cycle = await f.create([experiment.id]);
-  const attach = async (role: 'plan' | 'feasibility' | 'result' | 'report', content: string) => {
-    const json = role === 'feasibility' || role === 'result';
-    const artifact = await f.artifact(
-      f.owner,
-      content,
-      json ? 'application/json' : 'text/markdown',
+  const directory = mkdtempSync(join(tmpdir(), 'merv-negative-current-'));
+  const work = currentWork(f.app.ctx, { directory, source: f.owner });
+  let execution: Awaited<ReturnType<typeof work.lease>> | undefined;
+  try {
+    const attach = async (role: 'plan' | 'feasibility' | 'result' | 'report', content: string) => {
+      const json = role === 'feasibility' || role === 'result';
+      const artifact = execution
+        ? await work.run(
+            execution,
+            'artifact.create',
+            { title: role, content, mediaType: json ? 'application/json' : 'text/markdown' },
+            (caller, input) => f.app.ctx.artifacts.create(caller, input as never),
+          )
+        : await f.artifact(f.owner, content, json ? 'application/json' : 'text/markdown');
+      const input = {
+        experimentId: experiment.id,
+        attemptIndex: experiment.attempt.index,
+        expectedRevision: experiment.workflow.revision,
+        artifactId: artifact.id,
+        role,
+        path: `${role}.${json ? 'json' : 'md'}`,
+        ...(role === 'result' ? { resultFormat: 'json' as const } : {}),
+        requestId: f.id(),
+      };
+      if (execution)
+        await work.run(execution, 'experiment.attach', input, (caller, bound) =>
+          f.app.ctx.experiments.attach(caller, bound as unknown as ExperimentAttach),
+        );
+      else await f.app.ctx.experiments.attach(f.owner, input);
+    };
+    await attach(
+      'plan',
+      '# Summary\nA paired comparison.\n# Objective & hypothesis\nThe change improves accuracy.\n# Evaluation\nCompare two fixed seeds and matched controls.',
     );
-    await f.app.ctx.experiments.attach(f.owner, {
+    await attach('feasibility', feasibilityStatement());
+    experiment = await f.app.ctx.experiments.transition(f.owner, {
       experimentId: experiment.id,
-      attemptIndex: experiment.attempt.index,
       expectedRevision: experiment.workflow.revision,
-      artifactId: artifact.id,
-      role,
-      path: `${role}.${json ? 'json' : 'md'}`,
-      ...(role === 'result' ? { resultFormat: 'json' as const } : {}),
+      transition: 'submit_design',
       requestId: f.id(),
     });
-  };
-  await attach(
-    'plan',
-    '# Summary\nA paired comparison.\n# Objective & hypothesis\nThe change improves accuracy.\n# Evaluation\nCompare two fixed seeds and matched controls.',
-  );
-  await attach('feasibility', feasibilityStatement());
-  experiment = await f.app.ctx.experiments.transition(f.owner, {
-    experimentId: experiment.id,
-    expectedRevision: experiment.workflow.revision,
-    transition: 'submit_design',
-    requestId: f.id(),
-  });
-  await f.review(experiment.reviewId!, experiment.workflow.revision);
-  experiment = await f.app.ctx.experiments.get(f.owner, experiment.id);
-  await attach('result', '{"baseline": 0.8, "treatment": 0.8}');
-  await attach(
-    'report',
-    '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports no improvement.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.',
-  );
-  experiment = await f.app.ctx.experiments.transition(f.owner, {
-    experimentId: experiment.id,
-    expectedRevision: experiment.workflow.revision,
-    transition: 'submit_results',
-    requestId: f.id(),
-  });
-  await f.pump();
-  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'researching');
-  await f.review(experiment.reviewId!, experiment.workflow.revision);
-  await f.pump();
-  assert.equal(
-    (await f.app.ctx.experiments.get(f.owner, experiment.id)).workflow.state,
-    'complete',
-  );
-  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+    await f.review(experiment.reviewId!, experiment.workflow.revision);
+    experiment = await f.app.ctx.experiments.get(f.owner, experiment.id);
+    execution = await work.lease(experiment);
+    await attach('result', '{"baseline": 0.8, "treatment": 0.8}');
+    await attach(
+      'report',
+      '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports no improvement.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.',
+    );
+    experiment = await work.run(
+      execution,
+      'experiment.transition',
+      { transition: 'submit_results', requestId: f.id() },
+      (caller, bound) =>
+        f.app.ctx.experiments.transition(caller, bound as unknown as ExperimentTransition),
+    );
+    await work.release(execution);
+    await f.pump();
+    assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'researching');
+    await f.review(experiment.reviewId!, experiment.workflow.revision);
+    await f.pump();
+    assert.equal(
+      (await f.app.ctx.experiments.get(f.owner, experiment.id)).workflow.state,
+      'complete',
+    );
+    assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+  } finally {
+    await work.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('an automatic cycle waits on its consolidation task and its publication as blockers, never as failures', async (t) => {
@@ -649,8 +660,8 @@ test('an automatic cycle waits on its consolidation task and its publication as 
     (await f.research.get(f.owner, cycle.id)).automation!.blocker!.code,
     'dependencies_pending',
   );
-  await f.finishTask(taskId);
   main.publication = { state: 'pending', pull: { number: 3, url: 'https://example.test/pull/3' } };
+  await f.finishTask(taskId);
   await f.pump();
   record = await f.research.get(f.owner, cycle.id);
   assert.equal(record.workflow.state, 'consolidating');

@@ -54,22 +54,13 @@ export class ExperimentCompute {
             experiment &&
               (experiment.state === 'running' ||
                 (input?.purpose === 'check' &&
-                  experiment.version >= 25 &&
                   ['planned', 'design_review', 'experiment_review'].includes(experiment.state))) &&
-              experiment.version > 8 &&
-              experiment.version <= 32 &&
+              [28, 32].includes(experiment.version) &&
               experiment.attempt_index === attemptIndex,
             'compute_not_running',
             'Compute requires this experiment’s current running attempt',
             409,
           );
-          if (commandId)
-            check(
-              [12, 16, 20, 24, 28, 32].includes(experiment.version),
-              'code_source_unavailable',
-              'This experiment version cannot ship code',
-              409,
-            );
           if (input?.rentalKey)
             check(
               caller.session,
@@ -91,8 +82,12 @@ export class ExperimentCompute {
           }
         },
         active: async (row, tx) => {
-          const experiment = await tx.get<{ attempt_index: number; state: string }>(
-            `SELECT e.attempt_index,w.state FROM experiments e JOIN wf_instances w ON w.id=e.id
+          const experiment = await tx.get<{
+            attempt_index: number;
+            state: string;
+            version: number;
+          }>(
+            `SELECT e.attempt_index,w.state,w.version FROM experiments e JOIN wf_instances w ON w.id=e.id
            WHERE e.id=? AND e.project_id=?`,
             row.owner_id,
             row.project_id,
@@ -100,6 +95,7 @@ export class ExperimentCompute {
           const input = JSON.parse(row.input_json);
           return (
             !!experiment &&
+            [28, 32].includes(experiment.version) &&
             (experiment.state === 'running' ||
               (input.purpose === 'check' &&
                 ['planned', 'design_review', 'experiment_review'].includes(experiment.state))) &&
@@ -114,7 +110,7 @@ export class ExperimentCompute {
       entitled: (projectId, tx) => this.managed.entitled(projectId, tx),
       active: async (projectId, experimentId, tx) =>
         !!(await tx.get(
-          `SELECT e.id FROM experiments e JOIN wf_instances w ON w.id=e.id WHERE e.id=? AND e.project_id=? AND w.state IN ('planned','design_review','running','experiment_review')`,
+          `SELECT e.id FROM experiments e JOIN wf_instances w ON w.id=e.id WHERE e.id=? AND e.project_id=? AND w.version IN (28,32) AND w.state IN ('planned','design_review','running','experiment_review')`,
           experimentId,
           projectId,
         )),
@@ -128,7 +124,7 @@ export class ExperimentCompute {
         check(
           await tx.get(
             `SELECT l.id FROM experiment_leases l JOIN experiments e ON e.id=l.experiment_id JOIN wf_instances w ON w.id=e.id
-          WHERE e.id=? AND e.project_id=? AND w.version>=17 AND w.version<=32 AND l.id=? AND l.actor_id=? AND l.revision=w.revision
+          WHERE e.id=? AND e.project_id=? AND w.version IN (28,32) AND l.id=? AND l.actor_id=? AND l.revision=w.revision
           AND l.state=w.state AND l.attempt_index=e.attempt_index AND l.released_at IS NULL
           AND w.state IN ('planned','design_review','running','experiment_review')`,
             experimentId,

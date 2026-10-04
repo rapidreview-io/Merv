@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -18,6 +18,7 @@ import type {
   Task,
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
+import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import type {} from '@merv/reflections/types';
 import { createApp } from './fixtures/app.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
@@ -43,8 +44,17 @@ async function fixture(t: TestContext) {
   };
   let app = await createApp({ directory, config, port: 0 });
   const clients = new Set<Client>();
+  const clientSecrets = new WeakMap<Client, string>();
+  const checkouts = new Map<
+    string,
+    {
+      work: ReturnType<typeof currentWork>;
+      held: Awaited<ReturnType<ReturnType<typeof currentWork>['attach']>>;
+    }
+  >();
   t.after(async () => {
     await Promise.allSettled([...clients].map((client) => client.close()));
+    for (const { held } of checkouts.values()) held.driver?.dispose();
     await app.stop();
     delete process.env[env];
     rmSync(directory, { recursive: true, force: true });
@@ -97,9 +107,15 @@ async function fixture(t: TestContext) {
     checks: ['The evidence records an independently verifiable result.'],
     requestId: 'create-task',
   };
-  // Retained pre-Git work; transport, review and restart still use the real services.
-  const task = await historicalTask(app.ctx, await source(), taskInput);
+  const task = await currentTask(app.ctx, await source(), taskInput);
   async function offer(target = task, requestId = randomUUID(), secret = freshSecret()) {
+    await app.ctx.sessions.heartbeatRunner(await source(), {
+      runnerId: 'test-runner',
+      machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+      capacity: 4,
+      capabilities: ['code.v2'],
+    });
     const input = {
       instanceId: target.id,
       expectedRevision: target.workflow.revision,
@@ -114,11 +130,18 @@ async function fixture(t: TestContext) {
       project.id,
     );
     assert.equal(result.status, 200, JSON.stringify(result.body));
+    const work = currentWork(app.ctx, {
+      directory: join(directory, result.body.session.id),
+      source: await source(),
+    });
+    const held = await work.attach(result.body.session);
+    checkouts.set(secret, { work, held });
     return { session: result.body.session, secret, input };
   }
   async function connect(secret: string) {
     const client = new Client({ name: 'real-session-integration', version: '1' });
     clients.add(client);
+    clientSecrets.set(client, secret);
     await client.connect(
       new StreamableHTTPClientTransport(new URL(`${app.ctx.api.url}/mcp`), {
         requestInit: { headers: { authorization: `Bearer ${secret}` } },
@@ -131,9 +154,44 @@ async function fixture(t: TestContext) {
     name: string,
     input: Record<string, unknown> = {},
   ): Promise<T> {
+    let work: ReturnType<typeof currentWork> | undefined;
+    let held: Awaited<ReturnType<ReturnType<typeof currentWork>['attach']>> | undefined;
+    if (name === 'task.submit_delivery' || (name === 'review.submit' && input.verdict === 'pass')) {
+      const caller = await app.ctx.sessions.authenticate(clientSecrets.get(client)!);
+      ({ work, held } = checkouts.get(clientSecrets.get(client)!)!);
+      held.worker = caller;
+      if (name === 'task.submit_delivery') input = { ...input, commandId: await work.commit(held) };
+    }
     const result = await client.callTool({ name, arguments: input });
+    if (work && held) await work.release(held);
     assert.notEqual(result.isError, true, JSON.stringify(result));
     return JSON.parse((result.content as { type: string; text: string }[])[0].text) as T;
+  }
+  async function capture(secret: string) {
+    const stored = checkouts.get(secret)!;
+    stored.held.driver.dispose();
+    const sourceCaller = await source();
+    const driver = new CodeWorkspaceDriver(
+      {
+        directory: stored.held.launch.runDirectory,
+        path: join(stored.held.launch.runDirectory, 'ledger.sqlite'),
+        terminal: () => true,
+      },
+      {
+        call: (route, body) => app.ctx.codeWork.v2!.call(sourceCaller, route, body),
+        putPart: (id, offset, bytes) =>
+          app.ctx.codeWork.v2!.putPart(sourceCaller, id, offset, Buffer.from(bytes)),
+        readPart: (id, input) => app.ctx.codeWork.v2!.readPart!(sourceCaller, id, input),
+      },
+      { pollMs: 10 },
+    );
+    try {
+      await driver.capture(stored.held.launch);
+      await driver.close(stored.held.launch);
+    } finally {
+      driver.dispose();
+      checkouts.delete(secret);
+    }
   }
   async function restart() {
     await Promise.allSettled([...clients].map((client) => client.close()));
@@ -156,6 +214,7 @@ async function fixture(t: TestContext) {
     connect,
     call,
     restart,
+    capture,
   };
 }
 
@@ -387,6 +446,7 @@ test('a real session survives restart and a released worker yields bounded conte
   });
   assert.ok([401, 403, 409].includes(refused.status), JSON.stringify(refused));
   await f.app.ctx.domainEvents.drain();
+  await f.capture(work.secret);
   const successor = await f.offer();
   assert.notEqual(successor.session.actorId, work.session.actorId);
   const next = await f.connect(successor.secret);

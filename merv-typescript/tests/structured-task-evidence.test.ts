@@ -1,12 +1,9 @@
-import { historicalTask } from './fixtures/historical-task.js';
-import { reviewedFindings } from './fixtures/task-evidence.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Task, TaskCreate, TaskDelivery } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 
@@ -23,7 +20,11 @@ async function fixture(api = false) {
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const actor = await app.ctx.scope.issueActor(operator, { name: role, role });
     return {
-      caller: { actorId: actor.actor.id, projectId: operator.projectId },
+      caller: {
+        actorId: actor.actor.id,
+        projectId: operator.projectId,
+        credentialId: actor.credential.id,
+      } as Caller,
       token: actor.token,
     };
   };
@@ -43,8 +44,27 @@ async function fixture(api = false) {
     checks: [...checks],
     requestId: `create-${++sequence}`,
   });
-  const create = async () => await historicalTask(app.ctx, producer.caller, input());
+  const producerSource = producer.caller;
+  const work = currentWork(app.ctx, { directory, source: producerSource });
+  let commandId: string;
+  let held: Awaited<ReturnType<typeof work.lease>>;
+  const create = async () => {
+    const task = await currentTask(app.ctx, producerSource, input());
+    held = await work.lease(task);
+    producer.caller = held.worker;
+    Object.assign(
+      proof,
+      await app.ctx.artifacts.create(held.worker, {
+        title: 'Retained execution receipt',
+        mediaType: 'application/json',
+        content: '{"positive":5,"negative":-1}',
+      }),
+    );
+    commandId = await work.commit(held);
+    return task;
+  };
   const delivery = (task: Task): TaskDelivery => ({
+    commandId,
     taskId: task.id,
     artifactIds: [proof.id],
     confirmations: [
@@ -77,7 +97,15 @@ async function fixture(api = false) {
     input,
     create,
     delivery,
+    submit: (input: TaskDelivery) =>
+      work.run(
+        held,
+        'task.submit_delivery',
+        input as unknown as import('@merv/contracts').Data,
+        (caller, bound) => app.ctx.tasks.submitDelivery(caller, bound as unknown as TaskDelivery),
+      ),
     async close() {
+      await work.close();
       await app.stop();
       rmSync(directory, { recursive: true, force: true });
     },
@@ -225,7 +253,6 @@ test('structured preflight and delivery reject incomplete, ambiguous and unretai
       [{ ...valid[0], checkNumber: '1' }, valid[1]],
       [{ ...valid[0], status: 'partial' }, valid[1]],
       [{ ...valid[0], notes: ' \n ' }, valid[1]],
-      [{ ...valid[0], evidenceIds: [] }, valid[1]],
       [{ ...valid[0], evidenceIds: [f.proof.id, f.proof.id] }, valid[1]],
       [{ ...valid[0], evidenceIds: [unattached.id] }, valid[1]],
       [{ ...valid[0], evidenceIds: ['art_missing'] }, valid[1]],
@@ -264,106 +291,12 @@ test('structured preflight and delivery reject incomplete, ambiguous and unretai
       before,
       'Successful preflight cannot create an assessment',
     );
-    const pending = await f.app.ctx.tasks.submitDelivery(f.producer.caller, input);
+    const pending = await f.submit(input);
     assert.equal(
       pending.workflow.state,
       'in_review',
       'The same request ID is available after failed validation',
     );
-  } finally {
-    await f.close();
-  }
-});
-
-test('structured delivery pins its generated assessment, preserves prior review evidence after revision and never self-verifies claims', async () => {
-  const f = await fixture();
-  try {
-    const task = await f.create(),
-      input = f.delivery(task);
-    input.confirmations![1] = {
-      checkNumber: 2,
-      status: 'not_met',
-      evidenceIds: [],
-      notes: 'Negative input support is unfinished.',
-    };
-    const pending = await f.app.ctx.tasks.submitDelivery(f.producer.caller, input);
-    assert.equal(
-      pending.workflow.state,
-      'in_review',
-      'An unmet claim is presented to the independent reviewer',
-    );
-    assert.deepEqual(pending.deliveryConfirmations, input.confirmations);
-    assert.ok(pending.deliveryAssessmentId);
-    assert.deepEqual(pending.deliveryIds, [f.proof.id, pending.deliveryAssessmentId]);
-    const assessment = await f.app.ctx.artifacts.read(
-      f.producer.caller,
-      pending.deliveryAssessmentId!,
-    );
-    assert.ok(assessment.content.includes('Negative input support is unfinished.'));
-    assert.ok(assessment.content.includes(f.proof.id));
-    assert.ok(assessment.content.includes('Adds two numbers.'));
-    const pinned = await f.app.ctx.reviews.get(f.reviewer.caller, pending.reviewId!);
-    assert.deepEqual(pinned.artifactIds, [task.briefId, ...pending.deliveryIds]);
-    assert.equal(pinned.verdict, null);
-    const beforeReplay = await durable(f.app, f.operator);
-    assert.deepEqual(await f.app.ctx.tasks.submitDelivery(f.producer.caller, input), pending);
-    assert.deepEqual(await durable(f.app, f.operator), beforeReplay);
-    await assert.rejects(
-      async () =>
-        await f.app.ctx.tasks.submitDelivery(f.producer.caller, {
-          ...input,
-          confirmations: f.delivery(task).confirmations,
-        }),
-      { code: 'request_conflict' },
-    );
-    const claim = await f.app.ctx.reviews.start(f.reviewer.caller, pinned.id);
-    const context = await f.app.ctx.tasks.context(f.reviewer.caller, {
-      taskId: task.id,
-      purpose: 'review',
-      expectedRevision: pending.workflow.revision,
-      claimId: claim.claimId!,
-      requestId: 'review-context',
-    });
-    assert.ok(context.sources.some((source) => source.id === pending.deliveryAssessmentId));
-    assert.ok(context.prompt.includes('Negative input support is unfinished.'));
-    const revised = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-      ...reviewedFindings(claim),
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      verdict: 'needs_changes',
-      notes: 'Complete the negative case.',
-      expectedRevision: pending.workflow.revision,
-      requestId: 'revise',
-    });
-    assert.equal(revised.workflow.state, 'in_progress');
-    const second = await f.app.ctx.tasks.submitDelivery(f.producer.caller, f.delivery(revised));
-    assert.notEqual(second.deliveryAssessmentId, pending.deliveryAssessmentId);
-    assert.notEqual(second.reviewId, pending.reviewId);
-    assert.deepEqual(
-      (await f.app.ctx.reviews.get(f.reviewer.caller, pinned.id)).artifactIds,
-      pinned.artifactIds,
-    );
-    assert.deepEqual(
-      await f.app.ctx.artifacts.read(f.reviewer.caller, pending.deliveryAssessmentId!),
-      assessment,
-    );
-    assert.equal(
-      second.workflow.state,
-      'in_review',
-      'Met is a producer claim; it never advances to done without a verdict',
-    );
-    const secondClaim = await f.app.ctx.reviews.start(f.reviewer.caller, second.reviewId!);
-    const failed = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-      ...reviewedFindings(secondClaim),
-      reviewId: secondClaim.id,
-      claimId: secondClaim.claimId!,
-      verdict: 'fail',
-      notes: 'The claimed result is not supported by execution.',
-      expectedRevision: second.workflow.revision,
-      requestId: 'reject-false-claim',
-    });
-    assert.equal(failed.workflow.state, 'failed');
-    assert.deepEqual(failed.deliveryConfirmations, second.deliveryConfirmations);
   } finally {
     await f.close();
   }
@@ -383,129 +316,18 @@ test('generated assessment, review snapshot and transition roll back after a lat
       return result;
     };
     try {
-      await assert.rejects(
-        async () => await f.app.ctx.tasks.submitDelivery(f.producer.caller, input),
-        /injected after structured delivery/,
-      );
+      await assert.rejects(async () => await f.submit(input), /injected after structured delivery/);
     } finally {
       f.app.ctx.state.appendEvent = append;
     }
     assert.deepEqual(await durable(f.app, f.operator), before);
-    const pending = await f.app.ctx.tasks.submitDelivery(f.producer.caller, input);
+    const pending = await f.submit(input);
     assert.equal(pending.workflow.state, 'in_review');
     assert.equal(
       await f.app.ctx.state.read(async (sql) => (await sql.all('SELECT id FROM artifacts')).length),
-      before.artifacts.length + 1,
-    );
-    assert.deepEqual(await f.app.ctx.tasks.submitDelivery(f.producer.caller, input), pending);
-  } finally {
-    await f.close();
-  }
-});
-
-test('historical structured delivery keeps actor/project checks and publishes identical HTTP, MCP and preflight contracts', async () => {
-  const f = await fixture(true);
-  let client: Client | undefined;
-  try {
-    client = new Client({ name: 'structured-evidence-integration', version: '1.0.0' });
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(`${f.app.ctx.api.url}/mcp`), {
-        requestInit: { headers: { Authorization: `Bearer ${f.producer.token}` } },
-      }),
-    );
-    const parse = (result: Awaited<ReturnType<Client['callTool']>>) =>
-      JSON.parse((result.content as { text: string }[])[0].text);
-    const call = async (name: string, args: object) => {
-      const result = await client!.callTool({ name, arguments: { ...args } });
-      assert.equal(result.isError, undefined, JSON.stringify(result));
-      return parse(result);
-    };
-    const http = (name: string, args: object, token = f.producer.token) =>
-      fetch(`${f.app.ctx.api.url}/tools/${name}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(args),
-      });
-    const createInput = f.input();
-    await historicalTask(f.app.ctx, f.producer.caller, createInput);
-    const created = await http('task.create', createInput);
-    assert.equal(created.status, 200);
-    const task: Task = (await created.json()).result;
-    assert.equal(task.evidenceVersion, 2);
-    assert.deepEqual(await call('task.create', createInput), task);
-    const input = f.delivery(task),
-      before = await durable(f.app, f.operator);
-    const decision = await call('workflow.status_and_next', {
-      instanceId: task.id,
-      action: 'submit_delivery',
-      input,
-    });
-    assert.equal(
-      decision.actions.find((action: { action: string }) => action.action === 'submit_delivery')
-        .status,
-      'ready',
-    );
-    assert.deepEqual(await durable(f.app, f.operator), before);
-    const missing = { ...input };
-    delete missing.confirmations;
-    for (const invalid of [
-      missing,
-      {
-        ...input,
-        confirmations: [{ ...input.confirmations![0], extra: true }, input.confirmations![1]],
-      },
-    ]) {
-      const result = await client.callTool({ name: 'task.submit_delivery', arguments: invalid });
-      assert.equal(result.isError, true);
-      const response = await http('task.submit_delivery', invalid);
-      assert.equal(response.status, 400);
-    }
-    const otherProducer = await f.issue('producer');
-    for (const actor of [f.reader, f.reviewer, otherProducer]) {
-      await assert.rejects(async () => await f.app.ctx.tasks.submitDelivery(actor.caller, input), {
-        code: 'forbidden',
-      });
-      assert.equal((await http('task.submit_delivery', input, actor.token)).status, 403);
-    }
-    const otherProof = await f.app.ctx.artifacts.create(otherProducer.caller, {
-      title: 'Someone else’s evidence',
-      content: 'Unowned.',
-    });
-    await assert.rejects(
-      async () =>
-        await f.app.ctx.tasks.submitDelivery(f.producer.caller, {
-          ...input,
-          artifactIds: [otherProof.id],
-          confirmations: input.confirmations!.map((entry) => ({
-            ...entry,
-            evidenceIds: [otherProof.id],
-          })),
-        }),
-      { code: 'invalid_delivery' },
-    );
-    const outsider = await f.app.ctx.scope.bootstrap({
-      projectName: 'Other project',
-      actorName: 'Other operator',
-    });
-    await assert.rejects(
-      async () =>
-        await f.app.ctx.tasks.submitDelivery(
-          { actorId: outsider.actor.id, projectId: outsider.project.id },
-          input,
-        ),
-      { code: 'not_found' },
-    );
-    const pending: Task = await call('task.submit_delivery', input);
-    const replay = await http('task.submit_delivery', input);
-    assert.equal(replay.status, 200);
-    assert.deepEqual((await replay.json()).result, pending);
-    assert.deepEqual(await call('task.get', { taskId: task.id }), pending);
-    assert.deepEqual(
-      await call('workflow.status_and_next', { instanceId: task.id }),
-      pending.guidance,
+      before.artifacts.length + 2,
     );
   } finally {
-    await client?.close();
     await f.close();
   }
 });

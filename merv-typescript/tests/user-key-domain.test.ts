@@ -1,5 +1,4 @@
-// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -44,7 +43,7 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
     key: await scope.authenticateKey(r.token),
   });
   const head = await state.eventHead();
-  const task = await historicalTask(app.ctx, producerCaller, {
+  const task = await currentTask(app.ctx, producerCaller, {
     title: 'Evidence',
     goal: 'Verify a result',
     checks: ['The result is verified'],
@@ -76,17 +75,15 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
     artifactIds: [delivery.id],
     requestId: 'feed',
   });
-  const pending = await tasks.submitDelivery(
-    producerCaller,
-    confirmedDelivery({
-      taskId: task.id,
-      artifactIds: [delivery.id],
-      expectedRevision: 0,
-      requestId: 'delivery',
-    }),
-  );
-  const claim = await reviews.start(reviewerCaller, pending.reviewId!);
-  await workflows.begin(reviewerCaller, { instanceId: task.id, expectedRevision: 1 });
+  const pending = await reviews.request(producerCaller, {
+    subjectId: 'key-provenance',
+    subjectRevision: 0,
+    producerId: producerCaller.actorId,
+    artifactIds: [delivery.id],
+    criteria: ['The result is verified'],
+    requestId: 'review-request',
+  });
+  const claim = await reviews.start(reviewerCaller, pending.id);
   const keyEvents = await state.events(project.id, head);
   const expectedActors = new Map([
     [producerCaller.actorId, producerCaller],
@@ -113,7 +110,6 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
     'context.built',
     'task.checkpoint_saved',
     'feed.posted',
-    'task.delivery_submitted',
     'review.requested',
     'review.started',
   ]) {
@@ -130,16 +126,15 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
   const human = await scope.caller(reviewer, project.id);
   assert.equal((await reviews.get(human, claim.id)).claimId, claim.claimId);
   assert.equal(await scope.eligible(project.id, human.actorId, 'review'), true);
-  const done = await tasks.submitReview(human, {
+  const done = await reviews.submit(human, {
     reviewId: claim.id,
     claimId: claim.claimId!,
     verdict: 'pass',
     notes: 'The owner independently checked the result.',
     ...reviewedFindings(claim),
-    expectedRevision: 1,
     requestId: 'verdict',
   });
-  assert.equal(done.workflow.state, 'done');
+  assert.equal(done.status, 'submitted');
   const humanEvents = (await state.events(project.id, before)).filter(
     (event) => event.type === 'review.submitted',
   );

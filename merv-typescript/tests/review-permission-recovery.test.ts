@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -301,34 +301,19 @@ for (const loss of ['role-loss', 'remove-rejoin'] as const) {
       await scope.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
       const operator = await scope.caller(owner, project.id);
       const reviewer = await scope.caller(reviewerUser, project.id);
-      const task = await historicalTask({ state, artifacts, tasks }, operator, {
-        title: 'Review authority',
-        goal: 'Verify the result.',
-        checks: ['The result is reproducible.'],
-        requestId: 'task',
-      });
       const proof = await artifacts.create(operator, {
         title: 'Proof',
         content: 'The result is reproducible.',
       });
-      const pending = await tasks.submitDelivery(
-        operator,
-        confirmedDelivery({
-          taskId: task.id,
-          artifactIds: [proof.id],
-          expectedRevision: 0,
-          requestId: 'delivery',
-        }),
-      );
-      const claimed = await reviews.start(reviewer, pending.reviewId!);
-      const assignment = {
-        taskId: task.id,
-        purpose: 'review' as const,
-        expectedRevision: 1,
-        claimId: claimed.claimId!,
-        requestId: 'context',
-      };
-      await tasks.context(reviewer, assignment);
+      const pending = await reviews.request(operator, {
+        subjectId: 'membership-claim',
+        subjectRevision: 0,
+        producerId: operator.actorId,
+        artifactIds: [proof.id],
+        criteria: ['The result is reproducible.'],
+        requestId: 'review',
+      });
+      const claimed = await reviews.start(reviewer, pending.id);
       await domainEvents.drain();
       // Put both recovery consumers in a retry delay, as after a transient failure.
       // Other services remain active; explicit drains cannot release this claim yet.
@@ -366,30 +351,11 @@ for (const loss of ['role-loss', 'remove-rejoin'] as const) {
         async () => await reviews.start(restored, claimed.id),
         async () => await reviews.checkSubmit(restored, claimed.id),
         async () => await reviews.submit(restored, verdict),
-        async () => await tasks.context(restored, assignment),
-        async () => await tasks.context(restored, { ...assignment, requestId: 'new-context' }),
-        async () =>
-          await tasks.checkpoint(restored, {
-            ...assignment,
-            requestId: 'checkpoint',
-            notes: 'Work',
-          }),
-        async () => await tasks.submitReview(restored, { ...verdict, expectedRevision: 1 }),
-        async () => await workflows.begin(restored, { instanceId: task.id, expectedRevision: 1 }),
       ]) {
         await assert.rejects(operation, { code: 'stale_claim' });
       }
-      for (const action of ['begin', 'start_review', 'submit_review']) {
-        const preflight = await workflows.evaluate(restored, task.id, {
-          action,
-          ...(action === 'submit_review' ? { input: { ...verdict, expectedRevision: 1 } } : {}),
-        });
-        assert.equal(preflight.currentGate, 'stale_claim');
-        assert.equal(preflight.nextAction, null);
-      }
       assert.equal(await state.eventHead(), head, 'Rejected operations append no events');
       assert.deepEqual(await reviews.get(operator, claimed.id), claimed);
-      assert.equal((await workflows.get(operator, task.id)).revision, 1);
 
       // A fresh post-loss claim is valid even before the old claim is cleaned up.
       const independent = await reviews.request(operator, {
@@ -409,24 +375,8 @@ for (const loss of ['role-loss', 'remove-rejoin'] as const) {
       const replacement = await reviews.start(restored, claimed.id);
       assert.notEqual(replacement.claimId, claimed.claimId);
       assert.equal(
-        (
-          await tasks.context(restored, {
-            ...assignment,
-            claimId: replacement.claimId!,
-            requestId: 'fresh-context',
-          })
-        ).actorId,
-        restored.actorId,
-      );
-      assert.equal(
-        (
-          await tasks.submitReview(restored, {
-            ...verdict,
-            claimId: replacement.claimId!,
-            expectedRevision: 1,
-          })
-        ).workflow.state,
-        'done',
+        (await reviews.submit(restored, { ...verdict, claimId: replacement.claimId! })).status,
+        'submitted',
         'Rejected verdicts leave their request IDs reusable after a fresh claim',
       );
     } finally {

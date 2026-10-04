@@ -15,7 +15,7 @@ import { Client as PostgresClient } from 'pg';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createApp } from '../dist/src/app.js';
-import { historicalTask } from '../dist/tests/fixtures/historical-task.js';
+import { currentTask, currentWork } from '../dist/tests/fixtures/current-work.js';
 import { waitForManagedCode } from '../dist/tests/fixtures/managed-code.js';
 
 let stage = 'preflight';
@@ -26,7 +26,8 @@ function checkpoint(value) {
 
 /** Reuses the established task, agent-assignment, and research test scenarios. */
 export async function exerciseRuntime(start) {
-  let app;
+  let app, work;
+  const workDirectory = await mkdtemp(join(tmpdir(), 'merv-runtime-work-'));
   const clients = new Set();
   const closeClients = async () => {
     const results = await Promise.allSettled([...clients].map((client) => client.close()));
@@ -124,6 +125,15 @@ export async function exerciseRuntime(start) {
       }),
     );
 
+    work = currentWork(app.ctx, { directory: workDirectory, source: owner });
+    const held = new Map();
+    await app.ctx.sessions.heartbeatRunner(owner, {
+      runnerId: 'external',
+      machine: { hostname: 'acceptance', system: process.platform, architecture: process.arch },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
+      capacity: 1,
+      capabilities: ['code.v2'],
+    });
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
     const { agent } = await http('/sessions/agents', boot.token, {
       name: 'Smoke continuing agent',
@@ -131,23 +141,30 @@ export async function exerciseRuntime(start) {
       requestId: 'register',
       secret,
     });
-    // Existing artifact-only work still supports the continuing-agent protocol.
-    // New managed work was admitted above; its leased Git execution has separate worker gates.
+    // The continuing agent uses actual managed Git for every assignment.
     const createTask = (requestId) =>
-      historicalTask(app.ctx, owner, {
+      currentTask(app.ctx, owner, {
         title: `Synthetic ${requestId}`,
         goal: 'Verify the sum.',
         checks: ['Two plus three equals five.'],
         requestId,
       });
-    const assign = (task, requestId) =>
-      http('/sessions/self/assignment', secret, {
+    const assign = async (task, requestId) => {
+      const result = await http('/sessions/self/assignment', secret, {
         instanceId: task.id,
         expectedRevision: task.workflow.revision,
         requestId,
       });
-    const release = (execution) =>
-      http('/sessions/self/release', secret, { executionId: execution.id });
+      const lease = await work.attach(await app.ctx.sessions.get(owner, result.execution.id));
+      lease.worker = await app.ctx.sessions.authenticate(secret);
+      held.set(result.execution.id, lease);
+      return result;
+    };
+    const release = async (execution) => {
+      await http('/sessions/self/release', secret, { executionId: execution.id });
+      await work.release(held.get(execution.id));
+      held.delete(execution.id);
+    };
 
     checkpoint('task-delivery');
     const first = await createTask('first-task');
@@ -162,7 +179,9 @@ export async function exerciseRuntime(start) {
       (await call(worker, 'artifact.read', { artifactId: artifact.id })).content,
       'Observed 2 + 3 = 5.',
     );
+    const commandId = await work.commit(held.get(firstExecution.id));
     const pending = await call(worker, 'task.submit_delivery', {
+      commandId,
       taskId: first.id,
       expectedRevision: first.workflow.revision,
       artifactIds: [artifact.id],
@@ -206,8 +225,8 @@ export async function exerciseRuntime(start) {
     assert.equal((await http('/sessions/self', secret)).current, null);
     const observation = await http(`/sessions/agents/${agent.id}/observation`, boot.token);
     assert.equal(observation.assignments.length, 2);
-    assert.equal(observation.tokenStats.totalCalls, 5);
-    assert.equal(observation.tokenStats.completedCalls, 5);
+    assert.equal(observation.tokenStats.totalCalls, 6);
+    assert.equal(observation.tokenStats.completedCalls, 6);
     assert.ok(Object.values(observation.tokenStats).every(Number.isSafeInteger));
     assert.ok(observation.tokenStats.inputTokens > 0 && observation.tokenStats.outputTokens > 0);
     assert.equal(observation.tokenAccounting.kind, 'estimate');
@@ -221,10 +240,15 @@ export async function exerciseRuntime(start) {
     checkpoint('independent-review');
     const issued = await app.ctx.scope.issueActor(owner, {
       name: 'Smoke independent reviewer',
-      role: 'reviewer',
+      role: 'operator',
     });
-    const reviewer = await connect(issued.token);
-    const claim = await call(reviewer, 'review.start', { reviewId: pending.reviewId });
+    const reviewLease = await work.lease(pending, {
+      projectId: owner.projectId,
+      actorId: issued.actor.id,
+      credentialId: issued.credential.id,
+    });
+    const reviewer = await connect(reviewLease.token);
+    const claim = await call(reviewer, 'review.get', { reviewId: pending.reviewId });
     for (const artifactId of claim.artifactIds)
       await call(reviewer, 'artifact.read', { artifactId });
     const verdict = {
@@ -250,12 +274,19 @@ export async function exerciseRuntime(start) {
       (event) => event.type === 'task.review_applied' && event.subjectId === first.id,
     );
     assert.equal(reviewed.length, 1);
-    await call(reviewer, 'review.submit', verdict);
-    assert.equal(
-      (await app.ctx.state.events(owner.projectId)).length,
-      events.length,
-      'Verdict replay must not add events',
+    await assert.rejects(
+      () => reviewer.callTool({ name: 'review.submit', arguments: verdict }),
+      (error) => error.code === 401 && /"code":"session_(completed|closed)"/.test(error.message),
+      'The completed worker must be fenced by session admission',
     );
+    assert.equal(
+      (await app.ctx.state.events(owner.projectId)).filter(
+        (event) => event.type === 'task.review_applied' && event.subjectId === first.id,
+      ).length,
+      1,
+      'A completed worker cannot submit another verdict',
+    );
+    await work.release(reviewLease);
 
     checkpoint('private-download');
     const download = await call(operator, 'artifact.read', {
@@ -312,6 +343,8 @@ export async function exerciseRuntime(start) {
     );
 
     checkpoint('restart-persistence');
+    await work.close();
+    work = undefined;
     await closeClients();
     await app.stop();
     app = await start();
@@ -334,7 +367,7 @@ export async function exerciseRuntime(start) {
       projectId: owner.projectId,
       pluginCount,
       taskState: 'done',
-      reviewReplay: 'idempotent',
+      closedWorkerReplay: 'fenced',
       agentId: agent.id,
       assignments: 2,
       toolCalls: retained.tokenStats.totalCalls,
@@ -351,7 +384,15 @@ export async function exerciseRuntime(start) {
     try {
       await closeClients();
     } finally {
-      await app?.stop();
+      try {
+        await work?.close();
+      } finally {
+        try {
+          await app?.stop();
+        } finally {
+          await rm(workDirectory, { recursive: true, force: true });
+        }
+      }
     }
   }
 }

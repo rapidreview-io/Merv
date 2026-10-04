@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -71,7 +71,7 @@ test('HTTP/MCP rotation replaces authority while task and actor identity stay du
   });
   const admin = identity(operator);
   const producer = await app.ctx.scope.issueActor(admin, { name: 'Producer', role: 'producer' });
-  const task = await historicalTask(app.ctx, identity(producer), {
+  const task = await currentTask(app.ctx, identity(producer), {
     title: 'Retain identity',
     goal: 'Keep work across rotation.',
     checks: ['Original actor attribution survives.'],

@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -101,7 +101,7 @@ test('production example preserves the full composition and changes only storage
 });
 
 test(
-  `assembled PostgreSQL + S3 preserves artifact, review, event and replay atomicity across restarts`,
+  `assembled PostgreSQL + S3 preserves artifact, task, event and replay atomicity across restarts`,
   { timeout: 90_000 },
   async (t) => {
     const f = await fixture(t);
@@ -173,7 +173,7 @@ test(
       checks: ['The sum is 20.'],
       requestId: 'create-task',
     };
-    const task = await historicalTask(app.ctx, producer, create);
+    const task = await currentTask(app.ctx, producer, create);
     assert.deepEqual(await app.ctx.tasks.create(producer, create), task);
     await assert.rejects(app.ctx.tasks.create(producer, { ...create, title: 'Changed input' }), {
       code: 'request_conflict',
@@ -183,41 +183,27 @@ test(
       expectedRevision: task.workflow.revision,
     });
     assert.ok(assignment.context?.prompt.includes('Verify the sum.'));
-    const pending = await app.ctx.tasks.submitDelivery(
-      producer,
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [artifact.id],
-        expectedRevision: task.workflow.revision,
-        requestId: 'delivery',
-      }),
-    );
-    assert.equal(pending.workflow.state, 'in_review');
-    const claim = await app.ctx.reviews.start(reviewer, pending.reviewId!);
-    const verdict: TaskReview = {
-      ...reviewedFindings(claim),
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      expectedRevision: pending.workflow.revision,
-      verdict: 'pass',
-      notes: 'Verified independently.',
-      requestId: 'verdict',
+    // Closure exercises the same domain/graph/event transaction without reviving the
+    // removed unleased delivery protocol. Real Git review is covered by runner-code-v2.
+    const closure = {
+      taskId: task.id,
+      expectedRevision: 0,
+      reason: 'Bounded check finished.',
+      requestId: 'close-task',
     };
     const before = await app.ctx.state.events(operator.projectId);
     const append = app.ctx.state.appendEvent.bind(app.ctx.state);
     app.ctx.state.appendEvent = async (tx, event) => {
       const stored = await append(tx, event);
-      if (event.type === 'task.review_applied')
-        throw new Error('injected failure after verdict and transition');
+      if (event.type === 'task.failed') throw new Error('injected failure after transition');
       return stored;
     };
     try {
-      await assert.rejects(app.ctx.tasks.submitReview(reviewer, verdict), /injected failure/);
+      await assert.rejects(app.ctx.tasks.markFailed(producer, closure), /injected failure/);
     } finally {
       app.ctx.state.appendEvent = append;
     }
-    assert.equal((await app.ctx.tasks.get(operator, task.id)).workflow.state, 'in_review');
-    assert.equal((await app.ctx.reviews.get(operator, claim.id)).status, 'started');
+    assert.equal((await app.ctx.tasks.get(operator, task.id)).workflow.state, 'in_progress');
     assert.deepEqual(await app.ctx.state.events(operator.projectId), before);
     assert.equal(
       await app.ctx.state.read(
@@ -225,46 +211,25 @@ test(
           (await sql.get<{ count: number }>(
             'SELECT COUNT(*) AS count FROM task_commands WHERE project_id=? AND actor_id=? AND request_id=?',
             operator.projectId,
-            reviewer.actorId,
-            verdict.requestId,
-          ))!.count,
-      ),
-      0,
-    );
-    assert.equal(
-      await app.ctx.state.read(
-        async (sql) =>
-          (await sql.get<{ count: number }>(
-            'SELECT COUNT(*) AS count FROM review_commands WHERE project_id=? AND actor_id=? AND request_id=?',
-            operator.projectId,
-            reviewer.actorId,
-            childRequest(reviewer, 'task', 'review', verdict.requestId),
+            producer.actorId,
+            closure.requestId,
           ))!.count,
       ),
       0,
     );
     app = await f.restart();
-    assert.equal((await app.ctx.tasks.get(operator, task.id)).workflow.state, 'in_review');
-    assert.equal((await app.ctx.reviews.get(operator, claim.id)).claimId, claim.claimId);
-    const done = await app.ctx.tasks.submitReview(reviewer, verdict);
-    assert.equal(done.workflow.state, 'done');
+    const done = await app.ctx.tasks.markFailed(producer, closure);
+    assert.equal(done.workflow.state, 'failed');
     const committed = await app.ctx.state.events(operator.projectId);
     assert.equal(
-      committed.filter((event) => event.type === 'review.submitted' && event.subjectId === claim.id)
+      committed.filter((event) => event.type === 'task.failed' && event.subjectId === task.id)
         .length,
       1,
     );
-    assert.equal(
-      committed.filter(
-        (event) => event.type === 'task.review_applied' && event.subjectId === task.id,
-      ).length,
-      1,
-    );
-    assert.deepEqual(await app.ctx.tasks.submitReview(reviewer, verdict), done);
+    assert.deepEqual(await app.ctx.tasks.markFailed(producer, closure), done);
     assert.deepEqual(await app.ctx.state.events(operator.projectId), committed);
     app = await f.restart();
-    assert.deepEqual(await app.ctx.tasks.submitReview(reviewer, verdict), done);
-    assert.equal((await app.ctx.tasks.get(operator, task.id)).workflow.state, 'done');
+    assert.deepEqual(await app.ctx.tasks.markFailed(producer, closure), done);
     const response = await fetch(`${app.ctx.api.url}/tools/artifact.read`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${identity.token}`, 'Content-Type': 'application/json' },

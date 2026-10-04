@@ -8,29 +8,17 @@ import {
 
 type Bindings = Record<string, WorkflowExecutionBinding>;
 
-/** Where a task version's private Git checkout starts, or 'none' for the original scratch task. */
-export type TaskWorkspace = 'none' | 'central' | 'reference' | 'code' | 'resolution';
-/** The workspace driver that prepares checkouts from Code's own repository; opaque to Tasks. */
+/** Current tasks all use Code-managed Git; resolution work additionally grants merge tools. */
+export type TaskWorkspace = 'code' | 'resolution';
 const CODE_DRIVER = 'code.v2';
 
-/**
- * Fixed work protocols. Completion readiness and context rendering never mint grants.
- *
- * A published execution policy is immutable, so the workspace belongs to the task's workflow
- * version: a scratch version declares nothing and stays byte-identical, and a Git version adds
- * the checkout and, for the producer alone, the commit tools a workspace never grants by itself.
- * A `code` version declares the same checkouts as a `reference` one and names the driver that
- * prepares them from Code's repository, so only a runner that carries it is offered the work.
- */
+/** Fixed work protocols. Completion readiness and context rendering never mint grants. */
 export function taskExecutionPolicy(
   purpose: 'work' | 'review',
-  workspace: TaskWorkspace = 'none',
+  workspace: TaskWorkspace,
   largeUploads = false,
   compute = false,
-  rentals = false,
-  rentalJobs = false,
 ): WorkflowExecutionPolicy {
-  const driver = ['code', 'resolution'].includes(workspace) ? { driver: CODE_DRIVER } : {};
   const instance = { instanceId: target('instanceId') };
   const task = { taskId: target('instanceId') };
   const revision = { expectedRevision: target('revision') };
@@ -42,30 +30,24 @@ export function taskExecutionPolicy(
   };
   return {
     readOnly: purpose === 'review',
-    ...(workspace === 'none'
-      ? {}
-      : {
-          workspace:
-            purpose === 'work'
-              ? {
-                  mode: 'persistent' as const,
-                  namespace: 'tasks',
-                  base:
-                    workspace === 'central' ? ('central' as const) : ('reference:base' as const),
-                  perBase: false,
-                  retain: true,
-                  advancesCentral: false,
-                  ...driver,
-                }
-              : {
-                  // The reviewer inspects exactly the delivered commit and keeps nothing.
-                  mode: 'ephemeral' as const,
-                  namespace: 'task-reviews',
-                  base: 'reference:code' as const,
-                  retain: false,
-                  ...driver,
-                },
-        }),
+    workspace:
+      purpose === 'work'
+        ? {
+            mode: 'persistent',
+            namespace: 'tasks',
+            base: 'reference:base',
+            perBase: false,
+            retain: true,
+            advancesCentral: false,
+            driver: CODE_DRIVER,
+          }
+        : {
+            mode: 'ephemeral',
+            namespace: 'task-reviews',
+            base: 'reference:code',
+            retain: false,
+            driver: CODE_DRIVER,
+          },
     tools: [
       grant('workflow.status_and_next', instance, {
         instanceId: { kind: 'oneOf', name: 'dependencies' },
@@ -73,10 +55,10 @@ export function taskExecutionPolicy(
       grant('workflow.assignment', instance),
       grant('task.get', task),
       ...(compute ? [grant('task.compute_status', task)] : []),
-      ...(rentals
+      ...(compute
         ? [
             ...(purpose === 'review' ? [grant('task.compute_offers', {})] : []),
-            ...(rentalJobs && purpose === 'review'
+            ...(purpose === 'review'
               ? [
                   grant('task.compute_run', {
                     ...task,
@@ -86,8 +68,8 @@ export function taskExecutionPolicy(
                   grant('task.compute_cancel', task),
                 ]
               : []),
-            ...['machines', 'rent', 'ssh', ...(rentalJobs ? ['extend'] : []), 'release'].map(
-              (name) => grant(`task.compute_${name}`, task),
+            ...['machines', 'rent', 'ssh', 'extend', 'release'].map((name) =>
+              grant(`task.compute_${name}`, task),
             ),
           ]
         : []),
@@ -118,13 +100,9 @@ export function taskExecutionPolicy(
               : []),
             grant('task.submit_delivery', { taskId: reference('producerTaskId'), ...revision }),
             grant('task.mark_failed', { ...task, ...revision }),
-            ...(workspace === 'none'
-              ? []
-              : [
-                  grant('code.commit', {}),
-                  grant('code.operation', {}),
-                  ...(workspace === 'resolution' ? [grant('code.merge', {})] : []),
-                ]),
+            grant('code.commit', {}),
+            grant('code.operation', {}),
+            ...(workspace === 'resolution' ? [grant('code.merge', {})] : []),
           ]
         : [
             grant('review.start', { reviewId: reference('reviewId') }),

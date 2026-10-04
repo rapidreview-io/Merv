@@ -1,10 +1,5 @@
-import { historicalTask } from './fixtures/historical-task.js';
-/**
- * Decision 5: a worker is its directing authority's hand. Work a person (or their Agent, which
- * acts as them) delivered at the desk carries no provenance, and a worker that person directs
- * must still not review it. Two workers one authority directs are different actors, though, so
- * either may review the other's delivery (plan §5.3 C1).
- */
+import { currentTask, currentWork } from './fixtures/current-work.js';
+/** Separate workers may review each other's current Git delivery; a directing author remains excluded. */
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -34,6 +29,11 @@ async function fixture(t: TestContext) {
     projectId: founder.projectId,
     credentialId: issued.credential.id,
   };
+  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: founder });
+  const held = new Map<string, Awaited<ReturnType<typeof work.attach>>>();
+  t.after(() => {
+    for (const item of held.values()) item.driver?.dispose();
+  });
   let seq = 0;
   const member = async (name: string): Promise<Caller> => {
     const issued = await app.ctx.scope.issueActor(founder, { name, role: 'operator' });
@@ -46,6 +46,13 @@ async function fixture(t: TestContext) {
   /** A worker identity whose every lease is directed by `source`. */
   const worker = async (source: Caller) => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
+    await app.ctx.sessions.heartbeatRunner(source, {
+      runnerId: 'external',
+      machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+      capacity: 4,
+      capabilities: ['code.v2'],
+    });
     await app.ctx.sessions.registerAgent(source, {
       name: `Worker ${++seq}`,
       runnerId: 'external',
@@ -54,19 +61,22 @@ async function fixture(t: TestContext) {
     });
     return {
       token,
-      assign: async (task: Pick<Task, 'id' | 'workflow'>) =>
-        await app.ctx.sessions.assignAgent(token, {
+      assign: async (task: Pick<Task, 'id' | 'workflow'>) => {
+        const session = await app.ctx.sessions.assignAgent(token, {
           instanceId: task.id,
           expectedRevision: task.workflow.revision,
           requestId: `assign-${++seq}`,
-        }),
+        });
+        held.set(session.id, await work.attach(session, source));
+        return session;
+      },
       caller: async () => await app.ctx.sessions.authenticate(token),
       offered: async () =>
         (await app.ctx.sessions.agentSelf(token)).available.map((item) => item.instanceId),
     };
   };
   const create = async (by: Caller) =>
-    await historicalTask(app.ctx, by, {
+    await currentTask(app.ctx, by, {
       title: `Task ${++seq}`,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
@@ -77,80 +87,28 @@ async function fixture(t: TestContext) {
       title: 'Proof',
       content: 'Observed 2 + 3 = 5.',
     })) as Artifact;
-    return (await app.ctx.tools.call(
+    const lease = held.get(by.session!.id)!;
+    lease.worker = by;
+    const commandId = await work.commit(lease);
+    const delivered = (await app.ctx.tools.call(
       'task.submit_delivery',
       by,
       confirmedDelivery({
         taskId: task.id,
         expectedRevision: task.workflow.revision,
         artifactIds: [proof.id],
+        commandId,
         requestId: `deliver-${++seq}`,
       }),
     )) as Task;
+    await work.release(lease);
+    held.delete(by.session!.id);
+    return delivered;
   };
   const candidates = async (source: Caller) =>
     (await app.ctx.workflows.dispatchCandidates(source)).map((item) => item.instanceId);
   return { app, founder, other, member, worker, create, deliver, candidates };
 }
-
-test('a worker whose directing authority produced the desk delivery is refused, never offered and never a dispatch candidate', async (t) => {
-  const f = await fixture(t);
-  const delivered = await f.deliver(f.founder, await f.create(f.founder));
-  const review = await f.app.ctx.reviews.get(f.founder, delivered.reviewId!);
-  assert.equal(review.producerId, f.founder.actorId);
-  assert.equal(review.provenance, undefined, 'a desk delivery carries no provenance');
-
-  const hand = await f.worker(f.founder);
-  await assert.rejects(async () => await hand.assign(delivered), { code: 'review_independence' });
-  assert.ok(!(await hand.offered()).includes(delivered.id), 'what is refused is not offered');
-  assert.ok(
-    !(await f.candidates(f.founder)).includes(delivered.id),
-    'no runner on the producer’s own key is offered its review',
-  );
-  assert.equal(
-    (await f.app.ctx.sessions.agentSelf(hand.token)).assignments.length,
-    0,
-    'the refusal created no execution',
-  );
-
-  // A worker another member directs is independent of it, and claims it through its lease.
-  assert.ok((await f.candidates(f.other)).includes(delivered.id));
-  const independent = await f.worker(f.other);
-  assert.ok((await independent.offered()).includes(delivered.id));
-  assert.equal((await independent.assign(delivered)).role, 'reviewer');
-  const claimed = await f.app.ctx.reviews.get(f.founder, delivered.reviewId!);
-  assert.equal(claimed.status, 'started');
-  assert.equal(claimed.reviewerId, (await independent.caller()).actorId);
-});
-
-test('a leased worker directed by the producer cannot claim its review, and the list says so, even while it holds another record’s review lease', async (t) => {
-  const f = await fixture(t);
-  const delivered = await f.deliver(f.founder, await f.create(f.founder));
-  // The same worker, leased on an unrelated review, still speaks for the founder.
-  const elsewhere = await f.deliver(f.other, await f.create(f.other));
-  const hand = await f.worker(f.founder);
-  await hand.assign(elsewhere);
-  const leased = await hand.caller();
-  await assert.rejects(
-    async () => await f.app.ctx.reviews.checkStart(leased, delivered.reviewId!),
-    { code: 'review_independence' },
-  );
-  await assert.rejects(async () => await f.app.ctx.reviews.start(leased, delivered.reviewId!), {
-    code: 'review_independence',
-  });
-  assert.equal(
-    (await f.app.ctx.reviews.list(leased)).find((item) => item.id === delivered.reviewId)
-      ?.claimable,
-    false,
-    'the list answers the same rule the claim applies',
-  );
-  assert.equal(
-    (await f.app.ctx.reviews.list(leased)).find((item) => item.id === elsewhere.reviewId)
-      ?.claimable,
-    false,
-    'its own claimed review is nobody’s to claim',
-  );
-});
 
 test('two workers one authority directs are different actors: either may review the other’s delivery, but not the authority itself (C1)', async (t) => {
   const f = await fixture(t);

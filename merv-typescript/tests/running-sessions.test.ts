@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -67,9 +67,12 @@ function words(value: unknown, into: string[] = []): string[] {
         words(item, into);
   return into;
 }
-const noIds = (value: unknown) =>
+const noIds = (value: unknown, allowed: string[] = []) =>
   assert.deepEqual(
-    words(value).filter((text) => /(session|runner|wf|flt|agent|actor)_[A-Za-z0-9]/.test(text)),
+    words(value).filter(
+      (text) =>
+        !allowed.includes(text) && /(session|runner|wf|flt|agent|actor)_[A-Za-z0-9]/.test(text),
+    ),
     [],
   );
 
@@ -959,20 +962,25 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
     });
     return { status: response.status, body: (await response.json()) as any };
   };
-  const task = await historicalTask(app.ctx, operator, {
+  const task = await currentTask(app.ctx, operator, {
     title: 'Rebuild citation index',
     goal: 'Every citation key maps to one retained file.',
     checks: ['Every key resolves.'],
     requestId: 'running-sessions',
   });
 
-  await app.ctx.sessions.heartbeatRunner(operator, presence('desk', 'mac-studio'));
+  await app.ctx.sessions.heartbeatRunner(operator, {
+    ...presence('desk', 'mac-studio'),
+    capabilities: ['code.v2'],
+  });
   const input = { runnerId: 'desk', requestId: request(), secret: secret() };
   const offered = await app.ctx.sessions.offer(operator, {
     instanceId: task.id,
     expectedRevision: task.workflow.revision,
     ...input,
   });
+  const codeWork = currentWork(app.ctx, { directory: join(directory, 'work'), source: operator });
+  const held = await codeWork.attach(offered);
   const worker = await app.ctx.sessions.authenticate(input.secret);
   const key = `session:${offered.id}`;
 
@@ -1007,7 +1015,8 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
     own.actions.map(({ tool, input }) => ({ tool, input })),
     [{ tool: 'session.halt', input: { sessionId: offered.id, reason: 'halted_by_operator' } }],
   );
-  noIds({ ...own, actions: [] });
+  // The real Git branch is useful workspace metadata and contains the work identity.
+  noIds({ ...own, actions: [] }, [held.workspace.snapshot!.branch!]);
   const read = await panel(reader);
   assert.equal(section(read, 'Brief'), undefined);
   assert.deepEqual(read.actions, []);
@@ -1024,6 +1033,7 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
   assert.equal(halted.status, 200, JSON.stringify(halted.body));
   assert.ok(halted.body.result[own.actions[0].expect!.field] >= own.actions[0].expect!.min);
   assert.equal((await panel(reader)).live, false);
+  await codeWork.release(held);
 });
 
 test('the Sessions lane words its states as the Sessions page does', () => {

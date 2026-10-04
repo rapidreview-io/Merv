@@ -1,10 +1,9 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import type { TaskService } from '@merv/tasks';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,6 +17,7 @@ async function fixture(t: TestContext, api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-execution-'));
   const app = await createApp({ directory, api, port: 0 });
   t.after(async () => {
+    await work.close();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -29,21 +29,15 @@ async function fixture(t: TestContext, api = false) {
   };
   const { sessions } = app.ctx;
   let sequence = 0;
-  /** A session as a runner takes one, and its worker. */
+  const work = currentWork(app.ctx, { directory, source: operator });
+  const held = new Map<string, Awaited<ReturnType<typeof work.lease>>>();
   const offer = async (task: Task) => {
-    const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    const session = await sessions.offer(operator, {
-      instanceId: task.id,
-      expectedRevision: task.workflow.revision,
-      runnerId: 'test',
-      requestId: `offer-${++sequence}`,
-      secret,
-    });
-    return { session, worker: await sessions.authenticate(secret) };
+    const lease = await work.lease(task);
+    held.set(lease.session.id, lease);
+    return lease;
   };
   const release = async (sessionId: string) => {
-    await sessions.release(operator, { sessionId, runnerId: 'test' });
-    await app.ctx.domainEvents.drain();
+    await work.release(held.get(sessionId)!);
   };
   const run = async <T>(
     worker: Caller,
@@ -51,19 +45,13 @@ async function fixture(t: TestContext, api = false) {
     input: Data,
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ) => await sessions.run(await sessions.prepare(worker, tool, input), handler);
-  const create = async (requestId: string, version = 28) =>
-    await historicalTask(
-      app.ctx,
-      operator,
-      {
-        title: 'Verify execution boundaries',
-        goal: 'Keep workflow execution confined to its assignment.',
-        checks: ['Only permitted sources and the current claim can be used.'],
-        requestId,
-      },
-      undefined,
-      version,
-    );
+  const create = async (requestId: string) =>
+    await currentTask(app.ctx, operator, {
+      title: 'Verify execution boundaries',
+      goal: 'Keep workflow execution confined to its assignment.',
+      checks: ['Only permitted sources and the current claim can be used.'],
+      requestId,
+    });
   const pending = async () => {
     const { session, worker } = await offer(await create('review-task'));
     const proof = await run(
@@ -79,13 +67,17 @@ async function fixture(t: TestContext, api = false) {
     const delivered = await run(
       worker,
       'task.submit_delivery',
-      confirmedDelivery({ artifactIds: [proof.id], requestId: 'submit' }),
+      confirmedDelivery({
+        artifactIds: [proof.id],
+        commandId: await work.commit(held.get(session.id)!),
+        requestId: 'submit',
+      }),
       async (caller, input) => await app.ctx.tasks.submitDelivery(caller, input as never),
     );
     await release(session.id);
     return delivered;
   };
-  return { app, operator, offer, release, run, create, pending };
+  return { app, operator, offer, release, run, create, pending, work, held };
 }
 
 test('policy-checked checkpoints cannot expose an unrelated artifact through assignment context', async (t) => {
@@ -150,7 +142,7 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
 test('a leased task worker receives GPU tool grants bound to its task and revision', async (t) => {
   const { offer, run, create } = await fixture(t);
   const task = await create('gpu-grants');
-  assert.equal(task.workflow.version, 28);
+  assert.equal(task.workflow.version, 31);
   const { worker } = await offer(task);
   const command = {
     key: 'smoke',
@@ -332,15 +324,15 @@ test('metadata admission avoids rendering, binds each session to its own record 
   }
 });
 
-test('historical native task leases pin trusted scope, preserve handoffs and admit registered capture evidence', async (t) => {
-  const { app, operator, offer, release, run, create } = await fixture(t);
+test('current native task leases pin trusted scope, preserve handoffs and admit registered capture evidence', async (t) => {
+  const { app, operator, offer, release, run, create, work, held } = await fixture(t);
   const old = await create('legacy-before-connection');
   const native = nativeWorkFixture();
   t.after((app.ctx.tasks as TaskService).bindNativeWork(native.service));
-  const task = await create('native-connected', 36);
-  assert.equal(old.workflow.version, 28);
-  assert.equal(task.workflow.version, 36);
-  assert.equal((await app.ctx.tasks.get(operator, old.id)).workflow.version, 28);
+  const task = await create('native-connected');
+  assert.equal(old.workflow.version, 31);
+  assert.equal(task.workflow.version, 39);
+  assert.equal((await app.ctx.tasks.get(operator, old.id)).workflow.version, 31);
   const first = await offer(task);
   assert.equal(first.session.execution.references.sandboxWorkId, task.id);
   assert.equal(first.session.execution.references.sandboxProfile, 'execute');
@@ -353,6 +345,7 @@ test('historical native task leases pin trusted scope, preserve handoffs and adm
   await release(first.session.id);
   assert.ok(native.revoked.includes(first.session.id));
   const second = await offer(task);
+  const commandId = await work.commit(held.get(second.session.id)!);
   assert.deepEqual(second.session.execution.references, first.session.execution.references);
   assert.equal(native.pins.size, 1);
   const service = await app.ctx.scope.serviceActor('sandboxes', operator.projectId);
@@ -392,6 +385,7 @@ test('historical native task leases pin trusted scope, preserve handoffs and adm
         expectedRevision: task.workflow.revision,
         artifactIds: [unverified.id],
         requestId: 'unverified',
+        commandId,
       }),
     ),
     { code: 'invalid_delivery' },
@@ -405,7 +399,7 @@ test('historical native task leases pin trusted scope, preserve handoffs and adm
   const delivered = await run(
     second.worker,
     'task.submit_delivery',
-    confirmedDelivery({ artifactIds: [capture.id], requestId: 'native-delivery' }),
+    confirmedDelivery({ artifactIds: [capture.id], commandId, requestId: 'native-delivery' }),
     (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
   );
   assert.equal(delivered.workflow.state, 'in_review');
@@ -417,25 +411,19 @@ test('historical native task leases pin trusted scope, preserve handoffs and adm
   await release(second.session.id);
   const independent = await app.ctx.scope.issueActor(operator, {
     name: 'Independent',
-    role: 'reviewer',
+    role: 'operator',
   });
   const reviewer = {
     actorId: independent.actor.id,
     projectId: operator.projectId,
     credentialId: independent.credential.id,
   };
-  const secret = `ms_${randomBytes(32).toString('base64url')}`;
-  const reviewSession = await app.ctx.sessions.offer(reviewer, {
-    instanceId: task.id,
-    expectedRevision: delivered.workflow.revision,
-    runnerId: 'review',
-    requestId: 'native-review',
-    secret,
-  });
+  const reviewLease = await work.lease(delivered, reviewer);
+  const reviewSession = reviewLease.session;
   assert.equal(reviewSession.execution.references.sandboxProfile, 'check');
   assert.equal(reviewSession.execution.references.sandboxWorkId, task.id);
   assert.ok((reviewSession.execution.references.artifacts as string[]).includes(capture.id));
-  await app.ctx.sessions.release(reviewer, { sessionId: reviewSession.id, runnerId: 'review' });
+  await work.release(reviewLease);
   await app.ctx.domainEvents.drain();
   await app.ctx.tasks.markFailed(operator, {
     taskId: task.id,

@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -74,9 +74,8 @@ async function fixture(t: TestContext) {
   );
   const key = (await http('/account/keys', operator, { projectId: project.id })).body;
   const readerKey = (await http('/account/keys', reader, { projectId: project.id })).body;
-  // Historical work keeps these dispatch tests independent of Git worker capabilities.
   const createTask = async (requestId: string) =>
-    historicalTask(
+    currentTask(
       app.ctx,
       await app.ctx.scope.caller(
         { kind: 'key', key: await app.ctx.scope.authenticateKey(key.token) },
@@ -92,6 +91,7 @@ async function fixture(t: TestContext) {
   const task = await createTask('first-task');
   const heartbeat = {
     runnerId: 'machine-local-id',
+    capabilities: ['code.v2'],
     machine: { hostname: 'Test host', system: 'Darwin', architecture: 'arm64' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 2 }],
     capacity: 2,
@@ -383,6 +383,12 @@ test('project reads are sanitized; reader, worker, foreign project, and executab
     f.project.id,
   );
   assert.equal(pulled.body.runner.desiredSettings.platforms[0].model, 'test-model');
+  await f.http(
+    '/sessions/runners/heartbeat',
+    f.key.token,
+    { ...f.heartbeat, runnerId: 'manual' },
+    f.project.id,
+  );
   const manual = await f.http(
     '/sessions/offer',
     f.key.token,

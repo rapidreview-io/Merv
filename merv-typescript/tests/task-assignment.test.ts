@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -19,7 +19,11 @@ async function fixture(api = false) {
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const identity = await app.ctx.scope.issueActor(operator, { role, name: role });
     return {
-      caller: { projectId: operator.projectId, actorId: identity.actor.id },
+      caller: {
+        projectId: operator.projectId,
+        actorId: identity.actor.id,
+        credentialId: identity.credential.id,
+      } as Caller,
       token: identity.token,
     };
   };
@@ -29,26 +33,54 @@ async function fixture(api = false) {
     reader = await issue('reader');
   let sequence = 0;
   const create = async (extra: Partial<TaskCreate> = {}) =>
-    await historicalTask(app.ctx, producer.caller, {
+    await currentTask(app.ctx, producer.caller, {
       title: 'Check addition',
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
       requestId: `create-${++sequence}`,
       ...extra,
     });
+  const work = currentWork(app.ctx, { directory, source: producer.caller });
   const submit = async (id: string, revision = 0) => {
-    const proof = await app.ctx.artifacts.create(producer.caller, {
-      title: 'Reproduction',
-      content: 'Observed 2 + 3 = 5.',
+    const held = await work.lease(await app.ctx.tasks.get(producer.caller, id));
+    try {
+      const proof = await app.ctx.artifacts.create(held.worker, {
+        title: 'Reproduction',
+        content: 'Observed 2 + 3 = 5.',
+      });
+      const commandId = await work.commit(held);
+      return await work.run(
+        held,
+        'task.submit_delivery',
+        confirmedDelivery({
+          taskId: id,
+          expectedRevision: revision,
+          artifactIds: [proof.id],
+          commandId,
+          requestId: `submit-${++sequence}`,
+        }),
+        (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
+      );
+    } finally {
+      await work.release(held);
+    }
+  };
+  let reviewLease: Awaited<ReturnType<typeof work.lease>> | undefined;
+  const claim = async (task: { id: string; workflow: { revision: number } }, actor = reviewer) => {
+    const runner = await app.ctx.scope.issueActor(operator, {
+      name: 'Independent review runner',
+      role: 'operator',
     });
-    return await app.ctx.tasks.submitDelivery(
-      producer.caller,
-      confirmedDelivery({
-        taskId: id,
-        expectedRevision: revision,
-        artifactIds: [proof.id],
-        requestId: `submit-${++sequence}`,
-      }),
+    const held = await work.lease(task, {
+      projectId: operator.projectId,
+      actorId: runner.actor.id,
+      credentialId: runner.credential.id,
+    });
+    reviewLease = held;
+    actor.caller = held.worker;
+    return await app.ctx.reviews.get(
+      held.worker,
+      (await app.ctx.tasks.get(held.worker, task.id)).reviewId!,
     );
   };
   const begin = async (caller: Caller, id: string, revision = 0) =>
@@ -74,8 +106,14 @@ async function fixture(api = false) {
     create,
     submit,
     begin,
+    claim,
+    work,
+    get reviewLease() {
+      return reviewLease;
+    },
     writes,
     close: async () => {
+      await work.close();
       await app.stop();
       rmSync(directory, { recursive: true, force: true });
     },
@@ -216,7 +254,7 @@ test('task contexts and assignments refuse a reader and the other role', async (
         { code: 'forbidden' },
       );
     const submitted = await f.submit(task.id);
-    const claim = await f.app.ctx.reviews.start(f.reviewer.caller, submitted.reviewId!);
+    const claim = await f.claim(submitted);
     const review = {
       taskId: task.id,
       purpose: 'review' as const,
@@ -244,91 +282,30 @@ test('task contexts and assignments refuse a reader and the other role', async (
   }
 });
 
-test('review assignment can precede claim; recovery rebuilds context without rewriting first activation', async () => {
-  const f = await fixture();
-  try {
-    const task = await f.submit((await f.create()).id);
-    const before = await f.writes();
-    const open = await f.app.ctx.workflows.assignment(f.reviewer.caller, task.id);
-    assert.equal(await f.writes(), before);
-    assert.equal(open.role, 'reviewer');
-    assert.equal(open.execution.readOnly, true);
-    assert.equal(open.context!.subject.claimId, undefined);
-    assert.deepEqual(open.handoff.tools, ['review.start', 'workflow.assignment']);
-    assert.match(open.context!.prompt, /Observed 2 \+ 3 = 5/);
-    await assert.rejects(
-      async () =>
-        await f.app.ctx.tasks.context(f.reviewer.caller, {
-          taskId: task.id,
-          purpose: 'review',
-          expectedRevision: 1,
-          requestId: 'before-claim',
-        }),
-      { code: 'review_independence' },
-    );
-    await assert.rejects(
-      async () => await f.app.ctx.workflows.assignment(f.producer.caller, task.id),
-      {
-        status: 403,
-      },
-    );
-    const started = await f.begin(f.reviewer.caller, task.id, 1);
-    assert.equal(
-      (await f.app.ctx.reviews.get(f.operator, task.reviewId!)).status,
-      'requested',
-      'Beginning must not claim a review',
-    );
-    const claim = await f.app.ctx.reviews.start(f.reviewer.caller, task.reviewId!);
-    const assigned = await f.app.ctx.workflows.assignment(f.reviewer.caller, task.id);
-    assert.equal(assigned.context!.subject.claimId, claim.claimId);
-    assert.equal(assigned.handoff.tools[0], 'review.submit');
-    await assert.rejects(async () => await f.begin(f.replacement.caller, task.id, 1), {
-      code: 'review_unavailable',
-    });
-    await f.app.ctx.tasks.checkpoint(f.reviewer.caller, {
-      taskId: task.id,
-      expectedRevision: 1,
-      purpose: 'review',
-      claimId: claim.claimId!,
-      notes: 'Checked the arithmetic; still verify the input receipt.',
-      requestId: 'checkpoint',
-    });
-    await f.app.ctx.scope.revokeActor(f.operator, f.reviewer.caller.actorId);
-    await f.app.ctx.domainEvents.drain();
-    const recovered = await f.begin(f.replacement.caller, task.id, 1);
-    assert.equal(recovered.workStart!.eventId, started.workStart!.eventId);
-    assert.equal(recovered.workStart!.actorId, f.reviewer.caller.actorId);
-    assert.equal(recovered.actorId, f.replacement.caller.actorId);
-    assert.match(recovered.context!.prompt, /reviewer_revoked/);
-    assert.match(recovered.context!.prompt, /still verify the input receipt/);
-    assert.notEqual(recovered.context!.hash, started.context!.hash);
-    const nextClaim = await f.app.ctx.reviews.start(f.replacement.caller, task.reviewId!);
-    assert.notEqual(nextClaim.claimId, claim.claimId);
-    const next = await f.app.ctx.workflows.assignment(f.replacement.caller, task.id);
-    assert.equal(next.context!.subject.claimId, nextClaim.claimId);
-    assert.equal((await f.app.ctx.workflows.workStarts(f.operator, task.id)).length, 1);
-  } finally {
-    await f.close();
-  }
-});
-
 test('returned-for-changes work has a new start and retained review feedback; terminal work cannot begin', async () => {
   const f = await fixture();
   try {
     const task = await f.create();
     await f.begin(f.producer.caller, task.id);
     const pending = await f.submit(task.id);
-    const claim = await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
+    const claim = await f.claim(pending);
     await f.begin(f.reviewer.caller, task.id, 1);
-    const returned = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      expectedRevision: 1,
-      verdict: 'needs_changes',
-      notes: 'Recheck arithmetic against the original input receipt.',
-      ...reviewedFindings(claim),
-      requestId: 'return',
-    });
+    const held = f.reviewLease!;
+    const returned = await f.work.run(
+      held,
+      'review.submit',
+      {
+        reviewId: claim.id,
+        claimId: claim.claimId!,
+        expectedRevision: 1,
+        verdict: 'needs_changes',
+        notes: 'Recheck arithmetic against the original input receipt.',
+        ...reviewedFindings(claim),
+        requestId: 'return',
+      },
+      (caller, input) => f.app.ctx.tasks.submitReview(caller, input as never),
+    );
+    await f.work.release(held);
     assert.equal(returned.workflow.revision, 2);
     assert.equal(returned.guidance.workStart, null);
     assert.equal(

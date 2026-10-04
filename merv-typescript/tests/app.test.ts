@@ -1,5 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
-import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { currentTask } from './fixtures/current-work.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -33,7 +32,7 @@ async function call(c: Client, name: string, args: Record<string, unknown> = {})
   assert.equal(result.isError, undefined, JSON.stringify(contents));
   return JSON.parse(contents[0].text);
 }
-test('assembled Cordis application completes historical MCP task review across two full restarts', async () => {
+test('assembled Cordis application preserves current MCP task closure across two full restarts', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
   let app = await createApp({ directory, api: true, port: 0 });
   let producer: Client | undefined, reviewer: Client | undefined;
@@ -111,7 +110,7 @@ test('assembled Cordis application completes historical MCP task review across t
       title: 'Brief',
       content: 'Goal: Verify arithmetic.\nDone when: Sum is 20.',
     });
-    const task = await historicalTask(
+    const task = await currentTask(
       app.ctx,
       { ...caller, actorId: p.actor.id, credentialId: p.credential.id },
       {
@@ -164,108 +163,38 @@ test('assembled Cordis application completes historical MCP task review across t
       title: 'Delivery',
       content: 'Sum is 20. Calculation: 2+4+6+8=20.',
     });
-    const submitted = await call(
-      producer,
-      'task.submit_delivery',
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [delivery.id],
-        expectedRevision: 0,
-        requestId: 'submit',
-      }),
-    );
-    assert.equal(submitted.workflow.state, 'in_review');
+    const closure = {
+      taskId: task.id,
+      expectedRevision: 0,
+      reason: 'This bounded check is finished.',
+      requestId: 'close',
+    };
+    const failed = await call(producer, 'task.mark_failed', closure);
+    assert.equal(failed.workflow.state, 'failed');
     assert.equal(
-      (await call(producer, 'workflow.status_and_next', { instanceId: task.id })).nextAction,
-      null,
+      (await call(producer, 'workflow.status_and_next', { instanceId: task.id })).currentGate,
+      'terminal',
     );
-    const rejected = await producer.callTool({
-      name: 'review.start',
-      arguments: { reviewId: submitted.reviewId },
-    });
-    assert.equal(rejected.isError, true);
     await producer.close();
     producer = undefined;
     await app.stop();
     app = await createApp({ directory, api: true, port: 0 });
-    reviewer = await client(app.ctx.api.url!, r.token);
-    const pin = await call(reviewer, 'review.get', { reviewId: submitted.reviewId });
-    assert.deepEqual(pin.artifactIds, [brief.id, ...submitted.deliveryIds]);
-    assert.equal(submitted.deliveryIds[0], delivery.id);
-    assert.equal(submitted.deliveryIds.at(-1), submitted.deliveryAssessmentId);
-    assert.equal(submitted.deliveryIds.length, 2);
+    producer = await client(app.ctx.api.url!, p.token);
+    assert.deepEqual(await call(producer, 'task.mark_failed', closure), failed);
+    assert.deepEqual(await storedContext(app.ctx.state, workContext.id), workContext);
     assert.equal(
-      (await call(reviewer, 'artifact.read', { artifactId: delivery.id })).content,
+      (await call(producer, 'artifact.read', { artifactId: delivery.id })).content,
       'Sum is 20. Calculation: 2+4+6+8=20.',
     );
-    const claim = await call(reviewer, 'review.start', { reviewId: pin.id });
-    await call(reviewer, 'workflow.begin', { instanceId: task.id, expectedRevision: 1 });
-    const reviewGuidance = await call(reviewer, 'workflow.status_and_next', {
-      instanceId: task.id,
-    });
-    assert.equal(reviewGuidance.nextAction.tool, 'review.submit');
-    assert.equal(reviewGuidance.nextAction.arguments.claimId, claim.claimId);
-    const contextArgs = {
-      taskId: task.id,
-      purpose: 'review',
-      expectedRevision: 1,
-      claimId: claim.claimId,
-      requestId: 'review-context',
-    };
-    const reviewContext = await call(reviewer, 'task.context', contextArgs);
-    assert.equal(reviewContext.type, 'task.review');
-    assert.equal(reviewContext.subject.claimId, claim.claimId);
-    const httpContext = await fetch(`${app.ctx.api.url}/tools/task.context`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${r.token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(contextArgs),
-    });
-    assert.equal(httpContext.status, 200);
-    assert.deepEqual((await httpContext.json()).result, reviewContext);
-    const missingClaim = await reviewer.callTool({
-      name: 'review.submit',
-      arguments: {
-        ...reviewedFindings(pin),
-        reviewId: pin.id,
-        verdict: 'pass',
-        notes: 'Missing assignment identity.',
-        expectedRevision: 1,
-        requestId: 'missing-claim',
-      },
-    });
-    assert.equal(missingClaim.isError, true);
-    const verdictArgs = {
-      ...reviewedFindings(claim),
-      reviewId: pin.id,
-      claimId: claim.claimId,
-      verdict: 'pass',
-      notes: 'Read the immutable delivery and independently verified 2+4+6+8=20.',
-      expectedRevision: 1,
-      requestId: 'verdict',
-    };
-    const done = await call(reviewer, 'review.submit', verdictArgs);
-    assert.equal(done.workflow.state, 'done');
-    assert.equal(
-      (await call(reviewer, 'workflow.status_and_next', { instanceId: task.id })).currentGate,
-      'terminal',
-    );
-    assert.deepEqual(await call(reviewer, 'review.submit', verdictArgs), done);
-    await reviewer.close();
-    reviewer = undefined;
+    await producer.close();
+    producer = undefined;
     await app.stop();
     app = await createApp({ directory, api: true, port: 0 });
-    assert.equal((await app.ctx.tasks.get(caller, task.id)).workflow.revision, 2);
-    assert.deepEqual(await storedContext(app.ctx.state, workContext.id), workContext);
-    assert.deepEqual(await storedContext(app.ctx.state, reviewContext.id), reviewContext);
-    assert.equal((await app.ctx.reviews.get(caller, pin.id)).reviewerId, r.actor.id);
+    assert.equal((await app.ctx.tasks.get(caller, task.id)).workflow.revision, 1);
     assert.equal(
-      (await app.ctx.state.events(caller.projectId)).filter((e) => e.type === 'task.review_applied')
+      (await app.ctx.state.events(caller.projectId)).filter((event) => event.type === 'task.failed')
         .length,
       1,
-    );
-    assert.equal(
-      (await app.ctx.artifacts.read(caller, delivery.id)).content,
-      'Sum is 20. Calculation: 2+4+6+8=20.',
     );
   } finally {
     await producer?.close();

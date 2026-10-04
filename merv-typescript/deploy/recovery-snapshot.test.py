@@ -186,6 +186,80 @@ class RecoveryTests(unittest.TestCase):
         with self.assertRaises(m.Failure):
             self.r.restore(first, db, destination)
 
+    def current_storage(self):
+        self.write(f"""CREATE TABLE audit.code_workspaces AS SELECT project_id,unit_id,head_oid,base_json FROM audit.code_units;
+        ALTER TABLE audit.code_workspaces ADD COLUMN writer_state text DEFAULT 'idle';
+        CREATE TABLE audit.code_retained_commits(project_id text,retention_key text,unit_id text,commit_oid text,storage text);
+        INSERT INTO audit.code_retained_commits VALUES ('{self.project}','accepted:unit','unit','{self.oid}','code');
+        """)
+
+    def test_current_and_legacy_snapshots_restore_their_authoritative_heads(self):
+        legacy = self.r.create()['snapshot']
+        self.current_storage()
+        source = self.base / 'source'
+        (source / 'file').write_text('current work')
+        shell(['git', 'commit', '-am', 'next checkpoint'], cwd=source)
+        current = shell(['git', 'rev-parse', 'HEAD'], cwd=source)
+        shell(['git', 'push', str(self.repo), 'HEAD:refs/merv/work/unit'], cwd=source)
+        self.write(f"UPDATE audit.code_workspaces SET head_oid='{current}';")
+        # Adapter history still names the old head. It cannot govern the current ref.
+        snapshot = self.r.create()['snapshot']
+        for point, expected in ((legacy, self.oid), (snapshot, current)):
+            self.assertEqual(self.r.verify(point)['state'], 'verified')
+            database = 'restored_' + uuid.uuid4().hex
+            self.restored.append(database)
+            destination = self.base / database
+            self.assertEqual(self.r.restore(point, database, destination)['state'], 'restored-isolated')
+            self.assertEqual(shell(['git', '--git-dir', str(destination / self.key / 'repository.git'), 'rev-parse', 'refs/merv/work/unit']), expected)
+            table = self.r.workspace_table(database)
+            self.assertEqual(table, 'code_units' if point == legacy else 'code_workspaces')
+            self.assertEqual(self.r.sql(f"SELECT head_oid FROM audit.{table};", database), expected)
+
+    def test_current_writer_census_cannot_be_omitted_by_old_host_configuration(self):
+        self.current_storage()
+        self.write("ALTER TABLE audit.code_units ADD COLUMN writer_state text DEFAULT 'active';")
+        # The existing host configuration lists only sessions, and some hosts name
+        # legacy code_units. Both must inspect the current writer, not stale history.
+        for configured in (['worker_sessions'], ['worker_sessions', 'code_units']):
+            self.r.c['idle_tables'] = configured
+            self.r.idle()
+            for state in ('reserved', 'active', 'closing'):
+                self.write(f"UPDATE audit.code_workspaces SET writer_state='{state}';")
+                with self.assertRaisesRegex(m.Failure, 'active work'):
+                    self.r.create()
+                self.assertTrue(self.r.control['State']['Running'])
+                self.assertFalse(self.r.resume.exists())
+            self.write("UPDATE audit.code_workspaces SET writer_state='closed';")
+            self.r.idle()
+        self.assertFalse(any(self.r.bucket.glob('*/COMPLETE.json')))
+
+    def test_current_retained_commit_promises_survive_restore_and_reject_missing_objects(self):
+        self.current_storage()
+        self.write('DROP TABLE audit.code_units;')  # Fresh core storage has no legacy adapter.
+        good = self.r.create()['snapshot']
+        missing = 'f' * 40
+        # Acceptance also promises the pinned base, even before any workspace head.
+        self.write(f"UPDATE audit.code_workspaces SET head_oid=NULL,base_json='{{\"reference\":\"{missing}\"}}';")
+        with self.assertRaises(m.Failure):
+            self.r.create()
+        self.write(f"UPDATE audit.code_workspaces SET head_oid='{self.oid}',base_json='{{\"reference\":\"{self.oid}\"}}';")
+        self.write(f"INSERT INTO audit.code_retained_commits VALUES ('{self.project}','other-acceptance','unlisted-unit','{missing}','code');")
+        with self.assertRaises(m.Failure):
+            self.r.create()
+        self.assertEqual(self.r.verify(good)['state'], 'verified')
+        self.assertEqual([p.parent.name for p in self.r.bucket.glob('*/COMPLETE.json')], [good])
+        self.write("UPDATE audit.code_retained_commits SET storage='external' WHERE retention_key='other-acceptance';")
+        self.assertEqual(self.r.verify(self.r.create()['snapshot'])['state'], 'verified')
+
+    def test_partial_current_schema_never_falls_back_to_legacy_records(self):
+        self.write('CREATE TABLE audit.code_workspaces AS SELECT * FROM audit.code_units;')
+        with self.assertRaisesRegex(m.Failure, 'incomplete Code storage schema'):
+            self.r.create()
+        with self.assertRaisesRegex(m.Failure, 'incomplete Code storage schema'):
+            self.r.inventory(self.r.root)
+        self.assertTrue(self.r.control['State']['Running'])
+        self.assertFalse(any(self.r.bucket.glob('*/COMPLETE.json')))
+
     def test_missing_terminal_capture_is_history_but_live_writers_block(self):
         self.write("""ALTER TABLE audit.worker_sessions ADD COLUMN id text, ADD COLUMN session_json text;
         INSERT INTO audit.worker_sessions VALUES ('expired','old','{"execution":{"policy":{"readOnly":false,"workspace":{"mode":"persistent","retain":true}}}}');

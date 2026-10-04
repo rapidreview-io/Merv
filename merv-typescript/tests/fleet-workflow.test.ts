@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import { Context } from 'cordis';
 import assert from 'node:assert/strict';
@@ -58,6 +58,8 @@ import { WebService } from '../packages/web/src/index.js';
 import { webTools } from '../packages/web/src/tools.js';
 import type { WebSearch } from '../packages/web/src/types.js';
 import { openState } from './fixtures/state.js';
+import { createApp } from './fixtures/app.js';
+import { loadConfiguration } from '../src/config.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
@@ -1196,23 +1198,33 @@ test('the review director takes only what the owner’s own hand may not, within
 
 /** Real Scope, Workflows, Sessions and Fleet; only the sandbox provider is a test double. */
 async function hosted(t: TestContext, workers: number, lostLaunch = false) {
-  const state = await openState();
-  const scope = await createService(new ProjectScope(state));
-  const workflows = await createService(new WorkflowsService(state, scope));
   const directory = mkdtempSync(join(tmpdir(), 'merv-fleet-workflow-'));
-  const artifacts = await createService(
-    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
-  );
-  const reviews = await createService(new ReviewService(state, scope, artifacts));
-  const context = await createService(new RecipeContextBuilder(state, scope, artifacts));
-  const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, context),
-  );
-  const events = await createService(new DurableEvents(state));
   const secretEnv = `MERV_WORKFLOW_HMAC_${randomUUID().replaceAll('-', '')}`;
   const modelEnv = `MERV_WORKFLOW_KEY_${randomUUID().replaceAll('-', '')}`;
   process.env[secretEnv] = randomBytes(48).toString('hex');
   process.env[modelEnv] = 'test-model-key';
+  const composition = loadConfiguration({ directory, api: true, port: 0 });
+  const app = await createApp({
+    directory,
+    config: {
+      plugins: composition.entries.map((entry) =>
+        entry.id === 'sessions'
+          ? { ...entry, config: { ...entry.config, managedSecretEnv: secretEnv } }
+          : entry,
+      ),
+    },
+  });
+  const {
+    state,
+    scope,
+    workflows,
+    artifacts,
+    reviews,
+    tasks,
+    domainEvents: events,
+    sessions,
+    codeWork,
+  } = app.ctx;
   const login = async (subject: string) =>
     await scope.acceptVerifiedIdentity({
       issuer,
@@ -1284,12 +1296,6 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
       edges: [{ from: 'working', action: 'finish', to: 'done' }],
     },
     policy,
-  );
-  const sessions = await createService(
-    new LeasedSessions(state, scope, workflows, events, {
-      managedSecretEnv: secretEnv,
-      sweepIntervalMs: 60_000,
-    }),
   );
   let now = Date.now();
   let lostReply = false;
@@ -1392,11 +1398,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
   t.after(async () => {
     await adapter.close();
     await fleet.close();
-    await sessions.close();
-    await events.close();
-    tasks.dispose();
-    await workflows.close();
-    await state.close();
+    await app.stop();
     rmSync(directory, { recursive: true, force: true });
     delete process.env[secretEnv];
     delete process.env[modelEnv];
@@ -1414,6 +1416,10 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     reviews,
     tasks,
     events,
+    codeWork,
+    workflows,
+    directory,
+    app,
     start: (caller: Caller, requestId = randomUUID()) =>
       workflow.start(caller, { workflow: 'hosted-bridge', requestId }),
     stopped,
@@ -1663,22 +1669,37 @@ test('a target that returns after more than 200 released allocations gets a new 
 type Hosted = Awaited<ReturnType<typeof hosted>>;
 /** A task someone delivered at the desk, awaiting its review. */
 async function delivered(h: Hosted, by: Caller, requestId: string) {
-  const task = await historicalTask(h, by, {
+  const task = await currentTask(h, by, {
     title: requestId,
     goal: 'Verify addition.',
     checks: ['Two plus three equals five.'],
     requestId,
   });
-  const proof = await h.artifacts.create(by, { title: 'Proof', content: 'Observed 2 + 3 = 5.' });
-  return await h.tasks.submitDelivery(
-    by,
-    confirmedDelivery({
-      taskId: task.id,
-      expectedRevision: task.workflow.revision,
-      artifactIds: [proof.id],
-      requestId: `${requestId}-delivery`,
-    }),
-  );
+  const work = currentWork(h, { directory: join(h.directory, requestId), source: by });
+  const lease = await work.lease(task);
+  try {
+    const proof = await work.run(
+      lease,
+      'artifact.create',
+      { title: 'Proof', content: 'Observed 2 + 3 = 5.' },
+      (caller, input) => h.artifacts.create(caller, input as never),
+    );
+    const commandId = await work.commit(lease);
+    return await work.run(
+      lease,
+      'task.submit_delivery',
+      confirmedDelivery({
+        taskId: task.id,
+        expectedRevision: task.workflow.revision,
+        artifactIds: [proof.id],
+        commandId,
+        requestId: `${requestId}-delivery`,
+      }),
+      (caller, input) => h.tasks.submitDelivery(caller, input as never),
+    );
+  } finally {
+    await work.release(lease);
+  }
 }
 /** The hosted runner on a launched allocation's machine enrolls, registers and leases once. */
 async function boot(h: Hosted, allocation: FleetAllocation) {
@@ -1792,7 +1813,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
   assert.deepEqual([tavily.seen.length, nisa.seen.length], [1, 1]);
 });
 
-test('Fleet produces Pi-directed work and its review director reviews the owner’s desk delivery', async (t) => {
+test('Fleet produces Pi-directed work and leases an independent current Git reviewer', async (t) => {
   const h = await hosted(t, 2);
   const caller = await h.project('Reviewed');
   await h.sessions.setDispatch(caller, { enabled: true });
@@ -1805,7 +1826,7 @@ test('Fleet produces Pi-directed work and its review director reviews the owner�
     conversation: { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'runtime' },
   };
   const review = await delivered(h, caller, 'human');
-  const producing = await historicalTask(h, pi, {
+  const producing = await currentTask(h, pi, {
     title: 'Producing',
     goal: 'Add.',
     checks: ['It adds.'],
@@ -1825,35 +1846,25 @@ test('Fleet produces Pi-directed work and its review director reviews the owner�
   );
   await h.adapter.start();
   const allocations = await h.fleet.listOwned(h.adapter, []);
-  const by = (kind: string) => allocations.find((a) => a.source.kind === kind)!;
-  // The founder's hand takes the producing step; a fresh agent the founder vouches for reviews.
+  const producingAllocation = allocations.find(
+    (a) => a.owner.id === `${producing.id}:${producing.workflow.revision}`,
+  )!;
+  const reviewingAllocation = allocations.find(
+    (a) => a.owner.id === `${review.id}:${review.workflow.revision}`,
+  )!;
+  assert.ok(producingAllocation);
+  assert.ok(reviewingAllocation);
   assert.deepEqual(
-    [by('human').owner.id, by('service').owner.id],
-    [`${producing.id}:${producing.workflow.revision}`, `${review.id}:${review.workflow.revision}`],
+    [producingAllocation.source.kind, reviewingAllocation.source.kind],
+    ['human', 'human'],
   );
-  assert.deepEqual(by('service').source, {
-    actorId: by('service').source.actorId,
-    projectId: caller.projectId,
-    kind: 'service',
-    vouchedBy: source,
-  });
-  await h.fleet.tick(); // Reserve and provision.
-  await h.fleet.tick(); // Launch.
-  const machine = await boot(h, by('service'));
+  await h.fleet.tick();
+  await h.fleet.tick();
+  const machine = await boot(h, reviewingAllocation);
   assert.deepEqual([machine.session.instanceId, machine.session.role], [review.id, 'reviewer']);
   const claimed = await h.reviews.get(caller, review.reviewId!);
   assert.deepEqual([claimed.status, claimed.reviewerId], ['started', machine.session.actorId]);
-  // Even named, a producing step is not its to lease.
-  await assert.rejects(
-    h.sessions.offer(sourceCaller(by('service').source), {
-      instanceId: producing.id,
-      expectedRevision: producing.workflow.revision,
-      runnerId: machine.runnerId,
-      requestId: 'produce',
-      secret: `ms_${randomBytes(32).toString('base64url')}`,
-    }),
-    { code: 'forbidden' },
-  );
+  assert.notEqual(claimed.reviewerId, claimed.producerId);
   // Nor does Fleet rent the workflow's machines to anyone who may not direct its work.
   const reader = await h.scope.issueActor(caller, { name: 'Reader', role: 'reader' });
   await assert.rejects(
@@ -1865,7 +1876,7 @@ test('Fleet produces Pi-directed work and its review director reviews the owner�
   );
 });
 
-test('Fleet’s review director and its machine stop when the owner who vouched for it may no longer write', async (t) => {
+test('Fleet’s current review worker and its machine stop when its owner may no longer write', async (t) => {
   const h = await hosted(t, 1);
   const founder = await h.project('Vouched');
   await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
@@ -1873,7 +1884,7 @@ test('Fleet’s review director and its machine stop when the owner who vouched 
   await delivered(h, founder, 'founder');
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
-  assert.equal(allocation?.source.kind, 'service');
+  assert.equal(allocation?.source.kind, 'human');
   await h.fleet.tick(); // Reserve and provision.
   await h.fleet.tick(); // Launch.
   const machine = await boot(h, allocation);
@@ -1893,21 +1904,21 @@ test('Fleet’s review director and its machine stop when the owner who vouched 
   assert.equal(h.stopped.size, 1);
 });
 
-test('a review step’s model calls count toward the owner who vouched for its director', async (t) => {
+test('a current review step’s model calls count toward the project owner', async (t) => {
   const h = await hosted(t, 1);
   const caller = await h.project('Charged');
   await h.sessions.setDispatch(caller, { enabled: true });
   await delivered(h, caller, 'charged');
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
-  assert.equal(allocation?.source.kind, 'service');
+  assert.equal(allocation?.source.kind, 'human');
   const voucher = digest({ issuer, subject: 'founder' });
   assert.equal(allocation.person, voucher);
   await h.fleet.tick(); // Reserve and provision.
   await h.fleet.tick(); // Launch.
   const machine = await boot(h, allocation);
   // Sessions names the review director itself; Fleet rented its machine for the voucher.
-  assert.notEqual((await h.sessions.managedModelGrant(machine.secret)).person, voucher);
+  assert.equal((await h.sessions.managedModelGrant(machine.secret)).person, voucher);
   const relay = codexModelRelay(h.sessions, h.state, {
     providerKey: () => 'test-model-key',
     dailyTokensPerPerson: 20_000_000,

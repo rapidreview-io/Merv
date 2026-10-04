@@ -83,7 +83,7 @@ import { ManagedCompute, initializeManagedCompute } from '@merv/sandboxes/manage
 import { WorkMachines, rentalGuidance } from '@merv/sandboxes/managed-compute';
 import type { SandboxRentalInput } from '@merv/sandboxes/types';
 import type { Paper, PaperContextSection } from '@merv/paper/types';
-import { RESERVED_CONTEXT_INPUTS, SUCCESSORS, TASK_TYPES } from './definitions.js';
+import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
 import {
   acceptanceChecks,
   renderAssessment,
@@ -132,10 +132,10 @@ function rejectReviewReturn(input: object): void {
   );
 }
 
-/** The published scratch-task graph. Edge order is part of its fingerprint; never reorder it. */
+/** The ordinary-task graph. Edge order is part of its fingerprint; never reorder it. */
 export const TASK_WORKFLOW: WorkflowDefinition = {
   name: 'task',
-  version: 2,
+  version: 31,
   initial: 'in_progress',
   states: ['in_progress', 'in_review', 'done', 'failed'],
   terminal: ['done', 'failed'],
@@ -149,83 +149,43 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
     { from: 'in_review', action: 'mark_failed', to: 'failed' },
   ],
 };
-/**
- * A published execution policy is immutable, so a task's private Git checkout belongs to the
- * workflow version it was created on and is never a field that a later edit could contradict.
- * Version 3 starts from the runner's central head; version 4 from the accepted task the
- * creator named. Version 5 derives and pins a base in Code's repository on the first lease;
- * references() only reads it. Its driver carries each producer lease's writer generation.
- * Version 6 is service-owned: only its internal binding supplies the fixed base.
- * Live tasks keep their version: nothing is ever upgraded into Git.
- */
-const workspaces: Record<number, TaskWorkspace> = {
-  2: 'none',
-  3: 'central',
-  4: 'reference',
-  5: 'code',
-  6: 'resolution',
-  7: 'none',
-  8: 'central',
-  9: 'reference',
-  10: 'code',
-  11: 'resolution',
-  12: 'none',
-  13: 'central',
-  14: 'reference',
-  15: 'code',
-  16: 'none',
-  17: 'central',
-  18: 'reference',
-  19: 'code',
-  20: 'none',
-  21: 'central',
-  22: 'reference',
-  23: 'code',
-  24: 'none',
-  25: 'central',
-  26: 'reference',
-  27: 'code',
-  28: 'none',
-  29: 'central',
-  30: 'reference',
-  31: 'code',
-  32: 'none',
-  33: 'central',
-  34: 'reference',
-  35: 'code',
-  36: 'none',
-  37: 'central',
-  38: 'reference',
-  39: 'code',
-  40: 'none',
-  41: 'central',
-  42: 'reference',
-  43: 'code',
+/** Only contracts selected by current task creation are executable. */
+const taskVersions: Record<
+  number,
+  { workspace: TaskWorkspace; largeUploads: boolean; native: boolean }
+> = {
+  6: { workspace: 'resolution', largeUploads: false, native: false },
+  11: { workspace: 'resolution', largeUploads: true, native: false },
+  31: { workspace: 'code', largeUploads: false, native: false },
+  35: { workspace: 'code', largeUploads: true, native: false },
+  39: { workspace: 'code', largeUploads: false, native: true },
+  43: { workspace: 'code', largeUploads: true, native: true },
 };
-export const nativeTask = (version: number) => version >= 36 && version <= 43;
-export const taskWorkspace = (version: number): TaskWorkspace => workspaces[version] ?? 'none';
-const taskVersion = (largeUploads = false, native = false): number =>
-  (native ? 8 : 0) + 31 + (largeUploads ? 4 : 0);
-/** Whether Code derives and pins the base, rather than the creator naming a task. */
-const derivedBase = (version: number) =>
-  [5, 10, 15, 19, 23, 27, 31, 35, 39, 43].includes(version) || serviceOwned(version);
-/** Only the internal service binding may create these tasks; their producer has no credential. */
-const serviceOwned = (version: number) =>
-  version === TASK_WORKFLOW_SERVICE.version || version === 11;
+function taskContract(version: number) {
+  const contract = taskVersions[version];
+  check(contract, 'workflow_version_retired', `Task workflow ${version} is retired`, 409);
+  return contract;
+}
+export const nativeTask = (version: number) => taskContract(version).native;
+export const taskWorkspace = (version: number): TaskWorkspace => taskContract(version).workspace;
+const taskVersion = (largeUploads = false, native = false, service = false): number =>
+  Number(
+    Object.entries(taskVersions).find(
+      ([, contract]) =>
+        contract.largeUploads === largeUploads &&
+        contract.native === native &&
+        (contract.workspace === 'resolution') === service,
+    )![0],
+  );
+const serviceOwned = (version: number) => taskVersions[version]?.workspace === 'resolution';
 /** A record another plugin answers 404 for is simply not there to speak of. */
 const absent = (error: unknown): null => {
   if (error instanceof MervError && error.status === 404) return null;
   throw error;
 };
-/** Where review_rounds counts from: a service task counts its deliveries, any other its returns. */
 const roundsFrom = (version: number) => (serviceOwned(version) ? 'in_progress' : 'in_review');
-/** The same graph as version 2; only the execution policies registered beside it differ. */
-export const TASK_WORKFLOW_GIT: WorkflowDefinition = { ...TASK_WORKFLOW, version: 3 };
-export const TASK_WORKFLOW_GIT_BASED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 4 };
-export const TASK_WORKFLOW_GIT_HOSTED: WorkflowDefinition = { ...TASK_WORKFLOW, version: 5 };
-export const TASK_WORKFLOW_SERVICE: WorkflowDefinition = {
+const serviceWorkflow: WorkflowDefinition = {
   ...TASK_WORKFLOW,
-  version: 6,
   states: ['in_progress', 'in_review', 'suspended', 'done'],
   terminal: ['done'],
   edges: [
@@ -236,32 +196,6 @@ export const TASK_WORKFLOW_SERVICE: WorkflowDefinition = {
     { from: 'suspended', action: 'resume', to: 'in_progress' },
   ],
 };
-export const TASK_WORKFLOW_LARGE = [
-  { ...TASK_WORKFLOW, version: 7 },
-  { ...TASK_WORKFLOW_GIT, version: 8 },
-  { ...TASK_WORKFLOW_GIT_BASED, version: 9 },
-  { ...TASK_WORKFLOW_GIT_HOSTED, version: 10 },
-  { ...TASK_WORKFLOW_SERVICE, version: 11 },
-];
-/** The same graph, with GPU access declared for new producer assignments. */
-export const TASK_WORKFLOW_COMPUTE = [
-  { ...TASK_WORKFLOW, version: 12 },
-  { ...TASK_WORKFLOW_GIT, version: 13 },
-  { ...TASK_WORKFLOW_GIT_BASED, version: 14 },
-  { ...TASK_WORKFLOW_GIT_HOSTED, version: 15 },
-  { ...TASK_WORKFLOW, version: 16 },
-  { ...TASK_WORKFLOW_GIT, version: 17 },
-  { ...TASK_WORKFLOW_GIT_BASED, version: 18 },
-  { ...TASK_WORKFLOW_GIT_HOSTED, version: 19 },
-  ...[20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35].map((version) => ({
-    ...TASK_WORKFLOW,
-    version,
-  })),
-];
-export const TASK_WORKFLOW_NATIVE = Array.from({ length: 8 }, (_, index) => ({
-  ...TASK_WORKFLOW,
-  version: 36 + index,
-}));
 /** What Tasks asks of Code; a test may bind exactly this much. */
 type TaskCode = Pick<
   Code,
@@ -406,19 +340,13 @@ export class TaskService implements Tasks {
       );
       await initializeManagedCompute(state);
       try {
-        for (const definition of [
-          TASK_WORKFLOW,
-          TASK_WORKFLOW_GIT,
-          TASK_WORKFLOW_GIT_BASED,
-          TASK_WORKFLOW_GIT_HOSTED,
-          TASK_WORKFLOW_SERVICE,
-          ...TASK_WORKFLOW_LARGE,
-          ...TASK_WORKFLOW_COMPUTE,
-          ...TASK_WORKFLOW_NATIVE,
-        ]) {
+        for (const version of Object.keys(taskVersions).map(Number)) {
           this.registrations.set(
-            definition.version,
-            await workflows.register(definition, this.workflowPolicy(definition.version)),
+            version,
+            await workflows.register(
+              { ...(serviceOwned(version) ? serviceWorkflow : TASK_WORKFLOW), version },
+              this.workflowPolicy(version),
+            ),
           );
         }
         for (const definition of TASK_TYPES) await this.registerType(definition);
@@ -435,6 +363,7 @@ export class TaskService implements Tasks {
           // the owner deciding as owner may shut them out.
           claim: async (caller, review, tx) => {
             const row = await this.row(tx, caller, review.subjectId);
+            this.registration((await this.workflows.get(caller, row.id, tx)).version);
             if (row.review_id === review.id && !review.override)
               await this.leasedClaim(caller, await this.workflows.get(caller, row.id, tx), tx);
           },
@@ -461,7 +390,7 @@ export class TaskService implements Tasks {
     };
   }
 
-  /** Only a Git task asks for Code, so a scratch task never notices that it is unloaded. */
+  /** Current tasks require Code-managed Git. */
   private requireCode(): TaskCode {
     check(this.code, 'code_unavailable', 'Git tasks require Code captures', 503);
     return this.code;
@@ -485,6 +414,7 @@ export class TaskService implements Tasks {
   }
 
   private registration(version: number): Awaited<ReturnType<Workflows['register']>> {
+    taskContract(version);
     const registration = this.registrations.get(version);
     check(registration, 'workflow_unavailable', 'This task workflow version is unavailable', 503);
     return registration;
@@ -548,7 +478,8 @@ export class TaskService implements Tasks {
    * and the person the limit waits for may still end the task.
    */
   private async leasedClaim(caller: Caller, snapshot: WorkflowSnapshot, tx: Transaction) {
-    if (caller.session || taskWorkspace(snapshot.version) === 'none') return;
+    this.registration(snapshot.version);
+    if (caller.session) return;
     const limit = await this.workflows.limitStatus(caller, snapshot.id, 'review_rounds', tx);
     check(
       limit.from === snapshot.state && limit.exhausted,
@@ -567,7 +498,7 @@ export class TaskService implements Tasks {
       if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
         await this.scope.require(caller, 'admin', tx);
       await this.workflows.checkDependencies(caller, snapshot.id, tx);
-      if (taskWorkspace(snapshot.version) !== 'none') this.requireCode();
+      this.requireCode();
       await this.requireBase(caller, snapshot, tx);
       this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'work');
       return 'producer';
@@ -587,8 +518,7 @@ export class TaskService implements Tasks {
       409,
     );
     requireDirecting(review, caller.actorId);
-    if (taskWorkspace(snapshot.version) !== 'none')
-      await this.reviewCommit(caller, snapshot, review, tx);
+    await this.reviewCommit(caller, snapshot, review, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');
     return 'reviewer';
   }
@@ -604,7 +534,6 @@ export class TaskService implements Tasks {
     snapshot: WorkflowSnapshot,
     tx: Transaction,
   ): Promise<void> {
-    if (!derivedBase(snapshot.version)) return;
     const base = await this.requireCode().baseStatus(caller, snapshot.id, tx);
     if (base.status === 'blocked')
       throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
@@ -642,7 +571,7 @@ export class TaskService implements Tasks {
     const purpose = snapshot.state === 'in_review' ? 'review' : 'work';
     // The base is fixed with the lease it serves: Workflows reads references() right after
     // this hook in the same transaction, and a refused offer takes the pin back with it.
-    if (purpose === 'work' && derivedBase(snapshot.version)) {
+    if (purpose === 'work') {
       await this.requireCode().pinBase(source, { unitId: snapshot.id, leaseId }, tx);
       await this.requireCode().reserveWriter(source, { unitId: snapshot.id, leaseId }, tx);
     }
@@ -811,14 +740,8 @@ export class TaskService implements Tasks {
           execution: taskExecutionPolicy(
             'work',
             taskWorkspace(version),
-            (version >= 7 && version <= 11) ||
-              (version >= 16 && version <= 19) ||
-              (version >= 24 && version <= 27) ||
-              (version >= 32 && version <= 35) ||
-              version >= 40,
-            version >= 12 && !nativeTask(version),
-            version >= 20 && !nativeTask(version),
-            version >= 28 && !nativeTask(version),
+            taskContract(version).largeUploads,
+            !serviceOwned(version) && !nativeTask(version),
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -832,14 +755,8 @@ export class TaskService implements Tasks {
           execution: taskExecutionPolicy(
             'review',
             taskWorkspace(version),
-            (version >= 7 && version <= 11) ||
-              (version >= 16 && version <= 19) ||
-              (version >= 24 && version <= 27) ||
-              (version >= 32 && version <= 35) ||
-              version >= 40,
-            version >= 12 && !nativeTask(version),
-            version >= 20 && !nativeTask(version),
-            version >= 28 && !nativeTask(version),
+            taskContract(version).largeUploads,
+            !serviceOwned(version) && !nativeTask(version),
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -944,10 +861,7 @@ export class TaskService implements Tasks {
             'Read the task context and inspect any completed prerequisites through their referenced records. Complete the pinned brief and retain evidence for every check. When returning for changes, read the previous review with review.get and address its findings. Submit confirmations with each checkNumber, met/not_met status, evidenceIds from the submitted artifacts, and notes explaining your verification or what remains unmet. Submit for independent review, then stop producer work while the review is pending.',
           // A Git task also needs the commandId of this worker's own successful code.commit,
           // and only a leased worker can obtain one; guidance says so before the refusal does.
-          requiredInput: ({ snapshot }) =>
-            taskWorkspace(snapshot.version) === 'none'
-              ? ['artifactIds', 'confirmations']
-              : ['artifactIds', 'commandId', 'confirmations'],
+          requiredInput: ['artifactIds', 'commandId', 'confirmations'],
           arguments: taskArguments,
           check: async (context) => {
             await this.checkDelivery(context);
@@ -984,7 +898,7 @@ export class TaskService implements Tasks {
           tool: 'review.start',
           instruction:
             'Claim this independent review, then refresh its guidance and read the context for your new assignment.' +
-            (taskWorkspace(version) === 'none' ? '' : ` ${GIT_CLAIM}`),
+            ` ${GIT_CLAIM}`,
           arguments: async (context) => ({ reviewId: (await this.currentReview(context)).id }),
           check: async (context) => {
             const review = await this.currentReview(context);
@@ -1086,7 +1000,7 @@ export class TaskService implements Tasks {
     );
     // Only a proposed verdict asks Code: the committing transition always carries its input, so
     // this is re-checked there, while guidance read with Code unloaded still answers.
-    if (context.input && taskWorkspace(context.snapshot.version) !== 'none') {
+    if (context.input) {
       const headOid = await this.reviewCommit(context.caller, context.snapshot, review, context.tx);
       // The owner deciding as owner answers for having read the commit; its receipt still holds.
       if (context.input.verdict === 'pass' && !review.override)
@@ -1136,7 +1050,7 @@ export class TaskService implements Tasks {
         p.sessionId === delivered.sessionId &&
         p.revision === delivered.revision &&
         p.workflow.name === 'task' &&
-        taskWorkspace(p.workflow.version) !== 'none' &&
+        Object.hasOwn(taskVersions, p.workflow.version) &&
         p.workflow.state === 'in_progress' &&
         !p.readOnly &&
         capture.status === 'ready' &&
@@ -1264,7 +1178,7 @@ export class TaskService implements Tasks {
       type: row.type_name,
       typeVersion: row.type_version,
       contextInputs: JSON.parse(row.context_inputs),
-      ...(taskWorkspace(workflow.version) === 'none' ? {} : { workspace: 'git' as const }),
+      ...(workflow.data.workspace === 'git' ? { workspace: 'git' as const } : {}),
       ...(typeof baseTaskId === 'string' ? { baseTaskId } : {}),
       ...(deliveryCode && typeof deliveryCodeArtifactId === 'string'
         ? { deliveryCode: deliveryCode as unknown as TaskDeliveryCode, deliveryCodeArtifactId }
@@ -1304,14 +1218,12 @@ export class TaskService implements Tasks {
     workId: string,
     tx: Transaction,
   ): Promise<string[]> {
-    const row = await tx.get<{ version: number }>(
-      'SELECT version FROM wf_instances WHERE id=? AND project_id=?',
-      workId,
-      projectId,
-    );
-    return row && nativeTask(row.version)
-      ? ((await this.nativeWork?.artifactIds(projectId, 'task', workId, tx)) ?? [])
-      : ((await this.compute?.artifactIds(projectId, workId, tx)) ?? []);
+    return [
+      ...new Set([
+        ...((await this.nativeWork?.artifactIds(projectId, 'task', workId, tx)) ?? []),
+        ...((await this.compute?.artifactIds(projectId, workId, tx)) ?? []),
+      ]),
+    ];
   }
   private async nativeTransition(
     caller: Caller,
@@ -1346,10 +1258,9 @@ export class TaskService implements Tasks {
           );
           check(
             task &&
-              task.version >= 12 &&
-              task.version <= 35 &&
+              [31, 35].includes(task.version) &&
               (task.state === 'in_progress' ||
-                (input?.purpose === 'check' && task.version >= 28 && task.state === 'in_review')) &&
+                (input?.purpose === 'check' && task.state === 'in_review')) &&
               task.revision === revision,
             'compute_not_running',
             'Compute requires the current task work revision',
@@ -1357,7 +1268,7 @@ export class TaskService implements Tasks {
           );
           if (commandId)
             check(
-              taskWorkspace(task.version) !== 'none' && this.code,
+              this.code,
               'code_source_unavailable',
               'This task cannot ship code to compute',
               409,
@@ -1376,14 +1287,16 @@ export class TaskService implements Tasks {
           check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
         },
         active: async (row, tx) => {
-          const task = await tx.get<{ state: string; revision: number }>(
-            `SELECT w.state,w.revision FROM tasks t JOIN wf_instances w ON w.id=t.id
+          const task = await tx.get<{ state: string; revision: number; version: number }>(
+            `SELECT w.state,w.revision,w.version FROM tasks t JOIN wf_instances w ON w.id=t.id
            WHERE t.id=? AND t.project_id=?`,
             row.owner_id,
             row.project_id,
           );
           const input = JSON.parse(row.input_json);
           return (
+            !!task &&
+            [31, 35].includes(task.version) &&
             (task?.state === 'in_progress' ||
               (input.purpose === 'check' && task?.state === 'in_review')) &&
             task.revision === row.generation
@@ -1398,7 +1311,7 @@ export class TaskService implements Tasks {
       entitled: (projectId, tx) => service.entitled(projectId, tx),
       active: async (projectId, taskId, tx) =>
         !!(await tx.get(
-          `SELECT t.id FROM tasks t JOIN wf_instances w ON w.id=t.id WHERE t.id=? AND t.project_id=? AND w.state IN ('in_progress','in_review')`,
+          `SELECT t.id FROM tasks t JOIN wf_instances w ON w.id=t.id WHERE t.id=? AND t.project_id=? AND w.version IN (31,35) AND w.state IN ('in_progress','in_review')`,
           taskId,
           projectId,
         )),
@@ -1412,7 +1325,7 @@ export class TaskService implements Tasks {
         check(
           await tx.get(
             `SELECT l.id FROM task_leases l JOIN tasks t ON t.id=l.task_id JOIN wf_instances w ON w.id=t.id
-          WHERE t.id=? AND t.project_id=? AND w.version>=20 AND w.version<=35 AND l.id=? AND l.actor_id=? AND l.revision=w.revision
+          WHERE t.id=? AND t.project_id=? AND w.version IN (31,35) AND l.id=? AND l.actor_id=? AND l.revision=w.revision
           AND l.released_at IS NULL AND ((w.state='in_progress' AND l.purpose='work') OR (w.state='in_review' AND l.purpose='review'))`,
             taskId,
             caller.projectId,
@@ -1710,14 +1623,11 @@ export class TaskService implements Tasks {
           'The pinned brief must contain the task goal and every Done-when check',
         );
         // Once Code keeps the project's history, new Git work lives there and nowhere else.
-        const version = service
-          ? this.artifacts.largeUploadAvailable
-            ? 11
-            : TASK_WORKFLOW_SERVICE.version
-          : taskVersion(
-              this.artifacts.largeUploadAvailable,
-              !!(await this.nativeWork?.connected(caller.projectId, tx)),
-            );
+        const version = taskVersion(
+          this.artifacts.largeUploadAvailable,
+          !service && !!(await this.nativeWork?.connected(caller.projectId, tx)),
+          !!service,
+        );
         const workflow = await (
           await this.registration(version)
         ).start(
@@ -1758,8 +1668,7 @@ export class TaskService implements Tasks {
           await this.requireNativeWork().pin(caller.projectId, 'task', workflow.id, tx);
           await this.nativeTransition(caller, workflow, tx);
         }
-        if (derivedBase(workflow.version))
-          await this.requireCode().declareUnit(caller, workflow.id, tx, service?.baseReference);
+        await this.requireCode().declareUnit(caller, workflow.id, tx, service?.baseReference);
         await recorded(this.state, tx, caller, 'task.created', workflow.id, {
           briefId: brief.id,
           evidenceVersion: 2,
@@ -1857,12 +1766,12 @@ export class TaskService implements Tasks {
   }
 
   /**
-   * A task's work recipe is the version it was created with, or the successor of a retired one;
+   * A task's work recipe must still be registered;
    * every task is reviewed with task.review@5.
    */
   private contextType(task: Pick<Task, 'type' | 'typeVersion'>, purpose: 'work' | 'review') {
     const work = `${task.type}@${task.typeVersion}`;
-    const type = this.types.get(purpose === 'work' ? (SUCCESSORS[work] ?? work) : 'task.review@5');
+    const type = this.types.get(purpose === 'work' ? work : 'task.review@5');
     check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
     return type;
   }
@@ -2169,13 +2078,11 @@ export class TaskService implements Tasks {
     );
     // An assignment check may answer 503 as a blocker, so the Code gates live here and never in
     // the action rules a bare task.get evaluates: a stored Git task stays readable without Code.
-    if (taskWorkspace(facts.workflow.version) !== 'none') {
-      if (facts.review)
-        await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
-      else {
-        this.requireCode();
-        await this.requireBase(context.caller, facts.workflow, context.tx);
-      }
+    if (facts.review)
+      await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
+    else {
+      this.requireCode();
+      await this.requireBase(context.caller, facts.workflow, context.tx);
     }
     this.contextType({ type: facts.row.type_name, typeVersion: facts.row.type_version }, purpose);
     return { ...facts, purpose };
@@ -2204,16 +2111,17 @@ export class TaskService implements Tasks {
     const needsClaim = purpose === 'review' && review?.status === 'requested';
     const assisting =
       purpose === 'work' && !(await this.isProducer(caller, row, task.workflow, tx));
-    const git = taskWorkspace(task.workflow.version) !== 'none';
     const instruction = assisting
       ? 'Support the assigned producer using this task context and save useful checkpoints. Only the assigned producer may submit the delivery; return your evidence to that producer.'
       : needsClaim
         ? 'Claim the review with review.start, then refresh workflow.assignment for your current claim before assessing or submitting. Reading or beginning this assignment does not claim the review.' +
-          (git ? ` ${GIT_CLAIM}` : '')
+          ` ${GIT_CLAIM}`
         : type.definition.recipe.outputInstructions +
           // A brief the caller supplied never carries these words, so the assignment always does.
-          (git ? ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}` : '') +
-          (purpose === 'work' && task.workflow.version >= 12 && !nativeTask(task.workflow.version)
+          ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}` +
+          (purpose === 'work' &&
+          !serviceOwned(task.workflow.version) &&
+          !nativeTask(task.workflow.version)
             ? ` ${GPU_WORK}`
             : '');
     return {
@@ -2223,8 +2131,8 @@ export class TaskService implements Tasks {
         `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}` +
         (nativeTask(task.workflow.version)
           ? this.nativeWork!.guidance(purpose === 'review' ? 'check' : 'execute')
-          : task.workflow.version >= 20
-            ? rentalGuidance('task.compute_', purpose === 'review', task.workflow.version >= 28) +
+          : !serviceOwned(task.workflow.version)
+            ? rentalGuidance('task.compute_', purpose === 'review', true) +
               `\nCurrent work machines: ${JSON.stringify((await this.machines?.rows(caller.projectId, task.id, tx)) ?? [])}`
             : ''),
       references: [
@@ -2250,7 +2158,7 @@ export class TaskService implements Tasks {
               ? []
               : [
                   'task.submit_delivery',
-                  ...(task.workflow.version >= 12 && !nativeTask(task.workflow.version)
+                  ...(!serviceOwned(task.workflow.version) && !nativeTask(task.workflow.version)
                     ? [
                         'task.compute_offers',
                         'task.compute_run',
@@ -2306,15 +2214,9 @@ export class TaskService implements Tasks {
       dependencies: (dependencies ?? []).map((dependency) => dependency.id).sort(),
       // What the runner bases the checkout on: the reviewer's on exactly the delivered commit, a
       // based producer's on the commit its accepted prerequisite delivered.
-      ...(taskWorkspace(snapshot.version) === 'none'
-        ? {}
-        : snapshot.state === 'in_review' && review
-          ? { code: await this.reviewCommit(caller, snapshot, review, tx) }
-          : derivedBase(snapshot.version)
-            ? await this.pinnedBase(caller, snapshot, tx)
-            : taskWorkspace(snapshot.version) === 'reference'
-              ? { base: await this.baseCommit(caller, snapshot, tx) }
-              : {}),
+      ...(snapshot.state === 'in_review' && review
+        ? { code: await this.reviewCommit(caller, snapshot, review, tx) }
+        : await this.pinnedBase(caller, snapshot, tx)),
       ...((await this.isProducer(caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
       ...(review ? { reviewId: review.id } : {}),
       ...(review?.status === 'started' && review.reviewerId === caller.actorId && review.claimId
@@ -2334,38 +2236,6 @@ export class TaskService implements Tasks {
   ): Promise<{ base?: string }> {
     const pin = await this.requireCode().basePin(caller, snapshot.id, tx);
     return pin ? { base: pin.reference } : {};
-  }
-
-  /**
-   * Only an accepted task's commit is a base: done is terminal, so the OID a persistent checkout
-   * fixes at its first launch can never move under the work built on it.
-   */
-  private async baseCommit(
-    caller: Caller,
-    snapshot: WorkflowSnapshot,
-    tx: Transaction,
-  ): Promise<string> {
-    const baseTaskId = snapshot.data.baseTaskId;
-    const base =
-      typeof baseTaskId === 'string'
-        ? await tx.get<{ id: string }>(
-            'SELECT id FROM tasks WHERE id = ? AND project_id = ?',
-            baseTaskId,
-            caller.projectId,
-          )
-        : undefined;
-    const delivered = base ? await this.workflows.get(caller, base.id, tx) : undefined;
-    const headOid = (delivered?.data.deliveryCode as unknown as TaskDeliveryCode | undefined)
-      ?.headOid;
-    check(
-      delivered?.state === 'done' &&
-        typeof headOid === 'string' &&
-        /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(headOid),
-      'task_base_unavailable',
-      'The base task has not been accepted with a delivered commit',
-      409,
-    );
-    return headOid;
   }
 
   private async assignmentFacts(
@@ -2388,6 +2258,7 @@ export class TaskService implements Tasks {
     );
     const row = await this.row(tx, caller, input.taskId);
     const workflow = await this.workflows.get(caller, row.id, tx);
+    this.registration(workflow.version);
     check(
       workflow.revision === input.expectedRevision,
       'revision_conflict',
@@ -2560,22 +2431,26 @@ export class TaskService implements Tasks {
           );
           const rounds = await this.workflows.limitStatusOf(
             caller,
-            rows.filter((row) => row.state === roundsFrom(row.version)).map((row) => row.id),
+            rows
+              .filter((row) => taskVersions[row.version] && row.state === roundsFrom(row.version))
+              .map((row) => row.id),
             'review_rounds',
             tx,
           );
-          return await mapAsync(rows, async (row) =>
-            taskNode(
-              await this.standing(
-                caller,
-                row,
-                waitsOn.get(row.id) ?? [],
-                leases,
-                blocked.has(row.id),
-                tx,
-                rounds,
+          return await mapAsync(
+            rows.filter((row) => taskVersions[row.version] || held.includes(row.id)),
+            async (row) =>
+              taskNode(
+                await this.standing(
+                  caller,
+                  row,
+                  waitsOn.get(row.id) ?? [],
+                  leases,
+                  blocked.has(row.id),
+                  tx,
+                  rounds,
+                ),
               ),
-            ),
           );
         }),
     );
@@ -2646,7 +2521,7 @@ export class TaskService implements Tasks {
   ): Promise<TaskStanding> {
     // Only the limit leaving the current state stops anything, as the gate reads it.
     const rounds =
-      row.state !== roundsFrom(row.version)
+      !taskVersions[row.version] || row.state !== roundsFrom(row.version)
         ? null
         : counted
           ? (counted.get(row.id) ?? null)
@@ -2682,7 +2557,7 @@ export class TaskService implements Tasks {
     input: proposed,
   }: WorkflowCheckContext): Promise<
     | {
-        commit: Awaited<ReturnType<TaskService['deliveredCommit']>> | null;
+        commit: Awaited<ReturnType<TaskService['deliveredCommit']>>;
         confirmations: TaskConfirmation[];
       }
     | undefined
@@ -2721,22 +2596,14 @@ export class TaskService implements Tasks {
       'Task revision changed; refresh the task before submitting',
       409,
     );
-    const git = taskWorkspace(current.version) !== 'none';
     check(
       Array.isArray(input.artifactIds) &&
-        (git || input.artifactIds.length > 0) &&
         new Set(input.artifactIds).size === input.artifactIds.length &&
         input.artifactIds.every((id) => typeof id === 'string' && id.length > 0),
       'invalid_delivery',
-      'Delivery requires a nonempty list of distinct artifacts',
+      'Delivery requires a list of distinct artifacts',
     );
-    check(
-      git || input.commandId === undefined,
-      'task_commit_required',
-      'A scratch task cannot attach an unrelated commit',
-      409,
-    );
-    const commit = git ? await this.deliveredCommit(caller, current, input.commandId, tx) : null;
+    const commit = await this.deliveredCommit(caller, current, input.commandId, tx);
     // No task's brief is a delivery, this task's least of all; nor is a record Merv rendered
     // for an earlier delivery, which every delivery records in history. A Git task that
     // delivers its commit alone names no artifact to look up.
@@ -2779,7 +2646,7 @@ export class TaskService implements Tasks {
         input.confirmations,
         JSON.parse(row.checks),
         input.artifactIds,
-        git,
+        true,
       ),
     };
   }
@@ -2815,7 +2682,7 @@ export class TaskService implements Tasks {
         p.actorId === caller.actorId &&
         p.revision === snapshot.revision &&
         p.workflow.name === 'task' &&
-        taskWorkspace(p.workflow.version) !== 'none' &&
+        Object.hasOwn(taskVersions, p.workflow.version) &&
         p.workflow.state === 'in_progress' &&
         !p.readOnly,
       'task_commit_provenance',
@@ -2999,6 +2866,7 @@ export class TaskService implements Tasks {
         const row = await this.row(tx, caller, input.taskId);
         const checks: string[] = JSON.parse(row.checks);
         const current = await this.workflows.get(caller, row.id, tx);
+        this.registration(current.version);
         const delivered = (await this.checkDelivery({
           caller,
           snapshot: current,
@@ -3009,19 +2877,17 @@ export class TaskService implements Tasks {
         const commit = delivered.commit;
         // Reviews pins artifacts and knows nothing of commits, so the commit enters the review
         // as a rendered record: pinned and hashed like any evidence, and citable by a finding.
-        const codeArtifact = commit
-          ? await this.artifacts.create(
-              caller,
-              {
-                title: clip(`Delivered commit: ${row.title}`, 300),
-                content: renderDeliveredCommit(row.title, commit),
-              },
-              tx,
-            )
-          : null;
+        const codeArtifact = await this.artifacts.create(
+          caller,
+          {
+            title: clip(`Delivered commit: ${row.title}`, 300),
+            content: renderDeliveredCommit(row.title, commit),
+          },
+          tx,
+        );
         // A met claim that cites no file is backed by the delivered commit, which is always there.
         const confirmations = delivered.confirmations.map((item) =>
-          codeArtifact && item.status === 'met' && !item.evidenceIds.length
+          item.status === 'met' && !item.evidenceIds.length
             ? { ...item, evidenceIds: [codeArtifact.id] }
             : item,
         );
@@ -3033,20 +2899,14 @@ export class TaskService implements Tasks {
           },
           tx,
         );
-        const deliveryIds = [
-          ...input.artifactIds,
-          ...(codeArtifact ? [codeArtifact.id] : []),
-          assessment.id,
-        ];
-        const deliveryCode: TaskDeliveryCode | null = commit
-          ? {
-              ref: { kind: 'code-commit', commandId: input.commandId! },
-              sessionId: commit.provenance.sessionId,
-              revision: commit.provenance.revision,
-              headOid: commit.workspace.headOid,
-              treeOid: commit.workspace.treeOid ?? null,
-            }
-          : null;
+        const deliveryIds = [...input.artifactIds, codeArtifact.id, assessment.id];
+        const deliveryCode: TaskDeliveryCode = {
+          ref: { kind: 'code-commit', commandId: input.commandId! },
+          sessionId: commit.provenance.sessionId,
+          revision: commit.provenance.revision,
+          headOid: commit.workspace.headOid,
+          treeOid: commit.workspace.treeOid ?? null,
+        };
         const moved = await (
           await this.registration((await this.workflows.get(caller, row.id, tx)).version)
         ).transition(
@@ -3061,9 +2921,8 @@ export class TaskService implements Tasks {
               deliveryIds,
               deliveryConfirmations: confirmations.map((item) => ({ ...item })),
               deliveryAssessmentId: assessment.id,
-              ...(deliveryCode && codeArtifact
-                ? { deliveryCode: { ...deliveryCode }, deliveryCodeArtifactId: codeArtifact.id }
-                : {}),
+              deliveryCode: { ...deliveryCode },
+              deliveryCodeArtifactId: codeArtifact.id,
             },
           },
           tx,
@@ -3117,7 +2976,7 @@ export class TaskService implements Tasks {
           reviewId: review.id,
           snapshotHash: review.snapshotHash,
           artifactIds: deliveryIds,
-          ...(deliveryCode ? { headOid: deliveryCode.headOid } : {}),
+          headOid: deliveryCode.headOid,
         });
         return await this.hydrate(caller, await this.row(tx, caller, row.id), tx);
       });
@@ -3285,9 +3144,7 @@ export class TaskService implements Tasks {
           },
           tx,
         );
-        // Every version records its success, so work created before automatic bases can still
-        // be built on. With Code unloaded nothing is recorded, and a scratch task is later read
-        // as code-less from its workflow version alone.
+        // Acceptance records the exact reviewed commit in the same transaction.
         if (input.verdict === 'pass' && this.code)
           await this.code.acceptUnit(
             caller,
@@ -3297,10 +3154,7 @@ export class TaskService implements Tasks {
               submissionRef: review.snapshotHash,
               reviewRef: review.id,
               // The accept guard has just re-derived a Git task's delivered commit from Code.
-              codeRef:
-                taskWorkspace(current.version) === 'none'
-                  ? null
-                  : (current.data.deliveryCode as unknown as TaskDeliveryCode).ref,
+              codeRef: (current.data.deliveryCode as unknown as TaskDeliveryCode).ref,
               reviewSessionId: caller.session?.id ?? null,
             },
             tx,

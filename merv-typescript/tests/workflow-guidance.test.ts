@@ -1,5 +1,4 @@
-// Historical scratch records exercise the original assignment and recovery contract.
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -351,211 +350,103 @@ test('a guard, begin check or lease role that writes under a read fails the read
   }
 });
 
-test('task guidance follows caller, evidence, review claims, recovery, context, revision and terminal outcomes', async () => {
+test('current task guidance follows leased delivery, independent review, revision fences and terminal restart', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-guidance-'));
   let app = await createApp({ directory });
+  let work: ReturnType<typeof currentWork> | undefined;
   try {
-    const a = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.bootstrap({
       projectName: 'Task guidance',
       actorName: 'Operator',
     });
-    const operator = { actorId: a.actor.id, projectId: a.project.id };
-    const issue = async (role: 'producer' | 'reviewer' | 'reader'): Promise<Caller> => ({
-      actorId: (await app.ctx.scope.issueActor(operator, { role, name: role })).actor.id,
-      projectId: a.project.id,
-    });
-    const producer = await issue('producer'),
-      reviewer = await issue('reviewer'),
-      replacement = await issue('reviewer'),
-      reader = await issue('reader');
-    const brief = await app.ctx.artifacts.create(producer, {
-      title: 'Brief',
-      content: 'Goal. Check.',
-    });
-    const task = await historicalTask(app.ctx, producer, {
+    const source: Caller = {
+      actorId: boot.actor.id,
+      projectId: boot.project.id,
+      credentialId: boot.credential.id,
+    };
+    work = currentWork(app.ctx, { directory: join(directory, 'work'), source });
+    const task = await currentTask(app.ctx, source, {
       title: 'Guided task',
-      goal: 'Goal.',
+      goal: 'Retain verified evidence.',
       checks: ['Check.'],
-      briefId: brief.id,
       requestId: 'create',
     });
-    const guidance = async (caller: Caller) => await app.ctx.workflows.evaluate(caller, task.id);
-    assert.deepEqual(task.guidance, await guidance(producer));
-    assert.equal((await guidance(producer)).currentGate, 'delivery_required');
-    assert.equal((await guidance(producer)).nextAction?.tool, 'workflow.begin');
-    await app.ctx.workflows.begin(producer, { instanceId: task.id, expectedRevision: 0 });
-    assert.equal((await guidance(producer)).nextAction?.tool, 'task.submit_delivery');
-    assert.equal((await guidance(producer)).nextAction?.status, 'needs_input');
-    assert.equal((await guidance(reader)).nextAction, null);
-    assert.deepEqual((await app.ctx.workflows.overview(producer)).ready, [task.id]);
-    assert.deepEqual((await app.ctx.workflows.overview(reader)).blocked, [task.id]);
-    const context = await app.ctx.tasks.context(producer, {
-      taskId: task.id,
-      purpose: 'work',
-      expectedRevision: 0,
-      requestId: 'context',
-    });
-    assert.ok(
-      context.prompt.includes(JSON.stringify(await guidance(producer))),
-      'Context consumes the canonical decision',
-    );
-    const bad = {
-      taskId: task.id,
-      artifactIds: [brief.id],
-      expectedRevision: 0,
-      requestId: 'deliver',
-    };
-    const preflight = await app.ctx.workflows.evaluate(producer, task.id, {
-      action: 'submit_delivery',
-      input: bad,
-    });
-    assert.equal(preflight.actions[0].blockers[0].code, 'invalid_delivery');
-    await assert.rejects(
-      async () => await app.ctx.tasks.submitDelivery(producer, confirmedDelivery(bad)),
-      {
-        code: preflight.actions[0].blockers[0].code,
-      },
-    );
-    const delivery = await app.ctx.artifacts.create(producer, {
-      title: 'Delivery',
-      content: 'Check. Evidence verified.',
-    });
-    const good = confirmedDelivery({ ...bad, artifactIds: [delivery.id] });
+    const guidance = () => app.ctx.workflows.evaluate(source, task.id);
+    assert.deepEqual(task.guidance, await guidance());
+    assert.equal((await guidance()).currentGate, 'delivery_required');
+    assert.equal((await guidance()).nextAction?.tool, 'workflow.begin');
+    const producer = await work.lease(task);
     assert.equal(
-      (
-        await app.ctx.workflows.evaluate(producer, task.id, {
-          action: 'submit_delivery',
-          input: good,
-        })
-      ).nextAction?.status,
-      'ready',
+      (await app.ctx.workflows.evaluate(producer.worker, task.id)).nextAction?.tool,
+      'task.submit_delivery',
     );
-    const pending = await app.ctx.tasks.submitDelivery(producer, confirmedDelivery(good));
-    assert.equal((await guidance(producer)).currentGate, 'review_required');
-    assert.equal((await guidance(producer)).nextAction, null);
-    assert.equal((await guidance(reviewer)).nextAction?.tool, 'workflow.begin');
-    await app.ctx.workflows.begin(reviewer, { instanceId: task.id, expectedRevision: 1 });
-    assert.equal((await guidance(reviewer)).nextAction?.tool, 'review.start');
-    const claim = await app.ctx.reviews.start(reviewer, pending.reviewId!);
-    assert.equal((await guidance(reviewer)).nextAction?.tool, 'review.submit');
-    assert.equal((await guidance(reviewer)).nextAction?.arguments.claimId, claim.claimId);
-    assert.equal((await guidance(replacement)).nextAction, null);
-    assert.equal((await guidance(producer)).currentGate, 'independent_review');
-    const reviewContext = await app.ctx.tasks.context(reviewer, {
-      taskId: task.id,
-      purpose: 'review',
-      claimId: claim.claimId!,
-      expectedRevision: 1,
-      requestId: 'review-context',
-    });
-    assert.ok(reviewContext.prompt.includes(JSON.stringify(await guidance(reviewer))));
-    // Hold Reviews' recovery consumer in a retry delay, so the claim stays with the revoked
-    // reviewer until it is released below.
-    const holdRecovery = async (until: number) =>
-      await app.ctx.state.transaction(
-        async (tx) =>
-          await tx.run(
-            "UPDATE event_consumers SET retry_at=? WHERE id='reviews.actor-revoked.v1'",
-            until,
-          ),
-      );
-    await holdRecovery(Date.now() + 60_000);
-    await app.ctx.scope.revokeActor(operator, reviewer.actorId);
-    assert.equal((await guidance(producer)).currentGate, 'review_recovery_pending');
-    await assert.rejects(async () => await guidance(reviewer), { code: 'forbidden' });
-    await holdRecovery(0);
-    await app.ctx.domainEvents.drain();
-    assert.equal((await guidance(producer)).currentGate, 'review_required');
-    assert.equal((await guidance(replacement)).nextAction?.tool, 'review.start');
-    const fresh = await app.ctx.reviews.start(replacement, claim.id);
-    const verdict = {
-      ...reviewedFindings(claim),
-      reviewId: fresh.id,
-      claimId: claim.claimId!,
-      verdict: 'needs_changes' as const,
-      notes: 'Correct the evidence.',
-      expectedRevision: 1,
-      requestId: 'verdict',
-    };
-    const stale = await app.ctx.workflows.evaluate(replacement, task.id, {
-      action: 'submit_review',
-      input: verdict,
-    });
-    assert.equal(stale.currentGate, 'stale_claim');
-    await assert.rejects(async () => await app.ctx.tasks.submitReview(replacement, verdict), {
-      code: 'stale_claim',
-    });
-    await app.ctx.tasks.submitReview(replacement, { ...verdict, claimId: fresh.claimId! });
-    assert.equal((await guidance(producer)).currentGate, 'delivery_required');
-    assert.equal((await guidance(producer)).revision, 2);
-    await assert.rejects(
-      async () =>
-        await app.ctx.tasks.submitDelivery(
-          producer,
-          confirmedDelivery({ ...good, requestId: 'stale' }),
-        ),
-      {
-        code: 'revision_conflict',
-      },
-    );
-    const next = await app.ctx.tasks.submitDelivery(
+    const evidence = await work.run(
       producer,
-      confirmedDelivery({
-        ...good,
-        expectedRevision: 2,
-        requestId: 'revise',
-      }),
+      'artifact.create',
+      {
+        title: 'Delivery',
+        content: 'Check. Evidence verified.',
+      },
+      (caller, input) => app.ctx.artifacts.create(caller, input as never),
     );
-    const last = await app.ctx.reviews.start(replacement, next.reviewId!);
-    await app.ctx.tasks.submitReview(replacement, {
-      ...reviewedFindings(last),
-      reviewId: last.id,
-      claimId: last.claimId!,
-      expectedRevision: 3,
-      verdict: 'pass',
-      notes: 'Rechecked all evidence.',
-      requestId: 'pass',
-    });
-    assert.equal((await guidance(producer)).terminal, true);
-    assert.equal((await guidance(producer)).nextAction, null);
-    const finished = await guidance(producer);
+    const commandId = await work.commit(producer);
+    const pending = await work.run(
+      producer,
+      'task.submit_delivery',
+      confirmedDelivery({
+        artifactIds: [evidence.id],
+        commandId,
+        requestId: 'deliver',
+      }),
+      (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
+    );
+    await work.release(producer);
+    assert.equal((await guidance()).currentGate, 'review_required');
+    assert.equal((await guidance()).revision, 1);
+    await assert.rejects(
+      app.ctx.workflows.begin(source, { instanceId: task.id, expectedRevision: 0 }),
+      { code: 'revision_conflict' },
+    );
+    const reviewer = await work.lease(pending);
+    assert.notEqual(reviewer.worker.actorId, producer.worker.actorId);
+    const claim = await app.ctx.reviews.get(source, pending.reviewId!);
+    const decision = await app.ctx.workflows.evaluate(reviewer.worker, task.id);
+    assert.equal(decision.nextAction?.tool, 'review.submit');
+    assert.equal(decision.nextAction?.arguments.claimId, claim.claimId);
+    const reviewContext = await work.run(
+      reviewer,
+      'task.context',
+      { requestId: 'context' },
+      (caller, input) => app.ctx.tasks.context(caller, input as never),
+    );
+    assert.ok(reviewContext.prompt.includes(JSON.stringify(decision)));
+    await work.run(
+      reviewer,
+      'review.submit',
+      {
+        ...reviewedFindings(claim),
+        verdict: 'pass',
+        notes: 'Checked the delivered commit.',
+        requestId: 'pass',
+      },
+      (caller, input) => app.ctx.tasks.submitReview(caller, input as never),
+    );
+    await work.release(reviewer);
+    const finished = await guidance();
+    assert.equal(finished.terminal, true);
+    assert.equal(finished.nextAction, null);
+    await work.close();
+    work = undefined;
     await app.stop();
     app = await createApp({ directory });
-    assert.deepEqual(await guidance(producer), finished);
-    assert.deepEqual(await storedContext(app.ctx.state, context.id), context);
+    assert.deepEqual(await guidance(), finished);
+    assert.deepEqual(await storedContext(app.ctx.state, reviewContext.id), reviewContext);
     await app.setEnabled('tasks', false);
-    // Historical terminal records remain terminal without inventing active checks.
-    assert.equal((await guidance(producer)).terminal, true);
+    assert.equal((await guidance()).terminal, true);
     await app.setEnabled('tasks', true);
-    assert.deepEqual(await guidance(producer), finished);
-    const failed = await historicalTask(app.ctx, producer, {
-      title: 'Fail case',
-      goal: 'Goal.',
-      checks: ['Check.'],
-      briefId: brief.id,
-      requestId: 'fail-create',
-    });
-    const failPending = await app.ctx.tasks.submitDelivery(
-      producer,
-      confirmedDelivery({
-        taskId: failed.id,
-        artifactIds: [delivery.id],
-        expectedRevision: 0,
-        requestId: 'fail-deliver',
-      }),
-    );
-    const failClaim = await app.ctx.reviews.start(replacement, failPending.reviewId!);
-    await app.ctx.tasks.submitReview(replacement, {
-      ...reviewedFindings(failClaim),
-      reviewId: failClaim.id,
-      claimId: failClaim.claimId!,
-      expectedRevision: 1,
-      verdict: 'fail',
-      notes: 'Goal cannot be achieved.',
-      requestId: 'fail-verdict',
-    });
-    assert.equal((await app.ctx.workflows.evaluate(producer, failed.id)).currentGate, 'terminal');
+    assert.deepEqual(await guidance(), finished);
   } finally {
+    await work?.close();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }

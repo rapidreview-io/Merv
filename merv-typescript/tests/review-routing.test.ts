@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -27,9 +27,14 @@ async function fixture(t: TestContext, api = false) {
       'reviews',
       'paper',
       'tasks',
+      'sessions',
+      'code',
+      'code-work',
     ],
   });
+  let work: ReturnType<typeof currentWork> | undefined;
   t.after(async () => {
+    await work?.close();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -42,16 +47,22 @@ async function fixture(t: TestContext, api = false) {
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
+  const issue = async (role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
     const result = await app.ctx.scope.issueActor(operator, { name: role, role });
     return {
       token: result.token,
-      caller: { actorId: result.actor.id, projectId: boot.project.id },
+      caller: {
+        actorId: result.actor.id,
+        projectId: boot.project.id,
+        credentialId: result.credential.id,
+      } as Caller,
     };
   };
   const producer = await issue('producer'),
-    reviewer = await issue('reviewer'),
+    reviewer = await issue('operator'),
     reader = await issue('reader');
+  const reviewerSource = { ...reviewer.caller };
+  const reviewerSourceToken = reviewer.token;
   const proof = await app.ctx.artifacts.create(producer.caller, {
     title: 'Proof',
     content: 'The verified value is 42.',
@@ -91,28 +102,45 @@ async function fixture(t: TestContext, api = false) {
       events: await app.ctx.state.events(operator.projectId),
     }));
   const pendingTask = async () => {
-    const task = await historicalTask(app.ctx, producer.caller, {
+    const task = await currentTask(app.ctx, producer.caller, {
       title: 'Verified arithmetic',
       goal: 'Verify the result.',
       checks: ['The result is correct.'],
       requestId: `task-${++sequence}`,
     });
-    const pending = await app.ctx.tasks.submitDelivery(
-      producer.caller,
-      confirmedDelivery(
-        {
-          taskId: task.id,
-          expectedRevision: 0,
-          artifactIds: [proof.id],
-          requestId: `delivery-${++sequence}`,
-        },
-        1,
-      ),
+    work ??= currentWork(app.ctx, {
+      directory: join(directory, 'workers'),
+      source: producer.caller,
+    });
+    const held = await work.lease(task);
+    const commandId = await work.commit(held);
+    const retained = await work.run(
+      held,
+      'artifact.create',
+      { title: 'Proof', content: 'The verified value is 42.' },
+      (by, value) => app.ctx.artifacts.create(by, value as any),
     );
-    const review = await app.ctx.reviews.start(reviewer.caller, pending.reviewId!);
+    const pending = await work.run(
+      held,
+      'task.submit_delivery',
+      confirmedDelivery({
+        taskId: task.id,
+        expectedRevision: 0,
+        artifactIds: [retained.id],
+        commandId,
+        requestId: `delivery-${++sequence}`,
+      }),
+      (by, value) => app.ctx.tasks.submitDelivery(by, value as any),
+    );
+    await work.release(held);
+    const reviewLease = await work.lease(pending, reviewerSource);
+    reviewer.caller = reviewLease.worker;
+    reviewer.token = reviewLease.token;
+    const review = await app.ctx.reviews.get(reviewer.caller, pending.reviewId!);
     return {
       task: pending,
       review,
+      held: reviewLease,
       input: {
         ...input(review),
         synopsis:
@@ -121,7 +149,7 @@ async function fixture(t: TestContext, api = false) {
           {
             criterionNumber: 1,
             status: 'met' as const,
-            evidenceIds: [proof.id],
+            evidenceIds: [retained.id],
             notes: 'Recomputed independently.',
           },
         ],
@@ -136,7 +164,30 @@ async function fixture(t: TestContext, api = false) {
     });
     return { status: response.status, body: (await response.json()) as any };
   };
-  return { app, operator, producer, reviewer, reader, request, input, durable, pendingTask, http };
+  return {
+    app,
+    operator,
+    producer,
+    reviewer,
+    reader,
+    reviewerSource,
+    reviewerSourceToken,
+    request,
+    input,
+    durable,
+    pendingTask,
+    http,
+    runReview: (
+      held: Awaited<ReturnType<ReturnType<typeof currentWork>['lease']>>,
+      input: ReviewApplication,
+    ) =>
+      work!.run(
+        held,
+        'review.submit',
+        input as unknown as import('@merv/contracts').Data,
+        (caller, bound) => app.ctx.reviews.apply(caller, bound as unknown as ReviewApplication),
+      ),
+  };
 }
 
 test('review owner registration is closed, copied, unique and safe against stale disposers', async (t) => {
@@ -360,34 +411,33 @@ test('registration changes during selection or submission invalidate the operati
   assert.deepEqual(await f.durable(), before);
 });
 
-test('task HTTP submission retains its schema, result and replay across owner unload and restore', async (t) => {
+test('HTTP review routing preserves its schema and verdict replay across owner withdrawal and restoration', async (t) => {
   const f = await fixture(t, true);
-  const { task, input } = await f.pendingTask();
-  assert.equal((await f.http({ ...input, owner: 'tasks' })).status, 400);
-  await f.app.setEnabled('tasks', false);
+  const review = await f.request('http-owned');
+  const input = f.input(review);
+  const owner = {
+    id: 'http-owner',
+    owns: async (review: { subjectId: string }) => review.subjectId === 'http-owned',
+    submit: (caller: Caller, input: ReviewApplication, tx: Transaction) =>
+      f.app.ctx.reviews.submit(caller, input, tx),
+  };
+  const drop = f.app.ctx.reviews.registerSubmitOwner(owner);
+  assert.equal((await f.http({ ...input, owner: 'http-owner' })).status, 400);
+  drop();
   const missing = await f.http(input);
   assert.equal(missing.status, 503);
   assert.equal(missing.body.error.code, 'review_owner_unavailable');
-  await f.app.setEnabled('tasks', true);
+  f.app.ctx.reviews.registerSubmitOwner(owner);
   const submitted = await f.http(input);
   assert.equal(submitted.status, 200, JSON.stringify(submitted));
-  assert.equal(submitted.body.result.id, task.id);
-  assert.equal(submitted.body.result.workflow.state, 'done');
+  assert.equal(submitted.body.result.id, review.id);
+  assert.equal(submitted.body.result.status, 'submitted');
   assert.deepEqual((await f.http(input)).body, submitted.body);
-  await f.app.setEnabled('tasks', false);
-  await f.app.setEnabled('tasks', true);
-  assert.deepEqual((await f.http(input)).body, submitted.body);
-  assert.equal(
-    (await f.app.ctx.state.events(f.operator.projectId)).filter(
-      (event) => event.subjectId === task.id && event.type === 'task.review_applied',
-    ).length,
-    1,
-  );
 });
 
 test('task routed verdict and transition roll back together when assessment persistence fails', async (t) => {
   const f = await fixture(t);
-  const { input } = await f.pendingTask(),
+  const { input, held } = await f.pendingTask(),
     before = await f.durable();
   const original = f.app.ctx.reviews.submit.bind(f.app.ctx.reviews);
   f.app.ctx.reviews.submit = async (caller, input, tx) => {
@@ -395,20 +445,23 @@ test('task routed verdict and transition roll back together when assessment pers
     throw new Error('Injected after verdict persistence');
   };
   await assert.rejects(
-    async () => await f.app.ctx.reviews.apply(f.reviewer.caller, input),
+    async () => await f.runReview(held, input),
     /Injected after verdict persistence/,
   );
   assert.deepEqual(await f.durable(), before);
   f.app.ctx.reviews.submit = original;
-  assert.equal(
-    ((await f.app.ctx.reviews.apply(f.reviewer.caller, input)) as any).workflow.state,
-    'done',
-  );
+  assert.equal(((await f.runReview(held, input)) as any).workflow.state, 'done');
 });
 
 test('the review owner withdraws before Tasks consumers finish draining on workflow unload', async (t) => {
   const f = await fixture(t, true),
-    { task, input } = await f.pendingTask();
+    task = await currentTask(f.app.ctx, f.producer.caller, {
+      title: 'Drain current task read',
+      goal: 'Read',
+      checks: ['Read'],
+      requestId: 'drain-create',
+    }),
+    input = f.input(await f.request());
   let enter = () => {},
     release = () => {};
   const entered = new Promise<void>((resolve) => {
@@ -429,7 +482,10 @@ test('the review owner withdraws before Tasks consumers finish draining on workf
   };
   const pending = fetch(`${f.app.ctx.api.url}/tools/task.get`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${f.reviewer.token}`, 'content-type': 'application/json' },
+    headers: {
+      authorization: `Bearer ${f.reviewerSourceToken}`,
+      'content-type': 'application/json',
+    },
     body: JSON.stringify({ taskId: task.id }),
   });
   let unloading: Promise<void> | undefined,
@@ -460,7 +516,8 @@ test('the review owner withdraws before Tasks consumers finish draining on workf
     await unloading;
   }
   await f.app.setEnabled('workflows', true);
-  assert.equal((await f.http(input)).body.result.workflow.state, 'done');
+  assert.equal((await f.http(input)).body.error.code, 'review_owner_unavailable');
+  assert.equal((await f.app.ctx.reviews.get(f.operator, input.reviewId)).status, 'started');
 });
 
 test('routing does not authorize fabricated task reviews, wrong projects, revoked reviewers or stale claims', async (t) => {
@@ -489,7 +546,7 @@ test('routing does not authorize fabricated task reviews, wrong projects, revoke
     { code: 'not_found' },
   );
   assert.equal((await f.app.ctx.reviews.get(f.operator, review.id)).status, 'started');
-  await f.app.ctx.scope.revokeActor(f.operator, f.reviewer.caller.actorId);
+  await f.app.ctx.scope.revokeActor(f.operator, f.reviewerSource.actorId);
   await f.app.ctx.domainEvents.drain();
   const before = await f.durable();
   await assert.rejects(async () => await f.app.ctx.reviews.apply(f.reviewer.caller, input));

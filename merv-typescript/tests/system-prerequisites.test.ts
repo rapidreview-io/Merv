@@ -210,7 +210,7 @@ test('the engine names no program in what it says', () => {
     assert.doesNotMatch(readFileSync(new URL(file, source), 'utf8'), /\bresearch\./, file);
 });
 
-test('historical workspace-free tasks survive without Code, new tasks require it, and published hashes remain', async (t) => {
+test('historical tasks remain read-only without Code, new tasks require it, and current published hashes remain', async (t) => {
   const f = await resolutionFixture(t);
   await assert.rejects(
     f.tasks.create(f.admin, {
@@ -228,9 +228,16 @@ test('historical workspace-free tasks survive without Code, new tasks require it
     requestId: 'note',
   });
   assert.equal(task.workflow.version, 28);
-  assert.equal(
-    await f.workflows.leaseRole(f.admin, { instanceId: task.id, expectedRevision: 0 }),
-    'producer',
+  assert.equal((await f.tasks.get(f.admin, task.id)).guidance.available, false);
+  assert.deepEqual(await f.workflows.dispatchCandidates(f.admin), []);
+  await assert.rejects(
+    f.tasks.markFailed(f.admin, {
+      taskId: task.id,
+      expectedRevision: 0,
+      reason: 'Cannot change history',
+      requestId: 'no-write',
+    }),
+    { code: 'workflow_version_retired' },
   );
   const published = JSON.parse(
     readFileSync(new URL('./fixtures/published-policies.json', import.meta.url), 'utf8'),

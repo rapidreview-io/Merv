@@ -1,6 +1,5 @@
-// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
-import { historicalExperiment } from './fixtures/historical-experiment.js';
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentExperiment } from './fixtures/current-experiment.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -67,36 +66,68 @@ async function fixture(t: TestContext) {
       actorId: issued.actor.id,
       credentialId: issued.credential.id,
     };
-    return { caller, token: issued.token };
+    return { caller, source: caller, token: issued.token };
   };
   const producer = await issue('producer');
   const reader = await issue('reader');
+  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: operator });
+  const reviewLeases = new Map<string, Awaited<ReturnType<typeof work.lease>>>();
+  t.after(() => {
+    for (const lease of reviewLeases.values()) lease.driver?.dispose();
+  });
   let sequence = 0;
   const task = async () =>
-    await historicalTask(app.ctx, producer.caller, {
+    await currentTask(app.ctx, producer.caller, {
       title: `Check adder ${++sequence}`,
       goal: 'Verify addition.',
       checks: ['Positive inputs work.', 'Negative inputs work.'],
       requestId: `create-${sequence}`,
     });
   const deliver = async (subject: Task) => {
-    const proof = await app.ctx.artifacts.create(producer.caller, {
-      title: 'Execution receipts',
-      mediaType: 'application/json',
-      content: '{"positive":5,"negative":-1}',
-    });
-    return await app.ctx.tasks.submitDelivery(
-      producer.caller,
+    const lease = await work.lease(subject, producer.caller);
+    const proof = await work.run(
+      lease,
+      'artifact.create',
+      {
+        title: 'Execution receipts',
+        mediaType: 'application/json',
+        content: '{"positive":5,"negative":-1}',
+      },
+      (caller, input) => app.ctx.artifacts.create(caller, input as never),
+    );
+    const commandId = await work.commit(lease);
+    const delivered = await work.run(
+      lease,
+      'task.submit_delivery',
       confirmedDelivery(
         {
           taskId: subject.id,
           artifactIds: [proof.id],
+          commandId,
           expectedRevision: subject.workflow.revision,
           requestId: `delivery-${++sequence}`,
         },
         2,
       ),
+      (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
     );
+    await work.release(lease);
+    return delivered;
+  };
+  const claimTask = async (subject: Task, reviewer: { caller: Caller; source: Caller }) => {
+    const lease = await work.lease(subject, operator);
+    reviewer.caller = lease.worker;
+    reviewLeases.set(lease.worker.session!.id, lease);
+    return app.ctx.reviews.get(operator, subject.reviewId!);
+  };
+  const returnTask = async (reviewer: Caller, input: TaskReview) => {
+    const lease = reviewLeases.get(reviewer.session!.id)!;
+    const returned = await work.run(lease, 'review.submit', input as never, (caller, bound) =>
+      app.ctx.tasks.submitReview(caller, bound as never),
+    );
+    await work.release(lease);
+    reviewLeases.delete(reviewer.session!.id);
+    return returned;
   };
   /** A needs_changes verdict on the claimed review: the negative case is not met. */
   const sendBack = (review: ReviewRequest, subject: Task): TaskReview => ({
@@ -126,7 +157,21 @@ async function fixture(t: TestContext) {
   });
   const sections = async (caller: Caller, ...subjectIds: string[]) =>
     await app.ctx.reviews.running(caller, subjectIds);
-  return { app, boot, operator, producer, reader, issue, task, deliver, sendBack, sections };
+  return {
+    app,
+    boot,
+    operator,
+    producer,
+    reader,
+    issue,
+    task,
+    deliver,
+    sendBack,
+    sections,
+    work,
+    claimTask,
+    returnTask,
+  };
 }
 
 const titled = (sections: RunningSection[], title: string) =>
@@ -186,21 +231,21 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
   assert.equal(unclaimed[0].attention, undefined);
 
   // A claim names its reviewer as an actor the shell names, and runs from the claim's event.
-  const claimed = await f.app.ctx.reviews.start(reviewer.caller, requested.id);
+  const claimed = await f.claimTask(first, reviewer);
   const started = (await f.app.ctx.state.events(f.operator.projectId)).find(
     (event) => event.type === 'review.started' && event.subjectId === requested.id,
   );
   assert.ok(started);
   for (const caller of [f.operator, f.reader.caller])
     assert.deepEqual(facts((await f.sections(caller, first.id))[0]), {
-      Standing: [{ actor: reviewer.caller.actorId, prefix: 'With ', unnamed: 'Claimed' }],
+      Standing: [{ actor: reviewer.caller.actorId, prefix: 'With ', unnamed: 'With an agent' }],
       Requested: [{ ago: requested.createdAt }],
       'Claimed for': [{ since: started.createdAt }],
       'Verdict page': [open(requested.id)],
     });
 
   // The verdict that sent the work back stays while the producer is on it again.
-  const returned = await f.app.ctx.tasks.submitReview(reviewer.caller, f.sendBack(claimed, first));
+  const returned = await f.returnTask(reviewer.caller, f.sendBack(claimed, first));
   assert.equal(returned.workflow.state, 'in_progress');
   const decided = (await f.sections(f.operator, first.id))[0];
   assert.deepEqual(facts(decided), {
@@ -239,10 +284,8 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
       },
     ],
   });
-  const reclaimed = await f.app.ctx.reviews.start(reviewer.caller, again.id);
-  const third = await f.deliver(
-    await f.app.ctx.tasks.submitReview(reviewer.caller, f.sendBack(reclaimed, second)),
-  );
+  const reclaimed = await f.claimTask(second, reviewer);
+  const third = await f.deliver(await f.returnTask(reviewer.caller, f.sendBack(reclaimed, second)));
   const latest = await f.sections(f.operator, first.id);
   assert.deepEqual(facts(titled(latest, 'Review'))['Verdict page'], [open(third.reviewId!)]);
   const earlier = titled(latest, 'Earlier rounds');
@@ -344,18 +387,19 @@ test('an experiment names the gate each review read, in the standing and in ever
     '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports the retained observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.';
   let sequence = 0;
   const request = () => `experiment-${++sequence}`;
-  let experiment = await historicalExperiment(f.app.ctx, f.operator, {
+  let experiment = await currentExperiment(f.app.ctx, f.operator, {
     name: 'ablate-retrieval-depth',
     intent: 'Does retrieval depth change held-out accuracy?',
     requestId: request(),
   });
+  let writer: Awaited<ReturnType<typeof f.work.lease>> | undefined;
   const attach = async (role: ExperimentAttach['role'], path: string, content: string) => {
-    const artifact = await f.app.ctx.artifacts.create(f.operator, {
+    const artifact = await f.app.ctx.artifacts.create(writer?.worker ?? f.operator, {
       title: role,
       content,
       mediaType: path.endsWith('.md') ? 'text/markdown' : 'application/json',
     });
-    await f.app.ctx.experiments.attach(f.operator, {
+    await f.app.ctx.experiments.attach(writer?.worker ?? f.operator, {
       experimentId: experiment.id,
       expectedRevision: experiment.workflow.revision,
       attemptIndex: experiment.attempt.index,
@@ -367,12 +411,17 @@ test('an experiment names the gate each review read, in the standing and in ever
     experiment = await f.app.ctx.experiments.get(f.operator, experiment.id);
   };
   const submit = async (transition: 'submit_design' | 'submit_results') => {
-    experiment = await f.app.ctx.experiments.transition(f.operator, {
+    const input = {
       experimentId: experiment.id,
       expectedRevision: experiment.workflow.revision,
       transition,
       requestId: request(),
-    });
+    };
+    experiment = writer
+      ? await f.work.run(writer, 'experiment.transition', input, (caller, bound) =>
+          f.app.ctx.experiments.transition(caller, bound as never),
+        )
+      : await f.app.ctx.experiments.transition(f.operator, input);
     return experiment.reviewId!;
   };
   const design = async () => {
@@ -419,9 +468,11 @@ test('an experiment names the gate each review read, in the standing and in ever
     earlier: ['Design · needs changes'],
   });
 
+  writer = await f.work.lease(experiment);
   await attach('result', 'result.json', '{"accuracy":0.5}');
   await attach('report', 'report.md', report);
   await submit('submit_results');
+  await f.work.release(writer);
   assert.deepEqual(await read(), {
     standing: ['Results · ', 'unclaimed'],
     earlier: ['Design · pass', 'Design · needs changes'],
@@ -462,6 +513,13 @@ test('an experiment names the gate each review read, in the standing and in ever
 test('an agent that took the review with its lease reads as an agent, and the sidebar carries the section inside the tool snapshot', async (t) => {
   const f = await fixture(t);
   const token = `ms_${randomBytes(32).toString('base64url')}`;
+  await f.app.ctx.sessions.heartbeatRunner(f.operator, {
+    runnerId: 'external',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
   const agent = await f.app.ctx.sessions.registerAgent(f.operator, {
     name: 'Reviewing agent',
     runnerId: 'external',

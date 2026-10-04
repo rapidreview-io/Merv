@@ -1,8 +1,8 @@
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { managedServices } from './fixtures/managed-services.js';
+import { currentWork } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,8 +14,6 @@ import { ArtifactStore } from '@merv/artifacts';
 import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import { DurableEvents } from '@merv/domain-events';
-import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
 import type { Artifact, Caller, Data, ReviewApplication } from '@merv/contracts';
 import type {
@@ -43,10 +41,14 @@ async function fixture(t: TestContext) {
   const workflows = await createService(new WorkflowsService(state, scope));
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
-  const events = await createService(new DurableEvents(state));
-  const sessions = await createService(
-    new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
-  );
+  const boot = await scope.bootstrap({ projectName: 'Invariant probe', actorName: 'Owner' });
+  const source: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
+  const managed = await managedServices({ state, scope, artifacts, workflows }, directory, source);
+  const { events, sessions } = managed;
   const experiments = await createService(
     new ExperimentService(
       state,
@@ -55,16 +57,11 @@ async function fixture(t: TestContext) {
       workflows,
       reviews,
       builder,
-      undefined,
+      managed.code,
       await createService(new PaperService(state, scope, artifacts)),
     ),
   );
-  const boot = await scope.bootstrap({ projectName: 'Invariant probe', actorName: 'Owner' });
-  const source: Caller = {
-    actorId: boot.actor.id,
-    projectId: boot.project.id,
-    credentialId: boot.credential.id,
-  };
+  const work = currentWork({ code: managed.code, sessions, events }, { directory, source });
   const issued = await scope.issueActor(source, { name: 'Independent reviewer', role: 'reviewer' });
   const reviewer: Caller = {
     actorId: issued.actor.id,
@@ -74,7 +71,7 @@ async function fixture(t: TestContext) {
   let sequence = 0;
   const request = () => `invariant-${++sequence}`;
   const create = async () =>
-    await historicalExperiment({ state, experiments }, source, {
+    await experiments.create(source, {
       name: `invariant-${++sequence}`,
       intent: 'Measure the effect.',
       requestId: request(),
@@ -129,15 +126,8 @@ async function fixture(t: TestContext) {
     } as ReviewApplication);
   };
   const offer = async (experiment: Experiment) => {
-    const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    const session = await sessions.offer(source, {
-      instanceId: experiment.id,
-      expectedRevision: experiment.workflow.revision,
-      runnerId: 'invariants',
-      requestId: request(),
-      secret,
-    });
-    return { session, worker: await sessions.authenticate(secret) };
+    const held = await work.lease(experiment);
+    return { session: held.session, worker: held.worker };
   };
   const run = async <T>(
     worker: Caller,
@@ -166,9 +156,9 @@ async function fixture(t: TestContext) {
         await artifacts.create(caller, input as unknown as { title: string; content: string }),
     );
   t.after(async () => {
-    await sessions.close();
+    await work.close();
+    await managed.close();
     experiments.close();
-    await events.close();
     reviews.close();
     workflows.close();
     await state.close();

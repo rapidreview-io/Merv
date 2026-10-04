@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
@@ -130,27 +130,15 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
       title: 'Brief',
       content: 'Goal. Check.',
     });
-    const task = await historicalTask(app.ctx, producer, {
-      title: 'Task',
-      goal: 'Goal.',
-      checks: ['Check.'],
-      briefId: brief.id,
-      requestId: 'create',
+    const pending = await app.ctx.reviews.request(producer, {
+      subjectId: 'recovery-subject',
+      subjectRevision: 0,
+      producerId: producer.actorId,
+      artifactIds: [brief.id],
+      criteria: ['Check.'],
+      requestId: 'request',
     });
-    const delivery = await app.ctx.artifacts.create(producer, {
-      title: 'Delivery',
-      content: 'Check. Verified.',
-    });
-    const pending = await app.ctx.tasks.submitDelivery(
-      producer,
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [delivery.id],
-        expectedRevision: 0,
-        requestId: 'deliver',
-      }),
-    );
-    const claim = await app.ctx.reviews.start(reviewer, pending.reviewId!);
+    const claim = await app.ctx.reviews.start(reviewer, pending.id);
     await app.setEnabled('domain-events', false);
     assert.equal(app.ctx.get('reviews'), undefined);
     await app.ctx.scope.revokeActor(otherOperator, reviewer.actorId);
@@ -159,18 +147,16 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
     await until(async () => (await app.ctx.reviews.get(operator, claim.id)).status === 'requested');
     const recovered = await app.ctx.reviews.get(operator, claim.id);
     assert.equal(recovered.snapshotHash, claim.snapshotHash);
-    assert.deepEqual(await app.ctx.tasks.get(producer, task.id), pending);
     assert.equal(recovered.recovery!.previousClaimId, claim.claimId);
     const newClaim = await app.ctx.reviews.start(replacement, claim.id);
     assert.notEqual(newClaim.claimId, claim.claimId);
     assert.equal(newClaim.claimGeneration, 2);
     await assert.rejects(
       () =>
-        app.ctx.tasks.submitReview(replacement, {
+        app.ctx.reviews.submit(replacement, {
           ...reviewedFindings(claim),
           reviewId: claim.id,
           claimId: claim.claimId!,
-          expectedRevision: 1,
           verdict: 'pass',
           notes: 'stale',
           requestId: 'stale',
@@ -179,27 +165,25 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
     );
     await assert.rejects(
       () =>
-        app.ctx.tasks.submitReview(reviewer, {
+        app.ctx.reviews.submit(reviewer, {
           ...reviewedFindings(claim),
           reviewId: claim.id,
           claimId: claim.claimId!,
-          expectedRevision: 1,
           verdict: 'pass',
           notes: 'revoked',
           requestId: 'revoked',
         }),
       /access this project/,
     );
-    const done = await app.ctx.tasks.submitReview(replacement, {
+    const done = await app.ctx.reviews.submit(replacement, {
       ...reviewedFindings(newClaim),
       reviewId: claim.id,
       claimId: newClaim.claimId!,
-      expectedRevision: 1,
       verdict: 'pass',
       notes: 'Independently checked.',
       requestId: 'accept',
     });
-    assert.equal(done.workflow.state, 'done');
+    assert.equal(done.status, 'submitted');
     await app.ctx.scope.revokeActor(operator, replacement.actorId);
     await app.ctx.domainEvents.drain();
     assert.equal((await app.ctx.reviews.get(operator, claim.id)).status, 'submitted');
@@ -212,7 +196,7 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
       ).length,
       1,
     );
-    assert.equal((await app.ctx.tasks.get(operator, task.id)).workflow.state, 'done');
+    assert.equal((await app.ctx.reviews.get(operator, pending.id)).status, 'submitted');
   } finally {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });

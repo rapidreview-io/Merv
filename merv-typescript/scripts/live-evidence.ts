@@ -12,6 +12,7 @@ export function verifyLiveEvidence(
   task: Task,
   review: ReviewRequest,
   transcripts: { reviewer: string; observer: string },
+  deliveryActorId = task.producerId,
 ) {
   assert.equal(task.title, acceptance.title);
   assert.equal(task.goal, acceptance.goal);
@@ -41,8 +42,8 @@ export function verifyLiveEvidence(
   assert.equal(task.workflow.revision, 2);
   assert.equal(review.id, task.reviewId);
   assert.equal(review.subjectId, task.id);
-  assert.equal(review.producerId, task.producerId);
-  assert.ok(review.reviewerId && review.reviewerId !== task.producerId);
+  assert.equal(review.producerId, deliveryActorId);
+  assert.ok(review.reviewerId && review.reviewerId !== deliveryActorId);
   assert.equal(review.verdict, 'pass');
   assert.equal(review.formatVersion, 2);
   assert.ok(review.synopsis && review.synopsis.length >= 40 && review.synopsis.length <= 420);

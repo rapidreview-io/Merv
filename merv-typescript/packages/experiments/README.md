@@ -1,14 +1,9 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers four program versions with Workflows —
-scratch `experiment@5`, Git `experiment@6`, Git on an accepted task's commit
-`experiment@7` and Git on a Code-derived base `experiment@8` — and four context
-recipes with Context Builder. A published execution policy is immutable, so any
-policy change publishes a new version instead of editing an old one. Versions
-1-4 could no longer start; they were retired on 2026-09-22 and their records
-deleted. Creating an experiment starts planning; it does not launch a process or
-decide whether a scientific claim is true.
+independent review gates. It registers four current contracts: managed-Git execution at `experiment@28`/`32` (small/large uploads), and native Sandboxes execution at `experiment@36`/`40`. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes describe planning, design review, execution and results review.
+
+Other stored versions remain read-only history. Their attempts, submissions, evidence, verdicts and pinned workflow graphs are retained, but their old runtime implementations are not registered. They cannot dispatch, accept attachments or transitions, or acquire new review claims, and they do not occupy a current execution slot. No old record is upgraded into another contract. Creating a current experiment starts planning; it does not launch a process or decide whether a scientific claim is true.
 
 | Entrypoint                | Requires                                                                  | Provides                                                        |
 | ------------------------- | ------------------------------------------------------------------------- | --------------------------------------------------------------- |
@@ -88,20 +83,4 @@ terminal corpus capture. Reflection waves and code consolidation remain separate
 implementation work.
 This program does not publish code.
 
-New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). The following describes historical versions only.
-
-Previously, omitting create `workspace`, or choosing `"none"`, selected the scratch program,
-`experiment@5`; omitted input stays absent in command hashes. Explicit
-`workspace: "git"` selects version 6, or 8 in a project Code hosts: scratch
-planning/design review, persistent private execution, and read-only ephemeral
-attempt review. Result submission pins its actual
-worker's future final capture. Review dispatch waits for that exact observation,
-then freezes its head OID as `reference:code`; missing code never falls back to
-central. With `baseTaskId`, a Git task among `dependsOn`, the persistent checkout
-starts from that task's accepted delivered commit (`reference:base`, version 7)
-in place of the central head. Code supplies the historical reader without a direct Experiments
-import of Sessions or Runner. The machine configuration owns repository paths.
-No cloud execution, object transport or Git publication is implied. See
-[research inputs and capture provenance](../../docs/RESEARCH_INPUTS.md). See the [implemented contract](../../docs/EXPERIMENTS.md),
-[Python reference](../../docs/EXPERIMENTS_PARITY_REFERENCE.md) and
-[remaining research-program order](../../docs/RESEARCH_PROGRAM_PARITY_PLAN.md).
+New experiments always use managed Git; see [Always-on Git](../../docs/ALWAYS_GIT.md). Planning and design review use scratch space; execution uses a persistent private checkout on the Code-derived base, and results review uses a read-only checkout pinned to the producing session's exact final capture. Dependencies select accepted inputs through Code Work. Experiments does not import Sessions or Runner and does not publish code. Old scratch, central-base and `baseTaskId` implementations are retired; their stored records remain readable.

@@ -1,4 +1,6 @@
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { managedServices } from './fixtures/managed-services.js';
+import { feasibilityStatement } from './feasibility-fixture.js';
+import { reviewedFindings } from './fixtures/task-evidence.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -44,8 +46,18 @@ async function fixture(t: TestContext, since = '2000-01-01T00:00:00Z') {
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const context = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const paper = await createService(new PaperService(state, scope, artifacts));
+  const managed = await managedServices({ state, scope, artifacts, workflows }, directory, caller);
   const experiments = await createService(
-    new ExperimentService(state, scope, artifacts, workflows, reviews, context, undefined, paper),
+    new ExperimentService(
+      state,
+      scope,
+      artifacts,
+      workflows,
+      reviews,
+      context,
+      managed.code,
+      paper,
+    ),
   );
   const calls: { projectId: string; spec: SandboxComputeSpec }[] = [];
   const cancelled: string[] = [];
@@ -77,19 +89,59 @@ async function fixture(t: TestContext, since = '2000-01-01T00:00:00Z') {
   };
   const unbind = experiments.bindCompute(adapter);
   const createRunning = async (who = caller) => {
-    const experiment = await historicalExperiment({ state, experiments }, who, {
+    await state.transaction((tx) => managed.code.ensureRepository(who, tx));
+    await (managed.code as any).store.maintain();
+    let experiment = await experiments.create(who, {
       name: randomUUID(),
       intent: 'Measure a GPU experiment.',
       requestId: randomUUID(),
     });
-    await state.transaction((tx) =>
-      tx.run("UPDATE wf_instances SET state='running' WHERE id=?", experiment.id),
-    );
+    for (const [role, content, path] of [
+      [
+        'plan',
+        '# Summary\nMeasure GPU output.\n# Objective & hypothesis\nEvaluate throughput.\n# Evaluation\nUse a fixed baseline.',
+        'plan.md',
+      ],
+      ['feasibility', feasibilityStatement(), 'feasibility.json'],
+    ] as const) {
+      const artifact = await artifacts.create(who, { title: role, content });
+      await experiments.attach(who, {
+        experimentId: experiment.id,
+        artifactId: artifact.id,
+        role,
+        path,
+        attemptIndex: 1,
+        expectedRevision: 0,
+        requestId: randomUUID(),
+      });
+    }
+    experiment = await experiments.transition(who, {
+      experimentId: experiment.id,
+      transition: 'submit_design',
+      expectedRevision: 0,
+      requestId: randomUUID(),
+    });
+    const issued = await scope.issueActor(who, {
+      name: 'Compute design reviewer',
+      role: 'reviewer',
+    });
+    const reviewer = { projectId: who.projectId, actorId: issued.actor.id };
+    const review = await reviews.start(reviewer, experiment.reviewId!);
+    await experiments.submitReview(reviewer, {
+      ...reviewedFindings(review),
+      reviewId: review.id,
+      claimId: review.claimId!,
+      expectedRevision: experiment.workflow.revision,
+      verdict: 'pass',
+      notes: 'Checked GPU design.',
+      requestId: randomUUID(),
+    });
     return experiment.id;
   };
   t.after(async () => {
     unbind();
     experiments.close();
+    await managed.close();
     await workflows.close();
     await state.close();
     rmSync(directory, { recursive: true, force: true });
@@ -260,7 +312,7 @@ test('projects before switch-on and attempts outside running cannot rent compute
     code('compute_not_entitled'),
   );
   const current = await fixture(t);
-  const planned = await historicalExperiment(current, current.caller, {
+  const planned = await current.experiments.create(current.caller, {
     name: randomUUID(),
     intent: 'Plan compute.',
     requestId: randomUUID(),

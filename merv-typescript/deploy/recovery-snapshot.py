@@ -123,18 +123,27 @@ class Recovery:
     def exists(self, table, database=None):
         return self.sql("SELECT to_regclass('\"%s\".\"%s\"') IS NOT NULL;" % (self.c['schema'], table), database) == 't'
 
+    def workspace_table(self, database=None):
+        # Restores select from their own schema, never from the running server. Once
+        # Code owns workspaces, the adapter's retained legacy rows are no longer heads.
+        current = self.exists('code_workspaces', database)
+        retained = self.exists('code_retained_commits', database)
+        require(current == retained, 'incomplete Code storage schema')
+        return 'code_workspaces' if current else 'code_units'
+
     def idle(self):
         schema = self.c['schema']
+        workspace = self.workspace_table()
         for table, condition in (
             ('worker_sessions', "status IN ('offered','active')"),
             ('fleet_allocations', "phase <> 'released'"),
             ('code_bases', "state='running' OR check_state IN ('queued','running') OR check_job_json IS NOT NULL"),
-            ('code_units', "writer_state IN ('reserved','active','closing')"),
+            (workspace, "writer_state IN ('reserved','active','closing')"),
             ('pi_commands', "status IN ('waiting','starting','working','saving')"),
             ('managed_compute_runs', "state NOT IN ('completed','failed','cancelled')"),
             ('code_publications', 'lock_id IS NOT NULL'),
         ):
-            if table in self.c.get('idle_tables', ['worker_sessions', 'fleet_allocations', 'code_bases', 'code_units', 'pi_commands', 'managed_compute_runs', 'code_publications']):
+            if table == 'code_workspaces' or table in self.c.get('idle_tables', ['worker_sessions', 'fleet_allocations', 'code_bases', 'code_units', 'pi_commands', 'managed_compute_runs', 'code_publications']):
                 require(self.exists(table), 'configured idle census table missing')
                 require(self.sql(f'SELECT count(*) FROM "{schema}"."{table}" WHERE {condition};') == '0',
                         'active work: snapshot skipped; previous recovery points unchanged')
@@ -220,6 +229,7 @@ class Recovery:
             payload, progress, result = (body(op.get(k)) for k in ('payload_json', 'progress_json', 'result_json'))
             if op['kind'] == 'local_bind' and op['status'] == 'completed' and result.get('main', {}).get('stored'):
                 stored_bindings[op['id']] = result['main']['oid']
+                commit(result['main']['oid'])
             if op['kind'] not in ('import', 'upload', 'accept-ref'):
                 continue
             if op['status'] == 'completed':
@@ -251,7 +261,10 @@ class Recovery:
                     if branch:
                         expected[unit] = target if applied else progress.get('expectedOld')
                         require(refs.get(branch) == expected[unit], 'journal work ref mismatch')
-        for unit in rows('code_units'):
+        workspace = self.workspace_table(database)
+        retained = rows('code_retained_commits') if workspace == 'code_workspaces' else []
+        local_units = {row['unit_id'] for row in retained if row.get('storage') == 'code'}
+        for unit in rows(workspace):
             head = unit.get('head_oid')
             if head:
                 commit(head)
@@ -269,11 +282,16 @@ class Recovery:
             if local_main:
                 require(pinned_main.get('oid') == local_main, 'pinned Main binding mismatch')
                 commit(local_main)
-            if base and (head or accepted.get('storage') == 'code' or (local_main and base.get('kind') == 'main')):
+            if base and (head or unit['unit_id'] in local_units or accepted.get('storage') == 'code' or (local_main and base.get('kind') == 'main')):
                 commit(base['reference'])
             if accepted.get('storage') == 'code':
                 commit(accepted['code']['commit'])
-        if self.exists('code_review_acceptances', database):
+        if workspace == 'code_workspaces':
+            for row in retained:
+                require(row.get('storage') in ('code', 'external'), 'invalid retained commit storage')
+                if row['storage'] == 'code':
+                    commit(row['commit_oid'])
+        elif self.exists('code_review_acceptances', database):
             for row in rows('code_review_acceptances'):
                 accepted = body(row.get('acceptance_json'))
                 if accepted.get('storage') == 'code':

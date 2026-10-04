@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -10,6 +10,19 @@ import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
+async function runner(
+  app: Awaited<ReturnType<typeof createApp>>,
+  source: Caller,
+  runnerId = 'external',
+) {
+  await app.ctx.sessions.heartbeatRunner(source, {
+    runnerId,
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
+}
 
 test('one agent can produce successive tasks and review other work, but cannot review its own or inherit unpinned outputs', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-continuing-agent-'));
@@ -27,6 +40,7 @@ test('one agent can produce successive tasks and review other work, but cannot r
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
+  await runner(app, owner);
   const token = secret();
   const agent = await app.ctx.sessions.registerAgent(owner, {
     name: 'Continuing agent',
@@ -35,18 +49,26 @@ test('one agent can produce successive tasks and review other work, but cannot r
     secret: token,
   });
   const createTask = async (requestId: string, by = owner) =>
-    await historicalTask(app.ctx, by, {
+    await currentTask(app.ctx, by, {
       title: requestId,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
       requestId,
     });
-  const assign = async (task: Task, requestId: string) =>
-    await app.ctx.sessions.assignAgent(token, {
+  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: owner });
+  const held = new Map<string, Awaited<ReturnType<typeof work.attach>>>();
+  t.after(() => {
+    for (const lease of held.values()) lease.driver?.dispose();
+  });
+  const assign = async (task: Task, requestId: string) => {
+    const session = await app.ctx.sessions.assignAgent(token, {
       instanceId: task.id,
       expectedRevision: task.workflow.revision,
       requestId,
     });
+    held.set(session.id, await work.attach(session));
+    return session;
+  };
   const first = await createTask('first');
   const a = await assign(first, 'work-first');
   const callerA = await app.ctx.sessions.authenticate(token);
@@ -54,6 +76,9 @@ test('one agent can produce successive tasks and review other work, but cannot r
     title: 'Proof',
     content: 'Observed 2 + 3 = 5.',
   })) as Artifact;
+  const producing = held.get(a.id)!;
+  producing.worker = callerA;
+  const commandId = await work.commit(producing);
   const submitted = (await app.ctx.tools.call(
     'task.submit_delivery',
     callerA,
@@ -62,10 +87,13 @@ test('one agent can produce successive tasks and review other work, but cannot r
       expectedRevision: 0,
       artifactIds: [proof.id],
       requestId: 'deliver-first',
+      commandId,
     }),
   )) as Task;
   assert.equal(submitted.workflow.state, 'in_review');
   await app.ctx.sessions.releaseAgentAssignment(token, a.id);
+  await work.release(producing);
+  held.delete(a.id);
   await assert.rejects(async () => await assign(submitted, 'self-review'), {
     code: 'review_independence',
   });
@@ -97,24 +125,32 @@ test('one agent can produce successive tasks and review other work, but cannot r
     },
   );
   await app.ctx.sessions.releaseAgentAssignment(token, b.id);
+  await work.release(held.get(b.id)!);
+  held.delete(b.id);
   // Another producer submits separate work. The same agent may now become a reviewer; had its
   // own source delivered it, the agent would be that source's hand and could not.
   const issued = await app.ctx.scope.issueActor(owner, { name: 'Other', role: 'producer' });
   const other: Caller = { ...owner, actorId: issued.actor.id, credentialId: issued.credential.id };
   const independent = await createTask('independent', other);
-  const otherProof = await app.ctx.artifacts.create(other, {
-    title: 'Other proof',
-    content: 'Independently observed 2 + 3 = 5.',
-  });
-  const reviewTask = await app.ctx.tasks.submitDelivery(
-    other,
+  const otherLease = await work.lease(independent, other);
+  const otherProof = await work.run(
+    otherLease,
+    'artifact.create',
+    { title: 'Other proof', content: 'Independently observed 2 + 3 = 5.' },
+    (caller, input) => app.ctx.artifacts.create(caller, input as never),
+  );
+  const otherCommand = await work.commit(otherLease);
+  const reviewTask = await work.run(
+    otherLease,
+    'task.submit_delivery',
     confirmedDelivery({
-      taskId: independent.id,
-      expectedRevision: 0,
       artifactIds: [otherProof.id],
+      commandId: otherCommand,
       requestId: 'other-delivery',
     }),
+    (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
   );
+  await work.release(otherLease);
   const reviewExecution = await assign(reviewTask, 'review-other');
   const reviewer = await app.ctx.sessions.authenticate(token);
   assert.equal(reviewer.actorId, agent.actorId);
@@ -174,12 +210,13 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
         content: '結果'.repeat(160),
       })),
     });
-  const task = await historicalTask(app.ctx, owner, {
+  const task = await currentTask(app.ctx, owner, {
     title: 'Survey',
     goal: 'Summarize the paper.',
     checks: ['Cites every section it relies on.'],
     requestId: 'create-survey',
   });
+  await runner(app, owner);
   const token = secret();
   await app.ctx.sessions.registerAgent(owner, {
     name: 'Paper agent',
@@ -222,7 +259,7 @@ test('an agent route closes a session as what happened to it, and a closed sessi
     credentialId: boot.credential.id,
   };
   const createTask = async (requestId: string) =>
-    await historicalTask(app.ctx, owner, {
+    await currentTask(app.ctx, owner, {
       title: requestId,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
@@ -233,6 +270,7 @@ test('an agent route closes a session as what happened to it, and a closed sessi
     return { status, closeReason, outcome, deferral };
   };
 
+  await runner(app, owner, 'hand');
   // The implicit agent of a hand offer is retired once, with its live offer.
   const offered = await app.ctx.sessions.offer(owner, {
     instanceId: (await createTask('offered')).id,
@@ -250,6 +288,7 @@ test('an agent route closes a session as what happened to it, and a closed sessi
   });
 
   // A delivered handoff is recorded as that, whichever route closes the session.
+  await runner(app, owner);
   const token = secret();
   await app.ctx.sessions.registerAgent(owner, {
     name: 'Continuing agent',
@@ -263,11 +302,15 @@ test('an agent route closes a session as what happened to it, and a closed sessi
     expectedRevision: task.workflow.revision,
     requestId: 'work',
   });
+  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: owner });
+  const lease = await work.attach(execution);
   const worker = await app.ctx.sessions.authenticate(token);
   const proof = (await app.ctx.tools.call('artifact.create', worker, {
     title: 'Proof',
     content: 'Observed 2 + 3 = 5.',
   })) as Artifact;
+  lease.worker = worker;
+  const commandId = await work.commit(lease);
   await app.ctx.tools.call(
     'task.submit_delivery',
     worker,
@@ -276,9 +319,11 @@ test('an agent route closes a session as what happened to it, and a closed sessi
       expectedRevision: 0,
       artifactIds: [proof.id],
       requestId: 'deliver',
+      commandId,
     }),
   );
   const closed = await app.ctx.sessions.releaseAgentAssignment(token, execution.id);
+  await work.release(lease);
   assert.deepEqual(
     [closed.status, closed.closeReason, closed.outcome],
     ['released', 'handoff', 'completed'],

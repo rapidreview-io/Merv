@@ -1,11 +1,12 @@
+import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
 import { CodeService as CoreCodeService } from '@merv/code/service';
-import { historicalTask } from './fixtures/historical-task.js';
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { currentWork } from './fixtures/current-work.js';
+import { currentTask } from './fixtures/current-work.js';
+import { currentExperiment } from './fixtures/current-experiment.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -23,7 +24,6 @@ import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '../packages/code-work/src/service.js';
 import { KnowledgeService } from '../packages/knowledge/src/index.js';
 import type { Caller } from '@merv/contracts';
-import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
 
@@ -67,6 +67,7 @@ async function fixture(t: TestContext) {
       }),
     );
     code = await createService(new CodeService(state, scope, sessions, workflows, core));
+    tasks.bindCode(code);
     experiments = await createService(
       new ExperimentService(
         state,
@@ -102,7 +103,9 @@ async function fixture(t: TestContext) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
+  await state!.transaction((tx) => code!.ensureRepository(operator, tx));
+  await (code! as any).store.maintain();
+  const issue = async (role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
     const issued = await scope.issueActor(operator, { name: role, role });
     return {
       projectId: operator.projectId,
@@ -111,18 +114,18 @@ async function fixture(t: TestContext) {
     };
   };
   const producer = await issue('producer'),
-    reviewer = await issue('reviewer'),
+    reviewer = await issue('operator'),
     reader = await issue('reader');
   let sequence = 0;
   const id = () => `knowledge-fixture-${++sequence}`;
   const createExperiment = async (name?: string) =>
-    await historicalExperiment({ state, experiments }, producer, {
+    await currentExperiment({ code, experiments }, producer, {
       name: name ?? `Experiment-${sequence + 1}`,
       intent: 'Test the treatment.',
       requestId: id(),
     });
   const createTask = async () =>
-    await historicalTask({ state, artifacts, tasks }, producer, {
+    await currentTask({ code, tasks }, producer, {
       title: 'Research support',
       goal: 'Check the retained output.',
       checks: ['Retain reproducible evidence.'],
@@ -130,29 +133,15 @@ async function fixture(t: TestContext) {
     });
   const completeTask = async () => {
     const task = await createTask();
-    const artifact = await artifacts.create(producer, {
-      title: 'Delivery',
-      content: 'Retain reproducible evidence. Verified output 2+2=4.',
-    });
-    const pending = await tasks.submitDelivery(
-      producer,
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [artifact.id],
-        expectedRevision: task.workflow.revision,
-        requestId: id(),
-      }),
-    );
-    const review = await reviews.start(reviewer, pending.reviewId!);
-    return await tasks.submitReview(reviewer, {
-      ...reviewedFindings(review),
-      reviewId: review.id,
-      claimId: review.claimId!,
-      expectedRevision: pending.workflow.revision,
-      verdict: 'pass',
-      notes: 'The retained evidence passes.',
-      requestId: id(),
-    });
+    return (
+      await deliverCurrentTask(
+        { tasks, artifacts, reviews, sessions, code, events },
+        directory,
+        producer,
+        task.id,
+        reviewer,
+      )
+    ).task;
   };
   t.after(async () => {
     await close();
@@ -191,6 +180,9 @@ async function fixture(t: TestContext) {
     },
     get sessions() {
       return sessions;
+    },
+    get events() {
+      return events;
     },
     get code() {
       return code;
@@ -380,14 +372,11 @@ test('Knowledge keeps one caller throughout its inventory and evidence reads', a
 test('Historical session capture reference resolves for current readers without reauthorizing the former source', async (t) => {
   const f = await fixture(t);
   const task = await f.createTask();
-  const session = await f.sessions.offer(f.producer, {
-    instanceId: task.id,
-    expectedRevision: 0,
-    runnerId: 'knowledge-test',
-    requestId: f.id(),
-    secret: `ms_${randomBytes(32).toString('base64url')}`,
-  });
-  await f.sessions.release(f.producer, { sessionId: session.id, runnerId: session.runnerId });
+  const work = currentWork(f, { directory: f.directory, source: f.producer });
+  const held = await work.lease(task);
+  const session = held.session;
+  await work.release(held);
+  await work.close();
   await f.scope.revokeActor(f.operator, f.producer.actorId);
   t.mock.method(f.sessions, 'get', () =>
     assert.fail('Historical resolution must not reconcile a lease'),
@@ -400,7 +389,8 @@ test('Historical session capture reference resolves for current readers without 
   assert.equal(resolved!.status, 'resolved');
   assert.equal(resolved!.capture!.provenance.actorId, session.actorId);
   assert.equal(resolved!.capture!.provenance.instanceId, task.id);
-  assert.equal(resolved!.capture!.status, 'none');
-  assert.equal(resolved!.capture!.workspace, null);
+  assert.equal(resolved!.capture!.status, 'ready');
+  assert.equal(resolved!.capture!.workspace!.baseOid, held.workspace.snapshot!.baseOid);
+  assert.equal(resolved!.capture!.workspace!.headOid, held.workspace.snapshot!.headOid);
   assert.equal(await f.state.eventHead(), before);
 });

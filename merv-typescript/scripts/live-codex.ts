@@ -1,4 +1,4 @@
-import { historicalTask } from '../tests/fixtures/historical-task.js';
+import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, join, dirname } from 'node:path';
@@ -63,14 +63,8 @@ const readTools = [
   'artifact.list',
 ];
 const phaseWrites: Record<Phase, string[]> = {
-  producer: [
-    'workflow.begin',
-    'artifact.create',
-    'task.context',
-    'task.submit_delivery',
-    'review.start',
-  ],
-  reviewer: ['workflow.begin', 'review.start', 'task.context', 'review.submit', 'artifact.create'],
+  producer: ['artifact.create', 'task.context', 'task.submit_delivery', 'review.start'],
+  reviewer: ['review.start', 'task.context', 'review.submit', 'artifact.create'],
   observer: ['actor.create'],
 };
 
@@ -79,10 +73,16 @@ const protocolObservations: {
   observations: Awaited<ReturnType<typeof startProtocolProxy>>['observations'];
 }[] = [];
 
-async function codex(phase: Phase, token: string, url: string, prompt: string) {
+async function codex(
+  phase: Phase,
+  token: string,
+  url: string,
+  prompt: string,
+  checkout = workingDirectory,
+) {
   const proxy = await startProtocolProxy(url);
   try {
-    await codexViaProxy(phase, token, proxy.url, prompt);
+    await codexViaProxy(phase, token, proxy.url, prompt, checkout);
   } finally {
     await proxy.close();
     protocolObservations.push({ phase, observations: proxy.observations });
@@ -93,7 +93,13 @@ async function codex(phase: Phase, token: string, url: string, prompt: string) {
   }
 }
 
-async function codexViaProxy(phase: Phase, token: string, url: string, prompt: string) {
+async function codexViaProxy(
+  phase: Phase,
+  token: string,
+  url: string,
+  prompt: string,
+  checkout: string,
+) {
   const output = createWriteStream(join(runDirectory, `${phase}.jsonl`), { mode: 0o600 });
   const errors = createWriteStream(join(runDirectory, `${phase}.stderr.log`), { mode: 0o600 });
   const args = [
@@ -107,7 +113,7 @@ async function codexViaProxy(phase: Phase, token: string, url: string, prompt: s
     '--color',
     'never',
     '-C',
-    workingDirectory,
+    checkout,
     '-c',
     'approval_policy="never"',
     '-c',
@@ -206,7 +212,6 @@ async function codexViaProxy(phase: Phase, token: string, url: string, prompt: s
   const required: Record<Phase, string[]> = {
     producer: [
       'workflow.assignment',
-      'workflow.begin',
       'artifact.create',
       'artifact.read',
       'task.context',
@@ -215,7 +220,6 @@ async function codexViaProxy(phase: Phase, token: string, url: string, prompt: s
     ],
     reviewer: [
       'workflow.assignment',
-      'workflow.begin',
       'task.get',
       'review.get',
       'artifact.read',
@@ -242,7 +246,11 @@ async function codexViaProxy(phase: Phase, token: string, url: string, prompt: s
     observer: 'actor.create',
   };
   assert.ok(
-    calls.some((call) => call.tool === refused[phase] && call.errorCode === 'forbidden'),
+    calls.some(
+      (call) =>
+        call.tool === refused[phase] &&
+        call.errorCode === (phase === 'observer' ? 'tool_forbidden' : 'execution_tool_forbidden'),
+    ),
     `${phase}: missing server-enforced permission denial for ${refused[phase]}`,
   );
 }
@@ -314,7 +322,7 @@ async function run() {
           role,
           expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         });
-      const verified = await human(`test-${role}`);
+      const verified = await human(name.includes('reviewer') ? 'test-reviewer' : `test-${role}`);
       await app.ctx.scope.addMember(operatorPrincipal!, caller.projectId, {
         subject: verified.principal.user.subject,
         role,
@@ -356,15 +364,13 @@ async function run() {
       };
     };
     let producer = await participant('Fresh Codex producer', 'producer');
-    let reviewer = await participant('Fresh Codex reviewer', 'reviewer');
+    let reviewer = await participant('Fresh Codex reviewer', 'operator');
     const observer = await participant('Fresh Codex observer', 'reader');
     writeFileSync(
       join(runDirectory, 'credentials.json'),
       JSON.stringify({ operator, producer, reviewer, observer }, null, 2) + '\n',
       { mode: 0o600 },
     );
-    // The shell-disabled harness verifies old artifact-only work and credential recovery.
-    // Managed Git is exercised through the actual workspace driver in the new-work harness.
     const seedCaller: Caller = userKeys
       ? await app.ctx.scope.caller(
           { kind: 'key', key: await app.ctx.scope.authenticateKey(producer.token) },
@@ -377,22 +383,35 @@ async function run() {
             projectId: caller.projectId,
             credentialId: producer.credential!.id,
           };
-    const historical = await historicalTask(app.ctx, seedCaller, {
+    const seeded = await currentTask(app.ctx, seedCaller, {
       title: 'Verify arithmetic evidence',
       goal: 'Verify the sum and mean of 2, 4, 6, 8.',
       checks: ['Sum equals 20', 'Mean equals 5'],
-      requestId: 'historical-arithmetic',
+      requestId: 'current-arithmetic',
     });
-    await codex(
-      'producer',
-      producer.token,
-      app.ctx.api.url!,
-      'You are the producer. Continue the existing historical task "Verify arithmetic evidence" (taskId: ' +
-        historical.id +
-        '). Read it with task.get and read its immutable numbered brief through artifact.read. This is an existing artifact-only task, so it retains its original delivery contract. Before doing the work, call workflow.assignment for the task and inspect its complete context preview. Follow guidance by calling workflow.begin with instanceId and expectedRevision; use the returned context, then repeat workflow.begin with identical inputs to verify the same first-start identity and unchanged revision. Also call task.context with purpose work, this taskId, expectedRevision and a stable requestId, and use the returned starting context. Compute the result yourself. Store a separate immutable Markdown delivery explaining the calculation. Submit it for independent review with one structured confirmation per numbered acceptance check. Each confirmation must include checkNumber, status "met" only if verified, the delivery artifact ID in evidenceIds, and nonblank notes explaining how you verified that check. Use artifactIds for your evidence; the server appends its generated assessment. After submission, call task.get explicitly to verify the persisted task is in_review, then refresh workflow.status_and_next. Attempt review.start as this producer, confirm access is refused, and leave the task awaiting a separate reviewer. Use stable unique request IDs and the current task revision. Do not create actor credentials.',
-    );
+    const production = currentWork(app.ctx, { directory: runDirectory, source: seedCaller });
+    const producerLease = await production.lease(seeded);
+    const commandId = await production.commit(producerLease, {
+      'arithmetic.txt': '2+4+6+8=20\n20/4=5\n',
+    });
+    try {
+      await codex(
+        'producer',
+        producerLease.token,
+        app.ctx.api.url!,
+        'You are the producer. Continue the current task "Verify arithmetic evidence" (taskId: ' +
+          seeded.id +
+          '). Read it with task.get and read its immutable numbered brief through artifact.read. Your real managed checkout contains arithmetic.txt with 2+4+6+8=20 and 20/4=5; independently verify those calculations. The runner has committed that file. Include commandId ' +
+          commandId +
+          ' in task.submit_delivery. Before doing the work, call workflow.assignment for the task and inspect its complete context preview. Your lease has already activated this revision. Repeat workflow.assignment with the same instanceId and verify the same pinned context and unchanged revision. Attempt review.start before doing any work and confirm access is refused. Also call task.context with purpose work, this taskId, expectedRevision and a stable requestId, and use the returned starting context. Compute the result yourself. Store a separate immutable Markdown delivery explaining the calculation. Submit it for independent review with one structured confirmation per numbered acceptance check. Each confirmation must include checkNumber, status "met" only if verified, the delivery artifact ID in evidenceIds, and nonblank notes explaining how you verified that check. Use artifactIds for your evidence; the server appends its generated assessment. Before submission, call task.get explicitly to verify the persisted task is in_progress. Leave the task awaiting a separate reviewer and stop calling tools after successful submission because your lease has ended. Use stable unique request IDs and the current task revision. Do not create actor credentials.',
+        producerLease.workspace.path,
+      );
+      await production.release(producerLease);
+    } finally {
+      await production.close();
+    }
     let task = (await app.ctx.tasks.list(caller))[0];
-    assert.equal(task?.id, historical.id, 'Producer must continue the exact historical task');
+    assert.equal(task?.id, seeded.id, 'Producer must continue the exact current task');
     assert.equal(task.workflow.state, 'in_review');
     assert.ok(task.reviewId);
     const firstTaskId = task.id,
@@ -517,18 +536,38 @@ async function run() {
     console.log(
       JSON.stringify({ phase: 'restart-before-review', status: 'verified', taskId: firstTaskId }),
     );
-    await codex(
-      'reviewer',
-      reviewer.token,
-      app.ctx.api.url!,
-      `You are an independent reviewer of task ${firstTaskId}, review ${firstReviewId}. The server has restarted since submission. Before claiming the review, call workflow.assignment to inspect the open review packet; verify its handoff asks you to claim. Call task.get and review.get explicitly to read the task and pinned review criteria, then read the brief and every delivery artifact, including the generated structured assessment, through artifact.read. Check both numbered confirmations against their cited evidence and verify the arithmetic independently. Claim the review with review.start, retain its claimId and include it in review.submit. After claiming, follow the guidance to call workflow.begin with instanceId and current expectedRevision; use the returned full review context and verify its claimId. Repeat workflow.begin to confirm the same first-start identity and unchanged revision. Before deciding the verdict, also call task.context with purpose review, this taskId, the claimId, current expectedRevision and a stable requestId; use the returned context for the assignment. Submit pass only if the evidence meets both checks. Supply a plain single-paragraph synopsis of 40–420 characters summarizing your independent verdict, plus exactly one finding for each pinned criterion: criterionNumber 1 or 2, status met only if independently verified, evidenceIds citing the actual delivery you read, and notes explaining your calculation for that check. Include overall verification notes as well. Do not copy the producer confirmations as a substitute for checking them yourself. Use the task workflow revision for expectedRevision. Verify the task reaches done. Attempt to create a task artifact as this reviewer and confirm permission is denied. Do not create actor credentials.`,
-    );
+    const reviewerSource: Caller = userKeys
+      ? await app.ctx.scope.caller(
+          { kind: 'key', key: await app.ctx.scope.authenticateKey(reviewer.token) },
+          caller.projectId,
+        )
+      : sharedIdentity
+        ? await app.ctx.scope.caller(owners.get(reviewer.actor.id)!.principal, caller.projectId)
+        : {
+            actorId: reviewer.actor.id,
+            projectId: caller.projectId,
+            credentialId: reviewer.credential!.id,
+          };
+    const reviewing = currentWork(app.ctx, { directory: runDirectory, source: reviewerSource });
+    const reviewerLease = await reviewing.lease(await app.ctx.tasks.get(caller, firstTaskId));
+    try {
+      await codex(
+        'reviewer',
+        reviewerLease.token,
+        app.ctx.api.url!,
+        `You are an independent reviewer of task ${firstTaskId}, review ${firstReviewId}. The server has restarted since submission. Your review claim is already reserved by this independent lease, and your read-only checkout contains the exact committed delivery. Call workflow.assignment to inspect the review packet. Call task.get and review.get explicitly to read the task and pinned review criteria, then read the brief and every delivery artifact, including the generated structured assessment, through artifact.read. Check both numbered confirmations against their cited evidence and verify the arithmetic independently. Use review.start to inspect your reserved claim, retain its claimId and include it in review.submit. Attempt to create a task artifact as this reviewer and confirm permission is denied. Your lease has already activated this revision. Repeat workflow.assignment with the same instanceId and verify the same pinned review context, claimId and unchanged revision. Before deciding the verdict, also call task.context with purpose review, this taskId, the claimId, current expectedRevision and a stable requestId; use the returned context for the assignment. Submit pass only if the evidence meets both checks. Supply a plain single-paragraph synopsis of 40–420 characters summarizing your independent verdict, plus exactly one finding for each pinned criterion: criterionNumber 1 or 2, status met only if independently verified, evidenceIds citing the actual delivery you read, and notes explaining your calculation for that check. Include overall verification notes as well. Do not copy the producer confirmations as a substitute for checking them yourself. Use the task workflow revision for expectedRevision. Stop calling tools immediately after the successful verdict; your lease ends at that handoff. Do not create actor credentials.`,
+        reviewerLease.workspace.path,
+      );
+      await reviewing.release(reviewerLease);
+    } finally {
+      await reviewing.close();
+    }
     task = await app.ctx.tasks.get(caller, firstTaskId);
     assert.equal(task.workflow.state, 'done');
     assert.equal(task.workflow.revision, 2);
     const review = await app.ctx.reviews.get(caller, firstReviewId);
     assert.equal(review.verdict, 'pass');
-    assert.equal(review.reviewerId, reviewer.actor.id);
+    assert.equal(review.reviewerId, reviewerLease.worker.actorId);
     assert.notEqual(review.reviewerId, review.producerId);
     await app.stop();
     app = await openApp();
@@ -557,6 +596,7 @@ async function run() {
         reviewer: readFileSync(join(runDirectory, 'reviewer.jsonl'), 'utf8'),
         observer: readFileSync(join(runDirectory, 'observer.jsonl'), 'utf8'),
       },
+      producerLease.worker.actorId,
     );
     if (userKeys) {
       const owner = owners.get(producer.actor.id)!;
@@ -637,19 +677,38 @@ async function run() {
     }
     const events = await app.ctx.state.events(caller.projectId);
     if (userKeys) {
-      for (const [actorId, key] of [
-        [producer.actor.id, originalKeys.get(producer.actor.id)!],
-        [reviewer.actor.id, reviewer.key!],
+      for (const [lease, key, sourceActorId] of [
+        [producerLease, originalKeys.get(producer.actor.id)!, producer.actor.id],
+        [reviewerLease, reviewer.key!, reviewer.actor.id],
       ] as const) {
+        assert.equal(lease.session.source.kind, 'key');
+        assert.equal(lease.session.source.actorId, sourceActorId);
+        assert.equal(lease.session.source.keyId, key.id);
+        assert.equal(lease.session.source.membershipId, memberEpochs.get(sourceActorId));
+        const offer = events.find(
+          (event) => event.type === 'session.offered' && event.subjectId === lease.session.id,
+        );
+        assert.ok(offer);
+        assert.deepEqual(offer.data.source, lease.session.source);
+        const registration = events.find(
+          (event) => event.type === 'session.runner_registered' && event.actorId === sourceActorId,
+        );
+        assert.ok(registration);
+        assert.deepEqual(registration.data.source, {
+          kind: 'user-key',
+          keyId: key.id,
+          membershipId: memberEpochs.get(sourceActorId),
+        });
         const writes = events.filter(
-          (event) => event.actorId === actorId && !event.type.startsWith('actor.'),
+          (event) =>
+            event.actorId === lease.worker.actorId &&
+            /^(artifact|workflow|task|review)\./.test(event.type),
         );
         assert.ok(writes.length > 0);
         for (const event of writes)
           assert.deepEqual(event.data.source, {
-            kind: 'user-key',
-            keyId: key.id,
-            membershipId: memberEpochs.get(actorId),
+            kind: 'session',
+            sessionId: lease.session.id,
           });
       }
     }
@@ -657,8 +716,8 @@ async function run() {
     assert.deepEqual(
       starts.map((start) => [start.revision, start.actorId]),
       [
-        [0, producer.actor.id],
-        [1, reviewer.actor.id],
+        [0, producerLease.worker.actorId],
+        [1, reviewerLease.worker.actorId],
       ],
       'Both fresh agents must begin their own revision and retain attribution across restarts',
     );
@@ -674,17 +733,17 @@ async function run() {
           .find((run) => run.phase === phase)!
           .calls.filter(
             (call) =>
-              call.tool === 'workflow.begin' &&
+              call.tool === 'workflow.assignment' &&
               call.status === 'completed' &&
               !call.errorCode &&
               !call.transportError,
           ).length >= 2,
-        `${phase} must actually repeat begin without duplicating the activation`,
+        `${phase} must repeat assignment without duplicating the activation`,
       );
     }
     const assignmentChecks = {
       bothAgentsReadAssignments: true,
-      bothAgentsRepeatedBegin: true,
+      bothAgentsRepeatedAssignments: true,
       exactlyTwoStartEvents: true,
       startsSurvivedTwoRestarts: true,
       startAttributionMatchesActors: true,
@@ -711,7 +770,7 @@ async function run() {
               accountRotationUsingAnotherMembership: true,
               ancestorRevocationKillsLaterSuccessor: true,
               independentKeyAndHumanLoginPreserved: true,
-              domainWritesRetainKeyAndMembershipProvenance: true,
+              domainWritesRetainSessionAndKeyProvenance: true,
             },
           }
         : sharedIdentity

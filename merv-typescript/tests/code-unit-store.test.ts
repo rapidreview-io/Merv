@@ -6,11 +6,7 @@ import test, { type TestContext } from 'node:test';
 import { createService, type Caller, type Transaction } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
-import {
-  WorkUnitRecords,
-  type AcceptanceBody,
-  type BaseBody,
-} from '@merv/code-work/unit-store';
+import { WorkUnitRecords, type AcceptanceBody, type BaseBody } from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { CodeStore } from '@merv/code/store/operations';
 import { gitSource } from './fixtures/code-store.js';

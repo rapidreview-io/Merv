@@ -1,5 +1,4 @@
-// Historical scratch records exercise the original assignment and recovery contract.
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -510,18 +509,30 @@ test('Tasks contribute source-aware queue labels and recipe availability without
     rmSync(directory, { recursive: true, force: true });
   });
   const boot = await app.ctx.scope.bootstrap({ projectName: 'Task dispatch', actorName: 'Owner' });
-  const source: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  const source: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
   const producerActor = await app.ctx.scope.issueActor(source, {
     name: 'Producer',
     role: 'producer',
   });
-  const producer: Caller = { ...source, actorId: producerActor.actor.id };
+  const producer: Caller = {
+    ...source,
+    actorId: producerActor.actor.id,
+    credentialId: producerActor.credential.id,
+  };
   const reviewerActor = await app.ctx.scope.issueActor(source, {
     name: 'Reviewer',
     role: 'reviewer',
   });
-  const reviewer: Caller = { ...source, actorId: reviewerActor.actor.id };
-  const task = await historicalTask(app.ctx, producer, {
+  const reviewer: Caller = {
+    ...source,
+    actorId: reviewerActor.actor.id,
+    credentialId: reviewerActor.credential.id,
+  };
+  const task = await currentTask(app.ctx, producer, {
     title: 'Produce evidence',
     goal: 'Verify.',
     checks: ['Verified.'],
@@ -543,7 +554,7 @@ test('Tasks contribute source-aware queue labels and recipe availability without
     },
   };
   const disposeType = await app.ctx.tasks.registerType(type);
-  const custom = await historicalTask(app.ctx, producer, {
+  const custom = await currentTask(app.ctx, producer, {
     title: 'Unavailable recipe',
     goal: 'Verify.',
     checks: ['Verified.'],
@@ -551,19 +562,28 @@ test('Tasks contribute source-aware queue labels and recipe availability without
     requestId: 'custom',
   });
   disposeType();
-  const artifact = await app.ctx.artifacts.create(producer, {
-    title: 'Evidence',
-    content: 'Verified.',
-  });
-  const pending = await app.ctx.tasks.submitDelivery(
-    producer,
+  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: producer });
+  const lease = await work.lease(task);
+  const artifact = await work.run(
+    lease,
+    'artifact.create',
+    { title: 'Evidence', content: 'Verified.' },
+    (caller, input) => app.ctx.artifacts.create(caller, input as never),
+  );
+  const commandId = await work.commit(lease);
+  const pending = await work.run(
+    lease,
+    'task.submit_delivery',
     confirmedDelivery({
+      commandId,
       taskId: task.id,
       expectedRevision: 0,
       artifactIds: [artifact.id],
       requestId: 'deliver',
     }),
+    (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
   );
+  await work.release(lease);
   t.mock.method(app.ctx.artifacts, 'read', poison);
   t.mock.method(app.ctx.workflows, 'evaluate', poison);
   t.mock.method(app.ctx.workflows, 'assignment', poison);
@@ -576,15 +596,23 @@ test('Tasks contribute source-aware queue labels and recipe availability without
   assert.equal(candidates[0].role, 'reviewer');
   assert.equal(candidates[0].expectedRevision, pending.workflow.revision);
   assert.equal(candidates[0].readOnly, true);
-  assert.deepEqual(candidates[0].workspace, { mode: 'none' });
+  assert.ok(candidates[0].workspace && candidates[0].workspace.mode !== 'none');
+  assert.equal(candidates[0].workspace.driver, 'code.v2');
   assert.notEqual(task.id, custom.id);
   assert.deepEqual(await app.ctx.workflows.dispatchCandidates(producer), []);
   assert.deepEqual(
     (await app.ctx.workflows.dispatchCandidates(reviewer)).map((candidate) => candidate.instanceId),
     [task.id],
   );
-  await app.ctx.reviews.start(reviewer, pending.reviewId!);
+  t.mock.restoreAll();
+  const reviewLease = await work.lease(pending, source);
+  t.mock.method(app.ctx.artifacts, 'read', poison);
+  t.mock.method(app.ctx.workflows, 'evaluate', poison);
+  t.mock.method(app.ctx.workflows, 'assignment', poison);
+
   assert.deepEqual(await app.ctx.workflows.dispatchCandidates(source), []);
+  t.mock.restoreAll();
+  await work.release(reviewLease);
 });
 
 test('a lease whose receipt its offer accepted is released', async (t) => {

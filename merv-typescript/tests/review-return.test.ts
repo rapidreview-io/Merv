@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -580,52 +580,47 @@ test('public review.submit exposes a strict optional route and carries it throug
 
 test('Tasks reject supplied routes before command replay and agree with workflow preflight', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-return-'));
-  const app = await createApp({
-    directory,
-    api: false,
-    components: [
-      'state',
-      'scope',
-      'blobs',
-      'artifacts',
-      'domain-events',
-      'workflows',
-      'context-builder',
-      'reviews',
-      'paper',
-      'tasks',
-    ],
-  });
+  const app = await createApp({ directory, api: false });
   try {
     const boot = await app.ctx.scope.bootstrap({
       projectName: 'Task fixed routes',
       actorName: 'Operator',
     });
-    const operator = { actorId: boot.actor.id, projectId: boot.project.id };
-    const actor = async (role: 'producer' | 'reviewer') => ({
-      actorId: (await app.ctx.scope.issueActor(operator, { name: role, role })).actor.id,
+    const operator = {
+      actorId: boot.actor.id,
       projectId: boot.project.id,
-    });
-    const producer = await actor('producer'),
-      reviewer = await actor('reviewer');
-    const proof = await app.ctx.artifacts.create(producer, {
-      title: 'Proof',
-      content: '42 was independently verified.',
-    });
-    const task = await historicalTask(app.ctx, producer, {
+      credentialId: boot.credential.id,
+    };
+    const producer = operator;
+    const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: operator });
+    const task = await currentTask(app.ctx, producer, {
       title: 'Verify',
       goal: 'Verify the result.',
       checks: ['The result is correct.'],
       requestId: 'task',
     });
-    const pending = await app.ctx.tasks.submitDelivery(
-      producer,
-      confirmedDelivery(
-        { taskId: task.id, expectedRevision: 0, artifactIds: [proof.id], requestId: 'delivery' },
-        1,
-      ),
+    const writer = await work.lease(task);
+    const proof = await work.run(
+      writer,
+      'artifact.create',
+      { title: 'Proof', content: '42 was independently verified.' },
+      (caller, input) => app.ctx.artifacts.create(caller, input as never),
     );
-    const review = await app.ctx.reviews.start(reviewer, pending.reviewId!);
+    const commandId = await work.commit(writer);
+    const pending = await work.run(
+      writer,
+      'task.submit_delivery',
+      confirmedDelivery({
+        artifactIds: [proof.id],
+        commandId,
+        requestId: 'delivery',
+      }),
+      (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
+    );
+    await work.release(writer);
+    const reviewLease = await work.lease(pending);
+    const reviewer = reviewLease.worker;
+    const review = await app.ctx.reviews.get(operator, pending.reviewId!);
     const input: ReviewApplication = {
       reviewId: review.id,
       claimId: review.claimId!,
@@ -696,15 +691,19 @@ test('Tasks reject supplied routes before command replay and agree with workflow
     });
     assert.equal(routeReads, 0);
     assert.deepEqual(await durable(), before);
-    const result = await app.ctx.reviews.apply(reviewer, input);
-    const committed = await durable();
-    assert.deepEqual(
-      await app.ctx.reviews.apply(reviewer, { ...input, returnTo: undefined }),
-      result,
+    const result = await work.run(reviewLease, 'review.submit', input as never, (caller, bound) =>
+      app.ctx.reviews.apply(caller, bound as never),
     );
-    assert.deepEqual(
-      await app.ctx.reviews.apply(reviewer, Object.assign(Object.create(null), input)),
-      result,
+    await work.release(reviewLease);
+    const committed = await durable();
+    assert.equal((result as { workflow: { state: string } }).workflow.state, 'done');
+    // This worker handed off its lease; a fresh transport cannot revive its successful command.
+    await assert.rejects(app.ctx.reviews.apply(reviewer, { ...input, returnTo: undefined }), {
+      code: 'session_completed',
+    });
+    await assert.rejects(
+      app.ctx.reviews.apply(reviewer, Object.assign(Object.create(null), input)),
+      { code: 'session_completed' },
     );
     await assert.rejects(
       async () => await app.ctx.tasks.submitReview(reviewer, { ...input, returnTo: 'done' }),
@@ -713,13 +712,13 @@ test('Tasks reject supplied routes before command replay and agree with workflow
       },
     );
     await assert.rejects(
-      async () => await app.ctx.reviews.apply(reviewer, { ...input, returnTo: 'done' }),
+      async () => await app.ctx.reviews.apply(operator, { ...input, returnTo: 'done' }),
       {
         code: 'invalid_review_return',
       },
     );
     assert.deepEqual(await durable(), committed);
-    assert.equal(Object.hasOwn(await app.ctx.reviews.get(reviewer, review.id), 'returnTo'), false);
+    assert.equal(Object.hasOwn(await app.ctx.reviews.get(operator, review.id), 'returnTo'), false);
   } finally {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });

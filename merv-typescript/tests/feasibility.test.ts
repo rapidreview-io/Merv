@@ -1,4 +1,4 @@
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -134,6 +134,7 @@ async function fixture(t: TestContext) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
+  await waitForManagedCode(app.ctx.codeWork, owner);
   const issued = await app.ctx.scope.issueActor(owner, { name: 'Reviewer', role: 'reviewer' });
   const reviewer: Caller = {
     projectId: owner.projectId,
@@ -197,12 +198,12 @@ const code = (value: string) => ({ code: value });
 test('a design cannot be submitted without a feasibility statement that admits it', async (t) => {
   const f = await fixture(t);
   const experiments = f.app.ctx.experiments;
-  const e = await historicalExperiment({ state: f.app.ctx.state, experiments }, f.owner, {
+  const e = await experiments.create(f.owner, {
     name: 'Gated',
     intent: 'Compare two methods.',
     requestId: f.id(),
   });
-  assert.equal(e.workflow.version, 25);
+  assert.equal(e.workflow.version, 28);
   await f.attach(e, 'plan', plan);
   const blockers = async () =>
     (await f.app.ctx.workflows.evaluate(f.owner, e.id)).actions
@@ -272,7 +273,7 @@ test('a design cannot be submitted without a feasibility statement that admits i
 test('a design review cannot waive feasibility, and its finding cites the statement', async (t) => {
   const f = await fixture(t);
   const experiments = f.app.ctx.experiments;
-  const e = await historicalExperiment({ state: f.app.ctx.state, experiments }, f.owner, {
+  const e = await experiments.create(f.owner, {
     name: 'Reviewed',
     intent: 'Compare two methods.',
     requestId: f.id(),

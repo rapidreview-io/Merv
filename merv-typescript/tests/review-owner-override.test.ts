@@ -1,5 +1,5 @@
-import { historicalExperiment } from './fixtures/historical-experiment.js';
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentExperiment } from './fixtures/current-experiment.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 /**
  * The founder's ruling of 2026-09-25: a review is decided by an independent agent by default,
  * and the person who owns the project may still decide any review, as owner. The override is a
@@ -49,6 +49,11 @@ async function fixture(t: TestContext) {
       (await scope.createKey(person, { projectId: project.id })).token,
     ),
   });
+  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: founder });
+  const held = new Map<string, Awaited<ReturnType<typeof work.attach>>>();
+  t.after(() => {
+    for (const item of held.values()) item.driver?.dispose();
+  });
   let seq = 0;
   const member = async (role: Role) => {
     const subject = `member-${++seq}`;
@@ -67,6 +72,13 @@ async function fixture(t: TestContext) {
   /** A worker whose every lease `source` directs. */
   const worker = async (source: Caller) => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
+    await sessions.heartbeatRunner(source, {
+      runnerId: 'external',
+      machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+      capacity: 4,
+      capabilities: ['code.v2'],
+    });
     await sessions.registerAgent(source, {
       name: `Worker ${++seq}`,
       runnerId: 'external',
@@ -75,39 +87,52 @@ async function fixture(t: TestContext) {
     });
     return {
       token,
-      assign: async (subject: { id: string; workflow: { revision: number } }) =>
-        await sessions.assignAgent(token, {
+      assign: async (subject: { id: string; workflow: { revision: number } }) => {
+        const session = await sessions.assignAgent(token, {
           instanceId: subject.id,
           expectedRevision: subject.workflow.revision,
           requestId: `assign-${++seq}`,
-        }),
+        });
+        held.set(session.id, await work.attach(session, source));
+        return session;
+      },
       caller: async () => await sessions.authenticate(token),
     };
   };
   const call = async <T>(name: string, caller: Caller, input: Data) =>
     (await tools.call(name, caller, input)) as T;
   const task = async (by: Caller) =>
-    await historicalTask(app.ctx, by, {
+    await currentTask(app.ctx, by, {
       title: `Task ${++seq}`,
       goal: 'Verify addition.',
       checks: ['Two plus three equals five.'],
       requestId: `task-${seq}`,
     });
   const deliver = async (by: Caller, subject: Task) => {
-    const proof = await call<Artifact>('artifact.create', by, {
-      title: 'Proof',
-      content: 'Observed 2 + 3 = 5.',
-    });
-    return await call<Task>(
+    const lease = by.session ? held.get(by.session.id)! : await work.lease(subject, by);
+    if (by.session) lease.worker = by;
+    const proof = await work.run(
+      lease,
+      'artifact.create',
+      { title: 'Proof', content: 'Observed 2 + 3 = 5.' },
+      (caller, input) => app.ctx.artifacts.create(caller, input as never),
+    );
+    const commandId = await work.commit(lease);
+    const delivered = await work.run(
+      lease,
       'task.submit_delivery',
-      by,
       confirmedDelivery({
         taskId: subject.id,
         expectedRevision: subject.workflow.revision,
         artifactIds: [proof.id],
+        commandId,
         requestId: `deliver-${++seq}`,
       }),
+      (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
     );
+    await work.release(lease);
+    if (by.session) held.delete(by.session.id);
+    return delivered;
   };
   /** A complete verdict on the claimed review, cited as `cite` says. */
   const verdict = (
@@ -150,6 +175,7 @@ async function fixture(t: TestContext) {
     verdict,
     action,
     events,
+    work,
   };
 }
 
@@ -227,7 +253,7 @@ test('the owner’s key, which agents hold, is never the owner, and the signed-i
   });
   assert.deepEqual(
     [claimed.reviewerId, claimed.producerId],
-    [f.founder.actorId, f.founder.actorId],
+    [f.founder.actorId, (await f.reviews.get(f.founder, reviewId)).producerId],
   );
   // A retry of the claim, with or without the flag, is the same claim; the key's is not.
   for (const input of [{ reviewId }, { reviewId, override: true }] as Data[]) {
@@ -268,14 +294,16 @@ test('no worker, machine actor, non-operator member or other person decides as o
   }
   assert.equal((await f.reviews.get(f.founder, reviewId)).status, 'requested');
   // An independent reviewer claims it the ordinary way, and nothing records an override.
-  const claimed = await f.call<ReviewRequest>('review.start', reviewer, { reviewId });
+  const independent = await f.work.lease(delivered, await f.member('operator'));
+  const claimed = await f.reviews.get(f.founder, reviewId);
   assert.equal(claimed.override, undefined);
   const done = await f.call<Task>(
     'review.submit',
-    reviewer,
+    independent.worker,
     f.verdict(claimed, delivered.workflow.revision),
   );
   assert.equal(done.workflow.state, 'done');
+  await f.work.release(independent);
   assert.equal((await f.reviews.get(f.founder, reviewId)).override, undefined);
   assert.deepEqual(
     (await f.events(reviewId, 'review.submitted')).map((event) => event.data.override),
@@ -301,18 +329,20 @@ test('no worker, machine actor, non-operator member or other person decides as o
 test('the owner decides an experiment’s design and its results as owner', async (t) => {
   const f = await fixture(t);
   const { experiments, artifacts } = f.app.ctx;
-  let experiment = await historicalExperiment(f.app.ctx, f.founder, {
+  let experiment = await currentExperiment(f.app.ctx, f.founder, {
     name: 'Owner-decided',
     intent: 'Test the hypothesis.',
     requestId: 'experiment',
   });
+  let writer: Awaited<ReturnType<typeof f.work.lease>> | undefined;
   const attach = async (role: string, content: string, markdown: boolean) => {
-    const artifact = await artifacts.create(f.founder, {
+    const by = writer?.worker ?? f.founder;
+    const artifact = await f.call<Artifact>('artifact.create', by, {
       title: role,
       content,
       mediaType: markdown ? 'text/markdown' : 'application/json',
     });
-    await experiments.attach(f.founder, {
+    await f.call('experiment.attach', by, {
       experimentId: experiment.id,
       attemptIndex: experiment.attempt.index,
       expectedRevision: experiment.workflow.revision,
@@ -354,18 +384,32 @@ test('the owner decides an experiment’s design and its results as owner', asyn
   });
   await decide('design');
   assert.equal(experiment.workflow.state, 'running');
+  writer = await f.work.lease(experiment);
   await attach('result', '{"accuracy":0.5}', false);
   await attach(
     'report',
     '# Summary\nThe result refuted the hypothesis.\n# Results\nmetrics_exhibit.json reports the observations.\n# Deviations from plan\nNone.\n# Conclusion\nNo improvement was observed.',
     true,
   );
-  experiment = await experiments.transition(f.founder, {
+  experiment = await f.call<Experiment>('experiment.transition', writer.worker, {
     experimentId: experiment.id,
     expectedRevision: experiment.workflow.revision,
     transition: 'submit_results',
     requestId: 'results',
   });
+  await f.work.release(writer);
+  const captureDeadline = Date.now() + 10_000;
+  while (
+    (
+      await f.app.ctx.codeWork.capture(f.founder, {
+        kind: 'session-final',
+        sessionId: writer.session.id,
+      })
+    ).status !== 'ready'
+  ) {
+    assert.ok(Date.now() < captureDeadline, 'Result capture must finish before review');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
   await decide('results');
   assert.equal(experiment.workflow.state, 'complete');
 });

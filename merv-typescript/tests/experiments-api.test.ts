@@ -1,4 +1,6 @@
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { currentWork } from './fixtures/current-work.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
+import { randomBytes } from 'node:crypto';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -35,6 +37,9 @@ async function fixture(t: TestContext) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
+  await waitForManagedCode(app.ctx.codeWork, source);
+  const work = currentWork(app.ctx, { directory, source });
+  t.after(() => work.close());
   const producer = await app.ctx.scope.issueActor(source, {
     name: 'Experiment producer',
     role: 'producer',
@@ -70,7 +75,7 @@ async function fixture(t: TestContext) {
     assert.notEqual(response.isError, true, `${name}: ${JSON.stringify(response.content)}`);
     return JSON.parse((response.content as { text: string }[])[0].text);
   };
-  return { app, source, boot, producer, reviewer, reader, http, connect, call };
+  return { app, source, boot, producer, reviewer, reader, http, connect, call, work };
 }
 
 const plan =
@@ -181,10 +186,11 @@ test('Experiments strict transport keeps scoped records, replay, attempts and cu
   );
 });
 
-test('Historical Experiment MCP completes both reviews, pins exact evidence and survives provider unload', async (t) => {
-  const f = await fixture(t),
-    producer = await f.connect(f.producer.token),
-    reviewer = await f.connect(f.reviewer.token);
+test('Current Experiment MCP completes both reviews, pins exact evidence and survives provider unload', async (t) => {
+  const f = await fixture(t);
+  let producer = await f.connect(f.producer.token);
+  const projectProducer = producer;
+  const reviewer = await f.connect(f.reviewer.token);
   const catalog = (await producer.listTools()).tools;
   const descriptions = catalog.filter((tool) => tool.name.startsWith('experiment.'));
   assert.deepEqual(descriptions.map((tool) => tool.name).sort(), [
@@ -209,11 +215,6 @@ test('Historical Experiment MCP completes both reviews, pins exact evidence and 
     intent: 'A improves held-out accuracy over B.',
     requestId: 'experiment',
   };
-  await historicalExperiment(
-    f.app.ctx,
-    { ...f.source, actorId: f.producer.actor.id, credentialId: f.producer.credential.id },
-    create,
-  );
   let e = await f.call(producer, 'experiment.create', create);
   const original = structuredClone(e);
   const attach = async (role: string, path: string, content: string, resultFormat?: string) => {
@@ -300,10 +301,23 @@ test('Historical Experiment MCP completes both reviews, pins exact evidence and 
     approved.evidence.find((item: any) => item.role === 'feasibility').artifactId,
     statement.id,
   );
-  await f.call(producer, 'workflow.begin', {
+  await f.app.ctx.sessions.heartbeatRunner(f.source, {
+    runnerId: 'mcp-current',
+    machine: { hostname: 'test', system: process.platform, architecture: process.arch },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
+    capacity: 1,
+    capabilities: ['code.v2'],
+  });
+  const secret = `ms_${randomBytes(32).toString('base64url')}`;
+  const session = await f.app.ctx.sessions.offer(f.source, {
     instanceId: e.id,
     expectedRevision: e.workflow.revision,
+    runnerId: 'mcp-current',
+    requestId: 'execution',
+    secret,
   });
+  const held = await f.work.attach(session);
+  producer = await f.connect(secret);
   await attach(
     'result',
     'results.json',
@@ -331,6 +345,7 @@ test('Historical Experiment MCP completes both reviews, pins exact evidence and 
   assert.equal(e.workflow.state, 'experiment_review');
   const results = e.submissions.find((submission: any) => submission.stage === 'results');
   assert.equal(results.evidence.find((item: any) => item.role === 'exhibit').hash, preview.hash);
+  await f.work.release(held);
   e = await grade('approve-results');
   assert.equal(e.workflow.state, 'complete');
   assert.equal(e.attempts.length, 1);
@@ -341,6 +356,6 @@ test('Historical Experiment MCP completes both reviews, pins exact evidence and 
     0,
     'the row counts open experiments; this one is complete',
   );
-  const events = await f.call(producer, 'feed.activity');
+  const events = await f.call(projectProducer, 'feed.activity');
   assert.ok(events.some((event: any) => event.type.startsWith('experiment.')));
 });

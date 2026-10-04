@@ -1,6 +1,5 @@
 import { CodeService as CoreCodeService } from '@merv/code/service';
-import { historicalTask } from './fixtures/historical-task.js';
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
@@ -17,7 +16,6 @@ import type {
   ReviewApplication,
   ReviewHistory,
   TaskDelivery,
-  TaskReview,
 } from '@merv/contracts';
 
 import { ProjectScope } from '@merv/scope';
@@ -38,7 +36,6 @@ import type {
   ExperimentTransition,
 } from '@merv/experiments/types';
 import { feasibilityStatement } from './feasibility-fixture.js';
-import { boundProject } from './fixtures/code-binding.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
 
@@ -97,6 +94,21 @@ async function fixture(t: TestContext) {
   const request = () => `request-${++sequence}`;
   const issue = async (role: 'operator' | 'producer' | 'reviewer' | 'reader'): Promise<Caller> => {
     const issued = await scope.issueActor(source, { name: role, role });
+    if (role === 'operator')
+      await sessions.heartbeatRunner(
+        {
+          projectId: source.projectId,
+          actorId: issued.actor.id,
+          credentialId: issued.credential.id,
+        },
+        {
+          runnerId: 'assignment-test',
+          machine: { hostname: 'test', system: process.platform, architecture: process.arch },
+          platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
+          capacity: 4,
+          capabilities: ['code.v2'],
+        },
+      );
     return {
       projectId: source.projectId,
       actorId: issued.actor.id,
@@ -104,24 +116,19 @@ async function fixture(t: TestContext) {
     };
   };
   const reviewer = await issue('reviewer');
-  const create = async (
-    dependsOn: string[] = [],
-    workspace?: 'git',
-    version = workspace ? 26 : 25,
-  ) =>
-    await historicalExperiment(
-      { state, experiments },
-      source,
-      {
-        name: `experiment-${++sequence}`,
-        intent: 'Test the hypothesis using matched evidence.',
-        dependsOn,
-        ...(workspace ? { workspace } : {}),
-        requestId: request(),
-      },
-      undefined,
-      version,
-    );
+  await state.transaction((tx) => code.ensureRepository(source, tx));
+  await (code as any).store.maintain();
+  tasks.bindCode(code);
+  const work = currentWork({ sessions, code, events }, { directory, source });
+  const held = new Map<string, Awaited<ReturnType<typeof work.attach>>>();
+  const create = async (dependsOn: string[] = [], workspace?: 'git') =>
+    experiments.create(source, {
+      name: `experiment-${++sequence}`,
+      intent: 'Test the hypothesis using matched evidence.',
+      dependsOn,
+      ...(workspace ? { workspace } : {}),
+      requestId: request(),
+    });
   const attach = async (
     experiment: Experiment,
     role: ExperimentAttach['role'],
@@ -153,8 +160,52 @@ async function fixture(t: TestContext) {
     experiment: Experiment,
     action: ExperimentTransition['transition'],
     caller = source,
-  ) =>
-    await experiments.transition(caller, {
+  ) => {
+    if (action === 'submit_results') {
+      const current = await experiments.get(caller, experiment.id);
+      const lease = await work.lease(current, caller);
+      for (const evidence of current.evidence.filter(
+        (entry) =>
+          entry.current &&
+          entry.attemptIndex === current.attempt.index &&
+          ['result', 'report'].includes(entry.role),
+      )) {
+        let artifactId = evidence.artifactId;
+        if (evidence.role === 'report') {
+          const body = await artifacts.read(caller, artifactId);
+          artifactId = (
+            await work.run(
+              lease,
+              'artifact.create',
+              { title: 'Successor report', content: body.content, mediaType: 'text/markdown' },
+              (worker, input) => artifacts.create(worker, input as any),
+            )
+          ).id;
+        }
+        await work.run(
+          lease,
+          'experiment.attach',
+          {
+            artifactId,
+            role: evidence.role,
+            path: evidence.path,
+            attemptIndex: current.attempt.index,
+            requestId: request(),
+            ...(evidence.resultFormat ? { resultFormat: evidence.resultFormat } : {}),
+          },
+          (worker, input) => experiments.attach(worker, input as unknown as ExperimentAttach),
+        );
+      }
+      const next = await work.run(
+        lease,
+        'experiment.transition',
+        { transition: action, requestId: request() },
+        (worker, input) => experiments.transition(worker, input as unknown as ExperimentTransition),
+      );
+      await work.release(lease);
+      return next;
+    }
+    return await experiments.transition(caller, {
       experimentId: experiment.id,
       expectedRevision: experiment.workflow.revision,
       transition: action,
@@ -163,6 +214,7 @@ async function fixture(t: TestContext) {
         ? { evidence: { reason: 'Controlled fixture recovery' } }
         : {}),
     });
+  };
   const design = async (experiment?: Experiment) => {
     experiment ??= await create();
     const evidence = await attach(experiment, 'plan', plan);
@@ -187,26 +239,64 @@ async function fixture(t: TestContext) {
   };
   const running = async () => await verdict((await design()).experiment, 'pass');
   const results = async (experiment: Experiment) => {
-    await workflows.begin(source, {
-      instanceId: experiment.id,
-      expectedRevision: experiment.workflow.revision,
-    });
-    await attach(experiment, 'result', 'The retained observations show no difference.');
-    await attach(experiment, 'report', report);
-    return await transition(experiment, 'submit_results');
+    const lease = await work.lease(experiment);
+    for (const [role, content] of [
+      ['result', 'The retained observations show no difference.'],
+      ['report', report],
+    ] as const) {
+      const artifact = await work.run(
+        lease,
+        'artifact.create',
+        { title: role, content, mediaType: 'text/markdown' },
+        (caller, input) => artifacts.create(caller, input as any),
+      );
+      await work.run(
+        lease,
+        'experiment.attach',
+        {
+          artifactId: artifact.id,
+          role,
+          path: `${role}.md`,
+          attemptIndex: experiment.attempt.index,
+          requestId: request(),
+          ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+        },
+        (caller, input) => experiments.attach(caller, input as unknown as ExperimentAttach),
+      );
+    }
+    const next = await work.run(
+      lease,
+      'experiment.transition',
+      { transition: 'submit_results', requestId: request() },
+      (caller, input) => experiments.transition(caller, input as unknown as ExperimentTransition),
+    );
+    await work.release(lease);
+    return next;
   };
+  const heartbeat = (caller: Caller) =>
+    sessions.heartbeatRunner(caller, {
+      runnerId: 'assignment-test',
+      machine: { hostname: 'test', system: process.platform, architecture: process.arch },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
+      capacity: 4,
+      capabilities: ['code.v2'],
+    });
+  await heartbeat(source);
   const offer = async (experiment: Experiment, caller = source) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    return {
+    const session = await sessions.offer(caller, {
+      instanceId: experiment.id,
+      expectedRevision: experiment.workflow.revision,
+      runnerId: 'assignment-test',
+      requestId: request(),
       secret,
-      session: await sessions.offer(caller, {
-        instanceId: experiment.id,
-        expectedRevision: experiment.workflow.revision,
-        runnerId: 'assignment-test',
-        requestId: request(),
-        secret,
-      }),
-    };
+    });
+    if (experiment.workflow.state === 'running') {
+      const attached = await work.attach(session, caller);
+      attached.worker = await sessions.authenticate(secret);
+      held.set(session.id, attached);
+    }
+    return { secret, session };
   };
   const run = async <T>(
     caller: Caller,
@@ -215,10 +305,14 @@ async function fixture(t: TestContext) {
     handler: (worker: Caller, bound: Data) => T | Promise<T>,
   ) => sessions.run(await sessions.prepare(caller, tool, input), handler);
   const release = async (sessionId: string, caller = source) => {
-    await sessions.release(caller, { sessionId, runnerId: 'assignment-test' });
+    if (held.has(sessionId)) {
+      await work.release(held.get(sessionId)!);
+      held.delete(sessionId);
+    } else await sessions.release(caller, { sessionId, runnerId: 'assignment-test' });
     await events.drain();
   };
   t.after(async () => {
+    await work.close();
     experiments.close();
     await code.close();
     await core.close();
@@ -231,6 +325,8 @@ async function fixture(t: TestContext) {
     rmSync(directory, { recursive: true, force: true });
   });
   return {
+    directory,
+    work,
     state,
     scope,
     artifacts,
@@ -277,7 +373,7 @@ async function fixture(t: TestContext) {
 }
 test('all four real assignments use distinct recipes; planning and execution wait for prerequisites', async (t) => {
   const f = await fixture(t);
-  const prerequisite = await historicalTask(f, f.source, {
+  const prerequisite = await currentTask(f, f.source, {
     title: 'Prerequisite',
     goal: 'Retain a prerequisite result.',
     checks: ['Result is present.'],
@@ -293,29 +389,33 @@ test('all four real assignments use distinct recipes; planning and execution wai
       (candidate) => candidate.instanceId === experiment.id,
     ),
   );
-  const proof = await f.artifacts.create(f.source, {
+  const prerequisiteWork = await f.work.lease(prerequisite);
+  const proof = await f.artifacts.create(prerequisiteWork.worker, {
     title: 'Prerequisite result',
     content: 'Result is present.',
   });
-  const delivery = await f.tasks.submitDelivery(
-    f.source,
-    confirmedDelivery({
-      taskId: prerequisite.id,
-      expectedRevision: 0,
-      artifactIds: [proof.id],
-      requestId: f.request(),
-    }),
+  const commandId = await f.work.commit(prerequisiteWork);
+  const delivery = await f.work.run(
+    prerequisiteWork,
+    'task.submit_delivery',
+    confirmedDelivery({ artifactIds: [proof.id], commandId, requestId: f.request() }),
+    (caller, input) => f.tasks.submitDelivery(caller, input as unknown as TaskDelivery),
   );
-  const review = await f.reviews.start(f.reviewer, delivery.reviewId!);
-  await f.tasks.submitReview(f.reviewer, {
-    ...reviewedFindings(review),
-    reviewId: review.id,
-    claimId: review.claimId!,
-    verdict: 'pass',
-    notes: 'Verified the retained prerequisite result.',
-    expectedRevision: delivery.workflow.revision,
-    requestId: f.request(),
-  } as ReviewApplication);
+  await f.work.release(prerequisiteWork);
+  const taskReviewer = await f.work.lease(delivery, await f.issue('operator'));
+  const review = await f.reviews.get(taskReviewer.worker, delivery.reviewId!);
+  await f.work.run(
+    taskReviewer,
+    'review.submit',
+    {
+      ...reviewedFindings(review),
+      verdict: 'pass',
+      notes: 'Verified the retained prerequisite result.',
+      requestId: f.request(),
+    },
+    (caller, input) => f.tasks.submitReview(caller, input as unknown as ReviewApplication),
+  );
+  await f.work.release(taskReviewer);
   const planned = await f.workflows.assignment(f.source, experiment.id);
   assert.equal(planned.context!.type, 'experiment.design');
   assert.equal(planned.execution.readOnly, false);
@@ -1194,238 +1294,6 @@ test('a lease freezes its project Introduction without changing the registered r
   assert.match(successor.session.assignment.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
 });
 
-test('Git experiments retain the central-base protocol and wait for their exact final capture before independent review', async (t) => {
-  const f = await fixture(t);
-  const oldInput = {
-    name: 'legacy-workspace-input',
-    intent: 'Preserve prior create normalization.',
-    requestId: f.request(),
-  };
-  const old = await historicalExperiment(f, f.source, oldInput);
-  const oldPolicy = (await f.workflows.assignment(f.source, old.id)).execution;
-  assert.equal(old.workflow.version, 25);
-  assert.equal(Object.hasOwn(old, 'workspace'), false);
-  assert.deepEqual(oldPolicy.policy!.workspace, { mode: 'none' });
-  await boundProject(f.state, f.source.projectId, 'a'.repeat(40), 'test-runner-private-repository');
-  const experiment = await f.create([], 'git');
-  assert.equal(experiment.workflow.version, 26);
-  assert.equal(experiment.workspace, 'git');
-  assert.equal(await f.experiments.codeUnit(f.source, experiment.id), null);
-  const pendingDesign = (await f.design(experiment)).experiment;
-  assert.deepEqual(
-    (await f.workflows.assignment(f.reviewer, experiment.id)).execution.policy!.workspace,
-    { mode: 'none' },
-  );
-  const running = await f.verdict(pendingDesign, 'pass');
-  const offered = await f.offer(running);
-  assert.equal(offered.session.execution.references.base, undefined);
-  assert.deepEqual(offered.session.execution.policy.workspace, {
-    mode: 'persistent',
-    namespace: 'experiments',
-    base: 'central',
-    perBase: false,
-    retain: true,
-    advancesCentral: false,
-  });
-  const attachment = {
-    repositoryId: 'test-runner-private-repository',
-    workspaceId: 'test-owned-workspace',
-    mode: 'persistent' as const,
-    branch: 'codex/merv/experiment',
-    baseOid: 'a'.repeat(40),
-    headOid: 'a'.repeat(40),
-    treeOid: 'b'.repeat(40),
-    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
-  };
-  const control = {
-    sessionId: offered.session.id,
-    runnerId: 'assignment-test',
-    hostRef: 'owned-test-launch',
-  };
-  await f.sessions.attach(f.source, { ...control, workspace: attachment });
-  const worker = await f.sessions.authenticate(offered.secret);
-  for (const [role, content] of [
-    ['result', 'The independently retained observation.'],
-    ['report', report],
-  ] as const) {
-    const artifact = await f.run(
-      worker,
-      'artifact.create',
-      { title: role, content, mediaType: 'text/markdown' },
-      async (caller, input) =>
-        await f.artifacts.create(
-          caller,
-          input as unknown as { title: string; content: string; mediaType: string },
-        ),
-    );
-    await f.run(
-      worker,
-      'experiment.attach',
-      {
-        artifactId: artifact.id,
-        role,
-        path: `${role}.md`,
-        attemptIndex: 1,
-        ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
-        requestId: f.request(),
-      },
-      async (caller, input) =>
-        await f.experiments.attach(caller, input as unknown as ExperimentAttach),
-    );
-  }
-  const pending = await f.run(
-    worker,
-    'experiment.transition',
-    { transition: 'submit_results', requestId: f.request() },
-    async (caller, input) =>
-      await f.experiments.transition(caller, input as unknown as ExperimentTransition),
-  );
-  assert.equal(pending.workflow.state, 'experiment_review');
-  const submission = pending.submissions.find((entry) => entry.stage === 'results')!;
-  const ref = { kind: 'session-final' as const, sessionId: offered.session.id };
-  assert.deepEqual(submission.codeCaptureRef, ref);
-  assert.equal(submission.producerId, worker.actorId);
-  assert.equal(submission.subjectRevision - 1, offered.session.expectedRevision);
-  assert.equal((await f.code.capture(f.source, ref)).status, 'pending');
-  await f.reload();
-  assert.deepEqual(
-    await f.experiments.create(f.source, oldInput),
-    old,
-    'Legacy semantic replay has not acquired a new default field',
-  );
-  assert.equal(
-    (await f.workflows.assignment(f.source, old.id)).execution.policyHash,
-    oldPolicy.policyHash,
-  );
-  const noBytes = t.mock.method(f.artifacts, 'bytes', () => {
-    assert.fail('Capture/candidate metadata must not render evidence');
-  });
-  const beforeHead = await f.state.eventHead();
-  assert.equal(
-    (await f.workflows.dispatchCandidates(f.source)).some(
-      (candidate) => candidate.instanceId === pending.id,
-    ),
-    false,
-  );
-  await assert.rejects(
-    async () =>
-      await f.workflows.leaseRole(f.source, {
-        instanceId: pending.id,
-        expectedRevision: pending.workflow.revision,
-      }),
-    { code: 'experiment_capture_pending' },
-  );
-  assert.equal((await f.code.capture(f.source, ref)).status, 'pending');
-  assert.equal(
-    await f.state.eventHead(),
-    beforeHead,
-    'Reads never reconcile or mutate a closed session',
-  );
-  noBytes.mock.restore();
-  await f.release(offered.session.id);
-  const final = {
-    ...attachment,
-    headOid: 'c'.repeat(40),
-    treeOid: 'd'.repeat(40),
-    stats: { commitCount: 1, filesChanged: 2, insertions: 4, deletions: 1 },
-  };
-  await f.sessions.workspaceResult(f.source, { ...control, workspace: final });
-  await f.sessions.workspaceResult(f.source, { ...control, workspace: final });
-  const capture = await f.code.capture(f.reviewer, ref);
-  assert.equal(capture.status, 'ready');
-  assert.deepEqual(capture.workspace, final);
-  assert.equal(capture.provenance.actorId, worker.actorId);
-  assert.equal(
-    capture.provenance.workflow.registrationId,
-    offered.session.execution.registrationId,
-  );
-  assert.equal(capture.provenance.revision, running.workflow.revision);
-  assert.equal(
-    (await f.state.events(f.source.projectId)).filter(
-      (event) => event.type === 'session.workspace_result',
-    ).length,
-    1,
-  );
-  assert.ok(
-    (await f.workflows.dispatchCandidates(f.source)).some(
-      (candidate) => candidate.instanceId === pending.id,
-    ),
-  );
-  const reviewOffer = await f.offer(pending);
-  assert.equal(reviewOffer.session.execution.references.code, final.headOid);
-  assert.deepEqual(reviewOffer.session.execution.policy.workspace, {
-    mode: 'ephemeral',
-    namespace: 'experiment-reviews',
-    base: 'reference:code',
-    retain: false,
-  });
-  assert.match(reviewOffer.session.assignment.context!.prompt, new RegExp(final.headOid));
-  assert.match(reviewOffer.session.assignment.context!.prompt, new RegExp(final.treeOid));
-  const reviewWorkspace = {
-    ...final,
-    workspaceId: 'review-checkout',
-    mode: 'ephemeral' as const,
-    branch: null,
-    baseOid: final.headOid,
-  };
-  const reviewControl = {
-    sessionId: reviewOffer.session.id,
-    runnerId: 'assignment-test',
-    hostRef: 'owned-review-launch',
-  };
-  await assert.rejects(
-    async () =>
-      await f.sessions.attach(f.source, {
-        ...reviewControl,
-        workspace: { ...reviewWorkspace, baseOid: attachment.baseOid },
-      }),
-    { code: 'workspace_base_conflict' },
-  );
-  await f.sessions.attach(f.source, { ...reviewControl, workspace: reviewWorkspace });
-  const reviewer = await f.sessions.authenticate(reviewOffer.secret);
-  const review = await f.reviews.get(reviewer, pending.reviewId!);
-  const done = await f.run(
-    reviewer,
-    'review.submit',
-    {
-      ...reviewedFindings(review),
-      verdict: 'pass',
-      notes: 'Verified the exact final code capture and retained evidence.',
-      requestId: f.request(),
-    } as Data,
-    async (caller, input) =>
-      await f.experiments.submitReview(caller, input as unknown as ReviewApplication),
-  );
-  assert.equal(done.workflow.state, 'complete');
-  assert.equal(
-    done.submissions.find((entry) => entry.id === submission.id)!.manifestHash,
-    submission.manifestHash,
-  );
-  // The acceptance names the submitted commit through the reference its submission stored:
-  // the review capture itself is no longer readable once the experiment is complete.
-  const accepted = (await f.code.unit(f.source, experiment.id)).acceptance!;
-  assert.deepEqual(
-    [
-      accepted.terminalRevision,
-      accepted.submissionRef,
-      accepted.reviewRef,
-      accepted.reference,
-      accepted.reviewAttached,
-      accepted.storage,
-    ],
-    [done.workflow.revision, submission.id, review.id, final.headOid, true, 'legacy-local'],
-  );
-  // Legacy work records acceptance without deriving a base.
-  assert.equal((await f.code.unit(f.source, experiment.id)).base?.reference, undefined);
-  await f.release(reviewOffer.session.id);
-  await f.sessions.workspaceResult(f.source, { ...reviewControl, workspace: reviewWorkspace });
-  assert.deepEqual(
-    await f.code.capture(f.source, ref),
-    capture,
-    'A later reviewer capture cannot overwrite the exact producer observation',
-  );
-});
-
 test('historical observations stay project-scoped and pure after source revocation', async (t) => {
   const f = await fixture(t);
   const ordinary = await f.offer(await f.create());
@@ -1539,179 +1407,6 @@ test('a continuing agent can acquire successive experiment leases without inheri
   );
 });
 
-test('A Git experiment may start from the commit an accepted Git task delivered', async (t) => {
-  const f = await fixture(t);
-  t.after(f.tasks.bindCode(f.code));
-  await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
-  const head = 'b'.repeat(40);
-  const task = await historicalTask(
-    f,
-    f.source,
-    {
-      title: 'Evaluation harness',
-      goal: 'Build the harness as a repository.',
-      checks: ['The harness runs end to end'],
-      workspace: 'git',
-      requestId: f.request(),
-    },
-    undefined,
-    29,
-  );
-  const scratch = await historicalTask(f, f.source, {
-    title: 'Notes',
-    goal: 'Write the notes.',
-    checks: ['The notes exist'],
-    requestId: f.request(),
-  });
-  const input = {
-    name: 'based-on-harness',
-    intent: 'Run the harness against the matched evidence.',
-    workspace: 'git' as const,
-    requestId: f.request(),
-  };
-  await assert.rejects(
-    async () =>
-      await f.experiments.create(f.source, {
-        ...input,
-        workspace: 'none',
-        baseTaskId: task.id,
-        dependsOn: [task.id],
-      }),
-    {
-      code: 'invalid_workspace',
-      message: 'New experiments always use Git. Omit workspace or use git.',
-    },
-  );
-  await assert.rejects(
-    async () => await f.experiments.create(f.source, { ...input, baseTaskId: task.id }),
-    { code: 'incompatible_workspace' },
-  );
-  await assert.rejects(
-    async () =>
-      await f.experiments.create(f.source, {
-        ...input,
-        baseTaskId: scratch.id,
-        dependsOn: [scratch.id],
-      }),
-    { code: 'incompatible_workspace' },
-  );
-  const based = { ...input, baseTaskId: task.id, dependsOn: [task.id] };
-  const experiment = await historicalExperiment(f, f.source, based, undefined, 27);
-  assert.equal(experiment.workflow.version, 27);
-  assert.equal(experiment.baseTaskId, task.id);
-  assert.deepEqual(await f.experiments.create(f.source, based), experiment);
-  // The task's worker commits and delivers; its leased reviewer accepts the pinned commit.
-  const control = (sessionId: string, hostRef: string) => ({
-    sessionId,
-    runnerId: 'assignment-test',
-    hostRef,
-  });
-  const checkout = (mode: 'persistent' | 'ephemeral', baseOid: string) => ({
-    repositoryId: 'runner-private-repository',
-    workspaceId: `${mode}-${baseOid.slice(0, 4)}`,
-    mode,
-    branch: mode === 'persistent' ? 'merv/task' : null,
-    baseOid,
-    headOid: baseOid,
-    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
-  });
-  const work = await f.offer(task as unknown as Experiment);
-  const producing = control(work.session.id, 'task-launch');
-  await f.sessions.attach(f.source, {
-    ...producing,
-    workspace: checkout('persistent', 'a'.repeat(40)),
-  });
-  const worker = await f.sessions.authenticate(work.secret);
-  const { command } = await f.run(
-    worker,
-    'code.commit',
-    { expectedHead: 'a'.repeat(40), message: 'Record the harness', requestId: f.request() },
-    async (caller, bound) =>
-      await f.code.commit(
-        caller,
-        bound as unknown as { expectedHead: string; message: string; requestId: string },
-      ),
-  );
-  await f.code.nextCommand(f.source, producing);
-  await f.code.completeCommand(f.source, {
-    ...producing,
-    commandId: command.id,
-    receipt: {
-      commandId: command.id,
-      repositoryId: 'runner-private-repository',
-      workspaceId: 'persistent-aaaa',
-      baseOid: 'a'.repeat(40),
-      parentOid: 'a'.repeat(40),
-      headOid: head,
-      treeOid: 'c'.repeat(40),
-      stats: { commitCount: 1, filesChanged: 3, insertions: 40, deletions: 0 },
-    },
-  });
-  const delivered = await f.run(
-    worker,
-    'task.submit_delivery',
-    {
-      artifactIds: [],
-      commandId: command.id,
-      confirmations: [
-        { checkNumber: 1, status: 'met', evidenceIds: [], notes: 'Ran it on the fixture.' },
-      ],
-      requestId: f.request(),
-    },
-    async (caller, bound) => await f.tasks.submitDelivery(caller, bound as unknown as TaskDelivery),
-  );
-  await f.release(work.session.id);
-
-  // The base is a prerequisite, so nothing is planned or run on it before it is accepted.
-  await assert.rejects(async () => await f.offer(experiment), { code: 'dependencies_pending' });
-
-  const reviewing = await f.offer(delivered as unknown as Experiment, f.reviewer);
-  await f.sessions.attach(f.reviewer, {
-    ...control(reviewing.session.id, 'task-review-launch'),
-    workspace: checkout('ephemeral', head),
-  });
-  const taskReviewer = await f.sessions.authenticate(reviewing.secret);
-  const accepted = await f.run(
-    taskReviewer,
-    'review.submit',
-    {
-      ...reviewedFindings(await f.reviews.get(taskReviewer, delivered.reviewId!)),
-      verdict: 'pass',
-      notes: 'Checked out the delivered commit and ran the harness.',
-      requestId: f.request(),
-    } as Data,
-    async (caller, bound) => await f.tasks.submitReview(caller, bound as unknown as TaskReview),
-  );
-  assert.equal(accepted.workflow.state, 'done');
-  await f.release(reviewing.session.id, f.reviewer);
-
-  const running = await f.verdict((await f.design(experiment)).experiment, 'pass');
-  const offered = await f.offer(running);
-  assert.equal(offered.session.execution.references.base, head);
-  assert.deepEqual(offered.session.execution.policy.workspace, {
-    mode: 'persistent',
-    namespace: 'experiments',
-    base: 'reference:base',
-    perBase: false,
-    retain: true,
-    advancesCentral: false,
-  });
-  await assert.rejects(
-    async () =>
-      await f.sessions.attach(f.source, {
-        ...control(offered.session.id, 'experiment-launch'),
-        workspace: checkout('persistent', 'a'.repeat(40)),
-      }),
-    { code: 'workspace_base_conflict' },
-  );
-  await f.sessions.attach(f.source, {
-    ...control(offered.session.id, 'experiment-launch'),
-    workspace: checkout('persistent', head),
-  });
-});
-
-// The design and results reviews share one reviewer policy and paper handoff (program.ts), and
-// experiments.test writes the paper from both; a leased design reviewer stands for both here.
 test('an assigned reviewer updates the paper through its scoped verdict only', async (t) => {
   const f = await fixture(t);
   const pending = (await f.design()).experiment;
@@ -1768,27 +1463,11 @@ test('an assigned reviewer updates the paper through its scoped verdict only', a
 test('Hosted experiments reject explicit legacy bases before creating work', async (t) => {
   const f = await fixture(t);
   t.after(f.tasks.bindCode(f.code));
-  await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
-  const prerequisite = await historicalTask(
-    f,
-    f.source,
-    {
-      title: 'Retained baseline',
-      goal: 'Keep the baseline in Git',
-      checks: ['Evidence retained'],
-      workspace: 'git',
-      requestId: f.request(),
-    },
-    undefined,
-    29,
-  );
-  await f.state.transaction(async (tx) => {
-    await tx.run(
-      'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
-      JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: 'a'.repeat(40) }),
-      JSON.stringify({ oid: 'a'.repeat(40), operationId: 'cop_fixture', stored: true }),
-      f.source.projectId,
-    );
+  const prerequisite = await currentTask(f, f.source, {
+    title: 'Retained baseline',
+    goal: 'Keep the baseline in Git',
+    checks: ['Evidence retained'],
+    requestId: f.request(),
   });
   const input = {
     name: 'hosted-follow-up',
@@ -1810,70 +1489,11 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   assert.equal(created.baseTaskId, undefined);
 });
 
-test('A Git experiment created once Code keeps the project’s history names Code’s driver where it has a checkout, and its planner is no writer', async (t) => {
-  const f = await fixture(t);
-  await boundProject(f.state, f.source.projectId, 'a'.repeat(40));
-  const input = {
-    intent: 'Run the harness against the matched evidence.',
-    workspace: 'git' as const,
-  };
-  const before = await historicalExperiment(
-    f,
-    f.source,
-    {
-      ...input,
-      name: 'runner-kept',
-      requestId: f.request(),
-    },
-    undefined,
-    26,
-  );
-  assert.equal(before.workflow.version, 26);
-  await f.state.transaction(async (tx) => {
-    await tx.run(
-      'UPDATE code_projects SET store_json=?,main_json=? WHERE project_id=?',
-      JSON.stringify({ format: 1, objectFormat: 'sha1', rootOid: 'a'.repeat(40) }),
-      JSON.stringify({ oid: 'a'.repeat(40), operationId: 'cop_fixture', stored: true }),
-      f.source.projectId,
-    );
-  });
-  const experiment = await f.experiments.create(f.source, {
-    ...input,
-    name: 'code-kept',
-    requestId: f.request(),
-  });
-  assert.equal(experiment.workflow.version, 28);
-  const policies = await f.state.read(
-    async (sql) =>
-      await sql.all<{ state: string; manifest_json: string }>(
-        "SELECT state,manifest_json FROM wf_execution_policies WHERE workflow='experiment' AND version=8 ORDER BY state",
-      ),
-  );
-  assert.deepEqual(
-    policies.map((row) => [
-      row.state,
-      (JSON.parse(row.manifest_json) as { workspace?: { driver?: string } }).workspace?.driver,
-    ]),
-    [
-      ['design_review', undefined],
-      ['experiment_review', 'code.v2'],
-      ['planned', undefined],
-      ['running', 'code.v2'],
-    ],
-  );
-  // Planning pins the base the plan is written against, but it has no checkout to write.
-  const planning = await f.offer(experiment);
-  const unit = (await f.experiments.codeUnit(f.source, experiment.id))!;
-  assert.equal(unit.base?.reference, 'a'.repeat(40));
-  assert.deepEqual([unit.generation, unit.writerState], [0, 'idle']);
-  await f.release(planning.session.id);
-});
-
 test('native experiment leases dynamically admit verified captures and revoke each assignment on handoff', async (t) => {
   const f = await fixture(t);
   const native = nativeWorkFixture();
   f.experiments.bindNativeWork(native.service);
-  const experiment = await f.create([], undefined, 33);
+  const experiment = await f.create();
   const first = await f.offer(experiment);
   assert.equal(first.session.execution.references.sandboxProfile, 'check');
   assert.equal(first.session.execution.references.sandboxAttempt, '1:planned');

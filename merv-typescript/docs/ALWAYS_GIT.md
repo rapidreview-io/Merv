@@ -13,7 +13,7 @@ Implementation contract:
 - Remove workspace selection from new work and reflection plans. Producers use
   managed branches; reviewers inspect the submitted commit. A delivery without
   source changes may retain the existing commit. Large data stays in artifacts.
-- Preserve legacy protocols only for already-created work and historical reads.
+- Retired workflow records remain read-only history; do not keep their runtime protocols or upgrade them into current contracts.
   New work uses one managed protocol, including before GitHub is connected.
 - Import a connected remote's history into the existing managed repository.
   Preserve both main heads. Reconcile diverged or unrelated histories through a

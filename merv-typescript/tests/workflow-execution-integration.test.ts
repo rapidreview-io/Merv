@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -17,7 +17,7 @@ test('a real Cordis program reload and application restart keep the pinned polic
       actorId: boot.actor.id,
       credentialId: boot.credential.id,
     };
-    const task = await historicalTask(app.ctx, caller, {
+    const task = await currentTask(app.ctx, caller, {
       title: 'Durable policy',
       goal: 'Keep the policy stable across restarts.',
       checks: ['An old registration handle cannot regain authority.'],
@@ -59,7 +59,7 @@ test('the pinned policy is stable across begin and checkpoint evidence', async (
       actorName: 'Operator',
     });
     const caller = { projectId: boot.project.id, actorId: boot.actor.id };
-    const task = await historicalTask(app.ctx, caller, {
+    const task = await currentTask(app.ctx, caller, {
       title: 'Stable declarations',
       goal: 'Keep checkpoint text from granting document access.',
       checks: ['Checkpoint documents remain context, without adding execution grants.'],

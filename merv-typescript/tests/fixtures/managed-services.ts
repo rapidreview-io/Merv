@@ -38,6 +38,9 @@ export async function managedServices(
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();
   return {
     code,
+    sessions,
+    events,
+    core,
     async close() {
       await code.close();
       await core.close();

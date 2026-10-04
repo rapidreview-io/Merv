@@ -1,4 +1,4 @@
-import { historicalTask } from '../tests/fixtures/historical-task.js';
+import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { finished } from 'node:stream/promises';
@@ -44,7 +44,13 @@ const phases: {
   protocol: unknown;
 }[] = [];
 
-async function agent(phase: 'producer' | 'reviewer', token: string, session: Session) {
+async function agent(
+  phase: 'producer' | 'reviewer',
+  token: string,
+  session: Session,
+  checkout: string,
+  commandId?: string,
+) {
   assert.ok(app);
   const proxy = await startProtocolProxy(app.ctx.api.url!);
   const output = createWriteStream(join(runDirectory, `${phase}.jsonl`), { mode: 0o600 });
@@ -64,7 +70,7 @@ async function agent(phase: 'producer' | 'reviewer', token: string, session: Ses
     '--color',
     'never',
     '-C',
-    workspace,
+    checkout,
     '-c',
     'approval_policy="never"',
     '-c',
@@ -118,7 +124,7 @@ async function agent(phase: 'producer' | 'reviewer', token: string, session: Ses
   child.stderr.pipe(errors);
   const work =
     phase === 'producer'
-      ? 'Create an immutable Markdown evidence artifact that independently demonstrates each acceptance check. Read it back. Build task.context. Submit task.submit_delivery with a separate met confirmation, evidence ID, and specific verification notes for each check.'
+      ? `Create an immutable Markdown evidence artifact that independently demonstrates each acceptance check. Read it back. Build task.context. The runner has committed arithmetic.txt in your actual managed checkout with 2+3=5 and 6*7=42; independently verify both calculations. Submit task.submit_delivery with commandId ${commandId}, a separate met confirmation, evidence ID, and specific verification notes for each check.`
       : 'Use review.start to inspect your already-reserved claim, review.get and artifact.read to inspect every pinned evidence artifact, and task.context for your assignment. Independently calculate each result. Submit review.submit with pass only if every criterion is verified, with one finding per criterion and a concise evidence-based synopsis.';
   child.stdin.end(
     `You are a fresh ${phase} agent testing a synthetic workflow using ONLY the merv_typescript MCP tools. Your session is already assigned to task ${session.instanceId}, revision ${session.expectedRevision}. Do not use shell, files, external tools, or inspect server internals. Start with workflow.status_and_next and workflow.assignment for that task, then task.get. The server restricts your tools and binds task, revision and claim arguments automatically; use the assignment's IDs when a schema requires them. ${work} After the successful handoff, stop calling tools: this lease ends when the workflow revision changes. End with a concise report of what you actually verified. This task contains no real customer/project data.`,
@@ -202,9 +208,7 @@ try {
       { kind: 'key', key: await app!.ctx.scope.authenticateKey(key.token) },
       project.id,
     );
-  // This read-only model harness exercises recovery of pre-managed-Git sessions.
-  // New-work acceptance uses live-experiments.ts and runner-code-v2-integration.test.ts.
-  const task = await historicalTask(app.ctx, await source(), {
+  const task = await currentTask(app.ctx, await source(), {
     title: 'Verify small arithmetic independently',
     goal: 'Produce and independently review reproducible evidence for two arithmetic results.',
     checks: ['Show that adding 2 and 3 gives 5.', 'Show that multiplying 6 by 7 gives 42.'],
@@ -234,7 +238,7 @@ try {
   for (const phase of ['producer', 'reviewer'] as const) {
     const current: Task = await app.ctx.tasks.get(await source(), task.id);
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    if (automatic) {
+    {
       await post(
         '/sessions/runners/heartbeat',
         key.token,
@@ -247,10 +251,11 @@ try {
           },
           platforms: [{ ...platform, enabled: true, parallelism: 1 }],
           capacity: 1,
+          capabilities: ['code.v2'],
         },
         project.id,
       );
-      await post('/sessions/dispatch', human, { enabled: true }, project.id, 'PUT');
+      if (automatic) await post('/sessions/dispatch', human, { enabled: true }, project.id, 'PUT');
     }
     const input = {
       ...(automatic
@@ -287,7 +292,19 @@ try {
     offered.push(session);
     await app.stop();
     app = await open();
-    await agent(phase, secret, session);
+    const work = currentWork(app.ctx, { directory: runDirectory, source: await source() });
+    try {
+      const held = await work.attach(session);
+      held.worker = await app.ctx.sessions.authenticate(secret);
+      const commandId =
+        phase === 'producer'
+          ? await work.commit(held, { 'arithmetic.txt': '2+3=5\n6*7=42\n' })
+          : undefined;
+      await agent(phase, secret, session, held.workspace.path, commandId);
+      await work.release(held);
+    } finally {
+      await work.close();
+    }
     if (automatic)
       assert.equal((await app.ctx.sessions.projectStatus(await source())).dispatch.enabled, false);
     assert.equal(

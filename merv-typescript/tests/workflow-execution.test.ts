@@ -1,5 +1,4 @@
-// Historical scratch records exercise the original assignment and recovery contract.
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { admitDispatch, createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -637,6 +636,14 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
+  await sessions.heartbeatRunner(operator, {
+    runnerId: 'test',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
+  const codeWork = currentWork(app.ctx, { directory: join(directory, 'work'), source: operator });
   let sequence = 0;
   const offer = async (target: { id: string; workflow: { revision: number } }) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
@@ -647,9 +654,11 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
       requestId: `offer-${++sequence}`,
       secret,
     });
-    return { session, worker: await sessions.authenticate(secret) };
+    const held = await codeWork.attach(session);
+    held.worker = await sessions.authenticate(secret);
+    return { session, worker: held.worker, held };
   };
-  const task = await historicalTask(app.ctx, operator, {
+  const task = await currentTask(app.ctx, operator, {
     title: 'Task',
     goal: 'Prove it.',
     checks: ['It passed.'],
@@ -695,14 +704,18 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     async (caller, input) =>
       await artifacts.create(caller, input as unknown as { title: string; content: string }),
   );
+  const held = work.held;
+  held.worker = producer;
+  const commandId = await codeWork.commit(held);
   const pending = await sessions.run(
     await sessions.prepare(
       producer,
       'task.submit_delivery',
-      confirmedDelivery({ artifactIds: [proof.id], requestId: 'delivery' }),
+      confirmedDelivery({ artifactIds: [proof.id], requestId: 'delivery', commandId }),
     ),
     async (caller, input) => await tasks.submitDelivery(caller, input as never),
   );
+  await codeWork.release(held);
   const review = await offer(pending);
   const reviewer = review.worker;
   assert.notEqual(review.session.execution.policyHash, work.session.execution.policyHash);
@@ -726,4 +739,5 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
   });
   artifacts.read = read;
   workflows.evaluate = evaluate;
+  await codeWork.release(review.held);
 });

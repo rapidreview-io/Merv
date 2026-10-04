@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -97,6 +97,8 @@ test(
         'reviews',
         'paper',
         'tasks',
+        'code',
+        'code-work',
         'sessions',
       ],
     });
@@ -204,7 +206,7 @@ test(
 
     let sequence = 0;
     const task = async () =>
-      await historicalTask({ state, artifacts, tasks }, producer, {
+      await currentTask(app.ctx, producer, {
         title: `Lease candidate ${++sequence}`,
         goal: 'Produce evidence',
         checks: ['Evidence is independently verifiable.'],
@@ -218,6 +220,7 @@ test(
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 2 }],
       capacity: 2,
+      capabilities: ['code.v2'],
     });
     const proof = await artifacts.create(producer, {
       title: 'Proof',

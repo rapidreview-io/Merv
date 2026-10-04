@@ -1,4 +1,3 @@
-import { historicalTask } from './historical-task.js';
 import type {
   Artifacts,
   Caller,
@@ -18,7 +17,7 @@ export interface Main {
 
 /**
  * Code as Research sees it for a hosted project, answered by the test. Tasks stays real,
- * with a workspace-free stand-in for the service creator, so the injected consolidation task
+ * with a public task creator at the service boundary, so the injected consolidation task
  * is one the test finishes or fails like any other. Returns the units marked to publish.
  */
 export function hostedCode(
@@ -46,8 +45,7 @@ export function hostedCode(
   });
   const serviceTasks = (): ReturnType<Tasks['serviceTasks']> => ({
     create: async (input, tx) =>
-      await historicalTask(
-        ctx,
+      await ctx.tasks.create(
         owner,
         {
           title: input.title,

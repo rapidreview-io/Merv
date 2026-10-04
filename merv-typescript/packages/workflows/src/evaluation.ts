@@ -405,7 +405,7 @@ async function ownDecision(
   if (!policy) {
     result.currentGate = 'workflow_unavailable';
     result.instruction =
-      'The owning program has no active guidance registration. Restore it before continuing.';
+      'This record is read-only while its owning workflow version is unavailable.';
     result.blockers = [{ code: 'workflow_unavailable', status: 503, message: result.instruction }];
     return result;
   }

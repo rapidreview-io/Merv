@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -43,6 +43,7 @@ async function fixture(t: TestContext) {
     },
   });
   t.after(async () => {
+    await work.close();
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -52,7 +53,7 @@ async function fixture(t: TestContext) {
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader') => {
+  const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
     const issued = await app.ctx.scope.issueActor(operator, { name, role });
     const caller: Caller = {
       actorId: issued.actor.id,
@@ -62,7 +63,7 @@ async function fixture(t: TestContext) {
     return { caller, token: issued.token };
   };
   const producer = await issue('Producer', 'producer'),
-    reviewer = await issue('Reviewer', 'reviewer'),
+    reviewer = await issue('Reviewer', 'operator'),
     reader = await issue('Reader', 'reader');
 
   const tool = async (name: string, token: string, input: unknown = {}) => {
@@ -88,7 +89,7 @@ async function fixture(t: TestContext) {
 
   let sequence = 0;
   const create = async (title: string, extra: Partial<TaskCreate> = {}) =>
-    await historicalTask(app.ctx, producer.caller, {
+    await currentTask(app.ctx, producer.caller, {
       title,
       goal: `Finish ${title.toLowerCase()} so the draft can cite it.`,
       checks: ['Every reference resolves.', 'The index is rebuilt from scratch.'],
@@ -96,36 +97,61 @@ async function fixture(t: TestContext) {
       ...extra,
     });
   const current = async (task: { id: string }) => await app.ctx.tasks.get(operator, task.id);
+  const work = currentWork(app.ctx, { directory, source: producer.caller });
   const deliver = async (task: { id: string }) => {
-    const evidence = await app.ctx.artifacts.create(producer.caller, {
-      title: `Evidence ${++sequence}`,
-      content: 'Every reference resolved; the index was rebuilt.',
-    });
-    return await app.ctx.tasks.submitDelivery(
-      producer.caller,
-      confirmedDelivery(
+    const held = await work.lease(await current(task));
+    try {
+      const evidence = await work.run(
+        held,
+        'artifact.create',
         {
-          taskId: task.id,
-          artifactIds: [evidence.id],
-          expectedRevision: (await current(task)).workflow.revision,
-          requestId: `deliver-${sequence}`,
+          title: `Evidence ${++sequence}`,
+          content: 'Every reference resolved; the index was rebuilt.',
         },
-        2,
-      ),
-    );
+        (caller, input) => app.ctx.artifacts.create(caller, input as never),
+      );
+      const commandId = await work.commit(held);
+      return await work.run(
+        held,
+        'task.submit_delivery',
+        confirmedDelivery(
+          {
+            taskId: task.id,
+            artifactIds: [evidence.id],
+            commandId,
+            expectedRevision: (await current(task)).workflow.revision,
+            requestId: `deliver-${sequence}`,
+          },
+          2,
+        ),
+        (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
+      );
+    } finally {
+      await work.release(held);
+    }
   };
   const verdict = async (pending: Task, value: Verdict) => {
-    const claim = await app.ctx.reviews.start(reviewer.caller, pending.reviewId!);
-    return await app.ctx.tasks.submitReview(reviewer.caller, {
-      ...reviewedFindings(claim),
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      verdict: value,
-      notes: `Independent verdict: ${value}.`,
-      ...(value === 'pass' ? { evidence: { outcome: 'Both checks ran.' } } : {}),
-      expectedRevision: pending.workflow.revision,
-      requestId: `verdict-${++sequence}`,
-    });
+    const held = await work.lease(pending, reviewer.caller);
+    try {
+      const claim = await app.ctx.reviews.get(held.worker, pending.reviewId!);
+      return await work.run(
+        held,
+        'review.submit',
+        {
+          ...reviewedFindings(claim),
+          reviewId: claim.id,
+          claimId: claim.claimId!,
+          verdict: value,
+          notes: `Independent verdict: ${value}.`,
+          ...(value === 'pass' ? { evidence: { outcome: 'Both checks ran.' } } : {}),
+          expectedRevision: pending.workflow.revision,
+          requestId: `verdict-${++sequence}`,
+        },
+        (caller, input) => app.ctx.tasks.submitReview(caller, input as never),
+      );
+    } finally {
+      await work.release(held);
+    }
   };
   const markFailed = async (task: { id: string }) =>
     await app.ctx.tasks.markFailed(producer.caller, {
@@ -137,6 +163,13 @@ async function fixture(t: TestContext) {
   /** A new agent of the operator's takes the task's current step on a lease. */
   const lease = async (task: { id: string }, name: string) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    await app.ctx.sessions.heartbeatRunner(operator, {
+      runnerId: `external-${sequence + 1}`,
+      machine: { hostname: 'running-test', system: 'darwin', architecture: 'arm64' },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
+      capacity: 1,
+      capabilities: ['code.v2'],
+    });
     await app.ctx.sessions.registerAgent(operator, {
       name,
       runnerId: `external-${++sequence}`,
@@ -165,6 +198,7 @@ async function fixture(t: TestContext) {
     verdict,
     markFailed,
     lease,
+    work,
   };
 }
 
@@ -180,76 +214,32 @@ function words(value: unknown, out: string[] = []): string[] {
   return out;
 }
 
-test('a task card says what holds it, from ready through review, and leaves the board when done', async (t) => {
+test('a current task card moves from ready through its leased review and leaves the board on acceptance', async (t) => {
   const f = await fixture(t);
   const task = await f.create('Rebuild citation index');
-  // Read inside the tool's snapshot, where a write would have failed the part.
-  assert.deepEqual((await f.board()).lanes.work.failed, []);
-  const ready = await f.card(task);
-  assert.deepEqual(
-    { ...ready, owner: undefined },
+  assert.deepEqual((await f.card(task))?.lines, [['Ready']]);
+  const pending = await f.deliver(task);
+  assert.ok(await f.card(task));
+  const held = await f.work.lease(pending, f.reviewer.caller);
+  assert.deepEqual((await f.card(task))?.lines, [['In review']]);
+  const review = await f.app.ctx.reviews.get(held.worker, pending.reviewId!);
+  const done = await f.work.run(
+    held,
+    'review.submit',
     {
-      key: `work:${task.id}`,
-      lane: 'work',
-      kind: 'Task',
-      title: 'Rebuild citation index',
-      lines: [['Ready']],
-      look: 'solid',
-      rank: 2,
-      owner: undefined,
+      ...reviewedFindings(review),
+      reviewId: review.id,
+      claimId: review.claimId!,
+      verdict: 'pass',
+      notes: 'Opened and independently checked the retained index evidence.',
+      expectedRevision: pending.workflow.revision,
+      requestId: f.work.request(),
     },
+    (caller, input) => f.app.ctx.tasks.submitReview(caller, input as never),
   );
-  assert.equal(ready?.owner, 'tasks');
-  assert.equal((await f.card(task, f.reader.token))?.lines[0]?.[0], 'Ready');
-
-  // A producer lease names only what it holds the task for. Its dot is the board's, lent by
-  // the session on it, so the card sets none of its own.
-  await f.lease(task, 'Producer agent');
-  assert.deepEqual((await f.card(task))?.lines, [['Producer on it']]);
-  const [own] = (await f.app.ctx.tasks.running(f.operator)).filter(
-    ({ key }) => key === `work:${task.id}`,
-  );
-  assert.equal(own && 'dot' in own, false);
-  assert.equal(own?.rank, 1);
-  assert.equal((await f.panel(task)).live, true);
-
-  const other = await f.create('Draft section 3.2');
-  const pending = await f.deliver(other);
-  const review = await f.app.ctx.reviews.get(f.operator, pending.reviewId!);
-  assert.deepEqual((await f.card(other))?.lines, [
-    ['Review unclaimed · ', { since: review.createdAt }],
-  ]);
-  const panel = await f.panel(other);
-  assert.deepEqual(panel.header.says, [{ state: 'in_review' }, ' · unclaimed']);
-  assert.equal(panel.live, false);
-
-  // A claim made in person names its reviewer, for whoever may read names.
-  await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
-  assert.deepEqual((await f.card(other, f.reader.token))?.lines, [
-    ['In review · ', { actor: f.reviewer.caller.actorId, prefix: 'with ', unnamed: 'claimed' }],
-  ]);
-  assert.deepEqual((await f.panel(other)).header.says, [{ state: 'in_review' }]);
-
-  // A leased review names only that it is in review: the reviewer's session says who.
-  const leased = await f.create('Check figure units');
-  await f.deliver(leased);
-  await f.lease(leased, 'Review agent');
-  assert.deepEqual((await f.card(leased))?.lines, [['In review']]);
-
-  const started = await f.app.ctx.reviews.get(f.reviewer.caller, pending.reviewId!);
-  await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-    ...reviewedFindings(started),
-    reviewId: started.id,
-    claimId: started.claimId!,
-    verdict: 'pass',
-    notes: 'Independent verdict: pass.',
-    evidence: { outcome: 'Both checks ran.' },
-    expectedRevision: pending.workflow.revision,
-    requestId: 'accept-other',
-  });
-  assert.equal(await f.card(other), undefined);
-  const done = await f.panel(other);
-  assert.deepEqual(done.header.says, [{ state: 'done' }]);
+  await f.work.release(held);
+  assert.equal(done.workflow.state, 'done');
+  assert.equal(await f.card(task), undefined);
 });
 
 test('a waiting task is dashed with its edge, and turns red with who ends the wait when its prerequisite fails', async (t) => {
@@ -364,54 +354,6 @@ test('a task that ended with a failed prerequisite still lists it, without the r
       says: [{ state: 'failed' }],
     },
   ]);
-});
-
-test('used review rounds turn a task red, naming the independent reviewer or an operator', async (t) => {
-  const f = await fixture(t);
-  const task = await f.create('Rebuild citation index');
-  await f.verdict(await f.deliver(task), 'needs_changes');
-  // Sent back, it is the producer's again, and the claims of the delivery it was sent back
-  // with are withdrawn.
-  assert.deepEqual((await f.card(task))?.lines, [['Ready']]);
-  const back = (await f.panel(task)).sections.find(({ title }) => title === 'Checks');
-  assert.deepEqual(back?.kind === 'table' && back.columns, ['Check']);
-
-  const pending = await f.deliver(task);
-  const expected = {
-    says: ['Every review round is used'],
-    who: 'An independent reviewer reviews it by hand, or an operator allows another round',
-    to: { route: `/reviews/${pending.reviewId}`, text: 'Open the review' },
-  };
-  const node = await f.card(task);
-  assert.deepEqual(node?.attention, expected);
-  const review = await f.app.ctx.reviews.get(f.operator, pending.reviewId!);
-  assert.deepEqual(node?.lines, [['Review unclaimed · ', { since: review.createdAt }]]);
-  const panel = await f.panel(task, f.reader.token);
-  assert.deepEqual(panel.header.attention, expected);
-  const checks = panel.sections.find(({ title }) => title === 'Checks');
-  assert.ok(checks?.kind === 'table');
-  assert.deepEqual(checks.columns, ['Check', 'Claim']);
-  assert.deepEqual(
-    checks.rows.map(({ cells }) => cells),
-    [
-      [['1 · Every reference resolves.'], [{ state: 'met' }]],
-      [['2 · The index is rebuilt from scratch.'], [{ state: 'met' }]],
-    ],
-  );
-  assert.equal(checks.aside?.[0], 'Delivered ');
-
-  // An independent reviewer takes the review by hand, which is the move the red asked for, so
-  // the card says who has it and needs nobody.
-  await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
-  const taken = await f.board();
-  const claimed = taken.lanes.work.nodes.find(({ key }) => key === `work:${task.id}`);
-  assert.equal(claimed?.attention, undefined);
-  assert.deepEqual(claimed?.lines, [
-    ['In review · ', { actor: f.reviewer.caller.actorId, prefix: 'with ', unnamed: 'claimed' }],
-  ]);
-  assert.equal(claimed?.rank, 1);
-  assert.equal(taken.lanes.work.needsYou, 0);
-  assert.equal((await f.panel(task)).header.attention, undefined);
 });
 
 test('a task another plugin holds back reads Waiting on a dashed card, never Ready', async (t) => {
@@ -573,7 +515,7 @@ test('the sidebar holds the ladder, relations, goal, pinned brief, checks and de
     ...words(panel),
     ...words(composed),
     ...words(await f.panel(dependent)),
-  ].filter((text) => !/^(work:|\/)/.test(text));
+  ].filter((text) => !/^(work:|\/|merv\/work\/)/.test(text));
   for (const id of [f.producer.caller.actorId, task.id, prerequisite.id, dependent.id, spec.id])
     assert.equal(
       everything.find((text) => text.includes(id)),

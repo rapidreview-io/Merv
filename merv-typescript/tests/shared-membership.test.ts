@@ -1,5 +1,4 @@
-// Historical scratch work exercises existing lifecycle/UI behavior; new work uses managed Git.
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import { createService } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -736,7 +735,7 @@ test('human task context and review claims integrate with role-loss and remove/r
     const operator = await app.ctx.scope.caller(owner, project.id);
     const producer = await app.ctx.scope.caller(producerUser, project.id);
     let reviewer = await app.ctx.scope.caller(reviewerUser, project.id);
-    const task = await historicalTask(app.ctx, producer, {
+    const task = await currentTask(app.ctx, producer, {
       title: 'Member task',
       goal: 'Verify the result.',
       checks: ['The result is reproducible.'],
@@ -752,24 +751,15 @@ test('human task context and review claims integrate with role-loss and remove/r
       title: 'Proof',
       content: 'The result is reproducible.',
     });
-    const pending = await app.ctx.tasks.submitDelivery(
-      producer,
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [proof.id],
-        expectedRevision: 0,
-        requestId: 'delivery',
-      }),
-    );
-    const claimed = await app.ctx.reviews.start(reviewer, pending.reviewId!);
-    const context = await app.ctx.tasks.context(reviewer, {
-      taskId: task.id,
-      purpose: 'review',
-      expectedRevision: 1,
-      claimId: claimed.claimId!,
-      requestId: 'review-context',
+    const pending = await app.ctx.reviews.request(producer, {
+      subjectId: 'member-review',
+      subjectRevision: 0,
+      producerId: producer.actorId,
+      artifactIds: [proof.id],
+      criteria: ['The result is reproducible.'],
+      requestId: 'review-request',
     });
-    assert.equal(context.actorId, reviewer.actorId);
+    const claimed = await app.ctx.reviews.start(reviewer, pending.id);
     await app.ctx.scope.changeMemberRole(owner, project.id, {
       subject: 'reviewer',
       role: 'reader',

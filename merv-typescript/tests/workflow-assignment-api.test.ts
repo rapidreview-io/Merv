@@ -1,5 +1,4 @@
-// Historical scratch records exercise the original assignment and recovery contract.
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -27,16 +26,24 @@ async function fixture(t: TestContext) {
     projectName: 'Assignment API',
     actorName: 'Operator',
   });
-  const operator: Caller = { actorId: initial.actor.id, projectId: initial.project.id };
+  const operator: Caller = {
+    actorId: initial.actor.id,
+    projectId: initial.project.id,
+    credentialId: initial.credential.id,
+  };
   const issue = async (role: Role) => {
     const credential = await app.ctx.scope.issueActor(operator, { name: role, role });
     return {
       ...credential,
-      caller: { actorId: credential.actor.id, projectId: operator.projectId },
+      caller: {
+        actorId: credential.actor.id,
+        projectId: operator.projectId,
+        credentialId: credential.credential.id,
+      },
     };
   };
   const producer = await issue('producer');
-  const task = await historicalTask(app.ctx, producer.caller, {
+  const task = await currentTask(app.ctx, producer.caller, {
     title: 'Retain the result',
     goal: 'Retain a verified arithmetic result.',
     checks: ['The sum of 2 and 3 is 5.'],
@@ -67,7 +74,7 @@ async function fixture(t: TestContext) {
       events: await sql.all('SELECT * FROM events ORDER BY id'),
       history: await sql.all('SELECT * FROM wf_history ORDER BY instance_id,revision'),
     }));
-  return { app, operator, producer, task, issue, connect, http, durable };
+  return { app, directory, operator, producer, task, issue, connect, http, durable };
 }
 
 const parse = (result: Awaited<ReturnType<Client['callTool']>>) =>
@@ -283,66 +290,44 @@ test(
 );
 
 test(
-  'review assignment packets remain read-only and bind the current claim before their permitted handoff',
+  'current review assignment packets are read-only and bind the claimed independent worker',
   { timeout: 15000 },
   async (t) => {
     const f = await fixture(t);
-    const evidence = await f.app.ctx.artifacts.create(f.producer.caller, {
-      title: 'Calculation',
-      content: '2 + 3 = 5.',
+    const work = currentWork(f.app.ctx, {
+      directory: join(f.directory, 'work'),
+      source: f.producer.caller,
     });
-    const pending = await f.app.ctx.tasks.submitDelivery(
-      f.producer.caller,
-      confirmedDelivery({
-        taskId: f.task.id,
-        expectedRevision: 0,
-        artifactIds: [evidence.id],
-        requestId: 'submit',
-      }),
+    const producer = await work.lease(f.task);
+    const evidence = await work.run(
+      producer,
+      'artifact.create',
+      { title: 'Calculation', content: '2 + 3 = 5.' },
+      (caller, input) => f.app.ctx.artifacts.create(caller, input as never),
     );
-    const reviewer = await f.issue('reviewer');
-    const client = await f.connect(reviewer.token);
-    const input = { instanceId: f.task.id };
-    const before = await f.durable();
-    const unclaimed = await call(client, 'workflow.assignment', input);
-    assert.deepEqual(
-      (await f.http('workflow.assignment', input, reviewer.token)).body.result,
-      unclaimed,
+    const commandId = await work.commit(producer);
+    const pending = await work.run(
+      producer,
+      'task.submit_delivery',
+      confirmedDelivery({ artifactIds: [evidence.id], commandId, requestId: 'submit' }),
+      (caller, input) => f.app.ctx.tasks.submitDelivery(caller, input as never),
     );
+    await work.release(producer);
+    const unclaimed = await f.app.ctx.workflows.assignment(f.operator, pending.id);
     assert.equal(unclaimed.execution.readOnly, true);
-    assert.deepEqual(unclaimed.handoff.tools, ['review.start', 'workflow.assignment']);
-    // Declared permissions stay fixed; the required claim binding is unavailable until claimed.
-    for (const name of ['review.submit', 'task.context']) {
-      const tool = unclaimed.execution.tools.find((tool) => tool.name === name);
-      assert.ok(tool);
-      assert.equal(Object.hasOwn(tool.arguments, 'claimId'), false);
-    }
-    assert.deepEqual(await f.durable(), before);
-    const begun = await call(client, 'workflow.begin', { ...input, expectedRevision: 1 });
-    assert.equal(begun.workStart?.actorId, reviewer.actor.id);
-    assert.equal(
-      (await f.app.ctx.reviews.get(reviewer.caller, pending.reviewId!)).status,
-      'requested',
-    );
-    const claimResult = await client.callTool({
-      name: 'review.start',
-      arguments: { reviewId: pending.reviewId! },
-    });
-    assert.equal(claimResult.isError, undefined);
-    const claim = parse(claimResult);
-    const assigned = await call(client, 'workflow.assignment', input);
-    assert.deepEqual(
-      (await f.http('workflow.assignment', input, reviewer.token)).body.result,
-      assigned,
-    );
+    const reviewer = await work.lease(pending, f.operator);
+    const claim = await f.app.ctx.reviews.get(f.operator, pending.reviewId!);
+    assert.notEqual(claim.reviewerId, claim.producerId);
+    const assigned = await f.app.ctx.workflows.assignment(reviewer.worker, pending.id);
+    assert.equal(assigned.execution.readOnly, true);
+    assert.equal(assigned.execution.policyHash, unclaimed.execution.policyHash);
+    assert.deepEqual(assigned.execution.policy, unclaimed.execution.policy);
     assert.deepEqual(assigned.context?.subject, {
-      id: f.task.id,
+      id: pending.id,
       revision: 1,
       claimId: claim.claimId,
     });
     assert.deepEqual(assigned.handoff.tools, ['review.submit']);
-    assert.equal(assigned.execution.policyHash, unclaimed.execution.policyHash);
-    assert.deepEqual(assigned.execution.policy, unclaimed.execution.policy);
     const submission = assigned.execution.tools.find((tool) => tool.name === 'review.submit');
     assert.deepEqual(submission?.arguments, {
       reviewId: pending.reviewId,
@@ -355,13 +340,10 @@ test(
       ),
     );
     assert.ok(!assigned.execution.tools.some((tool) => tool.name === 'task.submit_delivery'));
-    assert.equal((await f.durable()).contexts.length, 0);
-    assert.equal((await f.durable()).starts.length, 1);
-    const other = await f.issue('reviewer');
-    assert.equal((await f.http('workflow.assignment', input, other.token)).status, 409);
-    assert.equal(
-      (await f.http('workflow.begin', { ...input, expectedRevision: 1 }, other.token)).status,
-      409,
+    await assert.rejects(
+      f.app.ctx.sessions.prepare(reviewer.worker, 'review.submit', { claimId: 'stale-claim' }),
+      { code: 'execution_arguments_forbidden' },
     );
+    await work.release(reviewer);
   },
 );

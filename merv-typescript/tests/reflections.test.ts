@@ -1,5 +1,6 @@
-import { historicalTask } from './fixtures/historical-task.js';
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
+import { currentTask } from './fixtures/current-work.js';
+import { currentExperiment } from './fixtures/current-experiment.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { mapAsync } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
@@ -1429,13 +1430,13 @@ test('a leased lens reads research added after assignment through existing tools
     checks: ['Report outcome'],
     requestId: 'existing-task',
   };
-  const task = await historicalTask(f.app.ctx, f.owner, taskInput);
+  const task = await currentTask(f.app.ctx, f.owner, taskInput);
   const experimentInput = {
     name: 'existing-experiment',
     intent: 'Test feasibility',
     requestId: 'existing-experiment',
   };
-  const experiment = await historicalExperiment(f.app.ctx, f.owner, experimentInput);
+  const experiment = await currentExperiment(f.app.ctx, f.owner, experimentInput);
   const tools = (await f.app.ctx.tools.list()).map((tool) => tool.name);
   assert.equal(tools.filter((name) => name === 'reflection.create').length, 1);
   const wave = (await f.app.ctx.tools.call('reflection.create', f.owner, {
@@ -1476,21 +1477,14 @@ test('a leased lens reads research added after assignment through existing tools
       evidence.id,
     ),
   );
-  const delivery = await f.create(f.owner, 'Check feasibility: report outcome');
-  const submitted = await f.app.ctx.tasks.submitDelivery(f.owner, {
-    taskId: task.id,
-    expectedRevision: task.workflow.revision,
-    artifactIds: [delivery.id],
-    confirmations: [
-      {
-        checkNumber: 1,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: 'Reported the feasibility outcome.',
-      },
-    ],
-    requestId: 'submit-existing',
-  });
+  const deliveryDirectory = mkdtempSync(join(tmpdir(), 'merv-lens-delivery-'));
+  t.after(() => rmSync(deliveryDirectory, { recursive: true, force: true }));
+  const { task: submitted, proof: delivery } = await deliverCurrentTask(
+    f.app.ctx,
+    deliveryDirectory,
+    f.owner,
+    task.id,
+  );
   assert.ok(
     JSON.stringify(await call('review.get', { reviewId: submitted.reviewId! })).includes(
       delivery.id,

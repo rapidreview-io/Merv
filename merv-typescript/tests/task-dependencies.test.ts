@@ -1,5 +1,5 @@
 import { waitForManagedCode } from './fixtures/managed-code.js';
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -28,7 +28,11 @@ async function fixture(api = false) {
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const issued = await app.ctx.scope.issueActor(operator, { role, name: role });
     return {
-      caller: { actorId: issued.actor.id, projectId: boot.project.id },
+      caller: {
+        actorId: issued.actor.id,
+        projectId: boot.project.id,
+        credentialId: issued.credential.id,
+      },
       token: issued.token,
     };
   };
@@ -53,29 +57,65 @@ async function fixture(api = false) {
     ...(dependsOn === undefined ? {} : { dependsOn }),
   });
   const create = async (dependsOn?: TaskCreate['dependsOn']) =>
-    await historicalTask(app.ctx, producer.caller, input(dependsOn));
+    await currentTask(app.ctx, producer.caller, input(dependsOn));
   const get = async (task: Task) => await app.ctx.tasks.get(producer.caller, task.id);
-  const deliver = async (task: Task) =>
-    await app.ctx.tasks.submitDelivery(
-      producer.caller,
-      confirmedDelivery({
-        taskId: task.id,
-        artifactIds: [evidence.id],
-        expectedRevision: (await get(task)).workflow.revision,
-        requestId: `deliver-${++sequence}`,
-      }),
-    );
+  const work = currentWork(app.ctx, { directory, source: producer.caller });
+  const deliver = async (task: Task) => {
+    const held = await work.lease(await get(task));
+    try {
+      Object.assign(
+        evidence,
+        await app.ctx.artifacts.create(held.worker, {
+          title: 'Evidence',
+          content: 'Check. Upstream-only-secret-proof-82971.',
+        }),
+      );
+      const commandId = await work.commit(held);
+      return await work.run(
+        held,
+        'task.submit_delivery',
+        confirmedDelivery({
+          taskId: task.id,
+          artifactIds: [evidence.id],
+          commandId,
+          expectedRevision: (await get(task)).workflow.revision,
+          requestId: `deliver-${++sequence}`,
+        }),
+        (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
+      );
+    } finally {
+      await work.release(held);
+    }
+  };
   const verdict = async (pending: Task, value: Verdict) => {
-    const claim = await app.ctx.reviews.start(reviewer.caller, pending.reviewId!);
-    return await app.ctx.tasks.submitReview(reviewer.caller, {
-      ...reviewedFindings(claim),
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      verdict: value,
-      notes: `Independent verdict: ${value}.`,
-      expectedRevision: pending.workflow.revision,
-      requestId: `verdict-${++sequence}`,
+    const runner = await app.ctx.scope.issueActor(operator, {
+      name: 'Independent review runner',
+      role: 'operator',
     });
+    const held = await work.lease(pending, {
+      projectId: operator.projectId,
+      actorId: runner.actor.id,
+      credentialId: runner.credential.id,
+    });
+    try {
+      const claim = await app.ctx.reviews.get(held.worker, pending.reviewId!);
+      return await work.run(
+        held,
+        'review.submit',
+        {
+          ...reviewedFindings(claim),
+          reviewId: claim.id,
+          claimId: claim.claimId!,
+          verdict: value,
+          notes: `Independent verdict: ${value}.`,
+          expectedRevision: pending.workflow.revision,
+          requestId: `verdict-${++sequence}`,
+        },
+        (caller, input) => app.ctx.tasks.submitReview(caller, input as never),
+      );
+    } finally {
+      await work.release(held);
+    }
   };
   const withdraw = async (task: Task) =>
     await app.ctx.tasks.markFailed(producer.caller, {
@@ -101,6 +141,7 @@ async function fixture(api = false) {
     verdict,
     withdraw,
     async close() {
+      await work.close();
       await app.stop();
       rmSync(directory, { recursive: true, force: true });
     },
@@ -187,7 +228,7 @@ test('A → B → C becomes ready one independent pass at a time; needs_changes 
       {
         id: a.id,
         workflow: 'task',
-        version: 28,
+        version: 31,
         name: a.title,
         state: 'in_progress',
         revision: 0,
@@ -460,53 +501,6 @@ test('task creation rolls dependency edges, workflow rows, dedup and events back
       [created.id],
     );
     assert.deepEqual(await f.app.ctx.tasks.create(f.producer.caller, input), created);
-  } finally {
-    await f.close();
-  }
-});
-
-test('dependency-bearing review assignments keep normal independent context, checkpoint and verdict behavior', async () => {
-  const f = await fixture();
-  try {
-    const upstream = await f.create(),
-      downstream = await f.create(upstream.id);
-    await f.verdict(await f.deliver(upstream), 'pass');
-    const pending = await f.deliver(downstream),
-      claim = await f.app.ctx.reviews.start(f.reviewer.caller, pending.reviewId!);
-    await f.app.ctx.workflows.begin(f.reviewer.caller, {
-      instanceId: downstream.id,
-      expectedRevision: 1,
-    });
-    const reviewTask = await f.app.ctx.tasks.get(f.reviewer.caller, downstream.id);
-    assert.equal(reviewTask.guidance.nextAction?.tool, 'review.submit');
-    assert.equal(reviewTask.dependencies[0].settled, true);
-    const input = {
-      taskId: downstream.id,
-      purpose: 'review' as const,
-      expectedRevision: 1,
-      claimId: claim.claimId!,
-      requestId: 'dependent-review-context',
-    };
-    const context = await f.app.ctx.tasks.context(f.reviewer.caller, input);
-    assert.ok(context.prompt.includes(JSON.stringify(assignmentTask(reviewTask))));
-    assert.deepEqual(reviewTask.guidance.dependencies, reviewTask.dependencies);
-    const checkpoint = await f.app.ctx.tasks.checkpoint(f.reviewer.caller, {
-      ...input,
-      requestId: 'dependent-review-checkpoint',
-      notes: 'Independently checking this delivery.',
-    });
-    assert.equal(checkpoint.claimId, claim.claimId);
-    const done = await f.app.ctx.tasks.submitReview(f.reviewer.caller, {
-      ...reviewedFindings(claim),
-      reviewId: claim.id,
-      claimId: claim.claimId!,
-      verdict: 'pass',
-      notes: 'Verified downstream checks.',
-      expectedRevision: 1,
-      requestId: 'dependent-review-pass',
-    });
-    assert.equal(done.workflow.state, 'done');
-    assert.equal(done.dependencies[0].settled, true);
   } finally {
     await f.close();
   }

@@ -206,3 +206,21 @@ test('live evidence compares actual reviewer submission with retained structured
     /exact submitted findings must survive/,
   );
 });
+
+test('live evidence distinguishes the task creator from the actual leased delivery author', () => {
+  const { task, review, transcripts } = fixture();
+  const delivered = { ...review, producerId: 'leased-producer' };
+  assert.equal(
+    verifyLiveEvidence(task, delivered, transcripts, 'leased-producer').independentReviewer,
+    true,
+  );
+  assert.throws(() => verifyLiveEvidence(task, delivered, transcripts, 'wrong-worker'));
+  assert.throws(() =>
+    verifyLiveEvidence(
+      task,
+      { ...delivered, reviewerId: 'leased-producer' },
+      transcripts,
+      'leased-producer',
+    ),
+  );
+});

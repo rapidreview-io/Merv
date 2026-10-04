@@ -1,4 +1,8 @@
-import { historicalExperiment } from './fixtures/historical-experiment.js';
+import {
+  experimentTransitionSchema,
+  parseExperimentInput,
+} from '../packages/experiments/src/input.js';
+import { currentWork } from './fixtures/current-work.js';
 import { managedServices } from './fixtures/managed-services.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import { createService } from '@merv/contracts';
@@ -95,7 +99,11 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
     const result = await scope.issueActor(operator, { name: role, role });
-    return { actorId: result.actor.id, projectId: operator.projectId };
+    return {
+      actorId: result.actor.id,
+      projectId: operator.projectId,
+      credentialId: result.credential.id,
+    };
   };
   const producer = await issue('producer'),
     reviewer = await issue('reviewer'),
@@ -122,35 +130,32 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     ),
     sequence = 0;
   const id = () => `request-${++sequence}`;
-  const create = async (
-    name = `Experiment-${sequence + 1}`,
-    extra: Record<string, unknown> = {},
-    version = 25,
-  ) =>
-    await historicalExperiment(
-      { state, experiments },
-      producer,
-      {
-        name,
-        intent: 'Test the hypothesis.',
-        requestId: id(),
-        ...extra,
-      },
-      undefined,
-      version,
-    );
+  const { events, sessions } = managed;
+  const work = currentWork(
+    { code: managed.code, sessions, events },
+    { directory: dir, source: producer },
+  );
+  const active = new Map<string, Awaited<ReturnType<typeof work.lease>>>();
+  const create = async (name = `Experiment-${sequence + 1}`, extra: Record<string, unknown> = {}) =>
+    experiments.create(producer, {
+      name,
+      intent: 'Test the hypothesis.',
+      requestId: id(),
+      ...extra,
+    });
   const attach = async (
     experiment: Experiment,
     role: ExperimentAttach['role'],
     content: string,
     extra: Partial<ExperimentAttach> = {},
   ): Promise<ExperimentEvidence> => {
-    const artifact = await artifacts.create(producer, {
+    const author = active.get(experiment.id)?.worker ?? producer;
+    const artifact = await artifacts.create(author, {
       title: role,
       content,
       mediaType: role === 'plan' || role === 'report' ? 'text/markdown' : 'application/json',
     });
-    const attached = await experiments.attach(producer, {
+    const attached = await experiments.attach(author, {
       experimentId: experiment.id,
       attemptIndex: experiment.attempt.index,
       expectedRevision: experiment.workflow.revision,
@@ -168,14 +173,63 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     experiment: Experiment,
     transition: ExperimentTransition['transition'],
     extra: Partial<ExperimentTransition> = {},
-  ) =>
-    await experiments.transition(producer, {
+  ) => {
+    const input = {
       experimentId: experiment.id,
       expectedRevision: experiment.workflow.revision,
       transition,
       requestId: id(),
       ...extra,
-    });
+    };
+    parseExperimentInput(experimentTransitionSchema, input);
+    if (transition !== 'submit_results') return experiments.transition(producer, input);
+    const current = await experiments.get(producer, experiment.id);
+    const held = active.get(current.id) ?? (await work.lease(current));
+    for (const evidence of current.evidence.filter(
+      (item) =>
+        item.current &&
+        item.attemptIndex === current.attempt.index &&
+        ['result', 'report'].includes(item.role) &&
+        item.createdBy !== held.worker.actorId,
+    )) {
+      let artifactId = evidence.artifactId;
+      if (evidence.role === 'report') {
+        const body = await artifacts.read(producer, artifactId);
+        artifactId = (
+          await work.run(
+            held,
+            'artifact.create',
+            { title: 'Successor report', content: body.content, mediaType: 'text/markdown' },
+            (caller, bound) => artifacts.create(caller, bound as any),
+          )
+        ).id;
+      }
+      await work.run(
+        held,
+        'experiment.attach',
+        {
+          artifactId,
+          role: evidence.role,
+          path: evidence.path,
+          attemptIndex: current.attempt.index,
+          requestId: id(),
+          ...(evidence.resultFormat ? { resultFormat: evidence.resultFormat } : {}),
+        },
+        (caller, bound) => experiments.attach(caller, bound as unknown as ExperimentAttach),
+      );
+    }
+    try {
+      return await work.run(
+        held,
+        'experiment.transition',
+        { transition, requestId: input.requestId, ...extra },
+        (caller, bound) => experiments.transition(caller, bound as unknown as ExperimentTransition),
+      );
+    } finally {
+      active.delete(current.id);
+      await work.release(held);
+    }
+  };
   const reviewInput = async (
     experiment: Experiment,
     verdict: ReviewApplication['verdict'] = 'pass',
@@ -203,20 +257,31 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     experiment: Experiment,
     verdict: ReviewApplication['verdict'] = 'pass',
     returnTo?: string,
-  ) =>
-    (await reviews.apply(reviewer, await reviewInput(experiment, verdict, returnTo))) as Experiment;
+  ) => {
+    const next = (await reviews.apply(
+      reviewer,
+      await reviewInput(experiment, verdict, returnTo),
+    )) as Experiment;
+    return next;
+  };
+  const execute = async (e: Experiment) => {
+    if (!active.has(e.id)) active.set(e.id, await work.lease(e));
+    return e;
+  };
   const running = async () => {
     let e = await create();
     await attach(e, 'plan', plan);
     e = await transition(e, 'submit_design');
-    return await submitReview(e);
+    return execute(await submitReview(e));
   };
   const results = async (e: Experiment) => {
+    await execute(e);
     await attach(e, 'result', '{"accuracy":0.5,"nested":{"original":true}}');
     await attach(e, 'report', report);
     return await transition(e, 'submit_results');
   };
   t.after(async () => {
+    await work.close();
     await managed.close();
     experiments.close();
     contextBuilder.close();
@@ -236,6 +301,8 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     otherProducer,
     artifacts,
     blobs,
+    code: managed.code,
+    managed,
     workflows,
     reviews,
     create,
@@ -245,6 +312,8 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     submitReview,
     running,
     results,
+    execute,
+    worker: (e: Experiment) => active.get(e.id)?.worker ?? producer,
     id,
     get experiments() {
       return experiments;
@@ -315,10 +384,7 @@ test('Experiments run both independent gates, pin exact evidence/exhibit without
   e = await f.submitReview(e);
   assert.equal(e.workflow.state, 'running');
   assert.equal(e.attempt.startedAt, null);
-  await f.workflows.begin(f.producer, {
-    instanceId: e.id,
-    expectedRevision: e.workflow.revision,
-  });
+  await f.execute(e);
   e = await f.experiments.get(f.producer, e.id);
   assert.ok(e.attempt.startedAt);
   await f.attach(e, 'result', 'null');
@@ -456,11 +522,11 @@ test('The experiment limits default to four design rounds and three result round
   await f.attach(e, 'plan', plan);
   e = await f.transition(e, 'submit_design');
   assert.deepEqual(
-    (await f.workflows.evaluate(f.producer, e.id)).limits.map((limit) => [limit.name, limit.max]),
+    (await f.workflows.evaluate(f.worker(e), e.id)).limits.map((limit) => [limit.name, limit.max]),
     [['design_rounds', 4]],
   );
   e = await f.results(await f.submitReview(e));
-  const [results] = (await f.workflows.evaluate(f.producer, e.id)).limits;
+  const [results] = (await f.workflows.evaluate(f.worker(e), e.id)).limits;
   assert.deepEqual(
     [results.name, results.actions, results.max],
     ['result_rounds', ['revise_plan', 'revise_execution'], 3],
@@ -734,7 +800,7 @@ test('Workflow exit guidance checks the same plan and exhibit gates without crea
   let e = await f.create();
   await f.attach(e, 'plan', '# Summary\nDraft.\n# Objective & hypothesis\nA hypothesis.');
   const status = async (action: string) =>
-    (await f.workflows.evaluate(f.producer, e.id)).actions.find((item) => item.action === action)!;
+    (await f.workflows.evaluate(f.worker(e), e.id)).actions.find((item) => item.action === action)!;
   const before = async () => ({
     events: (await f.state.events(f.operator.projectId)).length,
     artifacts: (await f.artifacts.list(f.producer)).length,
@@ -751,6 +817,7 @@ test('Workflow exit guidance checks the same plan and exhibit gates without crea
   await f.attach(e, 'plan', plan);
   assert.equal((await status('submit_design')).status, 'ready');
   e = await f.submitReview(await f.transition(e, 'submit_design'));
+  await f.execute(e);
   await f.attach(e, 'result', '{"accuracy":0.5}');
   await f.attach(e, 'report', report.replace('metrics_exhibit.json', 'the local output'));
   unchanged = await before();
@@ -779,6 +846,7 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
   e = await f.transition(e, 'submit_design');
   const application = await f.reviewInput(e, 'needs_changes', 'planned');
   e = (await f.reviews.apply(f.reviewer, application)) as Experiment;
+  await f.managed.close();
   const state = await openState(f.directory),
     scope = await createService(new ProjectScope(state)),
     artifacts = await createService(
@@ -787,6 +855,11 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
     workflows = await createService(new WorkflowsService(state, scope)),
     reviews = await createService(new ReviewService(state, scope, artifacts)),
     builder = await createService(new RecipeContextBuilder(state, scope, artifacts)),
+    restoredManaged = await managedServices(
+      { state, scope, artifacts, workflows },
+      f.directory,
+      f.producer,
+    ),
     experiments = await createService(
       new ExperimentService(
         state,
@@ -795,7 +868,7 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
         workflows,
         reviews,
         builder,
-        undefined,
+        restoredManaged.code,
         await createService(new PaperService(state, scope, artifacts)),
       ),
     );
@@ -809,6 +882,7 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
     assert.ok(JSON.stringify(assignment).includes(image.id));
   } finally {
     experiments.close();
+    await restoredManaged.close();
     builder.close();
     workflows.close();
     reviews.close();
@@ -906,10 +980,10 @@ test('native experiments pin only new work, retain service captures and change p
   const legacy = await f.create('Legacy');
   const native = nativeWorkFixture();
   t.after(f.experiments.bindNativeWork(native.service));
-  let experiment = await f.create('Native', {}, 33);
-  assert.equal(legacy.workflow.version, 25);
-  assert.equal(experiment.workflow.version, 33);
-  assert.equal((await f.experiments.get(f.producer, legacy.id)).workflow.version, 25);
+  let experiment = await f.create('Native');
+  assert.equal(legacy.workflow.version, 28);
+  assert.equal(experiment.workflow.version, 36);
+  assert.equal((await f.experiments.get(f.producer, legacy.id)).workflow.version, 28);
   assert.deepEqual(native.changes.at(-1), {
     workId: experiment.id,
     attempt: '1:planned',

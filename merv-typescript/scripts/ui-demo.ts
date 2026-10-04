@@ -1,4 +1,6 @@
-import { historicalTask } from '../tests/fixtures/historical-task.js';
+import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
+import { waitForManagedCode } from '../tests/fixtures/managed-code.js';
+import type { TaskDelivery, ReviewApplication } from '@merv/contracts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,7 +18,7 @@ import { beating, mcp, seedRunning } from './ui-demo-running.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
- * historical artifact-only tasks and a pinned review. New Git work uses --git.
+ * current Git tasks, real worker commits and a pinned review. --git adds the Code publication view.
  * Type `disable <id>`, `enable <id>` (a plugin entry, such as `ui`) or `quit` on stdin.
  *
  * The Running page gets its own work last (scripts/ui-demo-running.ts): tasks waiting, worked
@@ -57,10 +59,10 @@ async function main() {
     actorName: 'Operator',
   });
   const operator = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader') =>
+  const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader' | 'operator') =>
     await app.ctx.scope.issueActor(operator, { name, role });
   const producer = await issue('Codex producer', 'producer');
-  const reviewer = await issue('Claude reviewer', 'reviewer');
+  const reviewer = await issue('Claude reviewer', 'operator');
   const reader = await issue('Observer', 'reader');
   const as =
     (token: string) =>
@@ -77,7 +79,19 @@ async function main() {
       if (body.error) throw new Error(`${name}: ${body.error.code} ${body.error.message}`);
       return body.result;
     };
-  const producerCaller = { actorId: producer.actor.id, projectId: operator.projectId };
+  const producerCaller = {
+    actorId: producer.actor.id,
+    projectId: operator.projectId,
+    credentialId: producer.credential.id,
+  };
+  const reviewerCaller = {
+    actorId: reviewer.actor.id,
+    projectId: operator.projectId,
+    credentialId: reviewer.credential.id,
+  };
+  const owner = { ...operator, credentialId: boot.credential.id };
+  await waitForManagedCode(app.ctx.codeWork, owner);
+  const work = currentWork(app.ctx, { directory: join(directory, 'demo-workers'), source: owner });
   const p = as(producer.token);
   const r = as(reviewer.token);
 
@@ -95,7 +109,7 @@ async function main() {
     ].join('\n'),
     mediaType: 'text/markdown',
   });
-  const task = await historicalTask(app.ctx, producerCaller, {
+  const task = await currentTask(app.ctx, producerCaller, {
     title: 'Reproduce grokking on modular addition',
     goal: 'Show the delayed generalization curve with our training harness.',
     checks: [
@@ -106,91 +120,114 @@ async function main() {
     briefId: brief.id,
     requestId: 'demo-task-1',
   });
-  const delivery = await p('artifact.create', {
-    title: 'Delivery: grokking curve, seed 7',
-    content: [
-      '# Result',
-      'Train accuracy hit 100% at step 1,640. Validation crossed 95% at step 9,810 with weight decay 1.0.',
-      '',
-      '## Checks',
-      '- Train accuracy 100% before step 2k: yes, step 1,640.',
-      '- Val accuracy > 95% after decay: yes, 97% at step 9,810.',
-      '- Curve and seed attached: seed 7, table below.',
-      '',
-      '| step | train | val |',
-      '|-----:|------:|----:|',
-      '| 1000 | 0.62 | 0.01 |',
-      '| 2000 | 1.00 | 0.02 |',
-      '| 8000 | 1.00 | 0.31 |',
-      '| 10000 | 1.00 | 0.97 |',
-      '',
-      'Seed: 7. Curve: see figure artifact.',
-    ].join('\n'),
-    mediaType: 'text/markdown',
+  const taskWorker = await work.lease(task, producerCaller);
+  const delivery = await work.run(
+    taskWorker,
+    'artifact.create',
+    {
+      title: 'Delivery: grokking curve, seed 7',
+      content: [
+        '# Result',
+        'Train accuracy hit 100% at step 1,640. Validation crossed 95% at step 9,810 with weight decay 1.0.',
+        '',
+        '## Checks',
+        '- Train accuracy 100% before step 2k: yes, step 1,640.',
+        '- Val accuracy > 95% after decay: yes, 97% at step 9,810.',
+        '- Curve and seed attached: seed 7, table below.',
+        '',
+        '| step | train | val |',
+        '|-----:|------:|----:|',
+        '| 1000 | 0.62 | 0.01 |',
+        '| 2000 | 1.00 | 0.02 |',
+        '| 8000 | 1.00 | 0.31 |',
+        '| 10000 | 1.00 | 0.97 |',
+        '',
+        'Seed: 7. Curve: see figure artifact.',
+      ].join('\n'),
+      mediaType: 'text/markdown',
+    },
+    (caller, input) => app.ctx.artifacts.create(caller, input as never),
+  );
+  const commandId = await work.commit(taskWorker, {
+    'grokking-demo.md': (await app.ctx.artifacts.read(taskWorker.worker, delivery.id)).content,
   });
-  const submitted = await p('task.submit_delivery', {
-    taskId: task.id,
-    artifactIds: [delivery.id],
-    confirmations: [
-      {
-        checkNumber: 1,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: 'Training accuracy reached 100% at step 1,640.',
-      },
-      {
-        checkNumber: 2,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: 'Validation accuracy reached 97% at step 9,810 with weight decay 1.0.',
-      },
-      {
-        checkNumber: 3,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: 'The delivery includes the learning-curve table and records seed 7.',
-      },
-    ],
-    expectedRevision: task.workflow.revision,
-    requestId: 'demo-delivery-1',
-  });
-  const started = await r('review.start', { reviewId: submitted.reviewId });
-  await r('review.submit', {
-    reviewId: submitted.reviewId,
-    ...(started.claimId ? { claimId: started.claimId } : {}),
-    expectedRevision: submitted.workflow.revision,
-    verdict: 'pass',
-    synopsis:
-      'The seeded delivery reports both accuracy thresholds and retains the learning-curve table and seed.',
-    findings: [
-      {
-        criterionNumber: 1,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: 'The seeded report records training accuracy of 100% at step 1,640, before 2,000.',
-      },
-      {
-        criterionNumber: 2,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: 'The seeded report records validation accuracy of 97% after weight decay.',
-      },
-      {
-        criterionNumber: 3,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: 'The seeded delivery retains the learning-curve table and identifies seed 7.',
-      },
-    ],
-    notes: 'Curve reproduces the published shape; seed and table are present. Accepting.',
-    requestId: 'demo-verdict-1',
-  });
+  const submitted = await work.run(
+    taskWorker,
+    'task.submit_delivery',
+    {
+      commandId,
+      taskId: task.id,
+      artifactIds: [delivery.id],
+      confirmations: [
+        {
+          checkNumber: 1,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'Training accuracy reached 100% at step 1,640.',
+        },
+        {
+          checkNumber: 2,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'Validation accuracy reached 97% at step 9,810 with weight decay 1.0.',
+        },
+        {
+          checkNumber: 3,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'The delivery includes the learning-curve table and records seed 7.',
+        },
+      ],
+      expectedRevision: task.workflow.revision,
+      requestId: 'demo-delivery-1',
+    },
+    (caller, input) => app.ctx.tasks.submitDelivery(caller, input as unknown as TaskDelivery),
+  );
+  await work.release(taskWorker);
+  const taskReview = await work.lease(submitted, reviewerCaller);
+  const started = await app.ctx.reviews.get(taskReview.worker, submitted.reviewId!);
+  await work.run(
+    taskReview,
+    'review.submit',
+    {
+      reviewId: submitted.reviewId,
+      ...(started.claimId ? { claimId: started.claimId } : {}),
+      expectedRevision: submitted.workflow.revision,
+      verdict: 'pass',
+      synopsis:
+        'The seeded delivery reports both accuracy thresholds and retains the learning-curve table and seed.',
+      findings: [
+        {
+          criterionNumber: 1,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'The seeded report records training accuracy of 100% at step 1,640, before 2,000.',
+        },
+        {
+          criterionNumber: 2,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'The seeded report records validation accuracy of 97% after weight decay.',
+        },
+        {
+          criterionNumber: 3,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: 'The seeded delivery retains the learning-curve table and identifies seed 7.',
+        },
+      ],
+      notes: 'Curve reproduces the published shape; seed and table are present. Accepting.',
+      requestId: 'demo-verdict-1',
+    },
+    (caller, input) => app.ctx.reviews.apply(caller, input as unknown as ReviewApplication),
+  );
+  await work.release(taskReview);
   const brief2 = await p('artifact.create', {
     title: 'Brief: sweep weight decay',
     content:
       'Goal: Find where the grokking step moves as decay grows.\nSweep weight decay in {0.1, 0.3, 1.0, 3.0}.\nDone when:\n- Four runs complete\n- Grokking step reported per run',
   });
-  const sweepTask = await historicalTask(app.ctx, producerCaller, {
+  const sweepTask = await currentTask(app.ctx, producerCaller, {
     title: 'Sweep weight decay across four settings',
     goal: 'Find where the grokking step moves as decay grows.',
     checks: ['Four runs complete', 'Grokking step reported per run'],
@@ -199,7 +236,13 @@ async function main() {
   });
 
   // Real local session/registry calls using disposable demo data, not live agent processes.
-  const owner = { ...operator, credentialId: boot.credential.id };
+  await app.ctx.sessions.heartbeatRunner(owner, {
+    runnerId: 'local-demo',
+    machine: { hostname: 'mac-studio', system: process.platform, architecture: process.arch },
+    platforms: [{ name: 'demo', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
   const joinAgent = async (name: string, requestId: string, runnerId = 'local-demo') => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
     const agent = await app.ctx.sessions.registerAgent(owner, {
@@ -211,7 +254,7 @@ async function main() {
     return { agent, token };
   };
   const previous = await joinAgent('Demo · prior research agent', 'demo-prior-agent');
-  const historical = await historicalTask(app.ctx, owner, {
+  const historical = await currentTask(app.ctx, owner, {
     title: 'Check training configuration',
     goal: 'Verify the training configuration.',
     checks: ['Configuration recorded.'],
@@ -222,12 +265,14 @@ async function main() {
     expectedRevision: historical.workflow.revision,
     requestId: 'prior-assignment',
   });
+  const previousWork = await work.attach(earlier);
   const earlierCaller = await app.ctx.sessions.authenticate(previous.token);
   await app.ctx.tools.call('artifact.create', earlierCaller, {
     title: 'Demo configuration',
     content: 'Recorded demo training configuration.',
   });
   await app.ctx.sessions.releaseAgentAssignment(previous.token, earlier.id);
+  await work.release(previousWork);
   await app.ctx.sessions.retireAgent(owner, previous.agent.id);
   await joinAgent('Demo · waiting reviewer', 'demo-idle-agent');
   const working = await joinAgent('Demo · weight-decay researcher', 'demo-working-agent');
@@ -236,6 +281,7 @@ async function main() {
     expectedRevision: sweepTask.workflow.revision,
     requestId: 'sweep-assignment',
   });
+  await work.attach(execution);
   const worker = await app.ctx.sessions.authenticate(working.token);
   await app.ctx.tools.call('workflow.assignment', worker, { instanceId: sweepTask.id });
   await app.ctx.tools.call('artifact.create', worker, {
@@ -263,8 +309,13 @@ async function main() {
   }
 
   const git = seedsGit ? await seedGit(app, owner) : undefined;
-  const { machines, leases } = await seedRunning(app, {
+  const {
+    machines,
+    leases,
+    close: closeRunning,
+  } = await seedRunning(app, {
     url,
+    directory,
     owner,
     token: boot.token,
     producer: p,
@@ -329,6 +380,9 @@ async function main() {
     const [verb, id] = line.trim().split(/\s+/);
     try {
       if (verb === 'quit') {
+        clearInterval(heartbeat);
+        await closeRunning();
+        await work.close();
         await app.stop();
         process.exit(0);
       } else if ((verb === 'disable' || verb === 'enable') && id) {
@@ -339,7 +393,13 @@ async function main() {
       console.error(error instanceof Error ? error.message : error);
     }
   });
-  const stop = () => void app.stop().then(() => process.exit(0));
+  const stop = () => {
+    clearInterval(heartbeat);
+    void closeRunning()
+      .then(() => work.close())
+      .then(() => app.stop())
+      .then(() => process.exit(0));
+  };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 }

@@ -1,12 +1,14 @@
-import { historicalTask } from '../tests/fixtures/historical-task.js';
-import { historicalExperiment } from '../tests/fixtures/historical-experiment.js';
+import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
+import { currentExperiment } from '../tests/fixtures/current-experiment.js';
+import type { TaskDelivery } from '@merv/contracts';
+import { join } from 'node:path';
 import type { Caller } from '@merv/contracts';
 
 /**
  * What the Running page draws, seeded in the demo server's own process: work in every state a
  * card can be in, two machines with agents on them, and the calls those agents make.
- * Historical scratch records are explicitly seeded; subsequent actions use real services. Machines report themselves on the runner heartbeat route, the
- * producer and the reviewer act through the tool API with their own tokens, and each agent
+ * Current Git work uses real leased checkouts, commits and final captures. Machines report
+ * themselves on the runner heartbeat route, producers and reviewers use scoped services, and each agent
  * calls the MCP endpoint with the credential it was registered with, so every call it makes
  * is admitted and observed the way a real one is.
  *
@@ -61,12 +63,14 @@ const studio: DemoMachine = {
     },
   ],
   capacity: 4,
+  capabilities: ['code.v2'],
 };
 const lab: DemoMachine = {
   runnerId: 'lab-gpu-01',
   machine: { hostname: 'lab-gpu-01', system: 'linux', architecture: 'x86_64' },
   platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 4 }],
   capacity: 4,
+  capabilities: ['code.v2'],
 };
 
 /** What a person asked for, as a text brief that carries the goal and every check. */
@@ -133,6 +137,7 @@ export async function seedRunning(
   app: App,
   input: {
     url: string;
+    directory: string;
     owner: Caller;
     /** The operator's own token: a runner authenticates with the key it was registered under. */
     token: string;
@@ -146,11 +151,15 @@ export async function seedRunning(
     ) => Promise<{ agent: { id: string }; token: string }>;
     sweep: DemoLease & { taskId: string };
   },
-): Promise<{ machines: DemoMachine[]; leases: DemoLease[] }> {
+): Promise<{ machines: DemoMachine[]; leases: DemoLease[]; close(): Promise<void> }> {
   const { ctx } = app;
   const { url, owner, token, joinAgent, sweep } = input;
   const p = input.producer;
   const r = input.reviewer;
+  const work = currentWork(ctx, {
+    directory: join(input.directory, 'running-workers'),
+    source: owner,
+  });
   const machines = [studio, lab];
   for (const machine of machines) await post(url, token, '/sessions/runners/heartbeat', machine);
 
@@ -168,6 +177,7 @@ export async function seedRunning(
       expectedRevision: record.workflow.revision,
       requestId: `${requestId}-assignment`,
     });
+    await work.attach(session);
     const reads: Read[] = [['workflow.assignment', { instanceId: record.id }]];
     const lease = {
       sessionId: session.id,
@@ -188,7 +198,7 @@ export async function seedRunning(
     notes: string[] = [],
   ) => {
     const brief = await p('artifact.create', briefOf(title, goal, checks, notes));
-    return await historicalTask(ctx, input.producerCaller, {
+    return await currentTask(ctx, input.producerCaller, {
       title,
       goal,
       checks,
@@ -199,23 +209,35 @@ export async function seedRunning(
   };
   /** A delivery that claims every check, submitted by the producer who did the work. */
   const deliver = async (created: any, title: string, lines: string[], requestId: string) => {
-    const delivery = await p('artifact.create', {
-      title,
-      content: lines.join('\n'),
-      mediaType: 'text/markdown',
-    });
-    return await p('task.submit_delivery', {
-      taskId: created.id,
-      artifactIds: [delivery.id],
-      confirmations: created.checks.map((check: string, index: number) => ({
-        checkNumber: index + 1,
-        status: 'met',
-        evidenceIds: [delivery.id],
-        notes: `${delivery.title} records it: ${check.toLowerCase()}.`,
-      })),
-      expectedRevision: created.workflow.revision,
-      requestId,
-    });
+    const held = await work.lease(created, input.producerCaller);
+    const content = lines.join('\n');
+    const delivery = await work.run(
+      held,
+      'artifact.create',
+      { title, content, mediaType: 'text/markdown' },
+      (caller, input) => ctx.artifacts.create(caller, input),
+    );
+    const commandId = await work.commit(held, { 'demo-result.md': content });
+    const submitted = await work.run(
+      held,
+      'task.submit_delivery',
+      {
+        taskId: created.id,
+        commandId,
+        artifactIds: [delivery.id],
+        confirmations: created.checks.map((check: string, index: number) => ({
+          checkNumber: index + 1,
+          status: 'met',
+          evidenceIds: [delivery.id],
+          notes: `${delivery.title} records it: ${check.toLowerCase()}.`,
+        })),
+        expectedRevision: created.workflow.revision,
+        requestId,
+      },
+      (caller, input) => ctx.tasks.submitDelivery(caller, input as unknown as TaskDelivery),
+    );
+    await work.release(held);
+    return submitted;
   };
 
   // A task an agent on the lab machine is working on, and the record of how far it got.
@@ -228,13 +250,6 @@ export async function seedRunning(
     ['Commuted pairs count as the same equation: a + b and b + a must land in one split.'],
   );
   const cleaner = await agent('Demo · data cleaner', 'demo-running-cleaner', lab, clean);
-  const cleaning = await cleaner.call('task.get', { taskId: clean.id });
-  await cleaner.call('task.context', {
-    taskId: clean.id,
-    purpose: 'work',
-    expectedRevision: cleaning.workflow.revision,
-    requestId: 'demo-running-clean-context',
-  });
   const audit = await cleaner.call('artifact.create', {
     title: 'Leak audit: held-out split',
     content: [
@@ -243,14 +258,6 @@ export async function seedRunning(
       'They move to training; the held-out split keeps 1,470 equations.',
     ].join('\n'),
     mediaType: 'text/markdown',
-  });
-  await cleaner.call('task.checkpoint', {
-    taskId: clean.id,
-    purpose: 'work',
-    expectedRevision: (await cleaner.call('task.get', { taskId: clean.id })).workflow.revision,
-    notes: 'Commuted pairs found and moved; the split sizes are next.',
-    artifactIds: [audit.id],
-    requestId: 'demo-running-clean-checkpoint',
   });
   cleaner.reads.push(
     ['task.get', { taskId: clean.id }],
@@ -317,7 +324,7 @@ export async function seedRunning(
   // An experiment whose design passed review and which an agent on the lab machine runs.
   const name = 'decay-sensitivity-p113';
   const intent = 'Does the grokking step move with weight decay at p = 113 as it does at p = 97?';
-  const experiment = await historicalExperiment(ctx, input.producerCaller, {
+  const experiment = await currentExperiment(ctx, input.producerCaller, {
     name,
     intent,
     details: 'The same one-layer transformer and harness as the p = 97 reproduction.',
@@ -420,7 +427,7 @@ export async function seedRunning(
   );
 
   // An experiment planned on the cleaned split: a dashed card that waits on the cleaning.
-  await historicalExperiment(ctx, input.producerCaller, {
+  await currentExperiment(ctx, input.producerCaller, {
     name: 'embedding-width-ablation',
     intent: 'Does halving the embedding width delay grokking on the cleaned split?',
     dependsOn: [clean.id],
@@ -437,7 +444,7 @@ export async function seedRunning(
   await reflecting.call('reflection.lens', { lensId: lens.id });
   await reflecting.call('project.records');
   reflecting.reads.push(['reflection.lens', { lensId: lens.id }], ['project.records', {}]);
-  return { machines, leases };
+  return { machines, leases, close: () => work.close() };
 }
 
 /**

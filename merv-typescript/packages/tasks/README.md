@@ -9,7 +9,9 @@ context recipe, and the task UI displays it. Delivery/reissue/verdict commands
 enforce those registered checks inside their transaction. See
 [workflow guidance](../../docs/WORKFLOW_GUIDANCE.md).
 
-`task@2` is the managed workflow for scratch tasks. Git tasks use `task@3`–`task@5`, which share its graph; service tasks use `task@6`, which suspends where the others fail (only `done` is terminal) and adds `revise_suspended` and `resume`. `task@1` was retired with its records on 2026-09-22. The program retains its private registration handle; generic workflow tools cannot start instances or bypass the task's evidence/review gates.
+Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@31`/`35` (small/large uploads), native Sandboxes work at `task@39`/`43`, and conflict-resolution service work at `task@6`/`11`. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
+
+Other stored versions remain read-only history: records, evidence, verdicts, context packages and pinned graphs are retained. Their runtime implementations are not registered, so they cannot dispatch or accept new contexts, checkpoints, claims or submissions. No old record is upgraded into another contract. The program retains private registration handles; generic workflow tools cannot bypass task gates.
 
 - **Create:** render and pin the goal and numbered checks as an immutable brief, or validate a compatible producer-supplied text brief. The current actor owns the task. Brief and goal fields are immutable.
 - **Submit delivery:** the producer supplies immutable artifacts and the current task revision. Every task requires a structured confirmation for every numbered check, with evidence references and verification notes. Merv pins a generated assessment alongside the evidence. The task enters `in_review` and a review request pins the brief plus delivery manifest in the same transaction.
@@ -32,7 +34,7 @@ Creation and type registration copy their inputs before asynchronous work. A typ
 
 ## Work prerequisites
 
-New task workflow versions 12–19 give a leased producer optional GPU access through
+Current non-native ordinary tasks give a leased producer optional GPU access through
 `task.compute_offers`, `task.compute_run`, `task.compute_status`, and
 `task.compute_cancel`. A run names the task's current work revision, a stable key,
 provider offer, bounded command, minutes and whole-workflow `maxUsd`; repeat the

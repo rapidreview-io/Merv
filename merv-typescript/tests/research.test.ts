@@ -1,4 +1,5 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { deliverCurrentTask } from './fixtures/current-task-delivery.js';
+import { currentTask } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import type { Caller, ReviewApplication } from '@merv/contracts';
 import { createService } from '@merv/contracts';
@@ -54,7 +55,7 @@ async function fixture(t: TestContext, store = false) {
   };
   await waitForManagedCode(app.ctx.codeWork, owner);
   const id = () => `research-test-${++sequence}`;
-  const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
+  const issue = async (role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
     const record = await app.ctx.scope.issueActor(owner, { name: id(), role });
     return {
       projectId: owner.projectId,
@@ -63,6 +64,7 @@ async function fixture(t: TestContext, store = false) {
     };
   };
   const reviewer = await issue('reviewer');
+  const taskReviewer = await issue('operator');
   const artifact = async (caller: Caller, title: string) =>
     await app.ctx.artifacts.create(caller, {
       title,
@@ -137,18 +139,9 @@ async function fixture(t: TestContext, store = false) {
     });
     return (await review(wave.review!.id, wave.workflow.revision)) as Reflection;
   };
-  /** A workspace-free task delivered and reviewed to done. */
+  /** A current Git task delivered and reviewed by distinct workers. */
   const finish = async (taskId: string) => {
-    const task = await app.ctx.tasks.get(owner, taskId);
-    const submitted = await app.ctx.tasks.submitDelivery(owner, {
-      ...confirmedDelivery(
-        { taskId, artifactIds: [(await artifact(owner, 'Delivered')).id] },
-        task.checks.length,
-      ),
-      expectedRevision: task.workflow.revision,
-      requestId: id(),
-    });
-    await review(submitted.reviewId!, submitted.workflow.revision);
+    await deliverCurrentTask(app.ctx, directory, owner, taskId, taskReviewer);
   };
   t.after(async () => {
     research.close();
@@ -352,7 +345,7 @@ async function hosted(f: Awaited<ReturnType<typeof fixture>>, main: Main) {
 }
 /** A finished task standing for accepted code main lacks. */
 const work = async (f: Awaited<ReturnType<typeof fixture>>) => {
-  const task = await historicalTask(f.app.ctx, f.owner, {
+  const task = await currentTask(f.app.ctx, f.owner, {
     title: 'Accepted work',
     goal: 'Deliver code main will need.',
     checks: ['It is delivered'],
@@ -544,10 +537,16 @@ test('a publication main overtook injects a successor task on what main lacks no
     [accepted.id, first].sort(),
   );
   assert.equal((await advanced(f, record.id)).at(-1).to, 'consolidating');
-  // Stale again, but main holds everything now: nothing is left to integrate.
-  await f.finish(second);
+  // Main integrated the work before the successor ran. End the now-unneeded
+  // task and explicitly reconsider integration against the latest main.
+  await f.app.ctx.tasks.markFailed(f.owner, {
+    taskId: second,
+    expectedRevision: 0,
+    reason: 'Main already integrated the required work.',
+    requestId: f.id(),
+  });
   main.unitIds = [];
-  assert.equal((await advance()).workflow.state, 'complete');
+  assert.equal((await advance({ retryIntegration: true })).workflow.state, 'complete');
   assert.equal(published.length, 2);
 });
 
@@ -722,7 +721,7 @@ test('completing a cycle digests what it decided, once, without naming anyone', 
 
 test('an ended cycle digests its reason and the selected work it leaves unfinished', async (t) => {
   const f = await fixture(t);
-  const task = await historicalTask(f.app.ctx, f.owner, {
+  const task = await currentTask(f.app.ctx, f.owner, {
     title: 'Survey the corpus',
     goal: 'List what the frozen corpus contains.',
     checks: ['The list exists'],
@@ -837,7 +836,7 @@ test('a digest stays within its bound by leaving entries out and counting them',
   for (let index = 0; index < 60; index++)
     dependsOn.push(
       (
-        await historicalTask(f.app.ctx, f.owner, {
+        await currentTask(f.app.ctx, f.owner, {
           title: `${'A long title that fills the digest. '.repeat(8)}${index}`,
           goal: 'Fill the digest.',
           checks: ['It is full'],
@@ -1210,7 +1209,7 @@ test('a wave that cannot finish is abandoned by its owner, which lifts the pause
     requestId: f.id(),
   });
   const task = () =>
-    historicalTask(f.app.ctx, f.owner, {
+    currentTask(f.app.ctx, f.owner, {
       title: 'Next step',
       goal: 'Start once the wave is over.',
       checks: ['Recorded'],
@@ -1416,7 +1415,7 @@ test('the advance that injects consolidation needs no next-wave choice, even whe
 
 test('completing a cycle with nextWave create opens the approved plan as work and the next cycle', async (t) => {
   const f = await fixture(t);
-  const carried = await historicalTask(f.app.ctx, f.owner, {
+  const carried = await currentTask(f.app.ctx, f.owner, {
     title: 'Work already under way',
     goal: 'Finish what the last wave started.',
     checks: ['It is finished'],
@@ -1614,7 +1613,7 @@ test('a stop plan and a text change specification complete as before and ignore 
 
 test('what would refuse the plan is reported before the advance, and skip is always a way on', async (t) => {
   const f = await fixture(t);
-  const carried = await historicalTask(f.app.ctx, f.owner, {
+  const carried = await currentTask(f.app.ctx, f.owner, {
     title: 'Work already under way',
     goal: 'Finish what the last wave started.',
     checks: ['It is finished'],
@@ -1655,7 +1654,7 @@ test('what would refuse the plan is reported before the advance, and skip is alw
 
 test('failed carried-over work remains evidence, while a project full of experiments refuses the plan', async (t) => {
   const f = await fixture(t);
-  const dead = await historicalTask(f.app.ctx, f.owner, {
+  const dead = await currentTask(f.app.ctx, f.owner, {
     title: 'Work that will die',
     goal: 'Be carried over and then fail.',
     checks: ['It is finished'],
@@ -1872,7 +1871,7 @@ test('a materialised hosted experiment waits on its hosted task and pins no base
 test('an automatic v2 wave exposes Code absence and rolls back before retry', async (t) => {
   const f = await fixture(t);
   await f.definition();
-  const input = await historicalTask(f.app.ctx, f.owner, {
+  const input = await currentTask(f.app.ctx, f.owner, {
     title: 'Unavailable input',
     goal: 'Find input data.',
     checks: ['Data is available'],

@@ -1,4 +1,5 @@
-import { historicalTask } from '../tests/fixtures/historical-task.js';
+import { currentTask } from '../tests/fixtures/current-work.js';
+import { deliverCurrentTask } from '../tests/fixtures/current-task-delivery.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -51,7 +52,7 @@ export async function runMountUnloadScenario(
   let unloading: Promise<void> | undefined;
   try {
     // Seed durable identities before loading the config that names their exact grants.
-    const seed = await createApp({ directory, components: ['state', 'scope'] });
+    const seed = await createApp({ directory });
     const identity = await (async () => {
       try {
         const admin = await seed.ctx.scope.bootstrap({
@@ -65,7 +66,7 @@ export async function runMountUnloadScenario(
         });
         const reviewer = await seed.ctx.scope.issueActor(operator, {
           name: 'Reviewer',
-          role: 'reviewer',
+          role: 'operator',
         });
         return { operator, producer, reviewer };
       } finally {
@@ -155,8 +156,7 @@ export async function runMountUnloadScenario(
       title: 'Brief',
       content: 'Goal: Keep native work available.\nCheck: Task reaches done.',
     });
-    // Replay work created before managed Git became mandatory.
-    const task = await historicalTask(
+    const task = await currentTask(
       running.ctx,
       {
         ...caller,
@@ -250,48 +250,19 @@ export async function runMountUnloadScenario(
       checks.actualProviderDisposed =
         true;
 
-    const delivery = await native(producer, 'artifact.create', {
-      title: 'Delivery',
-      content:
-        'Task reaches done. Native task, review, and feed operations continue while the independent mount is absent.',
-    });
-    const submitted = await native(producer, 'task.submit_delivery', {
-      taskId: task.id,
-      artifactIds: [delivery.id],
-      confirmations: [
-        {
-          checkNumber: 1,
-          status: 'met',
-          evidenceIds: [delivery.id],
-          notes:
-            'Native task, review, and feed operations remained available while the mount was absent.',
-        },
-      ],
-      expectedRevision: 0,
-      requestId: 'mount-delivery',
-    });
+    const { task: done, proof: delivery } = await deliverCurrentTask(
+      running.ctx,
+      directory,
+      { ...caller, credentialId: identity.producer.credential.id },
+      task.id,
+      {
+        ...identity.operator,
+        actorId: identity.reviewer.actor.id,
+        credentialId: identity.reviewer.credential.id,
+      },
+    );
     await native(reviewer, 'artifact.read', { artifactId: brief.id });
-    for (const artifactId of submitted.deliveryIds)
-      await native(reviewer, 'artifact.read', { artifactId });
-    const claim = await native(reviewer, 'review.start', { reviewId: submitted.reviewId });
-    const done = await native(reviewer, 'review.submit', {
-      reviewId: submitted.reviewId,
-      claimId: claim.claimId,
-      verdict: 'pass',
-      synopsis:
-        'Native task, independent review, and feed operations completed while the mount was absent.',
-      findings: [
-        {
-          criterionNumber: 1,
-          status: 'met',
-          evidenceIds: [delivery.id],
-          notes: 'The pinned delivery records native task operations continuing without the mount.',
-        },
-      ],
-      notes: 'Verified pinned evidence and native work with the mount absent.',
-      expectedRevision: 1,
-      requestId: 'mount-review',
-    });
+    await native(reviewer, 'artifact.read', { artifactId: delivery.id });
     assert.equal(done.workflow.state, 'done');
     const after = await native(reviewer, 'feed.post', {
       body: 'Independent review finished with the mount absent.',

@@ -1,8 +1,9 @@
-import { historicalExperiment } from './fixtures/historical-experiment.js';
-import { historicalTask } from './fixtures/historical-task.js';
+import { waitForManagedCode } from './fixtures/managed-code.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -100,8 +101,16 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
   t.after(unbind);
   const invoke = async <T = any>(worker: Caller, name: string, input: Data): Promise<T> =>
     (await app.ctx.tools.invoke(name, worker, input)).value as T;
+  const codeWork = currentWork(app.ctx, { directory: join(directory, 'code'), source: operator });
   const offer = async (task: Task) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    await app.ctx.sessions.heartbeatRunner(operator, {
+      runnerId: 'handoff',
+      machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+      capacity: 4,
+      capabilities: ['code.v2'],
+    });
     const session = await app.ctx.sessions.offer(operator, {
       instanceId: task.id,
       expectedRevision: task.workflow.revision,
@@ -109,9 +118,11 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
       requestId: randomUUID(),
       secret,
     });
-    return { session, worker: await app.ctx.sessions.authenticate(secret) };
+    const held = await codeWork.attach(session);
+    held.worker = await app.ctx.sessions.authenticate(secret);
+    return { session, worker: held.worker, held };
   };
-  const task = await historicalTask(app.ctx, operator, {
+  const task = await currentTask(app.ctx, operator, {
     title: 'GPU handoff canary',
     goal: 'Retain a shared GPU environment for verification.',
     checks: ['The environment is available to an independent reviewer.'],
@@ -157,16 +168,26 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
     content:
       'Machine sbx_shared is intentionally retained for the reviewer. No long work is needed.',
   });
+  const producerCode = producer.held;
+  producerCode.worker = producer.worker;
+  const commandId = await codeWork.commit(producerCode);
   const delivered = await invoke<Task>(
     producer.worker,
     'task.submit_delivery',
-    confirmedDelivery({ artifactIds: [evidence.id, capture.artifactId], requestId: randomUUID() }),
+    confirmedDelivery({
+      artifactIds: [evidence.id, capture.artifactId],
+      commandId,
+      requestId: randomUUID(),
+    }),
   );
   await app.ctx.sessions.release(operator, { sessionId: producer.session.id, runnerId: 'handoff' });
   await app.ctx.domainEvents.drain();
+  await codeWork.release(producerCode);
   await tasks.computeTick();
   assert.equal(stops, 0, 'review handoff does not release compute');
   const reviewer = await offer(delivered);
+  const reviewCode = reviewer.held;
+  reviewCode.worker = reviewer.worker;
   const retained = await invoke(reviewer.worker, 'artifact.get', {
     artifactId: capture.artifactId,
   });
@@ -227,6 +248,7 @@ test('real Sessions tools preserve the same rented GPU through task producer/rev
     requestId: randomUUID(),
   });
   await tasks.computeTick();
+  await codeWork.release(reviewCode);
   assert.equal(stops, 1, 'terminal task releases its machine');
   await assert.rejects(
     tasks.computeSsh(producer.worker, task.id, 'sbx_shared', 'ssh-ed25519 AAAA stale'),
@@ -303,8 +325,17 @@ test('experiment planning, both reviewers and execution share the work-owned ren
   t.after(unbind);
   const invoke = async <T = any>(worker: Caller, name: string, input: Data): Promise<T> =>
     (await app.ctx.tools.invoke(name, worker, input)).value as T;
+  const codeWork = currentWork(app.ctx, { directory: join(directory, 'code'), source: operator });
+  const heldBySession = new Map<string, Awaited<ReturnType<typeof codeWork.attach>>>();
   const offer = async (experiment: Experiment) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
+    await app.ctx.sessions.heartbeatRunner(operator, {
+      runnerId: 'handoff',
+      machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+      capacity: 4,
+      capabilities: ['code.v2'],
+    });
     const session = await app.ctx.sessions.offer(operator, {
       instanceId: experiment.id,
       expectedRevision: experiment.workflow.revision,
@@ -312,13 +343,19 @@ test('experiment planning, both reviewers and execution share the work-owned ren
       requestId: randomUUID(),
       secret,
     });
-    return { session, worker: await app.ctx.sessions.authenticate(secret) };
+    const held = await codeWork.attach(session);
+    held.worker = await app.ctx.sessions.authenticate(secret);
+    heldBySession.set(session.id, held);
+    return { session, worker: held.worker, held };
   };
   const release = async (sessionId: string) => {
     await app.ctx.sessions.release(operator, { sessionId, runnerId: 'handoff' });
     await app.ctx.domainEvents.drain();
+    const held = heldBySession.get(sessionId);
+    if (held) await codeWork.release(held);
   };
-  let experiment = await historicalExperiment({ state: app.ctx.state, experiments }, operator, {
+  await waitForManagedCode(app.ctx.codeWork, operator);
+  let experiment = await experiments.create(operator, {
     name: 'shared-feasibility-environment',
     intent: 'Use the same retained environment for a small comparison.',
     requestId: randomUUID(),
@@ -445,6 +482,18 @@ test('experiment planning, both reviewers and execution share the work-owned ren
     requestId: randomUUID(),
   });
   await release(executor.session.id);
+  const deadline = Date.now() + 10_000;
+  while (
+    (
+      await app.ctx.codeWork.capture(operator, {
+        kind: 'session-final',
+        sessionId: executor.session.id,
+      })
+    ).status !== 'ready'
+  ) {
+    assert.ok(Date.now() < deadline, 'Executor final capture must finish before review');
+    await delay(25);
+  }
   await experiments.computeTick();
   assert.equal(stops, 0);
   experiment = await review(experiment);

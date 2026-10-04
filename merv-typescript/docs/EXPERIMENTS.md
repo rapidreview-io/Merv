@@ -1,6 +1,6 @@
 # Experiments
 
-Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document older workflow versions. See [Always-on Git](ALWAYS_GIT.md).
+Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document retired, read-only workflow versions. See [Always-on Git](ALWAYS_GIT.md).
 
 The production Experiments plugin connects a research question to design review,
 execution, result review and an explicit conclusion. It retains every attempt
@@ -13,10 +13,7 @@ Reviewers carry what it means into the living paper.
 The provider injects **State, Scope, Artifacts, Workflows, Reviews, Context Builder,
 Code and Paper**. It owns experiment/attempt/evidence/submission records, the
 managed `experiment` programs, four context recipes and its Reviews submission
-route. New experiments start on version 5 (scratch) or on 6, 7 or 8 (explicit
-Git); every design carries a feasibility statement. Versions 1-4 could no longer
-start and were retired on 2026-09-22 with their records; the events log keeps
-their history.
+route. New experiments select managed-Git contracts 28/32 or native Sandboxes contracts 36/40, according to upload support. Every design carries a feasibility statement. Other stored versions retain their records as read-only history and have no registered runtime implementation.
 Workflows continues to own transitions, guidance and execution authority;
 Reviews owns independent claims and verdicts; Artifacts owns immutable file
 metadata and bytes.

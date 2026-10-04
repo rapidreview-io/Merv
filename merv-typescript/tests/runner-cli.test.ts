@@ -1,4 +1,4 @@
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -222,7 +222,7 @@ test('runner CLI retains the default Code driver and supports explicit opt-in', 
 });
 
 test(
-  'historical scratch work runs real MCP children without Code and drains them on both signals',
+  'current Git work runs real MCP children and drains them on both signals',
   { timeout: 45_000 },
   async (t) => {
     const directory = mkdtempSync(join(tmpdir(), 'merv-runner-cli-live-'));
@@ -230,7 +230,7 @@ test(
     const composition = loadConfiguration({ directory: serverDirectory, api: true, port: 0 });
     const app = await createApp({
       directory: serverDirectory,
-      config: { plugins: composition.entries.filter((entry) => !entry.id.startsWith('code')) },
+      config: { plugins: composition.entries },
     });
     t.after(async () => {
       await app.stop();
@@ -247,7 +247,7 @@ test(
     };
     symlinkSync(process.execPath, join(directory, 'relative-node'));
     for (const signal of ['SIGTERM', 'SIGINT'] as const) {
-      const task = await historicalTask(app.ctx, caller, {
+      const task = await currentTask(app.ctx, caller, {
         title: signal,
         goal: 'Prove CLI shutdown.',
         checks: ['Real child used MCP.'],
@@ -261,7 +261,7 @@ test(
         projectId: boot.project.id,
         requestTimeoutMs: 1000,
         capacity: 1,
-        workspaceDrivers: [],
+        workspaceDrivers: ['code'],
         profiles: [
           {
             name: 'fixture',
@@ -276,13 +276,13 @@ test(
       const path = join(directory, `${signal}.json`);
       writeFileSync(path, JSON.stringify(config));
       await app.ctx.sessions.setDispatch(caller, { enabled: true });
-      const child = launch(t, ['--config', path], boot.token, true);
+      const child = launch(t, ['--config', path], boot.token);
       const ready = await bounded(child.ready, 'Runner-only Cordis provider did not become ready');
       assert.equal(ready.mode, 'runner');
       assert.equal(ready.directory, join(directory, machine));
       assert.deepEqual(ready.plugins, [{ id: 'runner', name: '@merv/runner', state: 'active' }]);
       assert.ok(ready.runner.runnerId);
-      assert.equal(existsSync(join(ready.directory, 'code-v2')), false);
+      assert.equal(existsSync(join(ready.directory, 'code-v2')), true);
       const deadline = Date.now() + 15_000;
       let outputs: string[] = [];
       while (
@@ -304,7 +304,7 @@ test(
         (runner) => runner.runnerId === ready.runner.runnerId,
       );
       assert.ok(presence);
-      assert.ok(!presence.capabilities?.includes('code.v2'));
+      assert.ok(presence.capabilities?.includes('code.v2'));
       await app.ctx.sessions.setDispatch(caller, { enabled: false });
       assert.equal(await child.stop(signal), 0, child.stderr);
       const closed = await app.ctx.sessions.get(caller, active.id);

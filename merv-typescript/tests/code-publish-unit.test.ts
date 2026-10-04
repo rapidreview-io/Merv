@@ -722,11 +722,7 @@ test('a disabled project and a published tree mismatch both show on the unit', a
     reason: 'The disposable stale pull request merged under a bypass.',
     requestId: 'failed-canary',
   });
-  const core = new WorkUnitRecords(
-    f.state,
-    f.scope,
-    new CodeWriterService(f.state, f.scope, 900),
-  );
+  const core = new WorkUnitRecords(f.state, f.scope, new CodeWriterService(f.state, f.scope, 900));
   assert.equal((await core.unit(f.admin, work.id)).publication?.state, 'pending');
   core.close();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'disabled');

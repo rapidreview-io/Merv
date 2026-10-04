@@ -1,5 +1,4 @@
-// Historical scratch records exercise the original assignment and recovery contract.
-import { historicalTask } from './fixtures/historical-task.js';
+import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -42,11 +41,23 @@ async function fixture(t: TestContext) {
     projectId: authenticated.projectId,
     credentialId: authenticated.credential.id,
   };
-  const task = await historicalTask(app.ctx, source, {
+  const task = await currentTask(app.ctx, source, {
     title: 'Verify',
     goal: 'Verify a result.',
     checks: ['The result is 42.'],
     requestId: 'create',
+  });
+  const work = currentWork(app.ctx, { directory: join(directory, 'work'), source });
+  const held = new Map<string, Awaited<ReturnType<typeof work.attach>>>();
+  t.after(() => {
+    for (const lease of held.values()) lease.driver?.dispose();
+  });
+  await app.ctx.sessions.heartbeatRunner(source, {
+    runnerId: 'test',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
   });
   let sequence = 0;
   const offer = async (target: Task = task) => {
@@ -58,6 +69,7 @@ async function fixture(t: TestContext) {
       requestId: `offer-${++sequence}`,
       secret,
     });
+    held.set(session.id, await work.attach(session));
     return { secret, session };
   };
   async function run<T>(
@@ -66,12 +78,27 @@ async function fixture(t: TestContext) {
     input: Data,
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ): Promise<T> {
+    if (tool === 'task.submit_delivery') {
+      const session = await app.ctx.sessions.get(source, caller.session!.id);
+      let lease = held.get(session.id);
+      if (!lease) {
+        lease = await work.attach(session);
+        held.set(session.id, lease);
+      }
+      lease.worker = caller;
+      input = { ...input, commandId: await work.commit(lease) };
+    }
     const invocation = await app.ctx.sessions.prepare(caller, tool, input);
     return await app.ctx.sessions.run(invocation, handler);
   }
   const release = async (session: Session) => {
     await app.ctx.sessions.release(source, { sessionId: session.id, runnerId: 'test' });
     await app.ctx.domainEvents.drain();
+    const lease = held.get(session.id);
+    if (lease) {
+      await work.release(lease);
+      held.delete(session.id);
+    }
   };
   const deliver = async (caller: Caller) => {
     const artifact = await run(
@@ -91,6 +118,11 @@ async function fixture(t: TestContext) {
       async (worker, input) =>
         await app.ctx.tasks.submitDelivery(worker, input as unknown as TaskDelivery),
     );
+    const lease = held.get(caller.session!.id);
+    if (lease) {
+      await work.release(lease);
+      held.delete(caller.session!.id);
+    }
     return { artifact, delivered };
   };
   return { app, source, task, offer, run, release, deliver };

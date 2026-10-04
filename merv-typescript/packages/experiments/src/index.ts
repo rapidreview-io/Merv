@@ -83,10 +83,9 @@ import {
   designRoles,
   EXPERIMENT_LIMITS,
   ExperimentProgram,
-  derivedBase,
   programVersion,
   nativeExperiment,
-  programWorkspace,
+  currentExperiment,
   reviewedSubmission,
   reviewing,
   rolesFor,
@@ -111,6 +110,7 @@ interface StandingRow {
   name: string;
   review_id: string | null;
   state: string;
+  version: number;
   revision: number;
   updated_at: string;
   lease_id: string | null;
@@ -251,6 +251,10 @@ export class ExperimentService implements Experiments {
               review.subjectId,
               review.projectId,
             )),
+          claim: async (caller, review, tx) => {
+            const workflow = await this.workflows.get(caller, review.subjectId, tx);
+            this.program.handleFor(workflow.version);
+          },
           submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
           // An experiment is reviewed twice, so each review is named by the gate it read.
           gates: async (reviewIds, sql) => {
@@ -434,7 +438,9 @@ export class ExperimentService implements Experiments {
         ),
       };
       const nodes: RunningNode[] = [];
-      for (const row of rows)
+      for (const row of rows.filter(
+        (row) => currentExperiment(row.version) || held.includes(row.id),
+      ))
         nodes.push(experimentNode(await this.standing(caller, row, context, tx)));
       return [...nodes, ...runs.map(computeNode)];
     });
@@ -485,7 +491,7 @@ export class ExperimentService implements Experiments {
     ...params: (string | number)[]
   ): Promise<StandingRow[]> {
     return await tx.all<StandingRow>(
-      `SELECT e.id,e.name,e.review_id,w.state,w.revision,w.updated_at,l.id AS lease_id
+      `SELECT e.id,e.name,e.review_id,w.state,w.version,w.revision,w.updated_at,l.id AS lease_id
        FROM experiments e JOIN wf_instances w ON w.id=e.id
        LEFT JOIN experiment_leases l ON l.project_id=e.project_id AND l.experiment_id=e.id
         AND l.revision=w.revision AND l.released_at IS NULL
@@ -526,7 +532,7 @@ export class ExperimentService implements Experiments {
     const ended = terminal.has(row.state);
     const review = reviewing(row.state) && row.review_id;
     let exhausted = false;
-    if (reviewing(row.state))
+    if (currentExperiment(row.version) && reviewing(row.state))
       try {
         exhausted = (
           await this.workflows.limitStatus(
@@ -649,7 +655,7 @@ export class ExperimentService implements Experiments {
         submissions,
         reviewId: row.review_id,
         conclusion: row.conclusion,
-        ...(nativeExperiment(workflow.version)
+        ...(currentExperiment(workflow.version) && nativeExperiment(workflow.version)
           ? {
               captureArtifactIds:
                 (await this.nativeWork?.artifactIds(caller.projectId, 'experiment', id, tx)) ?? [],
@@ -658,9 +664,23 @@ export class ExperimentService implements Experiments {
             ? {
                 compute: await this.compute.rows(caller.projectId, id, attempt.index, tx),
                 machines: await this.compute.machines.rows(caller.projectId, id, tx),
-                captureArtifactIds: await this.compute.artifactIds(caller.projectId, id, tx),
+                captureArtifactIds: [
+                  ...new Set([
+                    ...(await this.compute.artifactIds(caller.projectId, id, tx)),
+                    ...((await this.nativeWork?.artifactIds(
+                      caller.projectId,
+                      'experiment',
+                      id,
+                      tx,
+                    )) ?? []),
+                  ]),
+                ],
               }
-            : {}),
+            : {
+                captureArtifactIds:
+                  (await this.nativeWork?.artifactIds(caller.projectId, 'experiment', id, tx)) ??
+                  [],
+              }),
       };
     });
   }
@@ -698,13 +718,14 @@ export class ExperimentService implements Experiments {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const rows = await tx.all<{ name: string; state: string }>(
-        'SELECT e.name,w.state FROM experiments e JOIN wf_instances w ON w.id=e.id WHERE e.project_id=?',
+      const rows = await tx.all<{ name: string; state: string; version: number }>(
+        'SELECT e.name,w.state,w.version FROM experiments e JOIN wf_instances w ON w.id=e.id WHERE e.project_id=?',
         caller.projectId,
       );
       return {
         names: rows.map((row) => row.name.toLowerCase()),
-        active: rows.filter((row) => !terminal.has(row.state)).length,
+        active: rows.filter((row) => currentExperiment(row.version) && !terminal.has(row.state))
+          .length,
       };
     });
   }
@@ -809,7 +830,7 @@ export class ExperimentService implements Experiments {
           await this.requireNativeWork().pin(caller.projectId, 'experiment', workflow.id, tx);
           await this.nativeTransition(caller, workflow, 1, tx);
         }
-        if (derivedBase(workflow.version)) await this.code!.declareUnit(caller, workflow.id, tx);
+        await this.code!.declareUnit(caller, workflow.id, tx);
         await this.record(
           caller,
           'created',
@@ -833,6 +854,7 @@ export class ExperimentService implements Experiments {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'attach', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
+        this.program.handleFor(experiment.workflow.version);
         this.revision(experiment, input.expectedRevision);
         check(
           experiment.attempt.index === input.attemptIndex,
@@ -1029,6 +1051,7 @@ export class ExperimentService implements Experiments {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'transition', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
+        this.program.handleFor(experiment.workflow.version);
         this.revision(experiment, input.expectedRevision);
         const prepared = await this.checkAction({
           caller,
@@ -1179,7 +1202,7 @@ export class ExperimentService implements Experiments {
     stage: 'design' | 'results',
     tx: Transaction,
   ): Promise<CodeCaptureRef | undefined> {
-    if (stage !== 'results' || experiment.workspace !== 'git') return undefined;
+    if (stage !== 'results') return undefined;
     check(
       caller.session,
       'session_required',
@@ -1198,7 +1221,7 @@ export class ExperimentService implements Experiments {
         p.revision === experiment.workflow.revision &&
         p.actorId === caller.actorId &&
         p.workflow.state === 'running' &&
-        programWorkspace(p.workflow.version) === 'git' &&
+        currentExperiment(p.workflow.version) &&
         !p.readOnly,
       'experiment_capture_provenance',
       'Submit from the exact attached running Git worker before final capture',
@@ -1488,7 +1511,7 @@ export class ExperimentService implements Experiments {
                 terminalRevision: moved.revision,
                 submissionRef: submission.id,
                 reviewRef: review.id,
-                codeRef: experiment.workspace === 'git' ? submission.codeCaptureRef! : null,
+                codeRef: submission.codeCaptureRef!,
                 reviewSessionId: caller.session?.id ?? null,
               },
               tx,
