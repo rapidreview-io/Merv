@@ -1,3 +1,4 @@
+import type { Task, TaskCheckpointInput, TaskContext, TaskDelivery } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,10 +11,6 @@ import type {
   Caller,
   Data,
   SessionToolPolicy,
-  Task,
-  TaskCheckpointInput,
-  TaskContext,
-  TaskDelivery,
   Transaction,
   WorkflowDefinition,
   WorkflowExecution,

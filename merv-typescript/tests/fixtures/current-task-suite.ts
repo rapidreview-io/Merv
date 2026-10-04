@@ -1,9 +1,10 @@
+import type { Task, TaskDelivery, TaskReview } from '@merv/tasks/types';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Caller, Task, TaskDelivery, TaskReview } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import { createApp } from './app.js';
 import { currentTask, currentWork } from './current-work.js';
 import { confirmedDelivery, reviewedFindings } from './task-evidence.js';

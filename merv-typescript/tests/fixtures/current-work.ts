@@ -1,3 +1,4 @@
+import type { TaskCreate, Tasks } from '@merv/tasks/types';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -6,8 +7,6 @@ import {
   effectiveWorkspace,
   type Caller,
   type Data,
-  type TaskCreate,
-  type Tasks,
   type Transaction,
   type WorkspaceHandle,
 } from '@merv/contracts';

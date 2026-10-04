@@ -1,3 +1,4 @@
+import type { Task } from '@merv/tasks/types';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import test from 'node:test';
@@ -7,7 +8,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Caller, Data, Task } from '@merv/contracts';
+import type { Caller, Data } from '@merv/contracts';
 import type { SandboxCompute, SandboxRental } from '@merv/sandboxes/types';
 import type { TaskService } from '@merv/tasks';
 import { createApp } from './fixtures/app.js';

@@ -1,3 +1,4 @@
+import type { Task, TaskCreate, Tasks } from '@merv/tasks/types';
 import { renderBrief } from '../../packages/tasks/src/evidence.js';
 import { TASK_WORKFLOW } from '@merv/tasks';
 import {
@@ -7,9 +8,6 @@ import {
   type Artifacts,
   type Caller,
   type State,
-  type Task,
-  type TaskCreate,
-  type Tasks,
   type Transaction,
   type Workflows,
 } from '@merv/contracts';

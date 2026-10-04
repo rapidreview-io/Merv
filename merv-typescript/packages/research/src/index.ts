@@ -1,3 +1,4 @@
+import type { ServiceTaskCreator, Tasks } from '@merv/tasks/types';
 import type { Code } from '@merv/code-work/types';
 import {
   check,
@@ -19,9 +20,7 @@ import {
   type Data,
   type DomainEvents,
   type Scope,
-  type ServiceTaskCreator,
   type State,
-  type Tasks,
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowDefinition,

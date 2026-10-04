@@ -189,6 +189,26 @@ export interface CodeRunning {
   /** The Code section of each `work:<id>` key that has a unit; nothing for the rest. */
   runningCode(caller: Caller, keys: readonly string[]): Promise<RunningSection[]>;
 }
+/**
+ * The port a work owner binds so Code can open the reviewed work that resolves a base or
+ * integrates a GitHub branch. It runs in Code's transaction; no public input selects it.
+ */
+export interface ResolutionWorkCreator {
+  create(
+    input: {
+      projectId: string;
+      requestId: string;
+      title: string;
+      goal: string;
+      checks: string[];
+    } & (
+      | { baseReference: string; dependsOn?: never }
+      /** Prerequisites of the same project; the base is derived from them. */
+      | { dependsOn: string[]; baseReference?: never }
+    ),
+    tx: Transaction,
+  ): Promise<{ id: string }>;
+}
 export interface Code
   extends
     CodeCommands,
@@ -198,7 +218,7 @@ export interface Code
     CodeRepositoryControls,
     CodePublicationApi,
     CodeRunning {
-  bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void;
+  bindServiceTasks(provider: ResolutionWorkCreator): () => void;
   controlPublication(caller: Caller, input: unknown): Promise<unknown>;
   readonly github: import('@merv/contracts').CodeGitHub;
   /**

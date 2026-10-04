@@ -1,3 +1,4 @@
+import type { Task, TaskCheckpointInput } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
@@ -7,7 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Caller, Data, SessionToolPolicy, Task, TaskCheckpointInput } from '@merv/contracts';
+import type { Caller, Data, SessionToolPolicy } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { countWrites } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';

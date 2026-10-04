@@ -12,6 +12,7 @@ import {
   advanceSchema,
   replanSchema,
 } from './input.js';
+import { mainAgentGuide } from './guide.js';
 export const researchToolsPlugin = {
   name: 'merv-research-tools',
   inject: ['research', 'tools'],
@@ -98,6 +99,8 @@ export const researchToolsPlugin = {
       },
     ])
       ctx.effect(() => ctx.tools.register(tool));
+    // Research composes the product, so it tells every main agent how Merv works.
+    ctx.effect(() => ctx.tools.contributeInstructions(mainAgentGuide));
   },
 };
 export default researchToolsPlugin;

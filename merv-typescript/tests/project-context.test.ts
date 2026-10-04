@@ -1,3 +1,4 @@
+import type { TaskContext } from '@merv/tasks/types';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { createService } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
@@ -9,14 +10,7 @@ import { randomBytes } from 'node:crypto';
 
 import { ProjectScope } from '@merv/scope';
 import { parseProjectContextUpdate, projectContextUpdateSchema } from '@merv/scope/project-context';
-import type {
-  Caller,
-  Data,
-  Principal,
-  ProjectContextUpdate,
-  TaskContext,
-  Transaction,
-} from '@merv/contracts';
+import type { Caller, Data, Principal, ProjectContextUpdate, Transaction } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { openState } from './fixtures/state.js';
 

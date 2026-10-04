@@ -1,3 +1,4 @@
+import type { Task, TaskCreate } from '@merv/tasks/types';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
@@ -8,7 +9,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Caller, Task, TaskCreate, Verdict, WorkflowDefinition } from '@merv/contracts';
+import type { Caller, Verdict, WorkflowDefinition } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;

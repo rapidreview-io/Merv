@@ -1,3 +1,4 @@
+import type { Tasks } from '@merv/tasks/types';
 import { mapAsync } from '@merv/contracts';
 import { createService } from '@merv/contracts';
 import type { Context } from 'cordis';
@@ -9,7 +10,6 @@ import {
   type Reviews,
   type Scope,
   type State,
-  type Tasks,
   type Transaction,
   type Workflows,
 } from '@merv/contracts';

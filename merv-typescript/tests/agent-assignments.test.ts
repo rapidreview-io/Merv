@@ -1,3 +1,4 @@
+import type { Task } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -5,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { executionOutputs, type Artifact, type Caller, type Task } from '@merv/contracts';
+import { executionOutputs, type Artifact, type Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 

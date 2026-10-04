@@ -10,11 +10,11 @@ import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { createApp } from './fixtures/app.js';
-import type { ContextInput, TaskTypeDefinition } from '@merv/contracts';
+import type { ContextInput, ContextRecipeDefinition } from '@merv/contracts';
 import { buildContext } from './fixtures/context.js';
 import { openState, storedContext } from './fixtures/state.js';
 
-const definition: TaskTypeDefinition = {
+const definition: ContextRecipeDefinition = {
   name: 'test.context',
   version: 1,
   kind: 'work',
@@ -177,7 +177,7 @@ test('additional task types register recipes directly and retire without retaini
       actorName: 'Operator',
     });
     const caller = { actorId: identity.actor.id, projectId: identity.project.id };
-    const definition: TaskTypeDefinition = {
+    const definition: ContextRecipeDefinition = {
       name: 'custom.plan',
       version: 1,
       kind: 'work',

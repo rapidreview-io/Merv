@@ -22,13 +22,13 @@ import {
   type ContextBuild,
   type ContextItem,
   type Scope,
-  type TaskTypeDefinition,
+  type ContextRecipeDefinition,
   type Transaction,
 } from '@merv/contracts';
 import { buildContext } from './fixtures/context.js';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
 
-const definition: TaskTypeDefinition = {
+const definition: ContextRecipeDefinition = {
   name: 'test.placement',
   version: 1,
   kind: 'work',
@@ -105,7 +105,7 @@ test('a restart registers its stored recipe versions without a write transaction
     definition,
     { ...definition, name: 'test.placement-review', kind: 'review' },
   ];
-  for (const recipe of definitions as TaskTypeDefinition[]) await first.register(recipe);
+  for (const recipe of definitions as ContextRecipeDefinition[]) await first.register(recipe);
   first.close();
   await assert.rejects(first.register(definition), { code: 'context_builder_closed' });
 
@@ -122,7 +122,7 @@ test('a restart registers its stored recipe versions without a write transaction
     transactions++;
     return transaction(fn);
   }) as typeof state.transaction;
-  for (const recipe of definitions as TaskTypeDefinition[]) await restarted.register(recipe);
+  for (const recipe of definitions as ContextRecipeDefinition[]) await restarted.register(recipe);
   assert.equal(transactions, 0);
   // A stored version still pins its recipe, read without a write transaction too.
   await assert.rejects(

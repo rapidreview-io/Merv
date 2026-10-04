@@ -21,14 +21,14 @@ import type {
   ContextBuild,
   ContextItem,
   ContextPreview,
-  TaskTypeDefinition,
+  ContextRecipeDefinition,
 } from '@merv/contracts';
 import { contextSource } from './fixtures/context.js';
 import { openState } from './fixtures/state.js';
 
 const caller: Caller = { actorId: 'actor_items', projectId: 'project_items' };
 const subject = { id: 'assignment', revision: 1 };
-const recipe = (maxChars: number, required = [true, false]): TaskTypeDefinition => ({
+const recipe = (maxChars: number, required = [true, false]): ContextRecipeDefinition => ({
   name: 'test.items',
   version: 1,
   kind: 'work',
@@ -79,7 +79,7 @@ function memory(documents: ReturnType<typeof doc>[] = []) {
   return { artifacts, reads };
 }
 const render = async (
-  definition: TaskTypeDefinition,
+  definition: ContextRecipeDefinition,
   inputs: Record<string, ContextItem[]>,
   artifacts = memory().artifacts,
 ) =>
@@ -350,7 +350,7 @@ test('omitted holds only units the budget kept out', async () => {
 });
 
 test('300 paper-shaped items fit 32k without failing', async () => {
-  const definition: TaskTypeDefinition = {
+  const definition: ContextRecipeDefinition = {
     ...recipe(32_000, [true, true, false]),
   };
   const paper = Array.from({ length: 300 }, (_, i) =>

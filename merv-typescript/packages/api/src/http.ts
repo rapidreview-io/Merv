@@ -14,7 +14,7 @@ import {
   type CallToolResult,
 } from '@modelcontextprotocol/sdk/types.js';
 import type { z } from 'zod';
-import { MervError, mainAgentGuide, plain, type Caller, type Scope } from '@merv/contracts';
+import { MervError, plain, type Caller, type Scope } from '@merv/contracts';
 import type { IdentityProvider } from '@merv/identity/types';
 import type {
   ApiCredential,
@@ -575,7 +575,12 @@ export class ApiServer {
         instructions:
           principal.kind === 'session'
             ? 'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.'
-            : `${mainAgentGuide}\n\nHuman sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.`,
+            : [
+                this.tools.instructions(),
+                'Human sessions and account machine keys must explicitly select a project using X-Merv-Project-Id or request _meta["merv/projectId"]. Actor tokens and project machine keys default to their fixed project. Use actor.whoami and project.get to inspect the selected identity and project.',
+              ]
+                .filter(Boolean)
+                .join('\n\n'),
       },
     );
     const selected = (meta?: Record<string, unknown>) =>

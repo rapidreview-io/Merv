@@ -1,17 +1,17 @@
-import { visible } from '@merv/contracts';
-import type { Context } from 'cordis';
-import type {} from '@merv/api/types';
-import { z } from 'zod';
-import { rentalSchema, computeOutputsSchema } from '@merv/sandboxes/managed-compute';
 import type {
-  Caller,
   TaskCreate,
   TaskDelivery,
   TaskReissue,
   TaskMarkFailed,
   TaskContext,
   TaskCheckpointInput,
-} from '@merv/contracts';
+} from './types.js';
+import { visible } from '@merv/contracts';
+import type { Context } from 'cordis';
+import type {} from '@merv/api/types';
+import { z } from 'zod';
+import { rentalSchema, computeOutputsSchema } from '@merv/sandboxes/managed-compute';
+import type { Caller } from '@merv/contracts';
 
 const requestId = z.string().min(1).max(200);
 const id = z.string().min(1);

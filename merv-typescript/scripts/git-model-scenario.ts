@@ -1,3 +1,4 @@
+import type { Task } from '@merv/tasks/types';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -7,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { importRepository } from '../src/code-import.js';
-import type { CodeProjectStatus, CodeStoreOperation, Task } from '@merv/contracts';
+import type { CodeProjectStatus, CodeStoreOperation } from '@merv/contracts';
 
 /**
  * Take the Git model through a running server's own HTTP/MCP surface: bind a project to a

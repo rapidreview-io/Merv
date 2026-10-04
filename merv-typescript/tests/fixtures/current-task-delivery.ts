@@ -1,4 +1,5 @@
-import type { Artifacts, Caller, Reviews, Tasks, TaskDelivery, TaskReview } from '@merv/contracts';
+import type { Tasks, TaskDelivery, TaskReview } from '@merv/tasks/types';
+import type { Artifacts, Caller, Reviews } from '@merv/contracts';
 import { currentWork } from './current-work.js';
 import { confirmedDelivery, reviewedFindings } from './task-evidence.js';
 

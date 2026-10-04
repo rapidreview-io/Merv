@@ -92,6 +92,7 @@ export class ToolRegistry implements Tools {
   private readonly catalogs = new Map<string, CatalogState>();
   private sessions?: SessionRegistration;
   private readonly callerRules = new Map<CallerKind, CallerRules>();
+  private readonly guide: { text: string }[] = [];
   private stopping = false;
 
   constructor(
@@ -322,6 +323,19 @@ export class ToolRegistry implements Tools {
     return () => {
       if (this.callerRules.get(kind) === rules) this.callerRules.delete(kind);
     };
+  }
+
+  contributeInstructions(text: string): () => void {
+    const part = { text };
+    this.guide.push(part);
+    return () => {
+      const index = this.guide.indexOf(part);
+      if (index >= 0) this.guide.splice(index, 1);
+    };
+  }
+
+  instructions(): string {
+    return this.guide.map(({ text }) => text).join('\n\n');
   }
 
   /** The rules of the plugin that issued this caller, if any; fails closed without them. */

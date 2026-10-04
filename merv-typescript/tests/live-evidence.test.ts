@@ -1,6 +1,7 @@
+import type { Task } from '@merv/tasks/types';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Task, ReviewRequest } from '@merv/contracts';
+import type { ReviewRequest } from '@merv/contracts';
 import { acceptance, verifyLiveEvidence } from '../scripts/live-evidence.js';
 
 function fixture() {

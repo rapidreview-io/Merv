@@ -1,4 +1,4 @@
-import type { TaskTypeDefinition } from '@merv/contracts';
+import type { ContextRecipeDefinition } from '@merv/contracts';
 
 const section = (key: string, title: string, required = true) => ({ key, title, required });
 const task = section('task', 'Task and acceptance criteria');
@@ -35,7 +35,7 @@ const workOutput =
  * whole, highest priority first, while they fit, and otherwise listed by one line naming the tool
  * that retrieves them.
  */
-export const TASK_TYPES: TaskTypeDefinition[] = [
+export const TASK_TYPES: ContextRecipeDefinition[] = [
   {
     name: 'task.work',
     version: 4,

@@ -1,5 +1,6 @@
+import type { Task } from '@merv/tasks/types';
 import assert from 'node:assert/strict';
-import type { Task, ReviewRequest } from '@merv/contracts';
+import type { ReviewRequest } from '@merv/contracts';
 
 export const acceptance = {
   title: 'Verify arithmetic evidence',

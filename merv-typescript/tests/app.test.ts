@@ -15,7 +15,7 @@ import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
 import { piInstructions, turnNotes } from '../packages/pi/src/prompt.js';
-import { mainAgentGuide } from '@merv/contracts';
+import { mainAgentGuide } from '../packages/research/src/guide.js';
 
 async function client(url: string, token: string) {
   const result = new Client({ name: 'merv-integration', version: '1.0.0' });
@@ -317,9 +317,11 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);
     assert.equal(new Set(models).size, models.length);
     assert.ok(models.length <= 128, `${models.length} tools`);
-    // Every tool the agent's instructions and notes name is registered.
+    // The full composition gives every main agent the research guide, and every tool the
+    // agent's instructions and notes name is registered.
+    assert.equal(app.ctx.tools.instructions(), mainAgentGuide);
     const named = [
-      piInstructions,
+      piInstructions(app.ctx.tools.instructions()),
       ...turnNotes({
         role: 'producer',
         actorId: 'actor_1',

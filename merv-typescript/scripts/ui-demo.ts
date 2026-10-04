@@ -1,6 +1,7 @@
+import type { TaskDelivery } from '@merv/tasks/types';
 import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
 import { waitForManagedCode } from '../tests/fixtures/managed-code.js';
-import type { TaskDelivery, ReviewApplication } from '@merv/contracts';
+import type { ReviewApplication } from '@merv/contracts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

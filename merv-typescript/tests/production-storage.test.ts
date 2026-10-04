@@ -1,3 +1,4 @@
+import type { TaskReview } from '@merv/tasks/types';
 import { currentTask } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -6,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test, { type TestContext } from 'node:test';
-import { childRequest, type Caller, type TaskReview } from '@merv/contracts';
+import { childRequest, type Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';

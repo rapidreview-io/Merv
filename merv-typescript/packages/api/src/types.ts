@@ -122,6 +122,10 @@ export interface Tools {
   registerCallerRules(kind: CallerKind, rules: CallerRules): () => void;
   /** Re-admits an invocation's arguments after a later yield, such as a remote connection setup. */
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
+  /** Adds a part to the guide every main agent is given (MCP instructions, Pi's prompt). */
+  contributeInstructions(text: string): () => void;
+  /** The contributed parts in contribution order, joined by blank lines; empty without any. */
+  instructions(): string;
 }
 declare module 'cordis' {
   interface Context {

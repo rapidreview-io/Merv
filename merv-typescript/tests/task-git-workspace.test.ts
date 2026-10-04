@@ -1,11 +1,7 @@
+import type { TaskDelivery, TaskReview } from '@merv/tasks/types';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  effectiveWorkspace,
-  type TaskDelivery,
-  type TaskReview,
-  type Transaction,
-} from '@merv/contracts';
+import { effectiveWorkspace, type Transaction } from '@merv/contracts';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 import { currentTaskSuite as fixture } from './fixtures/current-task-suite.js';
 

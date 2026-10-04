@@ -10,11 +10,11 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import type { Caller, TaskTypeDefinition } from '@merv/contracts';
+import type { Caller, ContextRecipeDefinition } from '@merv/contracts';
 import { buildContext } from './fixtures/context.js';
 import { openState, storedContext } from './fixtures/state.js';
 
-const recipe: TaskTypeDefinition = {
+const recipe: ContextRecipeDefinition = {
   name: 'test.reference-context',
   version: 1,
   kind: 'work',

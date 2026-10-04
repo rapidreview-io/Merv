@@ -1,3 +1,4 @@
+import type { Task } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,7 +16,6 @@ import type {
   IssuedUserKey,
   Project,
   ReviewRequest,
-  Task,
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';

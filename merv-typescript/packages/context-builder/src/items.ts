@@ -13,7 +13,7 @@ import {
   type ContextBuild,
   type ContextItem,
   type ContextPreview,
-  type TaskTypeDefinition,
+  type ContextRecipeDefinition,
 } from '@merv/contracts';
 
 /** The artifacts a render may use: those its input names, resolved before rendering. */
@@ -68,7 +68,7 @@ const block = (unit: Unit, body: string) => {
 const frame = (unit: Unit) => block(unit, '').length;
 
 export async function renderItems(
-  definition: TaskTypeDefinition,
+  definition: ContextRecipeDefinition,
   recipeHash: string,
   caller: Caller,
   input: Omit<ContextBuild, 'requestId'>,

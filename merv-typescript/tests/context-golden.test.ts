@@ -31,7 +31,7 @@ import {
   type ContextBuild,
   type ContextItem,
   type Scope,
-  type TaskTypeDefinition,
+  type ContextRecipeDefinition,
 } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { openState } from './fixtures/state.js';
@@ -125,8 +125,8 @@ const artifacts = {
 const scope = { async require() {} } as unknown as Scope;
 
 /** Every recipe version the consumers register, once each; the app must register exactly these. */
-function definitions(): TaskTypeDefinition[] {
-  const all = new Map<string, TaskTypeDefinition>();
+function definitions(): ContextRecipeDefinition[] {
+  const all = new Map<string, ContextRecipeDefinition>();
   for (const definition of [...TASK_TYPES, ...EXPERIMENT_RECIPES, ...ITEM_RECIPES]) {
     const key = `${definition.name}@${definition.version}`;
     const seen = all.get(key);
@@ -140,7 +140,7 @@ function definitions(): TaskTypeDefinition[] {
 }
 
 /** The canonical inputs for one recipe, by case name. */
-function cases(definition: TaskTypeDefinition): [string, Omit<ContextBuild, 'requestId'>][] {
+function cases(definition: ContextRecipeDefinition): [string, Omit<ContextBuild, 'requestId'>][] {
   const { sections, maxChars } = definition.recipe;
   const first = sections.find((s) => s.required)?.key ?? sections[0].key;
   const items = (pick: (key: string, index: number) => ContextItem[]) => ({

@@ -1,4 +1,5 @@
-import { visible, check, type TaskConfirmation } from '@merv/contracts';
+import type { TaskConfirmation } from './types.js';
+import { visible, check } from '@merv/contracts';
 import type { CodeCapture } from '@merv/code-work/types';
 
 export const acceptanceChecks = (checks: string[]) =>

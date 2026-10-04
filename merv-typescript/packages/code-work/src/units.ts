@@ -35,7 +35,13 @@ import {
   type WorkflowProviderRelations,
 } from './relations.js';
 import type { CodeUnitPublicationSeal } from './publications.js';
-import type { CodeCapture, CodeCaptureRef, CodeCaptures, CodeUnits } from './types.js';
+import type {
+  CodeCapture,
+  CodeCaptureRef,
+  CodeCaptures,
+  CodeUnits,
+  ResolutionWorkCreator,
+} from './types.js';
 
 import {
   bindsRepository,
@@ -132,7 +138,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction): Promise<void>;
   };
   reviews?: import('@merv/contracts').Reviews;
-  resolutionTasks?: import('@merv/contracts').ServiceTaskCreator;
+  resolutionTasks?: ResolutionWorkCreator;
   constructor(
     state: State,
     scope: Scope,

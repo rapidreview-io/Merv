@@ -18,7 +18,7 @@ import {
   type Scope,
   type Artifacts,
   type Caller,
-  type TaskTypeDefinition,
+  type ContextRecipeDefinition,
   type ContextBuilder,
   type ContextRegistration,
   type ContextBuild,
@@ -189,7 +189,9 @@ async function retired(tx: Transaction, result: ContextPackage): Promise<boolean
     result.typeVersion,
     result.recipeHash,
   );
-  return !!row && (JSON.parse(row.definition) as TaskTypeDefinition).recipe.format === undefined;
+  return (
+    !!row && (JSON.parse(row.definition) as ContextRecipeDefinition).recipe.format === undefined
+  );
 }
 
 export class RecipeContextBuilder implements ContextBuilder {
@@ -224,7 +226,7 @@ export class RecipeContextBuilder implements ContextBuilder {
       ? await fn(ambient)
       : await this.state.snapshot(() => this.state.transaction(fn));
   }
-  async register(input: TaskTypeDefinition): Promise<ContextRegistration> {
+  async register(input: ContextRecipeDefinition): Promise<ContextRegistration> {
     check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);
     const parsed = definitionSchema.safeParse(input);
     check(parsed.success, 'invalid_recipe', 'Invalid context recipe definition');

@@ -1,10 +1,11 @@
+import type { Task, TaskCreate, TaskDelivery } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Caller, Task, TaskCreate, TaskDelivery } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 
 type App = Awaited<ReturnType<typeof createApp>>;

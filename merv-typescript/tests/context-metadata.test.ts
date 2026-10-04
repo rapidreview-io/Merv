@@ -13,10 +13,10 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { RecipeContextBuilder } from '@merv/context-builder';
-import type { Caller, TaskTypeDefinition } from '@merv/contracts';
+import type { Caller, ContextRecipeDefinition } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
-const definition: TaskTypeDefinition = {
+const definition: ContextRecipeDefinition = {
   name: 'test.metadata',
   version: 1,
   kind: 'work',

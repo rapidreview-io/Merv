@@ -1,3 +1,4 @@
+import type { Task, TaskReview } from '@merv/tasks/types';
 import { currentExperiment } from './fixtures/current-experiment.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
@@ -13,8 +14,6 @@ import {
   type RunningPanel,
   type RunningPhrase,
   type RunningSection,
-  type Task,
-  type TaskReview,
 } from '@merv/contracts';
 import type { Experiment, ExperimentAttach } from '@merv/experiments/types';
 import type { RunningRead } from '@merv/ui';

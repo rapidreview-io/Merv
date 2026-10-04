@@ -855,7 +855,7 @@ export class PiService implements Pi, FleetOwner {
     const active = commands.find(({ id }) => id === conversation.activeCommandId);
     const served = active?.notes ? active : commands.findLast((command) => command.notes);
     return {
-      instructions: piInstructions,
+      instructions: piInstructions(this.tools.instructions()),
       turn: served
         ? {
             commandId: served.id,
@@ -1370,7 +1370,7 @@ export class PiService implements Pi, FleetOwner {
         tools: [...described, ...(offered ? [offered] : [])].filter(({ name }) =>
           tools.includes(name),
         ),
-        instructions: piInstructions,
+        instructions: piInstructions(this.tools.instructions()),
         notes: sent,
         projectPaper: sentPaper,
       };

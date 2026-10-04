@@ -27,7 +27,7 @@ import {
   type Reviews,
   type Scope,
   type State,
-  type TaskTypeDefinition,
+  type ContextRecipeDefinition,
   type Transaction,
   type WorkflowAssignmentRule,
   type WorkflowCheckContext,
@@ -219,7 +219,7 @@ const verifying =
 
 /** Current format-2 recipes, constructed directly without retired intermediate versions.
  * Published versions and recipe bytes are immutable; only their construction is shared. */
-export const EXPERIMENT_RECIPES: TaskTypeDefinition[] = activeStates.map((state) => ({
+export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
   version: state === 'experiment_review' ? 12 : 11,
   kind: reviewing(state) ? 'review' : 'work',

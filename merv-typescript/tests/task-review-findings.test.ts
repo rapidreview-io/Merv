@@ -1,6 +1,7 @@
+import type { TaskReview } from '@merv/tasks/types';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Data, TaskReview } from '@merv/contracts';
+import type { Data } from '@merv/contracts';
 import { reviewedFindings } from './fixtures/task-evidence.js';
 import { currentTaskSuite } from './fixtures/current-task-suite.js';
 

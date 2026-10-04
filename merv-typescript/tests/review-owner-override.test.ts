@@ -1,3 +1,4 @@
+import type { Task } from '@merv/tasks/types';
 import { currentExperiment } from './fixtures/current-experiment.js';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 /**
@@ -13,7 +14,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createService, digest } from '@merv/contracts';
-import type { Artifact, Caller, Data, ReviewRequest, Role, Task } from '@merv/contracts';
+import type { Artifact, Caller, Data, ReviewRequest, Role } from '@merv/contracts';
 import type { Experiment } from '@merv/experiments/types';
 import type { Reflection } from '@merv/reflections/types';
 import { ArtifactStore } from '@merv/artifacts';

@@ -1,3 +1,4 @@
+import type { Task, TaskMarkFailed } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { test } from 'node:test';
@@ -7,7 +8,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import type { Caller, Data, Task, TaskMarkFailed } from '@merv/contracts';
+import type { Caller, Data } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { storedContext } from './fixtures/state.js';
 

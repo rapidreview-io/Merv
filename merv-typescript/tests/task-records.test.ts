@@ -13,8 +13,8 @@ import { WorkflowsService } from '@merv/workflows';
 import { ReviewService } from '@merv/reviews';
 import { RecipeContextBuilder } from '@merv/context-builder';
 import { TaskService } from '@merv/tasks';
-import type { Caller, Task, Transaction } from '@merv/contracts';
-import type { TaskRecord } from '@merv/tasks/types';
+import type { Caller, Transaction } from '@merv/contracts';
+import type { TaskRecord, Task } from '@merv/tasks/types';
 import { openState } from './fixtures/state.js';
 
 async function fixture(t: TestContext) {

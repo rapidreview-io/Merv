@@ -1,3 +1,4 @@
+import type { TaskCreate } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { test } from 'node:test';
@@ -5,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import type { Caller, TaskCreate } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { countWrites } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';

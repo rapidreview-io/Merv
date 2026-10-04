@@ -1,11 +1,5 @@
-import type {
-  Artifacts,
-  Caller,
-  CodeUnit,
-  CodeUnitPublication,
-  State,
-  Tasks,
-} from '@merv/contracts';
+import type { Tasks } from '@merv/tasks/types';
+import type { Artifacts, Caller, CodeUnit, CodeUnitPublication, State } from '@merv/contracts';
 import type { ResearchService } from '@merv/research';
 
 /** What the test says main lacks and where a unit's publication stands; changed as it goes. */

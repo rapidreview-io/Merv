@@ -1,6 +1,7 @@
 /** How Merv works and how an agent works in it: the part every main agent shares, Merv's own
- * agent conversations (Pi) and the MCP clients that work with a person (the API) alike. Every
- * dotted name here is a registered tool (tests/app.test.ts). */
+ * agent conversations (Pi) and the MCP clients that work with a person (the API) alike, which
+ * the research tools contribute to the registry. Every dotted name here is a registered tool
+ * (tests/app.test.ts). */
 export const mainAgentGuide = `Merv is a review-gated research system. A project holds:
 - its Introduction: Merv writes it from the Problem whenever a research cycle starts, so do not write it yourself (project.get);
 - a living paper, carried as project context in worker and reviewer assignments: a Problem document with four fixed sections (problem, scope, goals, constraints), Literature with its citations, then Methods and Results (paper.read, paper.patch, paper.cite);

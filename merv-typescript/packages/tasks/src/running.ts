@@ -1,3 +1,4 @@
+import type { TaskRecord } from './types.js';
 import {
   clip,
   dependencyRows,
@@ -11,7 +12,6 @@ import {
   type RunningPanelPart,
   type RunningPhrase,
   type RunningSection,
-  type TaskRecord,
   type WorkflowDependency,
 } from '@merv/contracts';
 

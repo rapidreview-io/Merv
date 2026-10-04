@@ -44,24 +44,9 @@ import {
   type RunningNode,
   type RunningPanelPart,
   type Scope,
-  type ServiceTaskCreator,
   type Sql,
   type State,
-  type Task,
-  type TaskCheckpoint,
-  type TaskCheckpointInput,
-  type TaskConfirmation,
-  type TaskContext,
-  type TaskCreate,
-  type TaskDelivery,
-  type TaskDeliveryCode,
-  type TaskFailure,
-  type TaskMarkFailed,
-  type TaskRecord,
-  type TaskReissue,
-  type TaskReview,
-  type Tasks,
-  type TaskTypeDefinition,
+  type ContextRecipeDefinition,
   type Transaction,
   type WorkflowAssignmentContent,
   type WorkflowCheckContext,
@@ -93,6 +78,23 @@ import {
 } from './evidence.js';
 import { taskExecutionPolicy, type TaskWorkspace } from './execution-policy.js';
 import { taskNode, taskPanel, type TaskStanding } from './running.js';
+import type {
+  ServiceTaskCreator,
+  Task,
+  TaskCheckpoint,
+  TaskCheckpointInput,
+  TaskConfirmation,
+  TaskContext,
+  TaskCreate,
+  TaskDelivery,
+  TaskDeliveryCode,
+  TaskFailure,
+  TaskMarkFailed,
+  TaskRecord,
+  TaskReissue,
+  TaskReview,
+  Tasks,
+} from './types.js';
 
 export type {
   Task,
@@ -104,7 +106,7 @@ export type {
   TaskReissue,
   TaskReview,
   Tasks,
-} from '@merv/contracts';
+} from './types.js';
 
 /** Rejected rounds a task remembers; later ones push the oldest out, which no repair still needs. */
 const REJECTED_REVIEWS_KEPT = 50;
@@ -319,7 +321,7 @@ export class TaskService implements Tasks {
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   private types = new Map<
     string,
-    { definition: TaskTypeDefinition; context: ContextRegistration }
+    { definition: ContextRecipeDefinition; context: ContextRegistration }
   >();
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
@@ -1100,9 +1102,9 @@ export class TaskService implements Tasks {
     );
   }
 
-  async registerType(definition: TaskTypeDefinition): Promise<() => void> {
+  async registerType(definition: ContextRecipeDefinition): Promise<() => void> {
     check(!this.closed, 'tasks_closed', 'Tasks is closed', 503);
-    definition = plain<TaskTypeDefinition>(definition, 'invalid_recipe');
+    definition = plain<ContextRecipeDefinition>(definition, 'invalid_recipe');
     check(
       definition.kind !== 'work' ||
         ['task', 'brief'].every((key) =>
@@ -1795,7 +1797,7 @@ export class TaskService implements Tasks {
    */
   private async paperSections(
     caller: Caller,
-    type: { definition: TaskTypeDefinition },
+    type: { definition: ContextRecipeDefinition },
     tx: Transaction,
   ): Promise<Data> {
     check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
@@ -1971,7 +1973,7 @@ export class TaskService implements Tasks {
     inputs: Record<string, Source>,
     /** What paperSections gave, frozen in a lease's receipt or read now; null without Paper. */
     paper: unknown,
-    type: { definition: TaskTypeDefinition },
+    type: { definition: ContextRecipeDefinition },
     tx: Transaction,
   ): Promise<Record<string, ContextInput>> {
     const titles = new Map(type.definition.recipe.sections.map((s) => [s.key, s.title]));

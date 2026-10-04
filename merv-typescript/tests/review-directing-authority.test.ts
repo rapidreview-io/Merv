@@ -1,3 +1,4 @@
+import type { Task } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 /** Separate workers may review each other's current Git delivery; a directing author remains excluded. */
 import test, { type TestContext } from 'node:test';
@@ -6,7 +7,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Artifact, Caller, Task } from '@merv/contracts';
+import type { Artifact, Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 

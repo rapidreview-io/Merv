@@ -16,13 +16,13 @@ import {
   type ContextBuild,
   type ContextItem,
   type ContextPreview,
-  type TaskTypeDefinition,
+  type ContextRecipeDefinition,
   type Transaction,
 } from '@merv/contracts';
 import { buildContext, contextSource } from './fixtures/context.js';
 import { countWrites, openState, storedContext } from './fixtures/state.js';
 
-const definition: TaskTypeDefinition = {
+const definition: ContextRecipeDefinition = {
   name: 'test.preview',
   version: 1,
   kind: 'work',

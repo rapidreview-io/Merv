@@ -14,7 +14,8 @@ import {
 import { MachineRunner } from '@merv/runner';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { mainAgentGuide, type WorkflowWorkspacePolicy } from '@merv/contracts';
+import type { WorkflowWorkspacePolicy } from '@merv/contracts';
+import { mainAgentGuide } from '../packages/research/src/guide.js';
 import { piInstructions } from '../packages/pi/src/prompt.js';
 import type { Session } from '@merv/sessions/types';
 import {
@@ -498,8 +499,8 @@ test('source-notation verification reaches producer and reviewer launches and Pi
       assert.ok(prompt.indexOf('Text extraction can lose') < prompt.indexOf('Frozen assignment:'));
     }
   }
-  assert.ok(piInstructions.includes(mainAgentGuide));
-  assert.match(piInstructions, /Text extraction can lose superscripts and symbols/);
+  assert.ok(piInstructions(mainAgentGuide).includes(mainAgentGuide));
+  assert.match(mainAgentGuide, /Text extraction can lose superscripts and symbols/);
 });
 
 test('Claude Code runs headless on the Merv server alone, reads its bearer from the environment, and keeps only read tools on a read-only lease', () => {

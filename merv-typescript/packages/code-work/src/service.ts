@@ -43,7 +43,7 @@ import { CodePublicationService } from './publications.js';
 import { migrateRepositorySync, reconcileRepository } from './repository-sync.js';
 import { prepareRepository, repositoryPrepareSchema } from './repository-setup.js';
 import { CodeRunningReader } from './running.js';
-import type { Code } from './types.js';
+import type { Code, ResolutionWorkCreator } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
 import { archiveCommit } from './base-check.js';
 import type { CodeWriterService } from '@merv/code/writers';
@@ -335,7 +335,7 @@ export class CodeService extends CodeCommandService implements Code {
       if (bases.checks === sandboxes.checks) bases.checks = undefined;
     };
   }
-  bindServiceTasks(provider: import('@merv/contracts').ServiceTaskCreator): () => void {
+  bindServiceTasks(provider: ResolutionWorkCreator): () => void {
     this.unitStore.resolutionTasks = provider;
     void this.unitStore.reconcileAll().catch(() => undefined);
     return () => {

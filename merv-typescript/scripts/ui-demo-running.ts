@@ -1,6 +1,6 @@
+import type { TaskDelivery } from '@merv/tasks/types';
 import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
 import { currentExperiment } from '../tests/fixtures/current-experiment.js';
-import type { TaskDelivery } from '@merv/contracts';
 import { join } from 'node:path';
 import type { Caller } from '@merv/contracts';
 

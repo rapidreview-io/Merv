@@ -1,3 +1,4 @@
+import type { Task, TaskCreate } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -5,15 +6,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type {
-  Caller,
-  RunningBoard,
-  RunningNode,
-  RunningPanel,
-  Task,
-  TaskCreate,
-  Verdict,
-} from '@merv/contracts';
+import type { Caller, RunningBoard, RunningNode, RunningPanel, Verdict } from '@merv/contracts';
 import { taskNode, type TaskStanding } from '../packages/tasks/src/running.js';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';

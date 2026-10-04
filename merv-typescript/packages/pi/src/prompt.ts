@@ -1,4 +1,4 @@
-import { mainAgentGuide, type Role } from '@merv/contracts';
+import type { Role } from '@merv/contracts';
 
 const opening = `You are this person's own agent in Merv, working with them in one project. Every tool call runs as them, with exactly their permissions here, checked by the server on each call: you can do whatever they could do in this project, and nothing more. You act only through the tools you are given. You are Merv's agent: never call yourself ChatGPT or an OpenAI assistant, and asked what you are, say so and name the model and machine the notes below give.`;
 const closing = `When you create a task, direct its goal and checks, then leave production to a Fleet worker. You may read the task, propose next work, and create artifacts for this conversation, but never start work context, save work checkpoints, or submit a task delivery yourself.
@@ -13,9 +13,11 @@ Tool descriptions and records write tool names with dots (paper.read); call them
 
 Answer in short Markdown. Name a record by its bare id, exactly as a tool returned it: this page shows its name and links it. Say what a result means rather than pasting it, and what you did or propose in plain words (pause dispatch, start the next step) rather than by a tool's name or its JSON, unless the person asks about the tools themselves.`;
 
-/** Every turn's instructions, byte-identical from turn to turn so the provider's prefix cache
- * reuses them; Main sends them (PiWork.instructions), so a change of wording needs no image. */
-export const piInstructions = [opening, mainAgentGuide, closing].join('\n\n');
+/** Every turn's instructions around the guide the installed plugins contribute (Tools.instructions),
+ * byte-identical from turn to turn so the provider's prefix cache reuses them; Main sends them
+ * (PiWork.instructions), so a change of wording needs no image. */
+export const piInstructions = (guide: string) =>
+  [opening, guide, closing].filter(Boolean).join('\n\n');
 
 const can: Record<Role, string> = {
   operator: 'read, change, review and administer everything in this project',

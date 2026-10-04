@@ -1,3 +1,4 @@
+import type { Task } from '@merv/tasks/types';
 import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
 import { spawn } from 'node:child_process';
 import { createWriteStream, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -6,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { SignJWT } from 'jose';
-import type { IssuedUserKey, Project, Task } from '@merv/contracts';
+import type { IssuedUserKey, Project } from '@merv/contracts';
 import type { Session, SessionsProjectStatus } from '@merv/sessions/types';
 import { createApp } from '../src/app.js';
 import type { ApplicationConfig } from '../src/config.js';
