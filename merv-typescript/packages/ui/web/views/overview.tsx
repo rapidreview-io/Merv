@@ -4,11 +4,10 @@ import type { WorkflowDecision, WorkflowDependency } from '@merv/contracts/workf
 import { refreshTools, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
-import type { Row, ShellData } from '../shell';
+import type { Row } from '../shell';
 import type { RowNeeds } from '../shell-types';
 import {
   Ago,
-  EmptyState,
   Failure,
   KindLabel,
   LoadState,
@@ -17,7 +16,7 @@ import {
   kindOf,
   words,
 } from '../components';
-import { ArrowRightIcon } from '../icons';
+import { ArrowRightIcon, CheckIcon } from '../icons';
 import type { RecordNames } from '../markdown';
 import { firstPersonMove } from '@merv/code-work/blockers';
 import { namesOf } from './people';
@@ -25,18 +24,18 @@ import { namesOf } from './people';
 import { newest, useHome, type Flow, type HomeData } from './map-data';
 
 /**
- * Now: what needs the reader. One column of record cards, each saying its move in one
- * sentence a person reads, made from facts the gate carries — the ready action, a
- * prerequisite that failed, whether a review sent it back. The server's own instruction is
- * written for the agent holding the tool, so it is never the headline: it stays on the
- * card, folded, for whoever operates the agents. A blocker another plugin published whose
- * next move is this reader's speaks in the same voice, through the one vocabulary
- * `@merv/code-work/blockers` holds, and is the one thing that puts ended work on this page at all —
- * a publication nobody has merged is a wait on a human and not a record that is running.
- * Whose hands everything else is in, and what it waits on, is the Work page's map. Every
- * card is gated on its owning ui.shell row, so it goes quiet with its plugin, and every
- * fact on the page comes from the one read the rail shares. An absent value is
- * never rendered as zero and an error is never rendered as empty.
+ * What needs the reader: Home's first part, which was the Now page. One column of record
+ * cards, each saying its move in one sentence a person reads, made from facts the gate
+ * carries — the ready action, a prerequisite that failed, whether a review sent it back. The
+ * server's own instruction is written for the agent holding the tool, so it is never the
+ * headline: it stays on the card, folded, for whoever operates the agents. A blocker another
+ * plugin published whose next move is this reader's speaks in the same voice, through the one
+ * vocabulary `@merv/code-work/blockers` holds, and is the one thing that puts ended work here
+ * at all — a publication nobody has merged is a wait on a human and not a record that is
+ * running. Whose hands everything else is in, and what it waits on, is the Work page's map.
+ * Every card is gated on its owning ui.shell row, so it goes quiet with its plugin, and every
+ * fact here comes from the one read the rail shares. An absent value is never rendered as
+ * zero and an error is never rendered as empty.
  */
 
 /** An open record that is the reader's move, the sentence it stands on, and the way to act. */
@@ -113,7 +112,7 @@ const said = ({ instruction, blockers }: WorkflowDecision) =>
     (text, index, all) => !!text && all.indexOf(text) === index,
   );
 
-/** An open record of a row that says how Now reads it, before its gate is read. */
+/** An open record of a row that says how Home reads it, before its gate is read. */
 interface Open {
   id: string;
   name: string;
@@ -122,7 +121,7 @@ interface Open {
   row: Row;
   needs: RowNeeds;
 }
-/** The records of every row that declares how Now reads them, from the row's own home part. */
+/** The records of every row that declares how Home reads them, from the row's own home part. */
 const openWork = (rows: Row[], home: HomeData | undefined): Open[] =>
   rows.flatMap(({ needs, ...row }) => {
     const items = (home as Record<string, unknown> | undefined)?.[row.id];
@@ -345,9 +344,28 @@ function Card({ line }: { line: Line }) {
   );
 }
 
-function Block({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
+/**
+ * One part of Home under its heading and its count: its rows, or the one quiet line that
+ * stands for them — loading, nothing there, or the read that failed — so a part that cannot
+ * answer costs its own line and never the page.
+ */
+export function Part({
+  title,
+  count,
+  failed,
+  loading,
+  empty,
+  children,
+}: {
+  title: string;
+  count?: number;
+  failed?: ReactNode;
+  loading?: boolean;
+  empty?: ReactNode;
+  children?: ReactNode;
+}) {
   return (
-    <section className="ov-block">
+    <section className="ov-block" aria-label={title}>
       <h2 className="ov-h">
         {title}
         {/* A real space, so the name and the number are heard as two words. */}
@@ -358,7 +376,18 @@ function Block({ title, count, children }: { title: string; count?: number; chil
           </>
         )}
       </h2>
-      <ul className="ov-list">{children}</ul>
+      {failed && (
+        <div className="home-quiet home-failed" role="status">
+          {failed}
+        </div>
+      )}
+      {loading ? (
+        <LoadState loading />
+      ) : empty ? (
+        <div className="home-quiet">{empty}</div>
+      ) : (
+        <ul className="ov-list">{children}</ul>
+      )}
     </section>
   );
 }
@@ -367,7 +396,7 @@ function Block({ title, count, children }: { title: string; count?: number; chil
 const unwellOf = (rows: Row[]) =>
   rows.filter((row) => row.status.state === 'degraded' || row.status.state === 'unavailable');
 
-/** What Now lists, from the one home the whole page shares; the rail counts exactly this. */
+/** What needs the reader, from the one home the whole page shares; the rail counts exactly this. */
 export function useNow(rows: Row[], every?: number) {
   const session = useSession();
   const home = useHome(every);
@@ -395,42 +424,39 @@ export function NeedsYou({
   const unwell = unwellOf(rows);
   const count = lines.length + unwell.length;
   return (
-    <>
-      <LoadState {...load} columns={2} />
-      {load.data && !count && (
-        <div className="ov-clear">
-          <EmptyState icon="check" title="Nothing needs you" />
-        </div>
-      )}
-      {count > 0 && (
-        <Block title="Needs you" count={count}>
-          {lines.map((line) => (
-            <Card key={line.id} line={line} />
-          ))}
-          {unwell.map((row) => (
-            <li className="record ov-row" key={row.id}>
-              <div className="ov-body">
-                <KindLabel kind={row.view.kind} />
-                <Link className="ov-name" to={row.path}>
-                  {row.label}
-                </Link>
-                {row.status.detail && <p className="ov-say">{row.status.detail}</p>}
-                <StatusPill value={row.status.state} />
-              </div>
-            </li>
-          ))}
-        </Block>
-      )}
-    </>
-  );
-}
-
-export function OverviewView({ shell }: { shell: ShellData }) {
-  const { home, lines } = useNow(shell.rows);
-  return (
-    <div className="page-stage overview">
-      <h1 className="page-title">Now</h1>
-      <NeedsYou rows={shell.rows} lines={lines} load={home} />
-    </div>
+    <Part
+      title="Needs you"
+      count={count}
+      // A failed refresh keeps the cards that loaded, and says so in the one line every stale
+      // read says it in.
+      failed={
+        load.error && (load.data ? <LoadState {...load} /> : 'Could not read what needs you.')
+      }
+      loading={load.loading && !count}
+      empty={
+        load.data && !count ? (
+          // Nothing to do is good news, and wears the colour of it.
+          <p className="home-clear">
+            <CheckIcon size={14} /> Nothing needs you
+          </p>
+        ) : undefined
+      }
+    >
+      {lines.map((line) => (
+        <Card key={line.id} line={line} />
+      ))}
+      {unwell.map((row) => (
+        <li className="record ov-row" key={row.id}>
+          <div className="ov-body">
+            <KindLabel kind={row.view.kind} />
+            <Link className="ov-name" to={row.path}>
+              {row.label}
+            </Link>
+            {row.status.detail && <p className="ov-say">{row.status.detail}</p>}
+            <StatusPill value={row.status.state} />
+          </div>
+        </li>
+      ))}
+    </Part>
   );
 }

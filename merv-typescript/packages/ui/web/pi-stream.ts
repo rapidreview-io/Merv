@@ -103,9 +103,10 @@ export interface PiPrompt {
 export type PiDelta = PiEvent & { streamId: string };
 type Frame = { event: string; data: string };
 
-export class PiStreamError extends Error {
+/** A live stream the server refused, or answered with no body: its HTTP status says why. */
+export class StreamError extends Error {
   constructor(readonly status: number) {
-    super(`Agent stream unavailable (${status})`);
+    super(`Live stream unavailable (${status})`);
   }
 }
 
@@ -162,14 +163,18 @@ export function piFrameParser(accept: (frame: Frame) => void, maxFrameChars = 65
   };
 }
 
-/** Resolves true when the server closed the stream on purpose, so reconnecting says nothing. */
-export async function readPiEvents(
-  id: string,
+/**
+ * Reads one server-sent event stream of this app (`path`, with the caller's credential and
+ * project) until it ends or `signal` aborts, handing each frame's event name and its JSON
+ * object to `accept`. Resolves true when the server closed the stream on purpose (`rotate`),
+ * so reconnecting says nothing.
+ */
+export async function readEventStream(
+  path: string,
   signal: AbortSignal,
-  onSnapshot: (snapshot: PiSnapshot) => void,
-  onDelta: (delta: PiDelta) => void,
+  accept: (event: string, value: object) => void,
 ): Promise<boolean> {
-  const response = await fetch(`/pi/${encodeURIComponent(id)}/events`, {
+  const response = await fetch(path, {
     signal,
     credentials: 'omit',
     headers: {
@@ -178,7 +183,7 @@ export async function readPiEvents(
       ...(projectSelection() ? { 'x-merv-project-id': projectSelection()! } : {}),
     },
   });
-  if (!response.ok || !response.body) throw new PiStreamError(response.status);
+  if (!response.ok || !response.body) throw new StreamError(response.status);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let rotated = false;
@@ -187,18 +192,7 @@ export async function readPiEvents(
       if (event === 'rotate') rotated = true;
       try {
         const value: unknown = JSON.parse(data);
-        if (!value || typeof value !== 'object') return;
-        if (event === 'snapshot' && 'conversation' in value && 'streamId' in value)
-          onSnapshot(value as PiSnapshot);
-        if (
-          event === 'delta' &&
-          'streamId' in value &&
-          'sequence' in value &&
-          'commandId' in value &&
-          'type' in value &&
-          'text' in value
-        )
-          onDelta(value as PiDelta);
+        if (value && typeof value === 'object') accept(event, value);
       } catch {}
     },
     32 * 1024 * 1024,
@@ -216,3 +210,24 @@ export async function readPiEvents(
   }
   return rotated;
 }
+
+/** Pi's stream: its snapshots and its deltas. Resolves as `readEventStream` does. */
+export const readPiEvents = (
+  id: string,
+  signal: AbortSignal,
+  onSnapshot: (snapshot: PiSnapshot) => void,
+  onDelta: (delta: PiDelta) => void,
+): Promise<boolean> =>
+  readEventStream(`/pi/${encodeURIComponent(id)}/events`, signal, (event, value) => {
+    if (event === 'snapshot' && 'conversation' in value && 'streamId' in value)
+      onSnapshot(value as PiSnapshot);
+    if (
+      event === 'delta' &&
+      'streamId' in value &&
+      'sequence' in value &&
+      'commandId' in value &&
+      'type' in value &&
+      'text' in value
+    )
+      onDelta(value as PiDelta);
+  });

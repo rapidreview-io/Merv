@@ -88,8 +88,12 @@ class Shifted extends Real {
 }
 define('Date', Shifted);
 
-/** What the fixture server answers: a response, or a connection that drops. */
-export type Reply = { status?: number; body?: unknown } | { network: true };
+/**
+ * What the fixture server answers: a response, a connection that drops, or a body that
+ * arrives over time (a server-sent event stream), which closes as the page aborts its request.
+ */
+export type Reply =
+  { status?: number; body?: unknown } | { network: true } | { stream: ReadableStream<Uint8Array> };
 /**
  * One path's answer: fixed, or decided by how many times it has been asked and by
  * what was sent — one tool answers more than one question of the same page.
@@ -99,6 +103,8 @@ const handlers = new Map<string, Answer>();
 const counts = new Map<string, number>();
 /** Every request the views made, newest last, as `METHOD path`. */
 export const requests: string[] = [];
+/** Every streamed request the page aborted, newest last, by path. */
+export const aborted: string[] = [];
 export const serve = (path: string, reply: Reply | Answer) =>
   handlers.set(path, typeof reply === 'function' ? reply : () => reply);
 const sentBy = (body: unknown): Record<string, unknown> => {
@@ -108,24 +114,54 @@ const sentBy = (body: unknown): Record<string, unknown> => {
     return {};
   }
 };
-define('fetch', async (input: unknown, init: { method?: string; body?: unknown } = {}) => {
-  const path = String(input);
-  requests.push(`${init.method ?? 'GET'} ${path}`);
-  const call = (counts.get(path) ?? 0) + 1;
-  counts.set(path, call);
-  const reply = handlers.get(path)?.(call, sentBy(init.body)) ?? {
-    status: 404,
-    body: { error: { code: 'no_fixture', message: `No fixture for ${path}` } },
-  };
-  if ('network' in reply) throw new TypeError('fetch failed');
-  const status = reply.status ?? 200;
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    statusText: `HTTP ${status}`,
-    json: async () => reply.body,
-  };
-});
+define(
+  'fetch',
+  async (input: unknown, init: { method?: string; body?: unknown; signal?: AbortSignal } = {}) => {
+    const path = String(input);
+    requests.push(`${init.method ?? 'GET'} ${path}`);
+    const call = (counts.get(path) ?? 0) + 1;
+    counts.set(path, call);
+    const reply = handlers.get(path)?.(call, sentBy(init.body)) ?? {
+      status: 404,
+      body: { error: { code: 'no_fixture', message: `No fixture for ${path}` } },
+    };
+    if ('network' in reply) throw new TypeError('fetch failed');
+    if ('stream' in reply) {
+      const source = reply.stream.getReader();
+      let ended = false;
+      // As a browser's body does: an abort errors the read in flight and lets the source go;
+      // a body that has ended has nothing left to abort.
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init.signal?.addEventListener('abort', () => {
+            if (ended) return;
+            aborted.push(path);
+            controller.error(new DOMException('The operation was aborted.', 'AbortError'));
+            void source.cancel();
+          });
+        },
+        async pull(controller) {
+          const { done, value } = await source.read();
+          ended ||= done;
+          try {
+            if (done) controller.close();
+            else controller.enqueue(value);
+          } catch {
+            /* already aborted */
+          }
+        },
+      });
+      return { status: 200, ok: true, statusText: 'HTTP 200', body };
+    }
+    const status = reply.status ?? 200;
+    return {
+      status,
+      ok: status >= 200 && status < 300,
+      statusText: `HTTP ${status}`,
+      json: async () => reply.body,
+    };
+  },
+);
 
 // The test runner compiles these .tsx views with the classic JSX transform, which
 // names `React` in every rendered file; the bundler uses the automatic one. The
@@ -173,10 +209,10 @@ export async function unmount(): Promise<void> {
   handlers.clear();
   counts.clear();
   requests.length = 0;
+  aborted.length = 0;
   offset = 0;
   media.wide = true;
 }
-/** What a person reads on the page, which is what every assertion here is about. */
 /** The page's own stylesheet, which jsdom cascades by specificity; taken away after the test. */
 export const styled = () => {
   const sheet = document.createElement('style');
@@ -187,6 +223,7 @@ export const styled = () => {
   document.head.appendChild(sheet);
   return () => sheet.remove();
 };
+/** What a person reads on the page, which is what every assertion here is about. */
 export const text = (): string => host?.textContent ?? '';
 export async function click(label: string): Promise<void> {
   const control = [...(host?.querySelectorAll('button') ?? [])].find((button) =>
@@ -197,4 +234,18 @@ export async function click(label: string): Promise<void> {
     control.click();
   });
   await settle(0);
+}
+
+/** A server-sent event stream to serve (`{ stream }`), written to as the test goes. */
+export function eventStream() {
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stream = new ReadableStream<Uint8Array>({ start: (c) => void (controller = c) });
+  const bytes = new TextEncoder();
+  return {
+    stream,
+    send(event: string, data: unknown) {
+      controller.enqueue(bytes.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+    },
+    close: () => controller.close(),
+  };
 }

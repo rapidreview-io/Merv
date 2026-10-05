@@ -46,7 +46,7 @@ const rows = [
   row('paper', 'paper', 'top', 15, 'Paper'),
   row('artifacts', 'artifacts', 'research', 21, 'Files'),
   { ...row('settings', 'settings', 'settings', 100, 'Settings'), rooms: true },
-  // Registered by @merv/research: the lead row, standing over Now.
+  // Registered by @merv/research: the lead row, standing under Home.
   row('work', 'work', 'lead', 14, 'Work'),
 ];
 const plugin = (id: string, state = 'active') => ({ id, name: `@merv/${id}`, state });
@@ -215,8 +215,8 @@ test('a mistyped address is a page not found, with the way home and no word abou
   assert.equal(document.title, 'Page not found · Grokking replication · Merv');
   assert.ok(!/plugin|registered/i.test(document.querySelector('.main')!.textContent ?? ''));
   const home = document.querySelector<HTMLAnchorElement>('.empty-state a.btn')!;
-  assert.equal(home.textContent, 'Work');
-  assert.equal(home.getAttribute('href'), '/work');
+  assert.equal(home.textContent, 'Home');
+  assert.equal(home.getAttribute('href'), '/');
 });
 
 test('an address whose plugin is switched off says which, and how it stands', async (t) => {
@@ -227,7 +227,7 @@ test('an address whose plugin is switched off says which, and how it stands', as
   assert.ok(page.textContent!.includes('Feed is switched off'));
   assert.ok(page.textContent!.includes('feed-ui'));
   assert.ok(page.querySelector('.status'), 'the state is a state word, not a sentence');
-  assert.ok(page.querySelector('a.btn[href="/work"]'));
+  assert.ok(page.querySelector('a.btn[href="/"]'));
 });
 
 test('Settings keeps its title in every room, and folds its diagnostics under one line each', async (t) => {
@@ -641,34 +641,51 @@ test('an address this app moved elsewhere opens there, whether or not a plugin r
   assert.equal(where, '/work?key=work:wf_index');
 });
 
-test('a project opens on its lead row, Work, which leads the rail over Now and the paper; there is no Home', async (t) => {
+test('a project opens on Home, named for the project, which leads the rail over Work and the paper', async (t) => {
   t.after(async () => await unmount());
   boot('Operator', { rows: [...rows, row('tasks', 'tasks', 'hidden', 10, 'Tasks')] });
   await open('/');
   const links = [...rail().querySelectorAll('.rail-nav a')];
   assert.deepEqual(
-    links
-      .slice(0, 3)
-      .map((link) => [
-        link.querySelector('.rail-label')?.textContent ?? link.textContent,
-        link.getAttribute('href'),
-      ]),
+    links.slice(0, 3).map((link) => [link.textContent, link.getAttribute('href')]),
     [
+      ['Home', '/'],
       ['Work', '/work'],
-      ['Now', '/now'],
       ['Paper', '/paper'],
     ],
   );
-  assert.ok(!links.some((link) => link.getAttribute('href') === '/'));
-  assert.equal(rail().querySelector('[aria-current="page"]')?.getAttribute('href'), '/work');
+  assert.ok(!links.some((link) => link.getAttribute('href') === '/now'));
+  assert.equal(rail().querySelector('[aria-current="page"]')?.getAttribute('href'), '/');
+  assert.equal(document.querySelector('h1')!.textContent, 'Grokking replication');
+  assert.equal(document.title, 'Grokking replication · Merv', 'the project is said once');
+  await unmount();
+  // Now was what needs the reader, which Home holds: an old address lands there.
+  boot('Operator');
+  let where = '';
+  function Probe() {
+    const location = useLocation();
+    where = location.pathname + location.search;
+    return null;
+  }
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/now'] },
+      createElement(App),
+      createElement(Probe),
+    ),
+  );
+  await settle(20);
+  assert.equal(where, '/');
+  assert.ok(text().includes('Needs you'));
 });
 
-test('the rail counts what Now lists, an unwell row included', async (t) => {
+test('the rail counts what Home lists as needing you, an unwell row included', async (t) => {
   t.after(async () => await unmount());
   const sick = { ...row('paper', 'paper', 'top', 15, 'Paper'), status: { state: 'degraded' } };
   boot('Operator', { rows: [sick, ...rows.slice(1)] });
   serve('/tools/ui.home', { body: { result: {} } });
-  await open('/now');
+  await open('/');
   assert.equal(document.querySelector('.ov-count')?.textContent, '1');
   assert.equal(rail().querySelector('.rail-count')?.textContent, '1');
 });

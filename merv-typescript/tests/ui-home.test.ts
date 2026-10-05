@@ -429,17 +429,18 @@ test('a review that is ready is claimed where it stands, and the page opens its 
   assert.equal(text(), 'The verdict desk');
 });
 
-test('with nothing to do the page says so once, and an unwell row still needs someone', async (t) => {
+test('with nothing to do the part says so once, and an unwell row still needs someone', async (t) => {
   t.after(async () => await unmount());
   await mount(standing([]));
-  assert.equal(document.querySelector('.empty-title')!.textContent, 'Nothing needs you');
-  assert.ok(!text().includes('Needs you'));
+  assert.equal(document.querySelector('.ov-h')!.textContent, 'Needs you', 'no count of nothing');
+  assert.equal(document.querySelector('.home-clear')!.textContent!.trim(), 'Nothing needs you');
+  assert.equal(document.querySelector('.ov-list'), null);
   await unmount();
 
   rows[0].status = { state: 'degraded', detail: 'The task store is read-only' } as never;
   t.after(() => (rows[0].status = {}));
   await mount(standing([]));
-  assert.equal(document.querySelector('.empty-state'), null);
+  assert.equal(document.querySelector('.home-clear'), null);
   assert.ok(text().includes('The task store is read-only'));
 });
 

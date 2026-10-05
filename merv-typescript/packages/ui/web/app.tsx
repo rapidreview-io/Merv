@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
 import { EmptyState, LoadState, StatusPill } from './components';
 import { Icon } from './icons';
-import { MOVED, dormantOwner, humanizeGroup, leadRows } from './navigation';
+import { MOVED, dormantOwner, humanizeGroup } from './navigation';
 import { Moved, VIEW_KINDS, viewFor } from './views';
-import { OverviewView } from './views/overview';
+import { HomeView } from './views/home';
 import { PiProvider } from './views/pi';
 import { PiDock } from './views/pi-dock';
 
@@ -20,7 +20,6 @@ function NotFound({ shell }: { shell: ShellData }) {
   const { pathname } = useLocation();
   const place = pathname.split('/')[1] ?? '';
   const owner = dormantOwner(pathname, VIEW_KINDS, shell.rows, shell.plugins);
-  const home = leadRows(shell.rows)[0];
   return (
     <div className="page-stage">
       <EmptyState
@@ -36,9 +35,9 @@ function NotFound({ shell }: { shell: ShellData }) {
           )
         }
         action={
-          <Link className="btn" to={home?.path ?? '/now'}>
-            <Icon name={home?.view.kind ?? 'now'} />
-            {home?.label ?? 'Now'}
+          <Link className="btn" to="/">
+            <Icon name="home" />
+            Home
           </Link>
         }
       />
@@ -91,12 +90,8 @@ function Workspace() {
         <PageLede rows={shell.data ? rows : []}>
           {shell.data ? (
             <Routes>
-              {/* A project opens on its lead row; what needs the reader is one row away. */}
-              <Route
-                path="/"
-                element={<Navigate to={leadRows(rows)[0]?.path ?? '/now'} replace />}
-              />
-              <Route path="/now" element={<OverviewView shell={shell.data} />} />
+              {/* A project opens on Home: where it stands, what needs the reader, who is at work. */}
+              <Route path="/" element={<HomeView shell={shell.data} />} />
               {/* Before the rows: the first of two equal routes is the one that answers. */}
               {Object.entries(MOVED).map(([from, to]) => (
                 <Route key={from} path={`/${from}/*`} element={<Moved to={to(rows)} />} />

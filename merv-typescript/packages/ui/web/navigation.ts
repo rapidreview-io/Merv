@@ -6,7 +6,7 @@ import type { PluginState, Row, ShellData } from './shell-types';
  * (Research, Work, Agents, Feed), not which plugin provided a row.
  * Only rows registered through ui.shell are consumed; nothing is invented.
  * Settings rows are omitted here because the shell renders them in its
- * footer, and the built-in Overview link is likewise the shell's own.
+ * footer, and Home's row is likewise the shell's own.
  */
 export interface NavSection {
   id: string;
@@ -15,18 +15,18 @@ export interface NavSection {
 }
 
 /**
- * Rows of the `lead` group stand above Now, a project opens on the first of them, and a
- * page the rail does not show is reached from them.
+ * Rows of the `lead` group stand under Home at the head of the rail, and a page the rail does
+ * not show is reached from them.
  */
 export const leadRows = (rows: Row[]) => rows.filter((row) => row.group === 'lead');
 
 /**
- * Where a page the rail does not show goes back to, and an address the app retired opens:
- * the lead row (Work), or Now in a composition without one.
+ * Where a page the rail does not show goes back to, and where what is running opens: the lead
+ * row (Work), or Home in a composition without one.
  */
 export const homeOf = (rows: Row[]) => {
   const lead = leadRows(rows)[0];
-  return lead ? { to: lead.path, label: lead.label } : { to: '/now', label: 'Now' };
+  return lead ? { to: lead.path, label: lead.label } : { to: '/', label: 'Home' };
 };
 /** Where the records of a view kind open in this composition, if any row lists them. */
 export const pathOf = (rows: readonly Pick<Row, 'path' | 'view'>[], kind: string) =>
@@ -39,8 +39,10 @@ export const pathOf = (rows: readonly Pick<Row, 'path' | 'view'>[], kind: string
 export const MOVED: Record<string, (rows: Row[]) => string> = {
   // What a project is connected to is a setting.
   connections: () => '/settings/connections',
-  // What is running is drawn on the Work page, and without one Now is where the reader goes.
+  // What is running is drawn on the Work page, and without one Home is where the reader goes.
   running: (rows) => homeOf(rows).to,
+  // What needs the reader is Home's first part.
+  now: () => '/',
 };
 
 const NO_ROWS: Row[] = [];
@@ -51,7 +53,7 @@ const NO_ROWS: Row[] = [];
 export const useRows = (): Row[] =>
   useTool<ShellData>('ui.shell', {}, { every: 30000 }).data?.rows ?? NO_ROWS;
 
-/** Rows of the `top` group stand with the lead rows and Now rather than inside a section. */
+/** Rows of the `top` group stand with Home and the lead rows rather than inside a section. */
 export const topRows = (rows: Row[]) => rows.filter((row) => row.group === 'top');
 
 /**
