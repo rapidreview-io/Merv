@@ -16,14 +16,6 @@ export async function filterAsync<T>(
     if (await fn(values[index], index)) output.push(values[index]);
   return output;
 }
-export async function someAsync<T>(
-  values: readonly T[],
-  fn: (value: T, index: number) => unknown | Promise<unknown>,
-): Promise<boolean> {
-  for (let index = 0; index < values.length; index++)
-    if (await fn(values[index], index)) return true;
-  return false;
-}
 export async function everyAsync<T>(
   values: readonly T[],
   fn: (value: T, index: number) => unknown | Promise<unknown>,

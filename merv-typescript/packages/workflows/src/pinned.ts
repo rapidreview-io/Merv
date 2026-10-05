@@ -9,16 +9,6 @@ import type {
 import { executionFingerprint } from './execution.js';
 import { freezeData } from './json.js';
 
-/**
- * A contract as read. It is final once its success row and an execution row for every nonterminal
- * state exist. A version stored before either was pinned lacks them: that reads as their absence,
- * but a later registration of the version still writes the rows.
- */
-export interface PinnedRead {
-  pinned: WorkflowPinned;
-  final: boolean;
-}
-
 interface Row {
   name: string;
   version: number;
@@ -29,7 +19,7 @@ interface Row {
 }
 
 /** Every stored contract, or only the one named, in one query. */
-async function load(sql: Sql, only?: { name: string; version: number }): Promise<PinnedRead[]> {
+async function load(sql: Sql, only?: { name: string; version: number }): Promise<WorkflowPinned[]> {
   const rows = await sql.all<Row>(
     `SELECT d.name, d.version, d.definition_json, s.success_json, e.state, e.manifest_json
      FROM wf_definitions d
@@ -38,34 +28,23 @@ async function load(sql: Sql, only?: { name: string; version: number }): Promise
      ${only ? 'WHERE d.name = ? AND d.version = ?' : ''}`,
     ...(only ? [only.name, only.version] : []),
   );
-  const read = new Map<string, PinnedRead>();
+  const read = new Map<string, WorkflowPinned>();
   for (const row of rows) {
     const key = `${row.name}@${Number(row.version)}`;
     let entry = read.get(key);
     if (!entry) {
       entry = {
-        pinned: {
-          definition: JSON.parse(row.definition_json) as WorkflowDefinition,
-          successStates:
-            row.success_json === null ? null : (JSON.parse(row.success_json) as string[] | null),
-          execution: {},
-        },
-        final: row.success_json !== null,
+        definition: JSON.parse(row.definition_json) as WorkflowDefinition,
+        successStates:
+          row.success_json === null ? null : (JSON.parse(row.success_json) as string[] | null),
+        execution: {},
       };
       read.set(key, entry);
     }
     if (row.state !== null && row.manifest_json !== null)
-      entry.pinned.execution[row.state] = JSON.parse(
-        row.manifest_json,
-      ) as WorkflowExecutionPolicy | null;
+      entry.execution[row.state] = JSON.parse(row.manifest_json) as WorkflowExecutionPolicy | null;
   }
-  for (const entry of read.values()) {
-    const { definition, execution } = entry.pinned;
-    entry.final &&= definition.states.every(
-      (state) => definition.terminal.includes(state) || Object.hasOwn(execution, state),
-    );
-    freezeData(entry.pinned);
-  }
+  for (const entry of read.values()) freezeData(entry);
   return [...read.values()];
 }
 
@@ -74,7 +53,7 @@ export async function readPinned(
   sql: Sql,
   name: string,
   version: number,
-): Promise<PinnedRead | undefined> {
+): Promise<WorkflowPinned | undefined> {
   return (await load(sql, { name, version }))[0];
 }
 
@@ -95,15 +74,15 @@ export class PinnedContracts {
   async get(sql: Sql, name: string, version: number): Promise<WorkflowPinned | null> {
     const cached = this.cache.get(`${name}@${version}`);
     if (cached) return cached;
-    const entry = await readPinned(sql, name, version);
-    if (!entry) return null;
-    this.keep(entry);
-    return entry.pinned;
+    const pinned = await readPinned(sql, name, version);
+    if (!pinned) return null;
+    this.keep(pinned);
+    return pinned;
   }
 
-  /** Remembers a final contract; a registration calls it only after its transaction commits. */
-  keep({ pinned, final }: PinnedRead): void {
-    if (final) this.cache.set(`${pinned.definition.name}@${pinned.definition.version}`, pinned);
+  /** Remembers a contract; a registration calls it only after its transaction commits. */
+  keep(pinned: WorkflowPinned): void {
+    this.cache.set(`${pinned.definition.name}@${pinned.definition.version}`, pinned);
   }
 }
 

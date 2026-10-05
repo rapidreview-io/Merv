@@ -3,7 +3,7 @@ export {
   patchSchema as paperPatchSchema,
   changesSchema as paperChangesSchema,
 } from './paper-edit.js';
-export { mapAsync, filterAsync, someAsync, everyAsync } from './async.js';
+export { mapAsync, filterAsync, everyAsync } from './async.js';
 export { CheckedTransitions } from './checked-transitions.js';
 import type { ToolPolicy } from './tool-policy.js';
 export type {
@@ -68,7 +68,6 @@ export {
 export type {
   CodeFinding,
   CodeAdmissionLimits,
-  CodeAdmissionConfigureInput,
   CodeRepositoryImportInput,
   CodeRepositoryPrepareInput,
   CodeRepositoryPreparation,
@@ -77,19 +76,14 @@ export type {
   CodeStoreStatus,
   CodeStoreWarning,
   CodeMirrorStatus,
-  CodeWorkspaceManifestInput,
   CodeWorkspaceManifest,
   CodeUploadBegin,
   CodeUploadFinalize,
-  CodeDownloadBegin,
-  CodeDownloadRead,
   CodeUnitFenceInput,
   CodeMirrorRetryInput,
 } from './code-store.js';
 export type {
-  UiManifest,
   UiManifestRow,
-  UiManifestGroup,
   UiCollectionSpec,
   UiColumn,
   UiPhrasePart,
@@ -896,7 +890,7 @@ export async function releasedLease(
  * with it, and a row already released is left alone. It checks no receipt, so it never fails
  * as stale.
  */
-export async function releaseLeaseRow(
+async function releaseLeaseRow(
   tx: Transaction,
   reviews: Pick<Reviews, 'releaseClaim'>,
   table: string,

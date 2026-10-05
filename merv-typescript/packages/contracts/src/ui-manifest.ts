@@ -182,9 +182,7 @@ const row = z.object({
 });
 export const uiManifestSchema = z.object({ version: z.literal(1), rows: z.array(row).max(8) });
 
-export type UiManifest = z.infer<typeof uiManifestSchema>;
 export type UiManifestRow = z.infer<typeof row>;
-export type UiManifestGroup = z.infer<typeof group>;
 export type UiCollectionSpec = z.infer<typeof collection>;
 export type UiColumn = z.infer<typeof column>;
 export type UiPhrasePart = z.infer<typeof phrasePart>;

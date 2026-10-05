@@ -123,11 +123,6 @@ async function runMachine(configPath: string) {
 
 async function main() {
   const command = process.argv[2] ?? 'help';
-  check(
-    command !== 'code-restore',
-    'code_backup_retired',
-    'code-restore was retired. Use deploy/recovery-snapshot.py for deployment snapshots, or the preserved legacy recovery kit for old application backups.',
-  );
   if (command === 'help' || command === '--help') {
     console.log(`Merv TypeScript — durable tasks, evidence, independent review
 

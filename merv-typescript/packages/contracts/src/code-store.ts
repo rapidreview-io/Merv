@@ -49,7 +49,6 @@ export const codeAdmissionConfigureInputSchema = codeAdmissionLimitsSchema
   .omit({ format: true })
   .extend({ requestId: id })
   .strict();
-export type CodeAdmissionConfigureInput = z.infer<typeof codeAdmissionConfigureInputSchema>;
 
 /** One object rather than a union, because a tool's input is described as a single object. */
 export const codeRepositoryImportInputSchema = z
@@ -204,7 +203,6 @@ const control = z.object({ sessionId: id, runnerId: id, hostRef: id }).strict();
 export const codeWorkspaceManifestInputSchema = z
   .object({ sessionId: id, runnerId: id, hostRef: id.optional() })
   .strict();
-export type CodeWorkspaceManifestInput = z.infer<typeof codeWorkspaceManifestInputSchema>;
 export const codeWorkspaceManifestSchema = z
   .object({
     projectRef: id,
@@ -249,7 +247,6 @@ export const codeDownloadBeginSchema = z
     haves: z.array(oid).max(256),
   })
   .strict();
-export type CodeDownloadBegin = z.infer<typeof codeDownloadBeginSchema>;
 export const codeDownloadReadSchema = z
   .object({
     /** An export is read only by the machine that runs the session it was made for. */
@@ -260,7 +257,6 @@ export const codeDownloadReadSchema = z
     length: z.number().int().positive().max(CODE_PART_MAX_BYTES),
   })
   .strict();
-export type CodeDownloadRead = z.infer<typeof codeDownloadReadSchema>;
 
 export const codeUnitFenceInputSchema = z.object({ unitId: id, requestId: id }).strict();
 export type CodeUnitFenceInput = z.infer<typeof codeUnitFenceInputSchema>;
