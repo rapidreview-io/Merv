@@ -170,7 +170,8 @@ test('each open allocation is a machine in the sessions lane, rented for its ste
   const stopping = await f.request('pi-host', 'pih_1:1');
   await f.fleet.tick();
   await f.fleet.cancel(f.caller, stopping.id);
-  const waiting = await f.request('workflow', 'task_2:1');
+  // A machine a workflow's later steps reuse is rented for its work.
+  const waiting = await f.request('workflow', 'work:task_2');
   const released = await f.request('workflow', 'task_3:1');
   await f.fleet.cancel(f.caller, released.id);
   const now = async (id: string) => await f.fleet.inspect(f.caller, id);

@@ -116,9 +116,13 @@ function attention(a: FleetAllocation): RunningAttention | undefined {
   return kept(a) ? { says: [failure], quiet: true } : { says: [failure], who };
 }
 
-/** The step a workflow rented for: its owner id is `<instanceId>:<revision>`. */
+/** The work a workflow rented for: its owner id is `<instanceId>:<revision>`, or `work:<instanceId>`
+ * for a machine its later steps reuse. */
 function rentedFor(a: FleetAllocation): RunningKey | null {
-  const id = a.owner.kind === 'workflow' ? /^(.+):\d+$/.exec(a.owner.id)?.[1] : undefined;
+  const id =
+    a.owner.kind === 'workflow'
+      ? /^work:(.+)$|^(.+):\d+$/.exec(a.owner.id)?.slice(1).find(Boolean)
+      : undefined;
   const key = id && runningKey('work', id);
   return key && runningKeyPattern.test(key) ? key : null;
 }

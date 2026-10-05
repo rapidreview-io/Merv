@@ -30,6 +30,7 @@ import type {
   SandboxReadiness,
   SandboxRow,
   SandboxTarget,
+  SandboxRuntimeHandle,
   SandboxRuntimes,
 } from './types.js';
 import { NativeConnections } from './native-connections.js';
@@ -283,13 +284,10 @@ export class SandboxService implements Sandboxes {
       // Every call joins the same drain as a tool's, so closing waits for a check's step
       // instead of abandoning a half-created machine.
       this.checks = {
-        start: (projectId, spec) => this.#run(spec, (spec) => runner.start(projectId, spec)),
-        step: (projectId, plan, handle) =>
-          this.#run(handle, (handle) => runner.step(projectId, plan, handle)),
-        follow: (projectId, handle) =>
-          this.#run(handle, (handle) => runner.follow(projectId, handle)),
-        release: (projectId, handle) =>
-          this.#run(handle, (handle) => runner.release(projectId, handle)),
+        start: this.#drained(runner.start.bind(runner)),
+        step: this.#drained(runner.step.bind(runner)),
+        follow: this.#drained(runner.follow.bind(runner)),
+        release: this.#drained(runner.release.bind(runner)),
       };
     }
     if (parsed.data.runtimes) {
@@ -328,34 +326,25 @@ export class SandboxService implements Sandboxes {
           this.#connections.some(
             (entry) => entry.projectId === projectId && this.#client.configured(entry),
           ),
-        provision: (projectId, operationKey, profileId) =>
-          this.#run(
-            { projectId, operationKey, profileId },
-            ({ projectId, operationKey, profileId }) =>
-              profiled(profileId).provision(projectId, operationKey),
-          ),
-        inspect: (projectId, handle) =>
-          this.#run({ projectId, handle }, ({ projectId, handle }) =>
-            runner.inspect(projectId, handle),
-          ),
-        launch: (projectId, handle, operationKey, bootstrap, profileId) =>
-          this.#run(
-            { projectId, handle, operationKey, bootstrap, profileId },
-            ({ projectId, handle, operationKey, bootstrap, profileId }) =>
-              profiled(profileId).launch(projectId, handle, operationKey, bootstrap),
-          ),
-        acknowledge: (projectId, handle) =>
-          this.#run({ projectId, handle }, ({ projectId, handle }) =>
-            runner.acknowledge(projectId, handle),
-          ),
-        stop: (projectId, handle) =>
-          this.#run({ projectId, handle }, ({ projectId, handle }) =>
-            runner.stop(projectId, handle),
-          ),
-        renew: (projectId, handle, profileId) =>
-          this.#run({ projectId, handle, profileId }, ({ projectId, handle, profileId }) =>
+        provision: this.#drained((projectId: string, operationKey: string, profileId?: string) =>
+          profiled(profileId).provision(projectId, operationKey),
+        ),
+        inspect: this.#drained(runner.inspect.bind(runner)),
+        launch: this.#drained(
+          (
+            projectId: string,
+            handle: SandboxRuntimeHandle,
+            operationKey: string,
+            bootstrap: string,
+            profileId?: string,
+          ) => profiled(profileId).launch(projectId, handle, operationKey, bootstrap),
+        ),
+        acknowledge: this.#drained(runner.acknowledge.bind(runner)),
+        stop: this.#drained(runner.stop.bind(runner)),
+        renew: this.#drained(
+          (projectId: string, handle: SandboxRuntimeHandle, profileId?: string) =>
             profiled(profileId).renew(projectId, handle),
-          ),
+        ),
       };
     }
   }
@@ -420,6 +409,11 @@ export class SandboxService implements Sandboxes {
     } finally {
       this.#running.delete(pending);
     }
+  }
+
+  /** `fn` on the same admission/drain boundary, each call on a copy of its arguments. */
+  #drained<A extends unknown[], T>(fn: (...args: A) => Promise<T>): (...args: A) => Promise<T> {
+    return (...args) => this.#run(args, (args) => fn(...args));
   }
 
   /** Native owner calls contain live transactions, so preserve those handles while
@@ -596,8 +590,7 @@ export class SandboxService implements Sandboxes {
       const spec = this.#specs.get(rowId);
       check(spec, 'row_unreadable', 'That row is not published by this service', 404);
       const entry = this.#connectionFor(caller.projectId);
-      // ui.read hands a row its `params`; tolerate a caller that passes the whole tool input.
-      const id = params.id ?? (params.params as { id?: unknown } | undefined)?.id;
+      const id = params.id;
       if (id === undefined || id === null || id === '')
         return visible(await this.#client.read(entry, sandboxRoute(spec.collection.read)));
       check(typeof id === 'string', 'invalid_sandbox_id', 'A sandbox identifier must be a string');

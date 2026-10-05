@@ -129,21 +129,26 @@ export class NativeMachineReader implements NativeMachineReads {
   async list(projectId: string): Promise<Json[]> {
     const groups: { connectionId: string; rows: Json[] }[] = [];
     let count = 0;
+    let failure: unknown;
     for (const work of await this.works(projectId)) {
+      let rows: Json[];
       try {
-        const rows = await this.listWork(projectId, work);
-        count += rows.length;
-        check(count <= 10_000, 'sandbox_machines_limit', 'Native machine list is too large', 503);
-        groups.push({ connectionId: work.connection_id, rows });
+        rows = await this.listWork(projectId, work);
       } catch (error) {
+        // One work that cannot be read hides only its own machines; a project none of whose
+        // work answered is a failed read, never an empty one.
         if (
-          (error as { code?: string }).code === 'sandbox_access_revoked' &&
-          (await this.locallyRevoked(work.connection_id))
+          (error as { code?: string }).code !== 'sandbox_access_revoked' ||
+          !(await this.locallyRevoked(work.connection_id))
         )
-          continue;
-        throw error;
+          failure ??= error;
+        continue;
       }
+      count += rows.length;
+      check(count <= 10_000, 'sandbox_machines_limit', 'Native machine list is too large', 503);
+      groups.push({ connectionId: work.connection_id, rows });
     }
+    if (failure !== undefined && !groups.length) throw failure;
     // A previous work's root may have been revoked while later work was being read.
     const authorized = new Set((await this.works(projectId)).map((work) => work.connection_id));
     const rows = groups

@@ -87,6 +87,8 @@ export const nativeWorkKind = (workflow: string): string =>
   NATIVE_WORK_KINDS.has(workflow) ? workflow : 'task';
 /** A launch or close never waits on a session that ended longer ago than any lease can run. */
 const LEASE_HORIZON_MS = 8 * 24 * 3_600_000;
+/** Open work at rest under a live assignment is looked at this often, not on every pass. */
+const RESTING_MS = 30_000;
 type InstanceRow = { workflow: string; revision: number; data_json: string };
 const workflowTerminal = (state: string) => ['completed', 'failed', 'cancelled'].includes(state);
 const jobTerminal = (state: string) =>
@@ -635,10 +637,13 @@ export class NativeWorkService {
   }
   private async reconcileAll(): Promise<void> {
     const rows = await this.state.read((sql) =>
-      sql.all<NativeWorkRow>(`SELECT w.* FROM sandbox_native_work w JOIN sandbox_native_connections c ON c.id=w.connection_id AND c.project_id=w.project_id
+      sql.all<NativeWorkRow>(
+        `SELECT w.* FROM sandbox_native_work w JOIN sandbox_native_connections c ON c.id=w.connection_id AND c.project_id=w.project_id
       WHERE c.revoked_at IS NULL AND c.revoke_pending=FALSE
-      AND (w.transition_pending=TRUE OR w.evidence_checked_at IS NULL OR EXISTS (SELECT 1 FROM sandbox_native_assignments a WHERE a.project_id=w.project_id AND a.work_kind=w.work_kind AND a.work_id=w.work_id AND a.revoked_at IS NULL))
-      ORDER BY w.transition_pending DESC,w.evidence_checked_at ASC NULLS FIRST,w.project_id,w.work_kind,w.work_id LIMIT 20`),
+      AND (w.transition_pending=TRUE OR w.evidence_checked_at IS NULL OR (w.evidence_checked_at<? AND EXISTS (SELECT 1 FROM sandbox_native_assignments a WHERE a.project_id=w.project_id AND a.work_kind=w.work_kind AND a.work_id=w.work_id AND a.revoked_at IS NULL)))
+      ORDER BY w.transition_pending DESC,w.evidence_checked_at ASC NULLS FIRST,w.project_id,w.work_kind,w.work_id LIMIT 20`,
+        new Date(Date.now() - RESTING_MS).toISOString(),
+      ),
     );
     for (const row of rows) {
       try {
