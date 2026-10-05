@@ -118,11 +118,10 @@ const board = (doing?: unknown[]) => ({
           lane: 'sessions',
           title: 'Producer · claude',
           name: 'Tune the optimizer',
-          lines: [[{ mono: 'sandbox.run' }, ' · ', { since: ago(3) }], ['on a Fleet VM']],
+          lines: [doing ?? [{ mono: 'sandbox.run' }, ' · ', { since: ago(3) }], ['on a Fleet VM']],
           look: 'solid',
           dot: 'moving',
           links: [{ to: 'work:wf_t2', verb: 'works on' }],
-          ...(doing ? { doing } : {}),
         },
         {
           key: 'session:ses_2',
@@ -276,7 +275,7 @@ test('Home says where the project stands, what needs you, who is at work and wha
   );
 });
 
-test('a newest-action phrase from Sessions says what the agent is doing, in place of its line', async (t) => {
+test('the newest-action line Sessions writes says what the agent is doing', async (t) => {
   t.after(async () => await unmount());
   boot();
   serve('/tools/ui.running', { body: { result: board(['thinking']) } });

@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { Artifact } from '@merv/contracts/artifact-models';
-import type { RunningNode, RunningPhrase } from '@merv/contracts/running';
 import type { PaperWorkspace } from '@merv/paper/models';
 import { useTool } from '../api';
 import { Ago, KindLabel, StatusPill, cx, words } from '../components';
@@ -73,9 +72,6 @@ function Head({ rows, home }: { rows: Row[]; home: HomeData | undefined }) {
   );
 }
 
-/** A live session's node, with the phrase Sessions writes for its newest action, where it does. */
-type LiveNode = RunningNode & { doing?: RunningPhrase };
-
 /**
  * The agents working now, read from the board the Work map reads: each one's unit of work,
  * its role, and what it is doing at this moment, with how long. Each is the way to its unit's
@@ -88,7 +84,7 @@ function LiveNow({ rows }: { rows: Row[] }) {
   const data = board.data;
   const units = new Map((data?.lanes.work.nodes ?? []).map((node) => [node.key, node]));
   const working = (data?.lanes.sessions.nodes ?? []).filter(
-    (node): node is LiveNode => node.dot === 'live' || node.dot === 'moving',
+    (node) => node.dot === 'live' || node.dot === 'moving',
   );
   return (
     <Part
@@ -101,7 +97,8 @@ function LiveNow({ rows }: { rows: Row[] }) {
       <Reading.Provider value={{ now, nameOf, open: () => undefined }}>
         {working.map((node) => {
           const unit = node.links?.find((link) => units.has(link.to))?.to ?? node.links?.[0]?.to;
-          const doing = node.doing ?? node.attention?.says ?? node.lines[0] ?? [];
+          // Sessions writes the agent's newest action as the node's first line.
+          const doing = node.attention?.says ?? node.lines[0] ?? [];
           const face = (
             <>
               <span
