@@ -655,7 +655,6 @@ export class PiService implements Pi, FleetOwner {
       const view = await this.hostView(tx, host, conversation, source);
       return { conversation, commands: rows.map(decode<PiCommandRecord>), host, allocation, view };
     });
-    await this.scope.require(caller, 'read');
     const turn = commands.find((command) => command.id === conversation.activeCommandId);
     // The tail keeps only recent events: the turn's answer so far comes whole, as one event.
     const whole = streamed?.commandId === turn?.id ? streamed : undefined;
@@ -850,7 +849,6 @@ export class PiService implements Pi, FleetOwner {
         )
       ).map(decode<PiCommandRecord>),
     }));
-    await this.scope.require(caller, 'read');
     // The turn under way, else the newest one that was served.
     const active = commands.find(({ id }) => id === conversation.activeCommandId);
     const served = active?.notes ? active : commands.findLast((command) => command.notes);
@@ -2441,17 +2439,19 @@ export class PiService implements Pi, FleetOwner {
         // One host's failure leaves the others' passes alone; the next pass retries it.
       }
     }
-    // Fleet's progress is what open pages are waiting on.
-    for (const id of [...this.live.keys()]) {
-      const seen = await this.read(async (tx) => {
-        const conversation = await this.conversation(tx, id);
-        const command = conversation.activeCommandId
-          ? await this.command(tx, id, conversation.activeCommandId)
-          : null;
-        return { conversation, command, ...(await this.machineOf(tx, conversation)) };
-      }).catch(() => null);
-      if (seen) this.stage(seen.conversation, seen.command, seen.host, seen.allocation);
-    }
+    // Fleet's progress is what open pages are waiting on: one read sees every live conversation.
+    await this.read(async (tx) => {
+      for (const id of [...this.live.keys()]) {
+        const seen = await (async () => {
+          const conversation = await this.conversation(tx, id);
+          const command = conversation.activeCommandId
+            ? await this.command(tx, id, conversation.activeCommandId)
+            : null;
+          return { conversation, command, ...(await this.machineOf(tx, conversation)) };
+        })().catch(() => null);
+        if (seen) this.stage(seen.conversation, seen.command, seen.host, seen.allocation);
+      }
+    }).catch(() => {});
   }
   /** Applies Fleet's facts to a host: N not ready (T6), C lost (T7), D released once drained
    * (T5), turns expired or out of the queue, the idle end (T8) and a deadline's rollover (T10).

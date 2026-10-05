@@ -471,29 +471,28 @@ export class SandboxService implements Sandboxes {
   }
 
   async #read(): Promise<void> {
-    const collected = new Map<string, UiManifestRow>();
-    let reached = false;
+    let manifest: UiManifestRow[] | undefined;
     let detail = 'merv-sandboxes is unreachable';
+    // Every connection is the same service, so the first to answer describes every row.
     for (const entry of this.#connections) {
       if (this.#closed) return;
       try {
-        const manifest = await this.#client.read(entry, '/v1/ui/manifest');
-        // Every connection is the same service, so identical row ids describe one row.
-        for (const row of parseManifest(manifest))
-          if (!collected.has(row.id)) collected.set(row.id, row);
-        reached = true;
+        manifest = parseManifest(await this.#client.read(entry, '/v1/ui/manifest'));
+        break;
       } catch (error) {
         detail = error instanceof Error ? error.message : detail;
       }
     }
     if (this.#closed) return;
-    if (!reached) {
+    if (!manifest) {
       // Keep the last manifest: the row reports degraded rather than vanishing.
       this.#reachable = false;
       this.#detail = detail;
       return;
     }
     this.#reachable = true;
+    const collected = new Map<string, UiManifestRow>();
+    for (const row of manifest) if (!collected.has(row.id)) collected.set(row.id, row);
     const rows = [...collected.values()].map(toRow);
     const fingerprint = digest(rows);
     if (fingerprint === this.#digest) return;

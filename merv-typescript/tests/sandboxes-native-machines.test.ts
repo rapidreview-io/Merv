@@ -138,6 +138,14 @@ test('native machine reads aggregate all pinned payers and pages without copying
     'sbx_one',
   );
   assert.equal(await f.reader.record('project_test', 'missing'), null);
+  // Closed work whose cleanup settled holds only stopped machines and is no longer read.
+  await f.state.transaction((tx) =>
+    tx.run("UPDATE sandbox_native_work SET closed_at='2026-01-01' WHERE work_id='work_old'"),
+  );
+  assert.deepEqual(
+    (await f.reader.list('project_test')).map((row) => (row as { id: string }).id),
+    ['sbx_three'],
+  );
 });
 
 test('native machines refuse cross-work provenance, looping pages, and unavailable roots', async (t) => {
