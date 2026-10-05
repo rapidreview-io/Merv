@@ -4,8 +4,6 @@ import {
   codeLocalBindInputSchema,
   codeMergeInputSchema,
   codeMirrorRetryInputSchema,
-  codePublicationMergeSchema,
-  codeRepositoryConfigureInputSchema,
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
   codeUnitFenceInputSchema,
@@ -14,8 +12,6 @@ import {
   type CodeLocalBindInput,
   type CodeMergeInput,
   type CodeMirrorRetryInput,
-  type CodePublicationMerge,
-  type CodeRepositoryConfigureInput,
   type CodeRepositoryImportInput,
   type CodeRepositoryRebindInput,
   type CodeUnitFenceInput,
@@ -25,7 +21,9 @@ import { z } from 'zod';
 import { baseControlSchema, type CodeBaseControl } from './bases.js';
 import { publicationControlSchema } from './publication-host.js';
 import { repositoryPrepareSchema } from './repository-setup.js';
-import type {} from './types.js';
+import { codeRepositoryConfigureInputSchema } from './check-configuration.js';
+import { codePublicationMergeSchema } from './publications.js';
+import type { CodePublicationMerge, CodeRepositoryConfigureInput } from './types.js';
 
 export const codeToolsPlugin = {
   name: 'merv-code-tools',

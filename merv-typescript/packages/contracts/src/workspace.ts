@@ -1,10 +1,6 @@
 import { z } from 'zod';
 
-export type {
-  SessionWorkspace,
-  SessionWorkspaceRecord,
-  CodePendingMerge,
-} from './sessions-models.js';
+export type { SessionWorkspace, CodePendingMerge } from './sessions-models.js';
 
 const label = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);

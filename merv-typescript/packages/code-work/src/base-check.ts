@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
   check,
-  CODE_CHECK_SLACK_SECONDS,
-  CODE_CHECK_SOURCE_MAX_BYTES,
   type CodeBaseCheck,
   type CodeBaseRecord,
   type CodeCheckSpec,
@@ -13,6 +11,7 @@ import type {
   SandboxCheckVerdict,
 } from '@merv/sandboxes/types';
 import type { ServerGit } from '@merv/code/git';
+import { CODE_CHECK_SLACK_SECONDS, CODE_CHECK_SOURCE_MAX_BYTES } from './check-configuration.js';
 import type { ResolutionWork } from './types.js';
 
 /**

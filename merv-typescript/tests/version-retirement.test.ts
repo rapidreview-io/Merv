@@ -100,9 +100,10 @@ const consolidationTables = [
 ];
 /** Emptied by knowledge@2 and dropped by knowledge@3, which the release runs after it. */
 const knowledgeTables = ['knowledge_commands', 'knowledge_snapshots'];
+/** Dropped by workflows@10, which the release runs after the retirements. */
+const droppedTables = ['wf_system_requests'];
 /** Every table whose no-delete guard a retirement migration turns off and on again. */
 const guarded = [
-  'wf_system_requests',
   'wf_work_starts',
   'wf_limit_grants',
   'worker_sessions',
@@ -378,7 +379,7 @@ test('retiring the versions that can no longer start deletes their records and n
   assert.deepEqual(await ledger(client), expectedLedger);
   const expected: Record<string, string[]> = {};
   for (const [table, contents] of Object.entries(before)) {
-    if ([...consolidationTables, ...knowledgeTables].includes(table)) continue;
+    if ([...consolidationTables, ...knowledgeTables, ...droppedTables].includes(table)) continue;
     expected[table] = KEPT_TABLES.includes(table)
       ? contents
       : contents
@@ -445,7 +446,8 @@ test('retiring the versions that can no longer start deletes their records and n
     else if (row.selector === 'events') assert.equal(count, events[0]!.n);
     else if (
       /^consolidation.* dropped$/.test(String(row.selector)) ||
-      knowledgeTables.includes(String(row.selector))
+      knowledgeTables.includes(String(row.selector)) ||
+      droppedTables.some((table) => String(row.selector).startsWith(`${table} `))
     )
       assert.equal(count, null);
     else assert.equal(count, 0, String(row.selector));
@@ -477,7 +479,7 @@ test('retiring the versions that can no longer start deletes their records and n
     await rows(
       client,
       `SELECT name FROM unnest($1::text[]) AS name WHERE to_regclass(name) IS NOT NULL`,
-      [[...consolidationTables, ...knowledgeTables]],
+      [[...consolidationTables, ...knowledgeTables, ...droppedTables]],
     ),
     [],
   );

@@ -330,6 +330,12 @@ export class CredentialStore {
     });
   }
 
+  /** A hash's ledger row, live or not; undefined when the ledger never held it. */
+  async read(tokenHash: string, sql: Sql): Promise<Credential | undefined> {
+    const row = await find(sql, tokenHash);
+    return row && record(row);
+  }
+
   /** Idempotent; keeps the first revocation time. A hash never issued or adopted returns undefined. */
   async revoke(
     tokenHash: string,

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { digest, type Migration, type State } from '@merv/contracts';
 import { PostgresState } from '@merv/state';
 import { createApp } from './fixtures/app.js';
-import { initializeLegacyFoundationImports } from '../src/legacy-import.js';
+import { legacyFoundationImportMigrations } from './fixtures/legacy-foundation-import.js';
 import { initializeLegacyHistory } from '@merv/legacy-history/history';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/codex-relay.js';
@@ -71,7 +71,7 @@ async function registered(stop: (close: () => Promise<void>) => void) {
     },
   } as unknown as State;
   for (const start of [
-    () => initializeLegacyFoundationImports(recorder),
+    () => recorder.migrate('legacy-foundation-import', legacyFoundationImportMigrations),
     // Existing Code installations validate the historical mixed schema before projection;
     // a fresh standalone Code installation never registers these research migrations.
     () => initializeLegacyCodeRecords(recorder),

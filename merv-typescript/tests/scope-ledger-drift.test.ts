@@ -141,17 +141,7 @@ const unadopted: [
     async (f) => {
       const legacy = await legacyCredential(f);
       await f.scope.revokeCredential(f.owner, legacy.id);
-      return legacy;
-    },
-    async (scope, token) => await scope.authenticate(token),
-  ],
-  [
-    'rotateCredential',
-    'actor',
-    async (f) => {
-      const legacy = await legacyCredential(f);
-      const next = await f.scope.rotateCredential(f.owner, { credentialId: legacy.id });
-      assert.equal((await f.scope.authenticate(next.token)).id, f.machine.actor.id);
+      assert.notEqual(await scopeRevokedAt(f, 'actor_credentials', legacy.id), null);
       return legacy;
     },
     async (scope, token) => await scope.authenticate(token),
@@ -162,17 +152,7 @@ const unadopted: [
     async (f) => {
       const legacy = await legacyKey(f);
       await f.scope.revokeKey(f.alice, legacy.id);
-      return legacy;
-    },
-    async (scope, token) => await scope.authenticateKey(token),
-  ],
-  [
-    'rotateKey',
-    'user-key',
-    async (f) => {
-      const legacy = await legacyKey(f);
-      const next = await f.scope.rotateKey(f.alice, { keyId: legacy.id });
-      assert.equal((await f.scope.authenticateKey(next.token)).id, next.key.id);
+      assert.notEqual(await scopeRevokedAt(f, 'user_keys', legacy.id), null);
       return legacy;
     },
     async (scope, token) => await scope.authenticateKey(token),
@@ -180,18 +160,29 @@ const unadopted: [
 ];
 
 for (const [name, kind, retire, authenticate] of unadopted)
-  test(`${name} of a row the ledger has not adopted succeeds and stays revoked`, async (t) => {
+  test(`${name} of a row the ledger never held succeeds and records nothing there`, async () => {
     const f = await fixture();
     const legacy = await retire(f);
-    await t.test('the ledger records the revocation at once', async () => {
-      assert.notEqual((await ledgerRow(f, legacy.tokenHash))?.revoked_at ?? null, null);
-    });
-    await t.test('a restarted Scope still refuses the token', async () => {
-      await assert.rejects(authenticate(await f.boot(), legacy.token), unauthorized);
-      // Scope refuses on its own revoked_at too; the ledger must refuse on its own.
-      await assert.rejects(f.ledger.authenticate(legacy.token, kind), unauthorized);
-    });
+    assert.equal(await ledgerRow(f, legacy.tokenHash), undefined);
+    await assert.rejects(authenticate(await f.boot(), legacy.token), unauthorized);
+    await assert.rejects(f.ledger.authenticate(legacy.token, kind), unauthorized);
   });
+
+test('a credential or key the ledger never held cannot be rotated', async () => {
+  const f = await fixture();
+  const credential = await legacyCredential(f);
+  await assert.rejects(f.scope.rotateCredential(f.owner, { credentialId: credential.id }), {
+    code: 'credential_revoked',
+    status: 409,
+  });
+  assert.equal(await scopeRevokedAt(f, 'actor_credentials', credential.id), null);
+  const key = await legacyKey(f);
+  await assert.rejects(f.scope.rotateKey(f.alice, { keyId: key.id }), {
+    code: 'key_revoked',
+    status: 409,
+  });
+  assert.equal(await scopeRevokedAt(f, 'user_keys', key.id), null);
+});
 
 test('a credential revoked only in the ledger cannot be rotated', async () => {
   const f = await fixture();

@@ -452,6 +452,11 @@ DELETE FROM component_migrations WHERE component='reviews' AND version=11;`);
     // And reviews@13 (an index on reviews by subject).
     await client.query(`DROP INDEX reviews_subject;
 DELETE FROM component_migrations WHERE component='reviews' AND version=13;`);
+    // workflows@10 dropped the system-request table the retirements delete from; it returns.
+    await client.query(`CREATE TABLE wf_system_requests(project_id TEXT NOT NULL,provider TEXT NOT NULL,request_id TEXT NOT NULL,fingerprint TEXT NOT NULL,PRIMARY KEY(project_id,provider,request_id));
+CREATE FUNCTION wf_system_requests_guard() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'System requests are immutable and retained'; END $$ LANGUAGE plpgsql;
+CREATE TRIGGER wf_system_requests_guard BEFORE UPDATE OR DELETE ON wf_system_requests FOR EACH ROW EXECUTE FUNCTION wf_system_requests_guard();
+DELETE FROM component_migrations WHERE component='workflows' AND version=10;`);
     // And workflows@9 (pinned contracts are immutable; an index on instances by version).
     await client.query(`DROP TRIGGER wf_definitions_pinned ON wf_definitions;
 DROP TRIGGER wf_success_states_pinned ON wf_success_states;

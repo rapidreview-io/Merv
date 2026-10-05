@@ -1,7 +1,8 @@
+import { z } from 'zod';
 import {
   canonical,
   check,
-  codeRepositoryConfigureInputSchema,
+  codeAdmissionConfigureInputSchema,
   digest,
   newId,
   now,
@@ -16,6 +17,50 @@ import {
 import { parseCodeInput } from '@merv/code/input';
 import { OperationJournal } from '@merv/code/operation-journal';
 import type { CodeStore } from '@merv/code/store/operations';
+import type { CodeRepositoryConfigureInput } from './types.js';
+
+/** The largest merged tree a project check may ship, so one upload is one page of parts. */
+export const CODE_CHECK_SOURCE_MAX_BYTES = 128 * 1024 * 1024;
+/**
+ * How much longer than the command's own timeout a check is given: the archive, the upload,
+ * provisioning a machine, restoring a snapshot, polling and tearing down all happen outside
+ * the command, and a deadline that does not cover them turns every check into a re-rental.
+ * It must also exceed the allowance an adapter adds to the command's timeout for setup on
+ * the machine, or the lease and the reservation would end under a job still inside its own.
+ */
+export const CODE_CHECK_SLACK_SECONDS = 1500;
+
+export const codeCheckSpecSchema = z
+  .object({
+    command: z.string().trim().min(1).max(4000),
+    timeoutSeconds: z.number().int().min(30).max(3600),
+    image: z
+      .object({
+        provider: z.string().regex(/^[a-z][a-z0-9_-]{0,31}$/),
+        offerId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+        snapshotId: z
+          .string()
+          .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/)
+          .nullable(),
+      })
+      .strict(),
+  })
+  .strict() satisfies z.ZodType<CodeCheckSpec>;
+
+const { denyGlobs, secretExemptGlobs, requestId } = codeAdmissionConfigureInputSchema.shape;
+export const codeRepositoryConfigureInputSchema = z
+  .object({
+    denyGlobs,
+    secretExemptGlobs,
+    /**
+     * Stated on every call, never defaulted: the lists here replace what was set, so a check
+     * that could be left out would let an operator editing one glob switch verification off
+     * and have every later base seal unchecked without anybody having typed that.
+     */
+    check: codeCheckSpecSchema.nullable(),
+    requestId,
+  })
+  .strict() satisfies z.ZodType<CodeRepositoryConfigureInput>;
 
 export async function initializeCheckConfiguration(state: State): Promise<void> {
   await state.migrate('code_research_check_configuration', [

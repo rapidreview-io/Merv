@@ -355,7 +355,7 @@ export class UserKeys {
       check(changed.changes === 1, 'key_revoked', 'User key is already revoked or rotated', 409);
       // Only a revocation counts here, never expiry: renewing an expired key is intended.
       check(
-        (await this.ledger.retire('user-key', previous, tx)).revokedAt === null,
+        (await this.ledger.retire('user-key', previous, tx))?.revokedAt === null,
         'key_revoked',
         'User key was revoked in the credential ledger',
         409,

@@ -3,7 +3,6 @@ import type { Context } from 'cordis';
 import {
   check,
   CODE_PART_MAX_BYTES,
-  codePublicationMergeSchema,
   githubAutomationSchema,
   githubRepositoryInputSchema,
   githubRevisionSchema,
@@ -11,6 +10,7 @@ import {
   type CodeGitHub,
 } from '@merv/contracts';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
+import { codePublicationMergeSchema } from './publications.js';
 import type { Code } from './types.js';
 
 /** What Code's HTTP routes use of Code. */
