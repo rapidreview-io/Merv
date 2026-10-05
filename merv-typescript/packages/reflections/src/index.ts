@@ -1,12 +1,11 @@
+import { excludedFromReview, reviewHistory } from '@merv/reviews/rules';
 import {
-  excludedFromReview,
   leaseReleaseConsumer,
   releasedLease,
   visible,
   everyAsync,
   itemTitle,
   sha256Hex,
-  reviewHistory,
 } from '@merv/contracts';
 import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';

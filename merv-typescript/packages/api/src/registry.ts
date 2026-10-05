@@ -17,6 +17,7 @@ import type {
 } from './types.js';
 import type { ValidateFunction } from 'ajv';
 import { cloneJson, compileSchema } from './schema.js';
+import { toolsGuide } from './guide.js';
 
 export type { ToolDescription } from './types.js';
 export function isRemoteTool<T extends AnyToolDefinition | ListedTool>(
@@ -335,7 +336,7 @@ export class ToolRegistry implements Tools {
   }
 
   instructions(): string {
-    return this.guide.map(({ text }) => text).join('\n\n');
+    return [...this.guide.map(({ text }) => text), toolsGuide].join('\n\n');
   }
 
   /** The rules of the plugin that issued this caller, if any; fails closed without them. */

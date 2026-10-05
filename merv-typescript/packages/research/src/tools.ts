@@ -1,6 +1,4 @@
-import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
-import { z } from 'zod';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type { ResearchCreate, ResearchAdvance, ResearchEnd, ResearchReplan } from './types.js';
@@ -12,29 +10,13 @@ import {
   advanceSchema,
   replanSchema,
 } from './input.js';
-import { mainAgentGuide } from './guide.js';
+import { researchGuide } from './guide.js';
 export const researchToolsPlugin = {
   name: 'merv-research-tools',
   inject: ['research', 'tools'],
   apply(ctx: Context) {
     const research = ctx.research;
-    const requestId = z.string().min(1).max(200);
     for (const tool of [
-      {
-        name: 'reflection.create',
-        conversation: 'propose' as const,
-        description:
-          'Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.',
-        inputSchema: z
-          .object({
-            title: z.string().trim().min(1).max(300).refine(visible).optional(),
-            requestId,
-          })
-          .strict(),
-        handler: async (caller: Caller, input: { title?: string; requestId: string }) =>
-          await research.startReflection(caller, input),
-      },
-
       {
         name: 'research.create',
         description:
@@ -99,8 +81,8 @@ export const researchToolsPlugin = {
       },
     ])
       ctx.effect(() => ctx.tools.register(tool));
-    // Research composes the product, so it tells every main agent how Merv works.
-    ctx.effect(() => ctx.tools.contributeInstructions(mainAgentGuide));
+    // Research composes the product, so it tells every main agent how Merv's research works.
+    ctx.effect(() => ctx.tools.contributeInstructions(researchGuide));
   },
 };
 export default researchToolsPlugin;

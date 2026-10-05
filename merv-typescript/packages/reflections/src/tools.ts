@@ -1,6 +1,6 @@
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import type { Caller } from '@merv/contracts';
+import { visible, type Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type {} from './types.js';
 const id = z.string().min(1);
@@ -11,6 +11,20 @@ export const reflectionToolsPlugin = {
   inject: ['reflections', 'tools'],
   apply(ctx: Context) {
     const definitions = [
+      {
+        name: 'reflection.create',
+        conversation: 'propose' as const,
+        description:
+          'Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.',
+        inputSchema: z
+          .object({
+            title: z.string().trim().min(1).max(300).refine(visible).optional(),
+            requestId,
+          })
+          .strict(),
+        handler: async (caller: Caller, input: { title?: string; requestId: string }) =>
+          await ctx.reflections.create(caller, input),
+      },
       {
         name: 'reflection.list',
         description: 'List project reflection waves and their current stages.',

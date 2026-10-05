@@ -223,7 +223,7 @@ test('one derivation serves an experiment instance and a reflection instance', a
     intent: 'Test whether weight decay moves the grokking step.',
     requestId: 'experiment',
   });
-  const wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
+  const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
   for (const [instanceId, workflow] of [
     [experiment.id, 'experiment'],
     [wave.id, 'reflection'],

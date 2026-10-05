@@ -16,7 +16,8 @@ import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import { PaperService } from '@merv/paper';
 import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
-import type { Caller, ReviewHistory, Workflows } from '@merv/contracts';
+import type { Caller, Workflows } from '@merv/contracts';
+import type { ReviewHistory } from '@merv/reviews/rules';
 import { openState } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
 

@@ -124,7 +124,7 @@ export interface Tools {
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
   /** Adds a part to the guide every main agent is given (MCP instructions, Pi's prompt). */
   contributeInstructions(text: string): () => void;
-  /** The contributed parts in contribution order, joined by blank lines; empty without any. */
+  /** The contributed parts in contribution order, then the registry's own, joined by blank lines. */
   instructions(): string;
 }
 declare module 'cordis' {

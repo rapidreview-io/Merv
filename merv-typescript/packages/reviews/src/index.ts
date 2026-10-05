@@ -1,11 +1,5 @@
-import {
-  excludedFromReview,
-  directsIndependently,
-  canonical,
-  visible,
-  sourceCaller,
-  getArtifacts,
-} from '@merv/contracts';
+import { excludedFromReview, directsIndependently } from './rules.js';
+import { canonical, visible, sourceCaller, getArtifacts } from '@merv/contracts';
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';

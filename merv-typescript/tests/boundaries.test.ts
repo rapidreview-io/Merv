@@ -220,6 +220,14 @@ const sharedContract = (specifier: string) =>
   (specifier.startsWith('@merv/contracts/') &&
     contractsRuntimeExports.has(specifier.slice('@merv/contracts/'.length)));
 
+/** A unit's pure rules, which other units may run: the compute capability, experiment naming and
+ * limits, and review independence and history. */
+const pureRules = new Set([
+  '@merv/sandboxes/compute-capability',
+  '@merv/experiments/rules',
+  '@merv/reviews/rules',
+]);
+
 /** This adapter composes the Git utility; no other feature may import its implementation. */
 const codeUtilityExports = new Set([
   'store/managed',
@@ -441,9 +449,8 @@ function assertComponentReferences(
       // Identity's credential store is a public shared authority, also usable by standalone services.
       const credentials =
         ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
-      // The compute capability's rule and guidance are pure: any unit may render them.
-      const computeCapability = specifier === '@merv/sandboxes/compute-capability';
-      if (!utility && !credentials && !computeCapability) {
+      // Pure rules (no service, see the test below) that any unit may run.
+      if (!utility && !credentials && !pureRules.has(specifier)) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,
@@ -481,6 +488,17 @@ function assertComponentReferences(
 
 test('implementation imports remain inside their component and away from transport adapters', () => {
   for (const path of sourceFiles) assertComponentReferences(path, parse(path));
+});
+
+test('pure rule modules that other units run import nothing but contracts and zod', () => {
+  for (const specifier of pureRules) {
+    const [, name, file] = specifier.split('/');
+    for (const reference of moduleReferences(parse(join(packagesRoot, name!, 'src', `${file}.ts`))))
+      assert.ok(
+        ['@merv/contracts', 'zod'].includes(reference.specifier),
+        `${specifier} imports ${reference.specifier}`,
+      );
+  }
 });
 
 test('Pi SDK imports stay in the sandbox worker, outside every server entrypoint', () => {

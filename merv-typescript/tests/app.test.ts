@@ -15,7 +15,8 @@ import type { ToolDefinition } from '../packages/api/src/types.js';
 import { piTool } from '../packages/pi/src/relay-schema.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
 import { piInstructions, turnNotes } from '../packages/pi/src/prompt.js';
-import { mainAgentGuide } from '../packages/research/src/guide.js';
+import { researchGuide } from '../packages/research/src/guide.js';
+import { toolsGuide } from '../packages/api/src/guide.js';
 
 async function client(url: string, token: string) {
   const result = new Client({ name: 'merv-integration', version: '1.0.0' });
@@ -315,9 +316,9 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);
     assert.equal(new Set(models).size, models.length);
     assert.ok(models.length <= 128, `${models.length} tools`);
-    // The full composition gives every main agent the research guide, and every tool the
-    // agent's instructions and notes name is registered.
-    assert.equal(app.ctx.tools.instructions(), mainAgentGuide);
+    // The full composition gives every main agent the research guide, then the registry's, and
+    // every tool the agent's instructions and notes name is registered.
+    assert.equal(app.ctx.tools.instructions(), `${researchGuide}\n\n${toolsGuide}`);
     const named = [
       piInstructions(app.ctx.tools.instructions()),
       ...turnNotes({
@@ -358,7 +359,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     // MCP clients working with a person get the same guide.
     const credentials = await app.ctx.scope.bootstrap({ projectName: 'Guide', actorName: 'Owner' });
     const mcp = await client(app.ctx.api.url!, credentials.token);
-    assert.ok(mcp.getInstructions()?.startsWith(mainAgentGuide));
+    assert.ok(mcp.getInstructions()?.startsWith(app.ctx.tools.instructions()));
     // The Sessions page's controls, as tools.
     assert.equal((await call(mcp, 'session.dispatch', { enabled: true })).enabled, true);
     assert.deepEqual(await call(mcp, 'session.halt', { reason: 'pause' }), { halted: 0 });

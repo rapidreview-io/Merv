@@ -1,5 +1,36 @@
-import type { ReviewRequest } from './index.js';
-import { clip } from './text.js';
+import { check, clip, type ReviewRequest } from '@merv/contracts';
+
+// Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them.
+
+/** A review's producer and its excluded contributors cannot be its reviewer. */
+export const excludedFromReview = (
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
+  actorId: string,
+) =>
+  review.producerId === actorId ||
+  (review.excludedActorIds ?? []).includes(actorId) ||
+  (review.provenance?.excludedActorIds ?? []).includes(actorId);
+/**
+ * Whether a worker this authority directs may review. The producer never directs its own
+ * reviewer, with or without provenance; owner-certified contributors direct none either. Two
+ * workers one authority directs are different actors, so either may review the other's work.
+ */
+export const directsIndependently = (
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
+  authorityId: string,
+) =>
+  review.provenance ? !excludedFromReview(review, authorityId) : review.producerId !== authorityId;
+/** The lease source a review worker would speak for, refused where it may not direct one. */
+export const requireDirecting = (
+  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
+  authorityId: string,
+) =>
+  check(
+    directsIndependently(review, authorityId),
+    'review_independence',
+    'A producer or contributor cannot direct the reviewer of its own work',
+    403,
+  );
 
 /** One rejected review round as the next author reads it. */
 export interface ReviewRound {

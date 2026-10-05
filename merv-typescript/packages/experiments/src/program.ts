@@ -1,8 +1,7 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
+import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
 import {
-  requireDirecting,
-  excludedFromReview,
   itemTitle,
   releasedLease,
   mapAsync,
@@ -15,7 +14,6 @@ import {
   check,
   CheckedTransitions,
   digest,
-  reviewHistory,
   type Artifact,
   type Artifacts,
   type Caller,

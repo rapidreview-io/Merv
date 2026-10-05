@@ -189,9 +189,6 @@ test('Research boots with only State, Scope and Workflows and reports the missin
     /paper_unavailable/,
   );
   await assert.rejects(f.advance(record), { code: 'paper_unavailable' });
-  await assert.rejects(f.research.startReflection(f.owner, { requestId: f.id() }), {
-    code: 'reflections_unavailable',
-  });
 });
 
 test('a hosted cycle retains its Code obligation when the provider unloads', async (t) => {

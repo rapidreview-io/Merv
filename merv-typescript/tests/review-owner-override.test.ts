@@ -417,13 +417,13 @@ test('the owner decides an experiment’s design and its results as owner', asyn
 
 test('the owner who wrote a lens decides the reflection wave as owner', async (t) => {
   const f = await fixture(t);
-  const { reflections, research, artifacts } = f.app.ctx;
+  const { reflections, artifacts } = f.app.ctx;
   const write = async (by: Caller, title: string) =>
     await artifacts.create(by, {
       title,
       content: `# Summary\n${title}: source-linked observation.\n# Evidence\nNo completed experiments in the pinned corpus; no empirical conclusion is claimed.`,
     });
-  const wave = await research.startReflection(f.founder, { requestId: 'wave' });
+  const wave = await reflections.create(f.founder, { requestId: 'wave' });
   for (const [index, lens] of wave.lenses.entries()) {
     const by = index === 0 ? f.founder : await f.machine('producer');
     await reflections.submitLens(by, {

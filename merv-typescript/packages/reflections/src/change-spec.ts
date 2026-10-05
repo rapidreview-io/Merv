@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { check, folded, idSchema, ordered, parsed, visible } from '@merv/contracts';
+import { experimentName, MAX_ACTIVE_EXPERIMENTS } from '@merv/experiments/rules';
 import type { ChangeSpec } from './types.js';
 
 /**
@@ -9,7 +10,7 @@ import type { ChangeSpec } from './types.js';
 export const CHANGE_SPEC_LIMITS = {
   bytes: 64_000,
   items: 12,
-  experiments: 7,
+  experiments: MAX_ACTIVE_EXPERIMENTS,
   carriedOver: 20,
   rejected: 20,
 } as const;
@@ -43,13 +44,7 @@ const experiment = z
   .object({
     key,
     kind: z.literal('experiment'),
-    // Reflections cannot import Experiments, so its naming rule is repeated here. If the two
-    // drift, the next wave refuses the name when it creates the experiment; nothing passes silently.
-    name: z
-      .string()
-      .min(3)
-      .max(48)
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+    name: experimentName(),
     question: text(4000),
     details: z.string().max(4000),
     dependsOn,

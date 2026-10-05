@@ -10,7 +10,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
-import type { Artifact, Caller, Data, ReviewApplication, ReviewHistory } from '@merv/contracts';
+import type { Artifact, Caller, Data, ReviewApplication } from '@merv/contracts';
+import type { ReviewHistory } from '@merv/reviews/rules';
 
 import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
