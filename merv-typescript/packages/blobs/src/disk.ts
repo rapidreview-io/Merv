@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, link, stat, unlink } from 'node:fs/promises';
+import { mkdir, open, link, unlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { check, type Blobs } from '@merv/contracts';
+import type { Blobs } from '@merv/contracts';
 import {
   BlobOperations,
   copyBytes,
@@ -49,9 +49,8 @@ export class DiskBlobs implements Blobs {
             await link(temporary, destination);
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-            // The name is the content's hash, so an existing file of the same size holds it.
-            const size = (await stat(destination)).size;
-            check(size === content.byteLength, 'blob_corrupt', 'Stored blob size differs', 500);
+            // The name is the content's hash; an existing file must read back intact.
+            await this.read(namespace, hash);
           }
           const parent = await open(directory, 'r');
           try {

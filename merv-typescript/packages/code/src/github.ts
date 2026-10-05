@@ -25,6 +25,7 @@ import {
   type GitHubConfig,
   type GitHubTokens,
 } from './github-client.js';
+import { githubGitEnv } from './git.js';
 import { parseCodeInput } from './input.js';
 import type { CodeImportRemote } from './store/operations.js';
 
@@ -403,31 +404,40 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         'Connect your GitHub account to manage repositories for this project',
         403,
       );
-    else {
-      check(
-        row.owner_source &&
-          row.automation !== 'off' &&
-          (access === 'read' || row.automation === 'write'),
-        'github_automation_disabled',
-        'The repository owner must enable the required GitHub automation',
-        403,
-      );
-      const source = JSON.parse(row.owner_source) as DelegationSource;
-      check(
-        source.kind === 'human' &&
-          source.projectId === caller.projectId &&
-          row.owner === JSON.stringify([source.issuer, source.subject]),
-        'github_owner',
-        'GitHub owner binding is invalid',
-        403,
-      );
-      await this.scope.requireDelegation(source, 'admin', tx);
-    }
+    else await this.delegated(caller.projectId, row, access, tx);
   }
-  private async connection(caller: Caller, tx: Transaction, access: Access = 'owner') {
+  /** Automation acts for the human who turned it on, while they still administer the project. */
+  private async delegated(
+    projectId: string,
+    row: Connection,
+    access: 'read' | 'write',
+    tx?: Transaction,
+  ) {
+    check(
+      row.owner_source &&
+        row.automation !== 'off' &&
+        (access === 'read' || row.automation === 'write'),
+      'github_automation_disabled',
+      'The repository owner must enable the required GitHub automation',
+      403,
+    );
+    const source = JSON.parse(row.owner_source) as DelegationSource;
+    check(
+      source.kind === 'human' &&
+        source.projectId === projectId &&
+        row.owner === JSON.stringify([source.issuer, source.subject]),
+      'github_owner',
+      'GitHub owner binding is invalid',
+      403,
+    );
+    await this.scope.requireDelegation(source, 'admin', tx);
+  }
+  /** `app`: the request carries a server-minted credential, never the owner's OAuth token. */
+  private async connection(caller: Caller, tx: Transaction, access: Access = 'owner', app = false) {
     if (access === 'write') await this.scope.require(caller, 'write', tx);
     const row = await this.row(tx, caller.projectId);
     await this.authority(caller, tx, row, access);
+    if (app) return row;
     if (row.refresh_id && row.refresh_until! > timestamp())
       throw new MervError(
         'github_busy',
@@ -518,22 +528,27 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       throw error;
     }
   }
+  /**
+   * `installed`: fn ends on server-minted credentials, so its result no longer depends on the
+   * owner's OAuth token; a concurrent refresh of that token must not discard it.
+   */
   private async withToken<T>(
     caller: Caller,
     fn: (token: string, row: Connection, authorize: () => Promise<void>) => Promise<T>,
     access: Access = 'owner',
     authorizeRequest?: (tx: Transaction) => Promise<unknown>,
+    installed = false,
   ) {
     const { token, row } = await this.token(caller, access);
-    const authorize = () =>
+    const authorize = (app = false) =>
       this.state.transaction(async (tx) => {
-        await this.unchanged(caller, tx, row, access);
+        await this.unchanged(caller, tx, row, access, app);
         await authorizeRequest?.(tx);
       });
     try {
       return await this.client().authorized(authorize, async () => {
-        const result = await fn(token, row, authorize);
-        await authorize();
+        const result = await fn(token, row, () => authorize());
+        await authorize(installed);
         return result;
       });
     } catch (error) {
@@ -554,11 +569,13 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     tx: Transaction,
     previous: Connection,
     access: Access = 'owner',
+    app = false,
   ) {
-    const row = await this.connection(caller, tx, access);
+    const row = await this.connection(caller, tx, access, app);
     this.revision(row, previous.revision);
+    // A server-minted credential never carries the owner's token, so its refresh is no change.
     check(
-      row.token_version === previous.token_version,
+      app || row.token_version === previous.token_version,
       'github_conflict',
       'GitHub credentials changed; retry the request',
       409,
@@ -575,9 +592,10 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   }
   /**
    * Where the server publishes a project's own work, with no caller and no human token: the
-   * owner's link and the write automation they turned on are the whole authorisation, and
-   * unlinking or turning it off is the off switch. A refusal is a state, not an error: work
-   * never waits for publication, so the mirror simply says why it is not running.
+   * owner's link and the write automation they turned on are the whole authorisation, while
+   * they still administer the project; unlinking or turning it off is the off switch. A
+   * refusal is a state, not an error: work never waits for publication, so the mirror simply
+   * says why it is not running.
    */
   async mirrorTarget(projectId: string): Promise<GitHubRepository | { blocked: string }> {
     if (this.#closed || !this.#client) return { blocked: 'github_unconfigured' };
@@ -585,6 +603,12 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     const row = await this.state.read(async (sql) => await this.row(sql, projectId));
     if (!row.repository_json) return { blocked: 'github_repository_required' };
     if (row.automation !== 'write') return { blocked: 'github_automation_disabled' };
+    try {
+      await this.delegated(projectId, row, 'write');
+    } catch (error) {
+      if (error instanceof MervError && error.status === 403) return { blocked: 'github_owner' };
+      throw error;
+    }
     return JSON.parse(row.repository_json) as GitHubRepository;
   }
   /**
@@ -693,6 +717,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     binding: GitHubBinding | undefined,
     fn: (client: GitHubClient, token: string, binding: GitHubBinding) => Promise<T>,
     authorizeRequest?: (tx: Transaction) => Promise<unknown>,
+    installed = false,
   ) {
     if (binding) binding = structuredClone(binding);
     return this.run(caller, (caller) =>
@@ -720,6 +745,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         },
         access,
         authorizeRequest,
+        installed,
       ),
     );
   }
@@ -746,11 +772,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
             url: `https://github.com/${binding.repository.fullName}.git`,
             protocol: 'https',
             repository: binding.repository,
-            env: {
-              GIT_CONFIG_COUNT: '1',
-              GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-              GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${grant.token}`).toString('base64')}`,
-            },
+            env: githubGitEnv(grant.token),
           });
         } finally {
           await client.revokeInstallationToken(grant.token).catch(() => {});
@@ -797,6 +819,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
         }
       },
       authorize,
+      true,
     );
   }
   link(caller: Caller, value: GitHubRepositoryInput) {

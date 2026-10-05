@@ -198,10 +198,11 @@ interface TreeEntry {
 type KeptTree = { trees: string[]; links: string[]; inside: TreeEntry[] };
 /**
  * Kept trees as admission last read them. A tree never changes, and every upload borrows most
- * of the repository's, so they are read once per process rather than once per upload.
+ * of the repository's, so they are read once per process rather than once per upload. Only
+ * without deny globs: their names would make a whole repository of trees far from small.
  */
 const keptTreeMemo = new Map<string, KeptTree>();
-const MAX_KEPT_MEMO = 200_000;
+const MAX_KEPT_MEMO = 50_000;
 function parseTree(content: Buffer, format: ObjectFormat): TreeEntry[] | null {
   const width = format === 'sha1' ? 20 : 32;
   const entries: TreeEntry[] = [];
@@ -518,18 +519,18 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   // down, what was shallow enough is too deep; put under a denied directory, what is inside it
   // is denied. So every borrowed tree is read, and what a path decides is judged again.
   const keptTrees = new Map<string, KeptTree>();
-  const remembered = (oid: string) => (deny.length ? `${oid} named` : oid);
+  const memo = deny.length ? keptTrees : keptTreeMemo;
   for (let level = [...new Set(borrowed.map((item) => item.oid))]; level.length;) {
     if (keptTrees.size + level.length > MAX_TREE_VISITS) {
       found('history_size', null, null);
       break;
     }
-    if (keptTreeMemo.size + level.length > MAX_KEPT_MEMO) keptTreeMemo.clear();
+    if (memo === keptTreeMemo && memo.size + level.length > MAX_KEPT_MEMO) memo.clear();
     await read(
-      level.filter((oid) => !keptTreeMemo.has(remembered(oid))),
+      level.filter((oid) => !memo.has(oid)),
       (oid, content) => {
         const entries = parseTree(content, header.objectFormat) ?? [];
-        keptTreeMemo.set(remembered(oid), {
+        memo.set(oid, {
           trees: entries.filter((entry) => entry.mode === '40000').map((entry) => entry.oid),
           links: entries.filter((entry) => entry.mode === '120000').map((entry) => entry.oid),
           // Only the deny globs need the names, and a whole repository of them is not small.
@@ -541,7 +542,7 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     );
     const below = new Set<string>();
     for (const oid of level) {
-      const node = keptTreeMemo.get(remembered(oid));
+      const node = memo.get(oid);
       if (node) keptTrees.set(oid, node);
       for (const tree of node?.trees ?? []) below.add(tree);
     }

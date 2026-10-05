@@ -29,6 +29,7 @@ import {
   type WorkspaceTransport,
 } from '@merv/contracts';
 import { CodeWorkspaceDriver, WorkspaceError } from '@merv/code/driver/index';
+import { diskBytes } from '@merv/code/store/repository';
 import { LocalLedger } from '@merv/runner/ledger';
 import { RunnerWorkspaces } from '@merv/runner/workspaces';
 import { git } from './fixtures/code-store.js';
@@ -804,8 +805,10 @@ test('an interrupted upload continues where Code stands, and a final capture is 
   m.terminal.add('launch-ses_1');
   driver.dispose();
   let finalizes = 0;
+  let finalBegin: unknown;
   driver = m.start({
     call: async (route, body) => {
+      if (route === 'finalize') finalBegin = body;
       if (route === 'finalize' && ++finalizes === 1) throw unavailable();
       const answer = await f.code.v2!.call(f.admin, route, body);
       if (route === 'finalize' && finalizes === 2) throw unavailable();
@@ -826,6 +829,12 @@ test('an interrupted upload continues where Code stands, and a final capture is 
   assert.equal(git(path, ['rev-list', '--count', `${receipt.headOid}..HEAD`]), '1');
   assert.equal((await f.unit()).canonicalHead, captured);
   assert.equal((await f.unit()).writerState, 'closed');
+  // A begin whose answer was lost is replayed even when its own bytes filled the quota.
+  await f.open({ config: { quotaBytes: await diskBytes(f.paths.directory) } });
+  const replayed = (await f.code.v2!.call(f.admin, 'finalize', finalBegin)) as {
+    operation: { status: string };
+  };
+  assert.equal(replayed.operation.status, 'completed');
 });
 
 test('a final capture Code quarantines reports the last admitted head, and what was refused stays on the machine', async (t) => {

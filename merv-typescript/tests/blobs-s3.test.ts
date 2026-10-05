@@ -33,7 +33,7 @@ async function fixture(t: TestContext, options: { timeoutMs?: number; maxAttempt
   return { blobs, server };
 }
 
-test('S3 uses signed conditional writes, keeps legacy project/hash keys and checks duplicate content by size', async (t) => {
+test('S3 uses signed conditional writes, keeps legacy project/hash keys and verifies duplicate content', async (t) => {
   const { blobs, server } = await fixture(t);
   const first = await blobs.put('project_1', content);
   assert.deepEqual(first, { hash, size: content.byteLength });
@@ -42,7 +42,7 @@ test('S3 uses signed conditional writes, keeps legacy project/hash keys and chec
   assert.equal(server.objects.size, 1);
   assert.deepEqual(
     server.requests.map((r) => r.method),
-    ['PUT', 'GET', 'PUT', 'HEAD'],
+    ['PUT', 'GET', 'PUT', 'GET'],
   );
   for (const request of server.requests) {
     assert.equal(request.key, `evidence/v1/project_1/${hash}`);
@@ -67,6 +67,11 @@ test('S3 refuses corrupt reads and corrupt existing objects without overwriting 
   await assert.rejects(blobs.get('project_1', hash), code('blob_corrupt'));
   await assert.rejects(blobs.put('project_1', content), code('blob_corrupt'));
   assert.equal(server.objects.get(key)!.toString(), 'corrupted');
+  // A same-size object with other bytes is just as corrupt.
+  const sameSize = Buffer.alloc(content.byteLength, 1);
+  server.objects.set(key, sameSize);
+  await assert.rejects(blobs.put('project_1', content), code('blob_corrupt'));
+  assert.deepEqual(server.objects.get(key), sameSize);
 });
 
 test('S3 bounds declared and streamed reads and validates keys before networking', async (t) => {
@@ -221,6 +226,8 @@ test('async Disk preserves atomic immutable writes, integrity and clean temporar
   assert.deepEqual(await readdir(join(root, 'project_1', hash.slice(0, 2))), [hash]);
   await writeFile(path, 'corrupt');
   await assert.rejects(blobs.get('project_1', hash), code('blob_corrupt'));
+  await assert.rejects(blobs.put('project_1', content), code('blob_corrupt'));
+  await writeFile(path, Buffer.alloc(content.byteLength, 1));
   await assert.rejects(blobs.put('project_1', content), code('blob_corrupt'));
   await blobs.close();
   await assert.rejects(blobs.get('project_1', hash), code('blobs_closed'));

@@ -189,15 +189,14 @@ export class CodeService extends CodeCommandService implements Code {
             {
               imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
               workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
-              frozen: async () => [],
               fenced: (tx, fence, kind) => this.writerStore.fenced(tx, fence, kind),
               advanced: (tx, fence, input) => this.writerStore.advanced(tx, fence, input),
               quarantined: (tx, fence, id) => this.writerStore.quarantined(tx, fence, id),
               maintained: () => this.writerStore.expire(),
             },
+            utility.repositories,
             repositories.remote ?? this.linkedRepository(),
             repositories.fault,
-            utility.repositories,
           );
           await store.initialize();
           this.store = store;

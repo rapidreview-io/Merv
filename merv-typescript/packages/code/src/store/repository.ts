@@ -78,17 +78,20 @@ export async function diskBytes(path: string): Promise<number> {
     if ((error as NodeJS.ErrnoException).code !== 'ENOTDIR') throw error;
     return (await lstat(path)).size;
   }
-  let total = 0;
-  for (const entry of entries) {
-    const child = join(path, entry.name);
-    if (entry.isDirectory()) total += await diskBytes(child);
-    else
-      total += await lstat(child).then(
-        (stat) => stat.size,
-        () => 0,
-      );
-  }
-  return total;
+  // Siblings are measured at once: a repository that never collects garbage keeps a pack per
+  // transfer and a file per loose ref, and one at a time that is most of an upload's wait.
+  const sizes = await Promise.all(
+    entries.map((entry) => {
+      const child = join(path, entry.name);
+      return entry.isDirectory()
+        ? diskBytes(child)
+        : lstat(child).then(
+            (stat) => stat.size,
+            () => 0,
+          );
+    }),
+  );
+  return sizes.reduce((total, size) => total + size, 0);
 }
 
 /**
@@ -522,6 +525,9 @@ export class CodeRepositories {
   async sweep(
     finished: (operationId: string) => Promise<boolean | undefined>,
     nowMs = Date.now(),
+    /** Runs `take` in turn with whoever cuts that export; `take` says whether it took it. */
+    expire: (exportId: string, take: () => Promise<boolean>) => Promise<unknown> = (_, take) =>
+      take(),
   ): Promise<void> {
     const old = async (path: string, age: number) =>
       await lstat(path).then(
@@ -540,14 +546,17 @@ export class CodeRepositories {
       const repository = join(directory, 'repository.git');
       for (const name of await readdir(join(directory, 'exports')).catch(() => [])) {
         const path = join(directory, 'exports', name);
-        if (!(await old(path, EXPORT_TTL_MS))) continue;
-        await rm(path, { force: true });
         const exportId = name.replace(/\.bundle$/, '');
-        if (/^[A-Za-z0-9_]+$/.test(exportId))
-          for (const suffix of ['', '-second'])
-            await this.git.run(['update-ref', '-d', `refs/merv/exports/${exportId}${suffix}`], {
-              env: { GIT_DIR: repository },
-            });
+        await expire(exportId, async () => {
+          if (!(await old(path, EXPORT_TTL_MS))) return false;
+          await rm(path, { force: true });
+          if (/^[A-Za-z0-9_]+$/.test(exportId))
+            for (const suffix of ['', '-second'])
+              await this.git.run(['update-ref', '-d', `refs/merv/exports/${exportId}${suffix}`], {
+                env: { GIT_DIR: repository },
+              });
+          return true;
+        });
       }
       const packs = join(repository, 'objects', 'pack');
       for (const name of await readdir(packs).catch(() => []))

@@ -10,7 +10,7 @@ import { CodeWriterService } from '@merv/code/writers';
 import { CodeStore } from '@merv/code/store/operations';
 import { openState } from './fixtures/state.js';
 import { boundProject } from './fixtures/code-binding.js';
-import { gitSource } from './fixtures/code-store.js';
+import { gitSource, openRepositories } from './fixtures/code-store.js';
 
 test('managed Code transfers are fenced to one session even for the same source actor', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-managed-code-'));
@@ -53,6 +53,7 @@ test('managed Code transfers are fenced to one session even for the same source 
   const first = managed('session_first');
   const other = managed('session_other');
   await boundProject(state, owner.projectId, head);
+  const repositories = await openRepositories(join(directory, 'code'));
   const store = await createService(
     new CodeStore(
       state,
@@ -61,15 +62,16 @@ test('managed Code transfers are fenced to one session even for the same source 
       {
         imported: async () => {},
         workspaces: async () => [],
-        frozen: async () => [],
         fenced: async () => {},
         advanced: async () => {},
         quarantined: async () => {},
       },
+      repositories,
     ),
   );
   t.after(async () => {
     await store.close();
+    await repositories.close(0);
     unregister();
     units.close();
     writers.close();

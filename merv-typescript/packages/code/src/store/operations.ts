@@ -131,12 +131,10 @@ export interface CodeStoreHooks {
   imported(tx: Transaction, projectId: string): Promise<void>;
   /**
    * Sessions of the project that hold a workspace in Code's repository right now, read-only
-   * ones included, and holds supplied by optional integrations. Rebinding refuses while
-   * either is in flight. Both are asked by project on the rebind's own transaction:
-   * who is asking for the rebind must not narrow what it is refused for.
+   * ones included. Rebinding refuses while any is in flight. It is asked by project on the
+   * rebind's own transaction: who is asking for the rebind must not narrow what it is refused for.
    */
   workspaces(projectId: string, tx: Transaction): Promise<string[]>;
-  frozen(projectId: string, tx: Transaction): Promise<string[]>;
   /** The writer fence, asked when an upload begins, continues and before any ref moves. */
   fenced(tx: Transaction, fence: WriterFence, kind: 'checkpoint' | 'final'): Promise<unknown>;
   advanced(
@@ -280,6 +278,23 @@ interface ProjectRow {
 const columns =
   'id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,error,created_at,completed_at,unit_id,generation,phase,progress_json,detail_json,updated_at';
 const journalled = ['admitting', 'objects_durable', 'refs_applied'];
+/** One job at a time per key, in the order asked; a job runs whatever the one before ended in. */
+function serial<T>(
+  chains: Map<string, Promise<void>>,
+  key: string,
+  job: () => Promise<T>,
+): Promise<T> {
+  const run = (chains.get(key) ?? Promise.resolve()).then(job);
+  const settled = run.then(
+    () => {},
+    () => {},
+  );
+  chains.set(key, settled);
+  void settled.then(() => {
+    if (chains.get(key) === settled) chains.delete(key);
+  });
+  return run;
+}
 const FETCH_TIMEOUT_MS = 10 * 60_000;
 const next: Record<string, string> = {
   code_store_full:
@@ -314,7 +329,6 @@ const refusal = (error: unknown) =>
  * made, so a start after a crash either finds the receipt ref or retries that same update.
  */
 export class CodeStore {
-  readonly repositories: CodeRepositories;
   readonly config: CodeStoreConfig;
   private closed = false;
   private closing?: Promise<void>;
@@ -334,7 +348,7 @@ export class CodeStore {
   private woken = false;
   private maintaining?: Promise<void>;
   private readonly jobs = new Map<string, Promise<void>>();
-  private readonly parts = new Map<string, Promise<unknown>>();
+  private readonly parts = new Map<string, Promise<void>>();
   private readonly exporting = new Map<string, Promise<void>>();
   private readonly exports = new Map<
     string,
@@ -350,18 +364,17 @@ export class CodeStore {
     private readonly scope: Scope,
     config: Pick<CodeStoreConfig, 'root'> & Partial<CodeStoreConfig>,
     private readonly hooks: CodeStoreHooks,
+    /** Opened and closed by their owner, which holds the writer lock. */
+    readonly repositories: CodeRepositories,
     private readonly remote?: CodeImportRemote,
     /** Throws at a named boundary, which is how a test ends the process there. */
     private readonly fault: (point: FaultPoint) => void = () => {},
-    private readonly sharedRepositories?: CodeRepositories,
   ) {
     this.config = { ...defaultStoreConfig, ...config };
-    this.repositories = sharedRepositories ?? new CodeRepositories(this.config);
   }
 
-  /** Take the writer lock, then finish what an earlier process left between two steps. */
+  /** Finish what an earlier process left between two steps. */
   async initialize(): Promise<void> {
-    if (!this.sharedRepositories) await this.repositories.open();
     try {
       await this.maintain();
     } catch (error) {
@@ -755,7 +768,6 @@ export class CodeStore {
     const listed = [
       ...busy,
       ...held('sessions holding a workspace:', await this.hooks.workspaces(caller.projectId, tx)),
-      ...held('frozen candidate sets:', await this.hooks.frozen(caller.projectId, tx)),
     ];
     check(
       !listed.length,
@@ -887,13 +899,16 @@ export class CodeStore {
         ),
     ))
       await this.start(row).catch(() => {});
-    if (input.bundle) await this.repositories.assertRoom(caller.projectId, input.bundle.bytes);
+    const journal = (sql: Sql) =>
+      new OperationJournal(sql, caller.projectId, principal, requestId, inputHash);
+    // A replayed begin takes no more room: its bytes already count.
+    if (input.bundle && !(await this.state.read((sql) => journal(sql).previous())))
+      await this.repositories.assertRoom(caller.projectId, input.bundle.bytes);
     const superseded: OperationRow[] = [];
     const id = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       this.managedSession(caller, input.sessionId);
-      const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
-      const previous = await journal.previous<OperationRow>(columns);
+      const previous = await journal(tx).previous<OperationRow>(columns);
       if (previous) return previous.id;
       await this.hooks.fenced(tx, fence, input.kind);
       const open = await tx.all<OperationRow>(
@@ -978,44 +993,25 @@ export class CodeStore {
   ): Promise<CodeExport> {
     this.assertOpen();
     await this.managedRead(caller, input.sessionId);
-    // The session's one bundle path is cut by one request at a time; one asked again waits.
-    const session = `${caller.projectId}\0${input.sessionId}`;
-    const previous = this.exporting.get(session);
-    const job = this.owned(async () => {
-      await previous;
-      return await this.writeExport(caller, input);
-    });
-    const settled = job.then(
-      () => {},
-      () => {},
+    // The session's one bundle path is cut, or swept, by one job at a time; one asked again waits.
+    const exportId = `exp${createHash('sha256').update(`${caller.projectId}\0${input.sessionId}`).digest('hex').slice(0, 32)}`;
+    return await serial(this.exporting, exportId, () =>
+      this.owned(() => this.writeExport(caller, input, exportId)),
     );
-    this.exporting.set(session, settled);
-    void settled.then(() => {
-      if (this.exporting.get(session) === settled) this.exporting.delete(session);
-    });
-    return await job;
   }
 
   private async writeExport(
     caller: Caller,
     input: { sessionId: string; head: string; haves: string[]; secondParent?: string },
+    exportId: string,
   ): Promise<CodeExport> {
     const projectId = caller.projectId;
     const env = this.repositories.environment(projectId);
     const git = this.repositories.git;
-    const checked = await git.ok(['cat-file', '--batch-check'], {
-      env,
-      input: [...new Set(input.haves)].map((oid) => `${oid}^{commit}\n`).join(''),
-    });
-    const haves = checked
-      .toString('utf8')
-      .split('\n')
-      .map((line) => /^([0-9a-f]+) commit /.exec(line)?.[1])
-      .filter((oid): oid is string => !!oid)
-      .sort();
+    const missing = await this.absent(projectId, input.haves);
+    const haves = [...new Set(input.haves)].filter((oid) => !missing.has(oid)).sort();
     if (haves.includes(input.head) && (!input.secondParent || haves.includes(input.secondParent)))
       return { upToDate: true, head: input.head };
-    const exportId = `exp${createHash('sha256').update(`${projectId}\0${input.sessionId}`).digest('hex').slice(0, 32)}`;
     const key = digest({ head: input.head, haves, secondParent: input.secondParent ?? null });
     const paths = this.repositories.paths(projectId);
     const file = join(paths.exports, `${exportId}.bundle`);
@@ -1211,7 +1207,7 @@ export class CodeStore {
       `A part carries between 1 and ${this.config.partBytes} bytes`,
       413,
     );
-    const job = (this.parts.get(operationId) ?? Promise.resolve()).then(async () => {
+    const job = serial(this.parts, operationId, async () => {
       const row = await this.state.transaction(async (tx) => {
         const row = await this.authorized(caller, operationId, tx);
         check(
@@ -1263,14 +1259,6 @@ export class CodeStore {
       });
       return { received };
     });
-    const settled = job.then(
-      () => {},
-      () => {},
-    );
-    this.parts.set(operationId, settled);
-    void settled.then(() => {
-      if (this.parts.get(operationId) === settled) this.parts.delete(operationId);
-    });
     return await job.catch((error: unknown) => {
       throw refusal(error);
     });
@@ -1293,13 +1281,7 @@ export class CodeStore {
 
   /** Whether the project's repository holds this commit. */
   async contains(projectId: string, oid: string): Promise<boolean> {
-    if (!(await this.repositories.exists(projectId))) return false;
-    const found = await this.owned(() =>
-      this.repositories.git.run(['cat-file', '-e', `${oid}^{commit}`], {
-        env: this.repositories.environment(projectId),
-      }),
-    );
-    return found.code === 0;
+    return !(await this.owned(() => this.absent(projectId, [oid]))).size;
   }
 
   /** The repository and its operations, for a caller the project's reads already admitted. */
@@ -1365,26 +1347,39 @@ export class CodeStore {
             ),
         );
         const stale = new Date(Date.now() - this.config.abandonSeconds * 1000).toISOString();
-        for (const row of rows) {
-          if (!kinds.includes(row.kind)) continue;
-          if (journalled.includes(row.phase!)) await this.start(row).catch(() => {});
-          else if (row.kind === 'upload' && !this.jobs.has(row.id) && (await this.stale(row)))
-            await this.repositories
-              .run(row.project_id, () => this.fail(row, 'code_generation_stale', null))
-              .catch(() => {});
-          else if ((row.updated_at ?? row.created_at) < stale && !this.jobs.has(row.id))
-            await this.repositories
-              .run(row.project_id, () => this.fail(row, 'code_upload_abandoned', null))
-              .catch(() => {});
-        }
+        // Each project in its own order; a slow admission in one holds up no other.
+        const projects = new Map<string, OperationRow[]>();
+        for (const row of rows.filter((row) => kinds.includes(row.kind)))
+          projects.set(row.project_id, [...(projects.get(row.project_id) ?? []), row]);
+        await Promise.all(
+          [...projects.values()].map(async (rows) => {
+            for (const row of rows)
+              if (journalled.includes(row.phase!)) await this.start(row).catch(() => {});
+              else if (row.kind === 'upload' && !this.jobs.has(row.id) && (await this.stale(row)))
+                await this.repositories
+                  .run(row.project_id, () => this.fail(row, 'code_generation_stale', null))
+                  .catch(() => {});
+              else if ((row.updated_at ?? row.created_at) < stale && !this.jobs.has(row.id))
+                await this.repositories
+                  .run(row.project_id, () => this.fail(row, 'code_upload_abandoned', null))
+                  .catch(() => {});
+          }),
+        );
         if (!sweep) return;
-        await this.repositories.sweep(async (operationId) => {
-          const row = await this.state.read((sql) => this.row(sql, operationId));
-          if (!row) return undefined;
-          if (row.status === 'prepared') return false;
-          await this.hold(row);
-          return true;
-        });
+        await this.repositories.sweep(
+          async (operationId) => {
+            const row = await this.state.read((sql) => this.row(sql, operationId));
+            if (!row) return undefined;
+            if (row.status === 'prepared') return false;
+            await this.hold(row);
+            return true;
+          },
+          undefined,
+          (exportId, take) =>
+            serial(this.exporting, exportId, async () => {
+              if (await take()) this.exports.delete(exportId);
+            }),
+        );
       } finally {
         this.maintaining = undefined;
       }
@@ -1415,7 +1410,6 @@ export class CodeStore {
       await Promise.allSettled([...this.parts.values()]);
       while (this.active.size || this.jobs.size)
         await Promise.allSettled([...this.active, ...this.jobs.values()]);
-      if (!this.sharedRepositories) await this.repositories.close(0);
     } finally {
       clearTimeout(timer);
       this.cancellation.abort();
@@ -1809,25 +1803,14 @@ export class CodeStore {
       row.phase = 'objects_durable';
     }
     if (row.phase === 'objects_durable') {
+      // The intent was checked against its progress above; a retained ref never receives.
       if (payload.source === 'retain-ref')
         check(
-          payload.ref === progress.receiptRef && payload.tip === progress.target,
-          'code_retention_intent_changed',
-          'The retained ref differs from its immutable intent',
-          409,
-        );
-
-      if (payload.source === 'retain-ref') {
-        const retained = await this.repositories.git.run(['cat-file', '-t', progress.target!], {
-          env,
-        });
-        check(
-          retained.code === 0 && retained.stdout.toString('utf8').trim() === 'commit',
+          !(await this.absent(row.project_id, [progress.target!])).size,
           'code_retention_missing',
           'The retained commit must exist in Code before its ref is created',
           409,
         );
-      }
 
       const receipt = async () => {
         const found = await this.repositories.git.run(

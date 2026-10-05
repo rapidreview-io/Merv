@@ -11,7 +11,8 @@ import {
   utimesSync,
   writeFileSync,
 } from 'node:fs';
-import { open } from 'node:fs/promises';
+import fsp, { open } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
@@ -185,6 +186,46 @@ test('a quarantined capture is never part of what a successor is given, and an e
     f.code.v2!.readPart!(f.admin, found.exportId, { ...control('ses_2'), offset: 0, length: 10 }),
     refused('code_export_not_found'),
   );
+});
+
+test('the sweep never takes a bundle that was cut while it was deciding', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  await f.event('session.workspace_attached', 'ses_1');
+  const first = f.source.commit({ 'a.txt': 'one\n' }, 'first');
+  await f.upload('checkpoint', 'ses_1', 1, f.root, f.source.bundle(first, [f.root]));
+  const found = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in found));
+  const file = join(f.paths.exports, `${found.exportId}.bundle`);
+  const old = new Date(Date.now() - 3600_000);
+  utimesSync(file, old, old);
+  // The sweep has found the bundle old and is about to take it when the session asks again.
+  let release = () => {};
+  const gate = new Promise<void>((done) => (release = done));
+  let paused = () => {};
+  const reached = new Promise<void>((done) => (paused = done));
+  const real = fsp.rm;
+  let held = false;
+  t.mock.method(fsp, 'rm', async (...args: Parameters<typeof fsp.rm>) => {
+    if (args[0] === file && !held) {
+      held = true;
+      paused();
+      await gate;
+    }
+    return await real(...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => syncBuiltinESMExports());
+  const sweeping = f.code.maintainStore();
+  await reached;
+  const asked = download(f, 'ses_1', [f.root]);
+  await Promise.race([asked, new Promise((tick) => setTimeout(tick, 500))]);
+  release();
+  await sweeping;
+  const again = await asked;
+  assert.ok(!('upToDate' in again));
+  assert.notEqual(again.sha256, found.sha256);
+  await read(f, 'ses_1', again);
 });
 
 test('an export a machine is still reading keeps its place, however long the transfer takes', async (t) => {

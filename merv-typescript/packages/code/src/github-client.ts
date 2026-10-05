@@ -98,7 +98,7 @@ export class GitHubClient {
   #key: Buffer;
   #appKey?: KeyObject;
   #stop = new AbortController();
-  #authorization = new AsyncLocalStorage<(() => Promise<void>) | undefined>();
+  #authorization = new AsyncLocalStorage<((installed: boolean) => Promise<void>) | undefined>();
   #installation = new AsyncLocalStorage<true>();
   constructor(
     config: GitHubConfig,
@@ -151,7 +151,11 @@ export class GitHubClient {
   close() {
     this.#stop.abort();
   }
-  authorized<T>(authorize: () => Promise<void>, operation: () => Promise<T>): Promise<T> {
+  /** `authorize` runs before every request, told whether it carries a server-minted credential. */
+  authorized<T>(
+    authorize: (installed: boolean) => Promise<void>,
+    operation: () => Promise<T>,
+  ): Promise<T> {
     return this.#authorization.run(authorize, operation);
   }
   /**
@@ -346,11 +350,12 @@ export class GitHubClient {
     method = body ? 'POST' : 'GET',
   ): Promise<unknown> {
     try {
-      await this.#authorization.getStore()?.();
+      await this.#authorization.getStore()?.(!!this.#installation.getStore());
       this.#stop.signal.throwIfAborted();
       const response = await this.fetcher(url, {
         method,
-        redirect: 'error',
+        // A renamed or transferred repository answers 3xx; it is never followed (see below).
+        redirect: 'manual',
         signal: AbortSignal.any([this.#stop.signal, AbortSignal.timeout(15_000)]),
         headers: {
           accept: 'application/vnd.github+json',
@@ -381,6 +386,12 @@ export class GitHubClient {
         } else await response.body?.cancel();
         if (response.status === 404)
           throw new MervError('github_not_found', 'GitHub resource is absent or inaccessible', 404);
+        if (response.status >= 300 && response.status < 400)
+          throw new MervError(
+            'github_repository_moved',
+            'GitHub moved this repository; link it again in Code settings',
+            409,
+          );
         if (
           response.status === 403 &&
           response.headers.get('x-ratelimit-remaining') !== '0' &&
@@ -479,7 +490,7 @@ export class GitHubClient {
         `https://api.github.com/applications/${encodeURIComponent(this.#config.clientId)}/token`,
         {
           method: 'DELETE',
-          redirect: 'error',
+          redirect: 'manual',
           signal: AbortSignal.timeout(5000),
           headers: {
             accept: 'application/vnd.github+json',

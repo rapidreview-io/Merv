@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { CodeService } from './service.js';
 import { githubConfig } from './github-client.js';
 import { rejectRetiredBackup } from './configuration.js';
-import type {} from './types.js';
 
 const bytes = z.number().int().positive().safe();
 const configuration = z

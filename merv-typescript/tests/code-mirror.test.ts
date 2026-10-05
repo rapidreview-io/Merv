@@ -432,6 +432,18 @@ test('what publishes a project’s work is the owner’s link and the write auto
   assert.ok(
     f.calls.every((call) => JSON.stringify(call.body ?? '').indexOf('synthetic-installation') < 0),
   );
+
+  // The owner who turned automation on must still administer the project.
+  await f.scope.removeMember(
+    await f.scope.acceptVerifiedIdentity({
+      issuer: f.caller.human!.issuer,
+      subject: 'reviewer',
+      expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+    }),
+    f.project.id,
+    'owner',
+  );
+  assert.deepEqual(await f.github.mirrorTarget(f.project.id), { blocked: 'github_owner' });
 });
 
 test('the credential of a push exists only in the environment of that one Git child', async () => {
@@ -477,6 +489,9 @@ test('the credential of a push exists only in the environment of that one Git ch
           !value.includes('synthetic-installation-secret') || name === 'GIT_CONFIG_VALUE_0',
       ),
     );
+    // A moved repository is never followed.
+    assert.equal(call.env.GIT_CONFIG_KEY_1, 'http.followRedirects');
+    assert.equal(call.env.GIT_CONFIG_VALUE_1, 'false');
     assert.ok(call.args.every((argument) => !argument.startsWith('http://')));
   }
   assert.deepEqual(seen[1].args.slice(0, 3), [

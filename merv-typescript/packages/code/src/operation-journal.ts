@@ -1,11 +1,11 @@
-import { canonical, check, type Transaction } from '@merv/contracts';
+import { canonical, check, type Sql } from '@merv/contracts';
 
 type Replay = { input_hash: string; result_json: string };
 
-/** Replay and completed receipts in an existing caller-owned Code transaction. */
+/** Replay and completed receipts; completion runs in an existing caller-owned Code transaction. */
 export class OperationJournal {
   constructor(
-    private readonly tx: Transaction,
+    private readonly tx: Sql,
     private readonly projectId: string,
     private readonly principal: string,
     private readonly requestId: string,
