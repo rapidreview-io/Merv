@@ -161,9 +161,3 @@ export const excerptsInput = z
   })
   .strict();
 export const relatedInput = z.object({ arxiv_id: arxivId, max_results: results(10) }).strict();
-
-export type SearchInput = z.infer<typeof searchInput>;
-export type SemanticInput = z.infer<typeof semanticInput>;
-export type PaperInput = z.infer<typeof paperInput>;
-export type ExcerptsInput = z.infer<typeof excerptsInput>;
-export type RelatedInput = z.infer<typeof relatedInput>;

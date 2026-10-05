@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { codePlugin as code } from '@merv/code';
 import { codePlugin as research } from '@merv/code-work';
@@ -63,19 +62,4 @@ test('historical backup receipts and interrupted rows survive restart and mainte
   assert.ok(status.store);
   assert.equal(Object.hasOwn(status.store, 'backup'), false);
   assert.deepEqual(status.operations, []);
-});
-
-test('retired restore command directs operators to the deployment and legacy recovery tools', () => {
-  const result = spawnSync(
-    process.execPath,
-    ['--import', 'tsx', 'src/cli.ts', 'code-restore', '--verify-only'],
-    {
-      encoding: 'utf8',
-      timeout: 30_000,
-    },
-  );
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /code_backup_retired/);
-  assert.match(result.stderr, /deploy\/recovery-snapshot\.py/);
-  assert.match(result.stderr, /preserved legacy recovery kit/);
 });

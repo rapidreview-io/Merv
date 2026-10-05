@@ -196,7 +196,7 @@ interface ReviewRow {
   subject_id: string;
   subject_revision: number;
   producer_id: string;
-  administrative_actor_id: string | null;
+  administrative_actor_id: string;
   pinned_input_ids: string;
   excluded_actor_ids: string | null;
   required_criteria: string | null;
@@ -227,7 +227,7 @@ const hydrate = (row: ReviewRow): ReviewRequest => ({
   subjectId: row.subject_id,
   subjectRevision: row.subject_revision,
   producerId: row.producer_id,
-  administrativeActorId: row.administrative_actor_id ?? row.producer_id,
+  administrativeActorId: row.administrative_actor_id,
   pinnedInputIds: JSON.parse(row.pinned_input_ids),
   ...(row.excluded_actor_ids == null
     ? {}
@@ -620,7 +620,7 @@ export class ReviewService implements Reviews {
           subjectId: row.subject_id,
           subjectRevision: input.subjectRevision,
           producerId: row.producer_id,
-          administrativeActorId: row.administrative_actor_id ?? row.producer_id,
+          administrativeActorId: row.administrative_actor_id,
           artifactIds: JSON.parse(row.artifact_ids),
           pinnedInputIds: JSON.parse(row.pinned_input_ids),
           ...(row.excluded_actor_ids == null
@@ -647,7 +647,7 @@ export class ReviewService implements Reviews {
     const authority = await this.scope.authorityActor(caller, tx);
     check(
       row.producer_id === caller.actorId ||
-        (row.administrative_actor_id ?? row.producer_id) === authority.id ||
+        row.administrative_actor_id === authority.id ||
         authority.role === 'operator',
       'forbidden',
       'Only the review owner or an operator may administer this request',
@@ -681,9 +681,13 @@ export class ReviewService implements Reviews {
         'invalid_revision',
         'subjectRevision must be a nonnegative integer',
       );
-      // Format 2 is the only verdict format; an omitted field means it, and null is refused.
-      const formatVersion = input.formatVersion === undefined ? 2 : input.formatVersion;
-      check(formatVersion === 2, 'invalid_review_format', 'Review formatVersion must be 2');
+      // Format 2 is the only verdict format. Callers may still name it, since stored request
+      // receipts hash it; null is refused.
+      check(
+        input.formatVersion === undefined || input.formatVersion === 2,
+        'invalid_review_format',
+        'Review formatVersion must be 2',
+      );
       check(
         Array.isArray(input.criteria) &&
           input.criteria.length > 0 &&
@@ -758,7 +762,7 @@ export class ReviewService implements Reviews {
               administrativeActorId: input.administrativeActorId ?? input.producerId,
             }
           : {}),
-        formatVersion,
+        formatVersion: 2,
         ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
         ...(required === undefined ? {} : { requiredCriteria: required }),
       });
@@ -775,7 +779,7 @@ export class ReviewService implements Reviews {
         JSON.stringify(manifest),
         snapshotHash,
         createdAt,
-        formatVersion,
+        2,
         input.administrativeActorId ?? input.producerId,
         JSON.stringify(pinnedInputIds),
         ...(excludedActorIds === undefined ? [] : [JSON.stringify(excludedActorIds)]),
@@ -992,7 +996,7 @@ export class ReviewService implements Reviews {
       } catch {
         continue;
       }
-      if (data.claimId === review.claimId || review.claimId === `legacy:${review.id}`)
+      if (data.claimId === review.claimId)
         return { at: event.created_at, agent: data.source?.kind === 'session' };
     }
     return undefined;
@@ -1235,12 +1239,10 @@ export class ReviewService implements Reviews {
         await tx.get<{ id: number | null }>(
           `SELECT MAX(id) AS id FROM events
          WHERE project_id=? AND subject_id=? AND type='review.started'
-           AND ((data_json::jsonb #>> '{claimId}')=? OR ?='legacy:' || ?)`,
+           AND (data_json::jsonb #>> '{claimId}')=?`,
           row.project_id,
           row.id,
           row.claim_id,
-          row.claim_id,
-          row.id,
         )
       )?.id ?? 0
     );
