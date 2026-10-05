@@ -13,7 +13,7 @@ import type {
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { MERGE_SETTINGS } from '../packages/code/src/merge-settings.js';
-import { baseKey } from '../packages/code/src/base-plan.js';
+import { baseKey } from '../packages/code-work/src/base-plan.js';
 import { pendingMerge, pinMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 import { git } from './fixtures/code-store.js';
 import { writerFixture } from './fixtures/code-writers.js';

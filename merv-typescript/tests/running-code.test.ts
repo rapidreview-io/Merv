@@ -8,10 +8,10 @@ import { CodeService } from '@merv/code-work/service';
 import type { CodeCapture } from '@merv/code-work/types';
 import codeUiPlugin from '@merv/code-work/ui';
 import { checkNode, hasCheck, OVERDUE_GRACE_MS } from '@merv/code-work/running';
+import { personMove } from '@merv/code-work/blockers';
 import { CodeRepositories } from '@merv/code/store/repository';
 import {
   createService,
-  personMove,
   type Caller,
   type RunningNode,
   type RunningSection,

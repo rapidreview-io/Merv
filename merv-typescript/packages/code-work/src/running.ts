@@ -4,14 +4,12 @@ import {
   keyKind,
   mapAsync,
   MervError,
-  personMove,
   runningKey,
   runningKeyPattern,
   type Actor,
   type Caller,
   type CodeCommandRecord,
   type CodeUnit,
-  type PersonMove,
   type RunningAttention,
   type RunningFact,
   type RunningMark,
@@ -29,6 +27,7 @@ import {
   type WorkflowProvidedBlocker,
   type Workflows,
 } from '@merv/contracts';
+import { personMove, type PersonMove } from './blockers.js';
 import type { CodeBaseService, CodeCheckStanding } from './bases.js';
 
 /**

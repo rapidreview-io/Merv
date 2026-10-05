@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Migration, State } from '@merv/contracts';
-import { postgresGuard } from '../packages/code/src/postgres-guard.js';
+import { postgresGuard } from '../packages/code-work/src/postgres-guard.js';
 import { migratePublications } from '../packages/code-work/src/publications-schema.js';
 import { postgresMigrations as commands } from '../packages/code-work/src/commands.postgres.js';
 import { openState } from './fixtures/state.js';

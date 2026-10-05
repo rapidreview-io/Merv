@@ -8,6 +8,7 @@ import {
   enqueueMirror,
   GitMirrorTransport,
   type CodeMirrorConfig,
+  type MirrorAuthority,
   type MirrorTransport,
 } from '@merv/code/store/mirror';
 import {
@@ -550,15 +551,11 @@ export class CodeService extends CodeCommandService implements Code {
   }
   /** The binding and hosting a preparation compares; status() reads far more than these. */
   async repositoryState(caller: Caller) {
-    this.requireStore();
+    const store = this.requireStore();
     return await this.storage.transaction(async (tx) => {
       await this.baseScope.require(caller, 'read', tx);
       const project = await this.unitStore.project(tx, caller.projectId);
-      const row = await tx.get(
-        'SELECT 1 FROM code_projects WHERE project_id=? AND store_json IS NOT NULL',
-        caller.projectId,
-      );
-      return { project, store: { hosted: !!row } };
+      return { project, store: { hosted: !!(await store.stored(tx, caller.projectId)) } };
     });
   }
   async rebindRepository(caller: Caller, input: unknown) {
@@ -584,53 +581,17 @@ export class CodeService extends CodeCommandService implements Code {
    * What the server publishes a project's work to, with no caller: the owner's link and the
    * write automation they turned on are the authorisation, and unlinking is the off switch.
    */
-  private published() {
+  private published(): MirrorAuthority {
     return {
-      target: async (projectId: string) => {
-        const found = await this.github.mirrorTarget(projectId);
-        return 'blocked' in found ? found : { id: found.id, fullName: found.fullName };
-      },
-      token: async <T>(projectId: string, use: (token: string) => Promise<T>): Promise<T> => {
-        const found = await this.github.mirrorTarget(projectId);
-        if ('blocked' in found)
-          throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
-        return await this.network(() => this.github.mirrorToken(found, use));
-      },
+      target: (projectId) => this.github.mirrorTarget(projectId),
+      token: (projectId, use) => this.network(() => this.github.mirrorToken(projectId, use)),
     };
   }
   /** An import reads GitHub as the administrator who asked, with a token that ends with the call. */
   private linkedRepository(): CodeImportRemote {
     return {
       read: (caller, use, expected) =>
-        this.network(() =>
-          this.github.automation(caller, 'read', undefined, async (client, _token, binding) => {
-            check(
-              !expected ||
-                (binding.revision === expected.revision &&
-                  binding.repository.id === expected.repositoryId &&
-                  binding.baseBranch === expected.baseBranch),
-              'github_conflict',
-              'Repository settings changed; the selected import remains pinned to its original connection',
-              409,
-            );
-            const grant = await client.installationToken(binding.repository, false);
-            try {
-              return await use({
-                url: `https://github.com/${binding.repository.fullName}.git`,
-                protocol: 'https',
-                repository: binding.repository,
-                // The token exists only in the environment of that one Git child.
-                env: {
-                  GIT_CONFIG_COUNT: '1',
-                  GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-                  GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${grant.token}`).toString('base64')}`,
-                },
-              });
-            } finally {
-              await client.revokeInstallationToken(grant.token).catch(() => {});
-            }
-          }),
-        ),
+        this.network(() => this.github.importRemote.read(caller, use, expected)),
     };
   }
   override async close(): Promise<void> {

@@ -224,8 +224,6 @@ const sharedContract = (specifier: string) =>
 const codeUtilityExports = new Set([
   'store/managed',
   'base-merge',
-  'base-plan',
-  'base-schema',
   'changes',
   'configuration',
   'git',
@@ -234,8 +232,6 @@ const codeUtilityExports = new Set([
   'input',
   'operation-journal',
   'pending-merge',
-  'postgres-guard',
-  'publications-schema',
   'service',
   'store/mirror',
   'store/operations',

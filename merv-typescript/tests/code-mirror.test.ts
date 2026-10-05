@@ -416,7 +416,7 @@ test('what publishes a project’s work is the owner’s link and the write auto
   const minted = () => f.calls.filter((call) => call.path.endsWith('/access_tokens')).length;
   const revoked = () => f.calls.filter((call) => call.method === 'DELETE').length;
   assert.equal(
-    await f.github.mirrorToken(target, async (token) => {
+    await f.github.mirrorToken(f.project.id, async (token) => {
       assert.equal(token, 'synthetic-installation-secret');
       return 'done';
     }),
@@ -425,7 +425,7 @@ test('what publishes a project’s work is the owner’s link and the write auto
   assert.deepEqual([minted(), revoked()], [1, 1]);
   await assert.rejects(
     async () =>
-      await f.github.mirrorToken(target, () => Promise.reject(new Error('the push failed'))),
+      await f.github.mirrorToken(f.project.id, () => Promise.reject(new Error('the push failed'))),
     /the push failed/,
   );
   assert.deepEqual([minted(), revoked()], [2, 2], 'a failed push gives its credential up too');
