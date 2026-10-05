@@ -160,10 +160,15 @@ test('workspace acknowledgements compare against the attachment originally sent'
       if (changedReply) reply.stats.insertions = 1;
       const pending = client({
         session: session({ workspace: { attachment: reply, result: reply } }),
+        prompt: 'Worker prompt.',
       })[operation]('session_fixture', heartbeat.runnerId, 'launch_fixture', input);
       input.stats.insertions = 1;
       if (changedReply) await assert.rejects(pending, invalid);
-      else assert.deepEqual((await pending).workspace?.attachment, workspace);
+      else {
+        const answer = await pending;
+        const read = 'session' in answer ? answer.session : answer;
+        assert.deepEqual(read.workspace?.attachment, workspace);
+      }
     }
   }
   // The session's workspace record may gain fields; the attachment and result stay closed.
@@ -200,17 +205,25 @@ test('get rejects a same-project response for any different session or runner', 
   );
 });
 
-test('attach requires the requested session, runner and immutable host reference', async () => {
-  assert.equal(
-    (
-      await client({ session: session({ status: 'offered' }) }).attach(
+test('attach requires the requested session, runner and immutable host reference, and the worker prompt', async () => {
+  assert.deepEqual(
+    await client({ session: session({ status: 'offered' }), prompt: 'Worker prompt.' }).attach(
+      'session_fixture',
+      heartbeat.runnerId,
+      'launch_fixture',
+    ),
+    { session: session({ status: 'offered' }), prompt: 'Worker prompt.' },
+  );
+  // A server too old to send the prompt launches nothing.
+  for (const prompt of [undefined, '', ' ', 7, 'x'.repeat(32_001)])
+    await assert.rejects(
+      client({ session: session({ status: 'offered' }), prompt }).attach(
         'session_fixture',
         heartbeat.runnerId,
         'launch_fixture',
-      )
-    ).status,
-    'offered',
-  );
+      ),
+      invalid,
+    );
   for (const patch of [
     { id: 'session_other' },
     { runnerId: 'other_runner' },
@@ -222,7 +235,7 @@ test('attach requires the requested session, runner and immutable host reference
   ])
     await assert.rejects(
       async () =>
-        client({ session: session(patch) }).attach(
+        client({ session: session(patch), prompt: 'Worker prompt.' }).attach(
           'session_fixture',
           heartbeat.runnerId,
           'launch_fixture',
@@ -493,7 +506,7 @@ test('private native MCP response is host-bound, validated and separate from pub
       seen.push({ url: String(url), body: JSON.parse(String(init?.body)) });
       return Response.json(
         String(url).endsWith('/attach')
-          ? { session: session(), launchConnections: true }
+          ? { session: session(), launchConnections: true, prompt: 'Worker prompt.' }
           : { connections: [connection] },
       );
     },

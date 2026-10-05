@@ -38,7 +38,9 @@ separate real-agent acceptance harness, not a production runner.
 
 ## Private account credential delivery
 
-`POST /sessions/:id/huggingface` accepts only `{runnerId, hostRef}` from the managed supervisor bearer. It checks the current allocation, bound project, runner, source, attached host and live workflow lease before resolving an account through Scope. A personal key follows its owner; a service follows its immutable validated voucher. Actor-only sources and sealed offline reviews receive `{hfToken: null}`. An optional Secrets service supplies the private value; the response uses `Cache-Control: no-store`. There is no corresponding MCP tool or credential field in ordinary session responses.
+`POST /sessions/:id/huggingface-access` accepts only `{runnerId, hostRef}` from the managed supervisor bearer. It checks the current allocation, bound project, runner, source, attached host and live workflow lease before resolving an account through Scope. A personal key follows its owner; a service follows its immutable validated voucher. Where an account resolves, Secrets issues `{access: {token, endpoint}}`: a read-only capability for its Hugging Face broker, bound to this session, runner, allocation and host and expiring at the session's hard deadline, never the account token. Actor-only sources, sealed offline reviews and a deployment without Secrets receive `{access: null}`. The response uses `Cache-Control: no-store`. There is no corresponding MCP tool or credential field in ordinary session responses.
+
+The older `POST /sessions/:id/huggingface`, which returned the account token itself as `{hfToken}`, answers `{hfToken: null}` from 2026-10-08 and is then removed; runners before `huggingface-access` still call it.
 
 ## Transcripts
 

@@ -60,6 +60,22 @@ const agentResetInput = z.object({ reason: nonblank }).strict();
 const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
 const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404);
 
+/**
+ * What a runner tells the worker it launches about the lease, sent with each attach: the runner
+ * adds only what its harness and workspace give, then the frozen assignment.
+ */
+export const workerPrompt = [
+  'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
+  'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
+  'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
+  'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
+  // Workers read the assignment's tool list as the boundary of what they may look at and
+  // then invent what the project already holds. The list binds writes; reads are open.
+  'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
+  'Look before you invent. If your work needs something the assignment does not fix — a script, a protocol, a configuration, a threshold, a model — first read whether the project has already fixed it, and use that. Say in your submission what you found and reused, and what you had to choose yourself and why.',
+  'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
+].join('\n');
+
 /** Managed supervisor bearers have no general project, tool or administration transport. */
 const managedRoute = (method: string, path: string): boolean =>
   (method === 'POST' &&
@@ -197,7 +213,10 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
               : await sessions.release(caller, input);
       // Runners released before the unconditional call ask for launch connections only when
       // attach says so; self-hosted ones may still be running.
-      return { session, ...(route[2] === 'attach' ? { launchConnections: true } : {}) };
+      return {
+        session,
+        ...(route[2] === 'attach' ? { launchConnections: true, prompt: workerPrompt } : {}),
+      };
     }
   }
   throw unknownEndpoint();

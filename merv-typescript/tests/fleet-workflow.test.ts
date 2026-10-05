@@ -1744,6 +1744,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
     }),
     {
       session: machine.session,
+      prompt: 'Worker prompt.',
       secret: machine.secret,
       mcpUrl: 'https://merv.example.test/mcp',
       cwd: '/home/assignment/work',

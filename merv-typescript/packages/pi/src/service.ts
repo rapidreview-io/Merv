@@ -44,7 +44,7 @@ import { PiStreams } from './stream.js';
 import { decodeCheckpoint } from './checkpoint.js';
 import { messageChars, turnCeilingMs } from './limits.js';
 import { moveNotes, moveRefusal, moveTool, type PiMoveContext } from './moves.js';
-import { piModelRelay, piTitle } from './relay.js';
+import { piModelRelay, piTitle, titleRequest } from './relay.js';
 import { conversationRules, conversationUse } from './conversation-rules.js';
 import { fit } from './fit.js';
 import { piTool } from './relay-schema.js';
@@ -1983,8 +1983,17 @@ export class PiService implements Pi, FleetOwner {
     // A small call without reasoning, on the first model that answers at effort none.
     const titler = this.config.models.find((model) => model.effort === 'none');
     if (!key || !titler) return;
-    const reply = answer.map((message) => message.text).join('\n\n');
-    const title = await piTitle(titler.id, key, asked.text, reply);
+    const body = titleRequest(
+      titler.id,
+      asked.text,
+      answer.map((message) => message.text).join('\n\n'),
+    );
+    // Charged to the person's Agent tokens as the relay charges a turn's calls: a day already
+    // used up names nothing.
+    const person = { userId: (await this.read((tx) => this.conversation(tx, id))).userId };
+    const reserved = await this.reserveModel(person, body);
+    const { title, usage } = await piTitle(key, body);
+    if (usage) await this.settleModel(usage, person, reserved);
     if (!title) return;
     const named = await this.state.transaction(async (tx) => {
       const conversation = await this.conversation(tx, id);
@@ -2231,7 +2240,7 @@ export class PiService implements Pi, FleetOwner {
    * The day's total refuses any call that would pass the ceiling.
    */
   async reserveModel(
-    grant: Awaited<ReturnType<PiService['authorizeModel']>>,
+    grant: Pick<Awaited<ReturnType<PiService['authorizeModel']>>, 'userId'>,
     body: Record<string, unknown>,
   ): Promise<PiModelCharge> {
     const most =
@@ -2246,7 +2255,7 @@ export class PiService implements Pi, FleetOwner {
   }
   async settleModel(
     usage: { inputTokens: number; outputTokens: number },
-    grant: Awaited<ReturnType<PiService['authorizeModel']>>,
+    grant: Pick<Awaited<ReturnType<PiService['authorizeModel']>>, 'userId'>,
     reserved: PiModelCharge,
   ): Promise<void> {
     // Settles the day the call was charged to, even past midnight.

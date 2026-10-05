@@ -522,6 +522,9 @@ test('HTTP transports strict workspace metadata and permits post-transition capt
     workspace: workspace(),
   });
   assert.equal(attached.status, 200, JSON.stringify(attached));
+  // The worker's prompt comes from Sessions with the attach; the runner adds only its own.
+  assert.match(attached.body.prompt, /^You are the worker for one Merv workflow step\./);
+  assert.match(attached.body.prompt, /session\.message\.ack/);
   await f.finish();
   const closed = await f.app.ctx.sessions.get(f.source, f.session.id);
   assert.equal(closed.status, 'expired');
