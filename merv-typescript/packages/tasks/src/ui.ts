@@ -46,11 +46,7 @@ export const taskUiPlugin = {
             }),
           ) as Json;
         },
-        status: async (caller: Caller) => ({
-          count: (await tasks.list(caller)).filter(
-            (task) => !['done', 'failed'].includes(task.workflow.state),
-          ).length,
-        }),
+        status: async (caller: Caller) => ({ count: await tasks.active(caller) }),
       }),
     );
     // The work lane's tasks and a task's sidebar on the Running page, as the service reads them.

@@ -1254,22 +1254,24 @@ test('declared producer terminal actions and owner cancellation close active wor
   );
 });
 
-test('a lease freezes its project Introduction without changing the registered recipe', async (t) => {
+test('a lease freezes the Problem, carried once, without changing the registered recipe', async (t) => {
   const f = await fixture(t);
-  await f.scope.updateProjectContext(f.source, {
-    summary: 'ORIGINAL_PROJECT_INTRO_723',
-    expectedSummary: '',
-    requestId: f.request(),
-  });
+  const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
+  // Paper writes the Introduction from the Problem, so the Problem reaches the prompt once.
+  const problem = async (content: string, expectedRevision: number) =>
+    await paper.patch(f.source, {
+      kind: 'problem',
+      expectedRevision,
+      requestId: f.request(),
+      changes: [{ id: 'problem', content }],
+    });
+  await problem('ORIGINAL_PROJECT_INTRO_723', 0);
   const experiment = await f.create();
   const offered = await f.offer(experiment);
-  assert.match(offered.session.assignment.context!.prompt, /ORIGINAL_PROJECT_INTRO_723/);
+  const prompt = offered.session.assignment.context!.prompt;
+  assert.equal(prompt.split('ORIGINAL_PROJECT_INTRO_723').length, 2);
   const worker = await f.sessions.authenticate(offered.secret);
-  await f.scope.updateProjectContext(f.source, {
-    summary: 'CHANGED_PROJECT_INTRO_840',
-    expectedSummary: 'ORIGINAL_PROJECT_INTRO_723',
-    requestId: f.request(),
-  });
+  await problem('CHANGED_PROJECT_INTRO_840', 1);
   const refreshed = await f.workflows.assignment(worker, experiment.id);
   assert.match(refreshed.context!.prompt, /ORIGINAL_PROJECT_INTRO_723/);
   assert.doesNotMatch(refreshed.context!.prompt, /CHANGED_PROJECT_INTRO_840/);

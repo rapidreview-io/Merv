@@ -31,6 +31,10 @@ export interface Experiments {
   create(caller: Caller, input: ExperimentCreate, tx?: Transaction): Promise<Experiment>;
   get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;
   list(caller: Caller, tx?: Transaction): Promise<Experiment[]>;
+  /** Each experiment's name, intent, owner and workflow, in list order, read for all at once. */
+  summaries(
+    caller: Caller,
+  ): Promise<Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId' | 'workflow'>[]>;
   /** Every experiment's name, lowercased, and how many are not yet complete, abandoned or failed. */
   occupancy(caller: Caller, tx?: Transaction): Promise<ExperimentOccupancy>;
   attach(caller: Caller, input: ExperimentAttach, tx?: Transaction): Promise<ExperimentEvidence>;

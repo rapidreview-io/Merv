@@ -34,6 +34,18 @@ export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
 const problemKeys = ['problem', 'scope', 'goals', 'constraints'];
 const unique = (values: string[]) => [...new Set(values)].sort();
+/** A document before its first revision; the Problem already has its four empty sections. */
+const blank = (projectId: string, kind: PaperKind): PaperRevision => ({
+  projectId,
+  kind,
+  revision: 0,
+  sections:
+    kind === 'problem'
+      ? problemKeys.map((id) => ({ id, title: id[0].toUpperCase() + id.slice(1), content: '' }))
+      : [],
+  updatedBy: null,
+  updatedAt: null,
+});
 
 /** A document store. Scientific workflow owners stage and accept edits in their own review transaction. */
 export class PaperService implements Paper {
@@ -66,23 +78,7 @@ export class PaperService implements Paper {
       caller.projectId,
       documentKind,
     );
-    return row
-      ? (JSON.parse(row.record) as PaperRevision)
-      : {
-          projectId: caller.projectId,
-          kind: documentKind,
-          revision: 0,
-          sections:
-            documentKind === 'problem'
-              ? problemKeys.map((id) => ({
-                  id,
-                  title: id[0].toUpperCase() + id.slice(1),
-                  content: '',
-                }))
-              : [],
-          updatedBy: null,
-          updatedAt: null,
-        };
+    return row ? (JSON.parse(row.record) as PaperRevision) : blank(caller.projectId, documentKind);
   }
   private async citations(caller: Caller, tx: Transaction): Promise<PaperCitation[]> {
     return (
@@ -95,31 +91,7 @@ export class PaperService implements Paper {
   async read(caller: Caller, transaction?: Transaction): Promise<PaperWorkspace> {
     caller = this.capture(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const documents = Object.fromEntries(
-        await mapAsync(kinds, async (documentKind) => {
-          const current = await this.current(caller, documentKind, tx);
-          const row = await tx.get<{ record: string }>(
-            'SELECT record FROM paper_publications WHERE project_id=? AND kind=? ORDER BY _merv_rowid DESC LIMIT 1',
-            caller.projectId,
-            documentKind,
-          );
-          const publication = row ? (JSON.parse(row.record) as PaperPublication) : null;
-          const published =
-            publication &&
-            (await tx.get<{ record: string }>(
-              'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
-              caller.projectId,
-              documentKind,
-              publication.revision,
-            ));
-          const document = published ? (JSON.parse(published.record) as PaperRevision) : null;
-          return [
-            documentKind,
-            { current, published: publication && document ? { publication, document } : null },
-          ];
-        }),
-      ) as PaperWorkspace['documents'];
+      const documents = await this.documents(caller, tx);
       const proposals = (
         await tx.all<{ record: string; acceptance: string | null }>(
           'SELECT record,acceptance FROM paper_proposals WHERE project_id=? ORDER BY _merv_rowid DESC',
@@ -130,6 +102,35 @@ export class PaperService implements Paper {
         acceptance: row.acceptance ? JSON.parse(row.acceptance) : null,
       }));
       return { documents, citations: await this.citations(caller, tx), proposals };
+    });
+  }
+  async documents(caller: Caller, transaction?: Transaction): Promise<PaperWorkspace['documents']> {
+    caller = this.capture(caller);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      // In `kinds` order: each kind's newest revision, newest publication and its revision.
+      const rows = await tx.all<
+        { kind: PaperKind } & Record<'current' | 'publication' | 'published', string | null>
+      >(
+        `SELECT k.kind,c.record AS current,p.record AS publication,r.record AS published
+         FROM (VALUES ${kinds.map((_, n) => `(?,${n})`).join(',')}) k(kind,n)
+         LEFT JOIN LATERAL (SELECT record FROM paper_revisions WHERE project_id=? AND kind=k.kind ORDER BY revision DESC LIMIT 1) c ON true
+         LEFT JOIN LATERAL (SELECT revision,record FROM paper_publications WHERE project_id=? AND kind=k.kind ORDER BY _merv_rowid DESC LIMIT 1) p ON true
+         LEFT JOIN paper_revisions r ON r.project_id=? AND r.kind=k.kind AND r.revision=p.revision ORDER BY k.n`,
+        ...kinds,
+        ...Array<string>(3).fill(caller.projectId),
+      );
+      return Object.fromEntries(
+        rows.map(({ kind, current, publication, published }) => [
+          kind,
+          {
+            current: current ? JSON.parse(current) : blank(caller.projectId, kind),
+            published: published
+              ? { publication: JSON.parse(publication!), document: JSON.parse(published) }
+              : null,
+          },
+        ]),
+      ) as PaperWorkspace['documents'];
     });
   }
   async history(
@@ -301,20 +302,22 @@ export class PaperService implements Paper {
         const before = await this.current(caller, input.kind, tx);
         const after = await this.edited(caller, input, before, tx);
         await this.revision(caller, before, after, tx);
-        // The Problem is what the project is; the Introduction carries it into every worker's
-        // assignment, so it is rewritten from each Problem revision that says something.
-        const introduction = after.kind === 'problem' ? introductionFrom(after) : '';
-        const current = introduction && ((await this.scope.project(caller, tx)).summary ?? '');
-        if (introduction && introduction !== current)
-          await this.scope.updateProjectContext(
-            caller,
-            {
-              summary: introduction,
-              expectedSummary: current,
-              requestId: childRequest(caller, 'paper', 'introduction', input.requestId),
-            },
-            tx,
-          );
+        // The Problem is what the project is, and the Introduction says it: Paper is its one
+        // writer, rewriting it from each Problem revision, an empty one included.
+        if (after.kind === 'problem') {
+          const introduction = introductionFrom(after);
+          const current = (await this.scope.project(caller, tx)).summary ?? '';
+          if (introduction !== current)
+            await this.scope.updateProjectContext(
+              caller,
+              {
+                summary: introduction,
+                expectedSummary: current,
+                requestId: childRequest(caller, 'paper', 'introduction', input.requestId),
+              },
+              tx,
+            );
+        }
         return after;
       });
     });
@@ -473,6 +476,9 @@ export const paperPlugin = {
     await ctx.effect(async function* () {
       const service = await createService(new PaperService(ctx.state, ctx.scope, ctx.artifacts));
       yield () => service.close();
+      ctx.scope.introductionWriter =
+        "Merv writes the project Introduction from the paper's Problem: change the Problem with paper.patch";
+      yield () => void (ctx.scope.introductionWriter = undefined);
       yield ctx.provide('paper', service);
     });
   },

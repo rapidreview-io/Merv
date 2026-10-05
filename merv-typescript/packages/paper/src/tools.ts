@@ -33,10 +33,10 @@ export const paperToolsPlugin = {
             return input.kind
               ? input.history
                 ? await paper.history(caller, input.kind)
-                : (await paper.read(caller)).documents[input.kind]
+                : (await paper.documents(caller))[input.kind]
               : await paper.read(caller);
           check(input.kind, 'invalid_paper_input', 'Name the kind of the section to read');
-          const { revision, sections } = (await paper.read(caller)).documents[input.kind].current;
+          const { revision, sections } = (await paper.documents(caller))[input.kind].current;
           const found = sections.find(({ id }) => id === input.section);
           check(found, 'not_found', 'Section not found', 404);
           const offset = Math.min(input.offset ?? 0, found.content.length);
@@ -75,9 +75,7 @@ export const paperToolsPlugin = {
     ctx.effect(() => ctx.tools.contributeInstructions(guide));
     // Each of a main agent's turns is told the paper as it is then.
     ctx.effect(() =>
-      ctx.tools.contributeContext(async (caller) =>
-        paperSnapshot((await paper.read(caller)).documents),
-      ),
+      ctx.tools.contributeContext(async (caller) => paperSnapshot(await paper.documents(caller))),
     );
   },
 };

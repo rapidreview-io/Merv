@@ -330,6 +330,19 @@ export class ReflectionService implements Reflections {
       plan: submission?.plan ?? null,
     };
   }
+  async summaries(caller: Caller) {
+    return await this.state.transaction(async (tx) => {
+      await this.read(caller, tx);
+      const flows = new Map(
+        (await this.workflows.list(caller, tx, 'reflection')).map((w) => [w.id, w]),
+      );
+      const sql =
+        'SELECT id,title,owner_id AS "ownerId" FROM reflections WHERE project_id=? ORDER BY _merv_rowid DESC';
+      return (
+        await tx.all<Pick<Reflection, 'id' | 'title' | 'ownerId'>>(sql, caller.projectId)
+      ).map((row) => ({ ...row, workflow: flows.get(row.id)! }));
+    });
+  }
   async list(caller: Caller, transaction?: Transaction): Promise<Reflection[]> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
@@ -677,7 +690,7 @@ export class ReflectionService implements Reflections {
         : {}),
       ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
     });
-    const documents = (await this.paper.read(context.caller, context.tx)).documents;
+    const documents = await this.paper.documents(context.caller, context.tx);
     // A published section that repeats a current one says so itself: the builder names the copy.
     const paperItems = this.paper
       .contextSections(documents)
@@ -1221,7 +1234,9 @@ export class ReflectionService implements Reflections {
                     c.tx,
                   );
                   const input = c.input as unknown as ReflectionReview | undefined;
-                  if (input && input.paperChanges !== undefined)
+                  // At the verdict's own transition, submitReview's applyReview checks the
+                  // edits as it makes them, in this transaction.
+                  if (input && input.paperChanges !== undefined && !c.transition)
                     await this.paper.checkReview(c.caller, paperReview(wave, review, input), c.tx);
                 },
               },

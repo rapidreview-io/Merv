@@ -1405,7 +1405,10 @@ test('reflection reviewer authors paper edits with the verdict and main-agent ed
     /abort verdict/,
   );
   assert.equal((await f.app.ctx.paper.read(f.owner)).documents.results.current.revision, 1);
+  // The verdict works out its paper edits once, as it applies them.
+  const checks = t.mock.method(f.app.ctx.paper, 'checkReview');
   wave = (await f.app.ctx.tools.call('review.submit', reviewer, input)) as Reflection;
+  assert.equal(checks.mock.callCount(), 0);
   assert.equal(wave.workflow.state, 'approved');
   assert.deepEqual(await f.app.ctx.tools.call('review.submit', reviewer, input), wave);
   const document = (await f.app.ctx.paper.read(f.owner)).documents.results;

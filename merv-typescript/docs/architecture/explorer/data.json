@@ -2181,7 +2181,7 @@
         },
         {
           "name": "project.context.update",
-          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
+          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Refused, saying why, while a plugin writes the Introduction itself. Reuse requestId only to retry identical input.",
           "readOnly": false
         },
         {
@@ -2270,7 +2270,7 @@
         },
         {
           "name": "project.context.update",
-          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Reuse requestId only to retry identical input.",
+          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Refused, saying why, while a plugin writes the Introduction itself. Reuse requestId only to retry identical input.",
           "readOnly": false
         },
         {

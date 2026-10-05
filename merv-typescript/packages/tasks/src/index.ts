@@ -1522,12 +1522,14 @@ export class TaskService implements Tasks {
     return type;
   }
 
+  /** The project, with its Introduction only without Paper: Paper writes it from the Problem,
+   * whose sections the paper's own items carry. */
   private async projectContext(caller: Caller, tx: Transaction): Promise<Data> {
     const project = await this.scope.project(caller, tx);
     return {
       id: project.id,
       name: project.name,
-      summary: project.summary ?? '',
+      ...(this.paper ? {} : { summary: project.summary ?? '' }),
       contextRevision: project.contextRevision ?? 0,
     };
   }
@@ -1545,7 +1547,7 @@ export class TaskService implements Tasks {
     tx: Transaction,
   ): Promise<Data> {
     check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
-    const sections = this.paper.contextSections((await this.paper.read(caller, tx)).documents);
+    const sections = this.paper.contextSections(await this.paper.documents(caller, tx));
     // Each entry's JSON and the comma after it.
     const size = (entry: object) => Buffer.byteLength(JSON.stringify(entry)) + 1;
     let room = type.definition.recipe.maxChars,
@@ -2115,6 +2117,13 @@ export class TaskService implements Tasks {
   /** The records; guidance is per reader and per moment, so task.get carries it. */
   async list(caller: Caller): Promise<TaskRecord[]> {
     return await this.records(caller);
+  }
+  async active(caller: Caller): Promise<number> {
+    caller = structuredClone(caller);
+    return await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      return (await this.workflows.open('task', caller.projectId, tx)).length;
+    });
   }
 
   /**

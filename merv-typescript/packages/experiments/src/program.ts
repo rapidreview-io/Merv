@@ -357,6 +357,11 @@ interface LeaseRow {
   released_at: string | null;
 }
 const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
+/** What names an experiment's lease. */
+type LeaseTarget = Pick<Experiment, 'id' | 'projectId'> & {
+  workflow: Pick<Experiment['workflow'], 'revision' | 'state'>;
+  attempt?: Pick<Experiment['attempt'], 'index'>;
+};
 /**
  * What the rounds of every attempt may add to the optional feedback section. The section is
  * dropped whole when it does not fit, so the history stays small beside the latest reviews.
@@ -613,7 +618,7 @@ export abstract class ExperimentProgram {
   }
 
   private async activeLease(
-    experiment: Experiment,
+    experiment: LeaseTarget,
     tx: Transaction,
   ): Promise<LeaseRow | undefined> {
     return await tx.get<LeaseRow>(
@@ -624,7 +629,8 @@ export abstract class ExperimentProgram {
     );
   }
 
-  private async lease(caller: Caller, experiment: Experiment, tx: Transaction): Promise<LeaseRow> {
+  /** The caller's live lease on this revision; without `attempt`, at whichever attempt it holds. */
+  private async lease(caller: Caller, experiment: LeaseTarget, tx: Transaction): Promise<LeaseRow> {
     check(
       caller.session,
       'stale_lease',
@@ -636,7 +642,7 @@ export abstract class ExperimentProgram {
       lease &&
         lease.id === caller.session.id &&
         lease.actor_id === caller.actorId &&
-        lease.attempt_index === experiment.attempt.index &&
+        (!experiment.attempt || lease.attempt_index === experiment.attempt.index) &&
         lease.state === experiment.workflow.state,
       'stale_lease',
       'The worker no longer owns this exact experiment assignment',
@@ -988,6 +994,8 @@ export abstract class ExperimentProgram {
         size: artifact.size,
       };
     });
+    // Paper writes the Introduction from the Problem, whose sections `paper` carries.
+    const { summary: _summary, ...project } = await this.scope.project(caller, tx);
     return {
       experiment: own({
         id: experiment.id,
@@ -995,7 +1003,7 @@ export abstract class ExperimentProgram {
         intent: experiment.intent,
         details: experiment.details,
         ownerId: experiment.ownerId,
-        project: await this.scope.project(caller, tx),
+        project,
         workspace: 'git',
         codeCapture: await this.reviewCapture(caller, experiment, tx),
         paperChangesFormat: {
@@ -1016,7 +1024,7 @@ export abstract class ExperimentProgram {
           selected.includes(evidence.artifactId),
         ),
       }),
-      paper: this.paper.contextSections((await this.paper.read(caller, tx)).documents),
+      paper: this.paper.contextSections(await this.paper.documents(caller, tx)),
       approvedArtifacts,
       evidenceArtifacts,
       historicalArtifacts,
@@ -1457,7 +1465,13 @@ export abstract class ExperimentProgram {
         checkReceipt(lease, receipt, 'The exact experiment lease receipt is required');
       },
       outputs: async (context) => {
-        await this.lease(context.caller, (await this.admit(context)).experiment, context.tx);
+        // `check`, the whole admission, ran on this revision just before, in this transaction.
+        const { id, revision, state } = context.snapshot;
+        await this.lease(
+          context.caller,
+          { id, projectId: context.caller.projectId, workflow: { revision, state } },
+          context.tx,
+        );
         return {
           artifacts: [
             ...new Set([

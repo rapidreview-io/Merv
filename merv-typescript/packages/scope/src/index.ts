@@ -95,6 +95,7 @@ class AuthoritySlot<T> {
 }
 export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
+  introductionWriter?: string;
   private members!: Memberships;
   private userKeys!: UserKeys;
   private ledger: Ledger;
@@ -172,29 +173,34 @@ export class ProjectScope implements Scope {
         issuer: string;
         subject: string;
       }>(
-        `SELECT m.id,m.project_id,m.actor_id,m.issuer,m.subject FROM ${LIVE_OPERATOR} ORDER BY m.created_at,m.id`,
+        `SELECT * FROM (SELECT DISTINCT ON (m.project_id) m.id,m.project_id,m.actor_id,m.issuer,m.subject,m.created_at
+         FROM ${LIVE_OPERATOR} ORDER BY m.project_id,m.created_at,m.id) o ORDER BY o.created_at,o.id`,
       );
-    const owners = new Map<string, DelegationSource>();
-    for (const row of await within(this.state, tx, read))
-      if (!owners.has(row.project_id))
-        owners.set(row.project_id, {
-          actorId: row.actor_id,
-          projectId: row.project_id,
-          kind: 'human',
-          issuer: row.issuer,
-          subject: row.subject,
-          membershipId: row.id,
-        });
-    return [...owners].map(([projectId, source]) => ({ projectId, source }));
+    return (await within(this.state, tx, read)).map((row) => ({
+      projectId: row.project_id,
+      source: {
+        actorId: row.actor_id,
+        projectId: row.project_id,
+        kind: 'human',
+        issuer: row.issuer,
+        subject: row.subject,
+        membershipId: row.id,
+      },
+    }));
   }
   async projectCreator(projectId: string, tx?: Transaction) {
-    const row = await within(this.state, tx, (sql) =>
-      sql.get<{ issuer: string; subject: string }>(
-        'SELECT issuer,subject FROM user_project_requests WHERE project_id=?',
-        projectId,
-      ),
-    );
-    return row ? { issuer: row.issuer, subject: row.subject } : null;
+    return await within(this.state, tx, async (sql) => {
+      const row =
+        (await sql.get<{ issuer: string; subject: string }>(
+          'SELECT issuer,subject FROM user_project_requests WHERE project_id=?',
+          projectId,
+        )) ??
+        (await sql.get<{ issuer: string; subject: string }>(
+          `SELECT m.issuer,m.subject FROM ${LIVE_OPERATOR} AND m.project_id=? ORDER BY m.created_at,m.id LIMIT 1`,
+          projectId,
+        ));
+      return row ? { issuer: row.issuer, subject: row.subject } : null;
+    });
   }
   async serviceActor(
     provider: string,

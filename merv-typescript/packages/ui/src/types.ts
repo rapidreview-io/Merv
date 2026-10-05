@@ -34,8 +34,9 @@ export interface UiRow {
   /**
    * This row's part of ui.home, the one read Now and the rail poll, under the row's id: the
    * read-only tool that lists its records, and the fields of each record those pages read.
+   * `list`, when given, is read in the tool's place: those records with at least those fields.
    */
-  home?: { tool: string; keep: readonly string[] };
+  home?: { tool: string; keep: readonly string[]; list?(caller: Caller): Promise<unknown> };
 }
 
 export interface UiRowDescription extends Omit<UiRow, 'status' | 'read' | 'home'> {

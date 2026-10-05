@@ -372,6 +372,51 @@ const retired = async (f: Awaited<ReturnType<typeof fixture>>) => {
   return id;
 };
 
+test('summaries give each list the home fields in its order without reading records one by one', async (t) => {
+  const f = await fixture(t);
+  await f.app.ctx.experiments.create(f.owner, {
+    name: 'summarized',
+    intent: 'Be listed in a summary.',
+    requestId: f.id(),
+  });
+  let record = await f.create();
+  await f.definition();
+  record = await f.advance(record);
+  record = await f.advance(record);
+  assert.equal(record.workflow.state, 'reflecting');
+  const pick = (records: object[], keys: string[]) =>
+    records.map((entry) =>
+      Object.fromEntries(keys.map((key) => [key, entry[key as keyof typeof entry]])),
+    );
+  const lists = {
+    research: pick(await f.research.list(f.owner), ['id', 'name', 'ownerId', 'workflow']),
+    experiments: pick(await f.app.ctx.experiments.list(f.owner), [
+      'id',
+      'name',
+      'intent',
+      'ownerId',
+      'workflow',
+    ]),
+    reflections: pick(await f.app.ctx.reflections.list(f.owner), [
+      'id',
+      'title',
+      'ownerId',
+      'workflow',
+    ]),
+  };
+  assert.ok(Object.values(lists).every((list) => list.length === 1));
+  const gets = t.mock.method(f.app.ctx.workflows, 'get');
+  assert.deepEqual(
+    {
+      research: await f.research.summaries(f.owner),
+      experiments: await f.app.ctx.experiments.summaries(f.owner),
+      reflections: await f.app.ctx.reflections.summaries(f.owner),
+    },
+    lists,
+  );
+  assert.equal(gets.mock.callCount(), 0);
+});
+
 test('accepted code of a retired instance is history no cycle integrates', async (t) => {
   // A task cannot depend on an instance that no longer exists, so the consolidation task
   // stands on the rest of what main lacks.

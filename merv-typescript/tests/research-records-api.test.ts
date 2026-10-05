@@ -81,6 +81,17 @@ async function fixture(t: TestContext) {
 test('Introduction HTTP and MCP preserve exact baseline, original replay result and current write authority', async (t) => {
   const f = await fixture(t),
     client = await f.connect(f.producer.token);
+  // Paper writes the Introduction from its Problem, so while it is loaded the tool refuses.
+  const written = await f.http('project.context.update', {
+    summary: 'A second writer.',
+    expectedSummary: '',
+    requestId: 'second-writer',
+  });
+  assert.equal(written.status, 409);
+  assert.equal(written.body.error.code, 'project_context_written');
+  assert.match(written.body.error.message, /paper\.patch/);
+  // Without a plugin writing it, the tool keeps its own contract.
+  f.app.ctx.scope.introductionWriter = undefined;
   const initial = (await f.http('project.get', {}, f.reader.token)).body.result;
   assert.equal(initial.summary, '');
   assert.equal(initial.contextRevision, 0);
@@ -144,6 +155,7 @@ test('Introduction HTTP and MCP preserve exact baseline, original replay result 
 
 test('Introduction tool accepts project.get contextRevision and refuses stale revisions', async (t) => {
   const f = await fixture(t);
+  f.app.ctx.scope.introductionWriter = undefined;
   const observed = (await f.http('project.get')).body.result;
   const first = await f.http('project.context.update', {
     summary: 'Revision-based introduction.',
