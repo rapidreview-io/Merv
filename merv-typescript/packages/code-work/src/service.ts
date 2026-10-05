@@ -358,7 +358,8 @@ export class CodeService extends CodeCommandService implements Code {
   }
   bindServiceTasks(provider: ResolutionWorkCreator): () => void {
     this.unitStore.resolutionTasks = provider;
-    void this.unitStore.reconcileAll().catch(() => undefined);
+    // The startup pass did everything else; only a conflict needs the provider it lacked.
+    void this.unitStore.reconcileAll(true).catch(() => undefined);
     return () => {
       if (this.unitStore.resolutionTasks === provider) this.unitStore.resolutionTasks = undefined;
     };
@@ -595,6 +596,19 @@ export class CodeService extends CodeCommandService implements Code {
         operation,
       ),
     );
+  }
+  /** The binding and hosting a preparation compares; status() reads far more than these. */
+  async repositoryState(caller: Caller) {
+    this.requireStore();
+    return await this.storage.transaction(async (tx) => {
+      await this.baseScope.require(caller, 'read', tx);
+      const project = await this.unitStore.project(tx, caller.projectId);
+      const row = await tx.get(
+        'SELECT 1 FROM code_projects WHERE project_id=? AND store_json IS NOT NULL',
+        caller.projectId,
+      );
+      return { project, store: { hosted: !!row } };
+    });
   }
   async rebindRepository(caller: Caller, input: unknown) {
     return await this.requireStore().rebindRepository(caller, input);

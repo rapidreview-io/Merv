@@ -36,6 +36,8 @@ export class DurableEvents implements DomainEvents {
   private closing?: Promise<void>;
   private closed = false;
   private wakeRequested = false;
+  /** The earliest retry the last pass saw; commits in this process wake delivery directly. */
+  private retryAt = Infinity;
   private timer?: ReturnType<typeof setTimeout>;
   private unlisten: () => void = () => {};
 
@@ -158,8 +160,8 @@ export class DurableEvents implements DomainEvents {
         // Cleared in the same step as the last check above: a drain() from here on starts a
         // new pass instead of joining one that will not look for its commit.
         this.running = undefined;
-        // Also discovers commits made through another State connection.
-        this.wake(100);
+        // A slow poll also discovers commits made through another State connection.
+        this.wake(Math.max(0, Math.min(this.retryAt - Date.now(), 1000)));
       }
     });
     return this.running;
@@ -167,6 +169,7 @@ export class DurableEvents implements DomainEvents {
 
   private async deliver(): Promise<boolean> {
     const consumers = [...this.consumers.values()];
+    this.retryAt = Infinity;
     if (!consumers.length) return false;
     // Advisory and lock-free: skip a consumer only when a snapshot taken after this pass began
     // shows it waiting on a retry or already past every committed event. The locked
@@ -185,6 +188,7 @@ export class DurableEvents implements DomainEvents {
     let backlog = false;
     for (const consumer of consumers) {
       const seen = progress.get(consumer.id);
+      if (seen && seen.retry_at > Date.now()) this.retryAt = Math.min(this.retryAt, seen.retry_at);
       if (seen && (seen.retry_at > Date.now() || seen.cursor >= head)) continue;
       for (let count = 0; count < 100; count++) {
         if (this.closed || this.consumers.get(consumer.id) !== consumer) break;
@@ -250,6 +254,7 @@ export class DurableEvents implements DomainEvents {
             );
             if (!row || row.cursor !== attemptedCursor) return;
             const delay = 100 * 2 ** Math.min(row.attempts, 8);
+            this.retryAt = Math.min(this.retryAt, Date.now() + delay);
             // Failure handling must not invoke getters or proxy traps on an
             // arbitrary thrown value and thereby strand every later consumer.
             const field =

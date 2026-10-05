@@ -229,10 +229,11 @@ export class CodeBaseService {
   async initialize(): Promise<void> {
     await migrateBases(this.state);
     await initializeCheckConfiguration(this.state);
+    // Resolution retains and mirrors its result; only a base resolved before that did is left.
     if (this.hooks.resolved)
       await this.state.transaction(async (tx) => {
         for (const row of await tx.all<BaseRow>(
-          `SELECT ${columns} FROM code_bases WHERE state='resolved' AND health='healthy'`,
+          `SELECT ${columns} FROM code_bases WHERE state='resolved' AND health='healthy' AND NOT EXISTS (SELECT 1 FROM code_retained_commits r WHERE r.project_id=code_bases.project_id AND r.retention_key='base:'||code_bases.base_key)`,
         )) {
           const base = this.record(row);
           await this.hooks.resolved!(tx, row.project_id, base.key, base.result!.commit);
@@ -626,15 +627,18 @@ export class CodeBaseService {
           };
           const admitted = await this.hooks.serviceWork?.admit(tx, input);
           if (!admitted?.admitted) {
+            const reason = admitted?.reason ?? 'sessions_unavailable';
             await tx.run(
               "UPDATE code_bases SET state='retry_wait',next_at=?,blocker=?,updated_at=? WHERE project_id=? AND base_key=?",
               new Date(this.clock() + 5000).toISOString(),
-              admitted?.reason ?? 'sessions_unavailable',
+              reason,
               at,
               projectId,
               base.key,
             );
-            await this.hooks.changed(tx, projectId);
+            // Waiting again for the same reason changes nothing a waiter reads.
+            if (row.state !== 'retry_wait' || row.blocker !== reason)
+              await this.hooks.changed(tx, projectId);
             return false;
           }
           check(
