@@ -667,7 +667,7 @@ export class LeasedSessions implements Sessions {
     frozen?: Session['execution'],
   ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }> {
     this.ensureOpen();
-    check(live(session), 'session_closed', 'Session is closed', 401);
+    if (!live(session)) throw await this.endedHere(session, tx);
     check(
       session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
       'session_expired',
@@ -738,7 +738,7 @@ export class LeasedSessions implements Sessions {
       'Session cannot select another worker',
       403,
     );
-    if (!live(session)) throw ended(session);
+    if (!live(session)) throw await this.endedHere(session, tx);
     check(
       session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
       'session_closed',
@@ -891,6 +891,13 @@ export class LeasedSessions implements Sessions {
     await this.credentials.renew(row.token_hash, 'sessions', session.expiresAt, tx);
   }
   /** The record moved by this worker's own hand: its handoff landed. */
+  /** Why an ended session refuses: a session closed after its own handoff moved the record
+   *  says it completed, however it was closed, so a retry can tell its delivery landed. */
+  private async endedHere(session: Session, tx: Transaction): Promise<MervError> {
+    return session.closeReason !== 'handoff' && (await this.handedOff(session, tx))
+      ? ended({ ...session, closeReason: 'handoff' })
+      : ended(session);
+  }
   private async handedOff(session: Session, tx: Transaction): Promise<boolean> {
     return (
       (await this.workflows.movedBy(session.instanceId, session.expectedRevision + 1, tx)) ===
