@@ -4,14 +4,14 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:7edf96c64b9dd5baae30988d462b12afb3ffa3f114ef09e4fddf725e9ebb0730",
-    "releaseId": "rt1_a773dab2d9dba2b4f08c69073f1c8e5027b4a02a8c8b3e00dbab3fdd93c3d109",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:06e24369c1d20abeff7a375a8346dc98cc200d5199562bcafb9ccb9afd6db822",
+    "releaseId": "rt1_e3bf0f871a190d46248feca24b90159e6c7307ab6a296eb71284158ad709f468",
     "releases": {
-      "cloudflare-fleet": "rt1_a773dab2d9dba2b4f08c69073f1c8e5027b4a02a8c8b3e00dbab3fdd93c3d109",
-      "cloudflare-fleet-large": "rt1_b84e31348e28e0a3847de047058022672184ed333269c1914563976f5f67a318"
+      "cloudflare-fleet": "rt1_e3bf0f871a190d46248feca24b90159e6c7307ab6a296eb71284158ad709f468",
+      "cloudflare-fleet-large": "rt1_258f87dd0f9970ea05be31339301cde0370b6b65e3e0cd1ad36328699ee62ab7"
     },
-    "localId": "sha256:2c0206d22050d9b6ff9973263e24ba90e0a8a879cd5338a247825ec892e5b53b",
-    "sourceCommit": "9f5b0473daac55bb02cbd6f19f081bab10a0b5b4",
+    "localId": "sha256:8baa5b24bcf1ee1d91fa5e5799d8e5484661394b410c7ce6d512cd3edebb1721",
+    "sourceCommit": "fe52540357e3c9af37971543ae5a0b82aa583cbd",
     "sandboxesCommit": "5157f1ed7618ff3987da7f214d2312afd31e636d"
   },
   "inputs": [
@@ -21,7 +21,6 @@
     "packages/code/src/merge-settings.ts",
     "packages/contracts/src/async.ts",
     "packages/contracts/src/checked-transitions.ts",
-    "packages/contracts/src/code-blockers.ts",
     "packages/contracts/src/code-github.ts",
     "packages/contracts/src/code-publications.ts",
     "packages/contracts/src/code-store.ts",
@@ -31,9 +30,6 @@
     "packages/contracts/src/launch-connections.ts",
     "packages/contracts/src/order.ts",
     "packages/contracts/src/outbound.ts",
-    "packages/contracts/src/paper-context.ts",
-    "packages/contracts/src/paper-edit.ts",
-    "packages/contracts/src/review-history.ts",
     "packages/contracts/src/running.ts",
     "packages/contracts/src/schemas.ts",
     "packages/contracts/src/session-inputs.ts",
