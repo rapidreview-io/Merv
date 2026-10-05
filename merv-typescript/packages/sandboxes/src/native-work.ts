@@ -635,7 +635,7 @@ export class NativeWorkService {
     const rows = await this.state.read((sql) =>
       sql.all<NativeWorkRow>(`SELECT w.* FROM sandbox_native_work w JOIN sandbox_native_connections c ON c.id=w.connection_id AND c.project_id=w.project_id
       WHERE c.revoked_at IS NULL AND c.revoke_pending=FALSE
-      AND (w.closed_at IS NULL OR w.transition_pending=TRUE OR w.evidence_checked_at IS NULL)
+      AND (w.transition_pending=TRUE OR w.evidence_checked_at IS NULL OR EXISTS (SELECT 1 FROM sandbox_native_assignments a WHERE a.project_id=w.project_id AND a.work_kind=w.work_kind AND a.work_id=w.work_id AND a.revoked_at IS NULL))
       ORDER BY w.transition_pending DESC,w.evidence_checked_at ASC NULLS FIRST,w.project_id,w.work_kind,w.work_id LIMIT 20`),
     );
     for (const row of rows) {
@@ -656,10 +656,10 @@ export class NativeWorkService {
     }
   }
   private async fresh(work: NativeWorkRow): Promise<void> {
-    await this.state.read((sql) => this.connections.assertReady(work.project_id, sql));
-    const current = await this.state.read((sql) =>
-      this.row(sql, work.project_id, work.work_kind, work.work_id),
-    );
+    const current = await this.state.read(async (sql) => {
+      await this.connections.assertReady(work.project_id, sql);
+      return this.row(sql, work.project_id, work.work_kind, work.work_id);
+    });
     valid(
       current &&
         current.connection_id === work.connection_id &&
@@ -766,22 +766,20 @@ export class NativeWorkService {
         pending = true;
       }
     }
-    if (work.closed_at) {
-      // All admitted workflows must finish their capture/finalizer nodes before any rental,
-      // including a borrowed rental, is released. Provisioning/deleting/failed is not stopped.
-      pending ||=
-        resources.workflows.some((w) => !workflowTerminal(w.state)) ||
-        resources.jobs.some((j) => !jobTerminal(j.state));
-      if (!pending)
-        for (const machine of resources.sandboxes)
-          if (machine.state !== 'stopped') {
-            await this.fresh(work);
-            await request('/actions', 'POST', { kind: 'sandbox_delete', id: machine.id });
-            pending = true;
-          }
-      // Native work revocation fences admission; pre-existing creates are already visible
-      // as provisioning rows. Only terminal workflows/jobs plus stopped machines confirm closure.
-    }
+    // Running workflows/jobs keep work pending so their evidence registers as they end; open work
+    // without them or a live assignment rests. Closure needs terminal workflows/jobs (captures and
+    // finalizers end before any rental, even a borrowed one, is released), then stopped machines:
+    // provisioning/deleting/failed is not stopped. Revocation fenced admission; earlier creates show.
+    pending ||=
+      resources.workflows.some((w) => !workflowTerminal(w.state)) ||
+      resources.jobs.some((j) => !jobTerminal(j.state));
+    if (work.closed_at && !pending)
+      for (const machine of resources.sandboxes)
+        if (machine.state !== 'stopped') {
+          await this.fresh(work);
+          await request('/actions', 'POST', { kind: 'sandbox_delete', id: machine.id });
+          pending = true;
+        }
     await this.state.transaction((tx) =>
       tx.run(
         `UPDATE sandbox_native_work SET transition_pending=?,evidence_checked_at=?,last_error=?

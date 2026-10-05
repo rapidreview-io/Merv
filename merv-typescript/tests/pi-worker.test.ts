@@ -433,8 +433,13 @@ test('project paper travels as labeled user-level source, outside trusted system
       },
     },
   });
-  const app = await fixture({ projectPaper: source });
+  const app = await fixture({ projectPaper: source, turns: 2 });
   await app.run();
+  // Each turn's requests carry the snapshot once; the history and checkpoint never hold it.
+  const later = JSON.stringify(app.modelRequests[1]);
+  assert.equal(later.split('Recover target effect').length, 2);
+  assert.match(later, /Question 1/);
+  assert.doesNotMatch(app.completions.at(-1)!.checkpoint, /Recover target effect/);
   const request = app.modelRequests[0];
   const input = request.input as { role: string; content: unknown }[];
   const system = input.filter(({ role }) => role === 'system');

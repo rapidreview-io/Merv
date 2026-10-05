@@ -126,14 +126,13 @@ export class NativeEvidence {
     if (workflow.state === 'running' || workflow.state === 'cleaning_up') return;
     await this.connections.get(connection.id);
     for (const node of await this.captures(work, connection, workflow.id)) {
-      const spec = node;
       const registered = await this.state.read((sql) =>
         sql.get(
           'SELECT 1 FROM sandbox_native_captures WHERE connection_id=? AND namespace=? AND workflow_id=? AND node_id=?',
           connection.id,
           workflow.namespace,
           workflow.id,
-          spec.id,
+          node.id,
         ),
       );
       if (registered) continue;
@@ -173,7 +172,7 @@ export class NativeEvidence {
             work.work_kind,
             work.work_id,
             workflow.id,
-            spec.id,
+            node.id,
             objectId,
             sha256,
             size,
@@ -207,7 +206,7 @@ export class NativeEvidence {
       // Terminal failed/cancelled captures may have uploaded some leaves without
       // finishing their directory manifest. The native service exposes only its
       // committed immutable leaf receipts; partial state stays explicit.
-      for (const file of await this.retainedFiles(work, connection, workflow.id, spec.id)) {
+      for (const file of await this.retainedFiles(work, connection, workflow.id, node.id)) {
         const existing = byName.get(file.name);
         check(
           !existing || existing === file.object_id,
@@ -261,15 +260,15 @@ export class NativeEvidence {
         const artifact = await this.artifacts.createCollection(
           caller,
           {
-            title: `Compute capture — ${workflow.name || workflow.id} / ${spec.id}`.slice(0, 200),
-            sourceKey: `native:${digest([connection.id, workflow.namespace, workflow.id, spec.id])}`,
+            title: `Compute capture — ${workflow.name || workflow.id} / ${node.id}`.slice(0, 200),
+            sourceKey: `native:${digest([connection.id, workflow.namespace, workflow.id, node.id])}`,
             files: files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
             metadata: {
               ownerKind: work.work_kind,
               ownerId: work.work_id,
               attempt: workflow.attempt_ref ?? null,
               nativeWorkflowId: workflow.id,
-              captureNode: spec.id,
+              captureNode: node.id,
               captureState: node.state,
               outputState:
                 node.result.output_state ?? (node.state === 'succeeded' ? 'committed' : 'partial'),
@@ -285,7 +284,7 @@ export class NativeEvidence {
           connection.id,
           workflow.namespace,
           workflow.id,
-          spec.id,
+          node.id,
           artifact.id,
         );
       });
@@ -300,7 +299,7 @@ export class NativeEvidence {
         await this.connections.client.request<unknown>(
           `/v1/delegations/works/${work.native_grant_id}/workflows/${workflowId}/captures`,
           this.connections.bearer(connection),
-          { query: { limit: '1', ...(after ? { after } : {}) } },
+          { query: { limit: '10', ...(after ? { after } : {}) } },
         ),
       );
       check(parsed.success, 'sandbox_evidence_invalid', 'Invalid native capture page', 502);

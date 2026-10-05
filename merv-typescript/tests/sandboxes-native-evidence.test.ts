@@ -79,12 +79,13 @@ async function fixture(t: TestContext) {
     assert.ok(url.pathname.startsWith('/v1/delegations/works/grant_work/'));
     let value: unknown;
     if (url.pathname.endsWith('/captures')) {
-      assert.equal(url.searchParams.get('limit'), '1');
+      assert.equal(url.searchParams.get('limit'), '10');
       const start = url.searchParams.has('after')
         ? captures.findIndex((c) => c.id === url.searchParams.get('after')) + 1
         : 0;
-      const page = captures.slice(start, start + 1);
-      value = { captures: page, next: start + 1 < captures.length ? page[0]!.id : null };
+      // Shorter pages than asked for, so paging is still exercised.
+      const page = captures.slice(start, start + 2);
+      value = { captures: page, next: start + 2 < captures.length ? page.at(-1)!.id : null };
     } else if (url.pathname.endsWith('/files')) {
       assert.equal(url.searchParams.get('limit'), '500');
       const values = receipts.get(url.pathname.split('/').at(-2)!) ?? [];

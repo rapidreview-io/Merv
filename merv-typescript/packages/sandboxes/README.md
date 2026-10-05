@@ -59,7 +59,8 @@ Legacy `connections` may be empty only when native integration is configured.
 The backend stores connection/work/assignment bindings, revocation and cleanup
 intents, and capture-to-artifact IDs. Native Sandboxes owns execution, billing and
 storage. Reconciliation pages native resources, fences old assignment access,
-cancels obsolete attempts, lets finalizers finish, then releases remaining rentals.
+cancels obsolete attempts, lets finalizers finish, then releases remaining rentals. Open work
+is polled only while it holds a live assignment or running work; settled closed work leaves Compute.
 Handoffs retain accepted jobs and warm machines in the same work namespace.
 
 Sandboxes publishes rows that a service outside this process owns. merv-sandboxes serves a
@@ -74,7 +75,8 @@ Extend lease and Release machine are offered only to a caller the tools would le
 The public `@merv/sandboxes/types` contract defines `Context.sandboxes`, `Sandboxes`,
 `SandboxConnection`, `SandboxesConfig`, `SandboxRow`, `SandboxTarget`, `SandboxExtend`,
 `SandboxReadiness` and `SandboxMachines`. `rows()` returns the rows from the last accepted
-manifest, `status()` reports readiness only, `refresh()` reads every connection's manifest now,
+manifest, `status()` reports readiness only, `refresh()` reads the first answering connection's
+manifest now (all connections are the same service),
 `read(caller, rowId, params)` proxies the collection or one record, `extend` and `release` change
 one named sandbox, and `subscribe(listener)` fires when the published row set changes. For the
 Running page, `machines(projectId)` answers the project's machine list from memory, or null until

@@ -305,6 +305,9 @@ test('unknown assignment issuance retries the identical encrypted secret and has
   assert.equal((await f.readWork())!.transition_pending, true);
   await f.work.reconcile();
   assert.ok(f.tombstones.has(session.id));
+  const settled = f.calls.length;
+  await f.work.reconcile();
+  assert.equal(f.calls.length, settled, 'idle open work without a live lease is not polled');
   const next = await f.work.launchConnections(f.session('lease_two'));
   assert.notEqual(next[0]!.bearer, first[0]!.bearer);
   assert.equal(f.calls.filter((c) => c.path === '/v1/delegations/works').length, 1);

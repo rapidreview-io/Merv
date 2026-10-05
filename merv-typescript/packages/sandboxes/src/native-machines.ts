@@ -44,7 +44,7 @@ const machine = z.object({
 });
 const page = z.object({ namespace: id, sandboxes: z.array(machine).max(100), next: id.nullable() });
 
-/** Read native machines through the connection pinned to each work, never today's payer. */
+/** Machines of open or unsettled work, each read through its pinned payer, never today's. */
 export class NativeMachineReader implements NativeMachineReads {
   constructor(
     private readonly state: State,
@@ -55,7 +55,7 @@ export class NativeMachineReader implements NativeMachineReads {
       sql.all<NativeWorkRow>(
         `SELECT w.* FROM sandbox_native_work w JOIN sandbox_native_connections c ON c.id=w.connection_id AND c.project_id=w.project_id
          WHERE w.project_id=? AND w.native_grant_id IS NOT NULL AND w.namespace IS NOT NULL
-         AND c.revoked_at IS NULL AND c.revoke_pending=FALSE ORDER BY w.work_kind,w.work_id`,
+         AND c.revoked_at IS NULL AND c.revoke_pending=FALSE AND (w.closed_at IS NULL OR w.transition_pending=TRUE) ORDER BY w.work_kind,w.work_id`,
         projectId,
       ),
     );
