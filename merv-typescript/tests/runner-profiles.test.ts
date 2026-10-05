@@ -133,6 +133,7 @@ function request(readOnly = false, workspace?: WorkflowWorkspacePolicy): LaunchR
     secret,
     mcpUrl: 'http://127.0.0.1:8080/mcp',
     cwd: '/tmp/merv-profile-workspace',
+    shellEnvFile: '/tmp/merv-profile-run/shell-env.sh',
   };
 }
 const safeEnv = {
@@ -1053,6 +1054,40 @@ test('private native MCP connections reach both harnesses and allowed check revi
     assert.equal(sealedLaunch.env.MERV_NATIVE_MCP_TOKEN_0, undefined);
     assert.ok(!JSON.stringify(sealedLaunch.args).includes(native.url));
   }
+});
+
+test("Claude's shell commands see none of the bearers its MCP client reads from the environment", (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-claude-shell-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const shellEnvFile = join(directory, 'shell-env.sh');
+  const bearers = ['exa_' + 'ConfiguredBearer'.repeat(2), 'sbxt_' + 'PrivateNative'.repeat(4)];
+  const spec = buildLaunch(
+    {
+      ...claude,
+      servers: [{ name: 'exa', url: 'https://exa.example/mcp', bearerEnv: 'EXA_BEARER' }],
+    },
+    {
+      ...request(),
+      shellEnvFile,
+      connections: [{ name: 'sandboxes', url: 'https://sandbox.example/mcp', bearer: bearers[1]! }],
+    },
+    { ...safeEnv, EXA_BEARER: bearers[0] },
+  );
+  assert.equal(spec.env.CLAUDE_ENV_FILE, shellEnvFile);
+  assert.ok(![secret, ...bearers].some((value) => spec.shellEnv!.includes(value)));
+  writeFileSync(shellEnvFile, spec.shellEnv!);
+  // What Claude Code does before each Bash command: source the file in the command's own shell.
+  const shell = spawnSync('/bin/sh', ['-c', '. "$CLAUDE_ENV_FILE" && env'], {
+    env: spec.env,
+    encoding: 'utf8',
+  });
+  assert.equal(shell.status, 0);
+  assert.match(shell.stdout, /MERV_MCP_URL=/);
+  for (const value of [secret, ...bearers]) assert.ok(!shell.stdout.includes(value));
+  assert.throws(
+    () => buildLaunch(claude, { ...request(), shellEnvFile: undefined }, safeEnv),
+    /private shell environment file/,
+  );
 });
 
 test('private native MCP descriptions reject collisions and configuration injection without exposing their bearer', () => {

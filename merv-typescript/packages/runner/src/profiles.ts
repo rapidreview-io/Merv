@@ -96,6 +96,9 @@ export interface LaunchSpec {
   stdin: string;
   /** The bearers this launch carries, which no variable name reveals; the output never shows them. */
   secrets: string[];
+  /** Claude only: what the runner writes to `shellEnvFile` for Claude Code to source before each
+   *  Bash command, so that no shell command sees a bearer its MCP client reads. */
+  shellEnv?: string;
 }
 export interface LaunchRequest {
   session: Session;
@@ -110,6 +113,8 @@ export interface LaunchRequest {
   cwd: string;
   /** Canonical SKILL.md paths collected before launch; preparation itself stays pure. */
   disabledSkillPaths?: string[];
+  /** Claude only, required: a private runner-owned path for the launch's `shellEnv`. */
+  shellEnvFile?: string;
 }
 
 const maximumSkillEntries = 4096;
@@ -702,6 +707,15 @@ export function buildLaunch(
     }
   for (const [index, connection] of (request.connections ?? []).entries())
     bearers[`MERV_NATIVE_MCP_TOKEN_${index}`] = connection.bearer;
+  // Claude's Bash inherits its environment, and its shell has the network: the MCP client
+  // reads the bearers there, and the script Claude Code sources before every Bash command
+  // unsets them, as Codex's shell_environment_policy keeps them from its shell.
+  const shellEnvFile = profile.harness === 'claude' ? request.shellEnvFile : undefined;
+  check(
+    profile.harness !== 'claude' || (!!shellEnvFile && isAbsolute(shellEnvFile)),
+    'invalid_runner_launch',
+    'A Claude launch requires a private shell environment file',
+  );
   return protectLogging({
     executable:
       profile.harness === 'codex' && profile.isolatedLauncher
@@ -714,6 +728,9 @@ export function buildLaunch(
     cwd: request.cwd,
     stdin,
     secrets: Object.values(bearers),
+    ...(shellEnvFile && {
+      shellEnv: `unset ${[sessionTokenVariable, ...Object.keys(bearers)].join(' ')}\n`,
+    }),
     env: {
       ...safeEnvironment,
       ...bearers,
@@ -726,9 +743,11 @@ export function buildLaunch(
         : {}),
       // The handshake waits behind the server's writer queue under load, as it did for
       // Codex; a server that lists no tools in time looks connected and useless.
-      ...(profile.harness === 'claude'
-        ? { MCP_TIMEOUT: '120000', MCP_TOOL_TIMEOUT: '600000' }
-        : {}),
+      ...(shellEnvFile && {
+        MCP_TIMEOUT: '120000',
+        MCP_TOOL_TIMEOUT: '600000',
+        CLAUDE_ENV_FILE: shellEnvFile,
+      }),
       [mcpUrlVariable]: url,
       [sessionTokenVariable]: request.secret,
     },

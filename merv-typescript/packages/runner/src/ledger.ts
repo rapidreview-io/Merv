@@ -361,6 +361,10 @@ export class LocalLedger {
   }
   updateMetadata(id: string, patch: LaunchMetadata): LaunchRecord {
     patch = plain(patch, 'invalid_runner_metadata', limits);
+    // Only the controller writes metadata, and every tick saves what it read: unchanged, nothing is written.
+    const current = this.get(id);
+    if (current && encode({ ...current.metadata, ...patch }) === encode(current.metadata))
+      return current;
     this.db.exec('BEGIN IMMEDIATE');
     try {
       const record = this.get(id);

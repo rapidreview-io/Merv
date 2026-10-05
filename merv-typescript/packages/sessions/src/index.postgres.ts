@@ -95,6 +95,8 @@ $merv$;
 CREATE TRIGGER worker_sessions_agent_immutable BEFORE UPDATE ON worker_sessions
 FOR EACH ROW EXECUTE FUNCTION worker_sessions_agent_immutable_guard();
 `,
+  // A new table, because a closed session row refuses every update: what a session cost is known
+  // only at and after its close.
   4: `
 CREATE TABLE session_usage (
         session_id TEXT PRIMARY KEY REFERENCES worker_sessions(id), project_id TEXT NOT NULL,
@@ -334,4 +336,7 @@ END $merv$;
 CREATE TRIGGER session_managed_assignment_immutable BEFORE UPDATE OR DELETE ON session_managed_assignments
 FOR EACH ROW EXECUTE FUNCTION session_managed_assignment_guard();
 `,
+  // Every lease reads the closes in its backoff window, and every board read those since its
+  // deferral window: both ask by close time, which no other index orders.
+  12: `CREATE INDEX session_usage_closed ON session_usage(closed_at);`,
 };

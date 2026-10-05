@@ -1,6 +1,6 @@
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { nativeMcpConnectionsSchema } from '@merv/contracts';
-import { visible, createService, mapAsync } from '@merv/contracts';
+import { visible, createService } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
@@ -449,39 +449,12 @@ export class LeasedSessions implements Sessions {
         quietReadySeconds: config.quietReadySeconds,
         refusalSeconds: config.refusalSeconds,
       };
-      await state.migrate('sessions', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        {
-          version: 3,
-          sql: postgresMigrations[3],
-        },
-        {
-          // A new table, because a closed session row refuses every update: what a session
-          // cost is known only at and after its close.
-          version: 4,
-          sql: postgresMigrations[4],
-        },
-        {
-          version: 5,
-          sql: postgresMigrations[5],
-        },
-        {
-          version: 6,
-          sql: postgresMigrations[6],
-        },
-        { version: 7, sql: postgresMigrations[7] },
-        { version: 8, sql: managedNoncePostgresMigration },
-        { version: 9, sql: postgresMigrations[9] },
-        { version: 10, sql: postgresMigrations[10] },
-        { version: 11, sql: postgresMigrations[11] },
-      ]);
+      await state.migrate(
+        'sessions',
+        Object.entries({ ...postgresMigrations, 8: managedNoncePostgresMigration }).map(
+          ([version, sql]) => ({ version: +version, sql }),
+        ),
+      );
       this.credentials = new CredentialStore(state, this.clock);
       await this.credentials.initialize();
       this.managed = new ManagedRunnerBindings(
@@ -1226,17 +1199,26 @@ export class LeasedSessions implements Sessions {
     );
     return row ? this.decode(row) : null;
   }
-  private async agentStatus(agent: Agent, tx: Transaction): Promise<AgentStatus> {
-    const assignments = (
-      await tx.all<Row>(`${SESSION} WHERE actor_id=? ORDER BY _merv_rowid`, agent.actorId)
-    ).map((row) => this.decode(row));
-    return { agent, current: assignments.find(live) ?? null, assignments };
+  /** Every agent's assignments, read in one query. */
+  private async agentStatuses(agents: Agent[], tx: Transaction): Promise<AgentStatus[]> {
+    const sessions = agents.length
+      ? (
+          await tx.all<Row>(
+            `${SESSION} WHERE actor_id IN (${agents.map(() => '?').join()}) ORDER BY _merv_rowid`,
+            ...agents.map((agent) => agent.actorId),
+          )
+        ).map((row) => this.decode(row))
+      : [];
+    return agents.map((agent) => {
+      const assignments = sessions.filter((session) => session.actorId === agent.actorId);
+      return { agent, current: assignments.find(live) ?? null, assignments };
+    });
   }
   async agents(caller: Caller): Promise<AgentStatus[]> {
     this.ordinary(caller);
     caller = structuredClone(caller);
-    return await this.transaction(async (tx) =>
-      mapAsync(await this.directory.list(caller, tx), (agent) => this.agentStatus(agent, tx)),
+    return await this.transaction(
+      async (tx) => await this.agentStatuses(await this.directory.list(caller, tx), tx),
     );
   }
   async agent(caller: Caller, agentId: string): Promise<AgentStatus> {
@@ -1244,7 +1226,7 @@ export class LeasedSessions implements Sessions {
     caller = structuredClone(caller);
     return await this.transaction(
       async (tx) =>
-        await this.agentStatus(await this.directory.controlled(caller, agentId, tx), tx),
+        (await this.agentStatuses([await this.directory.controlled(caller, agentId, tx)], tx))[0]!,
     );
   }
   async retireAgent(caller: Caller, agentId: string): Promise<Agent> {
@@ -1299,7 +1281,7 @@ export class LeasedSessions implements Sessions {
       const available = (
         await this.workflows.dispatchCandidates(sourceCaller(agent.source), tx, agent.actorId)
       ).filter((item) => item.role !== 'operator' && !busy.has(targetKey(item)));
-      return { ...(await this.agentStatus(agent, tx)), available };
+      return { ...(await this.agentStatuses([agent], tx))[0]!, available };
     });
   }
   async assignAgent(token: string, input: AgentAssignment): Promise<Session> {

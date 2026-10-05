@@ -45,10 +45,14 @@ $merv$;
 CREATE TRIGGER session_runners_identity BEFORE UPDATE ON session_runners
 FOR EACH ROW EXECUTE FUNCTION session_runners_identity_guard();
 `,
+  // The last decision, not a log: one row per runner, so storage is constant.
   2: `
 ALTER TABLE session_runners ADD COLUMN last_decision TEXT;
       ALTER TABLE session_runners ADD COLUMN last_decision_at TEXT;
 `,
+  // Configuration an admin changes, like the dispatch switch, so nothing guards it; its history
+  // is the session.budget_changed events. The project's own id as the scope is the project
+  // budget; any other scope is a workflow instance.
   3: `
 CREATE TABLE session_budgets (
         project_id TEXT NOT NULL REFERENCES projects(id), scope_id TEXT NOT NULL,
@@ -59,6 +63,9 @@ CREATE TABLE session_budgets (
         PRIMARY KEY(project_id, scope_id)
       );
 `,
+  // What keeps a candidate from running, kept where dispatch decides: one counter row per target,
+  // so storage is bounded by failed targets, never by attempts. The row is a mutable counter, not
+  // a record; its history is the session.dispatch_held and session.hold_released events.
   4: `
 ALTER TABLE session_runners ADD COLUMN decision_since TEXT;
       CREATE TABLE session_dispatch_holds (
@@ -75,11 +82,15 @@ ALTER TABLE session_runners ADD COLUMN decision_since TEXT;
         PRIMARY KEY(project_id,actor_id,request_id)
       );
 `,
+  // Where automatic work may run. Its source_json, the chooser's authority, is no longer read or
+  // written: Fleet acts as the project's owner (Sessions.servedSources).
   5: `
 ALTER TABLE project_session_dispatch ADD COLUMN own_machines BIGINT NOT NULL DEFAULT 0 CHECK(own_machines IN (0,1)),
         ADD COLUMN source_json TEXT;
       UPDATE project_session_dispatch SET own_machines=1 WHERE enabled=1;
 `,
+  // The founder's ruling (2026-09-25): every project runs its work, on Fleet's machines, until
+  // someone says not.
   6: `
 UPDATE project_session_dispatch SET enabled=1, own_machines=0;
 `,

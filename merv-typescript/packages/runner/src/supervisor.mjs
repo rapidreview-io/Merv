@@ -138,19 +138,26 @@ function redactedFile(path, secrets) {
   const max = Math.max(1, ...secrets.map((secret) => secret.length));
   let pending = '',
     closed = false;
+  // A secret starting before the boundary is whole in `pending`; the earliest is redacted first,
+  // the first listed where two start together.
   const flush = (final) => {
     let result = '',
       index = 0;
     const boundary = final ? pending.length : Math.max(0, pending.length - max + 1);
-    while (index < boundary) {
-      const match = secrets.find((secret) => pending.startsWith(secret, index));
-      if (match) {
-        result += '[REDACTED]';
-        index += match.length;
-      } else {
-        result += pending[index];
-        index++;
+    for (;;) {
+      let at = boundary,
+        length = 0;
+      for (const secret of secrets) {
+        const found = pending.indexOf(secret, index);
+        if (found !== -1 && found < at) [at, length] = [found, secret.length];
       }
+      if (!length) break;
+      result += `${pending.slice(index, at)}[REDACTED]`;
+      index = at + length;
+    }
+    if (index < boundary) {
+      result += pending.slice(index, boundary);
+      index = boundary;
     }
     pending = pending.slice(index);
     if (result) writeSync(fd, result);
