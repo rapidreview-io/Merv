@@ -159,7 +159,6 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
   private serial: Promise<unknown> = Promise.resolve();
   private disposed = false;
   private closedOwnerOid?: string;
-  private checked?: RepositoryRow;
 
   constructor(
     private readonly host: LocalWorkspaceHost,
@@ -719,7 +718,6 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     const snapshot = structuredClone(input);
     const operation = this.serial.then(() => {
       if (this.disposed) throw new WorkspaceError('workspace_manager_closed');
-      this.checked = undefined;
       return action(snapshot);
     });
     this.serial = operation.catch(() => {});
@@ -984,9 +982,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     this.within(this.root, path);
     privateDirectory(path);
   }
-  /** The repository is validated once per operation, before its first Git work. */
   private async repository(fresh = false): Promise<RepositoryRow> {
-    if (!fresh && this.checked) return this.checked;
     if (!this.config) throw new WorkspaceError('workspace_repository_required');
     let row = this.repositoryRow();
     // The configured source is read only to bootstrap or to add a checkout (`fresh`): running
@@ -1054,7 +1050,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       this.db.prepare("UPDATE runner_repository SET status='ready' WHERE singleton=1").run();
       row = { ...row, status: 'ready' };
     }
-    return (this.checked = row);
+    return row;
   }
   private repositoryRow(): RepositoryRow | undefined {
     return this.db.prepare('SELECT * FROM runner_repository WHERE singleton=1').get() as
