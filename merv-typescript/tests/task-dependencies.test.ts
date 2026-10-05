@@ -229,7 +229,7 @@ test('A → B → C becomes ready one independent pass at a time; needs_changes 
       {
         id: a.id,
         workflow: 'task',
-        version: 31,
+        version: 39,
         name: a.title,
         state: 'in_progress',
         revision: 0,

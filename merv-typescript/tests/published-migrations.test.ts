@@ -11,6 +11,7 @@ import { initializeLegacyHistory } from '../src/legacy-history.js';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/codex-relay.js';
 import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';
+import { computeLedgers } from '../packages/sandboxes/src/compute-ledgers.js';
 import { initializeLegacyCodeRecords } from '../packages/code-work/src/work-schema.js';
 import { PiService } from '../packages/pi/src/index.js';
 
@@ -79,6 +80,12 @@ async function registered(stop: (close: () => Promise<void>) => void) {
     () => recorder.migrate('fleet_workflow', modelMigrations),
     // Native Sandboxes is configured per deployment; the default census app leaves it off.
     () => recorder.migrate('sandboxes-native', nativeMigrations),
+    // So are the retired compute path's ledgers, kept with it.
+    ...computeLedgers.map(
+      ([component, migrations]) =>
+        () =>
+          recorder.migrate(component, migrations),
+    ),
     () => new PiService(recorder, {} as never, {} as never, {} as never, {} as never).initialize(),
     () => initializeLegacyHistory(recorder),
   ]) {

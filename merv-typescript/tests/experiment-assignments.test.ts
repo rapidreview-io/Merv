@@ -413,11 +413,8 @@ test('all four real assignments use distinct recipes; planning and execution wai
   const planned = await f.workflows.assignment(f.source, experiment.id);
   assert.equal(planned.context!.type, 'experiment.design');
   assert.equal(planned.execution.readOnly, false);
-  assert.match(planned.brief, /small feasibility checks during planning/);
-  assert.match(
-    planned.brief,
-    /full experiment execution still requires independent design approval/,
-  );
+  assert.match(planned.brief, /native Sandboxes MCP/);
+  assert.match(planned.brief, /brief verification only/);
   assert.match(planned.brief, /Plan batching, multiple GPUs or concurrent independent jobs/);
   assert.match(planned.brief, /reviewers must independently verify pivotal claims/);
   assert.ok(
@@ -442,10 +439,6 @@ test('all four real assignments use distinct recipes; planning and execution wai
   assert.equal(
     (await f.workflows.assignment(f.source, running.id)).context!.type,
     'experiment.execute',
-  );
-  assert.doesNotMatch(
-    (await f.workflows.assignment(f.source, running.id)).brief,
-    /Planning has no compute\.run/,
   );
   const assessment = await f.results(running);
   const packet = await f.workflows.assignment(f.reviewer, assessment.id);
@@ -1480,7 +1473,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   );
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
-  assert.equal(created.workflow.version, 28);
+  assert.equal(created.workflow.version, 36);
   assert.equal(created.baseTaskId, undefined);
 });
 

@@ -177,8 +177,20 @@ test('native plugin waits for all owners and migration before publishing provide
   release.resolve();
   await ready;
   await nextTurn();
-  assert.ok(f.ctx.sandboxes.nativeWork);
   assert.ok(f.launcher());
+  // The retired compute path's ledgers stay registered with native Sandboxes, untouched.
+  assert.deepEqual(
+    await f.state.read((sql) =>
+      sql.all(
+        "SELECT component,version FROM component_migrations WHERE component IN ('sandboxes-compute','sandboxes-work-machines') ORDER BY component,version",
+      ),
+    ),
+    [
+      { component: 'sandboxes-compute', version: 1 },
+      { component: 'sandboxes-compute', version: 2 },
+      { component: 'sandboxes-work-machines', version: 1 },
+    ],
+  );
   assert.ok(f.files.has('sandboxes-native'));
   assert.ok(
     (await f.state.read((sql) => sql.get('SELECT * FROM sandbox_native_projects LIMIT 1'))) ===
@@ -226,7 +238,6 @@ test('legacy Fleet/Code connections remain available without native owners and n
   const fiber = f.ctx.plugin(sandboxesPlugin, config);
   await fiber.await();
   await nextTurn();
-  assert.equal(f.ctx.sandboxes.nativeWork, undefined);
   assert.ok(f.ctx.sandboxes.checks);
   assert.ok(f.ctx.sandboxes.runtimes);
   assert.equal(f.ctx.sandboxes.runtimes.connected(f.project.id), true);
@@ -257,7 +268,6 @@ test('native plugin unload drains reconciliation and fences captured work handle
   const fiber = f.ctx.plugin(sandboxesPlugin, f.config);
   await ready;
   await entered.promise;
-  const retired = f.ctx.sandboxes.nativeWork!;
   const sandboxes = f.ctx.sandboxes;
   let drained = false;
   const disposing = fiber.dispose().then(() => {
@@ -270,7 +280,6 @@ test('native plugin unload drains reconciliation and fences captured work handle
   assert.equal(workTicks, 0, 'stopping between reconcilers must not start the second pass');
   assert.equal(f.launcher(), undefined);
   assert.equal(f.files.size, 0);
-  await assert.rejects(retired.connected(f.project.id), { code: 'sandboxes_closed' });
   await assert.rejects(
     f.state.transaction((tx) => sandboxes.captures(f.project.id, 'work_after_unload', tx)),
     { code: 'sandboxes_closed' },

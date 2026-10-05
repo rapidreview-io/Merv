@@ -12,7 +12,7 @@ import { computeEpoch, computeProfile } from './compute-capability.js';
 import type { NativeMcpConnection, Session } from '@merv/sessions/types';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeAssignmentRow, NativeConnectionRow, NativeWorkRow } from './native-schema.js';
-import type { NativeComputeProfile, NativeSandboxWork, NativeWorkKind } from './native-types.js';
+import type { NativeComputeProfile, NativeWorkKind } from './native-types.js';
 
 export interface NativeWorkflow {
   id: string;
@@ -104,7 +104,7 @@ const route = (work: NativeWorkRow) => {
 };
 
 /** Stable work binding and unfinished cleanup intents, never a second native job ledger. */
-export class NativeWorkService implements NativeSandboxWork {
+export class NativeWorkService {
   private publisher?: Publisher;
   private reconciling?: Promise<void>;
   constructor(

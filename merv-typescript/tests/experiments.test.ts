@@ -976,15 +976,12 @@ test('plan and results reviewers write the paper with every verdict, atomically 
     }
 });
 
-test('native experiments fence compute by attempt and state, retain service captures and select versions by funding', async (t) => {
+test('native experiments fence compute by attempt and state and retain service captures', async (t) => {
   const f = await fixture(t);
-  const legacy = await f.create('Legacy');
   const native = nativeWorkFixture();
   t.after(f.experiments.bindSandboxes(native.service));
   let experiment = await f.create('Native');
-  assert.equal(legacy.workflow.version, 28);
   assert.equal(experiment.workflow.version, 36);
-  assert.equal((await f.experiments.get(f.producer, legacy.id)).workflow.version, 28);
   assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
   const planning = await f.workflows.assignment(f.producer, experiment.id);
   assert.match(planning.brief, /native Sandboxes MCP/);

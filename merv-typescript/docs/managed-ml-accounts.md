@@ -34,9 +34,9 @@ The integration refuses managed issuance without a finite aggregate member cap.
    No administrator token or new browser consent credential is needed.
 4. In each eligible project's Integrations, enable Merv-managed ML. The connection
    uses the creator's allowance and reports actual member usage and reservations.
-   New legacy ML submissions/rentals are disabled in this mode. Existing legacy
-   records, downloads, cancellations and releases remain available. CPU-only
-   legacy work remains available in projects that have not enabled native compute.
+   The legacy ML path (Merv's own managed runs and rentals) was retired on
+   2026-10-04; native compute is the only compute path. Its ledgers stay in the
+   database, and the ML consumption grant is now read only by managed native ML.
 5. For an existing native pilot, finish/revoke active assignments first. Enrollment
    fences new credentials, verifies the open work has no remote resources, revokes
    its old work grant, and checks resources again before changing the local binding.

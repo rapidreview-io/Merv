@@ -169,8 +169,9 @@ A budget covers **worker sessions Merv launched**, and nothing else: what a remo
 costs — a sandbox's compute, a provider's bill for a service the worker called — is not in
 it, and a runner's token figures do not measure it.
 
-ML machine compute for eligible new projects is bounded separately by that project's
-Sandboxes monthly allowance and the shared ML account ceiling.
+Native compute is bounded separately by Sandboxes: the payer the project connected, or, for
+Merv-managed ML, the creator account's monthly member allowance and the shared ML account
+ceiling ([managed ML accounts](managed-ml-accounts.md)).
 
 Trust boundary: **wall-clock is the dimension Merv measures itself.** Tokens are whatever
 wrote the usage file, which may be the agent process; they can be wrong in either

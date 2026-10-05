@@ -30,14 +30,12 @@ import type {
   SandboxRow,
   SandboxTarget,
   SandboxRuntimes,
-  SandboxCompute,
 } from './types.js';
-import { SandboxComputeAdapter } from './compute.js';
-import type { NativeSandboxWork } from './native-types.js';
 import { NativeConnections } from './native-connections.js';
 import { NativeEvidence } from './native-evidence.js';
 import { NativeWorkService } from './native-work.js';
 import { nativeMigrations } from './native-schema.js';
+import { initializeComputeLedgers } from './compute-ledgers.js';
 import { nativeRoutes } from './native-api.js';
 import { NativeMachineReader, type NativeMachineReads } from './native-machines.js';
 
@@ -165,15 +163,6 @@ const configuration = z
     refreshMs: z.number().int().min(1000).max(3_600_000).default(300_000),
     timeoutMs: z.number().int().min(100).max(60_000).default(15_000),
     storageOrigins: z.array(z.string().min(1).max(512)).max(8).default([]),
-    ml: z
-      .object({
-        namespace: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
-        tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
-        since: z.string().datetime({ offset: true }),
-        storageOrigins: z.array(z.string().url()).max(1),
-      })
-      .strict()
-      .optional(),
     runtimes: z
       .array(
         z
@@ -240,7 +229,6 @@ const toRow = (row: UiManifestRow): SandboxRow => ({
  * records its open panels ask for, read on this service's own timer, never inside a request.
  */
 export class SandboxService implements Sandboxes {
-  nativeWork?: NativeSandboxWork;
   nativeMachines?: NativeMachineReads;
   #nativeWork?: NativeWorkService;
   readonly #client: SandboxClient;
@@ -268,7 +256,6 @@ export class SandboxService implements Sandboxes {
    */
   readonly checks?: SandboxChecks;
   readonly runtimes?: SandboxRuntimes;
-  readonly compute?: SandboxCompute;
 
   constructor(config: SandboxesConfig) {
     const parsed = configuration.safeParse(config);
@@ -280,61 +267,6 @@ export class SandboxService implements Sandboxes {
       parsed.data.timeoutMs,
       parsed.data.storageOrigins,
     );
-    if (parsed.data.ml) {
-      const adapter = new SandboxComputeAdapter(
-        this.#client.origin,
-        parsed.data.timeoutMs,
-        parsed.data.refreshMs,
-        parsed.data.ml,
-      );
-      const admit = () =>
-        check(
-          !parsed.data.native?.managed,
-          'compute_native_required',
-          'Use Merv-managed ML through the native compute connection',
-          409,
-        );
-      this.compute = {
-        since: adapter.since,
-        offers: (projectId) => this.#run(projectId, (id) => adapter.offers(id)),
-        allowance: (projectId) => this.#run(projectId, (id) => adapter.allowance(id)),
-        submit: (projectId, spec) =>
-          this.#run(
-            { projectId, spec },
-            ({ projectId, spec }) => (admit(), adapter.submit(projectId, spec)),
-          ),
-        get: (projectId, runId) =>
-          this.#run({ projectId, runId }, ({ projectId, runId }) => adapter.get(projectId, runId)),
-        logs: (projectId, runId) =>
-          this.#run({ projectId, runId }, ({ projectId, runId }) => adapter.logs(projectId, runId)),
-        download: (projectId, objectId) =>
-          this.#run({ projectId, objectId }, ({ projectId, objectId }) =>
-            adapter.download(projectId, objectId),
-          ),
-        cancel: (projectId, runId) =>
-          this.#run({ projectId, runId }, ({ projectId, runId }) =>
-            adapter.cancel(projectId, runId),
-          ),
-        retain: (projectId, objectId) =>
-          this.#run({ projectId, objectId }, (i) => adapter.retain(i.projectId, i.objectId)),
-        rent: (projectId, input) =>
-          this.#run({ projectId, input }, (i) => (admit(), adapter.rent(i.projectId, i.input))),
-        findRental: (projectId, key) =>
-          this.#run({ projectId, key }, (i) => adapter.findRental(i.projectId, i.key)),
-        inspectRental: (projectId, sandboxId) =>
-          this.#run({ projectId, sandboxId }, (i) =>
-            adapter.inspectRental(i.projectId, i.sandboxId),
-          ),
-        releaseRental: (projectId, sandboxId) =>
-          this.#run({ projectId, sandboxId }, (i) =>
-            adapter.releaseRental(i.projectId, i.sandboxId),
-          ),
-        ssh: (projectId, sandboxId, publicKey) =>
-          this.#run({ projectId, sandboxId, publicKey }, (i) =>
-            adapter.ssh(i.projectId, i.sandboxId, i.publicKey),
-          ),
-      };
-    }
     if (parsed.data.storageOrigins.length) {
       const runner = new SandboxCheckRunner(this.#client, (projectId) =>
         this.#connectionFor(projectId),
@@ -480,16 +412,13 @@ export class SandboxService implements Sandboxes {
   }
 
   /** Native owner calls contain live transactions, so preserve those handles while
-   * using the same admission/drain boundary as the legacy adapter. */
+   * using the same admission/drain boundary as every other operation. */
   nativeOperation<T>(operation: () => Promise<T>): Promise<T> {
     return this.#run(undefined, operation);
   }
 
   bindNativeWork(work: NativeWorkService): void {
     this.#nativeWork = work;
-    this.nativeWork = {
-      connected: (projectId, tx) => this.nativeOperation(() => work.connected(projectId, tx)),
-    };
   }
 
   async captures(projectId: string, instanceId: string, tx: Transaction): Promise<string[]> {
@@ -821,20 +750,6 @@ export const sandboxesPlugin = {
           ),
         );
       });
-      ctx.inject(['artifacts'], (ctx) => {
-        if (service.compute?.download && ctx.artifacts.registerFileProvider)
-          ctx.effect(() =>
-            ctx.artifacts.registerFileProvider!('sandboxes', {
-              download: async (projectId, reference) => {
-                const link = await service.compute!.download!(projectId, reference);
-                return {
-                  ...link,
-                  expiresAt: link.expiresAt ?? new Date(Date.now() + 60_000).toISOString(),
-                };
-              },
-            }),
-          );
-      });
     };
     if (!config.native) {
       publish(ctx, new SandboxService(config));
@@ -859,6 +774,7 @@ export const sandboxesPlugin = {
         process.env[config.urlEnv]!,
       );
       await ctx.state.migrate('sandboxes-native', nativeMigrations);
+      await initializeComputeLedgers(ctx.state);
       const work = new NativeWorkService(ctx.state, connections);
       service.bindNativeMachines(new NativeMachineReader(ctx.state, connections));
       const evidence = new NativeEvidence(ctx.state, ctx.scope, ctx.artifacts, connections);

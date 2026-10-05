@@ -441,12 +441,9 @@ function assertComponentReferences(
       // Identity's credential store is a public shared authority, also usable by standalone services.
       const credentials =
         ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
-      // Sandboxes publishes the shared managed GPU ledger; owner policy stays in Tasks/Experiments.
-      const managedCompute =
-        ['tasks', 'experiments'].includes(owner) && specifier === '@merv/sandboxes/managed-compute';
       // The compute capability's rule and guidance are pure: any unit may render them.
       const computeCapability = specifier === '@merv/sandboxes/compute-capability';
-      if (!utility && !credentials && !managedCompute && !computeCapability) {
+      if (!utility && !credentials && !computeCapability) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,

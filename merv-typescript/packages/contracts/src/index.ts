@@ -2174,23 +2174,6 @@ export interface ContextRegistration {
 export interface ContextBuilder {
   register(definition: ContextRecipeDefinition): Promise<ContextRegistration>;
 }
-/** Work owners grant access; Sandboxes owns the rented machine and its lifetime. */
-export interface WorkComputeAccess {
-  computeMachines(caller: Caller, ownerId: string): Promise<Json[]>;
-  computeRent(
-    caller: Caller,
-    ownerId: string,
-    input: { key: string; provider: string; offerId: string; minutes: number },
-  ): Promise<unknown>;
-  computeSsh(caller: Caller, ownerId: string, sandboxId: string, publicKey: string): Promise<Json>;
-  computeRelease(caller: Caller, ownerId: string, sandboxId: string): Promise<unknown>;
-  computeExtend(
-    caller: Caller,
-    ownerId: string,
-    sandboxId: string,
-    minutes: number,
-  ): Promise<unknown>;
-}
 declare module 'cordis' {
   interface Context {
     state: State;

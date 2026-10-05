@@ -50,14 +50,13 @@ import type {
 } from './types.js';
 import type { FeasibilityStatement } from './evidence.js';
 
-import { rentalGuidance } from '@merv/sandboxes/managed-compute';
 const activeStates = ['planned', 'design_review', 'running', 'experiment_review'] as const;
 type ActiveState = (typeof activeStates)[number];
 export const reviewing = (state: string) =>
   state === 'design_review' || state === 'experiment_review';
 export const producing = (state: string) => state === 'planned' || state === 'running';
 
-/** Only contracts selected by current experiment creation are executable. */
+/** The executable contracts: new work selects a native one, live work keeps its own. */
 const programVersions: Record<number, { largeUploads: boolean; native: boolean }> = {
   28: { largeUploads: false, native: false },
   32: { largeUploads: true, native: false },
@@ -78,10 +77,11 @@ export const runningNode = {
 };
 export const nativeExperiment = (version: number) => programContract(version).native;
 const CODE_DRIVER = 'code.v2';
-export const programVersion = (largeUploads = false, native = false): number =>
+/** New experiments always run on a native contract. */
+export const programVersion = (largeUploads = false): number =>
   Number(
     Object.entries(programVersions).find(
-      ([, contract]) => contract.largeUploads === largeUploads && contract.native === native,
+      ([, contract]) => contract.largeUploads === largeUploads && contract.native,
     )![0],
   );
 /**
@@ -212,9 +212,6 @@ const gatedHandoffs: Partial<Record<ActiveState, string>> = {
 };
 const handoff = (state: ActiveState) =>
   gatedHandoffs[state] ? `${handoffs[state]} ${gatedHandoffs[state]}` : handoffs[state];
-// Assignment guidance is assembled at runtime; published context recipes remain immutable.
-const planningPhaseGuidance =
-  ' Planning has no compute.run. If a GPU smoke test or calibration is needed, specify it as the first execution step after independent design approval. During planning, check current offer availability and estimate its cost and time from named records; do not report the design infeasible solely because this planning lease cannot run GPU code. Record actual missing data, unavailable compute or budget, and unfinished prerequisites as distinct dependencies or blockers.';
 /** Said to every planner, executor and reviewer of an experiment, in the assignment. */
 const sourceVerification =
   'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.';
@@ -459,7 +456,7 @@ function execution(state: ActiveState, version: number): WorkflowExecutionPolicy
  */
 export abstract class ExperimentProgram {
   protected closed = false;
-  protected sandboxes?: Pick<Sandboxes, 'captures' | 'nativeWork'>;
+  protected sandboxes?: Pick<Sandboxes, 'captures'>;
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<ActiveState, ContextRegistration>();
   /** The owner edge each transaction's command is taking after running its exit checks itself. */
@@ -1305,10 +1302,7 @@ export abstract class ExperimentProgram {
       label: `${recipeNames[state]}: ${experiment.name}`,
       brief:
         `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
-        (nativeExperiment(experiment.workflow.version)
-          ? computeGuidance(state === 'running' ? 'execute' : 'check')
-          : rentalGuidance('compute.', reviewing(state), true) +
-            `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`),
+        computeGuidance(state === 'running' ? 'execute' : 'check'),
       references: [
         { kind: 'experiment', id: experiment.id, label: experiment.name },
         ...preview.sources.map((artifact) => ({
@@ -1561,7 +1555,7 @@ export abstract class ExperimentProgram {
                   ? 'review_required'
                   : 'independent_review',
           waiting: producing(state)
-            ? handoff(state) + (state === 'planned' ? planningPhaseGuidance : '')
+            ? handoff(state)
             : 'Wait for an independent reviewer to assess the exact pinned submission. Producer evidence stays immutable while its review is pending.',
           references: [
             ...(context.dependencies ?? []).map((dependency) => ({

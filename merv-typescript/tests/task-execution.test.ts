@@ -140,51 +140,10 @@ test('policy-checked checkpoints cannot expose an unrelated artifact through ass
   }
 });
 
-test('a leased task worker receives GPU tool grants bound to its task and revision', async (t) => {
-  const { offer, run, create } = await fixture(t);
-  const task = await create('gpu-grants');
-  assert.equal(task.workflow.version, 31);
-  const { worker } = await offer(task);
-  const command = {
-    key: 'smoke',
-    provider: 'test',
-    offerId: 'gpu',
-    command: 'echo ok',
-    minutes: 5,
-    maxUsd: 1,
-  };
-  const admitted = await run(worker, 'task.compute_run', command, (_caller, input) => input);
-  assert.equal(admitted.taskId, task.id);
-  assert.equal(admitted.expectedRevision, task.workflow.revision);
-  await assert.rejects(
-    run(
-      worker,
-      'task.compute_run',
-      { ...command, taskId: 'other-task' },
-      (_caller, input) => input,
-    ),
-    { code: 'execution_arguments_forbidden' },
-  );
-  const status = await run(worker, 'task.compute_status', {}, (_caller, input) => input);
-  assert.equal(status.taskId, task.id);
-});
-
 test('a review session binds the claim its lease took, and a successor binds only its own', async (t) => {
   const { app, operator, offer, release, pending } = await fixture(t);
   const task = await pending();
   const first = await offer(task);
-  assert.equal(
-    (await app.ctx.sessions.prepare(first.worker, 'task.compute_status', {})).input.taskId,
-    task.id,
-  );
-  assert.equal(
-    (await app.ctx.sessions.prepare(first.worker, 'task.compute_run', {})).input.purpose,
-    'check',
-  );
-  await assert.rejects(
-    app.ctx.sessions.prepare(first.worker, 'task.compute_run', { purpose: 'training' }),
-    { code: 'execution_arguments_forbidden' },
-  );
   const claim = (await app.ctx.reviews.get(operator, task.reviewId!)).claimId!;
   assert.ok(claim);
   assert.equal(
@@ -203,79 +162,6 @@ test('a review session binds the claim its lease took, and a successor binds onl
     (await app.ctx.sessions.prepare(next.worker, 'review.submit', {})).input.claimId,
     current,
   );
-});
-
-test('captured file reads reach the tools for both leased producers and independent reviewers', async (t) => {
-  const { app, offer, create, pending } = await fixture(t, true);
-  const producing = await offer(await create('output-reader'));
-  const reviewTask = await pending();
-  const reviewing = await offer(reviewTask);
-  const receipt = {
-    name: 'model.tar.gz',
-    objectId: 'obj_model',
-    sha256: 'a'.repeat(64),
-    sizeBytes: 100,
-    expiresAt: null,
-    url: 'https://bucket.example/model',
-  };
-  const taskDownload = t.mock.method(app.ctx.tasks, 'computeOutput', async () => receipt);
-  const experimentDownload = t.mock.method(
-    app.ctx.experiments,
-    'computeOutput',
-    async () => receipt,
-  );
-  const logs = { state: 'running', mode: 'native', streams: { stdout: { text: 'step 1' } } };
-  const taskLogs = t.mock.method(app.ctx.tasks, 'computeLogs', async () => logs);
-  const experimentLogs = t.mock.method(app.ctx.experiments, 'computeLogs', async () => logs);
-  for (const { worker } of [producing, reviewing]) {
-    const tools = await app.ctx.tools.describe(worker);
-    for (const name of [
-      'task.compute_output',
-      'compute.output',
-      'task.compute_logs',
-      'compute.logs',
-    ]) {
-      const description = tools.find((tool) => tool.name === name);
-      assert.equal(description?.annotations?.readOnlyHint, true);
-      assert.equal(description?.annotations?.openWorldHint, true);
-    }
-    assert.deepEqual(
-      await app.ctx.tools.call('task.compute_logs', worker, {
-        taskId: reviewTask.id,
-        runId: 'run_1',
-        generation: 1,
-      }),
-      logs,
-    );
-    assert.deepEqual(
-      await app.ctx.tools.call('compute.logs', worker, {
-        experimentId: 'exp_one',
-        runId: 'run_1',
-        attemptIndex: 1,
-      }),
-      logs,
-    );
-    assert.deepEqual(
-      await app.ctx.tools.call('task.compute_output', worker, {
-        taskId: reviewTask.id,
-        runId: 'run_1',
-        name: receipt.name,
-      }),
-      receipt,
-    );
-    assert.deepEqual(
-      await app.ctx.tools.call('compute.output', worker, {
-        experimentId: 'exp_one',
-        runId: 'run_1',
-        name: receipt.name,
-      }),
-      receipt,
-    );
-  }
-  assert.equal(taskDownload.mock.callCount(), 2);
-  assert.equal(experimentDownload.mock.callCount(), 2);
-  assert.equal(taskLogs.mock.callCount(), 2);
-  assert.equal(experimentLogs.mock.callCount(), 2);
 });
 
 test('metadata admission avoids rendering, binds each session to its own record and leaves reads open', async (t) => {
@@ -327,13 +213,10 @@ test('metadata admission avoids rendering, binds each session to its own record 
 
 test('current native task leases leave compute to Sandboxes and admit registered capture evidence', async (t) => {
   const { app, operator, offer, release, run, create, work, held } = await fixture(t);
-  const old = await create('legacy-before-connection');
   const native = nativeWorkFixture();
   t.after((app.ctx.tasks as TaskService).bindSandboxes(native.service));
   const task = await create('native-connected');
-  assert.equal(old.workflow.version, 31);
   assert.equal(task.workflow.version, 39);
-  assert.equal((await app.ctx.tasks.get(operator, old.id)).workflow.version, 31);
   const first = await offer(task);
   // Sandboxes derives compute from the lease itself: the unit names no scope or profile.
   assert.equal(first.session.execution.references.sandboxConnectionId, undefined);

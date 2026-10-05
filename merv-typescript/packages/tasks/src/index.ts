@@ -64,11 +64,8 @@ import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code } from '@merv/code-work/types';
-import type { SandboxCompute, ComputeOutputs, Sandboxes } from '@merv/sandboxes/types';
+import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
-import { ManagedCompute, initializeManagedCompute } from '@merv/sandboxes/managed-compute';
-import { WorkMachines, rentalGuidance } from '@merv/sandboxes/managed-compute';
-import type { SandboxRentalInput } from '@merv/sandboxes/types';
 import type { Paper, PaperContextSection } from '@merv/paper/types';
 import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
 import {
@@ -172,7 +169,7 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
     { from: 'in_review', action: 'mark_failed', to: 'failed' },
   ],
 };
-/** Only contracts selected by current task creation are executable. */
+/** The executable contracts: new work selects a native one, live work keeps its own. */
 const taskVersions: Record<
   number,
   { workspace: TaskWorkspace; largeUploads: boolean; native: boolean }
@@ -191,12 +188,13 @@ function taskContract(version: number) {
 }
 export const nativeTask = (version: number) => taskContract(version).native;
 export const taskWorkspace = (version: number): TaskWorkspace => taskContract(version).workspace;
-const taskVersion = (largeUploads = false, native = false, service = false): number =>
+/** New work always runs on a native contract; only service tasks keep their own. */
+const taskVersion = (largeUploads = false, service = false): number =>
   Number(
     Object.entries(taskVersions).find(
       ([, contract]) =>
         contract.largeUploads === largeUploads &&
-        contract.native === native &&
+        contract.native === !service &&
         (contract.workspace === 'resolution') === service,
     )![0],
   );
@@ -276,8 +274,6 @@ const GIT_REVIEW =
  */
 const GIT_CLAIM =
   'This is a Git task: only a leased review worker, whose runner prepares a checkout of the delivered commit, can pass it, and only that worker may claim it until review_rounds is used up. A claim made without a lease after that can only fail the task, and blocks every leased reviewer until the producer or an admin replaces the review with task.reissue_review.';
-const GPU_WORK =
-  'If this task needs a GPU, read task.compute_offers, then call task.compute_run with this taskId and expectedRevision, a stable key, a bounded command, minutes, and maxUsd. To retain files after machine release, declare outputs with absolute file paths and a total byte ceiling; archive directories first. Read task.compute_status, use task.compute_output for fresh download URLs and verify hashes, captured files are automatically retained as one collection artifact per capture. Use the run’s artifactId and artifact.read with mode download and fileName for individual files; do not reupload them. Use task.compute_logs for bounded live stdout/stderr; emit unbuffered progress. Use task.compute_cancel when work should stop. Prioritize fast completion: balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and task requirements. GPU work counts against the project allowance; avoid duplicating the same work.';
 
 /** Said to every producer and reviewer of a task, in the assignment; the published recipes stay as they are. */
 const SOURCE_VERIFICATION =
@@ -327,9 +323,7 @@ const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
 export class TaskService implements Tasks {
   private closed = false;
   private code?: Code;
-  private compute?: ManagedCompute;
-  private sandboxes?: Pick<Sandboxes, 'captures' | 'nativeWork'>;
-  private machines?: WorkMachines;
+  private sandboxes?: Pick<Sandboxes, 'captures'>;
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
@@ -356,7 +350,6 @@ export class TaskService implements Tasks {
         'tasks',
         Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
       );
-      await initializeManagedCompute(state);
       try {
         for (const version of Object.keys(taskVersions).map(Number)) {
           this.registrations.set(
@@ -424,9 +417,6 @@ export class TaskService implements Tasks {
 
   dispose(): void {
     this.closed = true;
-    this.compute?.close();
-    this.machines?.close();
-    this.compute = undefined;
     this.withdrawReviewOwner();
     for (const registration of this.registrations.values()) registration.dispose();
     this.registrations.clear();
@@ -1196,17 +1186,11 @@ export class TaskService implements Tasks {
     return {
       ...(await this.projectRecord(caller, row, tx)),
       guidance: await this.workflows.evaluate(caller, row.id, {}, tx),
-      ...(this.compute && tx
-        ? { compute: await this.compute.historySummary(caller.projectId, row.id, tx) }
-        : {}),
-      ...(this.machines && tx
-        ? { machines: await this.machines.rows(caller.projectId, row.id, tx) }
-        : {}),
     };
   }
 
-  /** Captures and native funding, read from Sandboxes; it attaches compute to leases itself. */
-  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'nativeWork'>): () => void {
+  /** Captures, read from Sandboxes; it attaches compute to leases itself. */
+  bindSandboxes(service: Pick<Sandboxes, 'captures'>): () => void {
     this.sandboxes = service;
     return () => {
       if (this.sandboxes === service) this.sandboxes = undefined;
@@ -1217,211 +1201,7 @@ export class TaskService implements Tasks {
     workId: string,
     tx: Transaction,
   ): Promise<string[]> {
-    return [
-      ...new Set([
-        ...((await this.sandboxes?.captures(projectId, workId, tx)) ?? []),
-        ...((await this.compute?.artifactIds(projectId, workId, tx)) ?? []),
-      ]),
-    ];
-  }
-  bindCompute(adapter: SandboxCompute): () => void {
-    this.compute?.close();
-    this.machines?.close();
-    const service = new ManagedCompute(
-      this.state,
-      this.scope,
-      adapter,
-      'task',
-      {
-        authorize: async (caller, taskId, revision, tx, commandId, input) => {
-          const task = await tx.get<{ state: string; revision: number; version: number }>(
-            `SELECT w.state,w.revision,w.version FROM tasks t JOIN wf_instances w ON w.id=t.id
-           WHERE t.id=? AND t.project_id=?`,
-            taskId,
-            caller.projectId,
-          );
-          check(
-            task &&
-              [31, 35].includes(task.version) &&
-              (task.state === 'in_progress' ||
-                (input?.purpose === 'check' && task.state === 'in_review')) &&
-              task.revision === revision,
-            'compute_not_running',
-            'Compute requires the current task work revision',
-            409,
-          );
-          if (commandId)
-            check(
-              this.code,
-              'code_source_unavailable',
-              'This task cannot ship code to compute',
-              409,
-            );
-          check(caller.session, 'stale_lease', 'Compute requires the task work lease', 403);
-          const lease = await tx.get(
-            `SELECT id FROM task_leases WHERE id=? AND project_id=? AND task_id=? AND revision=?
-           AND actor_id=? AND purpose=? AND released_at IS NULL`,
-            caller.session.id,
-            caller.projectId,
-            taskId,
-            revision,
-            caller.actorId,
-            task.state === 'in_review' ? 'review' : 'work',
-          );
-          check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
-        },
-        active: async (row, tx) => {
-          const task = await tx.get<{ state: string; revision: number; version: number }>(
-            `SELECT w.state,w.revision,w.version FROM tasks t JOIN wf_instances w ON w.id=t.id
-           WHERE t.id=? AND t.project_id=?`,
-            row.owner_id,
-            row.project_id,
-          );
-          const input = JSON.parse(row.input_json);
-          return (
-            !!task &&
-            [31, 35].includes(task.version) &&
-            (task?.state === 'in_progress' ||
-              (input.purpose === 'check' && task?.state === 'in_review')) &&
-            task.revision === row.generation
-          );
-        },
-        source: async (row, commandId) =>
-          this.code?.source(row.project_id, row.owner_id, commandId),
-      },
-      this.artifacts,
-    );
-    const machines = new WorkMachines(this.state, this.scope, adapter, 'task', {
-      entitled: (projectId, tx) => service.entitled(projectId, tx),
-      active: async (projectId, taskId, tx) =>
-        !!(await tx.get(
-          `SELECT t.id FROM tasks t JOIN wf_instances w ON w.id=t.id WHERE t.id=? AND t.project_id=? AND w.version IN (31,35) AND w.state IN ('in_progress','in_review')`,
-          taskId,
-          projectId,
-        )),
-      authorize: async (caller, taskId, tx) => {
-        check(
-          caller.session,
-          'stale_lease',
-          'GPU rental access requires a current task assignment',
-          403,
-        );
-        check(
-          await tx.get(
-            `SELECT l.id FROM task_leases l JOIN tasks t ON t.id=l.task_id JOIN wf_instances w ON w.id=t.id
-          WHERE t.id=? AND t.project_id=? AND w.version IN (31,35) AND l.id=? AND l.actor_id=? AND l.revision=w.revision
-          AND l.released_at IS NULL AND ((w.state='in_progress' AND l.purpose='work') OR (w.state='in_review' AND l.purpose='review'))`,
-            taskId,
-            caller.projectId,
-            caller.session.id,
-            caller.actorId,
-          ),
-          'stale_lease',
-          'This worker no longer owns the task assignment',
-          409,
-        );
-      },
-    });
-    this.machines = machines;
-    this.compute = service;
-    return () => {
-      if (this.compute === service) {
-        service.close();
-        this.compute = undefined;
-        machines.close();
-        if (this.machines === machines) this.machines = undefined;
-      }
-    };
-  }
-  async computeOffers(caller: Caller) {
-    return this.compute
-      ? this.compute.offers(caller)
-      : { entitled: false, available: false, allowance: null, offers: [] };
-  }
-  async computeStatus(caller: Caller, taskId: string, runId?: string, generation?: number) {
-    return this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      await this.row(tx, caller, taskId);
-      if (!this.compute) return runId ? null : [];
-      return runId
-        ? this.compute.status(caller.projectId, taskId, runId, tx, generation)
-        : this.compute.historySummary(caller.projectId, taskId, tx);
-    });
-  }
-  async computeRun(
-    caller: Caller,
-    input: {
-      taskId: string;
-      expectedRevision: number;
-      key: string;
-      provider?: string;
-      offerId?: string;
-      rentalKey?: string;
-      purpose?: 'check';
-      command: string;
-      minutes: number;
-      maxUsd: number;
-      commandId?: string;
-      outputs?: ComputeOutputs;
-    },
-  ) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return this.compute.run(caller, {
-      ownerId: input.taskId,
-      generation: input.expectedRevision,
-      key: input.key,
-      provider: input.provider,
-      offerId: input.offerId,
-      ...(input.rentalKey ? { rentalKey: input.rentalKey } : {}),
-      ...(input.purpose ? { purpose: input.purpose } : {}),
-      command: input.command,
-      minutes: input.minutes,
-      maxUsd: input.maxUsd,
-      ...(input.commandId ? { commandId: input.commandId } : {}),
-      ...(input.outputs ? { outputs: input.outputs } : {}),
-    });
-  }
-  async computeCancel(caller: Caller, taskId: string, runId: string) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return this.compute.cancel(caller, taskId, runId);
-  }
-  async computeOutput(
-    caller: Caller,
-    taskId: string,
-    runId: string,
-    name: string,
-    generation?: number,
-  ) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return this.compute.output(caller, taskId, runId, name, generation);
-  }
-  async computeLogs(caller: Caller, taskId: string, runId: string, generation?: number) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return this.compute.logs(caller, taskId, runId, generation);
-  }
-  async computeTick() {
-    await this.compute?.tick();
-    await this.machines?.tick();
-  }
-  async computeMachines(caller: Caller, taskId: string) {
-    return this.machines?.list(caller, taskId) ?? [];
-  }
-  async computeRent(caller: Caller, taskId: string, input: SandboxRentalInput) {
-    check(this.machines, 'compute_unavailable', 'GPU rental is unavailable', 503);
-    return this.machines.rent(caller, taskId, input);
-  }
-  async computeSsh(caller: Caller, taskId: string, sandboxId: string, publicKey: string) {
-    check(this.machines, 'compute_unavailable', 'SSH access is unavailable', 503);
-    return this.machines.access(caller, taskId, sandboxId, publicKey);
-  }
-  async computeExtend(caller: Caller, taskId: string, sandboxId: string, minutes: number) {
-    const machines = this.machines;
-    check(machines, 'compute_unavailable', 'GPU rental is unavailable', 503);
-    return machines.extend(caller, taskId, sandboxId, minutes);
-  }
-  async computeRelease(caller: Caller, taskId: string, sandboxId: string) {
-    check(this.machines, 'compute_unavailable', 'GPU rental is unavailable', 503);
-    return this.machines.release(caller, taskId, sandboxId);
+    return (await this.sandboxes?.captures(projectId, workId, tx)) ?? [];
   }
   private async command<T>(
     tx: Transaction,
@@ -1601,11 +1381,7 @@ export class TaskService implements Tasks {
           'The pinned brief must contain the task goal and every Done-when check',
         );
         // Once Code keeps the project's history, new Git work lives there and nowhere else.
-        const version = taskVersion(
-          this.artifacts.largeUploadAvailable,
-          !service && !!(await this.sandboxes?.nativeWork?.connected(caller.projectId, tx)),
-          !!service,
-        );
+        const version = taskVersion(this.artifacts.largeUploadAvailable, !!service);
         const workflow = await (
           await this.registration(version)
         ).start(
@@ -2092,23 +1868,15 @@ export class TaskService implements Tasks {
           ` ${GIT_CLAIM}`
         : type.definition.recipe.outputInstructions +
           // A brief the caller supplied never carries these words, so the assignment always does.
-          ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}` +
-          (purpose === 'work' &&
-          !serviceOwned(task.workflow.version) &&
-          !nativeTask(task.workflow.version)
-            ? ` ${GPU_WORK}`
-            : '');
+          ` ${purpose === 'work' ? GIT_DELIVERY : GIT_REVIEW}`;
     return {
       role: purpose === 'review' ? 'reviewer' : 'producer',
       label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
       brief:
         `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}` +
-        (nativeTask(task.workflow.version)
-          ? computeGuidance(purpose === 'review' ? 'check' : 'execute')
-          : !serviceOwned(task.workflow.version)
-            ? rentalGuidance('task.compute_', purpose === 'review', true) +
-              `\nCurrent work machines: ${JSON.stringify((await this.machines?.rows(caller.projectId, task.id, tx)) ?? [])}`
-            : ''),
+        (serviceOwned(task.workflow.version)
+          ? ''
+          : computeGuidance(purpose === 'review' ? 'check' : 'execute')),
       references: [
         { kind: 'task', id: task.id, label: task.title },
         ...task.guidance.references,
@@ -2130,17 +1898,7 @@ export class TaskService implements Tasks {
               : ['review.submit']
             : assisting
               ? []
-              : [
-                  'task.submit_delivery',
-                  ...(!serviceOwned(task.workflow.version) && !nativeTask(task.workflow.version)
-                    ? [
-                        'task.compute_offers',
-                        'task.compute_run',
-                        'task.compute_status',
-                        'task.compute_cancel',
-                      ]
-                    : []),
-                ],
+              : ['task.submit_delivery'],
       },
       execution: {
         readOnly: purpose === 'review',
@@ -3178,7 +2936,6 @@ export const tasksPlugin = {
       ctx.effect(() => tasks.bindCode(ctx.codeWork));
     });
     ctx.inject(['sandboxes'], (ctx) => {
-      if (ctx.sandboxes.compute) ctx.effect(() => tasks.bindCompute(ctx.sandboxes.compute!));
       ctx.effect(() => tasks.bindSandboxes(ctx.sandboxes));
     });
     // Keep the graph registration until every consumer of Tasks has been disposed.

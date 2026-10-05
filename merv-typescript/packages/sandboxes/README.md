@@ -34,6 +34,13 @@ and the existing memory cache. Native machine controls link to Sandboxes. There 
 no second resource ledger. A short `check` assignment permits bounded verification;
 existing SSH sessions are not forcibly terminated by certificate revocation.
 
+Execution rework stays within the existing scientific attempt. Assignment handoff and
+`retry_running` recover the same native requests; revised commands use new idempotency
+keys. Submitting results moves compute authority to brief review and queues old-phase
+cleanup. A reviewer may reuse retained evidence and warm machines, but must not depend
+on a previous phase's unfinished long-running jobs. No additional research-round
+counter or compute scheduler is introduced.
+
 Terminal native Captures become one artifact collection each, containing immutable
 file references without another upload. Empty or partial captures retain explicit
 outcome metadata. Native holds survive work closure and machine release. The native
@@ -58,9 +65,8 @@ Handoffs retain accepted jobs and warm machines in the same work namespace.
 Sandboxes publishes rows that a service outside this process owns. merv-sandboxes serves a
 manifest of rows — what each row holds, never how it looks — and this plugin validates that
 manifest, registers one sidebar row per manifest row, and proxies each row's reads with the
-calling project's own credentials. It also owns the shared managed-job and work-rental ledgers;
-Tasks and Experiments supply work authorization. Protected Fleet runtimes remain separate
-from research compute. Its transport has no Cordis dependencies, and the thin `@merv/sandboxes/ui` adapter injects
+calling project's own credentials. Protected Fleet runtimes remain separate from research
+compute. Its transport has no Cordis dependencies, and the thin `@merv/sandboxes/ui` adapter injects
 `sandboxes`, `ui` and `scope`. It mirrors the rows into the sidebar registry and draws the
 project's machines on the Running page; `scope` answers only whether the reader holds `write`, so
 Extend lease and Release machine are offered only to a caller the tools would let act.
@@ -202,99 +208,12 @@ appearing only when the service is named, and the shipped fake control plane
 (`npm run fake:sandboxes`, port 3210) answering a manifest, six sandboxes and both lifecycle
 routes this build accepts.
 
-## Managed GPU runs
+## The retired Merv-side compute path
 
-The optional ML adapter remains the transport to merv-sandboxes. The shared
-`managed_compute_runs` ledger in this package gives Tasks and Experiments one
-project allowance check and one idempotent submit/poll/cancel loop. Independent
-jobs may run concurrently without a fixed Merv job-count cap; provider capacity
-and spending controls still apply. Each owner checks its own active workflow and worker
-lease before admitting a run. Jobs already admitted remain live through worker
-replacement; leaving the work state cancels them. Task reads show compact job
-summaries, while `task.compute_status` with a run ID returns its result.
-
-New research jobs use the provider's native exit status and stdout/stderr. They
-do not buffer all output in a custom result file. `compute.logs` and
-`task.compute_logs` read the latest 8,000 bytes of each stream on demand, scoped
-to the stored project, work item and attempt/revision. Workers should emit
-unbuffered progress (for example `python -u`); redirecting logs to a file still
-hides them from the live stream. These reads neither inject logs into routine
-context nor change a scientific verdict. Retained logs may expire; permanent
-evidence still belongs in Artifacts.
-
-The fixed provider job name selects the native result protocol. Older jobs keep
-their inner wrapper result, and a lost pre-upgrade submission reply is recovered
-with the exact former request under the same idempotency key. Code checks keep
-their existing wrapper and setup-failure semantics. Optional named file capture
-still runs before release, including after a failed command.
-
-Startup imports legacy experiment jobs and preserves their run IDs
-and provider idempotency keys. During rollout, avoid reverting to an older server
-image while managed jobs are active: the older image reads the legacy experiment
-ledger, which no longer receives updates after import.
-
-## Captures and work-owned GPU machines
-
-When Artifacts is present, each new managed run with requested outputs produces
-one collection artifact for its capture. It lists all retained files, their
-sizes and hashes, and the owning work/run metadata. Sandboxes first removes the
-objects' expiry, then Artifacts records references to them; file bytes are not
-uploaded again. Registration has its own retry state, independent of the command
-outcome. `artifact.read` with `mode: download` and `fileName` signs a fresh member
-link; omitting `fileName` retrieves the manifest. A collection is retained evidence,
-not automatic scientific approval or a replacement for an experiment report.
-
-New task and experiment workflow versions expose `compute.machines`, `.rent`,
-`.ssh`, `.extend`, and `.release` (the task equivalents use `task.compute_` prefixes).
-Tasks and Experiments still authorize their own current leases. Sandboxes owns
-rental lifecycle, provider transport and SSH certificates. The machine ledger is
-keyed by work item, so a planning, execution or review handoff preserves the same
-machine and filesystem. Assignments include known machines; successors should
-check before renting and obtain their own certificate using a local public key.
-A producer may leave useful compute ready for its successor within the remaining
-lease. Reviewers may optionally make brief checks, but must not run training,
-full evaluations or other long work, or alter submitted evidence.
-
-An explicit release, lease expiry or terminal work item ends the rental. Save
-needed files first. A stable rental key is idempotent, including uncertain create
-responses; use a new key only for a deliberately new machine. `compute.extend` (or
-`task.compute_extend`) adds `minutes` to the remaining lease with the provider's
-`expected_revision` check, using the same ML consumer subject and original payer.
-Concurrent renewals refuse stale calculations; budget refusal preserves the existing lease.
-After an uncertain reply, inspect the current lease before requesting another increment.
-
-For a durable job on a warm rental, pass `rentalKey` from `compute.machines` to
-`compute.run`, omitting `provider` and `offerId`. Only the current work assignment
-can select its own ready rental; raw provider IDs are not accepted as run input.
-The fixed workflow uses `use_vm`, optional approved source staging, native run and
-optional capture, with no release node. Completion, failure and cancellation
-preserve the borrowed machine. Its hard rental expiry still applies: extend it
-before starting work if the remaining time cannot cover the command and capture.
-`maxUsd` bounds newly provisioned leases; borrowed compute continues against the
-rental's original payer and provider budgets and is not repriced by the job.
-
-Each borrowed job starts in `$HOME/merv-run/<run-key-digest>` and stages approved
-source separately, so concurrent jobs cannot overwrite one another's source trees.
-Commands may explicitly refer to warm files and packages elsewhere on the machine.
-Optional `commandId` retains existing Code provenance validation. File captures
-use the same provenance/hash checks, retention and collection flow as disposable jobs.
-Use `purpose: "check"`, `rentalKey`, and five minutes for planning or review verification.
-These bounded jobs do not bypass design approval or change a scientific verdict;
-reviewers must preserve submitted evidence and avoid training and full evaluations.
-Direct SSH sessions still require explicitly retaining evidence or a managed capture job.
-
-Choose a disposable managed run for one bounded job, a rental for a reusable handoff
-environment, and a managed run on that rental for durable logs and captured files.
-
-Renewal and verification-job grants ship only in new task versions 28–35 and
-experiment versions 25–32. Previously created work keeps its pinned policy even
-when a new worker session takes over: it does not gain extension or planner/reviewer
-job grants. Its existing execution `compute.run` still accepts a work rental key.
-No stored workflows or active research assignments are migrated.
-
-Execution rework stays within the existing scientific attempt. Assignment handoff and
-`retry_running` recover the same native requests; revised commands use new idempotency
-keys. Submitting results moves compute authority to brief review and queues old-phase
-cleanup. A reviewer may reuse retained evidence and warm machines, but must not depend
-on a previous phase's unfinished long-running jobs. No additional research-round
-counter or compute scheduler is introduced.
+Native compute is the only compute path. The older one, Merv's own managed GPU runs and
+work-owned rentals behind the `task.compute_*` and `compute.*` tools and the `ml` adapter
+configuration, was removed on 2026-10-04. Its ledgers, `managed_compute_runs` and
+`work_compute_machines`, stay in the database untouched: `compute-ledgers.ts` keeps their
+published `sandboxes-compute` and `sandboxes-work-machines` migrations registered with native
+Sandboxes, and nothing reads or writes them. Capture collections that path registered remain
+artifacts, but their member files (provider `sandboxes`) no longer have a download provider.

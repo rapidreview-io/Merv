@@ -6,10 +6,9 @@ import type {
   RunningNode,
   RunningPanelPart,
   Transaction,
-  WorkComputeAccess,
 } from '@merv/contracts';
 import type {} from 'cordis';
-import type { SandboxCompute, ComputeOutputs, Sandboxes } from '@merv/sandboxes/types';
+import type { Sandboxes } from '@merv/sandboxes/types';
 import type { PaperChanges } from '@merv/paper/types';
 import type {
   Experiment,
@@ -27,41 +26,8 @@ export interface ExperimentReview extends ReviewApplication {
   paperChanges?: PaperChanges;
 }
 
-export interface ComputeInput {
-  experimentId: string;
-  attemptIndex: number;
-  key: string;
-  provider?: string;
-  offerId?: string;
-  rentalKey?: string;
-  purpose?: 'check';
-  command: string;
-  minutes: number;
-  maxUsd: number;
-  commandId?: string;
-  outputs?: ComputeOutputs;
-}
-
-export interface Experiments extends WorkComputeAccess {
-  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'nativeWork'>): () => void;
-  bindCompute(adapter: SandboxCompute): () => void;
-  computeOffers(caller: Caller): Promise<import('@merv/contracts').Data>;
-  computeRun(caller: Caller, input: ComputeInput): Promise<unknown>;
-  computeCancel(caller: Caller, experimentId: string, runId: string): Promise<unknown>;
-  computeLogs(
-    caller: Caller,
-    experimentId: string,
-    runId: string,
-    attemptIndex?: number,
-  ): Promise<unknown>;
-  computeOutput(
-    caller: Caller,
-    experimentId: string,
-    runId: string,
-    name: string,
-    attemptIndex?: number,
-  ): Promise<unknown>;
-  computeTick(): Promise<void>;
+export interface Experiments {
+  bindSandboxes(service: Pick<Sandboxes, 'captures'>): () => void;
   create(caller: Caller, input: ExperimentCreate, tx?: Transaction): Promise<Experiment>;
   get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;
   list(caller: Caller, tx?: Transaction): Promise<Experiment[]>;
@@ -73,11 +39,11 @@ export interface Experiments extends WorkComputeAccess {
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, experimentId: string): Promise<ProcessGraph>;
   /**
-   * The Running page's cards: open experiments, any `work:<id>` key in `include`, an ended
-   * one a GPU run still holds, and each live GPU run as `compute:<digest>`. No gate is evaluated.
+   * The Running page's cards: open experiments and any `work:<id>` key in `include`. No gate
+   * is evaluated.
    */
   running(caller: Caller, include?: ReadonlySet<string>): Promise<RunningNode[]>;
-  /** The sidebar of `work:<experimentId>` or `compute:<digest>`; null for any other key. */
+  /** The sidebar of `work:<experimentId>`; null for any other key. */
   runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null>;
   /** What the optional Code plugin holds for a Git experiment; null without it. */
   codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;

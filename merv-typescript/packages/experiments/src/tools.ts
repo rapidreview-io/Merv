@@ -1,14 +1,7 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
-import { z } from 'zod';
-import { rentalSchema, computeOutputsSchema } from '@merv/sandboxes/managed-compute';
 import type {} from '@merv/api/types';
-import type {
-  ComputeInput,
-  ExperimentAttach,
-  ExperimentCreate,
-  ExperimentTransition,
-} from './types.js';
+import type { ExperimentAttach, ExperimentCreate, ExperimentTransition } from './types.js';
 import {
   experimentAttachSchema,
   experimentCreateSchema,
@@ -23,159 +16,11 @@ export const experimentsToolsPlugin = {
   inject: ['experiments', 'tools'],
   apply(ctx: Context) {
     const experiments = ctx.experiments;
-    const owner = z.object({ experimentId: z.string().min(1) });
-    const machine = owner.extend({ sandboxId: z.string().min(1).max(128) });
-    for (const definition of [
-      {
-        name: 'compute.machines',
-        description:
-          'List GPU machines associated with this work item across worker handoffs. Check here before renting: a previous worker may have left a ready environment. State is refreshed in the background; leaseExpiresAt bounds reuse.',
-        inputSchema: owner.strict(),
-        readOnly: true,
-        handler: (c: Caller, i: Record<string, string>) =>
-          experiments.computeMachines(c, i.experimentId),
-      },
-      {
-        name: 'compute.rent',
-        description:
-          'Rent a GPU for this task or experiment, available to its current and subsequent assigned workers. Use an offer from compute offers, a stable key, and a time-limited lease (minutes); current provider spending policy applies. Check machines before renting. No command is started automatically. Reuse key after an uncertain response; a released rental needs a new key. Files survive worker handoff but are lost on GPU release/expiry unless retained separately. Reviewers may optionally use compute for brief checks only, never long-running work.',
-        inputSchema: owner.merge(rentalSchema).strict(),
-        conversation: 'propose' as const,
-        handler: (c: Caller, i: Record<string, unknown>) =>
-          experiments.computeRent(
-            c,
-            i.experimentId as string,
-            rentalSchema.parse({
-              key: i.key,
-              provider: i.provider,
-              offerId: i.offerId,
-              minutes: i.minutes,
-            }),
-          ),
-      },
-      {
-        name: 'compute.ssh',
-        description:
-          'Get SSH access to this work item’s ready GPU. Generate an Ed25519 key locally (ssh-keygen -t ed25519 -N "" -f KEY); supply only the .pub contents. Save returned certificate as KEY-cert.pub. Add "[HOST]:PORT HOST_PUBLIC_KEY" to a known_hosts file using gateway.host, gateway.port and gateway.host_public_key (plain HOST for port 22), then ssh -i KEY -o CertificateFile=KEY-cert.pub -o UserKnownHostsFile=KNOWN_HOSTS -o StrictHostKeyChecking=yes -p PORT SANDBOX_ID@HOST. Each successor gets its own certificate. Certificates expire after five minutes; request a fresh one for a new connection. Reviewers: brief verification only; no training or full evaluations. Preserve submitted evidence.',
-        inputSchema: machine.extend({ publicKey: z.string().min(20).max(16384) }).strict(),
-        openWorld: true,
-        conversation: 'secret' as const,
-        handler: (c: Caller, i: Record<string, string>) =>
-          experiments.computeSsh(c, i.experimentId, i.sandboxId, i.publicKey),
-      },
-      {
-        name: 'compute.extend',
-        description:
-          'Add minutes to this work rental’s remaining lease. Uses provider revision checks and the original compute payer; current provider budgets apply. Re-read machines after an uncertain reply before retrying.',
-        inputSchema: machine.extend({ minutes: z.number().int().min(1).max(1380) }).strict(),
-        conversation: 'propose' as const,
-        handler: (c: Caller, i: { experimentId: string; sandboxId: string; minutes: number }) =>
-          experiments.computeExtend(c, i.experimentId, i.sandboxId, i.minutes),
-      },
-      {
-        name: 'compute.release',
-        description:
-          'Release a GPU associated with this work item. Retain needed files first; release deletes the machine’s filesystem. Leave it available only when the next worker can use it within the remaining lease.',
-        inputSchema: machine.strict(),
-        conversation: 'propose' as const,
-        handler: (c: Caller, i: Record<string, string>) =>
-          experiments.computeRelease(c, i.experimentId, i.sandboxId),
-      },
-    ])
-      ctx.effect(() => ctx.tools.register(definition));
-    const run = z
-      .object({
-        experimentId: z.string().min(1),
-        attemptIndex: z.number().int().positive(),
-        key: z.string().min(1).max(128),
-        provider: z.string().min(1).max(64).optional(),
-        offerId: z.string().min(1).max(256).optional(),
-        rentalKey: z.string().min(1).max(128).optional(),
-        purpose: z.literal('check').optional(),
-        command: z.string().min(1).max(65536),
-        minutes: z.number().int().min(5).max(1380),
-        maxUsd: z.number().finite().nonnegative(),
-        commandId: z.string().min(1).optional(),
-        outputs: computeOutputsSchema.optional(),
-      })
-      .strict();
-    const cancel = z.object({ experimentId: z.string().min(1), runId: z.string().min(1) }).strict();
-    for (const definition of [
-      {
-        name: 'compute.offers',
-        description: 'Read this project’s ML allowance and available GPU offers.',
-        inputSchema: z.object({}).strict(),
-        readOnly: true,
-        handler: async (caller: Caller) => await experiments.computeOffers(caller),
-      },
-      {
-        name: 'compute.run',
-        description:
-          'Run the current experiment attempt. Choose provider/offerId for a disposable machine, or rentalKey from machines for a durable job on that work rental. Borrowed rentals survive job completion, failure and cancellation; outputs use the same retained capture collection. Planners/reviewers must use purpose="check", rentalKey, and at most five minutes for brief verification; no training or full evaluations, and preserve submitted evidence. maxUsd covers the whole newly provisioned lease: allow 10 minutes setup plus 10 minutes capture overhead when outputs are requested (otherwise 1 minute capture). Optional outputs names absolute regular-file paths and a total maxBytes ceiling (up to 2 GiB); archive directories yourself. Files are captured before machine release, including diagnostics after command failure. Read compute.logs for bounded live progress (emit unbuffered stdout/stderr). Read file metadata in experiment.get_state, then use the run’s artifactId for its automatically retained capture collection. artifact.read with mode download and fileName retrieves a member without reuploading; compute.output remains available for older runs. On Code-hosted Git experiments, first code.commit and pass its succeeded commandId to ship that tree.',
-        inputSchema: run,
-        conversation: 'propose' as const,
-        handler: async (caller: Caller, input: ComputeInput) =>
-          await experiments.computeRun(caller, input),
-      },
-      {
-        name: 'compute.logs',
-        description:
-          'Read the latest 8,000 bytes each of stdout and stderr for this experiment GPU run, including while running. Output is fetched only on request and may expire. Use unbuffered output (for example python -u); logs redirected to files are not streamed. Older jobs buffer their logs until completion. Progress logs are not a scientific verdict.',
-        openWorld: true,
-        readOnly: true,
-        inputSchema: z
-          .object({
-            experimentId: z.string().min(1),
-            runId: z.string().min(1),
-            attemptIndex: z.number().int().positive().optional(),
-          })
-          .strict(),
-        handler: async (
-          caller: Caller,
-          input: { experimentId: string; runId: string; attemptIndex?: number },
-        ) => experiments.computeLogs(caller, input.experimentId, input.runId, input.attemptIndex),
-      },
-      {
-        name: 'compute.output',
-        openWorld: true,
-        description:
-          'Get a fresh download URL and SHA/size for one captured file of this experiment run, after machine release. Use its output name, not an arbitrary object ID. New captures automatically produce one collection artifact; use its artifactId and artifact.read mode download with fileName. No reupload is needed. A captured file is not a scientific success verdict.',
-        inputSchema: z
-          .object({
-            experimentId: z.string().min(1),
-            runId: z.string().min(1),
-            name: z.string().min(1).max(128),
-            attemptIndex: z.number().int().positive().optional(),
-          })
-          .strict(),
-        readOnly: true,
-        handler: async (
-          caller: Caller,
-          input: { experimentId: string; runId: string; name: string; attemptIndex?: number },
-        ) =>
-          experiments.computeOutput(
-            caller,
-            input.experimentId,
-            input.runId,
-            input.name,
-            input.attemptIndex,
-          ),
-      },
-      {
-        name: 'compute.cancel',
-        description: 'Propose cancellation of one run owned by this experiment.',
-        inputSchema: cancel,
-        conversation: 'propose' as const,
-        handler: async (caller: Caller, input: { experimentId: string; runId: string }) =>
-          await experiments.computeCancel(caller, input.experimentId, input.runId),
-      },
-    ])
-      ctx.effect(() => ctx.tools.register(definition));
     for (const definition of [
       {
         name: 'experiment.create',
         description:
-          'Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Planning workers may rent and inspect a GPU over SSH for brief feasibility checks. Full training and evaluations still require independent design approval; compute.run belongs to that execution phase. Check existing work machines before renting more. Name actual missing data, compute, budget or prerequisite work separately. Every experiment uses a private managed Git checkout, independently of GitHub. Code derives its base from accepted dependsOn prerequisites and project main. The first planning or running lease pins this base. Conflicting dependencies wait for reviewed resolution. Missing repository storage blocks execution rather than using scratch. Retain implementation with code.commit and experimental outputs as artifacts. Reuse the same requestId and input to recover a committed response.',
+          'Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Full training and evaluations require independent design approval. Name actual missing data, compute, budget or prerequisite work separately. Every experiment uses a private managed Git checkout, independently of GitHub. Code derives its base from accepted dependsOn prerequisites and project main. The first planning or running lease pins this base. Conflicting dependencies wait for reviewed resolution. Missing repository storage blocks execution rather than using scratch. Retain implementation with code.commit and experimental outputs as artifacts. Reuse the same requestId and input to recover a committed response.',
         inputSchema: experimentCreateSchema.omit({ workspace: true, baseTaskId: true }),
         handler: async (caller: Caller, input: ExperimentCreate) =>
           await experiments.create(caller, input),

@@ -278,34 +278,12 @@ function Keys() {
 export function Integrations({ shell }: ViewProps) {
   const [nativeAvailable, setNativeAvailable] = useState<boolean | null>(null);
   const code = shell.rows.some((row) => row.view.kind === 'code');
-  const compute = useTool<{
-    entitled: boolean;
-    allowance: {
-      month_to_date: { currency: string; amount: string }[];
-      cap: { currency: string; amount: string } | null;
-    } | null;
-  }>('compute.offers', {}, { every: 60_000 });
-  const allowance =
-    compute.data?.entitled && compute.data.allowance?.cap?.amount ? compute.data.allowance : null;
-  const used = allowance?.month_to_date.find((money) => money.currency === 'USD')?.amount ?? '0';
-  const month = new Date().toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
   return (
     <div className="page-stage stack stack--lg">
       <SandboxesConnection onAvailable={setNativeAvailable} />
       {code && <GitHubConnection />}
-      {!code && !allowance && compute.loading && <LoadState {...compute} />}
-      {!code && !allowance && !compute.loading && nativeAvailable === false && (
+      {!code && nativeAvailable === false && (
         <EmptyState kind="settings" icon="link" title="No integrations" />
-      )}
-      {allowance && nativeAvailable === false && (
-        <KV
-          rows={[
-            [
-              'ML compute',
-              `$${Number(used).toFixed(2)} of $${Number(allowance.cap!.amount).toFixed(0)}  ${month}`,
-            ],
-          ]}
-        />
       )}
     </div>
   );

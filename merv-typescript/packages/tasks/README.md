@@ -34,17 +34,14 @@ Creation and type registration copy their inputs before asynchronous work. A typ
 
 ## Work prerequisites
 
-Current non-native ordinary tasks give a leased producer optional GPU access through
-`task.compute_offers`, `task.compute_run`, `task.compute_status`, and
-`task.compute_cancel`. A run names the task's current work revision, a stable key,
-provider offer, bounded command, minutes and whole-workflow `maxUsd`; repeat the
-same key and input to recover an uncertain submission. `task.get` and
-`task.compute_status` retain results from earlier revisions for review. The
-Sandboxes integration enforces the project's allowance and a shared limit of two
-live GPU jobs across Tasks and Experiments. The remote scratch directory is
-temporary and the result captures bounded output; retain evidence through the
-existing artifact workflow. Published older task execution policies remain pinned
-and do not gain GPU grants retroactively.
+Tasks owns no compute. New ordinary tasks use the native contracts (`task@39`/`43`), and
+Sandboxes attaches native compute to a leased assignment where the project has a funded
+connection: `execute` for work, `check` for review. Conflict-resolution service tasks declare
+`computeProfile: 'none'`. The assignment carries the guidance from
+`@merv/sandboxes/compute-capability`, and delivery admits the capture collections Sandboxes
+verified for the task. The older `task@31`/`35` contracts stay registered for live work; their
+pinned policies still name the retired `task.compute_*` tools, which are no longer registered
+and so grant nothing. See [compute as an assignment capability](../../docs/COMPUTE_CAPABILITY.md).
 
 `task.create.dependsOn` accepts existing same-project work IDs (array, one ID, null
 or omitted). Workflows owns the durable DAG and its completion checks. Tasks

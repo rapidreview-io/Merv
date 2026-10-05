@@ -1,9 +1,6 @@
 import type { Caller, Json, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
-import type { ComputeOutputs, SandboxComputeOutput } from './models.js';
-import type { NativeSandboxWork, NativeSandboxesConfig } from './native-types.js';
-export type { NativeSandboxWork } from './native-types.js';
-export type { ComputeOutputs, SandboxComputeOutput } from './models.js';
+import type { NativeSandboxesConfig } from './native-types.js';
 
 /** One project's authorized connection. Secrets are named, never carried. */
 export interface SandboxConnection {
@@ -29,7 +26,6 @@ export interface SandboxesConfig {
    * Without it there are no checks at all: `Sandboxes.checks` is undefined.
    */
   storageOrigins?: string[];
-  ml?: { namespace: string; tokenEnv: string; since: string; storageOrigins: string[] };
   /** Operator-selected protected runtime profiles by key, the default first (MERV_FLEET_RUNTIMES).
    * Absence disables the server-only capability. */
   runtimes?: (SandboxRuntimeProfile & { key: string })[];
@@ -191,66 +187,6 @@ export interface SandboxChecks {
   release(projectId: string, resources: SandboxCheckCleanup): Promise<void>;
 }
 
-export interface SandboxComputeSpec {
-  experimentId: string;
-  idempotencyKey: string;
-  provider?: string;
-  offerId?: string;
-  /** Resolved by the work owner from a rental key; never accepted from agent input. */
-  rentalSandboxId?: string;
-  command: string;
-  minutes: number;
-  maxUsd: number;
-  source?: { bytes: Uint8Array; sha256: string };
-  outputs?: ComputeOutputs;
-}
-export interface SandboxComputeRun {
-  id: string;
-  state: string;
-  reason: string | null;
-  /** Provider estimates, never billed spend. Older stored rows may lack provenance. */
-  cost: {
-    amount: string;
-    currency: string;
-    basis?: 'full_lease_quote' | 'job_runtime_estimate' | 'unclassified_estimate';
-  } | null;
-  result: { exit: number; bytes?: number; head?: string; tail?: string } | null;
-  outputs?: SandboxComputeOutput[];
-  outputState?: string;
-  failureStage?: string;
-}
-export interface SandboxCompute {
-  readonly since: string;
-  offers(projectId: string): Promise<Json>;
-  allowance(projectId: string): Promise<Json>;
-  submit(projectId: string, spec: SandboxComputeSpec): Promise<string>;
-  get(projectId: string, runId: string): Promise<SandboxComputeRun>;
-  logs?(projectId: string, runId: string): Promise<Json>;
-  cancel(projectId: string, runId: string): Promise<void>;
-  download?(projectId: string, objectId: string): Promise<{ url: string; expiresAt?: string }>;
-  retain?(projectId: string, objectId: string): Promise<void>;
-  rent?(projectId: string, input: SandboxRentalInput): Promise<SandboxRental>;
-  findRental?(projectId: string, key: string): Promise<SandboxRental | null>;
-  inspectRental?(projectId: string, sandboxId: string): Promise<SandboxRental>;
-  releaseRental?(projectId: string, sandboxId: string): Promise<SandboxRental>;
-  extendRental?(projectId: string, sandboxId: string, minutes: number): Promise<SandboxRental>;
-  ssh?(projectId: string, sandboxId: string, publicKey: string): Promise<Json>;
-}
-
-export interface SandboxRentalInput {
-  key: string;
-  provider: string;
-  offerId: string;
-  minutes: number;
-}
-export interface SandboxRental {
-  sandboxId: string;
-  state: string;
-  leaseExpiresAt: string | null;
-  hourlyPrice: Json;
-  reason: string | null;
-}
-
 /**
  * One sidebar row derived from a manifest row. Data only: the browser renders `view`,
  * and `spec`/`record` are the manifest's own collection and record specifications.
@@ -294,8 +230,6 @@ export interface SandboxMachines {
 }
 
 export interface Sandboxes {
-  /** Whether a project's native compute is funded, for version selection; absent on legacy deployments. */
-  nativeWork?: NativeSandboxWork;
   /**
    * The artifact collections native compute verified and registered for one workflow
    * instance, in the caller's transaction. Empty where native compute is not configured.
@@ -334,7 +268,6 @@ export interface Sandboxes {
   readonly checks?: SandboxChecks;
   /** Present only when deployment configured a fixed protected runtime profile. */
   readonly runtimes?: SandboxRuntimes;
-  readonly compute?: SandboxCompute;
 }
 
 declare module 'cordis' {

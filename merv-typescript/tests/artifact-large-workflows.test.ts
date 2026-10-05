@@ -33,40 +33,13 @@ async function app(t: TestContext, s3: boolean) {
 
 test('without signed uploads, new tasks keep the version that grants none', async (t) => {
   const { app: disk, owner } = await app(t, false);
-  assert.deepEqual(await disk.ctx.tools.call('compute.offers', owner, {}), {
-    entitled: false,
-    available: false,
-    allowance: null,
-    offers: [],
-  });
-  const run = {
-    experimentId: 'exp_missing',
-    attemptIndex: 1,
-    key: 'trial',
-    provider: 'lambda',
-    offerId: 'gpu',
-    command: 'echo',
-    minutes: 5,
-    maxUsd: 1,
-  };
-  await assert.rejects(disk.ctx.tools.call('compute.run', owner, run), {
-    code: 'compute_unavailable',
-  });
-  // Compute stages no artifacts: the schema refuses inputs.
-  await assert.rejects(
-    disk.ctx.tools.call('compute.run', owner, {
-      ...run,
-      inputs: [{ artifactId: 'art_data', path: 'data.csv' }],
-    }),
-    { code: 'invalid_input' },
-  );
   const ordinary = await disk.ctx.tasks.create(owner, {
     title: 'Original',
     goal: 'Retain one result',
     checks: ['Result retained'],
     requestId: 'original',
   });
-  assert.equal(ordinary.workflow.version, 31);
+  assert.equal(ordinary.workflow.version, 39);
 });
 
 test('S3 blobs give new producers upload grants while reviewers stay read-only', async (t) => {
@@ -77,13 +50,13 @@ test('S3 blobs give new producers upload grants while reviewers stay read-only',
     checks: ['Rows retained'],
     requestId: 'large',
   });
-  assert.equal(task.workflow.version, 35);
+  assert.equal(task.workflow.version, 43);
   const experiment = await s3.ctx.experiments.create(owner, {
     name: 'large_experiment',
     intent: 'Analyze retained rows',
     requestId: 'experiment',
   });
-  assert.equal(experiment.workflow.version, 32);
+  assert.equal(experiment.workflow.version, 40);
   const taskPolicy = await s3.ctx.workflows.assignment(owner, task.id);
   const experimentPolicy = await s3.ctx.workflows.assignment(owner, experiment.id);
   for (const assignment of [taskPolicy, experimentPolicy]) {

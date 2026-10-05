@@ -25,16 +25,11 @@ import {
   type WorkflowDependency,
 } from '@merv/contracts';
 import type { Code, CodeCaptureRef } from '@merv/code-work/types';
-import type { SandboxCompute, Sandboxes } from '@merv/sandboxes/types';
-import { ExperimentCompute, type ComputeRunning } from './compute.js';
-import { initializeManagedCompute } from '@merv/sandboxes/managed-compute';
+import type { Sandboxes } from '@merv/sandboxes/types';
 import {
-  computeNode,
-  computePanel,
   enteredAgain,
   experimentNode,
   experimentPanel,
-  liveRun,
   type ExperimentStanding,
 } from './running.js';
 import type {
@@ -48,7 +43,6 @@ import type {
   Experiments,
   ExperimentSubmission,
   ExperimentTransition,
-  ComputeInput,
 } from './types.js';
 import {
   experimentAttachSchema,
@@ -81,7 +75,6 @@ import {
   ExperimentProgram,
   feasibilityCriterion,
   programVersion,
-  nativeExperiment,
   currentExperiment,
   producing,
   resultsCriteria,
@@ -114,7 +107,6 @@ interface StandingRow {
 }
 /** What one board read knows beside an experiment's own row. */
 interface StandingContext {
-  runs: ComputeRunning[];
   /** When the last lease on unheld work ended at its current revision, by experiment. */
   released: Map<string, string>;
   /** Experiments another plugin published a blocker on. */
@@ -164,12 +156,10 @@ const configuration = z
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService extends ExperimentProgram implements Experiments {
   private codeBinding?: symbol;
-  private compute?: ExperimentCompute;
   private releaseReviewOwner?: () => void;
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await migrateExperiments(this.state);
-    await initializeManagedCompute(this.state, true);
     await this.register();
     try {
       this.releaseReviewOwner = this.reviews.registerSubmitOwner({
@@ -218,84 +208,13 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       this.code = undefined;
     };
   }
-  /** Captures and native funding, read from Sandboxes; it attaches compute to leases itself. */
-  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'nativeWork'>): () => void {
+  /** Captures, read from Sandboxes; it attaches compute to leases itself. */
+  bindSandboxes(service: Pick<Sandboxes, 'captures'>): () => void {
     this.open();
     this.sandboxes = service;
     return () => {
       if (this.sandboxes === service) this.sandboxes = undefined;
     };
-  }
-  bindCompute(adapter: SandboxCompute): () => void {
-    this.open();
-    this.compute?.close();
-    const service = new ExperimentCompute(
-      this.state,
-      this.scope,
-      adapter,
-      () => this.code,
-      this.artifacts,
-    );
-    this.compute = service;
-    return () => {
-      if (this.compute === service) {
-        service.close();
-        this.compute = undefined;
-      }
-    };
-  }
-  async computeOffers(caller: Caller): Promise<Data> {
-    if (!this.compute) return { entitled: false, available: false, allowance: null, offers: [] };
-    return (await this.compute.offers(caller)) as Data;
-  }
-  async computeRun(caller: Caller, input: ComputeInput) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return await this.compute.run(caller, input);
-  }
-  async computeCancel(caller: Caller, experimentId: string, runId: string) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return await this.compute.cancel(caller, experimentId, runId);
-  }
-  async computeOutput(
-    caller: Caller,
-    experimentId: string,
-    runId: string,
-    name: string,
-    attemptIndex?: number,
-  ) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return this.compute.output(caller, experimentId, runId, name, attemptIndex);
-  }
-  async computeLogs(caller: Caller, experimentId: string, runId: string, attemptIndex?: number) {
-    check(this.compute, 'compute_unavailable', 'ML compute is unavailable', 503);
-    return this.compute.logs(caller, experimentId, runId, attemptIndex);
-  }
-  async computeTick(): Promise<void> {
-    await this.compute?.tick();
-  }
-  async computeMachines(caller: Caller, experimentId: string) {
-    return this.compute?.machines.list(caller, experimentId) ?? [];
-  }
-  async computeRent(
-    caller: Caller,
-    experimentId: string,
-    input: import('@merv/sandboxes/types').SandboxRentalInput,
-  ) {
-    check(this.compute, 'compute_unavailable', 'GPU rental is unavailable', 503);
-    return this.compute.machines.rent(caller, experimentId, input);
-  }
-  async computeSsh(caller: Caller, experimentId: string, sandboxId: string, publicKey: string) {
-    check(this.compute, 'compute_unavailable', 'SSH access is unavailable', 503);
-    return this.compute.machines.access(caller, experimentId, sandboxId, publicKey);
-  }
-  async computeExtend(caller: Caller, experimentId: string, sandboxId: string, minutes: number) {
-    const machines = this.compute?.machines;
-    check(machines, 'compute_unavailable', 'GPU rental is unavailable', 503);
-    return machines.extend(caller, experimentId, sandboxId, minutes);
-  }
-  async computeRelease(caller: Caller, experimentId: string, sandboxId: string) {
-    check(this.compute, 'compute_unavailable', 'GPU rental is unavailable', 503);
-    return this.compute.machines.release(caller, experimentId, sandboxId);
   }
   private open(): void {
     check(!this.closed, 'experiments_unavailable', 'Experiments is unavailable', 503);
@@ -306,22 +225,16 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     return await this.workflows.process(caller, id);
   }
   /**
-   * The Running page's cards: every experiment on its way to a result, any other one a key in
-   * `include` names or a live GPU run still holds, and those runs. Read without evaluating a
-   * gate, because a submission's checks read the bytes it would submit.
+   * The Running page's cards: every experiment on its way to a result, and any other one a key
+   * in `include` names. Read without evaluating a gate, because a submission's checks read the
+   * bytes it would submit.
    */
   async running(caller: Caller, include: ReadonlySet<string> = new Set()): Promise<RunningNode[]> {
     this.open();
     caller = structuredClone(caller);
     return await inTransaction(this.state, undefined, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const runs = (await this.compute?.inFlight(caller.projectId, tx)) ?? [];
-      const held = [
-        ...new Set([
-          ...[...include].filter((key) => keyKind(key) === 'work').map(keyId),
-          ...runs.map((run) => run.experimentId),
-        ]),
-      ];
+      const held = [...include].filter((key) => keyKind(key) === 'work').map(keyId);
       const ended = TERMINAL.map(() => '?').join(','),
         kept = held.map(() => '?').join(',') || 'NULL';
       const rows = await this.standingRows(
@@ -332,7 +245,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         ...held,
       );
       const context: StandingContext = {
-        runs,
         released: await this.releases(caller, rows, tx),
         blocked: new Set(
           (await this.workflows.blockers(caller, undefined, tx)).map((item) => item.instanceId),
@@ -349,42 +261,31 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         (row) => currentExperiment(row.version) || held.includes(row.id),
       ))
         nodes.push(experimentNode(await this.standing(caller, row, context, tx)));
-      return [...nodes, ...runs.map(computeNode)];
+      return nodes;
     });
   }
   /**
-   * The Running sidebar of `work:<experimentId>` or `compute:<digest>`, for any state, so an
-   * open sidebar outlives the card. Null for a key that is not one of this project's.
+   * The Running sidebar of `work:<experimentId>`, for any state, so an open sidebar outlives
+   * the card. Null for a key that is not one of this project's.
    */
   async runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null> {
     this.open();
     caller = structuredClone(caller);
     const kind = keyKind(key),
       id = keyId(key);
-    if (kind === 'compute')
-      return await inTransaction(this.state, undefined, async (tx) => {
-        await this.scope.require(caller, 'read', tx);
-        const run = await this.compute?.find(caller.projectId, id, tx);
-        if (!run) return null;
-        const { name } = await this.row(caller, run.experimentId, tx);
-        return computePanel(run, name);
-      });
     if (kind !== 'work') return null;
     const read = await inTransaction(this.state, undefined, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const [row] = await this.standingRows(caller, tx, 'e.id=?', id);
       if (!row) return null;
       const experiment = await this.get(caller, id, tx);
-      const runs =
-        (await this.compute?.recent(caller.projectId, id, experiment.attempt.index, tx)) ?? [];
       const context: StandingContext = {
-        runs,
         released: await this.releases(caller, [row], tx),
         blocked: new Set(
           (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
         ),
       };
-      return { standing: await this.standing(caller, row, context, tx), experiment, runs };
+      return { standing: await this.standing(caller, row, context, tx), experiment };
     });
     if (!read) return null;
     // The ladder is where the record stands, so no action's check runs to draw it.
@@ -484,7 +385,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           })
         : null,
       exhausted,
-      computing: context.runs.some((run) => run.experimentId === row.id && liveRun(run)),
     };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
@@ -542,7 +442,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           id,
         )
       ).map(submissionMetadata);
-      const nativeIds = (await this.sandboxes?.captures(caller.projectId, id, tx)) ?? [];
       return {
         id,
         projectId: row.project_id,
@@ -563,19 +462,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         submissions,
         reviewId: row.review_id,
         conclusion: row.conclusion,
-        ...(this.compute &&
-        !(currentExperiment(workflow.version) && nativeExperiment(workflow.version))
-          ? {
-              compute: await this.compute.rows(caller.projectId, id, attempt.index, tx),
-              machines: await this.compute.machines.rows(caller.projectId, id, tx),
-              captureArtifactIds: [
-                ...new Set([
-                  ...(await this.compute.artifactIds(caller.projectId, id, tx)),
-                  ...nativeIds,
-                ]),
-              ],
-            }
-          : { captureArtifactIds: nativeIds }),
+        captureArtifactIds: (await this.sandboxes?.captures(caller.projectId, id, tx)) ?? [],
       };
     });
   }
@@ -684,10 +571,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           409,
         );
         const workflow = await this.handleFor(
-          programVersion(
-            this.artifacts.largeUploadAvailable,
-            !!(await this.sandboxes?.nativeWork?.connected(caller.projectId, tx)),
-          ),
+          programVersion(this.artifacts.largeUploadAvailable),
         ).start(
           caller,
           {
@@ -1619,8 +1503,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     this.closed = true;
     this.codeBinding = undefined;
     this.code = undefined;
-    this.compute?.close();
-    this.compute = undefined;
     this.withdrawReviewOwner();
     this.unregister();
   }
@@ -1656,7 +1538,6 @@ export const experimentsPlugin = {
       ctx.effect(() => experiments.bindCode(ctx.codeWork));
     });
     ctx.inject(['sandboxes'], (ctx) => {
-      if (ctx.sandboxes.compute) ctx.effect(() => experiments.bindCompute(ctx.sandboxes.compute!));
       ctx.effect(() => experiments.bindSandboxes(ctx.sandboxes));
     });
     ctx.effect(function* () {

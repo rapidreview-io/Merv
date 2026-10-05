@@ -8,31 +8,8 @@ const { Integrations } = await import('../packages/ui/web/views/settings.js');
 const { SandboxesConnection } = await import('../packages/ui/web/views/sandboxes.js');
 const props = { shell: { rows: [], plugins: [] } } as never;
 
-test('Integrations shows an entitled project’s month of ML compute', async (t) => {
+test('Integrations stays empty without Code or native compute', async (t) => {
   t.after(unmount);
-  serve('/tools/compute.offers', {
-    body: {
-      result: {
-        entitled: true,
-        allowance: {
-          month_to_date: [{ currency: 'USD', amount: '12.4' }],
-          cap: { currency: 'USD', amount: '50' },
-        },
-        offers: [],
-      },
-    },
-  });
-  await mount(createElement(Integrations, props));
-  assert.match(text(), /ML compute/);
-  assert.match(text(), /\$12\.40 of \$50/);
-  assert.doesNotMatch(text(), /No integrations/);
-});
-
-test('Integrations stays empty without an entitled allowance', async (t) => {
-  t.after(unmount);
-  serve('/tools/compute.offers', {
-    body: { result: { entitled: false, allowance: null, offers: [] } },
-  });
   await mount(createElement(Integrations, props));
   assert.match(text(), /No integrations/);
 });
@@ -101,24 +78,11 @@ test('failed consent completion preserves the callback for an exact retry', asyn
   assert.doesNotMatch(text(), /View compute/);
 });
 
-test('native Personal compute never displays the unrelated legacy managed allowance', async (t) => {
+test('Integrations shows native Personal compute billing the approved account', async (t) => {
   t.after(unmount);
   serve('/sandboxes/connection', { body: connected });
-  serve('/tools/compute.offers', {
-    body: {
-      result: {
-        entitled: true,
-        allowance: {
-          month_to_date: [{ currency: 'USD', amount: '12.4' }],
-          cap: { currency: 'USD', amount: '500' },
-        },
-        offers: [],
-      },
-    },
-  });
   await mount(createElement(Integrations, props));
   assert.match(text(), /bills the account you approved/);
-  assert.doesNotMatch(text(), /\$12\.40|of \$500/);
 });
 
 test('managed compute displays the enforced account usage and enables without Personal consent', async (t) => {

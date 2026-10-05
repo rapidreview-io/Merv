@@ -1,4 +1,4 @@
-import type { Json, Transaction } from '@merv/contracts';
+import type { Json } from '@merv/contracts';
 
 export interface NativeMachineReads {
   list(projectId: string): Promise<Json[]>;
@@ -15,10 +15,6 @@ export type NativeComputeProfile = 'execute' | 'check';
  * revokes native work itself (docs/COMPUTE_CAPABILITY.md); `connected` remains only for the
  * units' version selection until the older compute path is retired.
  */
-export interface NativeSandboxWork {
-  connected(projectId: string, tx?: Transaction): Promise<boolean>;
-}
-
 export interface NativeSandboxesConfig {
   applicationId: string;
   applicationSecretEnv: string;

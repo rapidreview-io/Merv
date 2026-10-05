@@ -1,7 +1,7 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers four current contracts: managed-Git execution at `experiment@28`/`32` (small/large uploads), and native Sandboxes execution at `experiment@36`/`40`. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes describe planning, design review, execution and results review.
+independent review gates. It registers four current contracts: managed-Git execution at `experiment@28`/`32` (small/large uploads), kept for live work, and native Sandboxes execution at `experiment@36`/`40`, which every new experiment uses. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes describe planning, design review, execution and results review.
 
 Other stored versions remain read-only history. Their attempts, submissions, evidence, verdicts and pinned workflow graphs are retained, but their old runtime implementations are not registered. They cannot dispatch, accept attachments or transitions, or acquire new review claims, and they do not occupy a current execution slot. No old record is upgraded into another contract. Creating a current experiment starts planning; it does not launch a process or decide whether a scientific claim is true.
 
@@ -17,6 +17,12 @@ Current gates and next actions come from
 `workflow.status_and_next`; assigned context comes from `workflow.assignment`.
 Independent reviewers claim and submit through the existing `review.start` and
 `review.submit` tools.
+
+Experiments owns no compute. It records `computeEpoch` (`attempt:state`) in the workflow data,
+and Sandboxes attaches native compute to the leased assignment: `execute` while running, `check`
+in planning and both reviews. The pinned policies of `experiment@28`/`32` still name the retired
+`compute.*` tools, which are no longer registered and so grant nothing. See
+[compute as an assignment capability](../../docs/COMPUTE_CAPABILITY.md).
 
 ```text
 planned → design_review → running → experiment_review → complete
@@ -76,9 +82,8 @@ packages/experiments/
     ├── types.ts              # Service contract and Cordis capability
     ├── input.ts              # Strict shared tool/core schemas and safe JSON boundary
     ├── evidence.ts           # Document, figure and metrics validation
-    ├── compute.ts            # Rented GPU machines and runs for Git contracts
     ├── running.ts            # Running page cards and sidebars
-    ├── tools.ts              # Experiment and compute tool registrations
+    ├── tools.ts              # Experiment tool registrations
     └── ui.ts                 # Optional UI registration
 ```
 

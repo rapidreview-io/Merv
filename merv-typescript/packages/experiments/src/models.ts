@@ -1,5 +1,4 @@
 import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
-import type { SandboxComputeOutput } from '@merv/sandboxes/models';
 
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
 export type ExperimentTransitionName =
@@ -109,22 +108,7 @@ export interface Experiment {
   submissions: ExperimentSubmission[];
   reviewId: string | null;
   conclusion: string | null;
-  machines?: import('@merv/contracts/types').Json[];
   captureArtifactIds?: string[];
-  compute?: {
-    key: string;
-    runId: string;
-    attemptIndex: number;
-    state: string;
-    cost: unknown;
-    result?: unknown;
-    outputs?: SandboxComputeOutput[];
-    outputState?: string;
-    failureStage?: string;
-    reason?: string;
-    commit?: string;
-    artifactId?: string;
-  }[];
 }
 export interface ExperimentExhibit {
   experimentId: string;

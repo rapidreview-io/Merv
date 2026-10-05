@@ -8,7 +8,6 @@ import type {
   RunningNode,
   RunningPanelPart,
   Transaction,
-  WorkComputeAccess,
   WorkflowDecision,
   WorkflowDependency,
   WorkflowSnapshot,
@@ -47,8 +46,6 @@ export interface Task {
   /** The commit the current delivery names; the review pins its rendered record. */
   deliveryCode?: TaskDeliveryCode;
   deliveryCodeArtifactId?: string;
-  /** Recent compact managed GPU run summaries across work revisions, when ML is available. */
-  compute?: { key: string; runId: string; generation: number; state: string; cost: unknown }[];
 }
 /**
  * The commit a Git task delivered. The receipt stays resolvable through its ref, so the record
@@ -155,41 +152,7 @@ export interface ServiceTaskCreator {
     tx: Transaction,
   ): Promise<{ id: string }>;
 }
-export interface Tasks extends WorkComputeAccess {
-  computeOffers(caller: Caller): Promise<unknown>;
-  computeStatus(
-    caller: Caller,
-    taskId: string,
-    runId?: string,
-    generation?: number,
-  ): Promise<unknown>;
-  computeRun(
-    caller: Caller,
-    input: {
-      taskId: string;
-      expectedRevision: number;
-      key: string;
-      provider?: string;
-      offerId?: string;
-      rentalKey?: string;
-      purpose?: 'check';
-      command: string;
-      minutes: number;
-      maxUsd: number;
-      commandId?: string;
-      outputs?: { files: { name: string; path: string }[]; maxBytes: number };
-    },
-  ): Promise<unknown>;
-  computeCancel(caller: Caller, taskId: string, runId: string): Promise<unknown>;
-  computeLogs(caller: Caller, taskId: string, runId: string, generation?: number): Promise<unknown>;
-  computeOutput(
-    caller: Caller,
-    taskId: string,
-    runId: string,
-    name: string,
-    generation?: number,
-  ): Promise<unknown>;
-  computeTick(): Promise<void>;
+export interface Tasks {
   registerType(definition: ContextRecipeDefinition): Promise<() => void>;
   context(caller: Caller, input: TaskContext): Promise<ContextPackage>;
   checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint>;

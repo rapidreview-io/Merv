@@ -62,30 +62,17 @@ const pi = {
   PI_HOST_KEY: 'h'.repeat(43),
 };
 
-test('ML config renders only a valid consumer grant, switch-on time, and optional storage origin', (t) => {
-  const { run, plugin } = renderer(t);
-  assert.equal(run(connected).status, 0);
-  assert.equal(plugin('sandboxes').config.ml, undefined);
+test('the ML consumption grant renders nothing on its own: only managed native ML uses it', (t) => {
+  const { run, plugin, output } = renderer(t);
   const ml = {
     ...connected,
     MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
     MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_ml',
-    MERV_SANDBOXES_ML_SINCE: '2026-09-25T12:00:00+00:00',
-    MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'https://objects.example',
   };
   assert.equal(run(ml).status, 0);
-  assert.deepEqual(plugin('sandboxes').config.ml, {
-    namespace: 'merv-ml',
-    tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
-    since: ml.MERV_SANDBOXES_ML_SINCE,
-    storageOrigins: ['https://objects.example'],
-  });
-  for (const invalid of [
-    { MERV_SANDBOXES_ML_TOKEN: 'bad' },
-    { MERV_SANDBOXES_ML_SINCE: 'yesterday' },
-    { MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'http://objects.example' },
-  ])
-    assert.notEqual(run({ ...ml, ...invalid }).status, 0);
+  assert.equal(plugin('sandboxes').config.ml, undefined);
+  assert.equal(plugin('sandboxes').config.native, undefined);
+  assert.ok(!readFileSync(output, 'utf8').includes('merv-ml'));
 });
 
 test('native compute is opt-in and carries only credential names, preserving legacy connections', (t) => {
@@ -726,7 +713,6 @@ test('managed ML requires both native and ML configuration and never renders its
     MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
     MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
     MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_managed',
-    MERV_SANDBOXES_ML_SINCE: '2026-09-25T12:00:00+00:00',
   };
   assert.equal(run(settings).status, 0);
   assert.deepEqual(plugin('sandboxes').config.native.managed, {
@@ -737,6 +723,7 @@ test('managed ML requires both native and ML configuration and never renders its
   for (const invalid of [
     { MERV_SANDBOXES_NATIVE_ENABLED: 'false' },
     { MERV_SANDBOXES_ML_NAMESPACE: undefined },
+    { MERV_SANDBOXES_ML_NAMESPACE: 'Not A Namespace' },
     { MERV_SANDBOXES_ML_TOKEN: '' },
   ])
     assert.notEqual(run({ ...settings, ...invalid }).status, 0);

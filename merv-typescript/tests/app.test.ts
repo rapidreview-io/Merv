@@ -46,15 +46,13 @@ test('assembled Cordis application preserves current MCP task closure across two
       r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
-    assert.equal(catalog.length, 106);
+    assert.equal(catalog.length, 85);
     assert.equal(
       catalog.some((tool) => tool.name === 'code.backup.run'),
       false,
     );
     for (const name of [
       'system.status',
-      'task.compute_extend',
-      'compute.extend',
       'session.dispatch',
       'session.halt',
       'session.observe',

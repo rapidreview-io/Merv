@@ -350,8 +350,11 @@ freezes `references.code` to its head OID, with source/worker/revision provenanc
 in context. Later captures cannot substitute. An accepted result is recorded with Code as the
 unit's acceptance, so later work can take its base from it.
 
-The native Sandboxes contracts (36/40) run the same graph with Sandboxes' native
-work references and guidance in place of the rented-machine `compute.*` tools.
+Every new experiment uses the native Sandboxes contracts (36/40). They run the
+same graph; Sandboxes attaches native compute to each leased assignment
+([compute as an assignment capability](COMPUTE_CAPABILITY.md)). The older
+contracts (28/32) stay registered for live work, and their pinned grants of the
+retired `compute.*` tools grant nothing.
 Experiments does not publish code; Sessions/Runner still own process and checkout
 lifecycle. The seven-experiment cap does not implement the future reflection
 scheduler's reserved slots. Exact capture and compatibility details are in

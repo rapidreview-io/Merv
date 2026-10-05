@@ -1,8 +1,8 @@
 # Compute as an assignment capability
 
-Status: accepted by the owner on 2026-10-04. Phase 1 (the capability) is implemented; phase 2
-(removing the older path and the version changes below) is not. This page is the source of
-truth for the change. It decides two things:
+Status: accepted by the owner on 2026-10-04. Phase 1 (the capability) and phase 2 (removing the
+older path and the version changes below) are implemented; the release waits on the production
+reads under "Before release". This page is the source of truth for the change. It decides two things:
 
 - **The older Merv-side compute path is retired.** That path is the `task.compute_*` and
   `compute.*` tools, the `ManagedCompute` and `WorkMachines` ledgers, and the legacy
@@ -99,8 +99,8 @@ The capability ships before the older path is removed. What it settled:
 - `computeGuidance(profile)` returns the assignment overlay text (empty for `none`).
 - On the service: `ctx.sandboxes.captures(projectId, instanceId, tx)` returns the capture
   collections Sandboxes verified for an instance, and `[]` where native compute is not
-  configured. `ctx.sandboxes.nativeWork.connected(projectId, tx?)` remains only for the units'
-  version selection until phase 2.
+  configured. Phase 1 also kept `ctx.sandboxes.nativeWork.connected(projectId, tx?)` for the
+  units' version selection; phase 2 removed it.
 
 **Units:**
 
@@ -137,6 +137,33 @@ The capability ships before the older path is removed. What it settled:
   unconfirmed. Until it confirms, every other workflow is sent as `task`.
 - A pinned work whose connection was revoked while the project later connected a different
   account is refused at launch, as before. It is not moved to the new account.
+
+## Phase 2: the older path removed (implemented)
+
+- **Versions.** Tasks and Experiments create every new work item on the native contracts and no
+  longer ask Sandboxes whether the project is connected. The `task@31`/`35` and
+  `experiment@28`/`32` execution policies are unchanged byte for byte (they are fingerprinted),
+  so live work keeps its pinned grants; the tools those grants name are no longer registered.
+- **Briefs.** Every non-service assignment, on any registered version, carries
+  `computeGuidance(profile)`. The rental guidance, `GPU_WORK`, the planner's "Planning has no
+  compute.run" guidance and the "Current work machines" line are gone.
+- **Reads.** `task.get` and `experiment.get_state` no longer return `compute` or `machines`;
+  `captureArtifactIds` holds only the captures Sandboxes verified. The Running page no longer
+  draws GPU-run cards or the experiment sidebar's GPU runs table.
+- **Ledgers.** `managed_compute_runs` and `work_compute_machines` stay. Their published
+  migrations (`sandboxes-compute@1-2`, `sandboxes-work-machines@1`) are still registered,
+  unchanged, from `packages/sandboxes/src/compute-ledgers.ts`, which native Sandboxes runs at
+  startup; nothing reads or writes the tables. The startup copy of `experiment_compute_runs`
+  into `managed_compute_runs` is gone (production already holds its rows).
+- **Configuration.** The `ml` adapter configuration is gone from Sandboxes and from the
+  renderer, with `MERV_SANDBOXES_ML_SINCE` and `MERV_SANDBOXES_ML_STORAGE_ORIGIN`.
+  `MERV_SANDBOXES_ML_NAMESPACE` and `MERV_SANDBOXES_ML_TOKEN` remain: Merv-managed native ML
+  (`native.managed`) uses them, and the renderer now reads them only when
+  `MERV_SANDBOXES_MANAGED_ML_ENABLED` is set.
+- **Retained captures.** Capture collections the older path registered remain artifacts, but
+  their member files name the `sandboxes` file provider, which is no longer registered: their
+  manifests still read, and member downloads answer `download_unsupported`. The objects stay
+  retained in Sandboxes storage, so a read-only provider could be restored if they are needed.
 
 ## Versions
 
