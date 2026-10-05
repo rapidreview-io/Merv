@@ -117,6 +117,7 @@ async function status(t: TestContext) {
       register: (tool: { name: string; handler: typeof handler }) => {
         if (tool.name === 'system.status') handler = tool.handler;
       },
+      contributeInstructions: () => () => {},
     },
     effect: (register: () => unknown) => register(),
   } as unknown as Context);
