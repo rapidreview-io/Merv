@@ -763,10 +763,9 @@ export class LeasedSessions implements Sessions {
       'Session cannot select another worker',
       403,
     );
+    if (!live(session)) throw ended(session);
     check(
-      live(session) &&
-        session.expiresAt > isoNow(this.clock) &&
-        session.hardDeadline > isoNow(this.clock),
+      session.expiresAt > isoNow(this.clock) && session.hardDeadline > isoNow(this.clock),
       'session_closed',
       'Session is closed or expired',
       401,
