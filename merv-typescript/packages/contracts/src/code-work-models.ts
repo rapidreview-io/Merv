@@ -2,11 +2,40 @@ import type { CodeUnitPublication } from './code-work-publication-models.js';
 export type { CodeUnitPublication } from './code-work-publication-models.js';
 import type { CodeCaptureRef } from './code-models.js';
 import type { WorkflowProvidedBlockerInput, WorkflowProvidedBlocker } from './workflow-guidance.js';
-import type { CodeWorkStoreStatus } from './code-work-store.js';
 import type { CodeWriterState } from './code-units.js';
 import type { CodeProjectBinding } from './code.js';
 import type { CodePublication, CodePublicationControls } from './code-publication-models.js';
-import type { CodeStoreOperation, CodeMirrorStatus, CodeStoreWarning } from './code-store.js';
+import type {
+  CodeAdmissionLimits,
+  CodeStoreOperation,
+  CodeStoreStatus,
+  CodeMirrorStatus,
+  CodeStoreWarning,
+} from './code-store.js';
+
+/**
+ * The one command a project runs against a merged base, and the machine it runs in. The
+ * offer is named rather than described, because a floating market pick would make two runs
+ * of one base two environments and no receipt could say what the check ran in. Code Work
+ * owns the schema that parses it.
+ */
+export interface CodeCheckSpec {
+  command: string;
+  timeoutSeconds: number;
+  image: { provider: string; offerId: string; snapshotId: string | null };
+}
+export interface CodeStoreLimits extends CodeAdmissionLimits {
+  /**
+   * The project check, or null for none. The tag stays 1: an added field with a default is
+   * readable by the reader that was written for format 1, and every stored row reads back
+   * as no command configured, which is what those projects meant.
+   */
+  check: CodeCheckSpec | null;
+}
+/** Code Work exposes its check configuration alongside technical repository status. */
+export interface CodeWorkStoreStatus extends Omit<CodeStoreStatus, 'limits'> {
+  limits: CodeStoreLimits;
+}
 
 /**
  * What an owner plugin and Code say to each other about a unit of work. Nothing here names a

@@ -411,7 +411,7 @@ export class ReviewService implements Reviews {
     return await inTransaction(this.state, transaction, async (tx) => {
       check(!this.closed, 'review_owner_unavailable', 'Review routing is unavailable', 503);
       await this.scope.require(caller, 'review', tx);
-      const review = await freeze(await this.get(caller, input.reviewId, tx));
+      const review = freeze(await this.get(caller, input.reviewId, tx));
       const { owner, current } = await this.ownerOf(review, tx);
       const extra = Object.keys(input).find(
         (key) => !submitFields.has(key) && !owner.fields?.includes(key),
@@ -485,15 +485,6 @@ export class ReviewService implements Reviews {
     return await receipted(tx, caller, requestId, digest(input), fn, {
       table: 'review_commands',
       operation,
-      // Answers recorded before these fields existed replay with their defaults.
-      replay: (result) => ({
-        ...result,
-        administrativeActorId: result.administrativeActorId ?? result.producerId,
-        pinnedInputIds: result.pinnedInputIds ?? [],
-        synopsis: result.synopsis ?? null,
-        findings: result.findings ?? [],
-        evidence: result.evidence ?? {},
-      }),
     });
   }
 

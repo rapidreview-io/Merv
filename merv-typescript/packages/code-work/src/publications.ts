@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { CodeGitHubService } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
 import { migratePublications } from './publications-schema.js';
@@ -5,8 +6,6 @@ import {
   canonical,
   check,
   clip,
-  codePublicationIdSchema,
-  codePublicationMergeSchema,
   digest,
   MervError,
   newId,
@@ -15,8 +14,6 @@ import {
   sourceCaller,
   type Caller,
   type CodePublication,
-  type CodePublicationApi,
-  type CodePublicationMerge,
   type GitHubPullRequest,
   type Scope,
   type State,
@@ -27,6 +24,18 @@ import {
   PublicationIncident,
   type PublicationHost,
 } from './publication-host.js';
+import type { CodePublicationApi, CodePublicationMerge } from './types.js';
+
+const codePublicationIdSchema = z
+  .object({ proposalId: z.string().regex(/^codeprop_[A-Za-z0-9_-]+$/) })
+  .strict();
+export const codePublicationMergeSchema = codePublicationIdSchema
+  .extend({
+    expectedHead: z.string().regex(/^[0-9a-f]{40}$/),
+    expectedBase: z.string().regex(/^[0-9a-f]{40}$/),
+    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+  })
+  .strict() satisfies z.ZodType<CodePublicationMerge>;
 
 /** What an accepted unit hands the journal: its own facts, already verified where it was sealed. */
 export interface CodeUnitPublicationSeal {

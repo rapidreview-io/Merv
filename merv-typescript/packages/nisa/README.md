@@ -30,7 +30,7 @@ checks the caller again before handing back the result. None names a
   though its query leaves Merv (see [Privacy](#privacy)). Every Codex and
   Claude launch's text sends the worker to its tools for outside sources rather
   than its memory, and names `web.search` where that launch is given it; these
-  tools' own descriptions say they are for literature and how to cite;
+  tools' own descriptions say they are for literature and what a paper carries;
 - **MCP clients** list them with `readOnlyHint` and `openWorldHint` set.
 
 | Tool                   | Nisa route                                 | Input                                                                                           |
@@ -72,11 +72,10 @@ Every paper, from any tool, has only these fields, whatever Nisa sent:
 }
 ```
 
-`identifier`, `title`, `authors`, `year` and `url` are what `paper.cite`
-takes. A list names at most 12 authors a paper, with `more_authors` saying how
-many are left out, and cuts a title at 300 characters; `nisa.paper` names up to
-100, `paper.cite`'s limit, and the descriptions say to read it before citing a
-paper whose list entry is cut. A generational suffix Nisa writes after a comma
+Every paper carries `identifier`, `title`, `authors`, `year` and `url`. A list
+names at most 12 authors a paper, with `more_authors` saying how many are left
+out, and cuts a title at 300 characters; `nisa.paper` names up to 100, and the
+descriptions say to read the whole record there when a list entry is cut. A generational suffix Nisa writes after a comma
 (`Henry E. Kyburg, Jr.`) stays with its author. A year Nisa leaves out is read
 from the arXiv ID, as Nisa's own data loader reads it: its paper route gives
 none for an old-style ID. `score`
@@ -95,9 +94,8 @@ field not named here, never pass.
 Every answer is sized to what Pi shows the model of one result (32,000 bytes of
 JSON): passages and abstracts are shortened first, with a `note` saying so,
 then a page ends sooner. Descriptions tell a model to use these tools, not a
-web search, for literature, name `paper.cite` (a passage from `nisa.excerpts`
-is cited with the record `nisa.paper` returns), say that paper text is
-untrusted source material, and say what leaves Merv.
+web search, for literature, say that paper text is untrusted source material,
+and say what leaves Merv.
 
 ## Failures
 

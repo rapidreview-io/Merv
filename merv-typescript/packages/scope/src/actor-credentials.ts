@@ -296,7 +296,7 @@ export class ActorCredentials {
       check(result.changes === 1, 'credential_revoked', 'Credential was already revoked', 409);
       // Only a revocation counts here, never expiry: renewing an expired credential is intended.
       check(
-        (await this.ledger.retire('actor', previous, tx)).revokedAt === null,
+        (await this.ledger.retire('actor', previous, tx))?.revokedAt === null,
         'credential_revoked',
         'Credential was revoked in the credential ledger',
         409,

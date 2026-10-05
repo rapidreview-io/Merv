@@ -30,15 +30,11 @@ export {
 } from './outbound.js';
 export { sessionWorkspaceSchema, type CodePendingMerge } from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
-export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
-export type {
-  CodePublication,
-  CodePublicationMerge,
-  CodePublicationApi,
-} from './code-publications.js';
+export type { CodePublication } from './code-publication-models.js';
 export {
   CODE_BUNDLE_MAX_BYTES,
   CODE_PART_MAX_BYTES,
+  codeAdmissionConfigureInputSchema,
   codeAdmissionLimitsSchema,
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
@@ -68,17 +64,7 @@ export type {
   CodeUnitFenceInput,
   CodeMirrorRetryInput,
 } from './code-store.js';
-export type {
-  UiManifestRow,
-  UiCollectionSpec,
-  UiColumn,
-  UiPhrasePart,
-  UiLivenessSpec,
-  UiRecordSpec,
-  UiAction,
-  UiSection,
-  UiDetail,
-} from './ui-manifest.js';
+export type { UiManifestRow, UiCollectionSpec, UiRecordSpec } from './ui-manifest.js';
 export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
 export type * from './running.js';
@@ -136,6 +122,8 @@ export type {
   CodeBaseStatus,
   CodeUnit,
   CodeProjectStatus,
+  CodeCheckSpec,
+  CodeStoreLimits,
 } from './code-work-models.js';
 export type { CodeWriterState, CodeWriterStatus } from './code-units.js';
 export type {
@@ -386,7 +374,7 @@ export function parsed<T>(
   return result.data;
 }
 /** Where a domain keeps its receipts and how it compares and replays them; see receipted(). */
-export interface Receipt<T> {
+interface Receipt<T> {
   table: string;
   /** Column names; the defaults are actor_id, input_hash and result. */
   actor?: string;
@@ -837,7 +825,7 @@ export function checkReceipt<T extends { receipt: string }>(
   );
 }
 /** The columns every domain's lease table shares. */
-export interface LeaseRow {
+interface LeaseRow {
   id: string;
   project_id: string;
   actor_id: string;
@@ -944,7 +932,7 @@ export interface PluginStatus {
   missingDependencies: string[];
 }
 /** The composition root's plugin lifecycle report; every reader of plugin state shares it. */
-export interface Composition {
+interface Composition {
   status(): PluginStatus[];
 }
 export function eventSource(caller: Caller): Data {
@@ -2260,15 +2248,3 @@ export const delegationEnd = (source: DelegationSource): number =>
     : source.kind !== 'human' && source.expiresAt
       ? Date.parse(source.expiresAt)
       : Infinity;
-
-export {
-  CODE_CHECK_SOURCE_MAX_BYTES,
-  CODE_CHECK_SLACK_SECONDS,
-  codeCheckSpecSchema,
-  codeRepositoryConfigureInputSchema,
-} from './code-work-store.js';
-export type {
-  CodeCheckSpec,
-  CodeStoreLimits,
-  CodeRepositoryConfigureInput,
-} from './code-work-store.js';

@@ -223,4 +223,9 @@ BEGIN RAISE EXCEPTION USING MESSAGE='Pinned workflow contracts are immutable', E
 CREATE TRIGGER wf_definitions_pinned BEFORE UPDATE OR DELETE ON wf_definitions FOR EACH ROW EXECUTE FUNCTION wf_pinned_guard();
 CREATE TRIGGER wf_success_states_pinned BEFORE UPDATE OR DELETE ON wf_success_states FOR EACH ROW EXECUTE FUNCTION wf_pinned_guard();
 `,
+  // Drops the system-request table no code writes any more; production held no row of it.
+  10: `
+DROP TABLE wf_system_requests;
+DROP FUNCTION wf_system_requests_guard();
+`,
 };

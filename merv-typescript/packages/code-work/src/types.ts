@@ -9,10 +9,12 @@ import type {
   CodeLocalBindInput,
   CodeProjectBinding,
   CodeProjectStatus,
-  CodePublicationApi,
+  CodePublication,
+  CodeStoreLimits,
   CodeUnit,
   CodeUnitAcceptance,
   CodeUnitAcceptInput,
+  GitHubPullDetails,
   RunningMark,
   RunningNode,
   RunningPanelPart,
@@ -24,6 +26,24 @@ import type {
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
 import type {} from 'cordis';
+
+/** A project's check and admission lists, all restated on every call. */
+export type CodeRepositoryConfigureInput = Omit<CodeStoreLimits, 'format'> & { requestId: string };
+export interface CodePublicationMerge {
+  proposalId: string;
+  expectedHead: string;
+  expectedBase: string;
+  requestId: string;
+}
+export interface CodePublicationApi {
+  publications(caller: Caller): Promise<CodePublication[]>;
+  syncPublications(caller: Caller): Promise<CodePublication[]>;
+  publicationDetails(
+    caller: Caller,
+    proposalId: string,
+  ): Promise<{ publication: CodePublication; details: GitHubPullDetails | null }>;
+  mergePublication(caller: Caller, input: CodePublicationMerge): Promise<CodePublication>;
+}
 
 export interface CodeCommands {
   merge(
@@ -181,8 +201,8 @@ export interface CodeRepositoryControls {
   ): Promise<import('@merv/contracts').CodeStoreOperation>;
   configureRepository(
     caller: Caller,
-    input: import('@merv/contracts').CodeRepositoryConfigureInput,
-  ): Promise<import('@merv/contracts').CodeStoreLimits>;
+    input: CodeRepositoryConfigureInput,
+  ): Promise<CodeStoreLimits>;
   fenceUnit(
     caller: Caller,
     input: import('@merv/contracts').CodeUnitFenceInput,

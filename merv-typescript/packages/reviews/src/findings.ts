@@ -10,7 +10,7 @@ import {
 } from '@merv/contracts';
 
 /** Keep structured observations finite and portable before command hashing or persistence. */
-export function validateEvidence(value: unknown): Data {
+function validateEvidence(value: unknown): Data {
   if (value === undefined) return {};
   check(
     value && typeof value === 'object' && !nodeTypes.isProxy(value) && !Array.isArray(value),

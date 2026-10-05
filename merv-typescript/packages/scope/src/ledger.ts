@@ -55,27 +55,21 @@ export class Ledger {
     return credential;
   }
 
-  /** Revokes a Scope credential in the ledger. Every Scope row is issued through the ledger and no
-   * boot pass adopts rows any more, so a row missing from the ledger never authenticates; retire
-   * still adopts first so the revocation is recorded even for such a row (revoke alone ignores an
-   * unknown hash) and so it can return the ledger row as it was BEFORE this revocation, which
-   * rotation checks. adopt is idempotent on the hash and refuses one another authority holds
-   * (409); revoke keeps an earlier revocation. */
+  /** Revokes a Scope credential in the ledger and returns its ledger row as it was BEFORE this
+   * revocation, which rotation checks; undefined when the ledger holds no row for it, which then
+   * never authenticates. A hash another authority holds is refused (409); revoke keeps an
+   * earlier revocation. */
   async retire(
     kind: LedgerKind,
-    row: { id: string; token_hash: string; expires_at: string | null },
+    row: { id: string; token_hash: string },
     tx: Transaction,
-  ): Promise<Credential> {
-    const before = await this.store.adopt(
-      {
-        owner: 'scope',
-        subject: row.id,
-        kind,
-        tokenHash: row.token_hash,
-        expiresAt: row.expires_at,
-        hardDeadline: row.expires_at,
-      },
-      tx,
+  ): Promise<Credential | undefined> {
+    const before = await this.store.read(row.token_hash, tx);
+    check(
+      !before || (before.owner === 'scope' && before.subject === row.id && before.kind === kind),
+      'credential_conflict',
+      'Credential token belongs to another authority',
+      409,
     );
     await this.store.revoke(row.token_hash, 'scope', tx);
     return before;

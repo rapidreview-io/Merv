@@ -1,15 +1,12 @@
-import { initializeCheckConfiguration, projectCheck } from './check-configuration.js';
+import {
+  CODE_CHECK_SLACK_SECONDS,
+  codeCheckSpecSchema,
+  initializeCheckConfiguration,
+  projectCheck,
+} from './check-configuration.js';
 import { migrateBases } from './base-schema.js';
 import { OperationJournal } from '@merv/code/operation-journal';
-import {
-  canonical,
-  check,
-  codeCheckSpecSchema,
-  digest,
-  newId,
-  CODE_CHECK_SLACK_SECONDS,
-  MervError,
-} from '@merv/contracts';
+import { canonical, check, digest, newId, MervError } from '@merv/contracts';
 import type {
   CodeBaseCheck,
   CodeBaseCheckState,

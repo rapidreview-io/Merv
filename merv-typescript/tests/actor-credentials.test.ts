@@ -1092,15 +1092,16 @@ test('the expiry rule reads no more rows: revocation costs the same and self iss
   // 10 and 15 statements for self issuance and self rotation, and as many as now for the rest.
   // The totals count every statement, BEGIN and COMMIT included, so a change to how State runs a
   // transaction or to what authorize, the ledger or the event log write moves them all alike.
+  // A revocation reads its ledger row once rather than adopting it (an insert, then a read).
   assert.deepEqual(
     { issueSelf, rotateSelf, issueOther, rotateOther, create, revoke, revokeActor },
     {
       issueSelf: 9,
-      rotateSelf: 14,
+      rotateSelf: 13,
       issueOther: 9,
-      rotateOther: 14,
+      rotateOther: 13,
       create: 9,
-      revoke: 12,
+      revoke: 11,
       revokeActor: 8,
     },
   );

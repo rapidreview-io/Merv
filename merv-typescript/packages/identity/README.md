@@ -52,13 +52,13 @@ Ownership rules:
 
 `revoke` is idempotent and keeps the first revocation time; it also revokes an
 expired row, and a hash that was never issued or adopted returns `undefined`.
+`read` returns a hash's row, live or not, so an owner can see what it revokes.
 
 The ledger alone decides whether a hash can authenticate: a hash an owner's own
 tables hold but the ledger does not never authenticates, and no boot pass adopts
 such hashes (the Scope and Sessions boot loops were removed in Identity R2, after
 production showed none were left to adopt). `adopt` remains for owners that derive
-a token themselves (Pi) and for Scope's `retire`, which records a revocation even
-for a row the ledger lacks. It inserts a row if it is absent and returns the stored
+a token themselves (Pi). It inserts a row if it is absent and returns the stored
 row; for an existing row it changes nothing, so it never revokes, extends, revives or
 re-owns a credential, and a mismatched owner, subject or kind is refused with 409.
 Revocation goes through `revoke`. Scope keys adopted earlier kept their existing
