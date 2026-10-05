@@ -4,6 +4,7 @@ export {
   changesSchema as paperChangesSchema,
 } from './paper-edit.js';
 export { mapAsync, filterAsync, someAsync, everyAsync } from './async.js';
+export { CheckedTransitions } from './checked-transitions.js';
 import type { ToolPolicy } from './tool-policy.js';
 export type {
   ToolPolicy,

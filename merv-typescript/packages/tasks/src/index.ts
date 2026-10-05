@@ -1,6 +1,7 @@
 import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import {
   check,
+  CheckedTransitions,
   checkReceipt,
   childRequest,
   clip,
@@ -333,7 +334,7 @@ export class TaskService implements Tasks {
   private releaseReviewOwner?: () => void;
   private registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   /** Guards a command has run itself, by the transition it is making in that transaction. */
-  private checking = new WeakMap<Transaction, Map<string, unknown>>();
+  private checked = new CheckedTransitions();
   private types = new Map<
     string,
     { definition: ContextRecipeDefinition; context: ContextRegistration }
@@ -875,7 +876,7 @@ export class TaskService implements Tasks {
           requiredInput: ['artifactIds', 'commandId', 'confirmations'],
           arguments: taskArguments,
           check: async (context) => {
-            if (!this.checked(context)) await this.checkDelivery(context);
+            if (!this.checked.found(context)) await this.checkDelivery(context);
           },
         },
         {
@@ -951,7 +952,7 @@ export class TaskService implements Tasks {
             ? 'Suspend this service task with a specific reason. Its evidence and waiters are retained; a human operator can extend review_rounds to resume the same task.'
             : 'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
           check: async (context) => {
-            if (!this.checked(context)) await this.checkFailure(context);
+            if (!this.checked.found(context)) await this.checkFailure(context);
           },
         },
       ],
@@ -1001,7 +1002,7 @@ export class TaskService implements Tasks {
 
   private async checkTaskReview(context: WorkflowCheckContext): Promise<void> {
     // The command making this transition has checked the review and routed the verdict itself.
-    const checked = this.checked<ReviewRequest>(context);
+    const checked = this.checked.found<ReviewRequest>(context)?.value;
     let review = checked;
     if (!review) {
       await this.scope.require(context.caller, 'review', context.tx);
@@ -2795,24 +2796,19 @@ export class TaskService implements Tasks {
     tx: Transaction,
     checked?: unknown,
   ): Promise<WorkflowSnapshot> {
-    const key = `${current.id}@${current.revision}:${transition.action}`;
-    const pending = this.checking.get(tx) ?? new Map<string, unknown>();
-    if (checked !== undefined) this.checking.set(tx, pending.set(key, checked));
-    const moved = await this.registration(current.version)
-      .transition(
-        caller,
-        { instanceId: current.id, expectedRevision: current.revision, ...transition },
-        tx,
-      )
-      .finally(() => pending.delete(key));
+    const moved = await this.checked.take(
+      tx,
+      { instanceId: current.id, revision: current.revision, action: transition.action },
+      () =>
+        this.registration(current.version).transition(
+          caller,
+          { instanceId: current.id, expectedRevision: current.revision, ...transition },
+          tx,
+        ),
+      checked,
+    );
     await this.nativeTransition(caller, moved, tx);
     return moved;
-  }
-
-  /** What the command making this transition found when it ran the action's guard itself. */
-  private checked<T>({ snapshot, transition, tx }: WorkflowCheckContext): T | undefined {
-    return this.checking.get(tx)?.get(`${snapshot.id}@${snapshot.revision}:${transition}`) as
-      T | undefined;
   }
 
   async markFailed(

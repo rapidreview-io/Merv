@@ -12,6 +12,7 @@ import { checkReceipt, grant, literal, reference, target } from '@merv/contracts
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
+  CheckedTransitions,
   digest,
   reviewHistory,
   type Artifact,
@@ -336,9 +337,6 @@ const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
  * dropped whole when it does not fit, so the history stays small beside the latest reviews.
  */
 const REVIEW_HISTORY_CHARS = 8000;
-/** Names one owner edge from one exact revision. */
-const edgeKey = (snapshot: { id: string; revision: number }, action: string) =>
-  `${snapshot.id}@${snapshot.revision}:${action}`;
 
 function execution(state: ActiveState, version: number): WorkflowExecutionPolicy {
   const experiment = { experimentId: target('instanceId') };
@@ -448,7 +446,7 @@ export abstract class ExperimentProgram {
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<ActiveState, ContextRegistration>();
   /** The owner edge each transaction's command is taking after running its exit checks itself. */
-  private checked = new WeakMap<Transaction, string>();
+  private checked = new CheckedTransitions();
 
   constructor(
     protected readonly state: State,
@@ -519,16 +517,17 @@ export abstract class ExperimentProgram {
     transition: Omit<WorkflowTransition, 'instanceId'>,
     tx: Transaction,
   ) {
-    this.checked.set(tx, edgeKey(experiment.workflow, transition.action));
-    try {
-      return await this.handleFor(experiment.workflow.version).transition(
-        caller,
-        { instanceId: experiment.id, ...transition },
-        tx,
-      );
-    } finally {
-      this.checked.delete(tx);
-    }
+    const { id, revision, version } = experiment.workflow;
+    return await this.checked.take(
+      tx,
+      { instanceId: id, revision, action: transition.action },
+      () =>
+        this.handleFor(version).transition(
+          caller,
+          { instanceId: experiment.id, ...transition },
+          tx,
+        ),
+    );
   }
 
   protected requireNativeWork(): NativeSandboxWork {
@@ -1520,8 +1519,7 @@ export abstract class ExperimentProgram {
         transition: name,
       }),
       check: async (context: WorkflowCheckContext) => {
-        if (this.checked.get(context.tx) !== edgeKey(context.snapshot, name))
-          await this.checkAction({ ...context, transition: name });
+        if (!this.checked.found(context)) await this.checkAction({ ...context, transition: name });
       },
     });
     const lease = this.leaseHooks();
