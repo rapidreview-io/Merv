@@ -5,6 +5,7 @@ import type {
   PaperKind,
   PaperRevision,
   PaperPatch,
+  PaperChanges,
   PaperCite,
   PaperCitation,
   PaperReview,
@@ -40,6 +41,8 @@ export interface Paper {
   cite(caller: Caller, input: PaperCite, tx?: Transaction): Promise<PaperCitation>;
   /** The owner verifies the review; paper edits and verdict commit or roll back together. */
   applyReview(caller: Caller, input: PaperReview, tx: Transaction): Promise<PaperPublication[]>;
+  /** Reviewer paper changes as a review submission carries them, parsed (invalid_input). */
+  parseChanges(value: unknown): PaperChanges;
   /** Validate reviewer edits against the current paper without writing. */
   checkReview(caller: Caller, input: PaperReview, tx: Transaction): Promise<unknown>;
   /**

@@ -817,72 +817,39 @@ test('a Fleet halt the person runs from a proposal is recorded as theirs', async
   assert.equal(halted.at(-1)?.data.intent, 'stop');
 });
 
-test('each turn says whom the agent serves, where, on what, what the project lacks, and what a stopped answer made; its person can read it back', async (t) => {
+test('each turn says whom the agent serves, where, on what, what the project holds now, and what a stopped answer made; its person can read it back', async (t) => {
   const f = await fixture(t);
   probes(f, t);
+  // What the installed plugins say of the project rides with the turn, under the worker's cap; a
+  // reader that fails is left out.
+  t.after(f.tools.contributeContext(async () => 'Project paper: goals A model'));
+  t.after(f.tools.contributeContext(async () => 'x'.repeat(40_000)));
   t.after(
-    f.tools.register({
-      name: 'paper.read',
-      description: 'Read the paper',
-      readOnly: true,
-      inputSchema: z.object({ kind: z.string().optional() }).strict(),
-      handler: () => ({
-        documents: {
-          problem: {
-            current: {
-              revision: 7,
-              sections: [
-                { id: 'problem', content: 'Why proteins misfold' + '\0'.repeat(5_000) },
-                { id: 'scope', content: '  ' },
-                { id: 'goals', content: 'A model' + '\0'.repeat(5_000) },
-                { id: 'constraints', content: 'None' + '\0'.repeat(5_000) },
-              ],
-            },
-            published: null,
-          },
-          literature: {
-            current: {
-              revision: 3,
-              sections: [
-                { id: 'prior', content: 'Prior evidence ' + 'x'.repeat(15_000) },
-                ...Array.from({ length: 250 }, (_, index) => ({
-                  id: `section-${index}`,
-                  title: 'Long section title '.repeat(10),
-                  content: 'Evidence',
-                })),
-              ],
-            },
-            published: null,
-          },
-        },
-      }),
+    f.tools.contributeContext(async () => {
+      throw new Error('unavailable');
     }),
   );
   const { all, project } = await sources(f);
   const producer = all.find(({ kind, role }) => kind === 'human' && role === 'producer')!.caller;
   const reviewer = all.find(({ kind, role }) => kind === 'human' && role === 'reviewer')!.caller;
   const first = await f.begun(producer);
-  assert.deepEqual(first.work.notes.slice(0, 4), [
+  assert.deepEqual(first.work.notes.slice(0, 3), [
     'Model: you are GPT-6 Luna (gpt-6-luna). Earlier answers in this conversation may come from other models the person picked; if asked which model you are, say GPT-6 Luna.',
     `You serve ${producer.actorId}, a producer in project ${project.id}: they, and so you, can read everything and create and change work, but not review it or administer the project. actor.whoami and project.get name them.`,
     'Today is 2026-09-23 (UTC).',
-    'Empty Problem sections: scope.',
   ]);
-  assert.match(first.work.notes[4], /^Machine: Standard/);
+  assert.match(first.work.notes[3], /^Machine: Standard/);
   assert.match(first.work.instructions!, /^You are this person's own agent in Merv/);
   assert.match(first.work.instructions!, /never call yourself ChatGPT/);
-  assert.match(first.work.projectPaper!, /"revision":7/);
-  assert.match(first.work.projectPaper!, /A model/);
-  assert.match(first.work.projectPaper!, /read with paper.read/);
-  assert.ok(first.work.projectPaper!.length < 32_000);
-  assert.match(first.work.projectPaper!, /251 sections omitted/);
+  assert.ok(first.work.context!.startsWith('Project paper: goals A model\n\nxxx'));
+  assert.equal(first.work.context!.length, 32_000);
   // What the turn was given is what its person reads back.
   const id = first.input.conversationId;
   const given = await f.pi.prompt(producer, id);
   assert.equal(given.instructions, first.work.instructions);
   assert.equal(given.turn?.commandId, first.input.commandId);
   assert.deepEqual(given.turn?.notes, first.work.notes);
-  assert.equal(given.turn?.projectPaper, first.work.projectPaper);
+  assert.equal(given.turn?.context, first.work.context);
   // The stored list leads with switch_machine; the worker's ends with it.
   assert.deepEqual([...given.turn!.tools].sort(), first.work.tools.map(({ name }) => name).sort());
   // The agent writes, then its answer is stopped: the next turn says what it had made.
@@ -891,19 +858,14 @@ test('each turn says whom the agent serves, where, on what, what the project lac
   await f.pi.send(producer, first.input.conversationId, { commandId: 'again', text: 'Go on' });
   const { work } = await f.pi.next(first.token, { workerId: 'worker_1' });
   assert.equal(
-    work!.notes[4],
+    work!.notes[3],
     'Your previous answer here stopped before it finished, after it had made: probe.write probe',
   );
   assert.equal(work!.instructions, first.work.instructions);
   // The latest turn is the one read back; nobody else can read this conversation's.
   assert.deepEqual((await f.pi.prompt(producer, id)).turn?.notes, work!.notes);
   await assert.rejects(f.pi.prompt(reviewer, id), { code: 'pi_not_found' });
-  // A reviewer writes no paper: no Problem line.
   const other = await f.begun(reviewer);
-  assert.deepEqual(
-    other.work.notes.filter((note) => /Problem|Introduction/.test(note)),
-    [],
-  );
   assert.match(other.work.notes[1], /a reviewer in project/);
 });
 
@@ -930,7 +892,13 @@ test('recoverable tool failures and oversized results come back to the model as 
           offset: 100,
           total: content.length,
         }
-      : { artifact: { id: 'art_bin' }, content: 'AAAA'.repeat(10), encoding: 'base64' };
+      : {
+          artifact: { id: 'art_bin' },
+          content: 'AAAA'.repeat(10),
+          encoding: 'base64',
+          offset: 0,
+          total: 40,
+        };
   });
   const tasks = (count: number, goal?: string) =>
     Array.from({ length: count }, (_, index) => ({
@@ -977,6 +945,8 @@ test('recoverable tool failures and oversized results come back to the model as 
   assert.deepEqual(await call('artifact.read', { artifactId: 'art_bin' }), {
     artifact: { id: 'art_bin' },
     encoding: 'base64',
+    offset: 0,
+    total: 40,
     note: 'Binary content (30 bytes) is not shown',
   });
   // 340 records come back as an index of every one; more than that fits keeps the newest.
@@ -984,7 +954,10 @@ test('recoverable tool failures and oversized results come back to the model as 
     index: { tasks: { id: string; goal: string; deliverables?: unknown }[] };
     note: string;
   };
-  assert.equal(listed.note, 'Shown as an index: read one record with its get tool');
+  assert.equal(
+    listed.note,
+    'Shown as an index: read one record with its get tool, or one part with a narrower task.list call',
+  );
   assert.deepEqual(
     listed.index.tasks.map(({ id }) => id),
     tasks(340).map(({ id }) => id),
@@ -998,7 +971,7 @@ test('recoverable tool failures and oversized results come back to the model as 
   assert.deepEqual(newest.index.tasks[0].id, 'task_0');
   assert.equal(
     newest.note,
-    `Shown as an index: read one record with its get tool. tasks: ${shown} of 2000 shown, newest`,
+    `Shown as an index: read one record with its get tool, or one part with a narrower task.list call. tasks: ${shown} of 2000 shown, newest`,
   );
   const partial = (await call('project.records')) as { partial: string; truncated: string };
   assert.ok(bytes(partial) <= 32_000 && partial.partial.startsWith('{"note":"xxx'));

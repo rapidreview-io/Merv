@@ -82,7 +82,7 @@ async function fixture(
     globalFetch?: typeof fetch;
     cutOff?: boolean;
     model?: string;
-    projectPaper?: string;
+    context?: string;
     toolFailures?: number[];
     toolResult?: unknown;
     progressFailures?: number[];
@@ -258,7 +258,7 @@ async function fixture(
           tools: [tool],
           notes: [],
           instructions: 'You are a test agent.',
-          ...(options.projectPaper === undefined ? {} : { projectPaper: options.projectPaper }),
+          ...(options.context === undefined ? {} : { context: options.context }),
         };
         return json({ work });
       }
@@ -426,7 +426,7 @@ test('model stream uses only the supplied relay transport, never ambient fetch',
   assert.equal(app.modelRequests.length, 1);
 });
 
-test('project paper travels as labeled user-level source, outside trusted system instructions', async () => {
+test('project context travels as labeled user-level source, outside trusted system instructions', async () => {
   const source = JSON.stringify({
     documents: {
       problem: {
@@ -434,7 +434,7 @@ test('project paper travels as labeled user-level source, outside trusted system
       },
     },
   });
-  const app = await fixture({ projectPaper: source, turns: 2 });
+  const app = await fixture({ context: source, turns: 2 });
   await app.run();
   // Each turn's requests carry the snapshot once; the history and checkpoint never hold it.
   const later = JSON.stringify(app.modelRequests[1]);
@@ -446,7 +446,7 @@ test('project paper travels as labeled user-level source, outside trusted system
   const system = input.filter(({ role }) => role === 'system');
   const user = input.filter(({ role }) => role === 'user');
   assert.ok(!JSON.stringify(system).includes('Recover target effect'));
-  assert.match(JSON.stringify(user), /Project paper snapshot for this project/);
+  assert.match(JSON.stringify(user), /Project context for this turn/);
   assert.match(JSON.stringify(user), /Recover target effect/);
   assert.match(JSON.stringify(user), /Question 1/);
 });

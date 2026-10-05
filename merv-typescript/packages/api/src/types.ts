@@ -126,6 +126,12 @@ export interface Tools {
   contributeInstructions(text: string): () => void;
   /** The contributed parts in contribution order, joined by blank lines; empty without any. */
   instructions(): string;
+  /** Adds a reader of what a main agent's turn is told about the project as it is now: source
+   *  material beside the person's message (Pi's turn context), never instructions. */
+  contributeContext(read: (caller: Caller) => Promise<string | undefined>): () => void;
+  /** Each reader's text for this caller in contribution order, joined by blank lines; a reader
+   *  that fails or has nothing to say is left out. */
+  context(caller: Caller): Promise<string>;
 }
 declare module 'cordis' {
   interface Context {

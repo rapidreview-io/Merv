@@ -101,7 +101,10 @@ export interface PiCommandRecord extends PiCommand {
   /** The lines this turn appended to the agent's instructions (turnNotes, then its machine's),
    * fixed at its first serve like tools. Absent for a turn served before they were kept. */
   notes?: string[];
-  /** Project paper snapshot fixed when this turn was first served. Source material, not instructions. */
+  /** The project context (Tools.context) fixed when this turn was first served. Source material,
+   * not instructions. */
+  context?: string;
+  /** What a turn served before context was generic kept as its paper; never served again. */
   projectPaper?: string;
   /** Its first tool call, recorded before the call runs: from then it never starts again. */
   calledAt?: string;
@@ -325,10 +328,11 @@ export interface PiWork {
    * result always shown whole. Absent (an older Main) is a read. */
   tools: { name: string; description: string; inputSchema: Data; readOnly?: boolean }[];
   /** At most 8 lines of at most 300 characters the worker appends to this turn's system prompt:
-   * who the agent serves, today and its model, what the project lacks, its machine. */
+   * who the agent serves, today and its model, its machine. */
   notes: string[];
-  /** Bounded project paper source with current/published revision labels. */
-  projectPaper?: string;
+  /** At most 32,000 characters the installed plugins tell this turn about the project, which the
+   * worker sends beside the person's message as source material, never instructions. */
+  context?: string;
   /** The agent's instructions (at most 32,000 characters), the same on every turn. */
   instructions: string;
 }
@@ -368,7 +372,7 @@ export interface PiCompletion {
  * the latest turn's appended notes and offered tools exactly as that turn was served. */
 export interface PiPrompt {
   instructions: string;
-  turn: { commandId: string; notes: string[]; tools: string[]; projectPaper?: string } | null;
+  turn: { commandId: string; notes: string[]; tools: string[]; context?: string } | null;
 }
 export interface Pi {
   create(caller: Caller, input: unknown): Promise<PiConversation>;

@@ -93,6 +93,7 @@ export class ToolRegistry implements Tools {
   private sessions?: SessionRegistration;
   private readonly callerRules = new Map<CallerKind, CallerRules>();
   private readonly guide: { text: string }[] = [];
+  private readonly readers: { read: (caller: Caller) => Promise<string | undefined> }[] = [];
   private stopping = false;
 
   constructor(
@@ -336,6 +337,22 @@ export class ToolRegistry implements Tools {
 
   instructions(): string {
     return this.guide.map(({ text }) => text).join('\n\n');
+  }
+
+  contributeContext(read: (caller: Caller) => Promise<string | undefined>): () => void {
+    const part = { read };
+    this.readers.push(part);
+    return () => {
+      const index = this.readers.indexOf(part);
+      if (index >= 0) this.readers.splice(index, 1);
+    };
+  }
+
+  async context(caller: Caller): Promise<string> {
+    const parts = await Promise.all(
+      this.readers.map(({ read }) => read(caller).catch(() => undefined)),
+    );
+    return parts.filter(Boolean).join('\n\n');
   }
 
   /** The rules of the plugin that issued this caller, if any; fails closed without them. */

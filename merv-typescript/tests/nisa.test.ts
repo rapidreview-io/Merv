@@ -152,7 +152,7 @@ function registry(t: TestContext, service: NisaService) {
   return tools;
 }
 
-test('a keyword search reaches Nisa as its CLI sends it, never enriched, and answers what paper.cite takes', async (t) => {
+test('a keyword search reaches Nisa as its CLI sends it, never enriched, and answers what a citation takes', async (t) => {
   const fake = await nisa(t);
   const service = new NisaService({ keyEnv: keyEnv(t, key), origin: fake.origin });
   const tools = registry(t, service);
@@ -297,7 +297,7 @@ test('semantic search, a paper, its passages and related papers each call their 
     [fake.seen.at(-1)!.method, fake.seen.at(-1)!.path, fake.seen.at(-1)!.headers.authorization],
     ['GET', '/api/sdk/paper/2303.08774', `Bearer ${key}`],
   );
-  // A record names up to 100 authors, which paper.cite takes, and says how many are left out.
+  // A record names up to 100 authors, as a citation takes them, and says how many are left out.
   assert.equal(record.authors.length, 100);
   assert.equal(record.more_authors, 50);
   assert.deepEqual(
@@ -596,7 +596,7 @@ test('a generational suffix stays with its author, and a year Nisa leaves out co
     record = { ...paperRecord, arxiv_id, ...fields };
     return (await tools.call('nisa.paper', caller, { arxiv_id })) as NisaPaper;
   };
-  // Nisa's author lists write "Henry E. Kyburg, Jr.": paper.cite would take "Jr." for an author.
+  // Nisa's author lists write "Henry E. Kyburg, Jr.": a citation would take "Jr." for an author.
   assert.deepEqual(
     (await read('1301.6713', { authors: 'Henry E. Kyburg, Jr., Charles Lee Isbell, Jr, Ada, III' }))
       .authors,
@@ -699,7 +699,7 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
   for (const name of ['nisa.search', 'nisa.semantic_search'])
     assert.match(
       described(name),
-      /^Search scholarly papers \(arXiv\).*Use this, not a web search, for literature.*paper\.cite.*more_authors.*nisa\.paper before citing/,
+      /^Search scholarly papers \(arXiv\).*Use this, not a web search, for literature.*identifier \(arxiv:…\), title, authors, year and url.*more_authors.*nisa\.paper reads the whole record/,
     );
   // What a model sends leaves Merv, as web.search says of its own queries.
   for (const name of ['nisa.search', 'nisa.semantic_search', 'nisa.excerpts'])
@@ -708,8 +708,10 @@ test('nisa tools are open-world reads, taken by the relay, run without a snapsho
       /leaves Merv for Nisa.*never put unpublished project text, credentials or signed links in it/,
     );
   assert.match(described('nisa.semantic_search'), /the provider that embeds it/);
-  // A passage carries no title or authors: its citation comes from the paper's record.
-  assert.match(described('nisa.excerpts'), /paper\.cite with the record nisa\.paper returns/);
+  // A passage carries no title or authors: the paper's record does.
+  assert.match(described('nisa.excerpts'), /nisa\.paper reads the paper's record/);
+  // Naming a citation is Paper's to say, not a literature search's.
+  for (const { description } of definitions) assert.doesNotMatch(description, /paper\.cite/);
   assert.match(described('nisa.related'), /nisa_no_related/);
   // Nisa filters authors by whole words in one search and by substring in the other.
   const author = (name: string) =>

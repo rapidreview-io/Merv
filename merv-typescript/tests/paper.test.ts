@@ -9,6 +9,7 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { PaperService } from '@merv/paper';
+import { introductionFrom } from '@merv/paper/introduction';
 import { MervError, type Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 const hasCode = (code: string) => (error: unknown) =>
@@ -449,4 +450,70 @@ test('context sections list every written current and published section whole, i
   const copy = structuredClone(documents);
   f.paper.contextSections(documents);
   assert.deepEqual(documents, copy);
+});
+
+test('a Problem patch writes the Introduction from it, replacing what was there', async (t) => {
+  const f = await fixture(t);
+  const before = await f.scope.project(f.operator);
+  await f.scope.updateProjectContext(f.operator, {
+    summary: 'A note written by hand.',
+    expectedSummary: before.summary ?? '',
+    requestId: f.request(),
+  });
+  const patch = async (changes: { id: string; content: string }[]) =>
+    await f.paper.patch(f.producer, {
+      kind: 'problem',
+      expectedRevision: (await f.paper.read(f.producer)).documents.problem.current.revision,
+      requestId: f.request(),
+      changes,
+    });
+  // An empty Problem says nothing, so the hand-written Introduction stays.
+  await patch([{ id: 'scope', content: '  ' }]);
+  assert.equal((await f.scope.project(f.operator)).summary, 'A note written by hand.');
+  await patch([
+    { id: 'problem', content: 'Can this comparison be evaluated reliably?' },
+    { id: 'goals', content: 'Retain independently verified evidence.' },
+  ]);
+  assert.equal(
+    (await f.scope.project(f.operator)).summary,
+    '## Problem\n\nCan this comparison be evaluated reliably?\n\n## Goals\n\nRetain independently verified evidence.',
+  );
+  await patch([
+    { id: 'scope', content: 'A bounded local comparison.' },
+    { id: 'constraints', content: 'Use only the frozen available corpus.' },
+  ]);
+  const project = await f.scope.project(f.operator);
+  assert.equal(
+    project.summary,
+    [
+      '## Problem\n\nCan this comparison be evaluated reliably?',
+      '## Scope\n\nA bounded local comparison.',
+      '## Goals\n\nRetain independently verified evidence.',
+      '## Constraints\n\nUse only the frozen available corpus.',
+    ].join('\n\n'),
+  );
+  assert.equal(project.contextRevision, before.contextRevision! + 3);
+  // A patch that says the same thing, and any other document, leaves it and its revision alone.
+  await patch([{ id: 'goals', content: 'Retain independently verified evidence.' }]);
+  await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'm', title: 'M', content: 'Method' }],
+  });
+  assert.equal((await f.scope.project(f.operator)).contextRevision, project.contextRevision);
+});
+
+test('the Introduction written from a long Problem is cut to fit and says so', () => {
+  const long = { id: 'problem', title: 'Problem', content: 'é'.repeat(20_000) };
+  const text = introductionFrom({
+    sections: [
+      long,
+      { id: 'literature', title: 'Literature', content: 'Not part of the Problem.' },
+    ],
+  });
+  assert.ok(Buffer.byteLength(text, 'utf8') <= 16_000);
+  assert.ok(text.startsWith('## Problem\n\né'));
+  assert.match(text, /paper\.read returns the whole Problem\.\]$/);
+  assert.ok(!text.includes('Literature'));
 });

@@ -8,4 +8,3 @@ export type { CodeUnitPublication } from './code-work-publication-models.js';
 export type * from './github-models.js';
 export type { CodePublication } from './code-publication-models.js';
 export type Verdict = 'pass' | 'needs_changes' | 'fail';
-export type { PaperPatch, PaperChanges } from './paper-models.js';

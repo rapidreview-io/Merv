@@ -11,7 +11,7 @@ import {
 import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { executionOutputs, getArtifacts, keyId, keyKind } from '@merv/contracts';
-import { CheckedTransitions, paperChangesSchema, parsed } from '@merv/contracts';
+import { CheckedTransitions } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -1535,7 +1535,7 @@ export class ReflectionService implements Reflections {
     if (input.paperChanges !== undefined)
       input = {
         ...input,
-        paperChanges: parsed(paperChangesSchema, input.paperChanges, 'invalid_input'),
+        paperChanges: this.paper.parseChanges(input.paperChanges),
       };
     return await this.command(caller, 'review', input, tx, async () => {
       const review = await this.reviews.get(caller, input.reviewId, tx);

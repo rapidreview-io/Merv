@@ -60,7 +60,7 @@ export interface NisaRelatedInput {
 }
 
 /** One paper as every Nisa tool answers it: only these fields, whatever Nisa sent. identifier,
- * title, authors, year and url are what paper.cite takes. */
+ * title, authors, year and url name it as a citation does. */
 export interface NisaPaper {
   /** arxiv:<arxiv_id>. */
   identifier: string;

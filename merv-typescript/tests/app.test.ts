@@ -272,7 +272,7 @@ test('a paper too long to show the agent whole reads on section by section', asy
     assert.equal(document.index!.current.sections[0].content.length, 301);
     assert.equal(
       document.note,
-      'Shown as an index: read one section with paper.read, its kind and section id',
+      'Shown as an index: read one record with its get tool, or one part with a narrower paper.read call',
     );
     // One section comes back whole; one too long for that, in slices that read on.
     assert.equal((await read({ kind: 'methods', section: 'b' })).content, sections[1].content);
@@ -315,9 +315,10 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);
     assert.equal(new Set(models).size, models.length);
     assert.ok(models.length <= 128, `${models.length} tools`);
-    // The full composition gives every main agent the research guide, and every tool the
-    // agent's instructions and notes name is registered.
-    assert.equal(app.ctx.tools.instructions(), mainAgentGuide);
+    // The full composition gives every main agent the research guide beside what Tasks and
+    // Paper add, and every tool the agent's instructions and notes name is registered.
+    for (const part of [mainAgentGuide, 'leave production to a Fleet worker', 'paper.patch'])
+      assert.ok(app.ctx.tools.instructions().includes(part), part);
     const named = [
       piInstructions(app.ctx.tools.instructions()),
       ...turnNotes({
@@ -358,7 +359,7 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     // MCP clients working with a person get the same guide.
     const credentials = await app.ctx.scope.bootstrap({ projectName: 'Guide', actorName: 'Owner' });
     const mcp = await client(app.ctx.api.url!, credentials.token);
-    assert.ok(mcp.getInstructions()?.startsWith(mainAgentGuide));
+    assert.ok(mcp.getInstructions()?.startsWith(app.ctx.tools.instructions()));
     // The Sessions page's controls, as tools.
     assert.equal((await call(mcp, 'session.dispatch', { enabled: true })).enabled, true);
     assert.deepEqual(await call(mcp, 'session.halt', { reason: 'pause' }), { halted: 0 });

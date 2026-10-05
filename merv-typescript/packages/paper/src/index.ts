@@ -1,5 +1,5 @@
-import { recorded, mapAsync, getArtifacts } from '@merv/contracts';
-import { createService, replayed } from '@merv/contracts';
+import { recorded, mapAsync, getArtifacts, parsed } from '@merv/contracts';
+import { childRequest, createService, replayed } from '@merv/contracts';
 import type { Context } from 'cordis';
 import {
   check,
@@ -19,14 +19,16 @@ import type {
   PaperCite,
   PaperKind,
   PaperPatch,
+  PaperChanges,
   PaperPublication,
   PaperRevision,
   PaperWorkspace,
   PaperReview,
   PaperEdit,
 } from './types.js';
-import { citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
+import { changesSchema, citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
 import { contextSections } from './context.js';
+import { introductionFrom } from './introduction.js';
 import { migratePaper } from './storage.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
@@ -299,6 +301,20 @@ export class PaperService implements Paper {
         const before = await this.current(caller, input.kind, tx);
         const after = await this.edited(caller, input, before, tx);
         await this.revision(caller, before, after, tx);
+        // The Problem is what the project is; the Introduction carries it into every worker's
+        // assignment, so it is rewritten from each Problem revision that says something.
+        const introduction = after.kind === 'problem' ? introductionFrom(after) : '';
+        const current = introduction && ((await this.scope.project(caller, tx)).summary ?? '');
+        if (introduction && introduction !== current)
+          await this.scope.updateProjectContext(
+            caller,
+            {
+              summary: introduction,
+              expectedSummary: current,
+              requestId: childRequest(caller, 'paper', 'introduction', input.requestId),
+            },
+            tx,
+          );
         return after;
       });
     });
@@ -380,6 +396,9 @@ export class PaperService implements Paper {
         return citation;
       });
     });
+  }
+  parseChanges(value: unknown): PaperChanges {
+    return parsed(changesSchema, value, 'invalid_input');
   }
   async checkReview(caller: Caller, input: PaperReview, tx: Transaction) {
     return await this.reviewed(this.capture(caller), parse(reviewSchema, input), tx);

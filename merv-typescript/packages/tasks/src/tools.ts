@@ -169,6 +169,12 @@ export const taskToolsPlugin = {
       },
     ];
     for (const definition of definitions) ctx.effect(() => ctx.tools.register(definition));
+    // A main agent works with a person; a Fleet worker produces the tasks it directs.
+    ctx.effect(() =>
+      ctx.tools.contributeInstructions(
+        'When you create a task, direct its goal and checks, then leave production to a Fleet worker. You may read the task, propose next work, and create artifacts, but never start work context, save work checkpoints, or submit a task delivery yourself.',
+      ),
+    );
   },
 };
 export default taskToolsPlugin;
