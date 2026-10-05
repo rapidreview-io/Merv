@@ -28,19 +28,19 @@ export interface ViewProps {
  * so it goes there whether or not a plugin still registers the row.
  */
 export const MOVED: Record<string, string> = {
-  // Who may open the project, and what it is connected to, are settings.
-  people: '/settings/members',
+  // What a project is connected to is a setting.
   connections: '/settings/connections',
-  knowledge: '/paper',
+  // What is running is drawn on the Work page.
+  running: WORK.path,
 };
 
 /**
- * What is running is drawn on the Work page now. An address that named a thing in hand
- * there (`?key=`) still opens that thing's sidebar, and the page a link carried goes with it.
+ * A moved address goes where its work is now. The thing it named in hand (`?key=`) still
+ * opens that thing's sidebar there, and the page a link carried goes with it.
  */
-function Running() {
+export function Moved({ to }: { to: string }) {
   const { search, state } = useLocation();
-  return <Navigate to={{ pathname: WORK.path, search }} state={state} replace />;
+  return <Navigate to={{ pathname: to, search }} state={state} replace />;
 }
 
 const views: Record<string, ComponentType<ViewProps>> = {
@@ -50,7 +50,6 @@ const views: Record<string, ComponentType<ViewProps>> = {
   feed: FeedView,
   settings: SettingsView,
   sessions: SessionsView,
-  running: Running,
   code: CodeView,
   experiments: ExperimentsView,
   paper: PaperView,

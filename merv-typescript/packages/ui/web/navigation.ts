@@ -24,16 +24,13 @@ const SECTION_OF_VIEW: Record<string, string> = {
 /**
  * Rows the rail does not show. Every one of them is still registered and still
  * serves its record routes and its ui.read: the wave of work is one
- * Work page now, with what is running on it drawn there, the reference
- * lookup is a control on Paper, and people and connections are Settings.
- * A reflection is a unit of that work: a row of the Work list like a task.
+ * Work page now, the reference lookup is a control on Paper, and connections
+ * are Settings. A reflection is a unit of that work: a row of the Work list like a task.
  * Agents, their machines and Fleet's requests are reached from the line under
  * the Work map, and from the sidebar of whichever of them is in hand.
  */
 const HIDDEN = new Set(
-  'research tasks experiments reviews reflections knowledge people connections running sessions'.split(
-    ' ',
-  ),
+  'research tasks experiments reviews reflections connections sessions'.split(' '),
 );
 /** Fleet's page is a collection like any published one, so it is named by its row. */
 const HIDDEN_ROWS = new Set(['fleet']);

@@ -28,7 +28,6 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
   const rows = [
     row('connections', 'connections', 'system', 40, '/external-connections'),
     row('settings', 'settings', 'settings', 100),
-    row('people', 'people', 'project', 2, '/members'),
     row('research-provider', 'research', 'work', 8, '/cycles'),
     row('jobs', 'tasks', 'work', 12, '/task-browser'),
     row('trials', 'experiments', 'work', 13),
@@ -60,7 +59,6 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     'trials',
     'verdicts',
     'reflections',
-    'people',
     'connections',
     'paper',
   ])
@@ -100,7 +98,6 @@ test('Code stands under Agents; what is running, its agents and Fleet’s reques
     row('code', 'code', 'work', 25),
     row('sessions', 'sessions', 'work', 24),
     row('fleet', 'collection', 'operations', 20),
-    row('running', 'running', 'operations', 19),
     row('reviews', 'reviews', 'work', 17),
   ]);
   assert.deepEqual(

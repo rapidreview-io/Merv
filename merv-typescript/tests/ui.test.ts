@@ -368,7 +368,6 @@ test('the assembled application serves the bundle, lists rows per active plugin,
       'paper',
       'reviews',
 
-      'running',
       'sessions',
       'code',
       'feed',
@@ -400,12 +399,8 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'tasks')?.status, { count: 0 });
   assert.equal(named('people'), undefined);
   assert.equal(shell.rows.find((entry) => entry.id === 'settings')?.group, 'settings');
-  // Running counts nothing in the chrome and has no row read: its page reads ui.running.
-  const running = shell.rows.find((entry) => entry.id === 'running');
-  assert.deepEqual(
-    [running?.path, running?.view, running?.status, running?.readable],
-    ['/running', { kind: 'running' }, {}, false],
-  );
+  // What is running is drawn on the Work page; it has no row of its own.
+  assert.equal(named('running'), undefined);
   assert.deepEqual(shell.rows.find((entry) => entry.id === 'code')?.view, { kind: 'code' });
   assert.equal(shell.rows.find((entry) => entry.id === 'code')?.readable, true);
   // A record page reads its record and the gate it stands at in one answer.
@@ -498,7 +493,6 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'paper',
     'reviews',
 
-    'running',
     'sessions',
     'code',
     'artifacts',
@@ -517,7 +511,6 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'paper',
     'reviews',
 
-    'running',
     'sessions',
     'code',
     'feed',
@@ -556,7 +549,6 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     'paper',
     'reviews',
 
-    'running',
     'sessions',
     'code',
     'feed',

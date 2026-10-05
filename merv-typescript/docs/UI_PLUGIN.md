@@ -57,7 +57,7 @@ Code's `ui.read` supplies commit receipts, status and publication records togeth
 - `ui.running` (read-only): the Running board, composed from every registered Running contribution (below): three lanes of nodes, each lane's summaries, and the edges between nodes.
 - `ui.running_panel` (read-only): `{ key }` returns one node's sidebar; `running_not_found` when no owner answers for the key.
 
-These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`. `@merv/ui` still registers the `running` row (`/running`), with no status and no read of its own, so a link to a key keeps working: the rail does not show it, and the address opens the Work page with that key's sidebar. The Work page reads these two tools (`views/work-map.tsx`).
+These two are a person's monitor: no agent conversation is offered them, and both refuse leased workers and managed runners with `running_forbidden`. There is no `running` row: the shell moves an old `/running` address to the Work page with its `?key=`, so a link to a key still opens that key's sidebar. The Work page reads these two tools (`views/work-map.tsx`).
 
 ## Running contributions
 

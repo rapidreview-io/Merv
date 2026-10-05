@@ -40,7 +40,6 @@ interface Point {
   x: number;
   y: number;
 }
-export type CanvasLayout = NonNullable<ReturnType<typeof canvas>>;
 
 /**
  * Where everything goes, from the model and one width. Pure: two runs of the same

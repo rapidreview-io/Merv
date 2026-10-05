@@ -21,7 +21,7 @@ Object.assign(globalThis, {
 });
 
 const { createElement } = await import('react');
-const { MemoryRouter } = await import('react-router-dom');
+const { MemoryRouter, useLocation } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { App } = await import('../packages/ui/web/app.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
@@ -369,8 +369,7 @@ test('the only operator is offered no control that would leave the project witho
     serve(`/projects/${project.id}/members`, {
       body: { memberships: [member(1, 'operator'), member(2, second)] },
     });
-    // The retired People route reaches the same account controls without a row.
-    await open(second === 'reviewer' ? '/people' : '/settings/members');
+    await open('/settings/members');
     assert.equal(document.querySelector('h1')!.textContent, 'Settings');
     assert.equal(
       document.querySelector('.settings nav [aria-current="page"]')!.textContent,
@@ -570,9 +569,24 @@ test('an address this app moved elsewhere opens there, whether or not a plugin r
     'Connections',
   );
   await unmount();
+  // What is running is drawn on Work: an old Running address keeps the thing it had in hand.
   boot('Operator');
-  await open('/knowledge');
-  assert.equal(document.querySelector('h1')!.textContent, 'Paper');
+  let where = '';
+  function Probe() {
+    const location = useLocation();
+    where = location.pathname + location.search;
+    return null;
+  }
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/running?key=work:wf_index'] },
+      createElement(App),
+      createElement(Probe),
+    ),
+  );
+  await settle(20);
+  assert.equal(where, '/work?key=work:wf_index');
 });
 
 test('a project opens on Work, which leads the rail over Now and the paper; there is no Home', async (t) => {
