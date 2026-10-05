@@ -157,7 +157,7 @@ export class NativeConnections {
     const row = await this.state.transaction(async (tx) => {
       await this.authorize(caller, tx);
       const previous = await this.current(caller.projectId, tx);
-      const subject = await managedAccountSubject(caller.projectId, tx);
+      const subject = await managedAccountSubject(this.scope, caller.projectId, tx);
       if (previous?.billing_subject === subject) return null;
       check(
         !(await tx.get(

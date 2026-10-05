@@ -1,16 +1,16 @@
 {
   "snapshot": "2026-10-05",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 69,
-  "serviceProviders": 31,
+  "pluginCount": 70,
+  "serviceProviders": 32,
   "toolAdapters": 18,
   "uiAdapters": 15,
   "apiAdapters": 5,
   "defaultEntries": 50,
   "apiEntries": 39,
-  "serverPlugins": 68,
+  "serverPlugins": 69,
   "machinePlugins": 1,
-  "directDependencyCount": 193,
+  "directDependencyCount": 194,
   "optionalDependencyCount": 24,
   "directConsumers": {
     "api": 8,
@@ -26,6 +26,7 @@
     "fleetWorkflow": 0,
     "identity": 1,
     "knowledge": 1,
+    "legacyHistory": 1,
     "mounts": 1,
     "nisa": 1,
     "paper": 6,
@@ -424,12 +425,26 @@
       "defaultConfiguration": true
     },
     {
-      "plugin": "merv-legacy-history-ui",
-      "source": "src/legacy-history-ui.ts",
-      "provides": [],
+      "plugin": "merv-legacy-history",
+      "source": "packages/legacy-history/src/index.ts",
+      "provides": [
+        "legacyHistory"
+      ],
       "requires": [
         "state",
-        "scope",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false
+    },
+    {
+      "plugin": "merv-legacy-history-ui",
+      "source": "packages/legacy-history/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "legacyHistory",
         "ui"
       ],
       "optional": [],

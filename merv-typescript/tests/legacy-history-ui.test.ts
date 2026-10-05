@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SignJWT } from 'jose';
 import { createApp } from './fixtures/app.js';
-import { legacyHistoryUiPlugin } from '../src/legacy-history-ui.js';
+import { legacyHistoryPlugin } from '@merv/legacy-history';
+import { legacyHistoryUiPlugin } from '@merv/legacy-history/ui';
 import { seedLegacyHistory } from './fixtures/legacy-history.js';
 import { stateConfig } from './fixtures/state.js';
 
@@ -75,6 +76,7 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
     })),
     { sourceId },
   );
+  await app.ctx.plugin(legacyHistoryPlugin);
   const fiber = app.ctx.plugin(legacyHistoryUiPlugin, { sourceId });
   await fiber;
   const request = async (

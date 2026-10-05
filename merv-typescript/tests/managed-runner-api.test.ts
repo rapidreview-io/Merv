@@ -314,6 +314,7 @@ async function credentialGate(t: TestContext) {
   const tools = {
     describe: reach('tools.describe', []),
     invoke: reach('tools.invoke', { format: 'json', value: null }),
+    instructions: () => '',
   } as unknown as Tools;
   const identity: IdentityProvider = {
     verify: async () => {

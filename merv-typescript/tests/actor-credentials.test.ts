@@ -479,13 +479,9 @@ test('a service actor is created once, then found with one read and no write tra
     });
   await assert.rejects(f.scope.serviceActor('code', 'project_missing'), { code: 'not_found' });
   const code = await f.scope.serviceActor('code', project);
-  // Fleet's review director reviews without naming the role; a role the provider cannot hold is
-  // still refused by scope@9's trigger.
-  const review = await f.scope.serviceActor('fleet-review', project);
-  assert.deepEqual(
-    await f.scope.serviceActor('fleet-review', project, undefined, 'reviewer'),
-    review,
-  );
+  // Fleet's review director names its role; a role the provider cannot hold is refused by
+  // scope@9's trigger.
+  const review = await f.scope.serviceActor('fleet-review', project, undefined, 'reviewer');
   await assert.rejects(f.scope.serviceActor('code', project, undefined, 'reviewer'), {
     code: 'state_constraint',
   });
@@ -502,7 +498,9 @@ test('a service actor is created once, then found with one read and no write tra
   try {
     assert.deepEqual(await f.scope.serviceActor('code', project), code);
     assert.deepEqual(
-      await f.state.snapshot(() => f.scope.serviceActor('fleet-review', project)),
+      await f.state.snapshot(() =>
+        f.scope.serviceActor('fleet-review', project, undefined, 'reviewer'),
+      ),
       review,
     );
   } finally {

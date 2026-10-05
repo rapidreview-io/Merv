@@ -12,7 +12,6 @@ import { computeEpoch, computeProfile, type ComputeProfile } from './compute-cap
 import type { NativeMcpConnection, Session } from '@merv/sessions/types';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeAssignmentRow, NativeConnectionRow, NativeWorkRow } from './native-schema.js';
-import type { NativeWorkKind } from './native-types.js';
 
 /** The profiles a native assignment is issued with; `none` issues no assignment. */
 type NativeComputeProfile = Exclude<ComputeProfile, 'none'>;
@@ -52,7 +51,7 @@ type WorkReceipt = {
   namespace: string;
   member_id: string;
   work_ref: string;
-  work_kind: NativeWorkKind;
+  work_kind: string;
   revoked_at: string | null;
 };
 type AssignmentReceipt = {
@@ -81,12 +80,11 @@ const reference = (value: unknown): value is string =>
 /** A workflow name, as the workflow engine accepts one. */
 export const workflowName = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/.test(value);
-/**
- * The work kind the native service is sent. It knows only `task` and `experiment`; every
- * workflow other than `experiment` is sent as `task` until the service confirms other kinds.
- */
-export const nativeWorkKind = (workflow: string): NativeWorkKind =>
-  workflow === 'experiment' ? 'experiment' : 'task';
+/** Workflow names the native service accepts as work kinds (unconfirmed beyond these). */
+const NATIVE_WORK_KINDS: ReadonlySet<string> = new Set(['task', 'experiment']);
+/** The work kind the native service is sent: the workflow's name if it knows it, else `task`. */
+export const nativeWorkKind = (workflow: string): string =>
+  NATIVE_WORK_KINDS.has(workflow) ? workflow : 'task';
 /** A launch or close never waits on a session that ended longer ago than any lease can run. */
 const LEASE_HORIZON_MS = 8 * 24 * 3_600_000;
 type InstanceRow = { workflow: string; revision: number; data_json: string };
@@ -401,7 +399,8 @@ export class NativeWorkService {
     } = session.execution.references;
     valid(
       identifier(connectionId) &&
-        (kind === 'task' || kind === 'experiment') &&
+        typeof kind === 'string' &&
+        NATIVE_WORK_KINDS.has(kind) &&
         workId === session.instanceId &&
         reference(attempt) &&
         (profile === 'execute' || profile === 'check') &&

@@ -7,6 +7,7 @@ import {
   hostedCodexCapabilities,
   hostedCodexPlatform,
   MervError,
+  personKey,
   recorded,
   sourceCaller,
   type Caller,
@@ -114,17 +115,6 @@ const skipped = (projectId: string, error: unknown) => {
   const code = error instanceof MervError ? error.code : 'unexpected';
   process.stderr.write(`${JSON.stringify({ event: 'fleet.workflow_skipped', projectId, code })}\n`);
 };
-/** Whose day a director's spend counts toward: their sign-in identity, keyed as Pi keys a person
- * so one day counts both, else the actor itself. */
-const personOf = (
-  user: { issuer: string; subject: string } | undefined,
-  who: { projectId: string; actorId: string },
-) =>
-  digest(
-    user
-      ? { issuer: user.issuer, subject: user.subject }
-      : { projectId: who.projectId, actorId: who.actorId },
-  );
 
 /** The narrow Sessions-to-Fleet bridge. No user-facing tools or research dependency. */
 export class FleetWorkflowAdapter implements FleetOwner {
@@ -228,7 +218,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
    * A lookup that fails refuses the request. */
   async payer(source: DelegationSource, _ownerId: string, tx: Transaction): Promise<string> {
     const who = source.kind === 'service' ? source.vouchedBy : source;
-    return personOf(
+    return personKey(
       who.kind === 'human' ? who : (await this.scope.requireDelegation(who, 'read', tx)).user,
       who,
     );
@@ -258,7 +248,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       if (!selected) return null;
       const actor = await this.director(selected.source);
       if (!actor) return null;
-      person = personOf(actor.user, selected.source);
+      person = personKey(actor.user, selected.source);
     }
     const { blocked, blockReason, resetsAt } = await modelBudgetStatus(
       this.state,
@@ -665,7 +655,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // One person across projects: the owner's sign-in identity, while they may write.
     const person = async (source: DelegationSource) => {
       const user = (await this.director(source))?.user;
-      return { who: user && `${user.issuer} ${user.subject}`, key: personOf(user, source) };
+      return { who: user && `${user.issuer} ${user.subject}`, key: personKey(user, source) };
     };
     const everyone = this.config.people.includes('*');
     // Each target a project wants, with the director whose machine takes it.
@@ -840,7 +830,7 @@ export const fleetWorkflowPlugin = {
           'Only you, signed in, can see or change your daily tokens',
           403,
         );
-        return digest({ issuer: caller.human!.issuer, subject: caller.human!.subject });
+        return personKey(caller.human, caller);
       };
       ctx.effect(() =>
         ctx.tools.register({

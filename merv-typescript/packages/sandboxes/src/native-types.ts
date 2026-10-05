@@ -5,8 +5,6 @@ export interface NativeMachineReads {
   record(projectId: string, id: string): Promise<Json | null>;
 }
 
-/** The work kinds the native service accepts; every workflow maps to one (nativeWorkKind). */
-export type NativeWorkKind = 'task' | 'experiment';
 /** The native application Sandboxes pins, attaches, fences, closes and revokes work through
  * (docs/COMPUTE_CAPABILITY.md). */
 export interface NativeSandboxesConfig {

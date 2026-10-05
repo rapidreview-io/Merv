@@ -25,7 +25,15 @@
       "id": "research",
       "label": "Research",
       "caption": "The work & what we learn",
-      "members": ["tasks", "experiments", "knowledge", "paper", "reflections", "research"],
+      "members": [
+        "tasks",
+        "experiments",
+        "knowledge",
+        "paper",
+        "reflections",
+        "research",
+        "legacyHistory"
+      ],
       "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
     {
@@ -169,9 +177,9 @@
       "label": "Research",
       "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Work publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff."
     },
-    "merv-legacy-history-ui": {
-      "label": "Legacy history \u00b7 UI adapter",
-      "purpose": "Optional read-only browser for research imported from the previous backend. Requires State, Scope and UI; preserves historical records without resuming old workflows."
+    "legacyHistory": {
+      "label": "Legacy history",
+      "purpose": "Optional read-only archive of research imported from the previous backend, with its UI page. Requires State and Scope; preserves historical records without resuming old workflows."
     },
     "codeWork": {
       "label": "Code Work",
@@ -241,7 +249,7 @@
         "id": "synthesis",
         "label": "Project knowledge & synthesis",
         "purpose": "Read across work and turn completed evidence into reviewed reflection.",
-        "members": ["knowledge", "reflections"]
+        "members": ["knowledge", "reflections", "legacyHistory"]
       },
       {
         "id": "coordination",

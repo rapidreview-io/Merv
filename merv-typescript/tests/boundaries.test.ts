@@ -5,6 +5,7 @@ import { contextBuilderPlugin } from '@merv/context-builder';
 import { domainEventsPlugin } from '@merv/domain-events';
 import { feedPlugin } from '@merv/feed';
 import { fleetPlugin } from '@merv/fleet';
+import { legacyHistoryPlugin } from '@merv/legacy-history';
 import { identityPlugin } from '@merv/identity';
 import { piPlugin } from '@merv/pi';
 import { paperPlugin } from '@merv/paper';
@@ -117,6 +118,8 @@ const capabilities: Record<string, readonly string[]> = {
     'domainEvents',
   ],
   feed: ['state', 'scope', 'artifacts'],
+  // The read-only archive of research imported from the previous server.
+  legacyHistory: ['state', 'scope'],
   identity: [],
   // Account ciphertext storage is separate from identity authentication and scope authority.
   secrets: ['state'],
@@ -208,7 +211,8 @@ const adapterKind = (path: string) =>
   undefined;
 const sorted = (values: readonly string[]) => [...values].sort();
 const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
-const capabilityOf = (owner: string) => (owner === 'code-work' ? 'codeWork' : owner);
+const capabilityOf = (owner: string) =>
+  owner.replace(/-(\w)/g, (_, letter) => letter.toUpperCase());
 
 /**
  * Contracts belongs to no component. Besides its index, a component may run only these shared
@@ -802,6 +806,7 @@ test('feature adapters inject their owner and one registry, without acquiring si
       'experiments',
       'feed',
       'fleet',
+      'legacy-history',
       'mounts',
       'paper',
       'pi',
@@ -963,6 +968,7 @@ test('each service boots with only its declared dependency closure and without A
     reviews: { plugin: reviewsPlugin },
     tasks: { plugin: tasksPlugin },
     feed: { plugin: feedPlugin },
+    legacyHistory: { plugin: legacyHistoryPlugin },
     identity: { plugin: identityPlugin },
     secrets: { plugin: secretsPlugin },
     sandboxes: {

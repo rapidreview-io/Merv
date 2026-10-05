@@ -74,7 +74,8 @@
         "purpose": "Read across work and turn completed evidence into reviewed reflection.",
         "members": [
           "knowledge",
-          "reflections"
+          "reflections",
+          "legacyHistory"
         ]
       },
       {
@@ -231,7 +232,8 @@
         "knowledge",
         "paper",
         "reflections",
-        "research"
+        "research",
+        "legacyHistory"
       ],
       "description": "Research workflows own scientific work, its context recipes and paper edit proposals. Paper stores the reviewed documents; Knowledge assembles source records. Research keeps its State/Scope/Workflows core active and binds its stage providers optionally. Digests read selected Tasks and Experiments directly. Only stages that use a missing provider wait. Accepted code missing from main is integrated through a reviewed Git task using Code Work."
     },
@@ -343,7 +345,7 @@
       "exposedTools": [
         {
           "name": "artifact.create",
-          "description": "Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.",
+          "description": "Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID other records can reference. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.",
           "readOnly": false
         },
         {
@@ -425,7 +427,7 @@
       "exposedTools": [
         {
           "name": "artifact.create",
-          "description": "Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID for task briefs and deliveries. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.",
+          "description": "Store a completed immutable document or file (maximum 2 MB). Use utf8 for Markdown/text; use base64 for binary files. Returns an artifact ID other records can reference. Not idempotent: after an uncertain result, list artifacts and match sha256 before retrying.",
           "readOnly": false
         },
         {
@@ -1231,12 +1233,32 @@
       ]
     },
     {
-      "plugin": "merv-legacy-history-ui",
-      "source": "src/legacy-history-ui.ts",
-      "provides": [],
+      "plugin": "merv-legacy-history",
+      "source": "packages/legacy-history/src/index.ts",
+      "provides": [
+        "legacyHistory"
+      ],
       "requires": [
         "state",
-        "scope",
+        "scope"
+      ],
+      "optional": [],
+      "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": false,
+      "id": "legacyHistory",
+      "group": "research",
+      "owner": "legacyHistory",
+      "label": "Legacy history",
+      "purpose": "Optional read-only archive of research imported from the previous backend, with its UI page. Requires State and Scope; preserves historical records without resuming old workflows.",
+      "exposedTools": []
+    },
+    {
+      "plugin": "merv-legacy-history-ui",
+      "source": "packages/legacy-history/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "legacyHistory",
         "ui"
       ],
       "optional": [],
@@ -1245,8 +1267,9 @@
       "defaultConfiguration": false,
       "id": "merv-legacy-history-ui",
       "group": "front",
-      "label": "Legacy history · UI adapter",
-      "purpose": "Optional read-only browser for research imported from the previous backend. Requires State, Scope and UI; preserves historical records without resuming old workflows.",
+      "owner": "legacyHistory",
+      "label": "Legacy history · ui adapter",
+      "purpose": "Connects Legacy history to the UI registry. This adapter owns no domain state.",
       "exposedTools": []
     },
     {
@@ -3276,13 +3299,18 @@
       "optional": false
     },
     {
-      "from": "merv-legacy-history-ui",
+      "from": "legacyHistory",
       "to": "state",
       "optional": false
     },
     {
-      "from": "merv-legacy-history-ui",
+      "from": "legacyHistory",
       "to": "scope",
+      "optional": false
+    },
+    {
+      "from": "merv-legacy-history-ui",
+      "to": "legacyHistory",
       "optional": false
     },
     {
@@ -3867,10 +3895,10 @@
     }
   ],
   "counts": {
-    "plugins": 69,
-    "providers": 31,
+    "plugins": 70,
+    "providers": 32,
     "adapters": 38,
-    "dependencies": 193
+    "dependencies": 194
   },
   "network": [
     {

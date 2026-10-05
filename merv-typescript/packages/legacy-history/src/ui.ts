@@ -2,12 +2,9 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { check, idSchema, MervError, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
-import {
-  initializeLegacyHistory,
-  legacyHistoryTypes,
-  LegacyHistoryReader,
-} from './legacy-history.js';
-import { historyMediaLinks } from './legacy-media-links.js';
+import { legacyHistoryTypes } from './history.js';
+import { historyMediaLinks } from './media-links.js';
+import type {} from './types.js';
 
 const recordType = z.enum(legacyHistoryTypes);
 const request = z.discriminatedUnion('action', [
@@ -25,16 +22,13 @@ const request = z.discriminatedUnion('action', [
     .strict(),
 ]);
 
-/** Optional migration reader; no new domain capability, agent tool, or live workflow adapter. */
+/** The archive's page for one imported source; no agent tool or live workflow adapter. */
 export const legacyHistoryUiPlugin = {
   name: 'merv-legacy-history-ui',
   Config: z.object({ sourceId: idSchema }).strict(),
-  inject: ['state', 'scope', 'ui'],
-  async apply(ctx: Context, config: { sourceId: string }) {
-    const state = ctx.state;
-    const scope = ctx.scope;
-    await initializeLegacyHistory(state);
-    const history = new LegacyHistoryReader(state, scope);
+  inject: ['legacyHistory', 'ui'],
+  apply(ctx: Context, config: { sourceId: string }) {
+    const history = ctx.legacyHistory;
     ctx.effect(() =>
       ctx.ui.register({
         id: 'legacy-history',

@@ -12,7 +12,6 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
 const env = {
@@ -154,11 +153,12 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     0,
   );
   config = JSON.parse(readFileSync(output));
-  assert.equal(config.plugins.length, 12);
+  assert.equal(config.plugins.length, 13);
   assert.equal(config.plugins.find((p) => p.id === 'state').config.schema, 'merv_ts_rehearsal');
   const history = config.plugins.find((p) => p.id === 'legacy-history-ui');
   assert.deepEqual(history.config, { sourceId: 'source-v2' });
-  assert.equal(history.name, pathToFileURL(join(directory, 'dist/src/legacy-history-ui.js')).href);
+  assert.equal(history.name, '@merv/legacy-history/ui');
+  assert.equal(config.plugins.find((p) => p.id === 'legacy-history').name, '@merv/legacy-history');
   assert.notEqual(run({ MERV_TS_DB_SCHEMA: 'public' }).status, 0);
   assert.notEqual(run({ MERV_TS_LEGACY_SOURCE_ID: '../source' }).status, 0);
 
