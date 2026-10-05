@@ -50,6 +50,16 @@ test('collection is one immutable, scoped artifact; retries and member links use
     artifacts.createCollection(caller, input),
   ]);
   assert.equal(first.id, retry.id);
+  // Fingerprints and manifests stored before artifacts shared contracts' canonical JSON.
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.get('SELECT hash, collection_input_hash FROM artifacts WHERE id=?', first.id),
+    ),
+    {
+      hash: '212cfbb1b430911cb484608527ed3475d42ba7b2b57ddc2a40d638b487933fff',
+      collection_input_hash: 'bbd3ae093b09e2019bc3fba26550a73c1cc5c32b720e04d8b881b5d01c259711',
+    },
+  );
   assert.equal((await artifacts.list(caller)).length, 1);
   assert.equal(first.files?.length, 2);
   assert.equal(JSON.stringify(first).includes('private-1'), false);

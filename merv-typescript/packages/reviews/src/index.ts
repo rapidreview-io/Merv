@@ -495,11 +495,15 @@ export class ReviewService implements Reviews {
 
   async guidance(
     caller: Caller,
-    reviewId: string,
+    reviewOrId: string | ReviewRequest,
     transaction?: Transaction,
   ): Promise<string | undefined> {
     caller = structuredClone(caller);
-    const review = freeze(await this.get(caller, reviewId, transaction));
+    const review = freeze(
+      typeof reviewOrId === 'string'
+        ? await this.get(caller, reviewOrId, transaction)
+        : structuredClone(reviewOrId),
+    );
     const read = async (tx: Transaction) => {
       const matches: Readonly<ReviewSubmitOwner>[] = [];
       for (const owner of [...this.owners.values()])
@@ -816,31 +820,40 @@ export class ReviewService implements Reviews {
     }));
   }
 
-  async get(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
-    caller = structuredClone(caller);
+  /**
+   * How this caller reads reviews, authorized once: an operator also learns whether they may
+   * override a requested one, and whether it waits for an operator to add an independent reviewer.
+   */
+  private async reader(caller: Caller, transaction?: Transaction) {
     const reader = await this.scope.require(caller, 'read', transaction);
     // The person's own agent reads it as the person, to propose what only the person's Run takes.
     const person = caller.conversation
       ? sourceCaller(await this.scope.delegationSource(caller, transaction))
       : caller;
-    const read = async (sql: Sql) => {
-      const review = hydrate(await this.row(sql, caller, reviewId));
+    return async (review: ReviewRequest): Promise<ReviewRequest> => {
       if (review.status !== 'requested' || reader.role !== 'operator' || reader.sessionId)
         return review;
       if (projectOwner(person, reader)) review.overridable = true;
-      if (review.provenance) {
-        for (const actor of await this.scope.actors(caller))
-          if (
-            !actor.sessionId &&
-            !excludedFromReview(review, actor.id) &&
-            (await this.scope.eligible(caller.projectId, actor.id, 'review', transaction))
-          )
-            return review;
+      const { producerId, excludedActorIds = [], provenance } = review;
+      if (
+        provenance &&
+        !(await this.scope.eligible(
+          caller.projectId,
+          { except: [producerId, ...excludedActorIds, ...provenance.excludedActorIds] },
+          'review',
+          transaction,
+        ))
+      )
         review.waiting =
           'Every eligible reviewer is a retained contributor or directing authority. An operator must provide an independent reviewer.';
-      }
       return review;
     };
+  }
+
+  async get(caller: Caller, reviewId: string, transaction?: Transaction): Promise<ReviewRequest> {
+    caller = structuredClone(caller);
+    const view = await this.reader(caller, transaction);
+    const read = async (sql: Sql) => await view(hydrate(await this.row(sql, caller, reviewId)));
     if (transaction) {
       this.state.assertTransaction(transaction);
       return await read(transaction);
@@ -865,10 +878,22 @@ export class ReviewService implements Reviews {
     );
   }
 
+  async open(caller: Caller): Promise<number> {
+    caller = structuredClone(caller);
+    await this.scope.require(caller, 'read');
+    return await this.state.read(
+      async (sql) =>
+        (await sql.get<{ n: number }>(
+          "SELECT count(*)::int AS n FROM reviews WHERE project_id = ? AND status IN ('requested', 'started')",
+          caller.projectId,
+        ))!.n,
+    );
+  }
+
   /**
    * The Running sidebar's Review sections for these subjects, read inside the page's snapshot:
-   * one query over the project's reviews of them, then get() for the review that speaks for
-   * each, so waiting, the synopsis and the findings read as get() serves them to this caller.
+   * one query over the project's reviews of them, the review that speaks for each read as get()
+   * serves it to this caller, with its waiting, synopsis and findings.
    */
   async running(
     caller: Caller,
@@ -881,14 +906,12 @@ export class ReviewService implements Reviews {
       .filter((id) => typeof id === 'string' && visible(id))
       .slice(0, 64);
     if (!subjects.length) return [];
-    await this.scope.require(caller, 'read', transaction);
+    const view = await this.reader(caller, transaction);
     const read = async (sql: Sql) => {
       // The newest at the highest revision it pinned speaks for its subject, so an open
       // re-review outranks the verdict it will replace.
-      const rows = await sql.all<
-        Pick<ReviewRow, 'id' | 'subject_id' | 'status' | 'verdict' | 'created_at'>
-      >(
-        `SELECT id, subject_id, status, verdict, created_at FROM reviews
+      const rows = await sql.all<ReviewRow>(
+        `SELECT * FROM reviews
          WHERE project_id = ? AND subject_id IN (${subjects.map(() => '?').join(',')})
          ORDER BY subject_revision DESC, created_at DESC, id DESC`,
         caller.projectId,
@@ -903,7 +926,7 @@ export class ReviewService implements Reviews {
       );
       const gated = (id: string) => (gates.has(id) ? { gate: gates.get(id)! } : {});
       const sections = await mapAsync(rounds, async ([newest, ...earlier]) => {
-        const current = await this.get(caller, newest!.id, transaction);
+        const current = await view(hydrate(newest!));
         const claim = current.status === 'started' ? await this.claimOf(sql, current) : undefined;
         return reviewSections({
           current,

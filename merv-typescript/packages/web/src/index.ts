@@ -1,23 +1,29 @@
 import type { Context } from 'cordis';
-import { check, MervError, type Caller } from '@merv/contracts';
+import {
+  check,
+  jsonBytes,
+  MAX_ANSWER_BYTES,
+  MervError,
+  OutboundError,
+  outboundFailure,
+  record,
+  sized,
+  Slots,
+  type Caller,
+} from '@merv/contracts';
 import { webConfig, type WebSettings } from './input.js';
 import {
   fallbackPrompt,
   fallbackSearch,
-  jsonBytes,
-  MAX_ANSWER_BYTES,
   MAX_EXTRACT_CHARS,
   MAX_TOTAL_CHARS,
   pageError,
   pageText,
   planExtract,
   planSearch,
-  record,
-  sized,
   tavilyResults,
 } from './normalize.js';
-import { post, ProviderError } from './providers.js';
-import { Slots } from './slots.js';
+import { post } from './providers.js';
 import type {
   Web,
   WebCall,
@@ -36,7 +42,7 @@ export type * from './types.js';
  * Tavily's rate limit, which passes: Nisa does not fall back on it, and nor does this. */
 const REFUSED = new Set([401, 403, 432, 433]);
 const refused = (error: unknown) =>
-  error instanceof ProviderError &&
+  error instanceof OutboundError &&
   error.failure.kind === 'status' &&
   REFUSED.has(error.failure.status);
 
@@ -378,45 +384,26 @@ export class WebService implements Web {
   private failure(error: unknown, provider: string): MervError {
     if (this.stopping.signal.aborted)
       return new MervError('web_stopped', 'Web search is stopping', 503);
-    if (error instanceof DOMException && error.name === 'TimeoutError')
-      return new MervError('web_timeout', `${provider} did not answer in time`, 504);
-    const failure = error instanceof ProviderError ? error.failure : { kind: 'network' as const };
-    if (failure.kind === 'too_large')
-      return new MervError(
-        'web_response_too_large',
-        `${provider} answered more than the configured byte limit`,
-        502,
-      );
-    if (failure.kind === 'invalid')
-      return new MervError('web_invalid_response', `${provider} answered invalid JSON`, 502);
-    if (failure.kind === 'network')
-      return new MervError('web_upstream_error', `${provider} is unreachable`, 502);
-    const { status } = failure;
-    if (status === 401 || status === 403)
-      return new MervError(
-        'web_provider_refused',
-        `${provider} refused this deployment's key (HTTP ${status})`,
-        503,
-      );
-    if (status === 432 || status === 433)
-      return new MervError(
-        'web_quota_exhausted',
-        `${provider}'s usage limit is reached (HTTP ${status})`,
-        503,
-      );
-    if (status === 429)
-      return new MervError(
-        'web_rate_limited',
-        `${provider} is limiting its request rate (HTTP 429); try again shortly`,
-        429,
-      );
-    if (status === 400)
-      return new MervError(
-        'web_request_refused',
-        `${provider} refused this request (HTTP 400)`,
-        422,
-      );
-    return new MervError('web_upstream_error', `${provider} failed (HTTP ${status})`, 502);
+    return outboundFailure(error, 'web', provider, 'invalid JSON', (status) => {
+      if (status === 401 || status === 403)
+        return new MervError(
+          'web_provider_refused',
+          `${provider} refused this deployment's key (HTTP ${status})`,
+          503,
+        );
+      if (status === 432 || status === 433)
+        return new MervError(
+          'web_quota_exhausted',
+          `${provider}'s usage limit is reached (HTTP ${status})`,
+          503,
+        );
+      if (status === 429)
+        return new MervError(
+          'web_rate_limited',
+          `${provider} is limiting its request rate (HTTP 429); try again shortly`,
+          429,
+        );
+    });
   }
 }
 

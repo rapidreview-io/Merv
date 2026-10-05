@@ -491,6 +491,9 @@ test('where no independent reviewer is left the owner may still decide, and a ch
   const read = await f.reviews.get(f.founder, requested.id);
   assert.ok(read.waiting, 'no independent reviewer is left');
   assert.equal(read.overridable, true);
+  // One reviewer that is no contributor ends the wait.
+  await f.machine('reviewer');
+  assert.equal((await f.reviews.get(f.founder, requested.id)).waiting, undefined);
   await f.reviews.start(f.founder, requested.id, undefined, true);
   await f.reviews.checkSubmit(f.founder, requested.id);
   excluded = [f.founder.actorId, (await f.machine('operator')).actorId];

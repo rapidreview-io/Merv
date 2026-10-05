@@ -1,5 +1,4 @@
 import { visible } from '@merv/contracts';
-import { postgresMigrations } from './memberships.postgres.js';
 import {
   check,
   digest,
@@ -9,7 +8,6 @@ import {
   type Actor,
   type Caller,
   type HumanPrincipal,
-  type Migration,
   type Permission,
   type Principal,
   type Project,
@@ -22,11 +20,6 @@ import {
   type VerifiedIdentity,
 } from '@merv/contracts';
 import { projectValue, type ProjectRow } from './project-context.js';
-
-export const membershipMigration: Migration = {
-  version: 3,
-  sql: postgresMigrations[3],
-};
 
 interface MembershipRow {
   id: string;

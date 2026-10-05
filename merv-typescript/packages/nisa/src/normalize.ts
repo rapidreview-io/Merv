@@ -2,13 +2,10 @@
  * Nisa's answers, read defensively: only allowlisted fields leave, each paper named the way
  * paper.cite takes it, and every answer sized to what an agent is shown of one result.
  */
+import { record } from '@merv/contracts';
 import { canonicalId } from './input.js';
 import type { NisaPaper } from './types.js';
 
-/** What Pi shows the model of one result, at most (packages/pi/src/fit.ts), less room for the
- * envelope a transport adds: a larger answer would reach the model cut, or as a bare index. */
-export const MAX_ANSWER_BYTES = 28_000;
-export const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 export const MAX_SNIPPET_CHARS = 800;
 export const LIST_ABSTRACT_CHARS = 600;
 export const MAX_ABSTRACT_CHARS = 10_000;
@@ -16,10 +13,6 @@ export const MAX_EXCERPT_CHARS = 2_000;
 const LIST_AUTHORS = 12;
 const PAPER_AUTHORS = 100;
 
-export const record = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 /** At most `max` characters, never half of one, and an ellipsis when cut. */
 export function clip(value: string, max: number): string {
   if (value.length <= max) return value;
@@ -133,22 +126,4 @@ export function papers(value: unknown, kind: Kind, max: number, chars: number): 
     if (found.length === max) break;
   }
   return found;
-}
-
-/**
- * The fullest `make(chars)`, chars from `whole` down, that fits MAX_ANSWER_BYTES: the answer
- * shortens its passages before anything else. UTF-8 bytes of the JSON are what an agent is
- * shown, so text that escapes or takes several bytes a character shortens sooner.
- */
-export function sized<T>(whole: number, make: (chars: number) => T): { value: T; chars: number } {
-  const fits = (value: T) => jsonBytes(value) <= MAX_ANSWER_BYTES;
-  const full = make(whole);
-  if (fits(full)) return { value: full, chars: whole };
-  let [low, high] = [0, whole - 1];
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2);
-    if (fits(make(middle))) low = middle;
-    else high = middle - 1;
-  }
-  return { value: make(low), chars: low };
 }

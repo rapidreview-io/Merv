@@ -1,23 +1,5 @@
-import { isIP } from 'node:net';
 import { z } from 'zod';
-import { envName } from '@merv/contracts';
-
-/** An https origin, or a loopback http one for a test's fake Nisa. */
-function allowedOrigin(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (url.origin !== value) return false;
-    return (
-      url.protocol === 'https:' ||
-      (url.protocol === 'http:' &&
-        (url.hostname === 'localhost' ||
-          url.hostname === '[::1]' ||
-          (isIP(url.hostname) === 4 && url.hostname.startsWith('127.'))))
-    );
-  } catch {
-    return false;
-  }
-}
+import { allowedOrigin, envName } from '@merv/contracts';
 
 export const nisaConfig = z
   .object({

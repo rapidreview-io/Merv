@@ -1,23 +1,6 @@
-import { isIP } from 'node:net';
 import { z } from 'zod';
-import { envName } from '@merv/contracts';
+import { allowedOrigin, envName } from '@merv/contracts';
 
-/** An https origin, or a loopback http one for a test's fake provider. */
-function allowedOrigin(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (url.origin !== value) return false;
-    return (
-      url.protocol === 'https:' ||
-      (url.protocol === 'http:' &&
-        (url.hostname === 'localhost' ||
-          url.hostname === '[::1]' ||
-          (isIP(url.hostname) === 4 && url.hostname.startsWith('127.'))))
-    );
-  } catch {
-    return false;
-  }
-}
 const origin = z.string().refine(allowedOrigin, 'Expected an https origin or a loopback one');
 
 export const webConfig = z

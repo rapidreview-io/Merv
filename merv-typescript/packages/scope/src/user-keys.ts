@@ -1,5 +1,4 @@
 import { expiry } from './expiry.js';
-import { postgresMigrations } from './user-keys.postgres.js';
 import {
   visible,
   check,
@@ -9,7 +8,6 @@ import {
   type Actor,
   type Caller,
   type IssuedUserKey,
-  type Migration,
   type Permission,
   type Principal,
   type Project,
@@ -21,11 +19,6 @@ import {
 import type { Ledger } from './ledger.js';
 import type { Memberships } from './memberships.js';
 import { projectValue, type ProjectRow } from './project-context.js';
-
-export const userKeyMigration: Migration = {
-  version: 4,
-  sql: postgresMigrations[4],
-};
 
 interface KeyRow {
   id: string;

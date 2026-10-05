@@ -15,11 +15,7 @@ export const reviewUiPlugin = {
         order: 17,
         path: '/reviews',
         view: { kind: 'reviews' },
-        status: async (caller: Caller) => ({
-          count: (await reviews.list(caller)).filter(
-            (review) => review.status === 'requested' || review.status === 'started',
-          ).length,
-        }),
+        status: async (caller: Caller) => ({ count: await reviews.open(caller) }),
       }),
     );
     // A review is not a node of its own: it is a section on the work it judges.

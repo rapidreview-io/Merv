@@ -2,7 +2,10 @@ import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
 import { ACTOR_WITH_MEMBER, needs, permits, serviceRole, workerRoles } from './roles.js';
 import { visible, createService, receipted, sha256Hex, within } from '@merv/contracts';
-import { scopeMigrations } from './migrations.js';
+import { postgresMigrations } from './index.postgres.js';
+import { postgresMigrations as memberships } from './memberships.postgres.js';
+import { postgresMigrations as userKeys } from './user-keys.postgres.js';
+import { postgresMigrations as projectContext } from './project-context.postgres.js';
 import { z } from 'zod';
 import { ExactToolPolicy, grantsSchema } from './tool-policy.js';
 import type { ToolGrant, ToolPolicy } from '@merv/contracts';
@@ -138,7 +141,12 @@ export class ProjectScope implements Scope {
     this.initialize = async () => {
       await this.ledger.initialize();
       this.toolPolicy = new ExactToolPolicy(this, grants);
-      await state.migrate('scope', scopeMigrations);
+      // In version order: integer keys enumerate ascending. Production pins each text by its digest.
+      const texts = { ...postgresMigrations, ...memberships, ...userKeys, ...projectContext };
+      await state.migrate(
+        'scope',
+        Object.entries(texts).map(([version, sql]) => ({ version: +version, sql })),
+      );
       this.members = new Memberships(
         state,
         () => this.time(),
@@ -764,24 +772,30 @@ export class ProjectScope implements Scope {
     check(allowed, 'forbidden', `Actor lacks ${permission} permission`, 403);
     return value;
   }
-  /** Internal eligibility lookup; inspecting an actor does not assume that actor's authority. */
+  /** Internal eligibility lookup; inspecting an actor does not assume that actor's authority.
+   *  With `{ except }`, whether any actor but those, and no worker session's, is eligible. */
   async eligible(
     projectId: string,
-    actorId: string,
+    actor: string | { except: readonly string[] },
     permission: Permission,
     tx?: Transaction,
   ): Promise<boolean> {
+    const ids = typeof actor === 'string' ? [actor] : ['', ...actor.except];
+    const roles = (['operator', ...workerRoles] as const).filter((role) =>
+      permits(role, permission),
+    );
     const lookup = async (sql: Sql) =>
-      await sql.get<{ role: Role }>(
-        `SELECT a.role FROM actors a LEFT JOIN member_actors m ON m.actor_id=a.id
-         WHERE a.id=? AND a.project_id=? AND a.active=1 AND (m.actor_id IS NULL OR EXISTS(
+      await sql.get(
+        `SELECT 1 FROM actors a LEFT JOIN member_actors m ON m.actor_id=a.id
+         WHERE ${typeof actor === 'string' ? 'a.id IN' : 'a.session_id IS NULL AND a.id NOT IN'} (${ids.map(() => '?').join(',')})
+         AND a.project_id=? AND a.active=1 AND a.role IN (${roles.map(() => '?').join(',')}) AND (m.actor_id IS NULL OR EXISTS(
            SELECT 1 FROM project_memberships p WHERE p.actor_id=a.id AND p.project_id=a.project_id
-           AND p.issuer=m.issuer AND p.subject=m.subject AND p.role=a.role AND p.active=1))`,
-        actorId,
+           AND p.issuer=m.issuer AND p.subject=m.subject AND p.role=a.role AND p.active=1)) LIMIT 1`,
+        ...ids,
         projectId,
+        ...roles,
       );
-    const row = await within(this.state, tx, lookup);
-    return !!row && permits(row.role, permission);
+    return !!(await within(this.state, tx, lookup));
   }
   async project(caller: Caller, tx?: Transaction): Promise<Project> {
     caller = structuredClone(caller);

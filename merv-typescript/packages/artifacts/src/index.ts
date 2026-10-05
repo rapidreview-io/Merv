@@ -1,6 +1,6 @@
-import { createService, plain } from '@merv/contracts';
+import { canonical, createService, plain } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
-import { META, decode, fromRow, insert, isText, meta, span, view } from './content.js';
+import { META, decode, fromRow, insert, isText, json, meta, span, view } from './content.js';
 import { Uploads } from './uploads.js';
 import type { Context } from 'cordis';
 import {
@@ -50,16 +50,6 @@ const collectionPath = (value: unknown): value is string =>
     .split('/')
     .every((part) => part.length > 0 && part.length <= 255 && part !== '.' && part !== '..');
 const COLLECTION_MANIFEST_BYTES = 16 * 1024 * 1024;
-const parsed = (value: unknown): any => (typeof value === 'string' ? JSON.parse(value) : value);
-const canonical = (value: any): string =>
-  Array.isArray(value)
-    ? `[${value.map(canonical).join(',')}]`
-    : value && typeof value === 'object'
-      ? `{${Object.keys(value)
-          .sort()
-          .map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`)
-          .join(',')}}`
-      : JSON.stringify(value);
 export class ArtifactStore implements Artifacts {
   private fileProviders = new Map<string, ArtifactFileProvider>();
   get largeUploadAvailable(): boolean {
@@ -299,7 +289,7 @@ export class ArtifactStore implements Artifacts {
       const artifact = fromRow(row);
       const file = artifact.files?.find((member) => member.name === fileName);
       const ref = (
-        parsed(row.file_refs_json) as { name: string; provider: string; reference: string }[] | null
+        json(row.file_refs_json) as { name: string; provider: string; reference: string }[] | null
       )?.find((member) => member.name === fileName);
       check(
         file && ref && file.provider === ref.provider,

@@ -3,16 +3,12 @@
  * input fix-ups it reports in normalization_note, its caps, and its section markers. Everything
  * a provider sends is read defensively and only allowlisted fields leave.
  */
+import { record } from '@merv/contracts';
 import type { WebExtractInput, WebPage, WebResult, WebSearch, WebSearchInput } from './types.js';
 
 export const MAX_RESULT_CHARS = 6_000;
 export const MAX_TOTAL_CHARS = 24_000;
 export const MAX_EXTRACT_CHARS = 20_000;
-/** What Pi shows the model of one result, at most (packages/pi/src/fit.ts), less room for the
- * envelope a transport adds. Nisa's caps count characters; an answer within them that escapes
- * or takes several bytes a character would pass this and reach the model cut, or as an index. */
-export const MAX_ANSWER_BYTES = 28_000;
-export const jsonBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value));
 /** Tavily refuses a longer query. */
 const MAX_QUERY_CHARS = 400;
 const TIME_RANGES: Record<string, string> = {
@@ -128,10 +124,6 @@ export function planSearch(input: WebSearchInput): SearchPlan {
   };
 }
 
-export const record = (value: unknown): Record<string, unknown> | undefined =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
 /** The first `max` characters, never half of one. */
 const cut = (value: string, max: number) =>
   value.length <= max
@@ -159,24 +151,6 @@ export function webUrl(value: unknown): string | undefined {
 }
 const score = (value: unknown) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.round(value * 1000) / 1000 : 0;
-
-/**
- * The fullest `make(chars)`, chars from `whole` down, whose JSON fits MAX_ANSWER_BYTES: UTF-8
- * bytes are what an agent is shown, so text that escapes or takes several bytes a character
- * is cut sooner than Nisa's character caps alone would cut it.
- */
-export function sized<T>(whole: number, make: (chars: number) => T): { value: T; chars: number } {
-  const fits = (value: T) => jsonBytes(value) <= MAX_ANSWER_BYTES;
-  const full = make(whole);
-  if (fits(full)) return { value: full, chars: whole };
-  let [low, high] = [0, whole - 1];
-  while (low < high) {
-    const middle = Math.ceil((low + high) / 2);
-    if (fits(make(middle))) low = middle;
-    else high = middle - 1;
-  }
-  return { value: make(low), chars: low };
-}
 
 /** Tavily's results within Nisa's caps: 6,000 characters each and `total` (24,000) in all. */
 export function tavilyResults(

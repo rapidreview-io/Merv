@@ -12,7 +12,7 @@ async function guided(
   caller: Caller,
   review: ReviewRequest,
 ): Promise<ReviewRequest & { guidance?: string }> {
-  const guidance = await reviews.guidance(caller, review.id);
+  const guidance = await reviews.guidance(caller, review);
   return guidance === undefined ? review : { ...review, guidance };
 }
 
