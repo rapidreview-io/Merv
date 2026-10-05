@@ -129,6 +129,7 @@ export class CodeService extends CodeCommandService implements Code {
   private storage: State;
   private readonly baseScope: Scope;
   private publicationClosed = false;
+  private publicationTimer?: NodeJS.Timeout;
   private networkOperations = new Set<Promise<unknown>>();
   private network<T>(operation: () => Promise<T>): Promise<T> {
     if (this.publicationClosed)
@@ -258,6 +259,12 @@ export class CodeService extends CodeCommandService implements Code {
         this.mirrorStore?.initialize();
         await this.publicationStore.initialize();
         await migrateRepositorySync(state);
+        // The first pass waits a period, so Reviews, which every publication checks, is bound.
+        this.publicationTimer = setInterval(
+          () => void this.network(() => this.publicationStore.syncDue()).catch(() => undefined),
+          30_000,
+        );
+        this.publicationTimer.unref();
       } catch (error) {
         await this.close();
         throw error;
@@ -663,6 +670,7 @@ export class CodeService extends CodeCommandService implements Code {
   }
   override async close(): Promise<void> {
     this.publicationClosed = true;
+    clearInterval(this.publicationTimer);
     // Stop scheduling immediately, then join the whole pass, including its final journal write.
     const mirroring = this.mirrorStore?.close();
     // No new merge starts from here; one that is running is waited for below, because every

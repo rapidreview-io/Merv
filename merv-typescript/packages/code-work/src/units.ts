@@ -45,6 +45,7 @@ import type {
 
 import {
   bindsRepository,
+  importedCommit,
   WorkUnitRecords,
   oid,
   unitColumns,
@@ -77,10 +78,10 @@ function publicationBlockers(publication: CodeUnitPublication): WorkflowProvided
           : 'waiting on publication: a signed-in operator merges the pull request',
       next:
         publication.destination === 'local'
-          ? 'The publication sync integrates the reviewed commit locally; refresh integrations with code.publication.sync if needed. No GitHub connection is required.'
+          ? 'Nothing: Code integrates the reviewed commit by itself within a minute, as the project owner; a project with no owner needs code.publication.sync. No GitHub connection is required.'
           : pull
             ? `A signed-in project operator merges pull request #${pull.number} with code.publication.merge; nothing here is owed by an agent.`
-            : 'Nothing: the publication journal opens the pull request, and a signed-in operator merges it.',
+            : 'Nothing: Code opens the pull request by itself within a minute, as the project owner (a project with no owner needs code.publication.sync), and a signed-in operator merges it.',
     },
     stale: {
       code: 'code_publication_stale',
@@ -780,15 +781,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       }
       if (
         accepted.storage !== 'code' &&
-        // An import delivers this commit either as its tip or as history it contains; the
-        // commits each import was found to contain are recorded with it, outside any
-        // transaction, so this gate is a read. A tip matches both patterns, which is right.
-        !(await tx.get(
-          "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND (result_json LIKE ? OR result_json LIKE ?) LIMIT 1",
-          projectId,
-          `%"head":"${accepted.code.commit}"%`,
-          `%"contained":[%"${accepted.code.commit}"%`,
-        ))
+        !(await importedCommit(tx, projectId, accepted.code.commit))
       ) {
         blockers.push(
           pending(

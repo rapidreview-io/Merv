@@ -20,8 +20,8 @@ import { assessment } from './fixtures/review-verdict.js';
  * A project Code hosts, with its own repositories and the GitHub App faked at its seam, where
  * ordinary units of work are accepted and one of them publishes its accepted code to main.
  */
-async function fixture(t: TestContext, connected = false) {
-  const f = await resolutionFixture(t, { human: connected });
+async function fixture(t: TestContext, connected = false, human = connected) {
+  const f = await resolutionFixture(t, { human });
   const remote = connected ? await githubFixture(t, f.state, f.admin) : undefined;
   if (remote) await remote.enable();
   await f.sessions.setDispatch(f.admin, { enabled: true });
@@ -807,6 +807,26 @@ test('reviewed local work reaches main without GitHub and keeps the exact review
   );
   assert.equal(wakes.length, 1, 'local completion wakes automatic research once');
   assert.equal(wakes[0].data.destination, 'local');
+});
+
+test('Code carries accepted local work to main by itself, every due publication in one pass', async (t) => {
+  const f = await fixture(t, false, true);
+  const first = await f.declare('First');
+  const second = await f.declare('Second');
+  for (const work of [first, second]) {
+    await f.publishes(work);
+    await f.pin(work);
+  }
+  await f.accept(first, f.feature);
+  await f.accept(second, f.root0);
+  // Nobody syncs: the pass Code runs on its own acts as the project's owner.
+  const store = (f.code as unknown as { publicationStore: { syncDue(): Promise<void> } })
+    .publicationStore;
+  await store.syncDue();
+  assert.equal((await f.code.status(f.admin)).project?.main.oid, f.feature);
+  assert.equal((await f.code.unit(f.admin, first.id)).publication?.state, 'published');
+  // Whichever went second, the same pass settled it: integrated, or stale behind main.
+  assert.notEqual((await f.code.unit(f.admin, second.id)).publication?.state, 'pending');
 });
 
 test('local integration refuses a main that moved after review', async (t) => {
