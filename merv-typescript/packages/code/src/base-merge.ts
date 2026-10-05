@@ -3,10 +3,10 @@ import { MERGE_SETTINGS } from './merge-settings.js';
 import type { ServerGit } from './git.js';
 
 /**
- * The automatic merge of two accepted histories, made inside Code's own repository. It
+ * The automatic merge of two retained histories, made inside Code's own repository. It
  * runs no code of the repository: `merge-tree` needs no checkout, and the child sees no
  * hooks, drivers, filters, replacement objects or configuration but what Code wrote. A
- * clean result is only ever a base for somebody's work, never an accepted result.
+ * clean result is only ever a base for somebody's work, never a retained result.
  */
 
 /** The one identity and moment every server-made merge carries, so a repeat is the same commit. */
@@ -57,7 +57,7 @@ export async function mergeBases(
     return {
       outcome: 'conflict',
       paths: [...new Set(paths)].sort(),
-      // What Git said stays whole up to a bound: it is evidence for the task that resolves it.
+      // What Git said stays whole up to a bound: it is evidence for whoever resolves it.
       messages: said.stdout.toString('utf8').split('\n\n').slice(1).join('\n\n').slice(0, 16_000),
     };
   }

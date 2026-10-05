@@ -26,7 +26,7 @@ import {
 } from '@merv/contracts';
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { CodeWriterService } from '@merv/code/writers';
-import { acceptedRef, workBranch } from '@merv/code/store/refs';
+import { resultRef, workBranch } from '@merv/code/store/refs';
 
 export interface ProjectRow {
   project_id: string;
@@ -296,7 +296,7 @@ export class WorkUnitRecords {
         projectId: caller.projectId,
         actorId: caller.actorId,
         key: `unit:${unitId}`,
-        ...(body.storage === 'code' ? { ref: acceptedRef(unitId), mirror: true } : {}),
+        ...(body.storage === 'code' ? { ref: resultRef(unitId), mirror: true } : {}),
         unitId,
         commit: body.code.commit,
         storage: body.storage === 'code' ? 'code' : 'external',

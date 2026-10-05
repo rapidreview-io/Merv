@@ -102,6 +102,8 @@ export { WorkspaceDeferred } from './workspace-driver.js';
 export type {
   CheckoutSlotClaim,
   CheckoutSlotLedger,
+  CheckoutWorkspaceChange,
+  CheckoutWorkspaceRow,
   WorkspaceDriver,
   WorkspaceDriverFactory,
   WorkspaceDriverHost,

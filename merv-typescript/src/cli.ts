@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { Context } from 'cordis';
 import { runnerWith, validateRunnerConfig } from '@merv/runner';
 import { createApp } from './app.js';
-import { uploadArtifact } from './artifact-upload.js';
+import { uploadArtifact } from '@merv/artifacts/upload-client';
 import { defaultConfigFile, loadConfiguration } from './config.js';
 import type {} from '@merv/identity/types';
 import { check, MervError, type Credentials, type Role } from '@merv/contracts';
@@ -208,7 +208,7 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
     return;
   }
   if (command === 'code-import') {
-    const { importRepository } = await import('./code-import.js');
+    const { importRepository } = await import('@merv/code-work/import-client');
     check(
       args.url &&
         args.repository &&

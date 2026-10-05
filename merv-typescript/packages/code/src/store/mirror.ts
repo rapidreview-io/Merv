@@ -18,7 +18,7 @@ import {
 } from '@merv/contracts';
 import { parseCodeInput } from '../input.js';
 import type { CodeRepositories } from './repository.js';
-import { validRetentionRef, retainedRef, acceptedRef, workRef } from './refs.js';
+import { validRetentionRef, retainedRef, resultRef, workRef } from './refs.js';
 
 /** What the server publishes a ref to, or why it publishes nothing. */
 export type MirrorTarget = { repository: string } | { blocked: string };
@@ -61,6 +61,7 @@ export const defaultMirrorConfig: CodeMirrorConfig = {
 const MAX_BACKOFF_MS = 3600_000;
 const WARNINGS = 20;
 const PRINCIPAL = 'system:code';
+// Kinds are persisted in code_operations rows: `mirror-accepted` publishes a unit's resultRef.
 const kinds = ['mirror-work', 'mirror-accepted', 'mirror-base', 'mirror-retained'] as const;
 export type MirrorKind = (typeof kinds)[number];
 /** Where a ref of Code's own repository is published under. */
@@ -113,7 +114,7 @@ export async function enqueueMirror(
         ? workRef(unitId)
         : kind === 'mirror-retained'
           ? retainedRef(unitId)
-          : acceptedRef(unitId));
+          : resultRef(unitId));
   check(
     validRetentionRef(ref),
     'invalid_ref',
@@ -176,7 +177,7 @@ export async function enqueueMirror(
  * has moved by another hand only leaves this work queued, retrying or blocked, and says so.
  *
  * Work refs only ever move forward, which is checked in Code's own repository before a push,
- * and accepted and base refs are only ever created. Nothing here forces, and nothing here deletes.
+ * and result and base refs are only ever created. Nothing here forces, and nothing here deletes.
  */
 export class CodeMirrorService {
   private closed = false;

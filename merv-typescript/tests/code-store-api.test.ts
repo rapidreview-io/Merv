@@ -14,7 +14,7 @@ import { mountCode, type CodeRoutes } from '@merv/code-work/api';
 import { mountSessions, type SessionRoutes } from '@merv/sessions/api';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
-import { importRepository } from '../src/code-import.js';
+import { importRepository } from '@merv/code-work/import-client';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { openState } from './fixtures/state.js';

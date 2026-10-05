@@ -12,7 +12,8 @@ export const unitRef = (unitId: string): string =>
     ? `encoded-${Buffer.from(unitId).toString('base64url')}`
     : unitId;
 export const workRef = (unitId: string) => `refs/merv/work/${unitRef(unitId)}`;
-export const acceptedRef = (unitId: string) => `refs/merv/accepted/${unitRef(unitId)}`;
+/** Where a unit's result is kept. The `accepted` segment is persisted in repositories and stays. */
+export const resultRef = (unitId: string) => `refs/merv/accepted/${unitRef(unitId)}`;
 /** The local branch a writer's checkout stands on; the mirror publishes it under the same name. */
 export const workBranch = (unitId: string) => `merv/work/${unitRef(unitId)}`;
 

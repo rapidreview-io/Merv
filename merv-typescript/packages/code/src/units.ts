@@ -369,7 +369,7 @@ export class CodeUnitStore {
             caller.projectId,
           );
       }
-      // Naming main is what every unit with no accepted code beneath it was waiting for.
+      // Naming main is what every unit with no retained code beneath it was waiting for.
       await this.writers.changes.emit({ kind: 'binding', projectId: caller.projectId }, tx);
       const result = (await this.project(tx, caller.projectId))!;
       await journal.complete(operationId, 'local_bind', payload, result, at);
