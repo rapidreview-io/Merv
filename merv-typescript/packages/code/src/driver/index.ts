@@ -578,6 +578,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         }
       }
       const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
+      const cache = this.repository(row.project_ref);
       if (
         !row.canceled &&
         policy.mode !== 'none' &&
@@ -589,14 +590,19 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
           this.assignmentPath(row.path);
           rmSync(row.path, { recursive: true, force: true });
         } else {
-          const cache = this.repository(row.project_ref)!;
-          await this.git.ok(['--git-dir', cache, 'worktree', 'remove', '--force', row.path]);
+          await this.git.ok(['--git-dir', cache!, 'worktree', 'remove', '--force', row.path]);
         }
       }
       for (const transfer of this.db
-        .prepare('SELECT bundle_path FROM code_v2_transfers WHERE launch_id=?')
-        .all(launch.id) as { bundle_path: string | null }[])
-        if (transfer.bundle_path) rmSync(transfer.bundle_path, { force: true });
+        .prepare('SELECT bundle_path,index_path FROM code_v2_transfers WHERE launch_id=?')
+        .all(launch.id) as { bundle_path: string | null; index_path: string | null }[])
+        for (const file of [transfer.bundle_path, transfer.index_path])
+          if (file) rmSync(file, { force: true });
+      if (cache && !this.assignmentRoot)
+        rmSync(join(dirname(cache), 'operations', hash(launch.id).slice(0, 32)), {
+          recursive: true,
+          force: true,
+        });
       this.db
         .prepare("UPDATE code_v2_workspaces SET status='closed' WHERE launch_id=?")
         .run(launch.id);
@@ -750,6 +756,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         )
         .run(manifest.projectRef, manifest.repositoryId, manifest.objectFormat, path);
     rmSync(path, { recursive: true, force: true });
+    // Checkouts kept here are worktrees of the repository just removed; Git cannot open them.
+    rmSync(join(directory, 'checkouts'), { recursive: true, force: true });
     await this.git.ok([
       'init',
       '--quiet',

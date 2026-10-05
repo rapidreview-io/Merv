@@ -2,7 +2,15 @@ import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
@@ -193,6 +201,7 @@ test('code commit changes only the owned checkout, persists a replayable receipt
   f.stop(first.record);
   assert.equal((await f.manager.capture(first.record))!.headOid, receipt.headOid);
   await f.manager.close(first.record);
+  assert.deepEqual(readdirSync(join(f.ledger.directory, 'workspaces', 'operations')), []);
   assert.deepEqual(await f.manager.checkpointCommit(first.record, command), receipt);
 });
 

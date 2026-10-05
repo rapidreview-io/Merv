@@ -340,3 +340,13 @@ test('a bundle Git could not write is a refusal, never an answer that nothing is
   chmodSync(f.paths.exports, 0o700);
   assert.ok(!('upToDate' in (await download(f, 'ses_1', []))));
 });
+
+test('a download asked for again while it is being made is the same export, not a second cut', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  const found = await Promise.all(Array.from({ length: 6 }, () => download(f, 'ses_1', [])));
+  for (const one of found) {
+    assert.ok(!('upToDate' in one));
+    await read(f, 'ses_1', one);
+  }
+});

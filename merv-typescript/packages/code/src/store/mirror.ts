@@ -757,7 +757,7 @@ export class GitMirrorTransport implements MirrorTransport {
     const line = result.stdout
       .toString('utf8')
       .split('\n')
-      .find((value) => value.trim().endsWith(ref));
+      .find((value) => value.trim().endsWith(`\t${ref}`));
     return line ? (/^([0-9a-f]{40,64})\b/.exec(line.trim())?.[1] ?? null) : null;
   }
 

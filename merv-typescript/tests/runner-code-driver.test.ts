@@ -7,6 +7,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readlinkSync,
   readFileSync,
   realpathSync,
@@ -649,6 +650,7 @@ test('a checkout is exactly the head Code names, its cache knows no remote, and 
   assert.deepEqual(await driver.capture(m.launch('ses_1')), result);
   await driver.close(m.launch('ses_1'));
   assert.ok(existsSync(path), 'a writer’s checkout is kept for the next generation here');
+  assert.deepEqual(readdirSync(join(cache, '..', 'operations')), [], 'no commit index outlives it');
 
   // Review on another machine, at exactly the delivered commit and nothing after it.
   f.reviewer('ses_r', receipt.headOid);
@@ -711,6 +713,10 @@ test('hosted Code checkout has independent Git metadata and its edits pass throu
   assert.equal((await f.unit()).canonicalHead, final?.headOid);
   assert.equal(git(handle.path, ['show', 'HEAD:after.txt']), 'capture this too');
   await driver.close(launch);
+  assert.deepEqual(
+    readdirSync(join(handle.path, '.git')).filter((name) => name.startsWith('index-')),
+    [],
+  );
   f.reviewer('ses_hosted_review', receipt.headOid);
   const reviewLaunch = m.launch('ses_hosted_review');
   const review = await driver.prepare(reviewLaunch, m.session('ses_hosted_review'));

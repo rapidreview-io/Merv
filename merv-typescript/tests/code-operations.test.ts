@@ -9,6 +9,8 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import fsp from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import type { Caller, CodeStoreOperation } from '@merv/contracts';
 import type { CodeImportRemote, FaultPoint } from '@merv/code/store/operations';
@@ -673,4 +675,84 @@ test('a ref of the linked repository is fetched into quarantine and admitted lik
     ['failed', 'code_import_rejected', 1],
   );
   assert.deepEqual(readdirSync(f.paths.quarantine), []);
+});
+
+test('history any earlier import holds is never imported from GitHub again', async (t) => {
+  const source = gitSource(t);
+  const one = source.commit({ 'a.txt': 'a\n' });
+  const remote: CodeImportRemote = {
+    read: async (_caller, use) =>
+      await use({
+        url: `file://${source.repository}`,
+        protocol: 'file',
+        repository: { id: 4242, fullName: 'fixture/source' },
+        env: {},
+      }),
+  };
+  const f = await codeStoreFixture(t, {}, one);
+  await f.open({ remote });
+  const imported = await f.code.importRepository(f.admin, {
+    source: 'github',
+    ref: 'refs/heads/main',
+    requestId: 'github-1',
+  });
+  assert.equal(imported.status, 'completed');
+  // More earlier imports than any fixed count, all of them sorting before the one that matters.
+  const other = git(f.paths.repository, [
+    'commit-tree',
+    '-m',
+    'other',
+    git(f.paths.repository, ['mktree'], ''),
+  ]);
+  git(
+    f.paths.repository,
+    ['update-ref', '--stdin'],
+    Array.from({ length: 60 }, (_, n) => `create refs/merv/imports/a${n} ${other}\n`).join(''),
+  );
+  const again = await f.code.importRepository(f.admin, {
+    source: 'github',
+    ref: 'refs/heads/main',
+    requestId: 'github-2',
+  });
+  assert.deepEqual([again.status, again.error], ['failed', 'code_import_current']);
+});
+
+test('a size check of a GitHub fetch that fails is not an unhandled rejection', async (t) => {
+  const source = gitSource(t);
+  const one = source.commit({ 'a.txt': 'a\n' });
+  const unhandled: unknown[] = [];
+  const seen = (error: unknown) => unhandled.push(error);
+  process.on('unhandledRejection', seen);
+  t.after(() => process.off('unhandledRejection', seen));
+  const f = await codeStoreFixture(t, {}, one);
+  const remote: CodeImportRemote = {
+    read: async (_caller, use) => {
+      t.mock.timers.enable({ apis: ['setInterval'] });
+      const reading = use({
+        url: `file://${source.repository}`,
+        protocol: 'file',
+        repository: { id: 4242, fullName: 'fixture/source' },
+        env: {},
+      });
+      // The watch measures the quarantine while the fetch runs; here the disk refuses it.
+      const readdir = t.mock.method(fsp, 'readdir', async () => {
+        throw Object.assign(new Error('too many open files'), { code: 'EMFILE' });
+      });
+      syncBuiltinESMExports();
+      t.mock.timers.tick(1000);
+      readdir.mock.restore();
+      syncBuiltinESMExports();
+      t.mock.timers.reset();
+      return await reading;
+    },
+  };
+  await f.open({ remote });
+  const imported = await f.code.importRepository(f.admin, {
+    source: 'github',
+    ref: 'refs/heads/main',
+    requestId: 'github-1',
+  });
+  assert.equal(imported.status, 'completed');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(unhandled, []);
 });
