@@ -10,7 +10,6 @@ import { Link, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import type {
   PaperCitation,
   PaperKind,
-  PaperPatch,
   PaperRevision,
   PaperSection,
   PaperSource,

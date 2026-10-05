@@ -963,8 +963,7 @@ details.stack > summary {
 .table th,
 .rail-group-head,
 .flag,
-.bg-kind,
-.bg-word {
+.bg-kind {
   font-size: var(--text-xs);
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -3663,16 +3662,6 @@ a.states-clause {
   width: 34px;
   margin-left: -34px;
 }
-/* A section with a change waiting on review carries one amber dot. */
-.out-flag {
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--proposed);
-  margin-left: 6px;
-  vertical-align: 2px;
-}
 /* The reading column. The hairline divides the two panes and belongs to the
    column, so it runs the height of the document rather than of the outline. */
 .paper-body {
@@ -3750,9 +3739,6 @@ a.states-clause {
   line-height: 1.5;
   color: var(--muted);
   white-space: normal;
-}
-.sec-tools {
-  margin-top: var(--space-2);
 }
 /* A proposed change against the text it changes: one colour, no fill, no box,
    no left edge, no green. Insertions are underlined, deletions struck in faint. */

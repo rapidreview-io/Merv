@@ -360,7 +360,7 @@ async function main() {
       {
         status: 'ready',
         ui: `${url}/ui/`,
-        running: `${url}/ui/running`,
+        work: `${url}/ui/work`,
         directory,
         schema,
         ...(sandboxes.length ? { sandboxes } : {}),

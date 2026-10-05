@@ -5,7 +5,7 @@ import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell
 import { EmptyState, LoadState, StatusPill } from './components';
 import { Icon } from './icons';
 import { WORK, dormantOwner, humanizeGroup } from './navigation';
-import { MOVED, VIEW_KINDS, viewFor } from './views';
+import { MOVED, Moved, VIEW_KINDS, viewFor } from './views';
 import { OverviewView } from './views/overview';
 import { PiProvider } from './views/pi';
 import { PiDock } from './views/pi-dock';
@@ -98,7 +98,7 @@ function Workspace() {
               <Route path="/work" element={<WorkView shell={shell.data} />} />
               {/* Before the rows: the first of two equal routes is the one that answers. */}
               {Object.entries(MOVED).map(([from, to]) => (
-                <Route key={from} path={`/${from}/*`} element={<Navigate to={to} replace />} />
+                <Route key={from} path={`/${from}/*`} element={<Moved to={to} />} />
               ))}
               {rows.map((row) => {
                 const View = viewFor(row.view.kind);
