@@ -738,12 +738,13 @@ export class MachineRunner implements Runner {
         const workspace = await driver.prepare(record, session);
         outcome = 'launch_failed';
         // Preparation may take time; the attach route rechecks current admission before spawn.
-        session = await this.client.attach(
+        let prompt: string;
+        ({ session, prompt } = await this.client.attach(
           record.sessionId,
           this.ledger.runnerId,
           record.id,
           workspace.snapshot,
-        );
+        ));
         this.save(record.id, { session: view(session), attached: true });
         if (!liveSession(session) || this.stopping) return false;
         const secret = this.ledger.sessionSecret(String(record.metadata.requestId));
@@ -761,6 +762,7 @@ export class MachineRunner implements Runner {
             : [];
         if (this.stopping) return false;
         const command = buildLaunch(profile, {
+          prompt,
           connections,
           hfToken: hfAccess?.token,
           hfEndpoint: hfAccess?.endpoint,

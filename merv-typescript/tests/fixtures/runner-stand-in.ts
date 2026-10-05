@@ -131,7 +131,10 @@ export function server(
       if (slid - Date.parse(session.expiresAt) >= (slid === hard ? 1 : 900_000))
         session.expiresAt = new Date(slid).toISOString();
     }
-    return reply({ session });
+    return reply({
+      session,
+      ...(action === 'attach' ? { prompt: 'Stand-in worker prompt.' } : {}),
+    });
   };
   const leases = (platform: string) =>
     calls.filter(

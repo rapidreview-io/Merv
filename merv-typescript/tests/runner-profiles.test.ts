@@ -23,6 +23,7 @@ import type { WorkflowWorkspacePolicy } from '@merv/contracts';
 import { researchGuide } from '../packages/research/src/guide.js';
 import { piInstructions } from '../packages/pi/src/prompt.js';
 import type { Session } from '@merv/sessions/types';
+import { workerPrompt } from '../packages/sessions/src/api.js';
 import {
   buildLaunch,
   collectRepositorySkillPaths,
@@ -130,6 +131,7 @@ function request(readOnly = false, workspace?: WorkflowWorkspacePolicy): LaunchR
   };
   return {
     session,
+    prompt: workerPrompt,
     secret,
     mcpUrl: 'http://127.0.0.1:8080/mcp',
     cwd: '/tmp/merv-profile-workspace',

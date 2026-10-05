@@ -303,7 +303,7 @@ export class RunnerClient {
     runnerId: string,
     hostRef: string,
     workspace?: SessionWorkspace,
-  ): Promise<Session> {
+  ): Promise<{ session: Session; prompt: string }> {
     const expected = workspaceSchema.safeParse(workspace);
     const reply = await this.request(`/sessions/${encodeURIComponent(id)}/attach`, {
       runnerId,
@@ -325,7 +325,11 @@ export class RunnerClient {
       )
         throw new RunnerControlError('invalid_control_response', 0);
     }
-    return session;
+    // What Sessions tells the worker of its lease; a server too old to say it launches nothing.
+    const prompt: unknown = reply?.prompt;
+    if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 32_000)
+      throw new RunnerControlError('invalid_control_response', 0);
+    return { session, prompt };
   }
   async launchConnections(
     id: string,

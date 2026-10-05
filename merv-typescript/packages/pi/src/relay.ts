@@ -64,31 +64,47 @@ export function piModelRelay({ models, authority, ...config }: PiRelayConfig): P
   };
 }
 
+type Usage = { inputTokens: number; outputTokens: number };
+/** The request that names a conversation from its first exchange: small, without reasoning. */
+export const titleRequest = (model: string, user: string, reply: string) => ({
+  model,
+  store: false,
+  max_output_tokens: 24,
+  reasoning: { effort: 'none' },
+  instructions: 'Title this conversation in 2 to 6 words. Reply with the title only.',
+  input: `User: ${user.slice(0, 2000)}\n\nAgent: ${reply.slice(0, 2000)}`,
+});
+
 /**
- * One small call to the relay's own upstream that names a conversation from its first exchange.
- * Anything short of a usable title is '', so the conversation keeps the name it has.
+ * That request, sent to the relay's own upstream. Anything short of a usable title is '', so the
+ * conversation keeps the name it has. `usage` settles its charge as the relay settles a call's:
+ * none where the provider refused it, and null, keeping the charge, where it may have run it.
  */
-export async function piTitle(model: string, key: string, user: string, reply: string) {
+export async function piTitle(
+  key: string,
+  body: ReturnType<typeof titleRequest>,
+): Promise<{ title: string; usage: Usage | null }> {
+  let usage: Usage | null = null;
   try {
     const response = await fetch(RESPONSES_URL, {
       method: 'POST',
       redirect: 'error',
       signal: AbortSignal.timeout(10_000),
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        store: false,
-        max_output_tokens: 24,
-        reasoning: { effort: 'none' },
-        instructions: 'Title this conversation in 2 to 6 words. Reply with the title only.',
-        input: `User: ${user.slice(0, 2000)}\n\nAgent: ${reply.slice(0, 2000)}`,
-      }),
+      body: JSON.stringify(body),
     });
-    if (!response.ok) return '';
-    const { output } = (await response.json()) as {
+    if (!response.ok) return { title: '', usage: { inputTokens: 0, outputTokens: 0 } };
+    const answer = (await response.json()) as {
       output: { content?: { type: string; text: string }[] }[];
+      usage?: { input_tokens?: unknown; output_tokens?: unknown };
     };
-    return output
+    const count = (value: unknown) => (Number.isSafeInteger(value) ? Number(value) : 0);
+    if (answer.usage)
+      usage = {
+        inputTokens: count(answer.usage.input_tokens),
+        outputTokens: count(answer.usage.output_tokens),
+      };
+    const title = answer.output
       .flatMap((item) => item.content ?? [])
       .filter((part) => part.type === 'output_text')
       .map((part) => part.text)
@@ -98,7 +114,8 @@ export async function piTitle(model: string, key: string, user: string, reply: s
       .replace(/^[\s#>'‘’-]*(?:title:)?[\s'‘’]*|[\s'‘’.]+$/gi, '')
       .slice(0, 80)
       .trim();
+    return { title, usage };
   } catch {
-    return '';
+    return { title: '', usage };
   }
 }

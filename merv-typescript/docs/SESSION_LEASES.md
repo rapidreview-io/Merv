@@ -225,7 +225,7 @@ use `X-Merv-Project-Id` when project selection is required.
 | `POST /sessions/offer`          | `instanceId`, `expectedRevision`, `runnerId`, `requestId`, `secret`, optional `hardDeadlineSeconds`; returns `{session}`.                                                    |
 | `GET /sessions`                 | Returns `{sessions}` belonging to this exact source authority.                                                                                                               |
 | `GET /sessions/:id`             | Returns `{session}` after checking source ownership.                                                                                                                         |
-| `POST /sessions/:id/attach`     | `runnerId`, immutable `hostRef`; returns `{session}`.                                                                                                                        |
+| `POST /sessions/:id/attach`     | `runnerId`, immutable `hostRef`; returns `{session, prompt}`: the worker prompt the runner sends before its own lines.                                                       |
 | `POST /sessions/:id/heartbeat`  | `runnerId`; returns `{session}`.                                                                                                                                             |
 | `POST /sessions/:id/release`    | `runnerId`, optional `reason`, `outcome` and `usage`; returns `{session}`.                                                                                                   |
 | `POST /sessions/:id/transcript` | The holding runner's `runnerId`, `hostRef` and transcript facts, optional `deliver`; returns `{transcript}` ([Sessions README](../packages/sessions/README.md#transcripts)). |

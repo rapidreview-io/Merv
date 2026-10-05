@@ -14,6 +14,7 @@ import {
   type HumanPrincipal,
   type Permission,
   type Role,
+  type State,
 } from '@merv/contracts';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
@@ -297,6 +298,16 @@ function provider(t: TestContext, reply: () => Promise<Response>) {
   return asked;
 }
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A person's Agent tokens, by day. */
+const spent = async (f: { state: State }, person: string) =>
+  (
+    await f.state.read((sql) =>
+      sql.all<{ tokens: number | string }>(
+        'SELECT tokens FROM pi_model_usage WHERE person=? ORDER BY day',
+        person,
+      ),
+    )
+  ).map(({ tokens }) => Number(tokens));
 
 test('Pi names a new conversation from its first exchange, once, without holding up the turn', async (t) => {
   const f = await fixture(t);
@@ -312,6 +323,7 @@ test('Pi names a new conversation from its first exchange, once, without holding
           content: [{ type: 'output_text', text: '"**Protein folding** basics."\n' }],
         },
       ],
+      usage: { input_tokens: 700, output_tokens: 6 },
     });
   });
   const conversation = await f.pi.create(f.operator, { requestId: 'unnamed' });
@@ -327,6 +339,8 @@ test('Pi names a new conversation from its first exchange, once, without holding
   answer();
   for (let wait = 0; wait < 100 && (await title()) === 'New conversation'; wait++) await pause(10);
   assert.equal(await title(), 'Protein folding basics');
+  // The naming call is the person's Agent tokens too, settled to what it used.
+  assert.deepEqual(await spent(f, conversation.userId), [706]);
   assert.equal(asked.length, 1);
   assert.equal(asked[0].model, 'gpt-6-luna');
   assert.equal(asked[0].max_output_tokens, 24);
@@ -364,6 +378,22 @@ test('a naming call that fails keeps the default title, and the turn is saved re
   assert.equal(asked.length, 1);
   assert.equal(snapshot.conversation.title, 'New conversation');
   assert.equal(snapshot.commands[0].status, 'completed');
+  // Refused by the provider, it cost nothing.
+  assert.deepEqual(await spent(f, conversation.userId), [0]);
+});
+
+test('a person whose Agent tokens are used up today gets no naming call', async (t) => {
+  const f = await fixture(t, { pi: { dailyTokensPerPerson: 10 } as PiConfig });
+  const asked = provider(t, async () => Response.json({ output: [] }));
+  const conversation = await f.pi.create(f.operator, { requestId: 'unnamed' });
+  const bound = await f.claimed(await f.send(conversation));
+  assert.deepEqual(await f.finish(bound), { saved: true });
+  await pause(20);
+  assert.equal(asked.length, 0);
+  assert.equal(
+    (await f.pi.snapshot(f.operator, conversation.id)).conversation.title,
+    'New conversation',
+  );
 });
 
 test('concurrent sends to separate conversations share one host and one machine', async (t) => {

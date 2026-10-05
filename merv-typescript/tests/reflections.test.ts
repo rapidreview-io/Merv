@@ -857,7 +857,13 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
       enabled: true,
       parallelism: 1,
     },
-    { session: execution, secret, mcpUrl: 'http://127.0.0.1:8080/mcp', cwd: '/tmp/merv-lens' },
+    {
+      session: execution,
+      prompt: 'Worker prompt.',
+      secret,
+      mcpUrl: 'http://127.0.0.1:8080/mcp',
+      cwd: '/tmp/merv-lens',
+    },
     {},
   );
   assert.doesNotMatch(
