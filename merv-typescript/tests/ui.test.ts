@@ -714,10 +714,12 @@ test('the Connections row reports mount health and serves mount status through u
   assert.equal((await tool('ui.read', { rowId: 'connections' })).error.code, 'row_unreadable');
 });
 
-test('The Cycles badge counts only cycles that have not completed, been abandoned or failed', async () => {
+test('The Cycles badge counts open cycles without reading every cycle', async () => {
   const ui = new UiRegistry();
-  const states = ['defining', 'researching', 'complete', 'abandoned', 'failed'];
-  const research = { list: async () => states.map((state) => ({ workflow: { state } })) };
+  const research = {
+    active: async () => 2,
+    list: async () => assert.fail('The badge must not read every cycle'),
+  };
   researchUiPlugin.apply({ research, ui, effect: (fn: () => unknown) => fn() } as never);
   const [cycles] = await ui.describe(caller);
   assert.deepEqual(cycles.status, { count: 2 });

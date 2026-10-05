@@ -1,6 +1,7 @@
 import type { ServiceTaskCreator, Tasks } from '@merv/tasks/types';
 import type { Code } from '@merv/code-work/types';
 import {
+  CheckedTransitions,
   check,
   clip,
   createService,
@@ -181,6 +182,7 @@ export class ResearchService implements Research {
   private automaticBound = false;
   private bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
   private handle?: Awaited<ReturnType<Workflows['register']>>;
+  private checked = new CheckedTransitions();
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
@@ -189,43 +191,10 @@ export class ResearchService implements Research {
     private workflows: Workflows,
   ) {
     this.initialize = async () => {
-      await state.migrate('research', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          // A cycle opened from an approved plan names the cycle it follows. The index makes
-          // "one successor per cycle" a fact of storage rather than of a lookup before insert.
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        {
-          // What a finished cycle decided, as the metadata of one immutable artifact. It is written
-          // once, possibly long after the cycle ended, so only a second write is refused.
-          version: 3,
-          sql: postgresMigrations[3],
-        },
-        {
-          version: 4,
-          sql: postgresMigrations[4],
-        },
-        {
-          // The consolidation tasks a version-6 cycle injected, newest last; unlike the children it changes.
-          version: 5,
-          sql: postgresMigrations[5],
-        },
-        {
-          version: 6,
-          sql: postgresMigrations[6],
-        },
-        {
-          // Deletes the cycles of research@2-5, re-links the survivors that followed them, and
-          // drops what the retired Consolidation plugin left behind.
-          version: 7,
-          sql: postgresMigrations[7],
-        },
-      ]);
+      await state.migrate(
+        'research',
+        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+      );
       // Providers bind later, each as it arrives; see researchPlugin.
       this.handle = await workflows.register(definition, this.policy());
     };
@@ -288,6 +257,7 @@ export class ResearchService implements Research {
             expectedRevision: context.snapshot.revision,
           }),
           check: async (context: WorkflowCheckContext) => {
+            if (this.checked.found(context)) return;
             const record = await this.get(context.caller, context.snapshot.id, context.tx);
             await this.authorize(context.caller, record, context.tx);
             if (context.input) parse(endChoiceSchema, context.input);
@@ -308,6 +278,7 @@ export class ResearchService implements Research {
             expectedRevision: context.snapshot.revision,
           }),
           check: async (context: WorkflowCheckContext) => {
+            if (this.checked.found(context)) return;
             const record = await this.get(context.caller, context.snapshot.id, context.tx);
             await this.authorize(context.caller, record, context.tx);
             await this.ready(
@@ -322,10 +293,12 @@ export class ResearchService implements Research {
           // about the plan is asked, rather than launching work an agent wrote.
           ...(stage === 'reflecting' || stage === 'consolidating'
             ? {
-                requiredInput: async ({ caller, snapshot, tx, input }: WorkflowCheckContext) => {
-                  // A choice already made was judged by the check; a skip must not need Reflections.
+                requiredInput: async (context: WorkflowCheckContext) => {
+                  const { caller, snapshot, tx, input } = context;
+                  // A choice made, or asked by the advance taking this, was judged by the check;
+                  // a skip must not need Reflections.
                   const choice = parse(nextWaveChoiceSchema, input ?? {});
-                  if (choice.nextWave) return [];
+                  if (choice.nextWave || this.checked.found(context)) return [];
                   // Without Git's answer a preflight reads the cycle as completing: the choice
                   // is asked whenever the plan continues, and honoured only when it completes. The
                   // transition carries that answer, so an advance that injects is not asked.
@@ -362,51 +335,54 @@ export class ResearchService implements Research {
     parse(getSchema, { researchId: id });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const row = await this.row(caller, id, tx);
-      const integrations: string[] = row.integrations ? JSON.parse(row.integrations) : [];
-      // The selection is what the cycle waits on now, not what it was created with.
-      const children = [row.reflection_id, ...integrations];
-      const { origin, ...record } = JSON.parse(row.record) as StoredRecord;
-      const successor = await tx.get<{ id: string }>(
-        'SELECT id FROM research_cycles WHERE predecessor_id=? AND project_id=?',
-        id,
-        caller.projectId,
-      );
-      const automatic = await tx.get<AutomaticRow>(
-        'SELECT * FROM research_automation WHERE research_id=?',
-        id,
-      );
-      return {
-        ...record,
-        automation: automatic
-          ? {
-              ...automaticStatus(automatic),
-              ...(!this.automaticBound &&
-              !over.has((await this.workflows.get(caller, id, tx)).state)
-                ? {
-                    blocker: {
-                      code: 'research_automatic_unavailable',
-                      message:
-                        'Automatic research is waiting for its durable event consumer to be available',
-                    },
-                  }
-                : {}),
-            }
-          : null,
-        // The column is the one statement of which cycle this follows; the record pins the rest.
-        origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,
-        successorId: successor?.id ?? null,
-        previousCycleId: row.predecessor_id,
-        digest: row.digest ? (JSON.parse(row.digest) as Artifact) : null,
-        researchDependencies: (await this.workflows.dependencies(caller, id, tx)).dependencies
-          .map((item) => item.id)
-          .filter((item) => !children.includes(item)),
-        workflow: await this.workflows.get(caller, id, tx),
-        problem: row.problem ? JSON.parse(row.problem) : null,
-        reflectionId: row.reflection_id,
-        integrations,
-      };
+      return await this.record(caller, await this.row(caller, id, tx), tx);
     });
+  }
+  /** The cycle a row describes, for a caller already authorized to read it. */
+  private async record(caller: Caller, row: Row, tx: Transaction): Promise<ResearchRecord> {
+    const integrations: string[] = row.integrations ? JSON.parse(row.integrations) : [];
+    // The selection is what the cycle waits on now, not what it was created with.
+    const children = [row.reflection_id, ...integrations];
+    const { origin, ...record } = JSON.parse(row.record) as StoredRecord;
+    const successor = await tx.get<{ id: string }>(
+      'SELECT id FROM research_cycles WHERE predecessor_id=? AND project_id=?',
+      row.id,
+      caller.projectId,
+    );
+    const automatic = await tx.get<AutomaticRow>(
+      'SELECT * FROM research_automation WHERE research_id=?',
+      row.id,
+    );
+    const workflow = await this.workflows.get(caller, row.id, tx);
+    return {
+      ...record,
+      automation: automatic
+        ? {
+            ...automaticStatus(automatic),
+            ...(!this.automaticBound && !over.has(workflow.state)
+              ? {
+                  blocker: {
+                    code: 'research_automatic_unavailable',
+                    message:
+                      'Automatic research is waiting for its durable event consumer to be available',
+                  },
+                }
+              : {}),
+          }
+        : null,
+      // The column is the one statement of which cycle this follows; the record pins the rest.
+      origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,
+      successorId: successor?.id ?? null,
+      previousCycleId: row.predecessor_id,
+      digest: row.digest ? (JSON.parse(row.digest) as Artifact) : null,
+      researchDependencies: (await this.workflows.dependencies(caller, row.id, tx)).dependencies
+        .map((item) => item.id)
+        .filter((item) => !children.includes(item)),
+      workflow,
+      problem: row.problem ? JSON.parse(row.problem) : null,
+      reflectionId: row.reflection_id,
+      integrations,
+    };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<Row> {
     const row = await tx.get<Row>(
@@ -423,12 +399,24 @@ export class ResearchService implements Research {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await mapAsync(
-        await tx.all<{ id: string }>(
-          'SELECT id FROM research_cycles WHERE project_id=? ORDER BY _merv_rowid',
+        await tx.all<Row>(
+          'SELECT * FROM research_cycles WHERE project_id=? ORDER BY _merv_rowid',
           caller.projectId,
         ),
-        async (row) => await this.get(caller, row.id, tx),
+        async (row) => await this.record(caller, row, tx),
       );
+    });
+  }
+  /** How many cycles are still open, for the navigation badge, without reading each one. */
+  async active(caller: Caller): Promise<number> {
+    this.open();
+    return await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const open = await tx.get<{ count: number }>(
+        "SELECT COUNT(*)::integer AS count FROM research_cycles c JOIN wf_instances w ON w.id=c.id WHERE c.project_id=? AND w.state NOT IN ('complete','abandoned','failed')",
+        caller.projectId,
+      );
+      return open!.count;
     });
   }
   async create(
@@ -622,12 +610,12 @@ export class ResearchService implements Research {
     checks: BindingChecks = [],
     choice: Choice = {},
     since?: Unpublished | null,
-  ): Promise<Move> {
+  ): Promise<{ move: Move; continuing?: Continuing }> {
     const stage = record.workflow.state as Stage;
     check(stage !== 'complete', 'research_complete', 'This research cycle is complete', 409);
     if (stage === 'defining') {
       await this.definition(caller, tx, checks);
-      return 'advance';
+      return { move: 'advance' };
     }
     if (stage === 'researching' || stage === 'reflecting')
       this.requireCapability('reflections', checks);
@@ -679,15 +667,16 @@ export class ResearchService implements Research {
     const move = await this.move(caller, record, tx, checks, since, choice);
     // A skip reads no plan, so it completes a cycle whose plan can no longer be created, or
     // whose Reflections is gone. Anything else must know whether a plan waits for an answer.
-    if (choice.nextWave !== 'skip') {
-      const approved = await this.continuing(caller, record, tx, checks, move);
-      if (approved && choice.nextWave === 'create') {
-        this.checkAutomaticContinuation(caller, record);
-        await this.creatable(caller, approved.plan, tx, checks);
-      }
+    const continuing =
+      choice.nextWave === 'skip'
+        ? undefined
+        : await this.continuing(caller, record, tx, checks, move);
+    if (continuing && choice.nextWave === 'create') {
+      this.checkAutomaticContinuation(caller, record);
+      await this.creatable(caller, continuing.plan, tx, checks);
     }
     checks.forEach((check) => check());
-    return move;
+    return { move, continuing };
   }
 
   /**
@@ -1336,18 +1325,24 @@ export class ResearchService implements Research {
       await this.authorize(caller, record, tx);
       const checks: BindingChecks = [];
       const result = await this.command(caller, 'end', input, tx, async () => {
-        const moved = await this.handle!.transition(
-          caller,
-          {
-            instanceId: record.id,
-            expectedRevision: input.expectedRevision,
-            action: input.outcome === 'failed' ? 'mark_failed' : 'abandon',
-            input: { outcome: input.outcome, reason: input.reason },
-            // Kept on the cycle, clipped, so a digest composed later can still say why it ended.
-            data: { reason: clip(input.reason, ENDING_REASON_CHARS) },
-            requestId: childRequest(caller, 'research', 'end', input.requestId),
-          },
+        const action = input.outcome === 'failed' ? 'mark_failed' : 'abandon';
+        const moved = await this.checked.take(
           tx,
+          { instanceId: record.id, revision: record.workflow.revision, action },
+          () =>
+            this.handle!.transition(
+              caller,
+              {
+                instanceId: record.id,
+                expectedRevision: input.expectedRevision,
+                action,
+                input: { outcome: input.outcome, reason: input.reason },
+                // Kept on the cycle, clipped, so a digest composed later can still say why it ended.
+                data: { reason: clip(input.reason, ENDING_REASON_CHARS) },
+                requestId: childRequest(caller, 'research', 'end', input.requestId),
+              },
+              tx,
+            ),
         );
         await tx.run(
           'UPDATE research_automation SET blocker_json=NULL WHERE research_id=?',
@@ -1360,11 +1355,12 @@ export class ResearchService implements Research {
           { from: record.workflow.state, to: moved.state, reason: input.reason },
           tx,
         );
-        await this.digested(caller, await this.get(caller, record.id, tx), tx, checks, {
+        const ended = await this.get(caller, record.id, tx);
+        ended.digest = await this.digested(caller, ended, tx, checks, {
           late: false,
           required: false,
         });
-        return await this.get(caller, record.id, tx);
+        return ended;
       });
       checks.forEach((check) => check());
       return result;
@@ -1393,12 +1389,8 @@ export class ResearchService implements Research {
           409,
         );
         const handle = this.handle!;
-        const move = await this.ready(caller, record, tx, checks, input, since);
+        const { move, continuing } = await this.ready(caller, record, tx, checks, input, since);
         const injecting = move === 'inject' || move === 'reinject';
-        const continuing =
-          input.nextWave === 'skip'
-            ? undefined
-            : await this.continuing(caller, record, tx, checks, move);
         check(
           !continuing || input.nextWave,
           'next_wave_choice_required',
@@ -1473,16 +1465,22 @@ export class ResearchService implements Research {
           ...(input.retryIntegration ? { retryIntegration: true } : {}),
           move,
         };
-        const moved = await handle.transition(
-          caller,
-          {
-            instanceId: record.id,
-            expectedRevision: input.expectedRevision,
-            action: move === 'inject' ? 'advance' : move,
-            input: choice,
-            requestId: childRequest(caller, 'research', 'advance', input.requestId),
-          },
+        const action = move === 'inject' ? 'advance' : move;
+        const moved = await this.checked.take(
           tx,
+          { instanceId: record.id, revision: record.workflow.revision, action },
+          () =>
+            handle.transition(
+              caller,
+              {
+                instanceId: record.id,
+                expectedRevision: input.expectedRevision,
+                action,
+                input: choice,
+                requestId: childRequest(caller, 'research', 'advance', input.requestId),
+              },
+              tx,
+            ),
         );
         // After the move, so every guard judged the project as it was before the plan's work
         // existed: seven planned experiments would otherwise refuse themselves.
@@ -1527,12 +1525,13 @@ export class ResearchService implements Research {
           },
           tx,
         );
+        const advanced = await this.get(caller, record.id, tx);
         if (moved.state === 'complete')
-          await this.digested(caller, await this.get(caller, record.id, tx), tx, checks, {
+          advanced.digest = await this.digested(caller, advanced, tx, checks, {
             late: false,
             required: false,
           });
-        return await this.get(caller, record.id, tx);
+        return advanced;
       });
       checks.forEach((check) => check());
       return result;
@@ -1565,13 +1564,11 @@ export class ResearchService implements Research {
   async wakeAutomatic(): Promise<void> {
     if (!this.automaticBound || this.closed) return;
     await this.state.transaction(async (tx) => {
+      // One resume per project: its consumer reconciles every open cycle there.
       const rows = await tx.all<{ project_id: string; source_json: string; research_id: string }>(
-        "SELECT a.project_id,a.source_json,a.research_id FROM research_automation a JOIN wf_instances w ON w.id=a.research_id WHERE w.state NOT IN ('complete','abandoned','failed')",
+        "SELECT DISTINCT ON (a.project_id) a.project_id,a.source_json,a.research_id FROM research_automation a JOIN wf_instances w ON w.id=a.research_id WHERE w.state NOT IN ('complete','abandoned','failed') ORDER BY a.project_id,a.cycle_index,a.research_id",
       );
-      const projects = new Set<string>();
-      for (const row of rows) {
-        if (projects.has(row.project_id)) continue;
-        projects.add(row.project_id);
+      for (const row of rows)
         await this.state.appendEvent(tx, {
           projectId: row.project_id,
           actorId: JSON.parse(row.source_json).actorId,
@@ -1579,7 +1576,6 @@ export class ResearchService implements Research {
           subjectId: row.research_id,
           data: { performedBy: 'system:research' },
         });
-      }
     });
   }
 

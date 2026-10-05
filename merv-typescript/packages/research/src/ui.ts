@@ -17,11 +17,7 @@ export const researchUiPlugin = {
         view: { kind: 'research' },
         read: async (caller) => JSON.parse(JSON.stringify(await research.list(caller))) as Json,
         // Open work: a cycle that has not yet completed, been abandoned or failed.
-        status: async (caller) => ({
-          count: (await research.list(caller)).filter(
-            (record) => !['complete', 'abandoned', 'failed'].includes(record.workflow.state),
-          ).length,
-        }),
+        status: async (caller) => ({ count: await research.active(caller) }),
       }),
     );
   },

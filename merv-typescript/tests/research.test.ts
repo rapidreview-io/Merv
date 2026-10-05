@@ -742,6 +742,8 @@ test('an ended cycle digests its reason and the selected work it leaves unfinish
   t.mock.method(f.app.ctx.experiments, 'list', async () => {
     throw new Error('A task-only cycle must not load experiments');
   });
+  // The Cycles badge counts open cycles only.
+  assert.equal(await f.research.active(f.owner), 1);
   const reason = 'The corpus was withdrawn before the survey finished.';
   const ended = await f.research.end(f.owner, {
     researchId: cycle.id,
@@ -750,6 +752,7 @@ test('an ended cycle digests its reason and the selected work it leaves unfinish
     reason,
     requestId: f.id(),
   });
+  assert.equal(await f.research.active(f.owner), 0);
   const { digest } = await digestOf(f, ended);
   assert.equal(digest.cycle.outcome, 'failed');
   assert.equal(digest.cycle.reason, reason);

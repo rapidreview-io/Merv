@@ -11,7 +11,7 @@ import {
 import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { executionOutputs, getArtifacts, keyId, keyKind } from '@merv/contracts';
-import { paperChangesSchema, parsed } from '@merv/contracts';
+import { CheckedTransitions, paperChangesSchema, parsed } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -39,6 +39,7 @@ import {
   type WorkflowCheckContext,
   type WorkflowExecutionPolicy,
   type WorkflowPolicy,
+  type WorkflowSnapshot,
   type Workflows,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
@@ -176,6 +177,7 @@ const embedded = (sections: Record<string, ContextItem[]>): Record<string, Conte
 export class ReflectionService implements Reflections {
   /** One per published version: an instance moves only through the version it began on. */
   private handles = new Map<string, Awaited<ReturnType<Workflows['register']>>>();
+  private checked = new CheckedTransitions();
   private contexts = new Map<string, ContextRegistration>();
   private releaseOwner?: () => void;
   private closed = false;
@@ -426,14 +428,18 @@ export class ReflectionService implements Reflections {
     check(handle, 'reflection_unavailable', 'Reflection program is unavailable', 503);
     return handle;
   }
-  /** A transition through the handle of the version the instance began on. */
+  /** A transition on the instance's own version; one guarded by its command passes `checked`. */
   private async moved(
     caller: Caller,
     input: Parameters<ReturnType<ReflectionService['handle']>['transition']>[1],
     tx: Transaction,
+    checked?: WorkflowSnapshot,
   ) {
-    const { workflow: name, version } = await this.workflows.get(caller, input.instanceId, tx);
-    return await this.handle({ name, version }).transition(caller, input, tx);
+    const { workflow: name, version } =
+      checked ?? (await this.workflows.get(caller, input.instanceId, tx));
+    const move = () => this.handle({ name, version }).transition(caller, input, tx);
+    const edge = checked && { ...checked, instanceId: checked.id, action: input.action };
+    return await (edge ? this.checked.take(tx, edge, move) : move());
   }
   private async createLenses(caller: Caller, row: WaveRow, tx: Transaction): Promise<void> {
     // Lenses pair with their wave: only an endable wave's lenses can be ended with it.
@@ -1148,6 +1154,7 @@ export class ReflectionService implements Reflections {
                   expectedRevision: snapshot.revision,
                 }),
                 check: async (c: WorkflowCheckContext) => {
+                  if (this.checked.found(c)) return;
                   await this.admit(c);
                   // The report is what the submission is about, so a question about the
                   // submission looks at it: an answer of ready for a report that is missing,
@@ -1172,6 +1179,7 @@ export class ReflectionService implements Reflections {
                   expectedRevision: snapshot.revision,
                 }),
                 check: async (c: WorkflowCheckContext) => {
+                  if (this.checked.found(c)) return;
                   await this.admit(c);
                   if (typeof c.input?.changeSpecArtifactId === 'string') {
                     const changeSpec = await this.author(
@@ -1325,6 +1333,7 @@ export class ReflectionService implements Reflections {
             requestId: childRequest(caller, 'reflection', 'lens-submit', input.requestId),
           },
           tx,
+          snapshot,
         );
         await tx.run(
           'UPDATE reflection_lenses SET producer_id=?,artifact=? WHERE id=?',
@@ -1408,6 +1417,7 @@ export class ReflectionService implements Reflections {
             requestId: childRequest(caller, 'reflection', 'submit', input.requestId),
           },
           tx,
+          snapshot,
         );
         const pinnedInputIds = lenses.map((lens) => (JSON.parse(lens.artifact!) as Artifact).id);
         const review = await this.reviews.request(
