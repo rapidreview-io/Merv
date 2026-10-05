@@ -4,14 +4,14 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:7fbc780036c528eed59bf2de3e9f1b57cf9b2e3b7ed8058e8474c253f6fe882c",
-    "releaseId": "rt1_e42c23ba593d7594a9b9315b6b13466bb08722e328faf66fbc2e6715386ce25b",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:dcbc4e3b30083a779cb50626ec7a3572242b10a9aebdf0ed5cabb669ce903de6",
+    "releaseId": "rt1_bd30ca1c546607a73c2712912aab844b80ed3846ad71ac9882201289d0f3d35a",
     "releases": {
-      "cloudflare-fleet": "rt1_e42c23ba593d7594a9b9315b6b13466bb08722e328faf66fbc2e6715386ce25b",
-      "cloudflare-fleet-large": "rt1_a7a876b1fa7ba917c000a1a4a743d60b8ae09cc0e49c9e8a577a1bcbcf2739f4"
+      "cloudflare-fleet": "rt1_bd30ca1c546607a73c2712912aab844b80ed3846ad71ac9882201289d0f3d35a",
+      "cloudflare-fleet-large": "rt1_ef46c909951db5625935dac96a272f96acd019f450ba03fc0c7d7a5822034be3"
     },
-    "localId": "sha256:d8afa0259bcdcad9041e7f2f76c8ec69de75914fc09a2d47fe9ff64ca5c824e8",
-    "sourceCommit": "ed7f71a82549af45ce9e7be2364b91e05159a3d9",
+    "localId": "sha256:56c767a0aff150ec3c6a5e347fe70f322ffc7f4858188e91c9f0b6cdbaeaa11d",
+    "sourceCommit": "0191f10703d61e3277bc09de27d174042fcf3d92",
     "sandboxesCommit": "5157f1ed7618ff3987da7f214d2312afd31e636d"
   },
   "inputs": [
@@ -19,6 +19,7 @@
     "packages/code/src/driver/index.ts",
     "packages/code/src/files.ts",
     "packages/code/src/merge-settings.ts",
+    "packages/contracts/src/agent-stream.ts",
     "packages/contracts/src/async.ts",
     "packages/contracts/src/checked-transitions.ts",
     "packages/contracts/src/code-github.ts",
@@ -41,7 +42,9 @@
     "packages/pi/src/tool-names.ts",
     "packages/pi/src/worker-main.ts",
     "packages/pi/src/worker.ts",
+    "packages/runner/src/agent-stream.ts",
     "packages/runner/src/client.ts",
+    "packages/runner/src/conversation.ts",
     "packages/runner/src/index.ts",
     "packages/runner/src/ledger.ts",
     "packages/runner/src/process-host.ts",
