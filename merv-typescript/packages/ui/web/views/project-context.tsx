@@ -122,8 +122,8 @@ export function ProjectIntroduction() {
   return (
     <section className="stack" aria-label="Project introduction">
       <p className="muted">
-        Every worker's assignment carries this. Merv rewrites it from the Problem each time a
-        research cycle starts, so an edit here lasts until then.
+        While the project paper is loaded, Merv writes this from its Problem whenever the Problem
+        changes, and an edit here is refused.
       </p>
       <LoadState {...project} />
       {project.data && (

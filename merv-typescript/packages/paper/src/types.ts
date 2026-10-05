@@ -36,6 +36,8 @@ export interface PaperContextSection {
 }
 export interface Paper {
   read(caller: Caller, tx?: Transaction): Promise<PaperWorkspace>;
+  /** Only `read`'s documents, in one query: what a context reads of the paper. */
+  documents(caller: Caller, tx?: Transaction): Promise<PaperWorkspace['documents']>;
   history(caller: Caller, kind: PaperKind, tx?: Transaction): Promise<PaperRevision[]>;
   patch(caller: Caller, input: PaperPatch, tx?: Transaction): Promise<PaperRevision>;
   cite(caller: Caller, input: PaperCite, tx?: Transaction): Promise<PaperCitation>;

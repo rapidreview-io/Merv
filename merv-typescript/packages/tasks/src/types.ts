@@ -159,6 +159,8 @@ export interface Tasks {
   create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task>;
   get(caller: Caller, taskId: string): Promise<Task>;
   list(caller: Caller): Promise<TaskRecord[]>;
+  /** How many tasks are still open, for the navigation badge, without reading each one. */
+  active(caller: Caller): Promise<number>;
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, taskId: string): Promise<ProcessGraph>;
   /** What the optional Code plugin holds for a Git task; null without it. */

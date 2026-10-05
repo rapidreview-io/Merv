@@ -46,16 +46,22 @@ export async function identityOf(tools: Tools, caller: Caller): Promise<Record<s
 export async function homeRead(tools: Tools, rows: UiRow[], caller: Caller): Promise<Json> {
   const parts = [
     ...PARTS,
-    ...rows.flatMap((row) => (row.home ? [[row.id, row.home.tool, row.home.keep] as const] : [])),
+    ...rows.flatMap((row) =>
+      row.home ? [[row.id, row.home.tool, row.home.keep, row.home.list] as const] : [],
+    ),
   ];
   // The parts are independent read-only tools. This tool runs in one snapshot scope, so
   // they share its connection and their queries queue on it in turn; that costs tens of
   // milliseconds, where a scope of their own each would queue on the writer lock.
   return Object.fromEntries(
     await Promise.all(
-      parts.map(async ([key, tool, keep]) => [
+      parts.map(async ([key, tool, keep, list]) => [
         key,
-        trim(key, await answer(async () => await tools.call(tool, caller, {})), keep),
+        trim(
+          key,
+          await answer(async () => await (list?.(caller) ?? tools.call(tool, caller, {}))),
+          keep,
+        ),
       ]),
     ),
   ) as Json;

@@ -124,12 +124,13 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     );
   }
 
-  async list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]> {
+  async list(caller: Caller, tx?: Transaction, workflow?: string): Promise<WorkflowSnapshot[]> {
     return await this.reading(caller, tx, async (tx, caller) =>
       (
         await tx.all<InstanceRow>(
-          'SELECT * FROM wf_instances WHERE project_id = ? ORDER BY created_at, id',
+          `SELECT * FROM wf_instances WHERE project_id = ?${workflow ? ' AND workflow = ?' : ''} ORDER BY created_at, id`,
           caller.projectId,
+          ...(workflow ? [workflow] : []),
         )
       ).map(this.snapshot),
     );

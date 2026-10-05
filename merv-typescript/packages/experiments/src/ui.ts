@@ -17,7 +17,11 @@ export const experimentsUiPlugin = {
         order: 16,
         path: '/experiments',
         view: { kind: 'experiments' },
-        home: { tool: 'experiment.list', keep: ['id', 'name', 'intent', 'ownerId', 'workflow'] },
+        home: {
+          tool: 'experiment.list',
+          keep: ['id', 'name', 'intent', 'ownerId', 'workflow'],
+          list: async (caller) => await experiments.summaries(caller),
+        },
         // One record, with the gate it stands at: the process graph is derived from the
         // same record, so the page reads both in one answer rather than two.
         read: async (caller, params) => {

@@ -495,6 +495,20 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       );
     });
   }
+  async summaries(caller: Caller) {
+    this.open();
+    return await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const flows = new Map(
+        (await this.workflows.list(caller, tx, 'experiment')).map((w) => [w.id, w]),
+      );
+      const sql =
+        'SELECT id,name,intent,owner_id AS "ownerId" FROM experiments WHERE project_id=? ORDER BY created_at,id';
+      return (
+        await tx.all<Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId'>>(sql, caller.projectId)
+      ).map((row) => ({ ...row, workflow: flows.get(row.id)! }));
+    });
+  }
   async occupancy(caller: Caller, transaction?: Transaction): Promise<ExperimentOccupancy> {
     this.open();
     caller = structuredClone(caller);
@@ -538,7 +552,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         check(
           active < MAX_ACTIVE_EXPERIMENTS,
           'experiment_limit',
-          'At most seven experiments may be active in this project',
+          `At most ${MAX_ACTIVE_EXPERIMENTS} experiments may be active in this project`,
           409,
         );
         for (const id of input.dependsOn) {
@@ -925,7 +939,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       figureIds = [
         ...new Set([...approved.figureIds, ...(await this.figures(caller, text, experiment, tx))]),
       ];
-      for (const id of approved.figureIds) await this.artifacts.bytes(caller, id, tx);
+      // Their bytes were read when the design was submitted, and artifacts never change.
+      await getArtifacts(this.artifacts, caller, approved.figureIds, tx);
       exhibit = await this.buildExhibit(
         caller,
         experiment,
@@ -965,7 +980,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         'Submission includes evidence outside the current worker’s authorship and frozen recovery selection',
         403,
       );
-      await this.artifacts.bytes(caller, item.artifactId, tx);
     }
     return { evidence, figureIds, exhibit };
   }

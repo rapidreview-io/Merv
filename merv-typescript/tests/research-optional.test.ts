@@ -301,8 +301,8 @@ test('a withdrawn optional provider cannot commit results returned after an awai
     release = pending();
   const unbind = f.research.bindPaper({
     ...paper,
-    read: async (...args) => {
-      const result = await paper.read(...args);
+    documents: async (...args) => {
+      const result = await paper.documents(...args);
       entered.resolve();
       await release.promise;
       return result;
@@ -322,8 +322,8 @@ test('a withdrawn optional provider cannot commit results returned after an awai
     rerelease = pending();
   const finalUnbind = f.research.bindPaper({
     ...paper,
-    read: async (...args) => {
-      const result = await paper.read(...args);
+    documents: async (...args) => {
+      const result = await paper.documents(...args);
       reentered.resolve();
       await rerelease.promise;
       return result;

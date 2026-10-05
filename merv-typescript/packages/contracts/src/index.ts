@@ -1064,7 +1064,8 @@ export interface Scope {
   /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
    * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
-  /** The person who created the project by signing in, or null (a bootstrapped or imported one). */
+  /** The person who created the project by signing in; for a bootstrapped or imported one, its
+   * owner (see projectOwners); null while it has neither. */
   projectCreator(
     projectId: string,
     tx?: Transaction,
@@ -1167,6 +1168,9 @@ export interface Scope {
     tx?: Transaction,
   ): Promise<boolean>;
   project(caller: Caller, tx?: Transaction): Promise<Project>;
+  /** Set by a plugin that writes the Introduction itself, while it is loaded: why
+   * project.context.update refuses, so the Introduction has that one writer. */
+  introductionWriter?: string;
   updateProjectContext(
     caller: Caller,
     input: ProjectContextUpdate,
@@ -1771,7 +1775,8 @@ export interface Workflows {
     ): Promise<WorkflowSnapshot>;
   }>;
   get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot>;
-  list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]>;
+  /** The project's instances, oldest first; with `workflow`, only that workflow's. */
+  list(caller: Caller, tx?: Transaction, workflow?: string): Promise<WorkflowSnapshot[]>;
   history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;
   /**
    * System reads for a caller already authorized for what it asks. `open`: the instances of

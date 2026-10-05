@@ -452,7 +452,7 @@ test('context sections list every written current and published section whole, i
   assert.deepEqual(documents, copy);
 });
 
-test('a Problem patch writes the Introduction from it, replacing what was there', async (t) => {
+test('a Problem patch writes the Introduction from it, replacing what was there, an empty Problem included', async (t) => {
   const f = await fixture(t);
   const before = await f.scope.project(f.operator);
   await f.scope.updateProjectContext(f.operator, {
@@ -467,9 +467,9 @@ test('a Problem patch writes the Introduction from it, replacing what was there'
       requestId: f.request(),
       changes,
     });
-  // An empty Problem says nothing, so the hand-written Introduction stays.
+  // Paper is the Introduction's one writer: an empty Problem leaves it empty too.
   await patch([{ id: 'scope', content: '  ' }]);
-  assert.equal((await f.scope.project(f.operator)).summary, 'A note written by hand.');
+  assert.equal((await f.scope.project(f.operator)).summary, '');
   await patch([
     { id: 'problem', content: 'Can this comparison be evaluated reliably?' },
     { id: 'goals', content: 'Retain independently verified evidence.' },
@@ -492,7 +492,7 @@ test('a Problem patch writes the Introduction from it, replacing what was there'
       '## Constraints\n\nUse only the frozen available corpus.',
     ].join('\n\n'),
   );
-  assert.equal(project.contextRevision, before.contextRevision! + 3);
+  assert.equal(project.contextRevision, before.contextRevision! + 4);
   // A patch that says the same thing, and any other document, leaves it and its revision alone.
   await patch([{ id: 'goals', content: 'Retain independently verified evidence.' }]);
   await f.paper.patch(f.producer, {
@@ -502,6 +502,9 @@ test('a Problem patch writes the Introduction from it, replacing what was there'
     changes: [{ id: 'm', title: 'M', content: 'Method' }],
   });
   assert.equal((await f.scope.project(f.operator)).contextRevision, project.contextRevision);
+  // Blanking every section blanks the Introduction.
+  await patch(['problem', 'scope', 'goals', 'constraints'].map((id) => ({ id, content: '' })));
+  assert.equal((await f.scope.project(f.operator)).summary, '');
 });
 
 test('the Introduction written from a long Problem is cut to fit and says so', () => {

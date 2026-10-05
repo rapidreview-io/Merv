@@ -505,7 +505,7 @@ test('Existing project rows gain empty Introduction defaults through migration w
   assert.equal((await scope.updateProjectContext(caller, update())).contextRevision, 1);
 });
 
-test('Task contexts freeze the Introduction at lease offer and retain saved packets across project changes and restart', async (t) => {
+test('Task contexts freeze the Problem at lease offer, carry it once, and retain saved packets across project changes and restart', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-introduction-'));
   let app = await createApp({ directory, api: false });
   t.after(async () => {
@@ -526,7 +526,15 @@ test('Task contexts freeze the Introduction at lease offer and retain saved pack
     capacity: 1,
     capabilities: ['code.v2'],
   });
-  const first = await app.ctx.scope.updateProjectContext(source, update('INTRO_AT_OFFER_731'));
+  // Paper writes the Introduction from the Problem; the paper's items carry the Problem.
+  const problem = async (content: string, expectedRevision: number) =>
+    await app.ctx.paper.patch(source, {
+      kind: 'problem',
+      expectedRevision,
+      requestId: `problem-${expectedRevision}`,
+      changes: [{ id: 'problem', content }],
+    });
+  await problem('INTRO_AT_OFFER_731', 0);
   const task = await app.ctx.tasks.create(source, {
     title: 'Observe intent',
     goal: 'Verify the result.',
@@ -548,19 +556,11 @@ test('Task contexts freeze the Introduction at lease offer and retain saved pack
     requestId: 'offer',
     secret,
   });
-  assert.match(offered.assignment.context!.prompt, /INTRO_AT_OFFER_731/);
+  assert.equal(offered.assignment.context!.prompt.split('INTRO_AT_OFFER_731').length, 2);
   assert.equal(offered.assignment.context!.recipeHash, saved.recipeHash);
-  const pin = {
-    id: boot.project.id,
-    name: boot.project.name,
-    summary: first.summary,
-    contextRevision: 1,
-  };
+  const pin = { id: boot.project.id, name: boot.project.name, contextRevision: 1 };
   assert.deepEqual(offered.lease.receipt.project, pin);
-  await app.ctx.scope.updateProjectContext(
-    source,
-    update('INTRO_AFTER_OFFER_942', first.summary!, 'later'),
-  );
+  await problem('INTRO_AFTER_OFFER_942', 1);
   assert.deepEqual(
     await app.ctx.tasks.context(source, contextInput),
     saved,

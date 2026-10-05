@@ -390,18 +390,26 @@ export class ResearchService implements Research {
       );
     });
   }
+  async summaries(caller: Caller) {
+    this.open();
+    return await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const flows = new Map(
+        (await this.workflows.list(caller, tx, 'research')).map((w) => [w.id, w]),
+      );
+      const sql = 'SELECT id,record FROM research_cycles WHERE project_id=? ORDER BY _merv_rowid';
+      return (await tx.all<Row>(sql, caller.projectId)).map(({ id, record }) => {
+        const { name, ownerId } = JSON.parse(record) as StoredRecord;
+        return { id, name, ownerId, workflow: flows.get(id)! };
+      });
+    });
+  }
   /** How many cycles are still open, for the navigation badge, without reading each one. */
   async active(caller: Caller): Promise<number> {
     this.open();
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const cycles = await this.workflows.open('research', caller.projectId, tx);
-      const open = await tx.get<{ count: number }>(
-        'SELECT COUNT(*)::integer AS count FROM research_cycles WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))',
-        caller.projectId,
-        JSON.stringify(cycles.map((cycle) => cycle.id)),
-      );
-      return open!.count;
+      return (await this.workflows.open('research', caller.projectId, tx)).length;
     });
   }
   async create(
@@ -572,8 +580,8 @@ export class ResearchService implements Research {
     tx: Transaction,
     checks: BindingChecks,
   ): Promise<PaperRevision> {
-    const problem = (await this.use('paper', checks, (service) => service.read(caller, tx)))
-      .documents.problem.current;
+    const problem = (await this.use('paper', checks, (service) => service.documents(caller, tx)))
+      .problem.current;
     check(
       ['problem', 'scope', 'goals', 'constraints'].every((id) =>
         problem.sections.some((section) => section.id === id && visible(section.content)),
@@ -787,7 +795,7 @@ export class ResearchService implements Research {
       check(
         active + planned.length <= MAX_ACTIVE_EXPERIMENTS,
         'experiment_limit',
-        `The plan adds ${planned.length} experiments to ${active} active ones, and at most seven may be active in this project. Finish or end active experiments first, or complete this cycle with nextWave: "skip"`,
+        `The plan adds ${planned.length} experiments to ${active} active ones, and at most ${MAX_ACTIVE_EXPERIMENTS} may be active in this project. Finish or end active experiments first, or complete this cycle with nextWave: "skip"`,
         409,
       );
     }
