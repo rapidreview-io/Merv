@@ -21,7 +21,7 @@ export const experimentsToolsPlugin = {
         name: 'experiment.create',
         description:
           'Create a research experiment in the selected project with an immutable name, intent and optional details. Dependencies are work-item IDs in the same project. Starts planning attempt 1; at most seven experiments may remain active. Full training and evaluations require independent design approval. Name actual missing data, compute, budget or prerequisite work separately. Every experiment uses a private managed Git checkout, independently of GitHub. Code derives its base from accepted dependsOn prerequisites and project main. The first planning or running lease pins this base. Conflicting dependencies wait for reviewed resolution. Missing repository storage blocks execution rather than using scratch. Retain implementation with code.commit and experimental outputs as artifacts. Reuse the same requestId and input to recover a committed response.',
-        inputSchema: experimentCreateSchema.omit({ workspace: true, baseTaskId: true }),
+        inputSchema: experimentCreateSchema.omit({ workspace: true }),
         handler: async (caller: Caller, input: ExperimentCreate) =>
           await experiments.create(caller, input),
       },

@@ -15,8 +15,6 @@ export interface ExperimentCreate {
   dependsOn?: string[];
   /** New experiments always use Git. Retired values remain typed for historical request replay. */
   workspace?: 'none' | 'git';
-  /** Historical request replay only; new work derives its base from dependsOn. */
-  baseTaskId?: string;
   requestId: string;
 }
 export interface ExperimentAttach {
@@ -99,8 +97,6 @@ export interface Experiment {
   createdAt: string;
   /** Present only when explicitly created with the Git program. */
   workspace?: 'git';
-  /** Present only when the Git checkout starts from that task's delivered commit. */
-  baseTaskId?: string;
   workflow: WorkflowSnapshot;
   attempt: ExperimentAttempt;
   attempts: ExperimentAttempt[];

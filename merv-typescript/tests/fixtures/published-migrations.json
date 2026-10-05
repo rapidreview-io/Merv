@@ -289,6 +289,12 @@
       "published": true
     },
     {
+      "component": "knowledge",
+      "version": 3,
+      "hash": "b94d6857b21eba9efe47172516237495957295bb556808d7c3dd325e87239ffc",
+      "published": false
+    },
+    {
       "component": "legacy-foundation-import",
       "version": 1,
       "hash": "3188be91510fbf0942db377ae9d7acc8c00ec12bcb76ef8e001f2d06eea3c72d",
@@ -311,6 +317,12 @@
       "version": 2,
       "hash": "b91640a4aafac4a43339664d794f5f249923e6e8fb5558a4878b4ae0440675a8",
       "published": true
+    },
+    {
+      "component": "paper",
+      "version": 3,
+      "hash": "ef3ef76a437ebcf19c9844fc7e7d9fab0dc052eee3cdbd6af590d284e425d679",
+      "published": false
     },
     {
       "component": "reflections",

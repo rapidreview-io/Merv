@@ -13,8 +13,6 @@ export interface PaperRevision {
   sections: PaperSection[];
   updatedBy: string | null;
   updatedAt: string | null;
-  /** Retained only for historical standalone writing revisions. */
-  updateId: string | null;
   proposalId?: string;
   review?: { id: string; source: PaperSource; verdict: Verdict };
 }

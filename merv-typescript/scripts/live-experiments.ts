@@ -368,7 +368,6 @@ try {
   // An owner-side check that the live record reads back what the program wrote. No model
   // claims to have performed Reflection, publication, or claim assessment.
   const records = await app.ctx.knowledge.records(source);
-  assert.equal(records.publication.status, 'none');
   assert.equal(records.project.summary, introduction);
   assert.equal(records.experiments.length, 1);
   assert.deepEqual(records.experiments[0], final);
@@ -605,7 +604,6 @@ try {
     records: {
       readBy: 'fixture-owner-after-native-terminal',
       experiments: records.experiments.length,
-      publication: records.publication.status,
     },
     freshAgents: 4,
     successfulCalls: calls.length,

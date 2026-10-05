@@ -404,16 +404,14 @@ export class ReflectionService implements Reflections {
           },
           tx,
         );
+        // corpus and paper belonged to the retired reflection@1; the columns stay NOT NULL.
         await tx.run(
-          'INSERT INTO reflections(id,project_id,title,owner_id,created_at,attempt,corpus,paper,review_id,submission,approved,feedback) VALUES(?,?,?,?,?,1,?,?,NULL,NULL,NULL,?)',
+          "INSERT INTO reflections(id,project_id,title,owner_id,created_at,attempt,corpus,paper,review_id,submission,approved,feedback) VALUES(?,?,?,?,?,1,'null','null',NULL,NULL,NULL,'[]')",
           workflow.id,
           caller.projectId,
           title,
           caller.actorId,
           now(),
-          'null',
-          'null',
-          '[]',
         );
         await this.createLenses(caller, await this.row(caller, workflow.id, tx), tx);
         await recorded(this.state, tx, caller, 'reflection.created', workflow.id, {

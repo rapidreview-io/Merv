@@ -768,7 +768,6 @@ function PaperPage({ row, shell }: ViewProps) {
         <>accepted by {verdict(from.acceptance.reviewId)}</>,
         revision.updatedAt ? <Ago at={revision.updatedAt} /> : null,
       ]);
-    if (revision.updateId) return 'From the earlier writing workflow';
     const who = nameOf(revision.updatedBy);
     return dotted([
       who ? `Edited by ${who}` : null,

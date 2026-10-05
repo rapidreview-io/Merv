@@ -11,6 +11,7 @@
  */
 import type pg from 'pg';
 import { digest } from '@merv/contracts';
+import { postgresMigrations as knowledgeMigrations } from '../../packages/knowledge/src/storage.postgres.js';
 
 /** The component migrations that retire the versions, as each owning component registers it. */
 export const retirementMigrations = [
@@ -451,6 +452,11 @@ DROP TRIGGER wf_success_states_pinned ON wf_success_states;
 DROP FUNCTION wf_pinned_guard();
 DROP INDEX wf_instances_kind;
 DELETE FROM component_migrations WHERE component='workflows' AND version=9;`);
+    // knowledge@3 dropped the corpus tables the retirement empties; they return empty, as before.
+    await client.query(knowledgeMigrations[1]);
+    await client.query(
+      "DELETE FROM component_migrations WHERE component='knowledge' AND version=3",
+    );
     await client.query(
       `DELETE FROM component_migrations WHERE ${retirementMigrations
         .map(([component, version]) => `(component='${component}' AND version=${version})`)

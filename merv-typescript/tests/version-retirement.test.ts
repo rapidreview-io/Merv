@@ -98,6 +98,8 @@ const consolidationTables = [
   'consolidation_commands',
   'consolidation_leases',
 ];
+/** Emptied by knowledge@2 and dropped by knowledge@3, which the release runs after it. */
+const knowledgeTables = ['knowledge_commands', 'knowledge_snapshots'];
 /** Every table whose no-delete guard a retirement migration turns off and on again. */
 const guarded = [
   'wf_system_requests',
@@ -376,37 +378,35 @@ test('retiring the versions that can no longer start deletes their records and n
   assert.deepEqual(await ledger(client), expectedLedger);
   const expected: Record<string, string[]> = {};
   for (const [table, contents] of Object.entries(before)) {
-    if (consolidationTables.includes(table)) continue;
+    if ([...consolidationTables, ...knowledgeTables].includes(table)) continue;
     expected[table] = KEPT_TABLES.includes(table)
       ? contents
-      : ['knowledge_commands', 'knowledge_snapshots'].includes(table)
-        ? []
-        : contents
-            .map((text) => {
-              const row = JSON.parse(text) as Record<string, unknown>;
-              // A survivor that followed a retired cycle forgets it, and its automatic run is
-              // re-rooted at its earliest surviving cycle.
-              if (table === 'research_cycles' && row.id === 'l-res6') row.predecessor_id = null;
-              if (table === 'research_automation' && row.research_id === 'l-res6')
-                row.root_id = 'l-res6';
-              // reflections@3 and reviews@11 add a column after the retirement; jsonb orders keys
-              // by length.
-              const added = {
-                reflections: { abandoned: null },
-                reviews: { owner_override: false },
-              }[table];
-              if (added)
-                return JSON.stringify(
-                  Object.fromEntries(
-                    Object.entries({ ...row, ...added }).sort(
-                      ([a], [b]) => a.length - b.length || (a < b ? -1 : 1),
-                    ),
+      : contents
+          .map((text) => {
+            const row = JSON.parse(text) as Record<string, unknown>;
+            // A survivor that followed a retired cycle forgets it, and its automatic run is
+            // re-rooted at its earliest surviving cycle.
+            if (table === 'research_cycles' && row.id === 'l-res6') row.predecessor_id = null;
+            if (table === 'research_automation' && row.research_id === 'l-res6')
+              row.root_id = 'l-res6';
+            // reflections@3 and reviews@11 add a column after the retirement; jsonb orders keys
+            // by length.
+            const added = {
+              reflections: { abandoned: null },
+              reviews: { owner_override: false },
+            }[table];
+            if (added)
+              return JSON.stringify(
+                Object.fromEntries(
+                  Object.entries({ ...row, ...added }).sort(
+                    ([a], [b]) => a.length - b.length || (a < b ? -1 : 1),
                   ),
-                );
-              return JSON.stringify(row);
-            })
-            .filter((text) => !namesRetired(text))
-            .sort();
+                ),
+              );
+            return JSON.stringify(row);
+          })
+          .filter((text) => !namesRetired(text))
+          .sort();
   }
   expected.session_managed_runners = [];
   expected.session_managed_assignments = [];
@@ -443,7 +443,11 @@ test('retiring the versions that can no longer start deletes their records and n
     const count = row.row_count === null ? null : Number(row.row_count);
     if (row.selector === 'wf_retired_instances') assert.equal(count, RETIRED.length);
     else if (row.selector === 'events') assert.equal(count, events[0]!.n);
-    else if (/^consolidation.* dropped$/.test(String(row.selector))) assert.equal(count, null);
+    else if (
+      /^consolidation.* dropped$/.test(String(row.selector)) ||
+      knowledgeTables.includes(String(row.selector))
+    )
+      assert.equal(count, null);
     else assert.equal(count, 0, String(row.selector));
   }
   assert.deepEqual(
@@ -469,25 +473,11 @@ test('retiring the versions that can no longer start deletes their records and n
     await assert.rejects(client.query(statement), refusedByGuard, statement);
     await client.query('ROLLBACK');
   }
-  for (const table of ['knowledge_commands', 'knowledge_snapshots']) {
-    await client.query('BEGIN');
-    await client.query(
-      `INSERT INTO knowledge_snapshots(id,project_id,created_by,created_at,format_version,manifest_hash,record)
-       VALUES('probe','p','a','now',1,'hash','{}')`,
-    );
-    await client.query(
-      `INSERT INTO knowledge_commands(project_id,actor_id,request_id,input_hash,snapshot_id)
-       VALUES('p','a','probe','hash','probe')`,
-    );
-    await assert.rejects(client.query(`DELETE FROM ${table}`), refusedByGuard, table);
-    await client.query('ROLLBACK');
-  }
-
   assert.deepEqual(
     await rows(
       client,
       `SELECT name FROM unnest($1::text[]) AS name WHERE to_regclass(name) IS NOT NULL`,
-      [consolidationTables],
+      [[...consolidationTables, ...knowledgeTables]],
     ),
     [],
   );

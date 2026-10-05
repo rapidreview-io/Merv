@@ -231,7 +231,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
   assert.equal(records.value.tasks[0].workflow.state, 'failed');
   assert.equal(Object.hasOwn(records.value.tasks[0], 'guidance'), false);
   assert.equal(records.value.experiments[0].id, experiment.id);
-  assert.equal(records.value.publication.status, 'none');
+  assert.equal(Object.hasOwn(records.value, 'publication'), false);
   const refs = [
     `task:${task.id}`,
     experiment.id,

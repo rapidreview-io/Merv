@@ -456,9 +456,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       createdBy: row.created_by,
       createdAt: row.created_at,
       ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
-      ...(typeof workflow.data.baseTaskId === 'string'
-        ? { baseTaskId: workflow.data.baseTaskId }
-        : {}),
       workflow,
       attempt,
       attempts,
@@ -557,12 +554,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           input.workspace === undefined || input.workspace === 'git',
           'invalid_workspace',
           'New experiments always use Git. Omit workspace or use git.',
-        );
-        check(
-          input.baseTaskId === undefined,
-          'incompatible_workspace',
-          'Use dependsOn for accepted code dependencies; baseTaskId is retired.',
-          409,
         );
         const owner = await this.scope.authorityActor(caller, tx);
         check(this.code, 'code_unavailable', 'New experiments require managed Code storage', 503);

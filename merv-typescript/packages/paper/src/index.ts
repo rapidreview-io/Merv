@@ -22,7 +22,6 @@ import type {
   PaperPublication,
   PaperRevision,
   PaperWorkspace,
-  PaperProposal,
   PaperReview,
   PaperEdit,
 } from './types.js';
@@ -81,7 +80,6 @@ export class PaperService implements Paper {
               : [],
           updatedBy: null,
           updatedAt: null,
-          updateId: null,
         };
   }
   private async citations(caller: Caller, tx: Transaction): Promise<PaperCitation[]> {
@@ -184,7 +182,6 @@ export class PaperService implements Paper {
     await recorded(this.state, tx, caller, 'paper.patched', `${after.kind}:${after.revision}`, {
       kind: after.kind,
       revision: after.revision,
-      updateId: after.updateId,
     });
   }
   private async edited(
@@ -281,7 +278,6 @@ export class PaperService implements Paper {
       sections,
       updatedBy: caller.actorId,
       updatedAt: now(),
-      updateId: null,
     };
   }
   async patch(

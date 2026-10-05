@@ -360,9 +360,9 @@ lifecycle. The seven-experiment cap does not implement the future reflection
 scheduler's reserved slots. Exact capture and compatibility details are in
 [research inputs](RESEARCH_INPUTS.md).
 
-`workspace` and `baseTaskId` remain in the create schema only so historical
-requests replay: a `workspace` other than `git` is refused (`invalid_workspace`)
-and any `baseTaskId` is refused (`incompatible_workspace`).
+`workspace` remains in the create schema only so historical requests replay: a
+`workspace` other than `git` is refused (`invalid_workspace`). The strict schema
+refuses the retired `baseTaskId` (`invalid_experiment_input`).
 
 TypeScript deliberately adds strict bounded schemas, safe relative paths,
 explicit result formats, revision/attempt fencing and durable request receipts.

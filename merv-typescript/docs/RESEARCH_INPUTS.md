@@ -51,10 +51,10 @@ Implementation: [Scope](../packages/scope/src/project-context.ts),
 
 Knowledge exposes two read-only tools:
 
-| Tool                 | Result                                                                                                 |
-| -------------------- | ------------------------------------------------------------------------------------------------------ |
-| `project.records`    | Current project metadata, all task records and all experiments, plus explicit publication availability |
-| `project.references` | Up to 200 references resolved in input order to project-scoped metadata                                |
+| Tool                 | Result                                                                  |
+| -------------------- | ----------------------------------------------------------------------- |
+| `project.records`    | Current project metadata, all task records and all experiments          |
+| `project.references` | Up to 200 references resolved in input order to project-scoped metadata |
 
 Inventory includes active and terminal work. It does not render prompts, read
 artifact bodies, reconcile sessions, evaluate exit gates or advance workflows.

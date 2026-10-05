@@ -13,7 +13,7 @@ export const knowledgeToolsPlugin = {
       ctx.tools.register({
         name: 'project.records',
         description:
-          'Read all project tasks and experiments, including terminal work, as metadata. Its tasks array is the same record list returned by task.list. Includes the current project Introduction and explicit publication availability. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.',
+          'Read all project tasks and experiments, including terminal work, as metadata. Its tasks array is the same record list returned by task.list. Includes the current project Introduction. Does not read artifact bytes or advance workflows. Gate, blockers and next actions use workflow.status_and_next.',
         inputSchema: z.object({}).strict(),
         readOnly: true,
         handler: async (caller) => await knowledge.records(caller),

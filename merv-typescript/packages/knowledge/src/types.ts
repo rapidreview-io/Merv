@@ -4,19 +4,12 @@ import type { Experiment } from '@merv/experiments/types';
 import type { CodeCapture } from '@merv/code-work/types';
 import type {} from 'cordis';
 
-/** No publication writer exists yet. */
-export interface KnowledgePublication {
-  status: 'none';
-  reflection: null;
-  lenses: [];
-}
 export interface KnowledgeRecords {
   formatVersion: 1;
-  /** Current Scope facts, including introduction when configured; independent of publication. */
+  /** Current Scope facts, including introduction when configured. */
   project: Project;
   tasks: TaskRecord[];
   experiments: Experiment[];
-  publication: KnowledgePublication;
 }
 export type KnowledgeReferenceKind =
   'task' | 'experiment' | 'artifact' | 'review' | 'code-capture' | 'reflection' | 'research';

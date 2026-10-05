@@ -55,4 +55,9 @@ ${retiredInstancesSql}
 ${withoutTriggers('knowledge_commands', ['knowledge_commands_no_delete'], 'DELETE FROM knowledge_commands;')}
 ${withoutTriggers('knowledge_snapshots', ['knowledge_snapshots_no_delete'], 'DELETE FROM knowledge_snapshots;')}
 `,
+  // Version 2 emptied both tables and nothing writes them again, so they go with their guards.
+  3: `
+DROP TABLE IF EXISTS knowledge_commands, knowledge_snapshots;
+DROP FUNCTION IF EXISTS knowledge_snapshots_no_update_guard(), knowledge_snapshots_no_delete_guard(), knowledge_commands_no_update_guard(), knowledge_commands_no_delete_guard();
+`,
 };
