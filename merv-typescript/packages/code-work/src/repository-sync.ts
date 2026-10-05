@@ -92,12 +92,8 @@ export async function reconcileRepository(
   );
   const assertMain = async (tx: Transaction, expected: string) => {
     await github.assertBinding(caller, binding, tx, 'read');
-    const project = await tx.get<{ main_json: string }>(
-      'SELECT main_json FROM code_projects WHERE project_id=?',
-      caller.projectId,
-    );
     check(
-      project && JSON.parse(project.main_json).oid === expected,
+      (await units.project(tx, caller.projectId))?.main.oid === expected,
       'code_main_changed',
       'Merv main moved; prepare a new integration against its current head',
       409,

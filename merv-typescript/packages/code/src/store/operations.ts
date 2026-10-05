@@ -1509,6 +1509,17 @@ export class CodeStore {
     return await sql.get<OperationRow>(`SELECT ${columns} FROM code_operations WHERE id=?`, id);
   }
 
+  /** The repository Code holds for a project once it was first stored, or null before. */
+  async stored(
+    sql: Sql,
+    projectId: string,
+  ): Promise<{ repositoryId: string; objectFormat: ObjectFormat } | null> {
+    const row = await this.project(sql, projectId);
+    if (!row?.store_json) return null;
+    const { objectFormat } = JSON.parse(row.store_json) as { objectFormat: ObjectFormat };
+    return { repositoryId: row.repository_id, objectFormat };
+  }
+
   private async project(sql: Sql, projectId: string): Promise<ProjectRow | undefined> {
     return await sql.get<ProjectRow>(
       'SELECT repository_id,main_json,limits_json,store_json FROM code_projects WHERE project_id=?',

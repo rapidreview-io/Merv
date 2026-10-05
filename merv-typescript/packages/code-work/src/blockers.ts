@@ -1,5 +1,3 @@
-import type { CodeUnitPublication } from './code-work-publication-models.js';
-
 /**
  * Which of Code's blockers a person reads, and what each one asks of them.
  *
@@ -189,8 +187,18 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
   }
 }
 
+/**
+ * What this reads of a unit's `CodeUnitPublication`, by shape: the browser bundle imports
+ * this module and must not load the server's contracts index.
+ */
+interface Publication {
+  destination?: 'local' | 'github';
+  state: string;
+  pull?: { number: number; url: string };
+}
+
 /** The code Code publishes for a unit whose publication has not reached main. */
-const PUBLICATION: Partial<Record<CodeUnitPublication['state'], string>> = {
+const PUBLICATION: Partial<Record<string, string>> = {
   pending: 'code_publication_pending',
   stale: 'code_publication_stale',
   setup_required: 'code_publication_setup_required',
@@ -207,7 +215,7 @@ const PUBLICATION: Partial<Record<CodeUnitPublication['state'], string>> = {
  * renders nothing.
  */
 export function publicationBlocker(
-  publication: CodeUnitPublication | null | undefined,
+  publication: Publication | null | undefined,
 ): CodeBlocker | null {
   const code =
     publication?.destination === 'local' && publication.state === 'pending'

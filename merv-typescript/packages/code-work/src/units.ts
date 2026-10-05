@@ -1,4 +1,4 @@
-import { baseKey } from '@merv/code/base-plan';
+import { baseKey } from './base-plan.js';
 import { pendingMerge, pinMerge } from '@merv/code/pending-merge';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeBaseRecord } from '@merv/contracts';

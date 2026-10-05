@@ -153,26 +153,14 @@ export class CodeWorkspaceProtocol {
       'This assignment does not use a workspace from Code’s repository',
       409,
     );
-    const project = await this.state.read(
-      async (sql) =>
-        await sql.get<{ repository_id: string; store_json: string | null }>(
-          'SELECT repository_id,store_json FROM code_projects WHERE project_id=?',
-          caller.projectId,
-        ),
-    );
+    const stored = await this.state.read((sql) => this.store.stored(sql, caller.projectId));
     check(
-      project?.store_json,
+      stored,
       'code_base_pending',
       'This project’s repository has not been imported into Code',
       409,
     );
-    const shared = {
-      projectRef: caller.projectId,
-      repositoryId: project.repository_id,
-      objectFormat: (JSON.parse(project.store_json) as { objectFormat: 'sha1' | 'sha256' })
-        .objectFormat,
-      unitId: session.instanceId,
-    };
+    const shared = { projectRef: caller.projectId, ...stored, unitId: session.instanceId };
     let manifest: CodeWorkspaceManifest;
     if (policy.readOnly) {
       const name = workspace.base.startsWith('reference:')

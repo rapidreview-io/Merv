@@ -20,8 +20,10 @@ never grants acceptance or erases an existing Git obligation.
 The API adapter mounts `/code`, with GitHub's OAuth callback public. Unloading CodeWork withdraws those routes, which then answer 503, without stopping the API.
 
 The default composition enables the integration, with both Code and CodeWork optional.
-Disable Code to suspend all its adapters, or disable CodeWork to retain a standalone Git
-utility. Use [the no-Code configuration](../../config/no-code.example.json) to start research
+Disable Code to suspend all its adapters. CodeWork runs Code's repository journal, imports,
+mirroring and the `/code/v2` workspace protocol on Code's repositories and GitHub service, so
+disabling it keeps Code's records, repository files and GitHub connection but stops that
+work and withdraws every `code.*` tool and `/code` route until it is enabled again. Use [the no-Code configuration](../../config/no-code.example.json) to start research
 without any Code entries. Existing Git work waits for restoration; code-free research can
 complete its full review and reflection lifecycle.
 

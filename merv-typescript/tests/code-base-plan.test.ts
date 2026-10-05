@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { baseKey, members, planBase, type PlannedBase } from '../packages/code/src/base-plan.js';
+import {
+  baseKey,
+  members,
+  planBase,
+  type PlannedBase,
+} from '../packages/code-work/src/base-plan.js';
 
 const c = (letter: string) => letter.repeat(40);
 const [A, B, C, D] = ['a', 'b', 'c', 'd'].map(c);

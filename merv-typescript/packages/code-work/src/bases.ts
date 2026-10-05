@@ -27,7 +27,7 @@ import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
 import { z } from 'zod';
 import { parseCodeInput } from '@merv/code/input';
 import { verifyResolution } from '@merv/code/pending-merge';
-import { baseKey, members, planBase, type PlannedBase } from '@merv/code/base-plan';
+import { baseKey, members, planBase, type PlannedBase } from './base-plan.js';
 import { MERGE_ENGINE, mergeBases } from '@merv/code/base-merge';
 import {
   archiveCommit,

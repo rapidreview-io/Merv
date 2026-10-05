@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mergeBases } from '../packages/code/src/base-merge.js';
-import { baseKey, members } from '../packages/code/src/base-plan.js';
+import { baseKey, members } from '../packages/code-work/src/base-plan.js';
 import { baseFixture as fixture } from './fixtures/code-bases.js';
 
 test('three units waiting on the same two commits are one record, one merge and one commit', async (t) => {

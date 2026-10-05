@@ -26,6 +26,7 @@ import {
   type GitHubTokens,
 } from './github-client.js';
 import { parseCodeInput } from './input.js';
+import type { CodeImportRemote } from './store/operations.js';
 
 const schema = `
 CREATE TABLE code_github (
@@ -587,15 +588,15 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     return JSON.parse(row.repository_json) as GitHubRepository;
   }
   /**
-   * One installation token for one repository, for the length of one operation. It is minted
-   * per operation and given up again however that operation ends, and it never leaves the
-   * server: no runner is ever lent write access to the linked repository.
+   * One installation token for the project's mirror target, for the length of one operation.
+   * It is minted per operation and given up again however that operation ends, and it never
+   * leaves the server: no runner is ever lent write access to the linked repository.
    */
-  async mirrorToken<T>(
-    repository: GitHubRepository,
-    use: (token: string) => Promise<T>,
-  ): Promise<T> {
-    return await this.run(repository, async (repository) => {
+  async mirrorToken<T>(projectId: string, use: (token: string) => Promise<T>): Promise<T> {
+    const found = await this.mirrorTarget(projectId);
+    if ('blocked' in found)
+      throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
+    return await this.run(found, async (repository) => {
       const client = this.client();
       const grant = await client.installationToken(repository, true);
       try {
@@ -722,6 +723,40 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       ),
     );
   }
+  /**
+   * How an import reads the linked repository: as the administrator who asked, pinned to the
+   * connection they selected, with an installation token that only the one Git child sees in
+   * its environment and that is given up when the call ends.
+   */
+  readonly importRemote: CodeImportRemote = {
+    read: (caller, use, expected) =>
+      this.automation(caller, 'read', undefined, async (client, _token, binding) => {
+        check(
+          !expected ||
+            (binding.revision === expected.revision &&
+              binding.repository.id === expected.repositoryId &&
+              binding.baseBranch === expected.baseBranch),
+          'github_conflict',
+          'Repository settings changed; the selected import remains pinned to its original connection',
+          409,
+        );
+        const grant = await client.installationToken(binding.repository, false);
+        try {
+          return await use({
+            url: `https://github.com/${binding.repository.fullName}.git`,
+            protocol: 'https',
+            repository: binding.repository,
+            env: {
+              GIT_CONFIG_COUNT: '1',
+              GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+              GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${grant.token}`).toString('base64')}`,
+            },
+          });
+        } finally {
+          await client.revokeInstallationToken(grant.token).catch(() => {});
+        }
+      }),
+  };
   async publicationBinding(caller: Caller, tx: Transaction) {
     const row = await this.connection(caller, tx, 'write');
     check(

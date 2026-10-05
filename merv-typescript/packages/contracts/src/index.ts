@@ -104,8 +104,6 @@ export {
   workRoute,
   dependencyRows,
 } from './running.js';
-export type { CodeBlocker, PersonMove, NameLookup } from './code-blockers.js';
-export { personMove, publicationBlocker, firstPersonMove } from './code-blockers.js';
 export {
   codexHandoffGraceMs,
   hostedCodexCapabilities,
