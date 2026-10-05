@@ -75,6 +75,7 @@ import {
 } from './evidence.js';
 import { taskExecutionPolicy, type TaskWorkspace } from './execution-policy.js';
 import { taskNode, taskPanel, type TaskStanding } from './running.js';
+import { resolutionTasks } from './resolution-brief.js';
 import type {
   ServiceTaskCreator,
   Task,
@@ -393,7 +394,7 @@ export class TaskService implements Tasks {
     const binding = Symbol('code');
     this.codeBinding = binding;
     this.code = code;
-    const release = code.bindServiceTasks(this.serviceTasks('code'));
+    const release = code.bindServiceTasks(resolutionTasks(this.serviceTasks('code')));
     return () => {
       release();
       if (this.codeBinding !== binding) return;

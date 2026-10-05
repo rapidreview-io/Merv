@@ -11,7 +11,8 @@ import type {
   SandboxChecks,
 } from '@merv/sandboxes';
 import { checkScript } from '@merv/sandboxes';
-import { checkBriefSections, checkResolutionCheck } from '@merv/code-work/base-check';
+import { checkFailure } from '@merv/code-work/base-check';
+import { resolutionBrief } from '@merv/tasks/resolution-brief';
 import { baseFixture } from './fixtures/code-bases.js';
 import { migrateBases } from '@merv/code-work/base-schema';
 import { openState } from './fixtures/state.js';
@@ -643,18 +644,25 @@ test('a failing check replaces both Git headings in the brief with what has to p
       reason: null,
       at: '2026-09-22T00:00:00.000Z',
     },
-  } as unknown as Parameters<typeof checkBriefSections>[0];
-  const sections = checkBriefSections(base)!;
-  assert.match(sections[0], /^Project check:/);
-  assert.match(sections[0], /make test/);
-  assert.match(sections[1], /^Check output:/);
-  assert.match(sections[1], /FAIL test_one/);
-  assert.match(checkResolutionCheck(base)!, /failed with exit 7/);
-  assert.equal(
-    checkBriefSections({ ...base, checkState: 'passed' } as typeof base),
-    null,
-    'a Git conflict keeps Git’s own headings',
+  } as unknown as Parameters<typeof checkFailure>[0];
+  const brief = (check: ReturnType<typeof checkFailure>) =>
+    resolutionBrief({
+      kind: 'base',
+      left: { commit: 'a'.repeat(40), inputs: [] },
+      right: { commit: 'b'.repeat(40), inputs: [] },
+      conflict: base.conflict!,
+      check,
+    });
+  const failed = brief(checkFailure(base));
+  assert.match(
+    failed.goal,
+    /\n\nProject check:\n`[^`]*make test[^`]*` exited 7 on thunder_compute/,
   );
+  assert.match(failed.goal, /\n\nCheck output:\nFAIL test_one/);
+  assert.doesNotMatch(failed.goal, /Conflicting paths/);
+  assert.match(failed.checks[2]!, /failed with exit 7/);
+  assert.equal(checkFailure({ ...base, checkState: 'passed' } as typeof base), null);
+  assert.match(brief(null).goal, /Conflicting paths:/, 'a Git conflict keeps Git’s own headings');
 });
 
 test('the populated cleanup migration retains legacy ownership without inventing identifiers', async (t) => {

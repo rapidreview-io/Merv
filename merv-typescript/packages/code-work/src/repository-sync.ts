@@ -123,13 +123,7 @@ export async function reconcileRepository(
         projectId: caller.projectId,
         requestId: `sync:${key}`,
         baseReference: local,
-        title: `Integrate GitHub ${input.baseBranch} into Merv main`,
-        goal: `Integrate the retained GitHub head ${input.headOid} with Merv main ${local}. Use code.merge, resolve conflicts and retain both histories. Do not replace either history, force-push, or publish to GitHub. This task must pass independent review before Merv main advances.`,
-        checks: [
-          `The delivered commit contains both ${local} and ${input.headOid}, with a merge whose ordered parents are the Merv checkpoint and the selected GitHub head.`,
-          'Resolve conflicts without discarding either side unintentionally; document reconciliation choices.',
-          'Run the relevant build and tests, retain results, and disclose checks that could not run.',
-        ],
+        work: { kind: 'sync', branch: input.baseBranch, main: local, head: input.headOid },
       },
       tx,
     );

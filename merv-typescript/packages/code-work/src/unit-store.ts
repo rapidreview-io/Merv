@@ -1,7 +1,7 @@
 import { initializeCheckConfiguration } from './check-configuration.js';
 import { initializeWorkRecords } from './work-schema.js';
 import { initializeWorkHolds } from './repository-holds.js';
-import { CodeUnitStore } from '@merv/code/units';
+import type { CodeUnitStore } from '@merv/code/units';
 import {
   canonical,
   check,
@@ -117,19 +117,17 @@ export const CODE_DRIVER = 'code.v2';
 
 /** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
 export class WorkUnitRecords {
-  protected readonly code: CodeUnitStore;
   protected closed = false;
+  /** `code` is Code's own unit store, already initialized; it outlives this owner. */
   constructor(
     protected readonly state: State,
     protected readonly scope: Scope,
     protected readonly writers: CodeWriterService,
-  ) {
-    this.code = new CodeUnitStore(state, scope, writers);
-  }
+    protected readonly code: CodeUnitStore,
+  ) {}
 
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.code.initialize();
     await initializeWorkRecords(this.state);
     await initializeWorkHolds(this.state);
     await initializeCheckConfiguration(this.state);
@@ -395,7 +393,6 @@ export class WorkUnitRecords {
 
   close(): void {
     this.closed = true;
-    this.code.close();
   }
 
   protected assertOpen(): void {

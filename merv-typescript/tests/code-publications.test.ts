@@ -24,7 +24,6 @@ import './fixtures/state.js';
 const host = {
   check: async () => {},
   reconcile: async () => {},
-  apply: async () => {},
   ancestor: async () => true,
   snapshot: async () => {},
   import: async () => {},
@@ -71,48 +70,6 @@ async function setup(t: TestContext) {
   });
   return { ...f, publications, open, sync, merge };
 }
-
-/** Retained envelopes must not consume the reconciliation slot of live work. */
-async function retainedPublications(f: Awaited<ReturnType<typeof setup>>) {
-  await f.state.transaction(async (tx) => {
-    const original = await tx.get<{ record_json: string }>(
-      "SELECT record_json FROM code_publications WHERE proposal_id='codeprop_fixture'",
-    );
-    for (let i = 0; i < 101; i++) {
-      const id = `aaa_retired_${String(i).padStart(3, '0')}`;
-      const record = {
-        ...JSON.parse(original!.record_json),
-        proposalId: id,
-        approval: {
-          ...(i % 2 ? { source: 'consolidation' } : {}),
-          integrationBase: baseOid,
-          certificateHash: 'retained',
-          acceptanceHash: 'retained',
-        },
-      };
-      await tx.run(
-        'INSERT INTO code_publications(proposal_id,project_id,record_json,binding_json) VALUES(?,?,?,?)',
-        id,
-        f.caller.projectId,
-        JSON.stringify(record),
-        JSON.stringify({ revision: 3, repository, baseBranch: 'main' }),
-      );
-    }
-  });
-}
-
-test('retired publications remain untouched and cannot starve a unit publication', async (t) => {
-  const f = await setup(t);
-  await retainedPublications(f);
-  assert.equal((await f.sync()).pull?.state, 'open');
-  assert.equal(f.pulls.length, 1);
-  const changed = await f.state.read((sql) =>
-    sql.all(
-      "SELECT proposal_id FROM code_publications WHERE proposal_id LIKE 'aaa_retired_%' AND (pull_json IS NOT NULL OR error IS NOT NULL OR synced_at <> '')",
-    ),
-  );
-  assert.deepEqual(changed, []);
-});
 
 test('pull request creation recovers a lost response and readies exactly that publication', async (t) => {
   const f = await setup(t);

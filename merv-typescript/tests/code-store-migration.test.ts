@@ -9,6 +9,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { CodeUnitService } from '@merv/code-work/units';
 import { postgresMigrations } from '@merv/code-work/legacy-units.postgres';
 import { CodeWriterService } from '@merv/code/writers';
+import { CodeUnitStore } from '@merv/code/units';
 import { openState } from './fixtures/state.js';
 
 const oid = (char: string) => char.repeat(40);
@@ -33,12 +34,14 @@ async function fixture(t: TestContext) {
         sql,
       })),
     );
+    const writers = new CodeWriterService(state, scope, 900);
     await new CodeUnitService(
       state,
       scope,
       workflows,
       { capture: async () => assert.fail('a migration reads no capture') },
-      new CodeWriterService(state, scope, 900),
+      writers,
+      await createService(new CodeUnitStore(state, scope, writers)),
       { contributors: async () => assert.fail('a migration reads no contributors') },
     ).initialize();
   };

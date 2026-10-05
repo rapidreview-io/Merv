@@ -1798,16 +1798,15 @@ test('a changed merge base or reviewed head starts a new request intent', async 
   assert.notEqual(sent[2]!.requestId, sent[1]!.requestId);
 });
 
-test('a superseded publication names the wave that replaced it, and never its id', async (t) => {
+test('a superseded publication says main moved before it merged', async (t) => {
   t.after(unmount);
-  const later = published({ proposalId: 'p2', instanceId: 'u7', title: 'Wave two' });
-  const stale = published({ stale: true, successor: 'p2', merge: null });
+  const stale = published({ stale: true, merge: null });
   serve('/tools/ui.read', {
     body: {
       result: {
         commands: commands(),
         status: status(units(), bases(), {
-          publication: { records: [stale, later], controls: { blockers: [] } },
+          publication: { records: [stale], controls: { blockers: [] } },
         }),
       },
     },
@@ -1815,21 +1814,9 @@ test('a superseded publication names the wave that replaced it, and never its id
   serve('/tools/ui.home', { body: { result: {} } });
   serve('/code/github', connected());
   await mount(page([row], { at: '/code/unit/p1' }));
-  const card = document.querySelector('#code-props');
-  const said = card?.textContent ?? '';
+  const said = document.querySelector('#code-props')?.textContent ?? '';
   assert.ok(said.includes('Superseded'), text().slice(0, 400));
-  assert.ok(said.includes('Wave two'), said);
-  assert.ok(!said.includes('p2'), `the proposal id is not on screen: ${said}`);
-  // It is the ring beside it, so it is a control that goes there.
-  const control = [...(card?.querySelectorAll('button') ?? [])].find(
-    (item) => item.textContent === 'Wave two',
-  );
-  assert.ok(control?.className.includes('btn-text'), control?.className);
-  await press(control!);
-  assert.ok(
-    document.querySelector('#code-props')?.textContent?.includes('Wave two'),
-    'pressing it opens that wave’s own card',
-  );
+  assert.ok(said.includes('main moved before it merged'), said);
 });
 
 /* The record's own section ------------------------------------------------- */

@@ -60,25 +60,18 @@ const parse = <T>(schema: z.ZodType<T>, input: unknown): T =>
 /** Durable server commands. Git execution and object verification belong to the runner. */
 export class CodeCommandService implements CodeCommands {
   private closed = false;
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
-    private readonly state: State,
-    private readonly scope: Scope,
-    private readonly sessions: Sessions,
-  ) {
-    this.initialize = async () => {
-      await state.migrate('code_commands', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-      ]);
-    };
+    protected readonly state: State,
+    protected readonly scope: Scope,
+    protected readonly sessions: Sessions,
+  ) {}
+
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate(
+      'code_commands',
+      [1, 2].map((version) => ({ version, sql: postgresMigrations[version] })),
+    );
   }
 
   private async transaction<T>(fn: (tx: Transaction) => T): Promise<T> {

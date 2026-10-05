@@ -8,6 +8,7 @@ import { createService, type Caller, type Transaction } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { WorkUnitRecords, type AcceptanceBody, type BaseBody } from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
+import { CodeUnitStore } from '@merv/code/units';
 import { CodeStore } from '@merv/code/store/operations';
 import { gitSource, openRepositories } from './fixtures/code-store.js';
 import { openState } from './fixtures/state.js';
@@ -34,7 +35,8 @@ async function fixture(t: TestContext) {
   const state = await openState(root);
   const scope = await createService(new ProjectScope(state));
   const writers = new CodeWriterService(state, scope, 900);
-  let store = await createService(new OwnerStore(state, scope, writers));
+  const units = await createService(new CodeUnitStore(state, scope, writers));
+  let store = await createService(new OwnerStore(state, scope, writers, units));
   t.after(async () => {
     store.close();
     writers.close();
@@ -74,7 +76,7 @@ async function fixture(t: TestContext) {
     },
     async reopen() {
       store.close();
-      store = await createService(new OwnerStore(state, scope, writers));
+      store = await createService(new OwnerStore(state, scope, writers, units));
     },
   };
 }
