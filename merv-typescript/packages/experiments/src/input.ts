@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { idSchema, visible, parsed } from '@merv/contracts';
 import type { ExperimentTransition } from './types.js';
+import { experimentName } from './rules.js';
 
 export const experimentIdSchema = idSchema;
 const requestId = z.string().min(1).max(200).refine(visible);
@@ -33,12 +34,7 @@ export const experimentPathSchema = z
 
 export const experimentCreateSchema = z
   .object({
-    name: z
-      .string()
-      .trim()
-      .min(3)
-      .max(48)
-      .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/),
+    name: experimentName(z.string().trim()),
     intent: prose(1),
     details: prose().default(''),
     dependsOn: ids.default([]),

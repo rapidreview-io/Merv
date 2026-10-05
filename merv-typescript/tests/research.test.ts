@@ -241,7 +241,7 @@ test('Research requests retain their admitted caller and reflection inputs', asy
     const producer = await f.issue('producer');
     const caller = { ...f.owner };
     const input = { title: 'Original reflection', requestId: f.id() };
-    const reflecting = f.research.startReflection(caller, input);
+    const reflecting = f.app.ctx.reflections.create(caller, input);
     Object.assign(caller, producer);
     input.title = 'Replacement reflection';
     const reflection = await reflecting;
@@ -1642,7 +1642,7 @@ test('what would refuse the plan is reported before the advance, and skip is alw
   f.research.bindExperiments(f.app.ctx.experiments);
 
   // Another wave pauses the very starts the plan needs.
-  await f.research.startReflection(f.owner, { requestId: f.id() });
+  await f.app.ctx.reflections.create(f.owner, { requestId: f.id() });
   await refused('reflection_open');
   f.research.bindTasks(f.app.ctx.tasks)();
   const skipped = await f.research.advance(f.owner, command('skip'));

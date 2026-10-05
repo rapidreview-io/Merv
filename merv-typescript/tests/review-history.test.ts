@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { REVIEW_HISTORY_LIMITS, reviewHistory, type ReviewRequest } from '@merv/contracts';
+import type { ReviewRequest } from '@merv/contracts';
+import { REVIEW_HISTORY_LIMITS, reviewHistory } from '@merv/reviews/rules';
 
 const review = (id: string, patch: Partial<ReviewRequest> = {}): ReviewRequest => ({
   id,

@@ -30,13 +30,9 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Experiments } from '@merv/experiments/types';
+import { MAX_ACTIVE_EXPERIMENTS } from '@merv/experiments/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';
-import type {
-  ApprovedReflection,
-  ChangeSpec,
-  ReflectionCreate,
-  Reflections,
-} from '@merv/reflections/types';
+import type { ApprovedReflection, ChangeSpec, Reflections } from '@merv/reflections/types';
 import type { Context } from 'cordis';
 import {
   automaticBlocker,
@@ -314,18 +310,6 @@ export class ResearchService implements Research {
     };
   }
 
-  async startReflection(caller: Caller, input: ReflectionCreate, tx?: Transaction) {
-    this.open();
-    ({ caller, input } = structuredClone({ caller, input }));
-    return await inTransaction(this.state, tx, async (transaction) => {
-      const checks: BindingChecks = [];
-      const result = await this.use('reflections', checks, (service) =>
-        service.create(caller, input, transaction),
-      );
-      checks.forEach((check) => check());
-      return result;
-    });
-  }
   private open() {
     check(!this.closed, 'research_unavailable', 'Research is unavailable', 503);
   }
@@ -800,7 +784,7 @@ export class ResearchService implements Research {
           409,
         );
       check(
-        active + planned.length <= 7,
+        active + planned.length <= MAX_ACTIVE_EXPERIMENTS,
         'experiment_limit',
         `The plan adds ${planned.length} experiments to ${active} active ones, and at most seven may be active in this project. Finish or end active experiments first, or complete this cycle with nextWave: "skip"`,
         409,

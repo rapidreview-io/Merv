@@ -10,13 +10,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
-import type {
-  Artifact,
-  Caller,
-  ReviewApplication,
-  ReviewHistory,
-  Transaction,
-} from '@merv/contracts';
+import type { Artifact, Caller, ReviewApplication, Transaction } from '@merv/contracts';
+import type { ReviewHistory } from '@merv/reviews/rules';
 import type {
   ChangeSpec,
   Reflection,
@@ -369,23 +364,20 @@ test('Reflection entrypoints keep their caller and enforce project access', asyn
 
 test('reflection uses live research, joins five independent ordinary workflows, reviews and retains exact approval', async (t) => {
   const f = await fixture(t);
-  let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
+  let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
   assert.equal(wave.workflow.workflow, 'reflection');
   assert.equal(wave.lenses.length, 5);
   assert.ok(wave.lenses.every((l) => l.workflow.workflow === 'reflection.lens'));
-  assert.equal(
-    (await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' })).id,
-    wave.id,
-  );
+  assert.equal((await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' })).id, wave.id);
   await assert.rejects(
-    async () => await f.app.ctx.research.startReflection(f.owner, { requestId: 'other' }),
+    async () => await f.app.ctx.reflections.create(f.owner, { requestId: 'other' }),
     {
       code: 'reflection_open',
     },
   );
   await assert.rejects(
     async () =>
-      await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave', title: 'Different' }),
+      await f.app.ctx.reflections.create(f.owner, { requestId: 'wave', title: 'Different' }),
     { code: 'request_conflict' },
   );
   await assert.rejects(async () => await f.app.ctx.reflections.approved(f.owner, wave.id), {
@@ -518,7 +510,7 @@ test('reflection uses live research, joins five independent ordinary workflows, 
       ),
     { code: 'state_constraint' },
   );
-  assert.ok((await f.app.ctx.research.startReflection(f.owner, { requestId: 'next-wave' })).id);
+  assert.ok((await f.app.ctx.reflections.create(f.owner, { requestId: 'next-wave' })).id);
 });
 
 test('a JSON change specification is parsed, reviewed as a plan and retained with the approval', async (t) => {
@@ -685,7 +677,7 @@ test('a JSON change specification is parsed, reviewed as a plan and retained wit
 
 test('review return preserves lenses for synthesis repair and creates fresh versioned children for lens repair', async (t) => {
   const f = await fixture(t);
-  let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
+  let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
   // With no rejected round there is nothing to carry, and the context says so.
   const untouched = (await f.app.ctx.workflows.assignment(f.owner, wave.lenses[0]!.id)).context!;
   assert.ok(!untouched.prompt.includes('review:'));
@@ -938,7 +930,7 @@ test('a reflection returned as often as its limit allows opens no more lenses an
   const f = await fixture(t, { limits: { reviewReturns: 1 } });
   const reviewer = await f.actor('Reviewer', 'reviewer');
   let wave = await f.synthesize(
-    await f.lenses(await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' })),
+    await f.lenses(await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' })),
   );
   // A lens has nothing to return to, and carries no limit of its own.
   assert.deepEqual((await f.app.ctx.workflows.evaluate(f.owner, wave.lenses[0]!.id)).limits, []);
@@ -973,7 +965,7 @@ test('the reflection limit is validated as plugin configuration before anything 
 
 test('leased lens calls use exact execution evidence, retain context through release and recover independent review claims', async (t) => {
   const f = await fixture(t);
-  let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'wave' });
+  let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
   const secret = token();
   const agent = await f.app.ctx.sessions.registerAgent(f.owner, {
     name: 'Lens agent',
@@ -1056,7 +1048,7 @@ test('leased lens calls use exact execution evidence, retain context through rel
 
 test('ordinary session workers execute a lens, synthesis and repair; unload preserves frozen assignments', async (t) => {
   const f = await fixture(t);
-  let wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'leased-wave' });
+  let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'leased-wave' });
   const actors: string[] = [];
   const [lens, ...others] = wave.lenses;
   const secret = token();
@@ -1249,7 +1241,7 @@ test('synthesis admission matches review ownership for direct producers and sour
   const owner = await f.actor('Wave owner');
   const outsider = await f.actor('Other producer');
   const wave = await f.lenses(
-    await f.app.ctx.research.startReflection(owner, { requestId: 'owned-wave' }),
+    await f.app.ctx.reflections.create(owner, { requestId: 'owned-wave' }),
   );
   assert.equal(wave.ownerId, owner.actorId);
   assert.equal(wave.workflow.state, 'synthesizing');
@@ -1347,7 +1339,7 @@ test('synthesis admission matches review ownership for direct producers and sour
 test('reflection reviewer authors paper edits with the verdict and main-agent edits can cause a safe retry', async (t) => {
   const f = await fixture(t);
   let wave = await f.lenses(
-    await f.app.ctx.research.startReflection(f.owner, { requestId: 'paper-reflection' }),
+    await f.app.ctx.reflections.create(f.owner, { requestId: 'paper-reflection' }),
   );
   wave = await f.synthesize(wave);
   const reviewer = await f.actor('Scientific reviewer', 'reviewer');
@@ -1619,7 +1611,7 @@ test('large research stays outside the assignment and live source permissions do
       requestId: `large-${i}`,
     });
   assert.ok(JSON.stringify(await f.app.ctx.knowledge.records(f.owner)).length > 100_000);
-  const wave = await f.app.ctx.research.startReflection(f.owner, { requestId: 'large-wave' });
+  const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'large-wave' });
   const secret = token();
   await f.app.ctx.sessions.registerAgent(f.owner, {
     name: 'Compact lens',

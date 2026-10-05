@@ -3,6 +3,7 @@ import { childRequest, createService, plain, recorded, replayed, sha256Hex } fro
 import { paperChangesSchema, parsed } from '@merv/contracts';
 import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
+import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
 import { z } from 'zod';
 import {
   check,
@@ -536,7 +537,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           409,
         );
         check(
-          active < 7,
+          active < MAX_ACTIVE_EXPERIMENTS,
           'experiment_limit',
           'At most seven experiments may be active in this project',
           409,

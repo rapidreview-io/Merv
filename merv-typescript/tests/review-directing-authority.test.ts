@@ -144,13 +144,13 @@ test('two workers one authority directs are different actors: either may review 
 
 test('a worker whose directing authority wrote a lens is not offered, and cannot take, the reflection’s review', async (t) => {
   const f = await fixture(t);
-  const { artifacts, reflections, research, reviews } = f.app.ctx;
+  const { artifacts, reflections, reviews } = f.app.ctx;
   const write = async (by: Caller, title: string) =>
     await artifacts.create(by, {
       title,
       content: `# Summary\n${title}: source-linked observation.\n# Evidence\nNo completed experiments in the pinned corpus; no empirical conclusion is claimed.`,
     });
-  const wave = await research.startReflection(f.founder, { requestId: 'wave' });
+  const wave = await reflections.create(f.founder, { requestId: 'wave' });
   // The founder writes one lens at the desk; four other members write the rest.
   for (const [index, lens] of wave.lenses.entries()) {
     const by = index === 0 ? f.founder : await f.member(`Lens ${index}`);

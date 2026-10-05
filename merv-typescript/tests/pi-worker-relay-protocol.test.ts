@@ -7,7 +7,7 @@ import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
 import { piInstructions } from '../packages/pi/src/prompt.js';
-import { mainAgentGuide } from '../packages/research/src/guide.js';
+import { researchGuide } from '../packages/research/src/guide.js';
 import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */
@@ -248,7 +248,7 @@ for (const upstreamStatus of [
         },
       ],
       notes: ['Today is 2026-09-25 (UTC). You run on the model gpt-6-luna.'],
-      instructions: piInstructions(mainAgentGuide),
+      instructions: piInstructions(researchGuide),
     };
     let nextCount = 0;
     let followed = false;
@@ -328,9 +328,7 @@ for (const upstreamStatus of [
       const [head] = piResponsesSchema.parse(forwarded[0]).input;
       assert.ok('role' in head && head.role === 'developer');
       assert.ok(
-        String(head.content).startsWith(
-          `${piInstructions(mainAgentGuide)}\n\n<addendum>\nToday is`,
-        ),
+        String(head.content).startsWith(`${piInstructions(researchGuide)}\n\n<addendum>\nToday is`),
       );
       assert.ok(validPiPayload(piResponsesSchema.parse(forwarded[0]), ['project_get']));
     }

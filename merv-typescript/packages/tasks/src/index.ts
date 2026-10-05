@@ -1,3 +1,4 @@
+import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
 import {
   check,
   CheckedTransitions,
@@ -7,7 +8,6 @@ import {
   createService,
   digest,
   folded,
-  excludedFromReview,
   inTransaction,
   itemTitle,
   keyId,
@@ -23,8 +23,6 @@ import {
   recorded,
   leaseReleaseConsumer,
   releasedLease,
-  requireDirecting,
-  reviewHistory,
   visible,
   type Artifact,
   type Artifacts,

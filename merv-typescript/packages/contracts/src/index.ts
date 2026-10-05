@@ -21,7 +21,6 @@ export type { Json, Data } from './data.js';
 export { clip, itemTitle, visible } from './text.js';
 export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
-export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
 export { boundedPaperContext } from './paper-context.js';
 export {
   allowedOrigin,
@@ -35,7 +34,6 @@ export {
   Slots,
   type OutboundFailure,
 } from './outbound.js';
-export type { ReviewHistory, ReviewRound } from './review-history.js';
 export {
   sessionWorkspaceSchema,
   codePendingMergeSchema,
@@ -783,36 +781,6 @@ export interface ConversationAuthority {
 export interface ManagedRunnerAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;
 }
-/** A domain's event as every domain records it: who, what, on which record, from where. */
-/** A review's producer and its excluded contributors cannot be its reviewer. */
-export const excludedFromReview = (
-  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
-  actorId: string,
-) =>
-  review.producerId === actorId ||
-  (review.excludedActorIds ?? []).includes(actorId) ||
-  (review.provenance?.excludedActorIds ?? []).includes(actorId);
-/**
- * Whether a worker this authority directs may review. The producer never directs its own
- * reviewer, with or without provenance; owner-certified contributors direct none either. Two
- * workers one authority directs are different actors, so either may review the other's work.
- */
-export const directsIndependently = (
-  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
-  authorityId: string,
-) =>
-  review.provenance ? !excludedFromReview(review, authorityId) : review.producerId !== authorityId;
-/** The lease source a review worker would speak for, refused where it may not direct one. */
-export const requireDirecting = (
-  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
-  authorityId: string,
-) =>
-  check(
-    directsIndependently(review, authorityId),
-    'review_independence',
-    'A producer or contributor cannot direct the reviewer of its own work',
-    403,
-  );
 /**
  * Append a domain event stamped with the caller's source. That source is audit provenance only:
  * authority is still rechecked by Scope inside the operation.

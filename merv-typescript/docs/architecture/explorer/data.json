@@ -1630,6 +1630,11 @@
       "purpose": "Connects Reflections to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
+          "name": "reflection.create",
+          "description": "Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.",
+          "readOnly": false
+        },
+        {
           "name": "reflection.end",
           "description": "Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.",
           "readOnly": false
@@ -1707,6 +1712,11 @@
       "purpose": "Owns five independent lenses, synthesis and review. Workflows pauses new task and experiment starts until approval. No Knowledge dependency; reflection assignments, leases and submissions survive Knowledge removal, while extra research-evidence reads wait for its return. Its own Paper dependency remains required.",
       "exposedTools": [
         {
+          "name": "reflection.create",
+          "description": "Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.",
+          "readOnly": false
+        },
+        {
           "name": "reflection.end",
           "description": "Owner or operator: abandon a reflection wave that cannot finish, as when five independent lens authors cannot be found. Its unfinished lenses end with it, an open review is withdrawn, and new tasks and experiments may start again. A research cycle waiting on the wave is then ended with research.end. Requires a specific reason and the current revision. This is terminal.",
           "readOnly": false
@@ -1768,11 +1778,6 @@
       "purpose": "Coordinates the outer cycle with only State, Scope and Workflows required. Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work bind optionally. Digests read selected Tasks and Experiments directly, without Knowledge. After approved reflection, accepted code missing from main is integrated through an ordinary reviewed Git Task and Code Work publication; otherwise the cycle can finish. Removing an optional provider blocks only operations that need it, and a replaced provider cannot commit an in-flight result. Stored records and completed command receipts remain readable. Historical cycles that require the retired Consolidation workflow retain their records and report research_consolidation_retired at its handoff.",
       "exposedTools": [
         {
-          "name": "reflection.create",
-          "description": "Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.",
-          "readOnly": false
-        },
-        {
           "name": "research.advance",
           "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.",
           "readOnly": false
@@ -1827,11 +1832,6 @@
       "label": "Research · tools adapter",
       "purpose": "Connects Research to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
-        {
-          "name": "reflection.create",
-          "description": "Create five independent lens workflows over live project research. Pause new task and experiment creation until the wave is approved; existing work continues. Only one unfinished reflection wave is allowed per project.",
-          "readOnly": false
-        },
         {
           "name": "research.advance",
           "description": "Advance the current outer gate. New cycles wait for selected work to finish, including failure or abandonment; scientific review approvals remain required. After reflection approval, a project without Git can complete. When Code hosts the project, accepted code that main does not hold yet is handed to one consolidation task; the cycle waits for its acceptance and its publication to main, injects a successor task when main moved first, and completes once main holds it. retryIntegration: true injects a fresh task after one ended without acceptance. Creates the next child workflows atomically, preserving their identities on replay. When the approved reflection carries a structured plan that continues, the advance that completes the cycle requires nextWave: create opens the plan’s tasks, experiments and the next research cycle in the same transaction, under you; skip completes without them. A text change specification creates nothing. Reuse the same requestId and exact expectedRevision for an uncertain response.",

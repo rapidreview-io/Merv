@@ -26,7 +26,7 @@ Agents use existing tools: `project.records`, `task.get`, `experiment.get_state`
 
 A wave's workers read live research through these tools. Since 2026-09-17 a session's reads are bounded by the project alone: a read-only call the fixed policy does not name, or names with other arguments, is admitted as given, and the policy only fills in the references it names (the artifacts pinned in the assignment, the wave's earlier review rounds). So a lens can also call `reflection.get` on its wave and read what its peers have submitted; the independence of the five lenses rests on five distinct agents, not on what each can see. Every write still holds as published. Research records and paper may change during the wave; agents should explain what they examined and distinguish ongoing work from completed results.
 
-Unloading Research removes the `reflection.create` tool. Reflections remains active: assignments, leases, reads and submissions consult neither Research nor Knowledge. In-process callers may also use `Reflections.create` directly for standalone waves.
+Reflections registers the `reflection.create` tool itself, so a wave can start with Research unloaded. Reflections remains active: assignments, leases, reads and submissions consult neither Research nor Knowledge. In-process callers may also use `Reflections.create` directly for standalone waves.
 
 ## Completion
 
@@ -76,7 +76,7 @@ Synthesis and review recipe 13 describes version-3 plans. The review context ref
 
 ## Existing tools
 
-- `reflection.create`: start a live wave and pause new tasks/experiments; registered by Research's existing tool adapter.
+- `reflection.create`: start a live wave and pause new tasks/experiments.
 - `reflection.list` / `reflection.get`: read waves, outputs and review state.
 - `reflection.lens`: read one lens and its own output.
 - `reflection.submit_lens`: complete a lens.
