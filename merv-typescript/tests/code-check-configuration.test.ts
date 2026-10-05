@@ -14,6 +14,7 @@ import {
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
 import { boundProject } from './fixtures/code-binding.js';
+import { openRepositories } from './fixtures/code-store.js';
 
 test('research configuration retains one exact journal, accepts maximum IDs, and rolls admission back on check failure', async (t) => {
   const root = mkdtempSync(join(tmpdir(), 'merv-check-config-'));
@@ -24,6 +25,7 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
   const core = await createService(new CodeService(state, scope, {}));
   await boundProject(state, caller.projectId, 'a'.repeat(40));
   await initializeCheckConfiguration(state);
+  const repositories = await openRepositories(root);
   const store = await createService(
     new CodeStore(
       state,
@@ -32,15 +34,16 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
       {
         imported: async () => {},
         workspaces: async () => [],
-        frozen: async () => [],
         fenced: async () => {},
         advanced: async () => {},
         quarantined: async () => {},
       },
+      repositories,
     ),
   );
   t.after(async () => {
     await store.close();
+    await repositories.close(0);
     await core.close();
     await state.close();
     rmSync(root, { recursive: true, force: true });

@@ -215,7 +215,13 @@ END IF;
 END $upgrade$;
 `;
 
+/** Nothing releases the upgrade hold any more: a database that still has one is opened again. */
+const upgraded = `DELETE FROM code_repository_holds WHERE hold_key='code-storage-upgrade';`;
+
 export async function initializeCodeStorage(state: State): Promise<void> {
-  await state.migrate('code_storage', [{ version: 1, sql: schema }]);
+  await state.migrate('code_storage', [
+    { version: 1, sql: schema },
+    { version: 2, sql: upgraded },
+  ]);
   await migratePendingMerges(state);
 }

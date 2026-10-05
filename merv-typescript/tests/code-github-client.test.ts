@@ -37,7 +37,7 @@ function client(handler: (url: URL, init: RequestInit) => unknown | Promise<unkn
       encryptionKey: 'aa'.repeat(32),
     },
     async (url, init) => {
-      assert.equal(init?.redirect, 'error');
+      assert.equal(init?.redirect, 'manual');
       assert.equal(new Headers(init?.headers).get('authorization'), 'Bearer private-test-token');
       assert.equal(new URL(String(url)).origin, 'https://api.github.com');
       assert.ok(init?.signal);
@@ -326,6 +326,23 @@ test('GitHub rate limits stay retryable instead of becoming permission refusals'
     t.after(() => api.close());
     await assert.rejects(api.branches('private-test-token', 'example/research'), {
       code: 'github_unavailable',
+    });
+  }
+});
+
+test('a moved repository asks to link it again instead of retrying forever', async (t) => {
+  for (const status of [301, 307]) {
+    const api = client(
+      () =>
+        new Response(null, {
+          status,
+          headers: { location: 'https://api.github.com/repositories/7/branches' },
+        }),
+    );
+    t.after(() => api.close());
+    await assert.rejects(api.branches('private-test-token', 'example/research'), {
+      code: 'github_repository_moved',
+      status: 409,
     });
   }
 });

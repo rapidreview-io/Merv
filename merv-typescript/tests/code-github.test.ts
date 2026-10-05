@@ -55,7 +55,7 @@ function fakeGitHub() {
       url.startsWith('https://api.github.com/') ||
         url === 'https://github.com/login/oauth/access_token',
     );
-    assert.equal(init?.redirect, 'error');
+    assert.equal(init?.redirect, 'manual');
     const headers = new Headers(init?.headers);
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
     calls.push({ url, token: headers.get('authorization') ?? undefined, body });

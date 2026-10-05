@@ -93,7 +93,7 @@ export async function githubFixture(t: TestContext, storage?: State, existingCal
       body,
       authorization: new Headers(init?.headers).get('authorization') ?? '',
     });
-    assert.equal(init?.redirect, 'error');
+    assert.equal(init?.redirect, 'manual');
     await control.before?.(path);
     if (control.refuse?.(path))
       return new Response('{"message":"Resource not accessible by integration"}', { status: 403 });

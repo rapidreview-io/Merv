@@ -220,10 +220,13 @@ session, review and acceptance goes on exactly as before.
   ever fast-forwards; `refs/merv/accepted/<unit>` becomes `refs/heads/merv/accepted/<unit>` and
   is only ever created. Nothing else is touched, and nothing is ever deleted or forced.
 - **What authorises it.** The owner's linked repository together with the write automation they
-  turned on (`github.configure_automation` with `mode: write`). The server reads that link with
-  no caller: turning the automation off, or unlinking the repository, is the off switch. Without
-  either, `code.status`'s `mirror.state` is `off` and `blockedBy` says which — that is quiet, not
-  an error.
+  turned on (`github.configure_automation` with `mode: write`), while that owner still
+  administers the project. The server reads that link with no caller: turning the automation
+  off, unlinking the repository or the owner leaving is the off switch. Without either,
+  `code.status`'s `mirror.state` is `off` and `blockedBy` says which (`github_owner` for the
+  owner) — that is quiet, not an error. A repository GitHub answers as moved (renamed or
+  transferred) is never followed: the API refuses with `github_repository_moved` until it is
+  linked again, and Git does not follow the redirect.
 - **What it uses.** One installation token per push, scoped to that one repository and to
   `contents`, passed only in the environment of the one Git child and given up again however the
   push ends. No GitHub credential ever reaches a machine.

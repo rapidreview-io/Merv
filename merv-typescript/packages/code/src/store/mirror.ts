@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type { GitResult } from '../git.js';
+import { githubGitEnv, type GitResult } from '../git.js';
 import { OperationJournal } from '../operation-journal.js';
 import {
   canonical,
@@ -744,7 +744,7 @@ export class GitMirrorTransport implements MirrorTransport {
       throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
     const remote = this.url(found.fullName);
     return await this.authority.token(projectId, (token) =>
-      this.held.run({ projectId, remote, env: header(token) }, use),
+      this.held.run({ projectId, remote, env: githubGitEnv(token) }, use),
     );
   }
 
@@ -796,9 +796,3 @@ export class GitMirrorTransport implements MirrorTransport {
     return `https://github.com/${fullName}.git`;
   }
 }
-/** The credential of one Git child: an environment entry, and nowhere else. */
-const header = (token: string): Record<string, string> => ({
-  GIT_CONFIG_COUNT: '1',
-  GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
-  GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
-});

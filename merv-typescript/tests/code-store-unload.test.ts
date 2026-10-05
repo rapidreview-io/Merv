@@ -27,7 +27,6 @@ class HeldGit extends ServerGit {
 const hooks: CodeStoreHooks = {
   imported: async () => {},
   workspaces: async () => [],
-  frozen: async () => [],
   fenced: async () => {},
   advanced: async () => {},
   quarantined: async () => {},
@@ -57,8 +56,6 @@ test(
         f.scope,
         { root: f.root, drainSeconds: 0.03, settleMs: 5000 },
         hooks,
-        undefined,
-        undefined,
         repositories,
       );
       stores.push(store);
@@ -73,7 +70,7 @@ test(
         peerFinished = true;
         return value;
       });
-      git.blocked = 'cat-file';
+      git.blocked = '--disk-usage';
       const exporting = assert.rejects(
         store.export(f.admin, { sessionId: 'session-export', head: first, haves: [] }),
         { code: 'code_git_aborted' },

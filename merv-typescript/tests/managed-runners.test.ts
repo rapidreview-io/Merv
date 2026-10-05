@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { CodeService } from '@merv/code/service';
 import { CodeStore } from '@merv/code/store/operations';
-import { git, gitSource } from './fixtures/code-store.js';
+import { git, gitSource, openRepositories } from './fixtures/code-store.js';
 import { boundProject } from './fixtures/code-binding.js';
 import {
   createService,
@@ -1583,6 +1583,7 @@ test('work-host Code transfers use only the unfinished assignment, including clo
   const core = await createService(new CodeService(f.state, f.scope, {}));
   await boundProject(f.state, f.owner.projectId, head);
   let finalized = 0;
+  const repositories = await openRepositories(root);
   const store = new CodeStore(
     f.state,
     f.scope,
@@ -1590,13 +1591,13 @@ test('work-host Code transfers use only the unfinished assignment, including clo
     {
       imported: async () => {},
       workspaces: async () => [],
-      frozen: async () => [],
       fenced: async () => {},
       advanced: async () => {
         finalized++;
       },
       quarantined: async () => {},
     },
+    repositories,
   );
   await store.initialize();
   const repository = store.repositories.paths(f.owner.projectId).repository;
@@ -1604,6 +1605,7 @@ test('work-host Code transfers use only the unfinished assignment, including clo
   git(root, ['clone', '--quiet', '--bare', source.repository, repository]);
   t.after(async () => {
     await store.close();
+    await repositories.close(0);
     await core.close();
     rmSync(root, { recursive: true, force: true });
   });

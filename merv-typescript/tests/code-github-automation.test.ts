@@ -223,6 +223,49 @@ test('a 401 for a server-minted credential keeps the human connection connected'
   assert.equal((await github.status(f.caller)).status, 'needs_reconnect');
 });
 
+test('a refresh of the human token never aborts a publication running on the App token', async (t) => {
+  const f = await githubFixture(t);
+  await f.enable();
+  const binding = await f.github.automation(f.caller, 'read', undefined, async (_c, _t, b) => b);
+  const client = new GitHubClient(config, f.fetcher);
+  t.after(() => client.close());
+  const refresh = (inFlight: boolean) =>
+    f.state.transaction(async (tx) => {
+      const row = (await tx.get<any>('SELECT * FROM code_github'))!;
+      if (inFlight)
+        return await tx.run(
+          'UPDATE code_github SET credentials=NULL,refresh_id=?,refresh_until=?',
+          'elsewhere',
+          new Date(Date.now() + 30_000).toISOString(),
+        );
+      const tokens = client.open<any>(
+        row.credentials,
+        `tokens:${f.project.id}:${row.token_version}`,
+      );
+      await tx.run(
+        'UPDATE code_github SET credentials=?,token_version=token_version+1',
+        client.seal(tokens, `tokens:${f.project.id}:${row.token_version + 1}`),
+      );
+    });
+  const publish = (during: () => Promise<unknown>) =>
+    f.github.publicationAutomation(f.caller, 'write', binding, async (c, token, current) => {
+      await c.pulls(token, current.repository.fullName);
+      await during();
+      await c.pulls(token, current.repository.fullName);
+      return 'published';
+    });
+  assert.equal(await publish(() => refresh(false)), 'published');
+  // What the App acts for is still fenced: a relink stops it.
+  await assert.rejects(
+    publish(() =>
+      f.state.transaction((tx) => tx.run('UPDATE code_github SET revision=revision+1')),
+    ),
+    { code: 'github_conflict' },
+  );
+  await f.state.transaction((tx) => tx.run('UPDATE code_github SET revision=revision-1'));
+  assert.equal(await publish(() => refresh(true)), 'published');
+});
+
 test('token cleanup remains available when automation is disabled during issuance', async (t) => {
   const f = await githubFixture(t);
   await f.enable();

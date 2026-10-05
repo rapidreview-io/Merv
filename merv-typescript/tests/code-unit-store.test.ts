@@ -9,7 +9,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkUnitRecords, type AcceptanceBody, type BaseBody } from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
 import { CodeStore } from '@merv/code/store/operations';
-import { gitSource } from './fixtures/code-store.js';
+import { gitSource, openRepositories } from './fixtures/code-store.js';
 import { openState } from './fixtures/state.js';
 
 /** Research records retain validated owner facts over the technical Code store. */
@@ -133,6 +133,7 @@ test('Code storage imports and rebinds while research retains unfinished bases a
   const f = await fixture(t);
   const source = gitSource(t);
   const head = source.commit({ 'research.txt': 'retained baseline' });
+  const repositories = await openRepositories(join(f.root, 'repositories'));
   const store = await createService(
     new CodeStore(
       f.state,
@@ -145,11 +146,11 @@ test('Code storage imports and rebinds while research retains unfinished bases a
       {
         imported: async () => {},
         workspaces: async () => [],
-        frozen: async () => [],
         fenced: async () => {},
         advanced: async () => {},
         quarantined: async () => {},
       },
+      repositories,
       {
         read: async (_caller, use) =>
           use({
@@ -227,5 +228,6 @@ test('Code storage imports and rebinds while research retains unfinished bases a
     );
   } finally {
     await store.close();
+    await repositories.close(0);
   }
 });

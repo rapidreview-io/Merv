@@ -25,6 +25,18 @@ export interface GitOptions {
 
 const MINIMUM = [2, 38] as const;
 
+/**
+ * The installation token of one Git child against GitHub: in its environment and nowhere
+ * else. A moved repository is linked again, never followed (as GitHubClient's 3xx).
+ */
+export const githubGitEnv = (token: string): Record<string, string> => ({
+  GIT_CONFIG_COUNT: '2',
+  GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+  GIT_CONFIG_VALUE_0: `Authorization: Basic ${Buffer.from(`x-access-token:${token}`).toString('base64')}`,
+  GIT_CONFIG_KEY_1: 'http.followRedirects',
+  GIT_CONFIG_VALUE_1: 'false',
+});
+
 /** Each child leads its own process group, so cancellation also reaches its descendants. */
 function terminate(child: ChildProcess): void {
   if (child.pid !== undefined && process.platform !== 'win32') {

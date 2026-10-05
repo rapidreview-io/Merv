@@ -307,6 +307,17 @@ export async function codeStoreFixture(
 }
 
 /** A fault hook that throws the first time one named boundary is reached. */
+/** The repositories a CodeStore runs on, opened as their owner opens them; the caller closes them. */
+export async function openRepositories(root: string): Promise<CodeRepositories> {
+  const repositories = new CodeRepositories({
+    root,
+    quotaBytes: 10 * 1024 ** 3,
+    reservedFreeBytes: 1,
+  });
+  await repositories.open();
+  return repositories;
+}
+
 export function faultAt(point: FaultPoint) {
   let fired = false;
   return (reached: FaultPoint) => {
