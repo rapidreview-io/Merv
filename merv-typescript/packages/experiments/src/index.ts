@@ -23,6 +23,7 @@ import {
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowDependency,
+  type WorkRoute,
 } from '@merv/contracts';
 import type { Code, CodeCaptureRef } from '@merv/code-work/types';
 import type { Sandboxes } from '@merv/sandboxes/types';
@@ -269,7 +270,11 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
    * The Running sidebar of `work:<experimentId>`, for any state, so an open sidebar outlives
    * the card. Null for a key that is not one of this project's.
    */
-  async runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null> {
+  async runningPanel(
+    caller: Caller,
+    key: string,
+    route: WorkRoute = () => undefined,
+  ): Promise<RunningPanelPart | null> {
     this.open();
     caller = structuredClone(caller);
     const kind = keyKind(key),
@@ -291,7 +296,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     if (!read) return null;
     // The ladder is where the record stands, so no action's check runs to draw it.
     const graph = await this.workflows.process(caller, id, { checks: false });
-    return experimentPanel({ ...read, graph });
+    return experimentPanel({ ...read, graph, route });
   }
   private async standingRows(
     caller: Caller,

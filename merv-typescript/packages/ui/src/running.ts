@@ -30,6 +30,7 @@ import {
   type RunningTarget,
   type RunningValue,
   type RunningVerb,
+  type WorkRoute,
 } from '@merv/contracts';
 import type { RunningContribution, RunningRead } from './types.js';
 
@@ -72,21 +73,6 @@ const VERBS = new Set<RunningVerb>([
 ]);
 /** The verbs by which a session lends its dot to the work it is on. */
 const WORKING = new Set<RunningVerb>(['works on', 'reviews']);
-/**
- * Where each owner's part stands, to name it when its adapter is configured but not running:
- * such an adapter registered nothing, and the board must not draw that silence as fact. Marks
- * are held on work, so an owner that marks is missing there too. Reviews only adds sections.
- * An owner that begins to draw on the board adds itself here.
- */
-const STANDS = new Map<string, readonly RunningLaneName[]>([
-  ['tasks', ['work']],
-  ['experiments', ['work', 'hardware']],
-  ['reflections', ['work']],
-  ['code-work', ['work', 'hardware']],
-  ['sessions', ['work', 'sessions']],
-  ['fleet', ['sessions']],
-  ['sandboxes', ['hardware']],
-]);
 /** Strongest first. */
 const DOTS: readonly NonNullable<RunningNode['dot']>[] = ['moving', 'live', 'starting'];
 const LOOKS = new Set(['solid', 'dashed', 'quiet']);
@@ -113,6 +99,12 @@ const trailingArrow = /\s*[→↗]\s*$/u;
 /** Contributions registered by owner adapters; a disposed one leaves the page at once. */
 export class RunningRegistry {
   private readonly entries = new Map<string, { contribution: RunningContribution }>();
+  /**
+   * Where each owner that contributed drew: its lanes, and work wherever it marks, since marks
+   * are held on work. Kept after it leaves, so an adapter that stops running is named there
+   * rather than drawn as silence.
+   */
+  readonly stood = new Map<string, readonly RunningLaneName[]>();
 
   contribute(contribution: RunningContribution): () => void {
     check(
@@ -152,6 +144,9 @@ export class RunningRegistry {
     );
     const entry = { contribution };
     this.entries.set(owner, entry);
+    const stands = new Set(lanes);
+    if (contribution.marks) stands.add('work');
+    this.stood.set(owner, [...stands]);
     return () => {
       if (this.entries.get(owner) === entry) this.entries.delete(owner);
     };
@@ -178,9 +173,11 @@ export interface RunningSources {
   isolated?<T>(read: () => Promise<T>): Promise<T>;
   /**
    * Owners whose ui adapter is configured and switched on but is not running: it failed, or
-   * waits on a plugin it needs. Each is named as failed in the lanes it would draw in.
+   * waits on a plugin it needs. Each is named as failed in the lanes it drew in.
    */
-  absent?(): readonly string[];
+  absent?(): readonly { owner: string; lanes: readonly RunningLaneName[] }[];
+  /** The page of a work record, by its workflow; without it, no work record has one. */
+  route?: WorkRoute;
 }
 
 // ─── Validation: every part is checked, and what fails is left out ────────────────────────
@@ -767,7 +764,7 @@ async function part<T>(isolated: Isolated, read: () => Promise<T>): Promise<Part
 }
 
 /** Each contribution's read for one answer, with its own `once` memo shared by every member. */
-function readers(caller: Caller) {
+function readers(caller: Caller, { route = () => undefined }: RunningSources) {
   const memos = new Map<RunningContribution, Map<string, Promise<unknown>>>();
   return (contribution: RunningContribution, include: Iterable<string> = []): RunningRead => {
     let memo = memos.get(contribution);
@@ -775,6 +772,7 @@ function readers(caller: Caller) {
     const own = memo;
     return {
       caller,
+      route,
       include: new Set(include),
       once<T>(name: string, read: () => Promise<T>): Promise<T> {
         let value = own.get(name);
@@ -817,16 +815,14 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
   refuseWorkers(caller);
   const contributions = sources.contributions();
   const owners = contributions.map(({ owner }) => owner);
-  const read = readers(caller);
+  const read = readers(caller, sources);
   const tools = toolNames(sources);
   const isolated = isolation(sources);
   const failed = new Map<RunningLaneName, Set<string>>(LANES.map((lane) => [lane, new Set()]));
   const fail = (lanes: readonly RunningLaneName[], owner: string) =>
     lanes.forEach((lane) => failed.get(lane)!.add(owner));
-  for (const owner of sources.absent?.() ?? []) {
-    const lanes = STANDS.get(owner);
-    if (lanes && !owners.includes(owner)) fail(lanes, owner);
-  }
+  for (const { owner, lanes } of sources.absent?.() ?? [])
+    if (!owners.includes(owner)) fail(lanes, owner);
 
   const marks: RunningMark[] = [];
   const markParts = await mapAsync(contributions, async (contribution) =>
@@ -976,7 +972,7 @@ export async function runningPanel(
     'A Running key is a lowercase kind, a colon and an id',
   );
   const contributions = sources.contributions();
-  const read = readers(caller);
+  const read = readers(caller, sources);
   const tools = toolNames(sources);
   const isolated = isolation(sources);
   const ownerOf = async (wanted: string, except?: RunningContribution, absorbedBy?: string) => {

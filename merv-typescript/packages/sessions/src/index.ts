@@ -38,6 +38,7 @@ import {
   type WorkflowExecution,
   type WorkflowExecutionReferences,
   type Workflows,
+  type WorkRoute,
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { SessionRunning } from './running.js';
@@ -1348,11 +1349,11 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     return await this.board.marks(caller);
   }
-  async runningPanel(caller: Caller, sessionId: string) {
+  async runningPanel(caller: Caller, sessionId: string, route?: WorkRoute) {
     this.ordinary(caller);
     this.ensureOpen();
     check(text(sessionId), 'invalid_session', 'A session identifier is required');
-    return await this.board.panel(caller, sessionId);
+    return await this.board.panel(caller, sessionId, route);
   }
   async runningWork(caller: Caller, instanceIds: readonly string[]) {
     this.ordinary(caller);

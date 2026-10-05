@@ -11,7 +11,8 @@ export const mountsUiPlugin = {
       ctx.ui.register({
         id: 'connections',
         label: 'Connections',
-        group: 'system',
+        // What a project is connected to is a setting: the rail does not list it.
+        group: 'hidden',
         order: 40,
         path: '/connections',
         view: { kind: 'connections' },

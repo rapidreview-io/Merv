@@ -33,9 +33,10 @@ export const legacyHistoryUiPlugin = {
       ctx.ui.register({
         id: 'legacy-history',
         label: 'Previous research',
-        group: 'work',
+        group: 'research',
         order: 19,
         path: '/legacy-history',
+        whenCounted: true,
         view: { kind: 'legacy-history' },
         status: async (caller) => {
           try {

@@ -11,9 +11,11 @@ export const codeUiPlugin = {
       ctx.ui.register({
         id: 'code',
         label: 'Code',
-        group: 'work',
+        group: 'operations',
         order: 25,
         path: '/code',
+        // Its deeper addresses are selections on the one drawing.
+        rooms: true,
         view: { kind: 'code' },
         // `commands` are the commit receipts; the store transfers of the same name, and the
         // publications, are inside status.

@@ -5,6 +5,7 @@ import { refreshTools, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell';
+import type { RowNeeds } from '../shell-types';
 import {
   Ago,
   EmptyState,
@@ -58,11 +59,6 @@ export interface Line {
 }
 type Named = (id: string | null | undefined) => string | undefined;
 
-/** The cycle's refusals on a child of its own ending unapproved: its wave, its consolidation. */
-const STOPS = ['dependency_failed', 'integration_failed'];
-
-const rowOf = (rows: Row[], kind: string) => rows.find((row) => row.view.kind === kind);
-
 /**
  * Whether a record is its owner's move. A gate with no blocker is simply running — unless
  * it holds the owner's own move (`asked`): work sent back for changes, or never begun,
@@ -78,23 +74,16 @@ const yours = (decision: WorkflowDecision, mine: boolean, asked: boolean) => {
   );
 };
 
-/** What each ready action asks of the person whose record it is, by the action's own name. */
-const ASKS: Record<string, string> = {
-  submit_design: 'Submit the design for review',
-  submit_results: 'Submit the results for review',
-};
-/** The owner's move the gate holds open. */
-const askOf = (decision: WorkflowDecision) =>
-  decision.actions.find((action) => action.action in ASKS && action.status !== 'blocked');
-/** What a reviewer is asked to read, by the state its subject waits in. */
-const READS: Record<string, string> = {
-  in_review: 'Review this delivery',
-  design_review: 'Review this design',
-  experiment_review: 'Review these results',
-};
+/** The owner's own words for a key of one of its maps, and nothing a map merely inherits. */
+const word = (words: Record<string, string> | undefined, key = '') =>
+  words && Object.hasOwn(words, key) ? words[key] : undefined;
+/** The owner's move the gate holds open, by the sentences its row declares. */
+const askOf = (decision: WorkflowDecision, asks?: Record<string, string>) =>
+  decision.actions.find((action) => word(asks, action.action) && action.status !== 'blocked');
 /**
- * The owner's move as a sentence. Every word comes from a fact of the gate: a prerequisite
- * that failed and its state, the action that is ready, whether a review sent the work back.
+ * The owner's move as a sentence. Every word comes from a fact of the gate — a prerequisite
+ * that failed and its state, the action that is ready, whether a review sent the work back —
+ * or from the sentence the record's row declares for that action.
  */
 export function recordSentence(
   gate: {
@@ -102,17 +91,21 @@ export function recordSentence(
     dependencies: Pick<WorkflowDependency, 'name' | 'state' | 'failed'>[];
   },
   returned = false,
+  asks?: Record<string, string>,
 ): string {
   const ended = gate.dependencies.find((item) => item.failed);
   if (ended) return `Decide what happens next: ${ended.name} ${words(ended.state)}`;
-  const ask = ASKS[gate.nextAction?.action ?? ''];
+  const ask = word(asks, gate.nextAction?.action);
   if (!ask) return 'Needs your input';
   return returned ? `Changes requested: ${ask[0].toLowerCase()}${ask.slice(1)}` : ask;
 }
 
 /** A review that is the reader's move: one to claim, or one of theirs to finish. */
-export const reviewSentence = (claimed: boolean, subjectState?: string) =>
-  claimed ? 'Finish your review' : (READS[subjectState ?? ''] ?? 'Review this work');
+export const reviewSentence = (
+  claimed: boolean,
+  subjectState?: string,
+  reads?: Record<string, string>,
+) => (claimed ? 'Finish your review' : (word(reads, subjectState) ?? 'Review this work'));
 
 /** What the server told whoever holds the tool: its instruction, then each refusal, once. */
 const said = ({ instruction, blockers }: WorkflowDecision) =>
@@ -120,20 +113,35 @@ const said = ({ instruction, blockers }: WorkflowDecision) =>
     (text, index, all) => !!text && all.indexOf(text) === index,
   );
 
-/** What every open record carries before its gate is read. */
-type Open = { id: string; name: string; owner: string; workflow: Flow };
-const opened = ({ id, workflow }: Pick<Open, 'id' | 'workflow'>, name: string, owner: string) =>
-  ({ id, name, owner, workflow }) satisfies Open;
-const openWork = (home: HomeData | undefined): [string, Open[]][] => [
-  ['tasks', (home?.tasks ?? []).map((item) => opened(item, item.title, item.producerId))],
-  ['experiments', (home?.experiments ?? []).map((item) => opened(item, item.name, item.ownerId))],
-  ['research', (home?.research ?? []).map((item) => opened(item, item.name, item.ownerId))],
-];
+/** An open record of a row that says how Now reads it, before its gate is read. */
+interface Open {
+  id: string;
+  name: string;
+  owner: string;
+  workflow: Flow;
+  row: Row;
+  needs: RowNeeds;
+}
+/** The records of every row that declares how Now reads them, from the row's own home part. */
+const openWork = (rows: Row[], home: HomeData | undefined): Open[] =>
+  rows.flatMap(({ needs, ...row }) => {
+    const items = (home as Record<string, unknown> | undefined)?.[row.id];
+    if (!needs || !Array.isArray(items)) return [];
+    return (items as Record<string, unknown>[]).map((item) => ({
+      id: item.id as string,
+      name: item[needs.name] as string,
+      owner: item[needs.owner] as string,
+      workflow: item.workflow as Flow,
+      row,
+      needs,
+    }));
+  });
 
 /**
  * Every open record, and every open review, that is the reader's move, newest first. The
  * gate of each one comes from the same read the page draws, so the list is one answer's and
- * never a race between twenty.
+ * never a race between twenty. Which records there are, and the words for their moves, are
+ * what their rows declare (`needs`).
  */
 export function needsYou(
   rows: Row[],
@@ -144,18 +152,13 @@ export function needsYou(
 ): Line[] {
   const me = viewer.id;
   const gate = new Map((home?.workflows?.workflows ?? []).map((item) => [item.instanceId, item]));
-  const work = openWork(home);
+  const work = openWork(rows, home);
   // A blocker that names another record names it the way this app names it, here as on the
   // record's own page; the server's label is the fallback and an id names nobody.
-  const recordNames: RecordNames = new Map(
-    work.flatMap(([, items]) => items.map((item) => [item.id, { name: item.name }] as const)),
-  );
+  const recordNames: RecordNames = new Map(work.map((item) => [item.id, { name: item.name }]));
+  const subjects = new Map(work.map((item) => [item.id, item]));
   const lines: Line[] = [];
-  // A wave's review is named by the wave, and asked for as work: a wave is no delivery.
-  const subjects = new Map<string, Omit<Open, 'workflow'> & { workflow?: Flow }>(
-    (home?.reflections ?? []).map((r) => [r.id, { id: r.id, name: r.title, owner: r.ownerId }]),
-  );
-  const reviewsRow = rowOf(rows, 'reviews');
+  const reviewsRow = rows.find((row) => row.view.kind === 'reviews');
   const reviews = reviewsRow ? (home?.reviews ?? []) : [];
   const openReviews = reviews.filter((item) => ['requested', 'started'].includes(item.status));
   // A record out for review is its reviewer's move, never its owner's.
@@ -167,70 +170,73 @@ export function needsYou(
     (item) => item.createdAt,
   ))
     if (!lastVerdict.has(review.subjectId)) lastVerdict.set(review.subjectId, review.verdict);
-  for (const [kind, items] of work) {
-    const row = rowOf(rows, kind);
-    for (const item of items) {
-      subjects.set(item.id, item);
-      const decision = gate.get(item.id);
-      if (!row || !decision || underReview.has(item.id)) continue;
-      // A blocker another plugin published whose next move is a person's outranks the
-      // record's own gate and stands here whatever that gate says — including on work
-      // that has ended and waits on somebody to carry its accepted code to main. Whose move
-      // it is and whether this app can make it are two questions: a move no page here
-      // carries out is still the reader's, with no control at all.
-      const held = firstPersonMove(decision.providerBlockers ?? [], recordNames);
-      if (held) {
-        if (held.move.whose !== 'nobody' && viewer.role === 'operator' && viewer.signedIn)
-          lines.push({
-            id: item.id,
-            kind,
-            name: item.name,
-            to: `${row.path}/${item.id}`,
-            at: held.blocker.since ?? item.workflow.updatedAt,
-            sentence: held.move.sentence,
-            who: held.move.who,
-            says: [...said(decision), held.blocker.next].filter(
-              (text, index, all) =>
-                !!text && all.indexOf(text) === index && text !== held.move.sentence,
-            ) as string[],
-            ...(held.move.control
-              ? { desk: { label: held.move.control.label, to: held.move.control.to } }
-              : {}),
-          });
-        continue;
-      }
-      if (decision.terminal) continue;
-      // Whoever began the step holds it; before anyone has, it is its owner's.
-      const began = decision.workStart?.actorId;
-      const ask = !began || began === me ? askOf(decision) : undefined;
-      const next = ask || decision.nextAction;
-      // A task's delivery names its worker's own commit, which only a leased worker can make.
-      if (next?.tool === 'task.submit_delivery' || !yours(decision, item.owner === me, !!ask))
-        continue;
-      const verdict = lastVerdict.get(item.id);
-      // A cycle is stopped only when its gate refuses on its own wave or consolidation task,
-      // declared after the work it reflects on, which may fail and stop nothing.
-      const stop =
-        decision.blockers.some((item) => STOPS.includes(item.code)) &&
-        decision.dependencies.filter((item) => item.failed).at(-1);
-      const dependencies = decision.dependencies.filter(
-        (item) => kind !== 'research' || !item.failed || item === stop,
-      );
-      const sentence = recordSentence(
-        { nextAction: next, dependencies },
-        !!verdict && verdict !== 'pass',
-      );
-      lines.push({
-        id: item.id,
-        kind,
-        name: item.name,
-        to: `${row.path}/${item.id}`,
-        at: item.workflow.updatedAt,
-        sentence,
-        // Where the server's reason is the headline, the fold does not say it again.
-        says: said(decision).filter((text) => text !== sentence),
-      });
+  for (const item of work) {
+    const { row, needs } = item;
+    const kind = row.view.kind;
+    const decision = gate.get(item.id);
+    // A record that only names the reviews of it is never a move of its own.
+    if (needs.subjectOnly || !decision || underReview.has(item.id)) continue;
+    // A blocker another plugin published whose next move is a person's outranks the
+    // record's own gate and stands here whatever that gate says — including on work
+    // that has ended and waits on somebody to carry its accepted code to main. Whose move
+    // it is and whether this app can make it are two questions: a move no page here
+    // carries out is still the reader's, with no control at all.
+    const held = firstPersonMove(decision.providerBlockers ?? [], recordNames);
+    if (held) {
+      if (held.move.whose !== 'nobody' && viewer.role === 'operator' && viewer.signedIn)
+        lines.push({
+          id: item.id,
+          kind,
+          name: item.name,
+          to: `${row.path}/${item.id}`,
+          at: held.blocker.since ?? item.workflow.updatedAt,
+          sentence: held.move.sentence,
+          who: held.move.who,
+          says: [...said(decision), held.blocker.next].filter(
+            (text, index, all) =>
+              !!text && all.indexOf(text) === index && text !== held.move.sentence,
+          ) as string[],
+          ...(held.move.control
+            ? { desk: { label: held.move.control.label, to: held.move.control.to } }
+            : {}),
+        });
+      continue;
     }
+    if (decision.terminal) continue;
+    // Whoever began the step holds it; before anyone has, it is its owner's.
+    const began = decision.workStart?.actorId;
+    const ask = !began || began === me ? askOf(decision, needs.asks) : undefined;
+    const next = ask || decision.nextAction;
+    // A move through a tool only a leased worker calls, such as a task's delivery naming its
+    // worker's own commit, is never the reader's.
+    if (needs.workerOnly?.includes(next?.tool ?? '') || !yours(decision, item.owner === me, !!ask))
+      continue;
+    const verdict = lastVerdict.get(item.id);
+    // A record that stops on its own child (a cycle on its wave or its consolidation) is
+    // stopped only when its gate refuses on one of the codes its row names, and then by
+    // the child declared last; any other prerequisite of it may fail and stop nothing.
+    const stop =
+      needs.stops &&
+      decision.blockers.some((blocker) => needs.stops!.includes(blocker.code)) &&
+      decision.dependencies.filter((dependency) => dependency.failed).at(-1);
+    const dependencies = decision.dependencies.filter(
+      (dependency) => !needs.stops || !dependency.failed || dependency === stop,
+    );
+    const sentence = recordSentence(
+      { nextAction: next, dependencies },
+      !!verdict && verdict !== 'pass',
+      needs.asks,
+    );
+    lines.push({
+      id: item.id,
+      kind,
+      name: item.name,
+      to: `${row.path}/${item.id}`,
+      at: item.workflow.updatedAt,
+      sentence,
+      // Where the server's reason is the headline, the fold does not say it again.
+      says: said(decision).filter((text) => text !== sentence),
+    });
   }
   if (reviewsRow)
     for (const review of openReviews) {
@@ -254,7 +260,11 @@ export function needsYou(
         name: subject?.name,
         to: `${reviewsRow.path}/${review.id}`,
         at: review.createdAt,
-        sentence: reviewSentence(!!review.reviewerId, subject?.workflow?.state),
+        sentence: reviewSentence(
+          !!review.reviewerId,
+          subject?.workflow.state,
+          subject?.needs.reads,
+        ),
         who: named(subject?.owner),
         says: [],
         claim: !review.reviewerId && start?.status === 'ready' ? review.id : undefined,
@@ -278,7 +288,7 @@ function Move({ line }: { line: Line }) {
     idempotent: true,
     validate: (value) => !!value && value.id === line.claim && value.status === 'started',
     onSuccess: () => {
-      refreshTools('ui.home', 'review.list', 'task.list', 'experiment.list');
+      refreshTools('ui.home', 'review.list');
       navigate(line.to);
     },
   });

@@ -9,7 +9,7 @@ export const artifactUiPlugin = {
       ctx.ui.register({
         id: 'artifacts',
         label: 'Files',
-        group: 'work',
+        group: 'research',
         order: 32,
         path: '/artifacts',
         view: { kind: 'artifacts' },

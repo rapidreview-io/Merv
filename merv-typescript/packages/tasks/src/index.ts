@@ -55,6 +55,7 @@ import {
   type Workflows,
   type WorkflowSnapshot,
   type WorkflowTransition,
+  type WorkRoute,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -2179,7 +2180,11 @@ export class TaskService implements Tasks {
   }
 
   /** A task's Running sidebar, whatever its state, so an open sidebar outlives the card. */
-  async runningPanel(caller: Caller, taskId: string): Promise<RunningPanelPart | null> {
+  async runningPanel(
+    caller: Caller,
+    taskId: string,
+    route: WorkRoute = () => undefined,
+  ): Promise<RunningPanelPart | null> {
     caller = structuredClone(caller);
     return await this.state.snapshot(async () => {
       const read = await this.state.transaction(async (tx) => {
@@ -2208,7 +2213,8 @@ export class TaskService implements Tasks {
       });
       if (!read) return null;
       // The ladder is Workflows' own read of this snapshot, so it runs after the one above.
-      return taskPanel(read.standing, read.record, await this.process(caller, taskId), read.brief);
+      const graph = await this.process(caller, taskId);
+      return taskPanel(read.standing, read.record, graph, read.brief, route);
     });
   }
 

@@ -148,7 +148,12 @@ async function fixture(t: TestContext) {
       await state.snapshot(() => runningPanel(sources, as, key)),
     /** Fleet's own panel member, as the sidebar calls it for a node another one absorbed. */
     absorbed: async (key: string, absorbedBy: string) => {
-      const read: RunningRead = { caller, include: new Set(), once: async (_name, fn) => fn() };
+      const read: RunningRead = {
+        caller,
+        include: new Set(),
+        once: async (_name, fn) => fn(),
+        route: () => undefined,
+      };
       const contribution = ui.contributions().find(({ owner }) => owner === 'fleet')!;
       return await state.snapshot(() => contribution.panel!(read, key, absorbedBy));
     },

@@ -3,6 +3,16 @@ export interface RowStatus {
   count?: number;
   detail?: string;
 }
+/** How Now speaks of a row's records (UiRowNeeds): every word is the owner's. */
+export interface RowNeeds {
+  name: string;
+  owner: string;
+  asks?: Record<string, string>;
+  reads?: Record<string, string>;
+  workerOnly?: string[];
+  stops?: string[];
+  subjectOnly?: true;
+}
 export interface Row {
   id: string;
   label: string;
@@ -10,6 +20,10 @@ export interface Row {
   order: number;
   path: string;
   view: { kind: string; [key: string]: unknown };
+  workflow?: string;
+  rooms?: true;
+  whenCounted?: true;
+  needs?: RowNeeds;
   status: RowStatus;
   readable: boolean;
 }

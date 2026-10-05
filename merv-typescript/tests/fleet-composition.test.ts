@@ -52,6 +52,8 @@ test('Fleet is optional and its row and controls install without research or Ses
   const row = ui.rows().find((row) => row.id === 'fleet')!;
   assert.ok(row);
   assert.equal(row.view.kind, 'collection');
+  // Reached from the Agents and machines page, not the rail.
+  assert.equal(row.group, 'hidden');
   // The shipped browser accepts the manifest; no new browser renderer is required.
   uiManifestSchema.parse({
     version: 1,
@@ -59,7 +61,7 @@ test('Fleet is optional and its row and controls install without research or Ses
       {
         id: row.id,
         label: row.label,
-        group: row.group,
+        group: 'operations',
         order: row.order,
         collection: row.view.spec,
         record: row.view.record,

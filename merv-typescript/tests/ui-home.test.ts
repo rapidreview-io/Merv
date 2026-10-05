@@ -16,17 +16,25 @@ await import('../packages/ui/web/components.js');
 const { NeedsYou, needsYou, recordSentence, reviewSentence } =
   await import('../packages/ui/web/views/overview.js');
 
-const row = (kind: string) => ({
-  id: kind,
-  label: kind,
-  group: 'work',
-  order: 1,
-  path: `/${kind}`,
-  view: { kind },
-  status: {},
+const { UiRegistry } = await import('../packages/ui/src/index.js');
+// The rows exactly as the plugins register them: every word Now says of a record is its row's.
+const registry = new UiRegistry();
+for (const { default: plugin } of [
+  await import('../packages/tasks/src/ui.js'),
+  await import('../packages/experiments/src/ui.js'),
+  await import('../packages/research/src/ui.js'),
+  await import('../packages/reflections/src/ui.js'),
+  await import('../packages/reviews/src/ui.js'),
+  await import('../packages/paper/src/ui.js'),
+])
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  plugin.apply({ effect: (register: () => unknown) => register(), ui: registry } as any);
+const rows = registry.rows().map(({ status: _status, read: _read, home: _home, ...row }) => ({
+  ...row,
+  status: {} as Record<string, unknown>,
   readable: true,
-});
-const rows = ['tasks', 'experiments', 'research', 'reviews', 'paper'].map(row);
+}));
+const needs = (kind: string) => rows.find((row) => row.view.kind === kind)!.needs!;
 const me = { id: 'actor_me', role: 'operator' };
 const names: Record<string, string> = {
   actor_me: 'Me',
@@ -107,9 +115,16 @@ const home = (over: Record<string, unknown>) => ({
 
 test('a move is one sentence made from the gate’s facts, never the agent’s instruction', () => {
   const ready = (action: string) => ({ nextAction: { action }, dependencies: [] });
-  assert.equal(recordSentence(ready('submit_design')), 'Submit the design for review');
-  assert.equal(recordSentence(ready('submit_results')), 'Submit the results for review');
-  assert.equal(recordSentence(ready('an_action_nobody_named')), 'Needs your input');
+  const { asks } = needs('experiments');
+  assert.equal(recordSentence(ready('submit_design'), false, asks), 'Submit the design for review');
+  assert.equal(
+    recordSentence(ready('submit_results'), false, asks),
+    'Submit the results for review',
+  );
+  assert.equal(recordSentence(ready('an_action_nobody_named'), false, asks), 'Needs your input');
+  // The shell has no words of its own for any workflow's action.
+  assert.equal(recordSentence(ready('submit_design')), 'Needs your input');
+  assert.equal(recordSentence(ready('constructor'), false, asks), 'Needs your input');
   assert.equal(
     recordSentence({
       nextAction: { action: 'end' },
@@ -119,15 +134,17 @@ test('a move is one sentence made from the gate’s facts, never the agent’s i
   );
   // Work a review sent back says so, in the ask's own words.
   assert.equal(
-    recordSentence(ready('submit_design'), true),
+    recordSentence(ready('submit_design'), true, asks),
     'Changes requested: submit the design for review',
   );
 
-  assert.equal(reviewSentence(false, 'in_review'), 'Review this delivery');
-  assert.equal(reviewSentence(false, 'design_review'), 'Review this design');
-  assert.equal(reviewSentence(false, 'experiment_review'), 'Review these results');
-  assert.equal(reviewSentence(false), 'Review this work');
-  assert.equal(reviewSentence(true, 'in_review'), 'Finish your review');
+  const reads = { ...needs('tasks').reads, ...needs('experiments').reads };
+  assert.equal(reviewSentence(false, 'in_review', reads), 'Review this delivery');
+  assert.equal(reviewSentence(false, 'design_review', reads), 'Review this design');
+  assert.equal(reviewSentence(false, 'experiment_review', reads), 'Review these results');
+  assert.equal(reviewSentence(false, undefined, reads), 'Review this work');
+  assert.equal(reviewSentence(false, 'in_review'), 'Review this work');
+  assert.equal(reviewSentence(true, 'in_review', reads), 'Finish your review');
 });
 
 test('only the reader’s own moves are listed, and a code the page cannot read is never promoted', () => {

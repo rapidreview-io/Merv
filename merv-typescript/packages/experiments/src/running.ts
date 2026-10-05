@@ -2,7 +2,6 @@ import {
   clip,
   dependencyRows,
   runningKey,
-  workRoute,
   type ProcessGraph,
   type ReviewRequest,
   type RunningAttention,
@@ -13,6 +12,7 @@ import {
   type RunningSection,
   type WorkflowDependency,
   type WorkflowHistoryEntry,
+  type WorkRoute,
 } from '@merv/contracts';
 import type { Experiment } from './models.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
@@ -185,11 +185,6 @@ export function experimentNode(standing: ExperimentStanding): RunningNode {
   };
 }
 
-const workKey = (id: string) => ({
-  key: runningKey('work', id),
-  route: workRoute('experiment', id)!,
-});
-
 /**
  * The experiment's sidebar: where it stands in its workflow, what it waits on and holds up,
  * its question and its evidence, and whose it is. Review and Code add their
@@ -199,8 +194,9 @@ export function experimentPanel(input: {
   standing: ExperimentStanding;
   experiment: Experiment;
   graph: ProcessGraph;
+  route: WorkRoute;
 }): RunningPanelPart {
-  const { standing, experiment, graph } = input;
+  const { standing, experiment, graph, route } = input;
   const { line } = face(standing);
   const red = attention(standing);
   const ended = !!ENDED[standing.state];
@@ -212,6 +208,7 @@ export function experimentPanel(input: {
   const { waitsOn, unblocks } = dependencyRows(
     graph.dependencies.filter((item) => item.direction === 'depends_on'),
     graph.dependencies.filter((item) => item.direction === 'required_by'),
+    route,
   );
   const evidence = experiment.evidence
     .filter((item) => item.current && item.attemptIndex === experiment.attempt.index)
@@ -271,7 +268,7 @@ export function experimentPanel(input: {
     },
     sections,
     actions: [],
-    route: workKey(standing.id).route,
+    route: route('experiment', standing.id),
     live: !!standing.lease,
   };
 }

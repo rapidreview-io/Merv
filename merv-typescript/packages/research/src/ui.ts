@@ -22,9 +22,11 @@ export const researchUiPlugin = {
       ctx.ui.register({
         id: 'research',
         label: 'Cycles',
-        group: 'work',
+        // The cycles frame the Work page, which reaches them; the rail does not list them.
+        group: 'hidden',
         order: 14,
         path: '/research',
+        workflow: 'research',
         view: { kind: 'research' },
         home: {
           tool: 'research.list',
@@ -37,6 +39,13 @@ export const researchUiPlugin = {
             'reflectionId',
             'automation',
           ],
+        },
+        // A cycle stops on its own wave or consolidation, declared after the work it reflects
+        // on, which may fail and stop nothing.
+        needs: {
+          name: 'name',
+          owner: 'ownerId',
+          stops: ['dependency_failed', 'integration_failed'],
         },
         read: async (caller) => JSON.parse(JSON.stringify(await research.list(caller))) as Json,
         // Open work: a cycle that has not yet completed, been abandoned or failed.

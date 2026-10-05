@@ -12,9 +12,11 @@ export const taskUiPlugin = {
       ctx.ui.register({
         id: 'tasks',
         label: 'Tasks',
-        group: 'work',
+        // Reached from the Work page and its records; the rail does not list it.
+        group: 'hidden',
         order: 15,
         path: '/tasks',
+        workflow: 'task',
         view: { kind: 'tasks' },
         home: {
           tool: 'task.list',
@@ -28,6 +30,13 @@ export const taskUiPlugin = {
             'failure',
             'workflow',
           ],
+        },
+        // A delivery names its worker's own commit, so only a leased worker ever makes one.
+        needs: {
+          name: 'title',
+          owner: 'producerId',
+          reads: { in_review: 'Review this delivery' },
+          workerOnly: ['task.submit_delivery'],
         },
         // One record, with the gate it stands at: the process graph is derived from the
         // same record, so the page reads both in one answer rather than two.
@@ -57,7 +66,9 @@ export const taskUiPlugin = {
         lanes: ['work'],
         nodes: async (read) => ({ nodes: await tasks.running(read.caller, read.include) }),
         panel: async (read, key) =>
-          keyKind(key) === 'work' ? await tasks.runningPanel(read.caller, keyId(key)) : null,
+          keyKind(key) === 'work'
+            ? await tasks.runningPanel(read.caller, keyId(key), read.route)
+            : null,
       }),
     );
   },

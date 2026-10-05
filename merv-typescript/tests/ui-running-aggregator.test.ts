@@ -364,7 +364,19 @@ test('each part is read alone and one at a time, and an owner whose adapter is n
       },
     },
   ]);
-  const absent = ['sessions', 'code-work', 'sandboxes', 'paper', 'constructor'];
+  // Where an owner drew is what it declared when it last ran: its lanes, and work if it marks.
+  const before = new RunningRegistry();
+  before.contribute({ owner: 'code-work', lanes: ['hardware'], marks: async () => [] })();
+  before.contribute({ owner: 'sandboxes', lanes: ['hardware'] })();
+  before.contribute({ owner: 'sessions', lanes: ['sessions'], marks: async () => [] })();
+  before.contribute({ owner: 'paper' })();
+  assert.deepEqual(before.contributions(), [], 'a disposed contribution leaves at once');
+  assert.deepEqual(before.stood.get('code-work'), ['hardware', 'work']);
+  assert.deepEqual(before.stood.get('paper'), []);
+  const absent = ['sessions', 'code-work', 'sandboxes', 'paper'].map((owner) => ({
+    owner,
+    lanes: before.stood.get(owner)!,
+  }));
   const answer = await runningBoard({ ...walk, isolated, absent: () => absent }, caller);
   assert.deepEqual(order, [
     'fleet.marks',
@@ -1297,20 +1309,24 @@ test('a statement that fails in one part is rolled back to that part alone, on t
   assert.deepEqual(aliases, ['sandbox:gone', 'sandbox:kept']);
 });
 
-test('an owner whose adapter is configured but not running is named as failed where it would draw', async (t) => {
-  // Fleet's adapter without Fleet: it waits on what it needs and registers nothing.
-  const { reader, tool } = await assembled(t, [
-    { id: 'fleet-ui', name: '@merv/fleet/ui', required: false },
-  ]);
+test('an owner whose adapter stops running is named as failed where it drew', async (t) => {
+  // The Reflections adapter loses Reflections: it waits on what it needs, and its part has left
+  // the board, which must not draw that silence as fact.
+  const { app, reader, tool } = await assembled(t);
+  const lanes = async () => {
+    const answer = await tool('ui.running', reader);
+    assert.equal(answer.status, 200);
+    return (answer.body.result as RunningBoard).lanes;
+  };
+  assert.deepEqual((await lanes()).work.failed, []);
+  await app.setEnabled('reflections', false);
   const shell = await tool('ui.shell', reader);
   assert.equal(
-    shell.body.result.plugins.find(({ id }: { id: string }) => id === 'fleet-ui')?.state,
+    shell.body.result.plugins.find(({ id }: { id: string }) => id === 'reflections-ui')?.state,
     'pending',
   );
-  const answer = await tool('ui.running', reader);
-  assert.equal(answer.status, 200);
-  const { lanes } = answer.body.result as RunningBoard;
-  assert.deepEqual(lanes.sessions.failed, ['fleet']);
-  assert.deepEqual(lanes.work.failed, []);
-  assert.deepEqual(lanes.hardware.failed, []);
+  const { sessions, work, hardware } = await lanes();
+  assert.deepEqual(work.failed, ['reflections']);
+  assert.deepEqual(sessions.failed, []);
+  assert.deepEqual(hardware.failed, []);
 });

@@ -66,7 +66,7 @@ export const fleetUiPlugin = {
         id: 'fleet',
         // Not in the rail: reached from the Agents and machines page and a machine's sidebar.
         label: 'Fleet requests',
-        group: 'operations',
+        group: 'hidden',
         order: 20,
         path: '/fleet',
         view: {

@@ -23,7 +23,7 @@ const idPattern = /^[a-z][a-z0-9-]{0,63}$/;
 /** Sidebar rows registered by feature adapters; a disposed registration disappears immediately. */
 export class UiRegistry implements Ui {
   private readonly entries = new Map<string, UiRow>();
-  private readonly running = new RunningRegistry();
+  readonly running = new RunningRegistry();
 
   register(row: UiRow): () => void {
     check(row && typeof row === 'object', 'invalid_row', 'Row must be an object');
@@ -168,15 +168,22 @@ export const uiPlugin = {
       contributions: () => ui.contributions(),
       tools: async () => (await ctx.tools.list()).map((tool) => tool.name),
       isolated,
-      // An owner's adapter, e.g. @merv/sessions/ui, that failed or waits on what it needs.
+      // An owner's adapter, e.g. @merv/sessions/ui, that failed or waits on what it needs,
+      // in the lanes it drew in when it last ran.
       absent: () =>
         plugins()
           .filter(({ state }) => state !== 'active' && state !== 'disabled')
-          .map(
-            ({ id, name }) =>
-              /^@merv\/([a-z][a-z0-9-]*)\/ui$/.exec(name)?.[1] ?? /^(.+)-ui$/.exec(id)?.[1],
-          )
-          .filter((owner) => owner !== undefined),
+          .flatMap(({ id, name }) => {
+            const owner =
+              /^@merv\/([a-z][a-z0-9-]*)\/ui$/.exec(name)?.[1] ?? /^(.+)-ui$/.exec(id)?.[1];
+            const lanes = owner && ui.running.stood.get(owner);
+            return lanes ? [{ owner, lanes }] : [];
+          }),
+      // A work record opens on the page of the row that lists its workflow.
+      route: (workflow, id) => {
+        const row = ui.rows().find((entry) => entry.workflow === workflow);
+        return row && `${row.path}/${encodeURIComponent(id)}`;
+      },
     };
     // A person's monitor. Its sidebars can hold what only an operator may read, so no
     // conversation is offered it and the reads refuse leased workers and managed runners.
@@ -225,6 +232,7 @@ export const uiPlugin = {
         group: 'settings',
         order: 100,
         path: '/settings',
+        rooms: true,
         view: { kind: 'settings' },
       }),
     );

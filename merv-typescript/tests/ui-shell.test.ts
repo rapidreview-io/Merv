@@ -41,10 +41,11 @@ const row = (id: string, kind: string, group: string, order: number, label: stri
   status: {},
   readable: false,
 });
+// Each placed as its plugin places it (UiRow.group, rooms).
 const rows = [
-  row('paper', 'paper', 'work', 15, 'Paper'),
-  row('artifacts', 'artifacts', 'work', 21, 'Files'),
-  row('settings', 'settings', 'settings', 100, 'Settings'),
+  row('paper', 'paper', 'top', 15, 'Paper'),
+  row('artifacts', 'artifacts', 'research', 21, 'Files'),
+  { ...row('settings', 'settings', 'settings', 100, 'Settings'), rooms: true },
   // Registered by @merv/research: the lead row, standing over Now.
   row('work', 'work', 'lead', 14, 'Work'),
 ];
@@ -458,7 +459,10 @@ test('a room with nothing in it is an empty state, and the session room ends the
 
 test('the archive narrows by the app’s own tabs, turns pages only where there are pages, and closes by a glyph', async (t) => {
   t.after(async () => await unmount());
-  const archive = { ...row('legacy-history', 'legacy-history', 'work', 19, 'Archive') };
+  const archive = {
+    ...row('legacy-history', 'legacy-history', 'research', 19, 'Archive'),
+    whenCounted: true,
+  };
   boot('Operator', { rows: [...rows, { ...archive, status: { count: 3 }, readable: true }] });
   serve('/tools/ui.read', (_call, sent) => {
     const asked = (sent.params ?? {}) as { action?: string; type?: string };
@@ -610,7 +614,7 @@ test('an address this app moved elsewhere opens there, whether or not a plugin r
   );
   assert.ok(!text().includes('Page not found'));
   await unmount();
-  boot('Operator', { rows: [...rows, row('connections', 'connections', 'system', 40, 'Conn')] });
+  boot('Operator', { rows: [...rows, row('connections', 'connections', 'hidden', 40, 'Conn')] });
   await open('/connections');
   assert.equal(
     document.querySelector('.settings nav [aria-current="page"]')!.textContent,
@@ -639,7 +643,7 @@ test('an address this app moved elsewhere opens there, whether or not a plugin r
 
 test('a project opens on its lead row, Work, which leads the rail over Now and the paper; there is no Home', async (t) => {
   t.after(async () => await unmount());
-  boot('Operator', { rows: [...rows, row('tasks', 'tasks', 'work', 10, 'Tasks')] });
+  boot('Operator', { rows: [...rows, row('tasks', 'tasks', 'hidden', 10, 'Tasks')] });
   await open('/');
   const links = [...rail().querySelectorAll('.rail-nav a')];
   assert.deepEqual(
@@ -661,7 +665,7 @@ test('a project opens on its lead row, Work, which leads the rail over Now and t
 
 test('the rail counts what Now lists, an unwell row included', async (t) => {
   t.after(async () => await unmount());
-  const sick = { ...row('paper', 'paper', 'work', 15, 'Paper'), status: { state: 'degraded' } };
+  const sick = { ...row('paper', 'paper', 'top', 15, 'Paper'), status: { state: 'degraded' } };
   boot('Operator', { rows: [sick, ...rows.slice(1)] });
   serve('/tools/ui.home', { body: { result: {} } });
   await open('/now');

@@ -350,17 +350,20 @@ export interface RunningPanel extends RunningPanelPart {
 
 // ─── Two shared readings, so every owner of work draws its relations the same way ─────────
 
-const WORK: Record<string, [kind: string, base: string]> = {
-  task: ['Task', '/tasks'],
-  experiment: ['Experiment', '/experiments'],
-  reflection: ['Reflection', '/reflections'],
-  research: ['Research', '/research'],
-};
+/**
+ * The page a work record opens on, by its workflow, or undefined where no page shows that
+ * workflow's records. The shell answers it from the rows that declare a workflow (UiRow), and
+ * hands it to every owner on its read.
+ */
+export type WorkRoute = (workflow: string, id: string) => string | undefined;
 
-/** The page a work record opens on, chosen by its workflow. Undefined where no page shows that kind. */
-export function workRoute(workflow: string, id: string): string | undefined {
-  const base = WORK[workflow]?.[1];
-  return base && `${base}/${encodeURIComponent(id)}`;
+/** A link to a work record: its key, and its page and its kind's word where a page shows it. */
+export function workLink(route: WorkRoute, workflow: string, id: string) {
+  const page = route(workflow, id);
+  return {
+    to: { key: runningKey('work', id), ...(page ? { route: page } : {}) },
+    ...(page ? { kind: workflow[0]!.toUpperCase() + workflow.slice(1) } : {}),
+  };
 }
 
 /**
@@ -371,18 +374,14 @@ export function workRoute(workflow: string, id: string): string | undefined {
 export function dependencyRows(
   dependsOn: readonly WorkflowDependency[],
   requiredBy: readonly WorkflowDependency[],
+  route: WorkRoute,
 ): { waitsOn: RunningLinkRow[]; unblocks: RunningLinkRow[] } {
-  const row = (dependency: WorkflowDependency): RunningLinkRow => {
-    const route = workRoute(dependency.workflow, dependency.id);
-    const kind = WORK[dependency.workflow]?.[0];
-    return {
-      to: { key: runningKey('work', dependency.id), ...(route ? { route } : {}) },
-      ...(kind ? { kind } : {}),
-      name: dependency.name,
-      says: [{ state: dependency.state }],
-      ...(dependency.failed ? { attention: true } : {}),
-    };
-  };
+  const row = (dependency: WorkflowDependency): RunningLinkRow => ({
+    ...workLink(route, dependency.workflow, dependency.id),
+    name: dependency.name,
+    says: [{ state: dependency.state }],
+    ...(dependency.failed ? { attention: true } : {}),
+  });
   return {
     waitsOn: dependsOn.filter((d) => !d.settled || d.failed).map(row),
     unblocks: requiredBy.filter((d) => !d.settled && !d.failed).map(row),

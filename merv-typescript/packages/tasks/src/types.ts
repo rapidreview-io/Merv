@@ -8,65 +8,12 @@ import type {
   RunningNode,
   RunningPanelPart,
   Transaction,
-  WorkflowDecision,
-  WorkflowDependency,
-  WorkflowSnapshot,
-  WorkflowWorkStart,
+  WorkRoute,
 } from '@merv/contracts';
 import type {} from 'cordis';
+import type { Task, TaskConfirmation, TaskRecord } from './models.js';
+export type * from './models.js';
 
-export interface Task {
-  id: string;
-  projectId: string;
-  title: string;
-  goal: string;
-  checks: string[];
-  evidenceVersion: 2;
-  acceptanceChecks: { number: number; text: string }[];
-  deliveryConfirmations: TaskConfirmation[];
-  deliveryAssessmentId: string | null;
-  producerId: string;
-  briefId: string;
-  deliveryIds: string[];
-  reviewId: string | null;
-  workflow: WorkflowSnapshot;
-  guidance: WorkflowDecision;
-  failure: TaskFailure | null;
-  dependencies: WorkflowDependency[];
-  dependents: WorkflowDependency[];
-  workStarts: WorkflowWorkStart[];
-  createdAt: string;
-  type: string;
-  typeVersion: number;
-  contextInputs: Record<string, string[]>;
-  /** Present only on a Git task, so every earlier record reads back unchanged. */
-  workspace?: 'git';
-  /** The accepted Git task whose delivered commit is the base of this task's checkout. */
-  baseTaskId?: string;
-  /** The commit the current delivery names; the review pins its rendered record. */
-  deliveryCode?: TaskDeliveryCode;
-  deliveryCodeArtifactId?: string;
-}
-/**
- * The commit a Git task delivered. The receipt stays resolvable through its ref, so the record
- * keeps only what a later check compares: who produced it, at which revision, and what it is.
- */
-export interface TaskDeliveryCode {
-  ref: { kind: 'code-commit'; commandId: string };
-  sessionId: string;
-  /** The task revision the commit was produced at; later revisions never move it. */
-  revision: number;
-  headOid: string;
-  treeOid: string | null;
-}
-export interface TaskFailure {
-  reason: string;
-  actorId: string;
-  createdAt: string;
-  reviewId: string | null;
-}
-/** Domain metadata only; safe to compose without evaluating interactive guidance. */
-export type TaskRecord = Omit<Task, 'guidance'>;
 export interface TaskContext {
   taskId: string;
   purpose: 'work' | 'review';
@@ -116,12 +63,6 @@ export interface TaskDelivery {
   expectedRevision: number;
   requestId: string;
 }
-export type TaskConfirmation = {
-  checkNumber: number;
-  status: 'met' | 'not_met';
-  evidenceIds: string[];
-  notes: string;
-};
 export interface TaskReview extends ReviewApplication {}
 export interface TaskReissue {
   taskId: string;
@@ -179,7 +120,7 @@ export interface Tasks {
    */
   running(caller: Caller, include?: Iterable<string>): Promise<RunningNode[]>;
   /** A task's sidebar on the Running page; null when no task of this project has the id. Reads only. */
-  runningPanel(caller: Caller, taskId: string): Promise<RunningPanelPart | null>;
+  runningPanel(caller: Caller, taskId: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
 }
 
 declare module 'cordis' {

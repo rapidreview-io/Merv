@@ -27,17 +27,18 @@ const row = (id: string, kind: string, group: string, order: number, path = `/${
 
 test('the rail lists places, hides the rows other pages absorbed, and leads with the lead row', () => {
   const work = row('work', 'work', 'lead', 14);
+  // Each row is placed by its owner: what another page absorbed declares itself hidden.
   const rows = [
     work,
-    row('connections', 'connections', 'system', 40, '/external-connections'),
+    row('connections', 'connections', 'hidden', 40, '/external-connections'),
     row('settings', 'settings', 'settings', 100),
-    row('research-provider', 'research', 'work', 8, '/cycles'),
-    row('jobs', 'tasks', 'work', 12, '/task-browser'),
-    row('trials', 'experiments', 'work', 13),
-    row('verdicts', 'reviews', 'work', 14),
-    row('artifacts', 'artifacts', 'work', 21),
-    row('paper', 'paper', 'work', 16),
-    row('reflections', 'reflections', 'work', 35),
+    row('research-provider', 'research', 'hidden', 8, '/cycles'),
+    row('jobs', 'tasks', 'hidden', 12, '/task-browser'),
+    row('trials', 'experiments', 'hidden', 13),
+    row('verdicts', 'reviews', 'hidden', 14),
+    row('artifacts', 'artifacts', 'research', 21),
+    row('paper', 'paper', 'top', 16),
+    row('reflections', 'reflections', 'hidden', 35),
     row('feed', 'feed', 'activity', 30),
   ];
   const before = structuredClone(rows);
@@ -87,21 +88,24 @@ test('the rail lists places, hides the rows other pages absorbed, and leads with
   // Work appears only with the work it opens; the archive only when it holds records.
   const listed = (entries: Row[]) =>
     buildNavigation(entries).flatMap((section) => section.rows.map((entry) => entry.id));
-  assert.deepEqual(listed([row('reflections', 'reflections', 'work', 35)]), []);
-  const archive = row('legacy-history', 'legacy-history', 'work', 19);
+  assert.deepEqual(listed([row('reflections', 'reflections', 'hidden', 35)]), []);
+  const archive: Row = {
+    ...row('legacy-history', 'legacy-history', 'research', 19),
+    whenCounted: true,
+  };
   assert.deepEqual(listed([archive]), []);
   archive.status = { count: 412 };
   assert.deepEqual(listed([archive]), ['legacy-history']);
 });
 
 test('Code stands under Agents; what is running, its agents and Fleet’s requests are reached from Work, not rows', () => {
-  // Code declares the work group; the rail files it under Agents. Sessions and Fleet are still
-  // registered, and the rail lists neither.
+  // Code declares the operations group, which the rail heads Agents. Sessions and Fleet are
+  // still registered, hidden, and the rail lists neither.
   const sections = buildNavigation([
-    row('code', 'code', 'work', 25),
-    row('sessions', 'sessions', 'work', 24),
-    row('fleet', 'collection', 'operations', 20),
-    row('reviews', 'reviews', 'work', 17),
+    row('code', 'code', 'operations', 25),
+    row('sessions', 'sessions', 'hidden', 24),
+    row('fleet', 'collection', 'hidden', 20),
+    row('reviews', 'reviews', 'hidden', 17),
   ]);
   assert.deepEqual(
     sections.map((section) => [section.label, section.rows.map((entry) => entry.id)]),
@@ -134,9 +138,9 @@ test('unknown views retain their declared group, path, status and deterministic 
 });
 
 test('plugin removal removes only its rows and re-addition restores navigation without duplicates', () => {
-  const tasks = row('tasks', 'tasks', 'work', 10);
+  const tasks = row('tasks', 'tasks', 'hidden', 10);
   const feed = row('feed', 'feed', 'activity', 20);
-  const artifacts = row('artifacts', 'artifacts', 'work', 21);
+  const artifacts = row('artifacts', 'artifacts', 'research', 21);
   const extension = row('custom', 'unrecognized', 'extensions', 30);
   const all = [tasks, feed, artifacts, extension];
   const initial = buildNavigation(all);
@@ -169,8 +173,8 @@ test('a heading is drawn only where it names more than its one row already says'
     label,
   });
   const sections = buildNavigation([
-    labelled('artifacts', 'artifacts', 'work', 21, 'Files'),
-    labelled('code', 'code', 'work', 25, 'Code'),
+    labelled('artifacts', 'artifacts', 'research', 21, 'Files'),
+    labelled('code', 'code', 'operations', 25, 'Code'),
     labelled('feed', 'feed', 'activity', 30, 'Feed'),
   ]);
   assert.deepEqual(

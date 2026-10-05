@@ -14,28 +14,6 @@ export interface NavSection {
   rows: Row[];
 }
 
-/** Known views map to user jobs; unknown views keep their declared group. */
-const SECTION_OF_VIEW: Record<string, string> = {
-  artifacts: 'research',
-  code: 'operations',
-  feed: 'activity',
-  'legacy-history': 'research',
-};
-
-/**
- * Rows the rail does not show. Every one of them is still registered and still
- * serves its record routes and its ui.read: the wave of work is one
- * Work page now, the reference lookup is a control on Paper, and connections
- * are Settings. A reflection is a unit of that work: a row of the Work list like a task.
- * Agents, their machines and Fleet's requests are reached from the line under
- * the Work map, and from the sidebar of whichever of them is in hand.
- */
-const HIDDEN = new Set(
-  'research tasks experiments reviews reflections connections sessions'.split(' '),
-);
-/** Fleet's page is a collection like any published one, so it is named by its row. */
-const HIDDEN_ROWS = new Set(['fleet']);
-
 /**
  * Rows of the `lead` group stand above Now, a project opens on the first of them, and a
  * page the rail does not show is reached from them.
@@ -73,17 +51,15 @@ const NO_ROWS: Row[] = [];
 export const useRows = (): Row[] =>
   useTool<ShellData>('ui.shell', {}, { every: 30000 }).data?.rows ?? NO_ROWS;
 
-/**
- * The paper stands with Work and Now rather than inside a section: it is what the
- * project is writing, not one collection among the others.
- */
-export const topRows = (rows: Row[]) => rows.filter((row) => row.view.kind === 'paper');
+/** Rows of the `top` group stand with the lead rows and Now rather than inside a section. */
+export const topRows = (rows: Row[]) => rows.filter((row) => row.group === 'top');
 
-/** An archive with nothing in it is not a place; one that reports records is. */
-const shows = (row: Row) =>
-  row.view.kind === 'legacy-history'
-    ? !!row.status.count
-    : !HIDDEN.has(row.view.kind) && !HIDDEN_ROWS.has(row.id);
+/**
+ * Whether the rail draws a row at all, as its owner placed it. A row of the `hidden` group is
+ * still registered and still serves its record routes and its ui.read: the page that absorbed
+ * it reaches it.
+ */
+const shows = (row: Row) => row.group !== 'hidden' && (!row.whenCounted || !!row.status.count);
 
 /**
  * The rail row an address lights: the row it stands under, and — for a page the rail does
@@ -119,16 +95,14 @@ export const humanizeGroup = (group: string) =>
  */
 export function buildNavigation(rows: Row[]): NavSection[] {
   const sorted = rows
-    .filter(
-      (row) => !['settings', 'lead'].includes(row.group) && shows(row) && row.view.kind !== 'paper',
-    )
+    .filter((row) => !['settings', 'lead', 'top'].includes(row.group) && shows(row))
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const sections = new Map<string, NavSection>();
   for (const row of sorted) {
-    const id = SECTION_OF_VIEW[row.view.kind] ?? row.group;
+    const id = row.group;
     let section = sections.get(id);
     if (!section) {
-      section = { id, label: SECTION_LABELS[id] ?? humanizeGroup(row.group), rows: [] };
+      section = { id, label: SECTION_LABELS[id] ?? humanizeGroup(id), rows: [] };
       sections.set(id, section);
     }
     section.rows.push(row);

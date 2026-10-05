@@ -2,9 +2,9 @@ import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import { useTool, type Actor, type Project } from '../api';
-import type { Reflection } from './research-programs';
-import type { Review } from './reviews';
-import type { Task } from './tasks';
+import type { ReviewRequest } from '@merv/contracts/types';
+import type { Reflection } from '@merv/reflections/models';
+import type { Task } from '@merv/tasks/models';
 
 /**
  * The data Now and the rail read: the shapes of the records, and the one read that serves
@@ -29,7 +29,7 @@ export type MapCycle = Pick<
   'id' | 'name' | 'ownerId' | 'workflow' | 'researchDependencies' | 'reflectionId' | 'automation'
 >;
 export type MapReview = Pick<
-  Review,
+  ReviewRequest,
   | 'id'
   | 'subjectId'
   | 'subjectRevision'

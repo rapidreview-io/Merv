@@ -187,7 +187,7 @@ function AccountFoot() {
 }
 
 /**
- * The one navigation. The lead rows (Work), Now and the paper first, then every other registered
+ * The one navigation. The lead rows (Work), Now and the top rows (Paper) first, then every other
  * collection as its own row under the heading of the section it belongs to, then
  * Settings and the account at the foot. Nothing is hidden behind a row or a title.
  */
@@ -258,13 +258,6 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
 }
 
 /**
- * A place whose deeper addresses are not records: Settings is one place with rooms, and
- * Code's are selections on the one drawing. Both keep the line the shell titles them
- * with, because in neither case has the reader left the page.
- */
-const roomy = (row: Row) => ['settings', 'code'].includes(row.view.kind);
-
-/**
  * What a page counted, said on the line the shell titles it with. The shell owns that
  * line, so a page hands its facts up rather than drawing a heading of its own under it.
  */
@@ -295,7 +288,8 @@ function TitleLine({ rows, facts }: { rows: Row[]; facts: PageFacts }) {
     pathname === '/'
       ? undefined
       : rows.find(
-          (row) => row.path === pathname || (roomy(row) && pathname.startsWith(`${row.path}/`)),
+          // A row with rooms (Settings, Code's selections) is still the page under its rooms.
+          (row) => row.path === pathname || (row.rooms && pathname.startsWith(`${row.path}/`)),
         );
   if (!current) return null;
   return (

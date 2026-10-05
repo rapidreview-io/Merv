@@ -34,6 +34,7 @@ import type {
   SessionWorkspace,
   SessionWorkspaceRecord,
   Transaction,
+  WorkRoute,
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type {
@@ -359,7 +360,11 @@ export interface Sessions {
    */
   runningMarks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }>;
   /** A lease's sidebar, any status; null for a lease the project does not hold. */
-  runningPanel(caller: Caller, sessionId: string): Promise<RunningPanelPart | null>;
+  runningPanel(
+    caller: Caller,
+    sessionId: string,
+    route?: WorkRoute,
+  ): Promise<RunningPanelPart | null>;
   /** The Sessions section of the given work's sidebar: the live leases on those instances. */
   runningWork(caller: Caller, instanceIds: readonly string[]): Promise<RunningSection[]>;
   /**

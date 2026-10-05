@@ -10,28 +10,10 @@ import { Thread, threadOf } from '../thread';
 import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
 import { useActorNames } from './people';
-import { CriterionRows, type Confirmation, type Review } from './reviews';
+import { CriterionRows, type Review } from './reviews';
 import type { ViewProps } from './index';
-import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
-
-export interface Task {
-  id: string;
-  title: string;
-  goal: string;
-  checks: string[];
-  deliveryConfirmations: Confirmation[];
-  producerId: string;
-  briefId: string;
-  deliveryIds: string[];
-  /** A delivery confirms each check by number; version 1 was retired with its tasks. */
-  evidenceVersion?: 2;
-  reviewId: string | null;
-  workflow: { state: string; revision: number; updatedAt: string };
-  failure: { reason: string; actorId: string; createdAt: string } | null;
-  dependencies: WorkflowDependency[];
-  dependents: WorkflowDependency[];
-  createdAt: string;
-}
+import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { Task } from '@merv/tasks/models';
 
 /** How the server titles the brief it composes from a task's title, goal and checks. */
 const COMPOSED = 'Task brief: ';
