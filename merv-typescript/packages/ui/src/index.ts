@@ -134,13 +134,7 @@ export const uiPlugin = {
         // The page's own read: a person's agent reads the records themselves.
         conversation: 'never',
         readOnly: true,
-        handler: async (caller: Caller) =>
-          await homeRead(
-            ctx.tools,
-            ui.rows(),
-            async (as, rowId, params) => await ui.read(as, rowId, params),
-            caller,
-          ),
+        handler: async (caller: Caller) => await homeRead(ctx.tools, caller),
       }),
     );
     const running: RunningSources = {

@@ -626,36 +626,30 @@ const dependency = (id: string, name: string, state: string, settled: boolean) =
   settled,
   failed: false,
 });
-/** The project's one read, holding the cycle's gate as `workflow.status_and_next` reports it. */
-const home = (state: string, advance: Record<string, unknown>) => ({
+/** The cycle's gate, as `workflow.status_and_next` reports it. */
+const cycleGate = (state: string, advance: Record<string, unknown>) => ({
   body: {
     result: {
-      workflows: {
-        workflows: [
-          {
-            instanceId: 'wf_cycle',
-            workflow: 'research',
-            version: 4,
-            state,
-            revision: 3,
-            actions: [
-              {
-                action: `advance_${state}`,
-                tool: 'research.advance',
-                instruction: 'Advance the cycle.',
-                arguments: { researchId: 'wf_cycle', expectedRevision: 3 },
-                requiredInput: [],
-                blockers: [],
-                ...advance,
-              },
-            ],
-            dependencies: [
-              dependency('wf_task', 'Sweep weight decay', 'in_progress', false),
-              dependency('wf_done', 'Baseline run', 'done', true),
-            ],
-          },
-        ],
-      },
+      instanceId: 'wf_cycle',
+      workflow: 'research',
+      version: 4,
+      state,
+      revision: 3,
+      actions: [
+        {
+          action: `advance_${state}`,
+          tool: 'research.advance',
+          instruction: 'Advance the cycle.',
+          arguments: { researchId: 'wf_cycle', expectedRevision: 3 },
+          requiredInput: [],
+          blockers: [],
+          ...advance,
+        },
+      ],
+      dependencies: [
+        dependency('wf_task', 'Sweep weight decay', 'in_progress', false),
+        dependency('wf_done', 'Baseline run', 'done', true),
+      ],
     },
   },
 });
@@ -683,8 +677,8 @@ const buttons = () =>
 test('a move the gate refuses is not offered, and what it waits on is named with its state', async (t) => {
   t.after(unmount);
   serve(
-    '/tools/ui.home',
-    home('researching', {
+    '/tools/workflow.status_and_next',
+    cycleGate('researching', {
       status: 'blocked',
       blockers: [
         {
@@ -708,8 +702,8 @@ test('a move the gate refuses is not offered, and what it waits on is named with
 test('a plan that continues is answered from the page: create the next wave, or skip it', async (t) => {
   t.after(unmount);
   serve(
-    '/tools/ui.home',
-    home('consolidating', {
+    '/tools/workflow.status_and_next',
+    cycleGate('consolidating', {
       status: 'needs_input',
       requiredInput: ['nextWave'],
       blockers: [{ code: 'input_required', status: 400, message: 'Supply nextWave.' }],
@@ -732,8 +726,8 @@ test('a plan that continues is answered from the page: create the next wave, or 
 test('a consolidation task that ended without acceptance is retried from the page', async (t) => {
   t.after(unmount);
   serve(
-    '/tools/ui.home',
-    home('consolidating', {
+    '/tools/workflow.status_and_next',
+    cycleGate('consolidating', {
       status: 'blocked',
       blockers: [{ code: 'integration_failed', status: 409, message: 'The task ended failed.' }],
     }),
@@ -748,7 +742,7 @@ test('a consolidation task that ended without acceptance is retried from the pag
 
 test('a ready gate is the one move, and it sends nothing it was not asked for', async (t) => {
   t.after(unmount);
-  serve('/tools/ui.home', home('researching', { status: 'ready' }));
+  serve('/tools/workflow.status_and_next', cycleGate('researching', { status: 'ready' }));
   await mount(page('researching'));
   await settle(10);
   assert.deepEqual(buttons(), [['Start next step', false]]);
@@ -759,7 +753,6 @@ test('a ready gate is the one move, and it sends nothing it was not asked for', 
 
 test('a cycle that has ended offers no move at all', async (t) => {
   t.after(unmount);
-  serve('/tools/ui.home', { body: { result: { workflows: { workflows: [] } } } });
   for (const state of ['complete', 'abandoned']) {
     await mount(page(state));
     await settle(10);
@@ -775,8 +768,8 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
     status: 409,
     message: 'The reflection wf_wave was abandoned. End this cycle with research.end.',
   };
-  const reflecting = home('reflecting', { status: 'blocked', blockers: [refusal] });
-  const [gate] = reflecting.body.result.workflows.workflows;
+  const reflecting = cycleGate('reflecting', { status: 'blocked', blockers: [refusal] });
+  const gate = reflecting.body.result;
   const end = {
     action: 'end',
     tool: 'research.end',
@@ -801,7 +794,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
       },
     ],
   });
-  serve('/tools/ui.home', reflecting);
+  serve('/tools/workflow.status_and_next', reflecting);
   const ended: Record<string, unknown>[] = [];
   serve('/tools/research.end', (_call, body) => {
     ended.push(body);
@@ -840,7 +833,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
   );
   await unmount();
   // The cycle's own page already lists what it waits on, the wave among them: only the move.
-  serve('/tools/ui.home', reflecting);
+  serve('/tools/workflow.status_and_next', reflecting);
   await mount(move(true));
   await settle(10);
   assert.deepEqual(buttons(), [['End cycle', false]]);

@@ -456,12 +456,15 @@ async function ownDecision(
       }
     return escalate();
   }
+  // The context is already a frozen read; only the asked action's input needs a copy of its own.
   result.actions = await mapAsync(
     rules,
     async (rule) =>
       await evaluateAction(
         rule,
-        readContext({ ...context, input: rule.name === query.action ? query.input : undefined }),
+        rule.name === query.action
+          ? readContext({ ...context, input: query.input })
+          : Object.freeze({ ...context, input: undefined }),
       ),
   );
   let candidates = result.actions.filter((action, index) =>

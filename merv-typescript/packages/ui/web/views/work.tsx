@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
+import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
@@ -13,7 +14,7 @@ import { OPEN, ThreeStates, firstSentence, newestReview, reviewClause } from '..
 import type { ShellData } from '../shell-types';
 import { Dependency, StageMark } from '../process';
 import { ArrowRightIcon } from '../icons';
-import { newest, useHome, type Flow } from './map-data';
+import { newest, type Flow } from './map-data';
 import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
 import { CreateReflection, type Reflection } from './research-programs';
@@ -166,7 +167,7 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
     onSuccess: () => {
       setName('');
       setDependencies([]);
-      // The new cycle's gate rides the shared home read, which its header's move reads.
+      // What the new cycle asks of the reader counts on the rail at once.
       refreshTools('ui.home');
       onSaved();
     },
@@ -534,10 +535,10 @@ function WaveList({ shell }: { shell: ShellData }) {
 const UNDEFINED = 'research_definition_required';
 
 /**
- * A cycle's one move, here and on its own page, as the project's one read of every gate
- * has it. A move the gate refuses is not offered as a button that can only fail: for want
- * of the definition it is the way to the paper, where that is written, and otherwise it
- * stands disabled over the records it waits on — unless the page already `listed` them.
+ * A cycle's one move, here and on its own page, as the cycle's own gate has it. A move the
+ * gate refuses is not offered as a button that can only fail: for want of the definition it
+ * is the way to the paper, where that is written, and otherwise it stands disabled over the
+ * records it waits on — unless the page already `listed` them.
  * An answer the gate asks for, the approved plan's next wave or a fresh consolidation
  * task, is a move of its own.
  */
@@ -552,9 +553,13 @@ export function CycleMove({
   listed?: boolean;
   onSaved(): void;
 }) {
-  const home = useHome();
-  if (!isOpen(cycle.workflow.state)) return null;
-  const read = home.data?.workflows?.workflows.find((item) => item.instanceId === cycle.id);
+  const open = isOpen(cycle.workflow.state);
+  const read = useTool<WorkflowDecision>(
+    open ? 'workflow.status_and_next' : null,
+    { instanceId: cycle.id },
+    { every: 10000 },
+  ).data;
+  if (!open) return null;
   // A gate read at another revision is not this cycle's, and leaves the plain move.
   const gate = read?.revision === cycle.workflow.revision ? read : undefined;
   const advance = gate?.actions.find((action) => action.tool === 'research.advance');
@@ -574,7 +579,7 @@ export function CycleMove({
       label={label}
       onSaved={() => {
         onSaved();
-        refreshTools('ui.home');
+        refreshTools('ui.home', 'workflow.status_and_next');
       }}
     />
   );

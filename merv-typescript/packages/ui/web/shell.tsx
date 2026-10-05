@@ -196,8 +196,9 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   const { project, account, chooseProject } = useSession();
   const { pathname } = useLocation();
   const rows = shell?.rows ?? [];
-  // The rail's one number is what Now lists, read exactly as Now reads it.
-  const needsYou = useNow(rows).count;
+  // The rail's one number is what Now lists, read exactly as Now reads it; away from Now,
+  // as often as the rows beside it.
+  const needsYou = useNow(rows, pathname === '/now' ? undefined : 30000).count;
   const holds = (row: Row) => held(row, pathname, rows);
   return (
     <aside className="sidebar" aria-label="Primary">

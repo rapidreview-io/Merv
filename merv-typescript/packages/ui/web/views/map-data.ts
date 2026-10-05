@@ -42,8 +42,8 @@ export type MapReflection = {
 };
 /**
  * What Now and the rail read, as the server composes it (`ui.home`): the project's
- * records and the gate of every workflow in it. A part the server could not answer
- * for is null.
+ * records and the gate of every open workflow in it, and of ended work another plugin
+ * still holds. A part the server could not answer for is null.
  */
 export interface HomeData {
   project: Project | null;
@@ -56,7 +56,7 @@ export interface HomeData {
   reflections: MapReflection[] | null;
 }
 /** One read for the rail and Now; asking twice joins one request. */
-export const useHome = () => useTool<HomeData>('ui.home', {}, { every: 10000 });
+export const useHome = (every = 10000) => useTool<HomeData>('ui.home', {}, { every });
 
 export const newest = <T>(items: T[], at: (item: T) => string) =>
   [...items].sort((a, b) => at(b).localeCompare(at(a)));

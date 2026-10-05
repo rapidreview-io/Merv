@@ -358,9 +358,9 @@ const unwellOf = (rows: Row[]) =>
   rows.filter((row) => row.status.state === 'degraded' || row.status.state === 'unavailable');
 
 /** What Now lists, from the one home the whole page shares; the rail counts exactly this. */
-export function useNow(rows: Row[]) {
+export function useNow(rows: Row[], every?: number) {
   const session = useSession();
-  const home = useHome();
+  const home = useHome(every);
   // The publication verbs refuse a key and a bearer actor outright, so whether the reader
   // is a person is part of whose move a Code blocker is.
   const lines = needsYou(

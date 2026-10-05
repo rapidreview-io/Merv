@@ -1,6 +1,5 @@
 import { clip, type Caller, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
-import type { UiRow } from './types.js';
 
 /** What Now and the rail read, and the read-only tool that owns each part. */
 const PARTS: [string, string][] = [
@@ -10,11 +9,10 @@ const PARTS: [string, string][] = [
   ['tasks', 'task.list'],
   ['reviews', 'review.list'],
   ['cycles', 'research.list'],
+  ['reflections', 'reflection.list'],
   // Without an instance, this one answers for every workflow in the project at once.
   ['workflows', 'workflow.status_and_next'],
 ];
-/** The rows whose own read the page draws, and what each of them is asked for. */
-const READS: [string, string][] = [['reflections', 'reflections']];
 
 /** A part whose tool is absent, or whose answer this caller may not read, is null. */
 const answer = async (fn: () => Promise<unknown>): Promise<Json> => {
@@ -45,12 +43,7 @@ export async function identityOf(tools: Tools, caller: Caller): Promise<Record<s
  * trips at a browser's latency. A part whose plugin is not loaded, or whose answer this
  * caller may not read, is null: the page draws what it has and never fails whole.
  */
-export async function homeRead(
-  tools: Tools,
-  rows: UiRow[],
-  read: (caller: Caller, rowId: string, params?: Record<string, unknown>) => Promise<Json>,
-  caller: Caller,
-): Promise<Json> {
+export async function homeRead(tools: Tools, caller: Caller): Promise<Json> {
   // The parts are independent read-only tools. This tool runs in one snapshot scope, so
   // they share its connection and their queries queue on it in turn; that costs tens of
   // milliseconds, where a scope of their own each would queue on the writer lock.
@@ -60,14 +53,8 @@ export async function homeRead(
       await answer(async () => await tools.call(tool, caller, {})),
     ]),
   );
-  const reads = await Promise.all(
-    READS.map(async ([key, kind]) => {
-      const row = rows.find((item) => item.view.kind === kind && item.read);
-      return [key, row ? await answer(async () => await read(caller, row.id)) : null];
-    }),
-  );
   return Object.fromEntries(
-    [...parts, ...reads].map(([key, value]) => [key, trim(key as string, value as Json)]),
+    parts.map(([key, value]) => [key, trim(key as string, value as Json)]),
   ) as Json;
 }
 
@@ -112,5 +99,14 @@ const pick = (record: Json, keys: string[]): Json =>
     : record;
 function trim(key: string, value: Json): Json {
   const keys = KEEP[key];
-  return keys && Array.isArray(value) ? value.map((item) => pick(item, keys)) : value;
+  if (keys && Array.isArray(value)) return value.map((item) => pick(item, keys));
+  if (key !== 'workflows' || !value || typeof value !== 'object' || Array.isArray(value))
+    return value;
+  // Of the overview, the gates Now reads: open work's, and ended work's a plugin still holds.
+  return {
+    workflows: ((value.workflows ?? []) as Gate[]).filter(
+      (gate) => !gate.terminal || gate.providerBlockers.length,
+    ),
+  };
 }
+type Gate = { terminal: boolean; providerBlockers: Json[] } & Record<string, Json>;
