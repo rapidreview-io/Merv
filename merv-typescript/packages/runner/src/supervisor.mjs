@@ -75,6 +75,7 @@ function groupOwner() {
     const secrets = [
       ...new Set([
         sessionToken,
+        ...(command.secrets ?? []),
         ...Object.entries(env)
           .filter(
             ([key, value]) =>

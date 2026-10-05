@@ -13,6 +13,8 @@ export interface ProcessCommand {
   cwd: string;
   env?: Record<string, string>;
   stdin?: string;
+  /** Redacted from what the process prints, beside the values of secret-named variables. */
+  secrets?: string[];
 }
 export interface ProcessLaunch {
   launchId: string;
@@ -71,6 +73,7 @@ export class ProcessHost {
         [usageFileVariable]: usageFile(record),
       },
       ...(input.command.stdin === undefined ? {} : { stdin: input.command.stdin }),
+      ...(input.command.secrets?.length ? { secrets: [...input.command.secrets] } : {}),
     };
     this.validateCommand(command, input.sessionToken);
     if (record.status === 'reserved') {
@@ -194,7 +197,8 @@ export class ProcessHost {
       [command.executable, command.cwd, ...command.args].some(
         (value) => typeof value !== 'string' || value.includes('\0') || value.includes(token),
       ) ||
-      (command.stdin !== undefined && typeof command.stdin !== 'string')
+      (command.stdin !== undefined && typeof command.stdin !== 'string') ||
+      command.secrets?.some((value) => typeof value !== 'string' || !value)
     )
       throw new Error('Invalid process command');
     for (const [key, value] of Object.entries(command.env ?? {})) {

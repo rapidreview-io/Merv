@@ -46,7 +46,8 @@ async function fixture(t: TestContext) {
     await workflows.close();
     await state.close();
   });
-  const register = async (name: string, driver?: string) => {
+  // `null`: a checkout of the runner's own repository, which names no driver.
+  const register = async (name: string, driver?: string | null) => {
     const policy: WorkflowPolicy = {
       successStates: ['done'],
       actions: [
@@ -77,7 +78,7 @@ async function fixture(t: TestContext) {
           execution: {
             readOnly: false,
             tools: [],
-            ...(driver
+            ...(driver !== undefined
               ? {
                   workspace: {
                     mode: 'persistent' as const,
@@ -86,12 +87,13 @@ async function fixture(t: TestContext) {
                     perBase: false,
                     retain: true,
                     advancesCentral: false,
-                    driver,
+                    ...(driver ? { driver } : {}),
                   },
                 }
               : {}),
           },
-          references: (): WorkflowExecutionReferences => (driver ? { base: oid } : {}),
+          references: (): WorkflowExecutionReferences =>
+            driver !== undefined ? { base: oid } : {},
           lease: {
             role: () => 'producer' as const,
             acquire: ({ leaseId }) => ({ leaseId }),
@@ -115,6 +117,7 @@ async function fixture(t: TestContext) {
   };
   const hosted = await register('hosted', 'code.v2');
   const scratch = await register('scratch');
+  const local = await register('local', null);
   const boot = await scope.bootstrap({ projectName: 'Capabilities', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
@@ -128,7 +131,7 @@ async function fixture(t: TestContext) {
     credentialId: issued.credential.id,
   };
   await sessions.setDispatch(owner, { enabled: true });
-  return { sessions, source, owner, hosted, scratch };
+  return { sessions, source, owner, hosted, scratch, local };
 }
 
 test('work that names a workspace driver is offered only to a runner that advertises it, and the rest of the queue still reaches the others', async (t) => {
@@ -211,4 +214,23 @@ test('a hand offer requires the driver before leasing and attachment rechecks th
     });
     assert.equal((await attach).hostRef, 'launch');
   }
+});
+
+test('work on the runner’s own repository goes to a runner.2 only when it names git.local', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.heartbeatRunner(f.source, presence('bare', ['runner.2']));
+  await f.sessions.heartbeatRunner(f.source, presence('repository', ['git.local', 'runner.2']));
+  // A runner from before `runner.2` does not say, so it is still trusted to have one.
+  await f.sessions.heartbeatRunner(f.source, presence('older'));
+  const first = await f.local.start(f.source, { workflow: 'local', requestId: request() });
+  const second = await f.local.start(f.source, { workflow: 'local', requestId: request() });
+  assert.deepEqual(await f.sessions.lease(f.source, auto('bare')), {
+    session: null,
+    reason: 'runner_incompatible',
+  });
+  assert.equal(
+    (await f.sessions.lease(f.source, auto('repository'))).session?.instanceId,
+    first.id,
+  );
+  assert.equal((await f.sessions.lease(f.source, auto('older'))).session?.instanceId, second.id);
 });

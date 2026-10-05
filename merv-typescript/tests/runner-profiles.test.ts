@@ -1,17 +1,22 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { inspect } from 'node:util';
 import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { MachineRunner } from '@merv/runner';
+import { LocalLedger, terminalLaunch } from '../packages/runner/src/ledger.js';
+import { ProcessHost } from '../packages/runner/src/process-host.js';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { WorkflowWorkspacePolicy } from '@merv/contracts';
@@ -883,6 +888,50 @@ test('a usage file the launch wrote wins; without one, only a regular log is rea
   }
 });
 
+test('a usage report swapped for a FIFO after it was looked at is never waited on', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-runner-fifo-'));
+  const credentialEnv = `MERV_RUNNER_FIFO_${process.pid}`;
+  process.env[credentialEnv] = 'mk_' + 'u'.repeat(40);
+  const runner = new MachineRunner(
+    {
+      directory: join(directory, 'machine'),
+      baseUrl: 'http://127.0.0.1:9',
+      projectId: 'project_fixture',
+      credentialEnv,
+      profiles: [codex],
+    },
+    { autoPoll: false },
+  );
+  const fifo = join(directory, 'usage.json'),
+    plain = join(directory, 'plain');
+  writeFileSync(plain, '{}');
+  assert.equal(spawnSync('mkfifo', [fifo]).status, 0);
+  // Whatever looks at the path first sees a regular file; the FIFO is what is opened.
+  const lstat = fs.lstatSync;
+  t.mock.method(fs, 'lstatSync', (path: string) => lstat(path === fifo ? plain : path));
+  syncBuiltinESMExports();
+  // A writer that frees a reader stuck on the FIFO after 2 s, so a failure is not a hang.
+  const writer = spawn(process.execPath, [
+    '-e',
+    `setTimeout(()=>require('fs').openSync(${JSON.stringify(fifo)},'w'),2000)`,
+  ]);
+  t.after(async () => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+    writer.kill('SIGKILL');
+    await runner.stop();
+    delete process.env[credentialEnv];
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const started = Date.now();
+  const usage = (runner as unknown as { readUsage(record: unknown): unknown }).readUsage({
+    runDirectory: directory,
+    metadata: { profile: codex },
+  });
+  assert.equal(usage, undefined);
+  assert.ok(Date.now() - started < 1000, 'the event loop never waits on a FIFO');
+});
+
 test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritance', () => {
   const marker = 'hf_' + 'NoncredentialMarker'.repeat(2);
   const hosted = { ...codex, hosted: true as const, isolatedLauncher: '/opt/merv/assignment' };
@@ -1040,4 +1089,44 @@ test('private native MCP descriptions reject collisions and configuration inject
       ),
     { code: 'invalid_runner_launch' },
   );
+});
+
+test('a further server’s bearer is redacted from the output whatever its variable is called', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-bearer-'));
+  const ledger = new LocalLedger({
+    directory,
+    binding: { baseUrl: 'http://127.0.0.1:7000', sourceId: 'source', projectId: 'project' },
+  });
+  t.after(() => {
+    ledger.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const bearer = 'exa_' + 'PrivateBearerMarker'.repeat(2);
+  const spec = buildLaunch(
+    {
+      ...claude,
+      servers: [{ name: 'exa', url: 'https://exa.example/mcp', bearerEnv: 'EXA_BEARER' }],
+    },
+    { ...request(), cwd: directory },
+    { ...safeEnv, EXA_BEARER: bearer },
+  );
+  const record = ledger.reserve({
+    id: 'bearer',
+    sessionId: 'session',
+    deadline: Date.now() + 15000,
+  });
+  await new ProcessHost(ledger, `mr_${'r'.repeat(43)}`).launch({
+    launchId: record.id,
+    sessionToken: secret,
+    deadline: record.deadline,
+    command: {
+      ...spec,
+      executable: process.execPath,
+      args: ['-e', 'process.stdout.write(process.env.EXA_BEARER)'],
+    },
+  });
+  for (let end = Date.now() + 5000; !terminalLaunch(ledger.get(record.id)!);)
+    if (Date.now() > end) assert.fail('Timed out waiting for the process');
+    else await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(readFileSync(join(record.runDirectory, 'stdout.log'), 'utf8'), '[REDACTED]');
 });

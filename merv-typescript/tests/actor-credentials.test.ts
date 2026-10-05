@@ -754,6 +754,9 @@ test('recognition retains local credential provenance after rotation, expiry, re
   assert.equal(await f.scope.recognizesCredential(rotated.token), true);
   for (const token of ['', 'short', 'x'.repeat(201), 'unknown'.repeat(8), null, {}])
     assert.equal(await f.scope.recognizesCredential(token as string), false);
+  // Sessions' managed runner and enrollment bearers are Merv's too, though Scope stores neither.
+  for (const prefix of ['mr_', 'me_'])
+    assert.equal(await f.scope.recognizesCredential(prefix + 'a'.repeat(64)), true);
   assert.equal(await f.state.eventHead(), head);
 });
 

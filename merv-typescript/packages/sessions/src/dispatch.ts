@@ -1054,7 +1054,7 @@ export class SessionDispatch {
       };
     const open = admissible.queue;
     // A checkout with no driver is cloned from the runner's own repository, which a machine
-    // Fleet rents does not have.
+    // Fleet rents, or a runner configured without one, does not have.
     const compatible = open.filter(
       (item) =>
         item.workspace.mode === 'none' ||
@@ -1881,7 +1881,8 @@ export class SessionDispatch {
           capabilities,
           failures,
           new Set([...skipped, ...this.passing(phaseOwner.hash)]),
-          !managed,
+          // A `runner.2` names `git.local` exactly when it has a repository; an older one is trusted.
+          !managed && (capabilities.has('git.local') || !capabilities.has('runner.2')),
         );
         candidate = selected.candidates.find(
           (item) =>
