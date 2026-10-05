@@ -276,8 +276,18 @@ export async function exerciseRuntime(start) {
     assert.equal(reviewed.length, 1);
     await assert.rejects(
       () => reviewer.callTool({ name: 'review.submit', arguments: verdict }),
-      (error) => error.code === 401 && /"code":"session_(completed|closed)"/.test(error.message),
+      (error) =>
+        error.code === 401 &&
+        /"code":"(?:session_(?:completed|closed)|unauthorized)"/.test(error.message),
       'The completed worker must be fenced by session admission',
+    );
+    // Reconciliation revokes the worker credential in Identity. Depending on scheduling,
+    // the first replay can already fail there instead of reaching session admission.
+    await app.ctx.domainEvents.drain();
+    await assert.rejects(
+      () => reviewer.callTool({ name: 'review.submit', arguments: verdict }),
+      (error) => error.code === 401 && /\"code\":\"unauthorized\"/.test(error.message),
+      'The reconciled worker credential must be rejected by authentication',
     );
     assert.equal(
       (await app.ctx.state.events(owner.projectId)).filter(
