@@ -1,5 +1,5 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a. Sandboxes-compute@1 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Artifacts@7, sandboxes-compute@2 and sandboxes-work-machines@1 verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c. Code bases@3 verified in production on 2026-10-03, release 20261003T120803Z-4e8cd3e9-2db825538cb9. Knowledge@3 and paper@3 verified in production on 2026-10-05, release 20261005T085855Z-2627df50-4b39ca6eda19. Sessions@12, reviews@13, code_storage@2 and code_research_repository_holds@2 verified in production on 2026-10-05, release 20261005T173643Z-d917dae1-2e366ff5b0eb.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a. Sandboxes-compute@1 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Artifacts@7, sandboxes-compute@2 and sandboxes-work-machines@1 verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c. Code bases@3 verified in production on 2026-10-03, release 20261003T120803Z-4e8cd3e9-2db825538cb9. Knowledge@3 and paper@3 verified in production on 2026-10-05, release 20261005T085855Z-2627df50-4b39ca6eda19. Sessions@12, reviews@13, code_storage@2 and code_research_repository_holds@2 verified in production on 2026-10-05, release 20261005T173643Z-d917dae1-2e366ff5b0eb. Experiments@6, reflections@4, research@8 and workflows@10 verified in production on 2026-10-05, release 20261005T181459Z-238d459a-482c88d1855a.",
   "migrations": [
     {
       "component": "identity-credentials",
@@ -382,7 +382,7 @@
       "component": "research",
       "version": 8,
       "hash": "f6c1be53b2f8f378744a3d9c3fd743ec60d214e5b554a88b9e95b8fe652f0d02",
-      "published": false
+      "published": true
     },
     {
       "component": "reviews",
@@ -784,7 +784,7 @@
       "component": "reflections",
       "version": 4,
       "hash": "1f382e63e32edfcbf181eacecb12984c64b0dcb46430e2382230ff912e204e47",
-      "published": false
+      "published": true
     },
     {
       "component": "experiments",
@@ -796,7 +796,7 @@
       "component": "experiments",
       "version": 6,
       "hash": "21f6c205d59e85c01ff291d9d92831970ca1af4d73b1558c03e5605cc8b1b664",
-      "published": false
+      "published": true
     },
     {
       "component": "sandboxes-compute",
@@ -892,7 +892,7 @@
       "component": "workflows",
       "version": 10,
       "hash": "cfab281f4ed8ad5f655a04ad8260f03bda33cdc9337323995eb597eedb8db494",
-      "published": false
+      "published": true
     }
   ]
 }
