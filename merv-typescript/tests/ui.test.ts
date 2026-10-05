@@ -725,12 +725,10 @@ test('The Cycles badge counts open cycles without reading every cycle', async ()
   assert.deepEqual(cycles.status, { count: 2 });
 });
 
-test('Code UI reuses hosted publications and reads the same ordered records for legacy projects', async () => {
+test('Code UI reads publications only from the status it already queried', async () => {
   const ui = new UiRegistry();
   const records = [{ proposalId: 'new' }, { proposalId: 'old' }];
   const hosted = { publication: { records, controls: { blockers: [] } } };
-  let status: object = hosted;
-  let publicationReads = 0;
   let failed = false;
   const codeWork = {
     list: async (input: unknown) => {
@@ -739,21 +737,13 @@ test('Code UI reuses hosted publications and reads the same ordered records for 
     },
     status: async (input: unknown) => {
       assert.deepEqual(input, caller);
-      return status;
+      if (failed) throw new MervError('unavailable', 'Code is reconnecting', 503);
+      return hosted;
     },
-    publications: async (input: unknown) => {
-      assert.deepEqual(input, caller);
-      publicationReads++;
-      if (failed) throw new MervError('unavailable', 'Publications are reconnecting', 503);
-      return records;
-    },
+    publications: async () => assert.fail('the status already carries the publications'),
   };
   codeUiPlugin.apply({ codeWork, ui, effect: (fn: () => unknown) => fn() } as never);
   assert.deepEqual(await ui.read(caller, 'code'), { commands: [], status: hosted });
-  assert.equal(publicationReads, 0, 'hosted status already queried the records');
-  status = { project: { durability: 'legacy-local' } };
-  assert.deepEqual(await ui.read(caller, 'code'), { commands: [], status, publications: records });
-  assert.equal(publicationReads, 1);
   failed = true;
   await assert.rejects(ui.read(caller, 'code'), { code: 'unavailable' });
 });

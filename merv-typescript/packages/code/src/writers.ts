@@ -58,17 +58,6 @@ export const writerColumns =
  * guessed at: after the grace it waits, visibly, for an operator to fence it.
  */
 export class CodeWriterService {
-  private async requireStorageReady(tx: Transaction, projectId: string): Promise<void> {
-    check(
-      !(await tx.get(
-        "SELECT hold_key FROM code_repository_holds WHERE project_id=? AND hold_key='code-storage-upgrade'",
-        projectId,
-      )),
-      'code_storage_upgrade_required',
-      'Retained repository history must be upgraded before writing',
-      409,
-    );
-  }
   private closed = false;
   constructor(
     private readonly state: State,
@@ -90,7 +79,6 @@ export class CodeWriterService {
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
-    await this.requireStorageReady(tx, caller.projectId);
     const row = await this.row(tx, caller.projectId, unitId);
     check(row?.base_json, 'code_base_pending', 'This unit has no base to write from yet', 409);
     check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
@@ -167,7 +155,6 @@ export class CodeWriterService {
    * and heals a generation the grace already gave up on.
    */
   async fenced(tx: Transaction, fence: WriterFence, kind: 'checkpoint' | 'final') {
-    await this.requireStorageReady(tx, fence.projectId);
     const row = await this.row(tx, fence.projectId, fence.unitId);
     check(row, 'code_unit_not_found', 'No such unit of work in this project', 404);
     check(!row.blocked_by, 'code_quarantined', 'This unit uses a quarantined base', 409);
@@ -251,7 +238,6 @@ export class CodeWriterService {
    * bytes nobody may complete any more.
    */
   async fence(caller: Caller, value: unknown, tx: Transaction): Promise<CodeWriterStatus> {
-    await this.requireStorageReady(tx, caller.projectId);
     this.assertOpen();
     const input = parseCodeInput(codeUnitFenceInputSchema, value);
     await this.scope.require(caller, 'admin', tx);

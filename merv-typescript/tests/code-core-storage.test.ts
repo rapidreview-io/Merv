@@ -21,29 +21,17 @@ test('standalone Code stores writer inputs and retained commits without research
     credentialId: boot.credential.id,
   };
   const commit = 'a'.repeat(40);
-  await state.transaction((tx) =>
-    code.units.holdRepository(
-      tx,
-      caller.projectId,
-      'code-storage-upgrade',
-      'Historical retention awaits its adapter',
-    ),
-  );
-  await assert.rejects(
-    state.transaction((tx) => code.units.declareWorkspace(caller, { unitId: 'blocked' }, tx)),
-    { code: 'code_storage_upgrade_required' },
-  );
-  await state.transaction((tx) =>
-    code.units.releaseRepository(tx, caller.projectId, 'code-storage-upgrade'),
-  );
+  const retainer = { projectId: caller.projectId, actorId: caller.actorId };
   await state.transaction(async (tx) => {
     await code.units.declareWorkspace(caller, { unitId: 'writer' }, tx);
     await code.units.pinWorkspace(caller, { unitId: 'writer', reference: commit }, tx);
-    await code.units.retainCommit(
-      caller,
-      { key: 'external-baseline', unitId: 'writer', commit, storage: 'external' },
-      tx,
-    );
+    await code.units.retainStoredCommit(tx, {
+      ...retainer,
+      key: 'external-baseline',
+      unitId: 'writer',
+      commit,
+      storage: 'external',
+    });
   });
   const tables = await state.read((sql) =>
     sql.all<{ name: string }>(
@@ -73,11 +61,13 @@ test('standalone Code stores writer inputs and retained commits without research
   assert.deepEqual(retained, { commit_oid: commit, storage: 'external' });
   await assert.rejects(
     state.transaction((tx) =>
-      code.units.retainCommit(
-        caller,
-        { key: 'external-baseline', unitId: 'writer', commit: 'b'.repeat(40), storage: 'external' },
-        tx,
-      ),
+      code.units.retainStoredCommit(tx, {
+        ...retainer,
+        key: 'external-baseline',
+        unitId: 'writer',
+        commit: 'b'.repeat(40),
+        storage: 'external',
+      }),
     ),
     { code: 'code_retention_conflict' },
   );
@@ -116,11 +106,13 @@ test('standalone Code stores writer inputs and retained commits without research
   await code.close();
   await assert.rejects(
     state.transaction((tx) =>
-      code.units.retainCommit(
-        caller,
-        { key: 'after-close', unitId: 'writer', commit: 'c'.repeat(40), storage: 'external' },
-        tx,
-      ),
+      code.units.retainStoredCommit(tx, {
+        ...retainer,
+        key: 'after-close',
+        unitId: 'writer',
+        commit: 'c'.repeat(40),
+        storage: 'external',
+      }),
     ),
     { code: 'code_unavailable' },
   );

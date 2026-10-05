@@ -29,8 +29,9 @@ determine when a result is usable.
 Retention uses an opaque key, so separate review rounds of one work item cannot overwrite
 each other's commits. Its default refs use `refs/merv/retained/`. A consumer can supply a
 validated technical ref name; Code Work supplies the existing `refs/merv/accepted/`
-destination for final acceptance, preserving local and mirrored branch names. Pending
-historical `accept-ref` journals remain recoverable without rewriting their receipts.
+destination for final acceptance, preserving local and mirrored branch names. Historical
+`accept-ref` journals are all complete; the `mirror-accepted` rows they queued are still
+published.
 
 Unfinished research merges and publications project persistent repository holds through
 Code's transactional hold API. Research-owned SQL triggers maintain those projections in
@@ -45,28 +46,23 @@ both atomically and keeps one replayable request receipt with its original input
 ## Upgrade behavior
 
 Published legacy migration text and migration identities are retained in Code Work.
-The new Code storage migration creates technical tables alongside existing research records.
-When it detects an older installation, it places a persistent upgrade hold on existing
-repositories. Code can load without the research adapter, but affected mutations and journal
-execution wait until that adapter has translated the historical obligations.
+The Code storage migration created the technical tables alongside existing research records
+and, on an older installation, held its repositories until the research adapter had copied
+writer ownership, starting commits, retained results and review rounds into them. Every
+deployment has completed that one-time copy, and the copy and its hold checks have been
+removed. The migration text, which still places that hold where `code_units` exists before
+Code's storage, is published and unchanged; Code initializes its storage before Code Work
+creates `code_units`, so a fresh installation never reaches it.
 
-The adapter copies writer ownership, starting commits, retained results and review rounds,
-then projects outstanding holds and mirror eligibility. These steps and removal of the
-upgrade hold are one transaction. Failure rolls everything back and leaves the hold in place.
-Existing research records, acceptance hashes, migration digests and operation journals remain
-unchanged. Repeating initialization preserves the current technical writer state rather than
-replacing it with obsolete legacy columns.
-
-After this upgrade, old binaries that still treat writer columns in `code_units` as current
-are not a safe rollback target. A production rollout needs a recovery snapshot and a tested
-forward recovery or full snapshot restoration procedure. The source change alone does not
-authorize or confirm a production rollout.
+Old binaries that still treat writer columns in `code_units` as current are not a safe
+rollback target. A production rollout needs a recovery snapshot and a tested forward recovery
+or full snapshot restoration procedure. The source change alone does not authorize or confirm
+a production rollout.
 
 ## Enforcement
 
 `code-work-boundary.test.ts` rejects core imports of research policy, SQL access to research
 tables, and research inheritance from Code implementation classes. Runtime tests cover fresh
-standalone Code, interrupted upgrade and retry, preserved historical facts, durable holds
-after adapter closure, and unchanged configuration authorization and replay semantics.
+standalone Code, durable holds after adapter closure, and unchanged configuration authorization and replay semantics.
 Git transfer, writer recovery, merge resolution and reviewed publication remain covered by
 their existing integration suites.

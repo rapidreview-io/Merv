@@ -299,6 +299,8 @@ export const RETIRED: (Instance & { reason: string })[] = [
  */
 export const KEPT_TABLES = [
   'code_units',
+  'code_workspaces',
+  'code_retained_commits',
   'code_edges',
   'code_commands',
   'session_service_work',
@@ -661,6 +663,21 @@ async function keptRows(client: pg.Client, { projectId, actorId }: Seed['history
     acceptance_json: { code: { commit: 'a'.repeat(40) }, storage: 'code' },
     acceptance_hash: 'hash',
     accepted_at: at,
+  });
+  // Code's technical custody of that acceptance: its workspace and its retained commit.
+  await insert(client, 'code_workspaces', {
+    project_id: projectId,
+    unit_id: 'r-exp4',
+    declared_at: at,
+  });
+  await insert(client, 'code_retained_commits', {
+    project_id: projectId,
+    retention_key: 'unit:r-exp4',
+    unit_id: 'r-exp4',
+    commit_oid: 'a'.repeat(40),
+    storage: 'code',
+    receipt: null,
+    created_at: at,
   });
   await insert(client, 'code_edges', {
     project_id: projectId,

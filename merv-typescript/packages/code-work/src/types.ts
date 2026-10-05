@@ -263,11 +263,6 @@ export interface Code
     putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer): Promise<unknown>;
     readPart(caller: Caller, exportId: string, input: unknown): Promise<Buffer>;
   };
-  source(
-    projectId: string,
-    instanceId: string,
-    commandId: string,
-  ): Promise<{ bytes: Uint8Array; sha256: string }>;
 }
 declare module 'cordis' {
   interface Context {

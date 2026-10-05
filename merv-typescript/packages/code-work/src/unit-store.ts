@@ -1,7 +1,6 @@
 import { initializeCheckConfiguration } from './check-configuration.js';
 import { initializeWorkRecords } from './work-schema.js';
 import { initializeWorkHolds } from './repository-holds.js';
-import { restoreLegacyCompatibility } from './compatibility.js';
 import { CodeUnitStore } from '@merv/code/units';
 import {
   canonical,
@@ -115,19 +114,6 @@ export const unitColumns =
 export const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const CODE_DRIVER = 'code.v2';
 
-/**
- * Whether a completed import delivered this commit, as its tip or as history it contains: the
- * commits each import was found to contain are recorded with it, outside any transaction, so
- * this is a read. A tip matches both patterns, which is right.
- */
-export const importedCommit = async (sql: Sql, projectId: string, commit: string) =>
-  !!(await sql.get(
-    "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND (result_json LIKE ? OR result_json LIKE ?) LIMIT 1",
-    projectId,
-    `%"head":"${commit}"%`,
-    `%"contained":[%"${commit}"%`,
-  ));
-
 /** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
 export class WorkUnitRecords {
   protected readonly code: CodeUnitStore;
@@ -146,7 +132,6 @@ export class WorkUnitRecords {
     await initializeWorkRecords(this.state);
     await initializeWorkHolds(this.state);
     await initializeCheckConfiguration(this.state);
-    await restoreLegacyCompatibility(this.state, this.code);
   }
 
   async moveMain(
@@ -217,15 +202,8 @@ export class WorkUnitRecords {
         caller.projectId,
       )) {
         const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
-        // A code-less success is nothing main could be missing. A legacy acceptance is code
-        // this repository holds as soon as it was imported, which is the same question
-        // derive() asks before it will build on one; only what was never imported is unasked.
+        // A code-less success is nothing main could be missing.
         if (!accepted.code) continue;
-        if (
-          accepted.storage !== 'code' &&
-          !(await importedCommit(tx, caller.projectId, accepted.code.commit))
-        )
-          continue;
         candidates.push({
           unitId: row.unit_id,
           commit: accepted.code.commit,
@@ -566,50 +544,6 @@ export class WorkUnitRecords {
     return this.pin(stored)!;
   }
 
-  protected async retainReviewAcceptance(
-    caller: Caller,
-    body: AcceptanceBody,
-    tx: Transaction,
-  ): Promise<CodeUnitAcceptance> {
-    this.state.assertTransaction(tx);
-    const encoded = canonical(body),
-      hash = digest(body);
-    const existing = await tx.get<{ acceptance_json: string; accepted_at: string }>(
-      'SELECT acceptance_json,accepted_at FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
-      caller.projectId,
-      body.unitId,
-      body.reviewRef,
-    );
-    check(
-      !existing || existing.acceptance_json === encoded,
-      'code_acceptance_conflict',
-      'This review already accepted different code',
-      409,
-    );
-    const at = existing?.accepted_at ?? now();
-    if (!existing)
-      await tx.run(
-        'INSERT INTO code_review_acceptances(project_id,unit_id,review_id,acceptance_json,accepted_at) VALUES(?,?,?,?,?)',
-        caller.projectId,
-        body.unitId,
-        body.reviewRef,
-        encoded,
-        at,
-      );
-    if (body.code)
-      await this.code.retainStoredCommit(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        key: `review:${body.unitId}:${body.reviewRef}`,
-        ...(body.storage === 'code' ? { mirror: true } : {}),
-        unitId: body.unitId,
-        commit: body.code.commit,
-        storage: body.storage === 'code' ? 'code' : 'external',
-        ...(body.receipt ? { receipt: body.receipt } : {}),
-      });
-    return this.acceptanceValue(body, hash, at);
-  }
-
   protected async retainUnitAcceptance(
     caller: Caller,
     body: AcceptanceBody,
@@ -633,33 +567,6 @@ export class WorkUnitRecords {
     return (await this.row(tx, caller.projectId, body.unitId))!;
   }
 
-  protected async retainPublishedAcceptance(
-    caller: Caller,
-    unitId: string,
-    reviewId: string,
-    revision: number,
-    tx: Transaction,
-  ) {
-    this.state.assertTransaction(tx);
-    const round = await tx.get<{ acceptance_json: string; accepted_at: string }>(
-      'SELECT acceptance_json,accepted_at FROM code_review_acceptances WHERE project_id=? AND unit_id=? AND review_id=?',
-      caller.projectId,
-      unitId,
-      reviewId,
-    );
-    check(
-      round,
-      'code_acceptance_unverifiable',
-      'The approved publication acceptance is missing',
-      409,
-    );
-    const body: AcceptanceBody = {
-      ...JSON.parse(round.acceptance_json),
-      terminalRevision: revision,
-    };
-    await this.writeAcceptance(caller, body, round.accepted_at, tx);
-  }
-
   private async insertUnit(
     tx: Transaction,
     projectId: string,
@@ -676,7 +583,7 @@ export class WorkUnitRecords {
     );
   }
 
-  /** Store the accepted identity and its durable Git ref together for either publication path. */
+  /** Store the accepted identity and its durable Git ref together. */
   private async writeAcceptance(
     caller: Caller,
     body: AcceptanceBody,

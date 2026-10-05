@@ -1,6 +1,5 @@
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import {
-  canonical,
   createService,
   digest,
   type WorkflowDefinition,
@@ -20,7 +19,6 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code-work/service';
-import type { WorkUnitRecords } from '@merv/code-work/unit-store';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeWriterService } from '@merv/code/writers';
 import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-work/src/bases.js';
@@ -458,12 +456,9 @@ test('a success that cannot be verified blocks, whether or not its owner is load
   assert.deepEqual(await sorted(), expected);
 });
 
-test('a unit whose checkouts Code prepares starts only from what Code’s repository holds', async (t) => {
+test('a unit whose checkouts Code prepares starts from main only once Code’s repository holds it', async (t) => {
   const f = await fixture(t);
   await f.bind(oid('a'), undefined, false);
-  const harness = await f.start([], 'coded');
-  await f.move(harness);
-  await f.accept(harness, oid('c'), repository, 'legacy-local');
   await f.state.transaction(async (tx) => {
     await tx.run(
       'UPDATE code_projects SET store_json=? WHERE project_id=?',
@@ -471,45 +466,11 @@ test('a unit whose checkouts Code prepares starts only from what Code’s reposi
       f.project.id,
     );
   });
-  const work = await f.declare([harness]);
   const run = async (sql: string, ...values: string[]) =>
     await f.state.transaction(async (tx) => {
       await tx.run(sql, ...values);
     });
-  // The dependency was accepted from a runner's repository: its commit must be imported.
-  assert.deepEqual(await f.published(work), [
-    ['code', 'code_base_pending', `acceptance:${harness.id}`],
-  ]);
-  const [blocker] = await f.workflows.blockers(f.admin, work.id);
-  assert.match(blocker!.next, /code-import/);
-  await assert.rejects(f.pin(work), { code: 'code_base_pending', status: 409 });
-
-  // An import whose tip is a descendant delivers the accepted commit as history it
-  // contains. A tip is never an ancestor of itself, so waiting for one would wait forever.
-  await run(
-    "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES ('cop_contains',?,'actor:fixture','contains','import','hash','{}','completed',?,'now','now','refs_applied')",
-    f.project.id,
-    canonical({ head: oid('d'), contained: [oid('c')] }),
-  );
-  await f.code.reconcileAll();
-  assert.deepEqual(await f.published(work), []);
-  // What a base builds on is what acceptedSince weighs against main.
-  const units = (f.code as unknown as { unitStore: WorkUnitRecords }).unitStore;
-  assert.deepEqual(
-    (await units.acceptedCandidates(f.admin)).candidates.map((item) => item.unitId),
-    [harness.id],
-  );
-
-  await run(
-    "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES ('cop_import',?,'actor:fixture','import','import','hash','{}','completed',?,'now','now','refs_applied')",
-    f.project.id,
-    JSON.stringify({ head: oid('c') }),
-  );
-  await f.code.reconcileAll();
-  assert.deepEqual(await f.published(work), []);
-  assert.equal((await f.pin(work)).reference, oid('c'));
-
-  // The same holds for main: named, but not held until an import or a bind says so.
+  // Main is named, but not held until an import or a bind says so.
   const fresh = await f.declare([], 'kept');
   assert.deepEqual(await f.published(fresh), [['code', 'code_base_pending', 'main']]);
   const main = await f.state.read(

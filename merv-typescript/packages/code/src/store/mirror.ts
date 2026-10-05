@@ -403,13 +403,6 @@ export class CodeMirrorService {
     const payload = JSON.parse(row.payload_json) as MirrorPayload;
     const claim = newId('clm');
     const claimed = await this.state.transaction(async (tx) => {
-      if (
-        await tx.get(
-          "SELECT hold_key FROM code_repository_holds WHERE project_id=? AND hold_key='code-storage-upgrade'",
-          row.project_id,
-        )
-      )
-        return null;
       const at = new Date();
       const changed = await tx.run(
         "UPDATE code_operations SET phase='running',claim_id=?,claim_until=?,updated_at=? WHERE id=? AND status='prepared' AND (phase IN ('queued','retry_wait') OR (phase='running' AND (claim_until IS NULL OR claim_until<=?)))",

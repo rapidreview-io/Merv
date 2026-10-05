@@ -45,7 +45,6 @@ import type {
 
 import {
   bindsRepository,
-  importedCommit,
   WorkUnitRecords,
   oid,
   unitColumns,
@@ -354,11 +353,16 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       input.codeRef === null
         ? null
         : await this.reviewedCode(caller, input.unitId, input.codeRef, input.reviewSessionId, tx);
-    // A unit that ever had a writer generation lives in Code's repository, and only there.
-    const writer = code ? await this.writers.row(tx, caller.projectId, input.unitId) : undefined;
-    const kept = !!writer && Number(writer.generation) >= 1;
+    // Reviewed code is accepted only as a commit Code admitted from the unit's own writer.
     let receipt: string | null = null;
-    if (code && kept) {
+    if (code) {
+      const writer = await this.writers.row(tx, caller.projectId, input.unitId);
+      check(
+        writer && Number(writer.generation) >= 1,
+        'code_acceptance_unverifiable',
+        'Code never admitted the commit that was reviewed',
+        409,
+      );
       check(
         writer.quarantine_operation_id === null,
         'code_capture_quarantined',
@@ -410,7 +414,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       reviewRef: input.reviewRef,
       acceptedBy: caller.actorId,
       code,
-      storage: code === null ? 'none' : receipt ? 'code' : 'legacy-local',
+      storage: code === null ? 'none' : 'code',
       ...(receipt ? { receipt } : {}),
     };
     const existing = await this.row(tx, caller.projectId, input.unitId);
@@ -774,20 +778,6 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
                 ? `“${node.name}” was accepted with code from a repository this project is not bound to`
                 : `The recorded acceptance of “${node.name}” no longer matches its hash`,
             `${EXPLICIT_BASE}, or redo “${node.name}” so that its success is accepted.`,
-            [node],
-          ),
-        );
-        continue;
-      }
-      if (
-        accepted.storage !== 'code' &&
-        !(await importedCommit(tx, projectId, accepted.code.commit))
-      ) {
-        blockers.push(
-          pending(
-            `acceptance:${node.id}`,
-            `“${node.name}” was accepted from a runner’s own repository, and Code’s repository does not hold that commit yet`,
-            `${IMPORT}, naming the accepted commit of “${node.name}”.`,
             [node],
           ),
         );
@@ -1401,23 +1391,6 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       const above = await this.dependencies(tx, event.projectId, node.id);
       queue.push(...(above?.dependents ?? []));
     }
-  }
-
-  async published(
-    caller: Caller,
-    unitId: string,
-    reviewId: string,
-    revision: number,
-    tx: Transaction,
-  ) {
-    const relations = await this.dependencies(tx, caller.projectId, unitId);
-    check(
-      relations?.instance.settled && relations.instance.revision === revision,
-      'code_acceptance_unverifiable',
-      'Publication must complete its owner at this exact revision',
-      409,
-    );
-    await this.retainPublishedAcceptance(caller, unitId, reviewId, revision, tx);
   }
 
   /** Publication enforcement is work-unit policy; the durable store reports retained facts. */

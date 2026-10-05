@@ -551,17 +551,6 @@ export class GitHubClient {
     check(b.name === branch, 'github_response', 'GitHub returned a different branch', 502);
     return { name: b.name, sha: b.commit.sha, protected: b.protected };
   }
-  async commit(token: string, repository: string, sha: string) {
-    githubResponse(githubOid, sha);
-    const result = githubCommit(
-      await this.request(
-        `https://api.github.com${repositoryPath(repository)}/commits/${sha}`,
-        token,
-      ),
-    );
-    check(result.sha === sha, 'github_response', 'GitHub returned a different commit', 502);
-    return result;
-  }
   async pulls(
     token: string,
     repository: string,
@@ -774,12 +763,6 @@ export class GitHubClient {
         )
       );
     });
-  }
-  async commentOnce(token: string, repository: string, number: number, body: string) {
-    const path = `${repositoryPath(repository)}/issues/${number}/comments`;
-    const comments = await this.collection(token, path);
-    if (!comments.some((comment) => (comment as { body?: string }).body === body))
-      await this.request(`https://api.github.com${path}`, token, { body });
   }
   async pullDetails(token: string, repository: string, number: number): Promise<GitHubPullDetails> {
     const pull = await this.pull(token, repository, number);

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { canonical, digest, MervError, newId, now } from '@merv/contracts';
-import type { CodeMirrorStatus, CodeStoreWarning, Transaction } from '@merv/contracts';
+import { MervError } from '@merv/contracts';
+import type { CodeMirrorStatus, CodeStoreWarning } from '@merv/contracts';
 import type { GitResult, ServerGit } from '@merv/code/git';
 import { CodeRepositories } from '@merv/code/store/repository';
 import {
@@ -309,43 +309,13 @@ test('an accepted commit is created on the repository, never moved, and blocks i
   await f.upload('final', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
   await f.step();
 
-  // An acceptance journals the ref its commit is kept under; the journal makes it.
-  const accepted = async (tip: string, requestId: string) => {
-    await f.state.transaction(async (tx: Transaction) => {
-      const payload = {
-        format: 1,
-        source: 'accept-ref',
-        actorId: f.admin.actorId,
-        unitId: f.unitId,
-        tip,
-      };
-      const at = now();
-      await tx.run(
-        'INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,progress_json,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-        newId('cop'),
-        f.admin.projectId,
-        'system:code',
-        requestId,
-        'accept-ref',
-        digest(payload),
-        canonical(payload),
-        'prepared',
-        at,
-        f.unitId,
-        'objects_durable',
-        canonical({
-          received: 0,
-          expectedOld: null,
-          target: tip,
-          receiptRef: `refs/merv/accepted/${f.unitId}`,
-        }),
-        at,
-      );
-    });
-    await f.code.maintainStore();
-    await f.step();
-  };
-  await accepted(one, `accept-ref:${f.unitId}`);
+  // An accepted ref an earlier acceptance journal made, still waiting to be published, as
+  // production retains it: the local ref exists and its mirror-accepted row is prepared.
+  git(f.paths.repository, ['update-ref', `refs/merv/accepted/${f.unitId}`, one]);
+  await f.state.transaction(
+    async (tx) => await enqueueMirror(tx, f.admin.projectId, 'mirror-accepted', f.unitId, one),
+  );
+  await f.step();
   assert.ok(f.refs().includes(`refs/merv/accepted/${f.unitId} ${one}`), JSON.stringify(f.refs()));
   assert.ok(f.remote.refs().includes(`refs/heads/merv/accepted/${f.unitId} ${one}`));
   const pushed = f.remote.pushes.length;

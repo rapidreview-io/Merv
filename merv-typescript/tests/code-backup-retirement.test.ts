@@ -3,31 +3,19 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { codePlugin as code } from '@merv/code';
 import { codePlugin as research } from '@merv/code-work';
-import { CodeStore } from '@merv/code/store/operations';
 import { codeStoreFixture } from './fixtures/code-store.js';
 
 const retired = { code: 'code_backup_retired', message: /deploy\/recovery-snapshot\.py.*legacy/ };
 
-test('retired repository backup settings fail before publication or storage access', async () => {
+test('retired repository backup settings fail while the configuration is parsed', async () => {
   for (const plugin of [code, research]) {
     for (const backup of [{}, null, false, undefined]) {
       const repositories = { ...(plugin === code ? { root: '/unused' } : {}), backup };
+      // The application validates every plugin's Config before it applies the plugin.
       assert.throws(() => plugin.Config.parse({ repositories }), retired);
-      // Direct application must not silently drop a retired setting when a caller bypasses Config.
-      await assert.rejects(plugin.apply({} as never, { repositories } as never), retired);
     }
     assert.ok(plugin.Config.safeParse({}).success);
   }
-  assert.throws(
-    () =>
-      new CodeStore(
-        {} as never,
-        {} as never,
-        { root: '/unused', backup: {} } as never,
-        {} as never,
-      ),
-    retired,
-  );
 });
 
 test('historical backup receipts and interrupted rows survive restart and maintenance untouched', async (t) => {

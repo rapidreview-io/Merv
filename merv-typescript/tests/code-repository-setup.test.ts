@@ -1,92 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { codeRepositoryImportInputSchema } from '@merv/contracts';
-import type { Caller, CodeRepositoryPrepareInput, CodeStoreOperation } from '@merv/contracts';
-import { prepareRepository } from '../packages/code-work/src/repository-setup.js';
-import { boundProject } from './fixtures/code-binding.js';
 import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
-
-const caller: Caller = { actorId: 'admin', projectId: 'project', credentialId: 'admin-key' };
-const selection: CodeRepositoryPrepareInput = {
-  expectedRevision: 3,
-  baseBranch: 'release/science',
-  headOid: 'a'.repeat(40),
-  requestId: 'prepare-1',
-};
-
-/** The helper composes owner APIs; the actual bind/import journals have their own store tests. */
-function fixture() {
-  const state = {
-    revision: 3,
-    branchHead: selection.headOid,
-    main: undefined as string | undefined,
-    stored: false,
-    hosted: true,
-    operation: 'prepared' as CodeStoreOperation['status'],
-    binds: [] as unknown[],
-    imports: [] as unknown[],
-    movedDuringImport: false,
-    reboundDuringImport: false,
-    repositoryId: 'github:42',
-  };
-  const code = {
-    github: {
-      status: async () => ({
-        revision: state.revision,
-        baseBranch: selection.baseBranch,
-        repository: { id: 42 },
-        automation: 'write',
-      }),
-      branches: async () => [{ name: selection.baseBranch, sha: state.branchHead }],
-    },
-    repositoryState: async () => ({
-      project: state.main
-        ? { repositoryId: state.repositoryId, main: { oid: state.main, stored: state.stored } }
-        : null,
-      store: { hosted: state.hosted },
-    }),
-    bindLocal: async (_caller: Caller, input: { mainOid: string }) => {
-      state.binds.push(input);
-      state.main = input.mainOid;
-      return { main: { oid: input.mainOid } };
-    },
-    importRepository: async (_caller: Caller, input: unknown) => {
-      state.imports.push(input);
-      if (state.movedDuringImport) state.revision++;
-      if (state.reboundDuringImport) state.repositoryId = 'github:99';
-      return { id: 'import-1', status: state.operation };
-    },
-  } as unknown as Parameters<typeof prepareRepository>[0];
-  return { state, run: (input = selection) => prepareRepository(code, caller, input) };
-}
-
-test('preparation imports the chosen nondefault branch and freezes the same operations on retry', async () => {
-  const { state, run } = fixture();
-  assert.equal((await run()).state, 'importing');
-  state.branchHead = 'b'.repeat(40);
-  state.operation = 'completed';
-  state.stored = true;
-  const ready = await run();
-  assert.equal(ready.state, 'ready');
-  assert.equal(ready.headOid, selection.headOid);
-  assert.deepEqual(
-    state.binds,
-    Array(2).fill({
-      repositoryId: 'github:42',
-      mainOid: selection.headOid,
-      requestId: 'prepare-1:bind',
-    }),
-  );
-  assert.deepEqual(
-    state.imports,
-    Array(2).fill({
-      source: 'github',
-      ref: 'refs/heads/release/science',
-      githubBinding: { revision: 3, repositoryId: 42, baseBranch: 'release/science' },
-      requestId: 'prepare-1:import',
-    }),
-  );
-});
 
 test('the import journal freezes GitHub authorization across retries and rejects changed selection', async (t) => {
   const source = gitSource(t);
@@ -126,58 +41,6 @@ test('the import journal freezes GitHub authorization across retries and rejects
     { code: 'request_conflict' },
   );
   assert.equal(observed.length, 1);
-});
-
-test('preparing a Unicode research branch imports its actual Git history and retains the selected commit', async (t) => {
-  const source = gitSource(t);
-  const head = source.commit({ 'research.txt': 'Unicode branch baseline' });
-  const baseBranch = '研究/évaluation';
-  source.git('branch', baseBranch);
-  const f = await codeStoreFixture(t, {}, head);
-  const principal = await f.scope.acceptVerifiedIdentity({
-    issuer: 'https://issuer.example.test',
-    subject: 'unicode-owner',
-    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
-  });
-  const project = await f.scope.createProject(principal, {
-    name: 'Unicode repository',
-    requestId: 'unicode-project',
-  });
-  const human = await f.scope.caller(principal, project.id);
-  // An imported legacy project still preserves its pre-managed binding.
-  await boundProject(f.state, project.id, head, 'github:42');
-  await f.open({
-    remote: {
-      read: async (_caller, use, binding) => {
-        assert.equal(binding?.baseBranch, baseBranch);
-        return await use({
-          url: source.repository,
-          protocol: 'file',
-          repository: { id: 42, fullName: 'research/project' },
-          env: {},
-        });
-      },
-    },
-  });
-  t.mock.method(f.code.github, 'status', async () => ({
-    revision: 3,
-    baseBranch,
-    automation: 'write',
-    repository: { id: 42 },
-  }));
-  t.mock.method(f.code.github, 'assertBinding', async () => {});
-  t.mock.method(f.code.github, 'branches', async () => [{ name: baseBranch, sha: head }]);
-  const result = await f.code.prepareRepository(human, {
-    expectedRevision: 3,
-    baseBranch,
-    headOid: head,
-    expectedMainOid: head,
-    requestId: 'unicode-prepare',
-  });
-  assert.equal(result.state, 'ready');
-  assert.equal(result.headOid, head);
-  assert.equal(result.operation.head, head);
-  assert.equal((await f.code.status(human)).project?.main.stored, true);
 });
 
 test('relinking before the atomic bind leaves the project baseline unchanged', async (t) => {
@@ -238,54 +101,25 @@ test('relinking before import authorization never fetches the replacement reposi
   assert.equal((await f.code.status(f.admin)).project?.main.stored, false);
 });
 
-test('preparation rejects stale settings and a branch that moved before binding', async () => {
-  const { state, run } = fixture();
-  state.revision++;
-  await assert.rejects(run(), { code: 'github_conflict' });
-  state.revision--;
-  state.branchHead = 'b'.repeat(40);
-  await assert.rejects(run(), { code: 'code_branch_changed' });
-  assert.equal(state.binds.length, 0);
-  assert.equal(state.imports.length, 0);
-});
-
-test('completed import is not ready until the selected commit is retained in hosted storage', async () => {
-  const { state, run } = fixture();
-  state.operation = 'completed';
-  assert.equal((await run()).state, 'failed');
-  state.stored = true;
-  state.hosted = false;
-  assert.equal((await run()).state, 'failed');
-});
-
-test('failed import remains actionable and a replacement selection carries explicit main comparison', async () => {
-  const { state, run } = fixture();
-  state.main = 'c'.repeat(40);
-  state.operation = 'failed';
-  assert.equal((await run({ ...selection, expectedMainOid: state.main })).state, 'failed');
-  assert.deepEqual(state.binds[0], {
-    repositoryId: 'github:42',
-    mainOid: selection.headOid,
-    expectedMainOid: 'c'.repeat(40),
-    requestId: 'prepare-1:bind',
-  });
-});
-
-test('a connection replaced during import cannot receive a ready result', async () => {
-  const { state, run } = fixture();
-  state.operation = 'completed';
-  state.stored = true;
-  state.movedDuringImport = true;
-  await assert.rejects(run(), { code: 'github_conflict' });
-});
-
-test('a repository rebound during import cannot report ready even when its main is unchanged', async () => {
-  const { state, run } = fixture();
-  state.operation = 'completed';
-  state.stored = true;
-  state.reboundDuringImport = true;
-  await assert.rejects(run(), { code: 'code_rebind_required' });
-  assert.equal(state.main, selection.headOid);
+test('preparing a project whose repository Code does not keep is refused before any import', async (t) => {
+  const f = await codeStoreFixture(t);
+  t.mock.method(f.code.github, 'status', async () => ({
+    revision: 3,
+    baseBranch: 'main',
+    automation: 'write',
+    repository: { id: 42 },
+  }));
+  const imports = t.mock.method(f.code, 'importRepository');
+  await assert.rejects(
+    f.code.prepareRepository(f.admin, {
+      expectedRevision: 3,
+      baseBranch: 'main',
+      headOid: 'a'.repeat(40),
+      requestId: 'unhosted',
+    }),
+    { code: 'code_project_unhosted' },
+  );
+  assert.equal(imports.mock.callCount(), 0);
 });
 
 test('repository imports accept Unicode branches while rejecting unsafe Git ref syntax', () => {

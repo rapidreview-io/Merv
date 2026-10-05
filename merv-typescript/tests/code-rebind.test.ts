@@ -2,7 +2,6 @@ import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { digest, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
-import { restoreLegacyCompatibility } from '@merv/code-work/compatibility';
 import type { FaultPoint } from '@merv/code/store/operations';
 import { codeStoreFixture, faultAt, git, gitSource } from './fixtures/code-store.js';
 
@@ -70,12 +69,26 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
   });
   await f.code.v2!.putPart(human, begun.id, 0, bundle.content);
   await f.code.v2!.call(human, `uploads/${begun.id}/complete`, {});
-  const write = async (sql: string, ...values: (string | null)[]) => {
-    const result = await f.state.transaction((tx) => tx.run(sql, ...(values as string[])));
-    if (/^(?:UPDATE code_units|INSERT INTO code_review_acceptances)/.test(sql))
-      await restoreLegacyCompatibility(f.state, f.core.units);
-    return result;
-  };
+  const write = async (sql: string, ...values: (string | null)[]) =>
+    await f.state.transaction((tx) => tx.run(sql, ...(values as string[])));
+  /** The retained commit Code keeps for a written research record, as its owner retains it. */
+  const retain = async (
+    key: string,
+    unitId: string,
+    commit: string,
+    storage: 'code' | 'external',
+    receipt: string | null = null,
+  ) =>
+    await write(
+      'INSERT INTO code_retained_commits(project_id,retention_key,unit_id,commit_oid,storage,receipt,created_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT DO NOTHING',
+      human.projectId,
+      key,
+      unitId,
+      commit,
+      storage,
+      receipt,
+      new Date().toISOString(),
+    );
   return {
     f,
     source,
@@ -155,6 +168,7 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
         human.projectId,
         unitId,
       );
+      await retain(`unit:${unitId}`, unitId, commit, 'code', 'cop_receipt');
     },
     /** A unit's base pin, as its first producing lease writes it: retained and immutable. */
     pin: async (unitId: string, reference: string) => {
@@ -176,9 +190,10 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
         human.projectId,
         unitId,
       );
+      await retain(`pin:${unitId}`, unitId, reference, 'external');
     },
     /** A consolidation@5 round's acceptance: its own immutable table, never the unit row. */
-    reviewed: async (unitId: string, reviewId: string, commit: string) =>
+    reviewed: async (unitId: string, reviewId: string, commit: string) => {
       await write(
         'INSERT INTO code_review_acceptances (project_id,unit_id,review_id,acceptance_json,accepted_at) VALUES (?,?,?,?,?)',
         human.projectId,
@@ -191,7 +206,9 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
           storage: 'code',
         }),
         new Date().toISOString(),
-      ),
+      );
+      await retain(`review:${unitId}:${reviewId}`, unitId, commit, 'code');
+    },
     /**
      * A live session of this project offered by somebody else entirely — an actor credential,
      * an mk_ key, another administrator — which is the ordinary case: a leased worker is never

@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { check, type GitHubCommit, type GitHubPullRequest } from '@merv/contracts';
 
 export const githubOid = z.string().regex(/^[0-9a-f]{40}$/);
-export const githubId = z.number().int().positive().safe();
-export const githubUrl = z
+const githubId = z.number().int().positive().safe();
+const githubUrl = z
   .string()
   .url()
   .max(4096)
@@ -12,7 +12,7 @@ export const githubUrl = z
     return url.protocol === 'https:' && !url.username && !url.password;
   });
 const ref = z.object({ ref: z.string().min(1).max(1024), sha: githubOid });
-export const githubPullSchema = z.object({
+const githubPullSchema = z.object({
   id: githubId,
   number: githubId,
   node_id: z.string().min(1).max(200),
@@ -29,7 +29,7 @@ export const githubPullSchema = z.object({
   mergeable_state: z.string().max(80).optional(),
   updated_at: z.string().datetime(),
 });
-export const githubCommitSchema = z.object({
+const githubCommitSchema = z.object({
   sha: githubOid,
   html_url: githubUrl,
   commit: z.object({

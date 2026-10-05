@@ -1,6 +1,6 @@
 import type { CodeCommandRecord } from '@merv/contracts/code';
 import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
-import type { CodePublication, GitHubStatus } from '@merv/contracts/types';
+import type { GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { accountRequest, useScopeVersion, useTool, type Account, type Actor } from '../api';
@@ -71,13 +71,11 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
   const read = useTool<{
     commands: CodeCommandRecord[];
     status?: CodeProjectStatus;
-    /** Legacy runner-owned publications; hosted records are already in status. */
-    publications?: CodePublication[];
   }>('ui.read', { rowId: row.id }, { every: 10_000 });
   // Names change rarely, so the lists that hold them are read once and never polled.
   const home = useTool<NamedHome>('ui.home');
   const { connection: github, settled } = useGitHubStatus();
-  const published = read.data?.status?.publication?.records ?? read.data?.publications ?? [];
+  const published = read.data?.status?.publication?.records ?? [];
   const branch = github?.baseBranch ?? github?.repository?.defaultBranch ?? null;
   // The model is rebuilt only when something it is made of answers again, so the ten-second
   // poll costs a render and not a re-derivation of the whole project.

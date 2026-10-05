@@ -20,24 +20,14 @@ import { parseCodeInput } from './input.js';
 import type { CodeWriterService } from './writers.js';
 import { retainedRef, validRetentionRef } from './store/refs.js';
 import { initializeCodeStorage } from './storage-schema.js';
-export interface ProjectRow {
+interface ProjectRow {
   project_id: string;
   repository_id: string;
   binding_json: string;
   main_json: string;
   store_json: string | null;
 }
-export const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-export const CODE_DRIVER = 'code.v2';
-export function bindsRepository(
-  bound: { repository_id: string; binding_json: string },
-  repositoryId: string,
-): boolean {
-  if (bound.repository_id === repositoryId) return true;
-  return !!(
-    JSON.parse(bound.binding_json) as { previous?: { repositoryId: string }[] }
-  ).previous?.some((entry) => entry.repositoryId === repositoryId);
-}
+const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /** Technical workspace identities and retained Git facts; owner policy stays with its caller. */
 export class CodeUnitStore {
   private closed = false;
@@ -75,131 +65,6 @@ export class CodeUnitStore {
         input.unitId,
       );
   }
-  async setReferenceEligibility(
-    tx: Transaction,
-    input: { projectId: string; key: string; reason: string | null },
-  ): Promise<void> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    await tx.run(
-      'INSERT INTO code_reference_eligibility(project_id,ref_key,blocked_reason) VALUES (?,?,?) ON CONFLICT(project_id,ref_key) DO UPDATE SET blocked_reason=EXCLUDED.blocked_reason',
-      input.projectId,
-      input.key,
-      input.reason,
-    );
-  }
-  /** Restore already retained technical workspace facts during an explicit storage upgrade. */
-  async restoreWorkspace(
-    tx: Transaction,
-    input: {
-      projectId: string;
-      unitId: string;
-      declaredAt: string;
-      reference?: string | null;
-      generation?: number | string;
-      writer_state?: import('@merv/contracts').CodeWriterState;
-      writer_session_id?: string | null;
-      writer_lease_id?: string | null;
-      writer_changed_at?: string | null;
-      head_oid?: string | null;
-      head_operation_id?: string | null;
-      mirrored_oid?: string | null;
-      mirrored_at?: string | null;
-      quarantine_operation_id?: string | null;
-      blocked_by?: string | null;
-    },
-  ): Promise<void> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    const columns = [
-      'generation',
-      'writer_state',
-      'writer_session_id',
-      'writer_lease_id',
-      'writer_changed_at',
-      'head_oid',
-      'head_operation_id',
-      'mirrored_oid',
-      'mirrored_at',
-      'quarantine_operation_id',
-      'blocked_by',
-    ];
-    const defaults: Record<string, unknown> = { generation: 0, writer_state: 'idle' };
-    await tx.run(
-      `INSERT INTO code_workspaces(project_id,unit_id,declared_at,base_json,${columns.join(',')}) VALUES (${Array(
-        4 + columns.length,
-      )
-        .fill('?')
-        .join(',')}) ON CONFLICT(project_id,unit_id) DO NOTHING`,
-      input.projectId,
-      input.unitId,
-      input.declaredAt,
-      input.reference ? canonical({ reference: input.reference }) : null,
-      ...columns.map(
-        (key) =>
-          (input[key as keyof typeof input] ?? defaults[key] ?? null) as string | number | null,
-      ),
-    );
-  }
-  /** Historical retention preserves its original storage receipt without replaying Git work. */
-  async retainHistoricalCommit(
-    tx: Transaction,
-    input: {
-      projectId: string;
-      key: string;
-      unitId: string;
-      commit: string;
-      storage: 'code' | 'external';
-      receipt?: string | null;
-      createdAt: string;
-    },
-  ): Promise<void> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    check(oid.test(input.commit), 'invalid_commit', 'Retention requires a commit');
-    const previous = await tx.get<{
-      commit_oid: string;
-      unit_id: string;
-      storage: string;
-      receipt: string | null;
-    }>(
-      'SELECT commit_oid,unit_id,storage,receipt FROM code_retained_commits WHERE project_id=? AND retention_key=?',
-      input.projectId,
-      input.key,
-    );
-    check(
-      !previous ||
-        (previous.commit_oid === input.commit &&
-          previous.unit_id === input.unitId &&
-          previous.storage === input.storage &&
-          previous.receipt === (input.receipt ?? null)),
-      'code_retention_conflict',
-      'The retained commit is immutable',
-      409,
-    );
-    if (!previous)
-      await tx.run(
-        'INSERT INTO code_retained_commits(project_id,retention_key,unit_id,commit_oid,storage,receipt,created_at) VALUES (?,?,?,?,?,?,?)',
-        input.projectId,
-        input.key,
-        input.unitId,
-        input.commit,
-        input.storage,
-        input.receipt ?? null,
-        input.createdAt,
-      );
-  }
-  private async requireStorageReady(tx: Transaction, projectId: string): Promise<void> {
-    check(
-      !(await tx.get(
-        "SELECT hold_key FROM code_repository_holds WHERE project_id=? AND hold_key='code-storage-upgrade'",
-        projectId,
-      )),
-      'code_storage_upgrade_required',
-      'Retained repository history must be upgraded before changing it',
-      409,
-    );
-  }
   async declareWorkspace(
     caller: Caller,
     input: { unitId: string },
@@ -208,7 +73,6 @@ export class CodeUnitStore {
     this.assertOpen();
     this.state.assertTransaction(tx);
     await this.scope.require(caller, 'write', tx);
-    await this.requireStorageReady(tx, caller.projectId);
     await tx.run(
       'INSERT INTO code_workspaces(project_id,unit_id,declared_at) VALUES (?,?,?) ON CONFLICT(project_id,unit_id) DO NOTHING',
       caller.projectId,
@@ -242,28 +106,6 @@ export class CodeUnitStore {
       input.unitId,
     );
   }
-  async retainCommit(
-    caller: Caller,
-    input: {
-      key: string;
-      unitId: string;
-      commit: string;
-      receipt?: string;
-      storage?: 'code' | 'external';
-      mirror?: boolean;
-      ref?: string;
-    },
-    tx: Transaction,
-  ): Promise<void> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    await this.scope.require(caller, 'write', tx);
-    await this.retainStoredCommit(tx, {
-      ...input,
-      projectId: caller.projectId,
-      actorId: caller.actorId,
-    });
-  }
   /** Trusted in-process Git consumers retain an obligation; execution verifies its commit. */
   async retainStoredCommit(
     tx: Transaction,
@@ -283,7 +125,6 @@ export class CodeUnitStore {
     this.assertOpen();
     this.state.assertTransaction(tx);
     const caller = { projectId: input.projectId, actorId: input.actorId ?? 'system:code' };
-    await this.requireStorageReady(tx, caller.projectId);
     check(oid.test(input.commit), 'invalid_commit', 'Retention requires a commit');
     const reference = input.ref ?? retainedRef(input.key);
     check(
@@ -424,7 +265,6 @@ export class CodeUnitStore {
   ): Promise<void> {
     this.assertOpen();
     this.state.assertTransaction(tx);
-    await this.requireStorageReady(tx, input.projectId);
     check(
       oid.test(input.oid) && oid.test(input.expectedOid),
       'invalid_commit',
@@ -451,30 +291,6 @@ export class CodeUnitStore {
       409,
     );
   }
-  async holdRepository(
-    tx: Transaction,
-    projectId: string,
-    key: string,
-    reason: string,
-  ): Promise<void> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    await tx.run(
-      'INSERT INTO code_repository_holds(project_id,hold_key,reason) VALUES (?,?,?) ON CONFLICT(project_id,hold_key) DO UPDATE SET reason=EXCLUDED.reason',
-      projectId,
-      key,
-      reason,
-    );
-  }
-  async releaseRepository(tx: Transaction, projectId: string, key: string): Promise<void> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    await tx.run(
-      'DELETE FROM code_repository_holds WHERE project_id=? AND hold_key=?',
-      projectId,
-      key,
-    );
-  }
   async bindLocal(
     caller: Caller,
     value: CodeLocalBindInput,
@@ -486,7 +302,6 @@ export class CodeUnitStore {
     const input = parseCodeInput(codeLocalBindInputSchema, value);
     return await inTransaction(this.state, tx, async (tx) => {
       await this.scope.require(caller, 'admin', tx);
-      await this.requireStorageReady(tx, caller.projectId);
       check(
         caller.human && !caller.session && !caller.key,
         'code_human_required',
