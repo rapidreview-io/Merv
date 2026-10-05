@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import type { GitResult } from '../git.js';
 import { OperationJournal } from '../operation-journal.js';
 import {
   canonical,
@@ -36,6 +38,8 @@ export interface MirrorTransport {
   target(projectId: string): Promise<MirrorTarget>;
   lsRemote(projectId: string, ref: string): Promise<string | null>;
   push(projectId: string, update: MirrorUpdate): Promise<MirrorOutcome>;
+  /** Lets the calls `use` makes on the project share one credential. */
+  hold?<T>(projectId: string, use: () => Promise<T>): Promise<T>;
 }
 
 export interface CodeMirrorConfig {
@@ -494,43 +498,48 @@ export class CodeMirrorService {
       return 'blocked';
     }
     const ref = published(payload.ref);
-    for (const attempt of [0, 1]) {
-      const remote = await this.transport.lsRemote(row.project_id, ref);
-      if (remote === target) return attempt ? 'ok' : 'unchanged';
-      const allowed =
-        remote === null
-          ? true
-          : payload.kind === 'mirror-work' && (await this.ancestor(row.project_id, remote, target));
-      if (!allowed) {
-        await this.blocked(row, claim, {
-          code: 'code_mirror_diverged',
-          message:
-            payload.kind === 'mirror-work'
-              ? 'The published branch holds a commit that is not behind what Code has, so no fast-forward can be made'
-              : 'The published immutable ref already holds another commit',
-          remote: remote ?? '',
-          target,
-          mirrored: mirrored ?? '',
+    const attempts = async (): Promise<'ok' | 'blocked' | 'unchanged'> => {
+      for (const attempt of [0, 1]) {
+        const remote = await this.transport.lsRemote(row.project_id, ref);
+        if (remote === target) return attempt ? 'ok' : 'unchanged';
+        const allowed =
+          remote === null
+            ? true
+            : payload.kind === 'mirror-work' &&
+              (await this.ancestor(row.project_id, remote, target));
+        if (!allowed) {
+          await this.blocked(row, claim, {
+            code: 'code_mirror_diverged',
+            message:
+              payload.kind === 'mirror-work'
+                ? 'The published branch holds a commit that is not behind what Code has, so no fast-forward can be made'
+                : 'The published immutable ref already holds another commit',
+            remote: remote ?? '',
+            target,
+            mirrored: mirrored ?? '',
+          });
+          return 'blocked';
+        }
+        const outcome = await this.transport.push(row.project_id, {
+          ref,
+          oid: target,
+          expectedRemote: remote,
         });
-        return 'blocked';
+        if (outcome === 'ok') return 'ok';
+        // Both a refusal and a lost answer are read again: the remote itself says what happened.
+        if (attempt)
+          throw new MervError(
+            'code_mirror_failed',
+            outcome === 'rejected'
+              ? 'The repository refused the push'
+              : 'The push gave no answer that could be read',
+            502,
+          );
       }
-      const outcome = await this.transport.push(row.project_id, {
-        ref,
-        oid: target,
-        expectedRemote: remote,
-      });
-      if (outcome === 'ok') return 'ok';
-      // Both a refusal and a lost answer are read again: the remote itself says what happened.
-      if (attempt)
-        throw new MervError(
-          'code_mirror_failed',
-          outcome === 'rejected'
-            ? 'The repository refused the push'
-            : 'The push gave no answer that could be read',
-          502,
-        );
-    }
-    return 'blocked';
+      return 'blocked';
+    };
+    // The ref is read, pushed and read again with one credential.
+    return this.transport.hold ? this.transport.hold(row.project_id, attempts) : attempts();
   }
 
   /** Whether the published commit is behind what Code holds, asked of Code's own repository. */
@@ -719,6 +728,11 @@ export interface MirrorAuthority {
  * and no machine is ever lent it. Only https is allowed, and only the ref Code names is touched.
  */
 export class GitMirrorTransport implements MirrorTransport {
+  private readonly held = new AsyncLocalStorage<{
+    projectId: string;
+    remote: string;
+    env: Record<string, string>;
+  }>();
   constructor(
     private readonly repositories: CodeRepositories,
     private readonly authority: MirrorAuthority,
@@ -730,22 +744,31 @@ export class GitMirrorTransport implements MirrorTransport {
     return 'blocked' in found ? found : { repository: found.fullName };
   }
 
-  async lsRemote(projectId: string, ref: string): Promise<string | null> {
+  /** One credential for every call `use` makes on the project, minted once and given up after. */
+  async hold<T>(projectId: string, use: () => Promise<T>): Promise<T> {
     const found = await this.authority.target(projectId);
     if ('blocked' in found)
       throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
-    const result = await this.authority.token(
-      projectId,
-      async (token) =>
-        await this.repositories.git.run(
-          ['ls-remote', '--exit-code', this.url(found.fullName), ref],
-          {
-            env: { ...this.repositories.environment(projectId), ...header(token) },
-            protocol: 'https',
-            timeoutMs: this.timeoutMs,
-          },
-        ),
+    const remote = this.url(found.fullName);
+    return await this.authority.token(projectId, (token) =>
+      this.held.run({ projectId, remote, env: header(token) }, use),
     );
+  }
+
+  /** A Git child against the linked repository, with the held credential or one of its own. */
+  private async remote(projectId: string, args: (url: string) => string[]): Promise<GitResult> {
+    const held = this.held.getStore();
+    if (held?.projectId !== projectId)
+      return this.hold(projectId, () => this.remote(projectId, args));
+    return await this.repositories.git.run(args(held.remote), {
+      env: { ...this.repositories.environment(projectId), ...held.env },
+      protocol: 'https',
+      timeoutMs: this.timeoutMs,
+    });
+  }
+
+  async lsRemote(projectId: string, ref: string): Promise<string | null> {
+    const result = await this.remote(projectId, (url) => ['ls-remote', '--exit-code', url, ref]);
     // Two is the repository answering that it has no such ref; anything else it could not say.
     if (result.code === 2) return null;
     if (result.code !== 0)
@@ -762,30 +785,18 @@ export class GitMirrorTransport implements MirrorTransport {
   }
 
   async push(projectId: string, update: MirrorUpdate): Promise<MirrorOutcome> {
-    const found = await this.authority.target(projectId);
-    if ('blocked' in found)
-      throw new MervError('code_mirror_unavailable', 'Nothing is linked to publish to', 503);
-    return await this.authority.token(projectId, async (token) => {
-      const result = await this.repositories.git.run(
-        [
-          'push',
-          '--porcelain',
-          `--force-with-lease=${update.ref}:${update.expectedRemote ?? ''}`,
-          this.url(found.fullName),
-          `${update.oid}:${update.ref}`,
-        ],
-        {
-          env: { ...this.repositories.environment(projectId), ...header(token) },
-          protocol: 'https',
-          timeoutMs: this.timeoutMs,
-        },
-      );
-      if (result.code === 0) return 'ok';
-      // A refusal names the ref; anything else is an answer that could not be read.
-      return result.stdout.toString('utf8').includes(`!\t`) || /\[rejected\]/.test(result.stderr)
-        ? 'rejected'
-        : 'unknown';
-    });
+    const result = await this.remote(projectId, (url) => [
+      'push',
+      '--porcelain',
+      `--force-with-lease=${update.ref}:${update.expectedRemote ?? ''}`,
+      url,
+      `${update.oid}:${update.ref}`,
+    ]);
+    if (result.code === 0) return 'ok';
+    // A refusal names the ref; anything else is an answer that could not be read.
+    return result.stdout.toString('utf8').includes(`!\t`) || /\[rejected\]/.test(result.stderr)
+      ? 'rejected'
+      : 'unknown';
   }
 
   private url(fullName: string): string {

@@ -10,7 +10,6 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
-  readFileSync,
   readSync,
   realpathSync,
   renameSync,
@@ -40,7 +39,20 @@ import {
 } from '@merv/contracts';
 import { hashFile } from '../files.js';
 import { MERGE_SETTINGS } from '../merge-settings.js';
-import { DriverGit, WorkspaceError } from './git.js';
+import {
+  changedNames,
+  commitInput,
+  commitReceipt,
+  diffStats,
+  DriverGit,
+  hash,
+  identity,
+  MAX_FILE,
+  oid,
+  pathStat,
+  syncPath,
+  WorkspaceError,
+} from './git.js';
 
 export { WorkspaceError } from './git.js';
 /** The capability a runner that carries this driver advertises, and the policy key it serves. */
@@ -92,21 +104,6 @@ interface TransferRow {
 }
 type TransportFailure = { code?: unknown; status?: unknown };
 
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const pathStat = (path: string) => {
-  try {
-    return lstatSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-};
-const oid = (value: string): string => {
-  const result = value.trim();
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result))
-    throw new WorkspaceError('workspace_invalid_oid');
-  return result;
-};
 const privateDirectory = (path: string) => {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   if (lstatSync(path).isSymbolicLink()) throw new WorkspaceError('workspace_foreign_path');
@@ -144,12 +141,6 @@ const stageAssignmentBundle = (source: string, target: string): void => {
   } finally {
     closeSync(input);
   }
-};
-const identity = {
-  GIT_AUTHOR_NAME: 'Merv Agent Runner',
-  GIT_AUTHOR_EMAIL: 'merv@localhost',
-  GIT_COMMITTER_NAME: 'Merv Agent Runner',
-  GIT_COMMITTER_EMAIL: 'merv@localhost',
 };
 /** Code examined the upload and did not admit it. */
 class UploadRefused extends WorkspaceError {}
@@ -212,7 +203,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   private readonly pollMs: number;
   private readonly admissionMs: number;
   private readonly assignmentRoot?: string;
-  private serial: Promise<unknown> = Promise.resolve();
+  private readonly serial = new Map<string, Promise<unknown>>();
   private disposed = false;
 
   constructor(
@@ -300,7 +291,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
    * a preparation that fails half-way leaves nothing behind that anyone must clean up.
    */
   prepare(launch: WorkspaceLaunch, session: WorkspaceSession): Promise<WorkspaceHandle> {
-    return this.run(async () => {
+    return this.run(this.host.workInstanceId ?? launch.id, async () => {
       if (launch.sessionId !== session.id) throw new WorkspaceError('workspace_session_mismatch');
       if (this.sharedWorkKey() && this.sharedWorkKey() !== session.instanceId)
         throw new WorkspaceError('workspace_session_mismatch');
@@ -328,7 +319,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       )
         throw new WorkspaceError('workspace_invalid_manifest');
       const manifest = parsed.data;
-      const cache = await this.cache(manifest);
+      // A project's cache is made by one launch at a time.
+      const cache = await this.run('', () => this.cache(manifest));
       await this.fetch(cache, manifest, control);
       const path = this.assignmentRoot
         ? join(this.assignmentRoot, hash(this.sharedWorkKey() ?? launch.id))
@@ -403,7 +395,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     const parsed = codeCommitCommandSchema.safeParse(input);
     if (!parsed.success) return Promise.reject(new WorkspaceError('workspace_invalid_command'));
     const command = parsed.data;
-    return this.run(async () => {
+    return this.run(this.host.workInstanceId ?? launch.id, async () => {
       const row = this.row(launch.id);
       if (
         !row ||
@@ -484,7 +476,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
    * and never builds another; what Code does not admit stays here and in Code's held bundles.
    */
   capture(launch: WorkspaceLaunch): Promise<SessionWorkspace | undefined> {
-    return this.run(async () => {
+    return this.run(this.host.workInstanceId ?? launch.id, async () => {
       if (!this.host.terminal(launch.id))
         throw new WorkspaceError('workspace_process_stop_unconfirmed');
       let row = this.row(launch.id);
@@ -516,7 +508,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   }
 
   close(launch: WorkspaceLaunch): Promise<void> {
-    return this.run(async () => {
+    return this.run(this.host.workInstanceId ?? launch.id, async () => {
       const row = this.row(launch.id);
       if (!row || row.status === 'closed') return;
       if (!['captured', 'closing'].includes(row.status))
@@ -615,12 +607,18 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     this.db.close();
   }
 
-  private run<T>(action: () => Promise<T>): Promise<T> {
-    const operation = this.serial.then(() => {
+  /**
+   * One operation at a time per key: a launch, or the work unit whose checkout hosted launches
+   * share. A long wait of one launch holds up no other.
+   */
+  private run<T>(key: string, action: () => Promise<T>): Promise<T> {
+    const operation = (this.serial.get(key) ?? Promise.resolve()).then(() => {
       if (this.disposed) throw new WorkspaceError('workspace_manager_closed');
       return action();
     });
-    this.serial = operation.catch(() => {});
+    const settled = operation.catch(() => {});
+    this.serial.set(key, settled);
+    void settled.then(() => this.serial.get(key) === settled && this.serial.delete(key));
     return operation;
   }
 
@@ -1066,25 +1064,6 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     >;
     const cache = this.repository(row.project_ref)!;
     const git = (args: string[]) => this.git.ok(['--git-dir', cache, ...args]);
-    const changes = await git([
-      'diff',
-      '--no-ext-diff',
-      '--no-textconv',
-      '--numstat',
-      '-z',
-      row.base_oid,
-      head,
-    ]);
-    let filesChanged = 0,
-      insertions = 0,
-      deletions = 0;
-    for (const entry of changes.split('\0').filter(Boolean)) {
-      const match = /^(\d+|-)\t(\d+|-)\t/.exec(entry);
-      if (!match) continue;
-      filesChanged++;
-      insertions += match[1] === '-' ? 0 : Number(match[1]);
-      deletions += match[2] === '-' ? 0 : Number(match[2]);
-    }
     const pending = this.mergeMetadata(row);
     return {
       repositoryId: row.repository_id,
@@ -1095,14 +1074,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       headOid: head,
       treeOid: oid(await git(['rev-parse', '--verify', `${head}^{tree}`])),
       ...(pending ? { pendingMerge: { ...pending, checkpoint: head } } : {}),
-      stats: {
-        commitCount: Number(
-          (await git(['rev-list', '--count', `${row.base_oid}..${head}`])).trim(),
-        ),
-        filesChanged,
-        insertions,
-        deletions,
-      },
+      stats: await diffStats(git, row.base_oid, head),
     };
   }
 
@@ -1163,16 +1135,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     });
     if (operation.status !== 'completed')
       throw new UploadRefused(operation.error ?? 'code_upload_failed');
-    const receipt: CodeCommitReceipt = {
-      commandId: command.id,
-      repositoryId: row.repository_id,
-      workspaceId: command.workspace.workspaceId,
-      baseOid: row.base_oid,
-      parentOid: command.expectedHead,
-      headOid: command.expectedHead,
-      treeOid: tree,
-      stats: (await this.snapshot(row, command.expectedHead)).stats,
-    };
+    const stats = (await this.snapshot(row, command.expectedHead)).stats;
+    const receipt = commitReceipt(command, command.expectedHead, tree, stats);
     this.db
       .prepare('UPDATE code_v2_transfers SET receipt_json=? WHERE request_id=?')
       .run(JSON.stringify(receipt), command.id);
@@ -1192,16 +1156,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   /** Refuse a file no repository of Code's would keep, before Git spends time on it. */
   private async checkFiles(row: WorkspaceRow, env?: Record<string, string>): Promise<void> {
     const root = realpathSync(row.path);
-    const listed =
-      (await this.git.ok(['ls-files', '--modified', '--others', '--exclude-standard', '-z'], {
-        cwd: row.path,
-        env,
-      })) +
-      (await this.git.ok(
-        ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--name-only', '-z'],
-        { cwd: row.path, env },
-      ));
-    for (const name of new Set(listed.split('\0').filter(Boolean))) {
+    for (const name of await changedNames((args) => this.git.ok(args, { cwd: row.path, env }))) {
       const file = resolve(root, name);
       // A tracked final-component symlink is Git data. Never traverse a symlink parent.
       const parent = existsSync(dirname(file)) ? realpathSync(dirname(file)) : dirname(file);
@@ -1213,7 +1168,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       } catch {
         continue;
       }
-      if (stat.isFile() && stat.size > 50 * 1024 * 1024)
+      if (stat.isFile() && stat.size > MAX_FILE)
         throw new WorkspaceError('workspace_file_too_large');
     }
   }
@@ -1267,7 +1222,6 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       const parentTree = oid(
         await this.git.ok(['rev-parse', `${command.expectedHead}^{tree}`], { cwd: row.path }),
       );
-      const timestamp = `${Math.floor(Date.parse(command.createdAt) / 1000)} +0000`;
       const target =
         parentTree === journal.tree_oid && command.merge !== 'complete'
           ? command.expectedHead
@@ -1280,11 +1234,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
                   command.expectedHead,
                   ...(command.merge === 'complete' ? ['-p', pending!.secondParent] : []),
                 ],
-                {
-                  cwd: row.path,
-                  env: { ...identity, GIT_AUTHOR_DATE: timestamp, GIT_COMMITTER_DATE: timestamp },
-                  stdin: command.message.endsWith('\n') ? command.message : `${command.message}\n`,
-                },
+                { cwd: row.path, ...commitInput(command) },
               ),
             );
       await this.importAssignmentCommit(row, target);
@@ -1305,16 +1255,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       throw new UploadRefused(operation.error ?? 'code_upload_failed');
     await this.advance(row, journal);
     const stats = (await this.snapshot(row, journal.target_oid!)).stats;
-    const receipt: CodeCommitReceipt = {
-      commandId: command.id,
-      repositoryId: command.workspace.repositoryId,
-      workspaceId: command.workspace.workspaceId,
-      baseOid: command.workspace.baseOid,
-      parentOid: command.expectedHead,
-      headOid: journal.target_oid!,
-      treeOid: journal.tree_oid!,
-      stats,
-    };
+    const receipt = commitReceipt(command, journal.target_oid!, journal.tree_oid!, stats);
     this.db
       .prepare(
         'UPDATE code_v2_transfers SET receipt_json=? WHERE request_id=? AND receipt_json IS NULL',
@@ -1346,12 +1287,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         ).trim();
         const temporary = `${index}.merv-${randomUUID()}`;
         copyFileSync(journal.index_path, temporary);
-        const fd = openSync(temporary, 'r');
-        try {
-          fsyncSync(fd);
-        } finally {
-          closeSync(fd);
-        }
+        syncPath(temporary);
         renameSync(temporary, index);
       }
     }
@@ -1442,20 +1378,19 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     const deadline = Date.now() + this.admissionMs;
     while (operation.status === 'prepared') {
       if (operation.phase === 'receiving' && operation.received < journal.bundle_bytes!) {
-        const bytes = readFileSync(journal.bundle_path!);
+        // Each part is read where it lies in the file; a bundle is never held whole.
+        const fd = openSync(journal.bundle_path!, 'r');
         try {
-          for (
-            let offset = operation.received;
-            offset < bytes.length;
-            offset += operation.partBytes
-          )
-            await this.ask(() =>
-              this.transport.putPart(
-                operation.id,
-                offset,
-                bytes.subarray(offset, offset + operation.partBytes),
-              ),
+          for (let offset = operation.received; offset < journal.bundle_bytes!;) {
+            const part = Buffer.alloc(
+              Math.min(operation.partBytes, journal.bundle_bytes! - offset),
             );
+            const read = readSync(fd, part, 0, part.length, offset);
+            await this.ask(() =>
+              this.transport.putPart(operation.id, offset, part.subarray(0, read)),
+            );
+            offset += operation.partBytes;
+          }
         } catch (error) {
           const code = (error as TransportFailure).code;
           if (code === 'code_upload_offset') {
@@ -1466,6 +1401,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
             continue;
           }
           if (code !== 'code_upload_closed') throw error;
+        } finally {
+          closeSync(fd);
         }
       }
       try {
@@ -1584,16 +1521,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
           if (operation.status === 'completed') {
             await this.advance(row, journal);
             const command = JSON.parse(journal.command_json!) as CodeCommitCommand;
-            const receipt: CodeCommitReceipt = {
-              commandId: command.id,
-              repositoryId: command.workspace.repositoryId,
-              workspaceId: command.workspace.workspaceId,
-              baseOid: command.workspace.baseOid,
-              parentOid: command.expectedHead,
-              headOid: journal.target_oid,
-              treeOid: journal.tree_oid!,
-              stats: (await this.snapshot(row, journal.target_oid)).stats,
-            };
+            const stats = (await this.snapshot(row, journal.target_oid)).stats;
+            const receipt = commitReceipt(command, journal.target_oid, journal.tree_oid!, stats);
             this.db
               .prepare('UPDATE code_v2_transfers SET receipt_json=? WHERE request_id=?')
               .run(JSON.stringify(receipt), journal.request_id);

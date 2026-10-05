@@ -181,12 +181,12 @@ export class S3Blobs implements Blobs {
         );
       } catch (error) {
         if (statusOf(error) !== 412) throw storageError(error, 'Blob upload failed');
-        // The object exists: it must read back intact. Vanishing now is an outage, not a miss.
-        await this.read(namespace, hash, signal).catch((failure: unknown) => {
-          throw failure instanceof MervError && failure.code === 'blob_not_found'
-            ? new MervError('blob_unavailable', 'Blob upload failed', 503)
-            : failure;
+        // The key is the content's hash, so an existing object of the same size holds it.
+        // Vanishing now is an outage, not a miss.
+        const size = await this.head(key, signal).catch((failure: unknown) => {
+          throw storageError(failure, 'Blob upload failed');
         });
+        check(size === content.byteLength, 'blob_corrupt', 'Stored blob size differs', 500);
       }
       return { hash, size: content.byteLength };
     });
