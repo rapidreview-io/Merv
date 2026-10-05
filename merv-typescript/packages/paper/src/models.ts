@@ -1,6 +1,24 @@
-import type { Verdict, PaperPatch, PaperChanges } from '@merv/contracts/types';
-export type { PaperPatch, PaperChanges };
+import type { Verdict } from '@merv/contracts/types';
 export type PaperKind = 'problem' | 'literature' | 'methods' | 'results';
+export interface PaperPatch {
+  kind: PaperKind;
+  expectedRevision: number;
+  requestId: string;
+  changes: {
+    id: string;
+    title?: string;
+    content?: string;
+    afterId?: string | null;
+    remove?: boolean;
+  }[];
+}
+export type PaperChanges = {
+  documents: {
+    kind: 'methods' | 'results';
+    expectedRevision: number;
+    changes: PaperPatch['changes'];
+  }[];
+};
 export interface PaperSection {
   id: string;
   title: string;

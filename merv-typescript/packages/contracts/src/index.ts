@@ -1,8 +1,4 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
-export {
-  patchSchema as paperPatchSchema,
-  changesSchema as paperChangesSchema,
-} from './paper-edit.js';
 export { mapAsync, filterAsync, everyAsync } from './async.js';
 export { CheckedTransitions } from './checked-transitions.js';
 import type { ToolPolicy } from './tool-policy.js';
@@ -21,7 +17,6 @@ export type { Json, Data } from './data.js';
 export { clip, itemTitle, visible } from './text.js';
 export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
-export { boundedPaperContext } from './paper-context.js';
 export {
   allowedOrigin,
   fetchJson,

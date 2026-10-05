@@ -1,6 +1,7 @@
 /**
- * Nisa's answers, read defensively: only allowlisted fields leave, each paper named the way
- * paper.cite takes it, and every answer sized to what an agent is shown of one result.
+ * Nisa's answers, read defensively: only allowlisted fields leave, each paper named by its
+ * identifier, title, authors, year and url, and every answer sized to what an agent is shown of
+ * one result.
  */
 import { record } from '@merv/contracts';
 import { canonicalId } from './input.js';
@@ -45,7 +46,7 @@ const submitted = (id: string): number | null => {
 };
 /** "Henry E. Kyburg, Jr.": Nisa writes a generational suffix after a comma, like another name. */
 const suffix = /^(?:Jr|Sr|II|III|IV)\.?$/i;
-/** Nisa's comma-separated authors (or a list), each at most 300 characters as paper.cite takes. */
+/** Nisa's comma-separated authors (or a list), each at most 300 characters. */
 function authors(value: unknown, max: number): { authors: string[]; more?: number } {
   const names =
     typeof value === 'string'

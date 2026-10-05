@@ -1,100 +1,113 @@
-import { boundedPaperContext } from '@merv/contracts';
+import { paperSnapshot } from '@merv/paper/context';
+import type { PaperWorkspace } from '@merv/paper/types';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-test('paper context protects current goals and marks oversized sections for reading', () => {
-  const documents = {
-    literature: {
-      current: { revision: 2, sections: [{ id: 'prior', content: 'x'.repeat(10_000) }] },
-      published: null,
-    },
-    problem: {
-      current: {
-        revision: 3,
-        sections: [
-          { id: 'problem', content: 'p'.repeat(10_000) },
-          { id: 'scope', content: 'Only Iris.' },
-          { id: 'goals', content: 'Reproduce the paper method.' },
-        ],
-      },
-      published: {
-        document: { revision: 1, sections: [{ id: 'old', content: 'y'.repeat(10_000) }] },
-      },
-    },
-  };
-  const result = boundedPaperContext(documents, 100);
-  assert.equal(result.problem.current.revision, 3);
-  assert.equal(result.problem.current.sections[2]!.content, 'Reproduce the paper method.');
-  assert.equal(result.problem.current.sections[1]!.content, 'Only Iris.');
-  assert.match(result.problem.current.sections[0]!.content, /read with paper.read/);
-  assert.match(result.literature.current.sections[0]!.content, /read with paper.read/);
-  assert.match(result.problem.published!.document.sections[0]!.content, /read with paper.read/);
-  assert.equal(documents.problem.current.sections[0]!.content.length, 10_000);
+type Sections = { id: string; title?: string; content: string }[];
+const revision = (number: number, sections: Sections) => ({
+  revision: number,
+  sections: sections.map((section) => ({ title: section.id, ...section })),
 });
-
-test('paper context references an identical published body but keeps revisions and distinct drafts', () => {
-  const methods = 'A detailed protocol. '.repeat(170);
-  const currentResults = 'Current measurements. '.repeat(80);
-  const publishedResults = 'Published measurements. '.repeat(80);
-  const documents = {
-    methods: {
-      current: {
-        revision: 3,
-        sections: [
-          { id: 'protocol-new', title: 'Protocol', content: methods },
-          { id: 'brief', content: 'Short' },
-        ],
+const paper = (
+  documents: Record<string, { current: [number, Sections]; published?: [number, Sections] }>,
+) =>
+  Object.fromEntries(
+    Object.entries(documents).map(([kind, { current, published }]) => [
+      kind,
+      {
+        current: revision(...current),
+        published: published
+          ? { document: revision(...published), publication: { id: `paperpub_${kind}` } }
+          : null,
       },
-      published: {
-        document: {
-          revision: 3,
-          sections: [
-            { id: 'protocol-published', title: 'Published protocol', content: methods },
-            { id: 'brief', content: 'Short' },
+    ]),
+  ) as unknown as PaperWorkspace['documents'];
+
+test('the paper snapshot leads with the Problem, names its empty sections and marks long bodies for reading', () => {
+  const snapshot = paperSnapshot(
+    paper({
+      literature: { current: [2, [{ id: 'prior', content: 'x'.repeat(10_000) }]] },
+      problem: {
+        current: [
+          3,
+          [
+            { id: 'problem', content: 'p'.repeat(10_000) },
+            { id: 'scope', content: 'Only Iris.' },
+            { id: 'goals', content: 'Reproduce the paper method.' },
+            { id: 'constraints', content: ' ' },
           ],
-        },
-        publication: { reviewId: 'review-3' },
+        ],
+        published: [1, [{ id: 'old', content: 'y'.repeat(10_000) }]],
       },
-    },
-    results: {
-      current: { revision: 4, sections: [{ id: 'outcome', content: currentResults }] },
-      published: {
-        document: { revision: 3, sections: [{ id: 'outcome', content: publishedResults }] },
-      },
-    },
-  };
-  const result = boundedPaperContext(documents, 12_000);
-  assert.equal(result.methods.current.sections[0]!.content, methods);
-  assert.match(
-    result.methods.published.document.sections[0]!.content,
-    /same content as current revision 3, section protocol-new; read with paper\.read/,
+    }),
+    100,
   );
-  assert.equal(JSON.stringify(result).split(methods).length - 1, 1);
-  assert.equal(result.methods.published.document.revision, 3);
-  assert.equal(result.methods.published.publication.reviewId, 'review-3');
-  assert.equal(result.methods.published.document.sections[0]!.title, 'Published protocol');
-  assert.equal(result.methods.published.document.sections[1]!.content, 'Short');
-  assert.equal(result.results.current.sections[0]!.content, currentResults);
-  assert.equal(result.results.published.document.sections[0]!.content, publishedResults);
-  assert.equal(documents.methods.published.document.sections[0]!.content, methods);
+  assert.match(snapshot, /^Project paper snapshot/);
+  assert.match(snapshot, /Empty Problem sections: constraints\./);
+  assert.ok(snapshot.indexOf('problem current') < snapshot.indexOf('literature current'));
+  assert.match(snapshot, /problem\/current revision 3; section goals/);
+  assert.match(snapshot, /\nOnly Iris\.\n/);
+  assert.match(snapshot, /\nReproduce the paper method\.\n/);
+  assert.equal(snapshot.match(/\(10000 characters; read with paper\.read\)/g)?.length, 3);
+  assert.match(snapshot, /publication paperpub_problem/);
 });
 
-test('a published section is not called inline when its matching current body was shortened', () => {
+test('the paper snapshot references an identical published body but keeps distinct drafts', () => {
+  const methods = 'A detailed protocol. '.repeat(170);
+  const current = 'Current measurements. '.repeat(80);
+  const published = 'Published measurements. '.repeat(80);
+  const snapshot = paperSnapshot(
+    paper({
+      methods: {
+        current: [3, [{ id: 'protocol-new', title: 'Protocol', content: methods }]],
+        published: [3, [{ id: 'protocol-published', title: 'Published', content: methods }]],
+      },
+      results: {
+        current: [4, [{ id: 'outcome', content: current }]],
+        published: [3, [{ id: 'outcome', content: published }]],
+      },
+    }),
+  );
+  assert.equal(snapshot.split(methods).length - 1, 1);
+  assert.match(
+    snapshot,
+    /## methods published: Published\n.*\n\(same content as current section paper:methods:current:3:0:protocol-new\)/,
+  );
+  assert.ok(snapshot.includes(current) && snapshot.includes(published));
+});
+
+test('a published body is not referenced when its matching current body was shortened', () => {
   const body = 'x'.repeat(300);
-  const documents = {
-    methods: {
-      current: { revision: 3, sections: [{ id: 'protocol', content: body }] },
-      published: { document: { revision: 3, sections: [{ id: 'protocol', content: body }] } },
-    },
-  };
-  const result = boundedPaperContext(documents, 100);
-  assert.match(
-    result.methods.current.sections[0]!.content,
-    /300 characters; read with paper\.read/,
+  const snapshot = paperSnapshot(
+    paper({
+      methods: {
+        current: [3, [{ id: 'protocol', content: body }]],
+        published: [3, [{ id: 'protocol', content: body }]],
+      },
+    }),
+    100,
   );
-  assert.match(
-    result.methods.published.document.sections[0]!.content,
-    /300 characters; read with paper\.read/,
+  assert.equal(snapshot.match(/300 characters; read with paper\.read/g)?.length, 2);
+  assert.doesNotMatch(snapshot, /same content as current/);
+});
+
+test('a paper of many sections stays within the snapshot and counts what it leaves out', () => {
+  const snapshot = paperSnapshot(
+    paper({
+      problem: { current: [7, [{ id: 'goals', content: 'A model' }]] },
+      literature: {
+        current: [
+          3,
+          Array.from({ length: 250 }, (_, index) => ({
+            id: `section-${index}`,
+            title: 'Long section title '.repeat(10),
+            content: 'Evidence',
+          })),
+        ],
+      },
+    }),
   );
-  assert.doesNotMatch(JSON.stringify(result), /same content as current/);
+  assert.ok(snapshot.length <= 30_500, `${snapshot.length}`);
+  assert.match(snapshot, /\nA model\n/);
+  assert.match(snapshot, /\n\d+ more sections omitted; read with paper\.read\.$/);
 });

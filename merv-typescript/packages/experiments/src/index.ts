@@ -1,6 +1,5 @@
 import { visible, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
-import { paperChangesSchema, parsed } from '@merv/contracts';
 import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
@@ -1156,7 +1155,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         'Review input must be an object',
       );
       if (input.paperChanges !== undefined)
-        input.paperChanges = parsed(paperChangesSchema, input.paperChanges, 'invalid_input');
+        input.paperChanges = this.paper.parseChanges(input.paperChanges);
       check(
         Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
         'invalid_revision',

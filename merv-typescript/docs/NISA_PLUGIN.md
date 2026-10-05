@@ -27,9 +27,9 @@ the person; leased workers call it as an open read (both harnesses see every
 read Main lists to their session: Claude workers through `mcp__merv`, Codex
 workers with no allowlist of their own); MCP clients list it. Input is validated here more strictly than
 Nisa validates it; each paper comes back with `identifier` (`arxiv:<id>`),
-`title`, `authors`, `year` and `url` (`https://arxiv.org/abs/<id>`), which is
-what `paper.cite` takes, and nothing Nisa sends beyond the allowlisted fields
-passes. Each answer is sized to what Pi shows the model of one result. Failures
+`title`, `authors`, `year` and `url` (`https://arxiv.org/abs/<id>`), the
+fields a citation takes (Paper's `paper.cite` says so itself), and nothing Nisa
+sends beyond the allowlisted fields passes. Each answer is sized to what Pi shows the model of one result. Failures
 are `nisa_*` errors that repeat nothing Nisa wrote. Every worker launch's text
 names the `nisa.*` searches for literature, and `web.search` for the rest of
 the web where that launch is given it: a worker otherwise reads its tools as

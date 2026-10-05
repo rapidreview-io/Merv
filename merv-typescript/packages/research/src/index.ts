@@ -42,7 +42,6 @@ import {
   recordBlocker,
   type AutomaticRow,
 } from './automatic.js';
-import { introductionFrom } from './introduction.js';
 import { postgresMigrations } from './index.postgres.js';
 import {
   advanceSchema,
@@ -1383,20 +1382,6 @@ export class ResearchService implements Research {
               JSON.stringify(problem),
               record.id,
             );
-            // The accepted Problem is what the project is; the Introduction carries it into
-            // every worker's assignment, so it is rewritten from the Problem here.
-            const current = (await this.scope.project(caller, tx)).summary ?? '';
-            const introduction = introductionFrom(problem);
-            if (introduction !== current)
-              await this.scope.updateProjectContext(
-                caller,
-                {
-                  summary: introduction,
-                  expectedSummary: current,
-                  requestId: childRequest(caller, 'research', 'introduction', input.requestId),
-                },
-                tx,
-              );
             break;
           }
           case 'researching': {

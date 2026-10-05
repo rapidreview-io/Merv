@@ -4,6 +4,7 @@ import type {} from './types.js';
 import { z } from 'zod';
 import { check } from '@merv/contracts';
 import { citeSchema, id, kind, patchSchema } from './input.js';
+import { paperSnapshot } from './context.js';
 const readSchema = z
   .object({
     kind: kind.optional(),
@@ -13,6 +14,8 @@ const readSchema = z
     length: z.number().int().min(1).optional(),
   })
   .strict();
+/** What every main agent is told about keeping the paper, beside its tools. */
+const guide = `When the person changes the agreed research objective, scope or constraints, read the current project paper and update the affected Problem sections with paper.patch before creating work that relies on the change. Preserve relevant history and unchanged limits, record only what they actually authorized, and read back the saved revision. Do not treat an ordinary status question or a proposed idea as permission to expand scope. If the update fails, report it rather than creating work against stale instructions.`;
 export const paperToolsPlugin = {
   name: 'merv-paper-tools',
   inject: ['paper', 'tools'],
@@ -63,11 +66,18 @@ export const paperToolsPlugin = {
       ctx.tools.register({
         name: 'paper.cite',
         description:
-          'Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry.',
+          'Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry. A record a literature search returns carries the identifier, title, authors, year and url this takes; read a record whose authors or title came cut short (more_authors, or a title ending in …) whole first.',
         inputSchema: citeSchema,
         readOnly: false,
         handler: async (caller, input) => await paper.cite(caller, input),
       }),
+    );
+    ctx.effect(() => ctx.tools.contributeInstructions(guide));
+    // Each of a main agent's turns is told the paper as it is then.
+    ctx.effect(() =>
+      ctx.tools.contributeContext(async (caller) =>
+        paperSnapshot((await paper.read(caller)).documents),
+      ),
     );
   },
 };

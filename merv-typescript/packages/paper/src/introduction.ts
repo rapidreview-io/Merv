@@ -1,4 +1,4 @@
-import type { PaperRevision } from '@merv/paper/types';
+import type { PaperRevision } from './models.js';
 
 /** Scope's limit for the project Introduction. */
 const limit = 16_000;
@@ -6,14 +6,17 @@ const shortened = '\n\n[Shortened to fit the Introduction; paper.read returns th
 const bytes = (text: string) => Buffer.byteLength(text, 'utf8');
 
 /**
- * The project Introduction, written from the accepted Problem: its four sections in paper order,
- * each under its own Markdown heading. The Problem is the one source of what the project is; the
+ * The project Introduction, written from the Problem: its filled sections in paper order, each
+ * under its own Markdown heading. The Problem is the one source of what the project is; the
  * Introduction is how every worker's assignment carries it. Too long a Problem is cut at a
  * character boundary and says so, since Scope stores at most 16,000 UTF-8 bytes.
  */
 export function introductionFrom(problem: Pick<PaperRevision, 'sections'>): string {
   const text = problem.sections
-    .filter((section) => ['problem', 'scope', 'goals', 'constraints'].includes(section.id))
+    .filter(
+      (section) =>
+        ['problem', 'scope', 'goals', 'constraints'].includes(section.id) && section.content.trim(),
+    )
     .map((section) => `## ${section.title}\n\n${section.content.trim()}`)
     .join('\n\n');
   if (bytes(text) <= limit) return text;

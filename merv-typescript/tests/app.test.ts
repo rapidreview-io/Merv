@@ -273,7 +273,7 @@ test('a paper too long to show the agent whole reads on section by section', asy
     assert.equal(document.index!.current.sections[0].content.length, 301);
     assert.equal(
       document.note,
-      'Shown as an index: read one section with paper.read, its kind and section id',
+      'Shown as an index: read one record with its get tool, or one part with a narrower paper.read call',
     );
     // One section comes back whole; one too long for that, in slices that read on.
     assert.equal((await read({ kind: 'methods', section: 'b' })).content, sections[1].content);
@@ -316,9 +316,15 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);
     assert.equal(new Set(models).size, models.length);
     assert.ok(models.length <= 128, `${models.length} tools`);
-    // The full composition gives every main agent the research guide, then the registry's, and
-    // every tool the agent's instructions and notes name is registered.
-    assert.equal(app.ctx.tools.instructions(), `${researchGuide}\n\n${toolsGuide}`);
+    // The full composition gives every main agent the research guide, what Tasks and Paper add,
+    // then the registry's own, and every tool the agent's instructions and notes name is registered.
+    for (const part of [
+      researchGuide,
+      toolsGuide,
+      'leave production to a Fleet worker',
+      'paper.patch',
+    ])
+      assert.ok(app.ctx.tools.instructions().includes(part), part);
     const named = [
       piInstructions(app.ctx.tools.instructions()),
       ...turnNotes({

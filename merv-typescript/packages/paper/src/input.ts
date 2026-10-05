@@ -1,14 +1,39 @@
-import {
-  paperPatchSchema as patchSchema,
-  paperChangesSchema as changesSchema,
-} from '@merv/contracts';
-export { patchSchema, changesSchema };
 import { z } from 'zod';
 import { idSchema, visible, parsed } from '@merv/contracts';
 export const id = idSchema;
 const requestId = z.string().trim().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 export const kind = z.enum(['problem', 'literature', 'methods', 'results']);
+export const patchSchema = z
+  .object({
+    kind,
+    expectedRevision: revision,
+    requestId,
+    changes: z
+      .array(
+        z
+          .object({
+            id,
+            title: z.string().trim().min(1).max(300).refine(visible).optional(),
+            content: z.string().max(100_000).optional(),
+            afterId: id.nullable().optional(),
+            remove: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict();
+/** The Methods and Results edits an experiment or reflection reviewer submits with a verdict. */
+export const changesSchema = z
+  .object({
+    documents: z
+      .array(patchSchema.omit({ requestId: true }).extend({ kind: z.enum(['methods', 'results']) }))
+      .min(1)
+      .max(2),
+  })
+  .strict();
 export const reviewSchema = changesSchema
   .extend({
     source: z.object({ kind: z.enum(['experiment', 'reflection']), id, revision }).strict(),
