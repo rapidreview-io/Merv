@@ -471,7 +471,11 @@ function assertComponentReferences(
           `${path} loads a transport adapter from its core entrypoint`,
         );
     }
-    if (!['api', 'mounts'].includes(owner)) {
+    // An operator-side client module (`*-client.ts`, loaded by the CLI, never by a plugin) may
+    // speak to the server through the MCP client.
+    const mcpClient =
+      /-client\.ts$/.test(path) && specifier.startsWith('@modelcontextprotocol/sdk/client/');
+    if (!['api', 'mounts'].includes(owner) && !mcpClient) {
       assert.ok(
         !specifier.startsWith('@modelcontextprotocol/') &&
           (!['node:http', 'node:https', 'express', 'fastify'].includes(specifier) ||

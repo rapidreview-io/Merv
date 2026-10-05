@@ -19,6 +19,7 @@ import { DatabaseSync } from 'node:sqlite';
 import {
   codeCommitCommandSchema,
   type CheckoutSlotLedger,
+  type CheckoutWorkspaceRow,
   effectiveWorkspace,
   type CodeCommitCommand,
   type CodeCommitReceipt,
@@ -69,21 +70,7 @@ export interface LocalWorkspaceHost {
   slots: CheckoutSlotLedger;
 }
 type LocalSession = WorkspaceSession & { projectId: string };
-type WorkspaceRow = {
-  launch_id: string;
-  slot_id: string;
-  epoch: number;
-  path: string;
-  policy_json: string;
-  read_only: number;
-  base_oid: string;
-  branch: string | null;
-  repository_id: string | null;
-  status: WorkspaceHandle['status'];
-  attachment_json: string | null;
-  result_json: string | null;
-  canceled: number;
-};
+type WorkspaceRow = CheckoutWorkspaceRow;
 type RepositoryRow = {
   repository_id: string;
   source_path: string;
@@ -454,22 +441,14 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
         try {
           await this.validateCheckout(row);
           const snapshot = await this.snapshot(row);
-          this.db
-            .prepare(
-              "UPDATE runner_workspaces SET status='ready',attachment_json=? WHERE launch_id=?",
-            )
-            .run(JSON.stringify(snapshot), record.id);
+          this.host.slots.update(record.id, { status: 'ready', attachment: snapshot });
           row = this.row(record.id)!;
         } catch {
-          this.db
-            .prepare("UPDATE runner_workspaces SET status='captured',canceled=1 WHERE launch_id=?")
-            .run(record.id);
+          this.host.slots.update(record.id, { status: 'captured', canceled: true });
           return undefined;
         }
       }
-      this.db
-        .prepare("UPDATE runner_workspaces SET status='capturing' WHERE launch_id=?")
-        .run(record.id);
+      this.host.slots.update(record.id, { status: 'capturing' });
       return this.bounded(row, async () => {
         // A delayed orphan update-ref must fail before final capture or successor reuse.
         await this.revokeFence(row);
@@ -543,9 +522,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
             );
         }
         const snapshot = await this.snapshot(row);
-        this.db
-          .prepare("UPDATE runner_workspaces SET status='captured',result_json=? WHERE launch_id=?")
-          .run(JSON.stringify(snapshot), record.id);
+        this.host.slots.update(record.id, { status: 'captured', result: snapshot });
         return snapshot;
       });
     });
@@ -560,9 +537,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       this.host.slots.requireOwnership(row);
       if (!['captured', 'closing'].includes(row.status))
         throw new WorkspaceError('workspace_capture_required');
-      this.db
-        .prepare("UPDATE runner_workspaces SET status='closing' WHERE launch_id=?")
-        .run(record.id);
+      this.host.slots.update(record.id, { status: 'closing' });
       // Each commit's private index is needed only until its launch is captured.
       rmSync(join(this.root, 'operations', hash(record.id)), { recursive: true, force: true });
       const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
@@ -637,11 +612,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
         renameSync(row.path, aside);
         rmSync(join(aside, '.git'));
       } catch {}
-      this.db
-        .prepare(
-          "UPDATE runner_workspaces SET canceled=1,status=CASE status WHEN 'capturing' THEN 'captured' ELSE status END WHERE launch_id=?",
-        )
-        .run(row.launch_id);
+      this.host.slots.abandon(row.launch_id);
       throw new WorkspaceError('workspace_abandoned');
     }
   }
@@ -660,8 +631,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     return operation;
   }
   private row(id: string): WorkspaceRow | undefined {
-    return this.db.prepare('SELECT * FROM runner_workspaces WHERE launch_id=?').get(id) as
-      WorkspaceRow | undefined;
+    return this.host.slots.workspace(id);
   }
   private requireLaunch(record: WorkspaceLaunch): void {
     const actual = this.host.launch(record.id);
@@ -1111,9 +1081,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       await this.git(['--git-dir', repository.bare_path, 'update-ref', baseRef, row.base_oid]);
     const snapshot = await this.snapshot(row);
     await this.armFence(row);
-    this.db
-      .prepare("UPDATE runner_workspaces SET status='ready',attachment_json=? WHERE launch_id=?")
-      .run(JSON.stringify(snapshot), row.launch_id);
+    this.host.slots.update(row.launch_id, { status: 'ready', attachment: snapshot });
   }
 
   private async validateCheckout(row: WorkspaceRow): Promise<void> {

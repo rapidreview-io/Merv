@@ -6,6 +6,8 @@ import {
   effectiveWorkspace,
   type CheckoutSlotClaim,
   type CheckoutSlotLedger,
+  type CheckoutWorkspaceChange,
+  type CheckoutWorkspaceRow,
   WorkspaceDeferred,
   type CodeCommitCommand,
   type CodeCommitReceipt,
@@ -59,15 +61,7 @@ export interface RepositoryDriverHost {
 export interface RepositoryDriverFactory {
   create(host: RepositoryDriverHost, repository: RunnerRepository): Required<WorkspaceDriver>;
 }
-type WorkspaceRow = {
-  launch_id: string;
-  slot_id: string;
-  epoch: number;
-  path: string;
-  policy_json: string;
-  read_only: number;
-  status: WorkspaceHandle['status'];
-};
+type WorkspaceRow = CheckoutWorkspaceRow;
 class WorkspaceError extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -94,7 +88,7 @@ type SlotOwner = Pick<WorkspaceRow, 'launch_id' | 'slot_id' | 'epoch'>;
  * claimed and released here alike; the driver keeps only what it adds to a row.
  */
 export class CheckoutSlots implements CheckoutSlotLedger {
-  readonly db: DatabaseSync;
+  private readonly db: DatabaseSync;
   constructor(private readonly ledger: LocalLedger) {
     this.db = new DatabaseSync(ledger.path);
     this.db
@@ -165,6 +159,31 @@ export class CheckoutSlots implements CheckoutSlotLedger {
         );
     });
   }
+  workspace(launchId: string): WorkspaceRow | undefined {
+    return this.db.prepare('SELECT * FROM runner_workspaces WHERE launch_id=?').get(launchId) as
+      WorkspaceRow | undefined;
+  }
+  update(launchId: string, change: CheckoutWorkspaceChange): void {
+    const set = Object.entries({
+      status: change.status,
+      attachment_json: change.attachment && JSON.stringify(change.attachment),
+      result_json: change.result && JSON.stringify(change.result),
+      canceled: change.canceled && 1,
+    }).filter(([, value]) => value !== undefined) as [string, string | number][];
+    // Only the columns named: naming a written-once column again would trip its trigger.
+    this.db
+      .prepare(
+        `UPDATE runner_workspaces SET ${set.map(([key]) => `${key}=?`).join(',')} WHERE launch_id=?`,
+      )
+      .run(...set.map(([, value]) => value), launchId);
+  }
+  abandon(launchId: string): void {
+    this.db
+      .prepare(
+        "UPDATE runner_workspaces SET canceled=1,status=CASE status WHEN 'capturing' THEN 'captured' ELSE status END WHERE launch_id=?",
+      )
+      .run(launchId);
+  }
   requireOwnership(row: SlotOwner): void {
     const slot = this.db
       .prepare('SELECT owner_launch_id,epoch FROM runner_checkout_slots WHERE slot_id=?')
@@ -185,6 +204,9 @@ export class CheckoutSlots implements CheckoutSlotLedger {
         .prepare("UPDATE runner_workspaces SET status='closed' WHERE launch_id=?")
         .run(row.launch_id);
     });
+  }
+  close(): void {
+    this.db.close();
   }
   private transaction(work: () => void): void {
     this.db.exec('BEGIN IMMEDIATE');
@@ -238,7 +260,6 @@ export function ledgerHost(
  * Both keep their rows in the same ledger tables, so a launch's row says which one it is.
  */
 export class RunnerWorkspaces implements Required<WorkspaceDriver> {
-  private readonly db: DatabaseSync;
   private readonly slots: CheckoutSlots;
   private readonly assignmentWorkspaceDirectory?: string;
   private readonly repository?: Required<WorkspaceDriver>;
@@ -270,14 +291,13 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
     }
     this.assignmentWorkspaceDirectory = assignmentWorkspaceDirectory;
     this.slots = new CheckoutSlots(ledger);
-    this.db = this.slots.db;
     try {
       this.repository = repository?.driver.create(
         ledgerHost(ledger, this.slots),
         repository.config,
       );
     } catch (error) {
-      this.db.close();
+      this.slots.close();
       throw error;
     }
   }
@@ -357,9 +377,7 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       const row = this.row(record.id);
       if (!row || row.status === 'captured' || row.status === 'closed') return undefined;
       this.slots.requireOwnership(row);
-      this.db
-        .prepare("UPDATE runner_workspaces SET status='captured' WHERE launch_id=?")
-        .run(record.id);
+      this.slots.update(record.id, { status: 'captured' });
       return undefined;
     });
   }
@@ -398,7 +416,7 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
   }
   dispose(): void {
     this.disposed = true;
-    this.db.close();
+    this.slots.close();
     this.repository?.dispose();
   }
 
@@ -412,8 +430,7 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
     return operation;
   }
   private row(id: string): WorkspaceRow | undefined {
-    return this.db.prepare('SELECT * FROM runner_workspaces WHERE launch_id=?').get(id) as
-      WorkspaceRow | undefined;
+    return this.slots.workspace(id);
   }
   private requireLaunch(record: WorkspaceLaunch): void {
     const actual = this.ledger.get(record.id);
@@ -450,9 +467,7 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       )
         throw new WorkspaceError('workspace_foreign_checkout');
     } else privateDirectory(row.path);
-    this.db
-      .prepare("UPDATE runner_workspaces SET status='ready' WHERE launch_id=?")
-      .run(row.launch_id);
+    this.slots.update(row.launch_id, { status: 'ready' });
   }
   private validate(row: WorkspaceRow): void {
     this.within(this.parent(row), row.path);

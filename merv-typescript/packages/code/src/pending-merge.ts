@@ -84,7 +84,7 @@ export async function pinMerge(
 }
 
 /**
- * A WIP may have no merge yet. Once a merge appears on the task's first-parent lineage it
+ * A WIP may have no merge yet. Once a merge appears on the unit's first-parent lineage it
  * must join the frozen right input, and later corrections cannot introduce another merge.
  * Walking first parents also refuses a left input reached only through a second parent.
  */

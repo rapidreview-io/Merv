@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
-import { artifactFile, uploadArtifact } from '../src/artifact-upload.js';
+import { artifactFile, uploadArtifact } from '@merv/artifacts/upload-client';
 import { createApp } from './fixtures/app.js';
 
 test('file convenience bounds and encodes local text/binary without server filesystem access', (t) => {

@@ -8,6 +8,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.0",
     "cordis": "4.0.0-rc.10",
     "@merv/contracts": "0.1.0",
     "@merv/sessions": "0.1.0",

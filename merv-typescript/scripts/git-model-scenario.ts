@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { importRepository } from '../src/code-import.js';
+import { importRepository } from '@merv/code-work/import-client';
 import type { CodeProjectStatus, CodeStoreOperation } from '@merv/contracts';
 
 /**
