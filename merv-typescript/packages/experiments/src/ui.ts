@@ -13,14 +13,25 @@ export const experimentsUiPlugin = {
       ctx.ui.register({
         id: 'experiments',
         label: 'Experiments',
-        group: 'work',
+        // Reached from the Work page and its records; the rail does not list it.
+        group: 'hidden',
         order: 16,
         path: '/experiments',
+        workflow: 'experiment',
         view: { kind: 'experiments' },
         home: {
           tool: 'experiment.list',
           keep: ['id', 'name', 'intent', 'ownerId', 'conclusion', 'workflow'],
           list: async (caller) => await experiments.summaries(caller),
+        },
+        needs: {
+          name: 'name',
+          owner: 'ownerId',
+          asks: {
+            submit_design: 'Submit the design for review',
+            submit_results: 'Submit the results for review',
+          },
+          reads: { design_review: 'Review this design', experiment_review: 'Review these results' },
         },
         // One record, with the gate it stands at: the process graph is derived from the
         // same record, so the page reads both in one answer rather than two.
@@ -51,7 +62,7 @@ export const experimentsUiPlugin = {
         kinds: ['work'],
         lanes: ['work'],
         nodes: async (read) => ({ nodes: await experiments.running(read.caller, read.include) }),
-        panel: async (read, key) => await experiments.runningPanel(read.caller, key),
+        panel: async (read, key) => await experiments.runningPanel(read.caller, key, read.route),
       }),
     );
   },

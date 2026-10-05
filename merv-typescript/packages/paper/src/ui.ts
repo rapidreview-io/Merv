@@ -11,7 +11,8 @@ export const paperUiPlugin = {
       ctx.ui.register({
         id: 'paper',
         label: 'Paper',
-        group: 'work',
+        // What the project is writing stands with Work and Now, not inside a section.
+        group: 'top',
         order: 16,
         path: '/paper',
         view: { kind: 'paper' },

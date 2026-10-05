@@ -11,7 +11,8 @@ export const reviewUiPlugin = {
       ctx.ui.register({
         id: 'reviews',
         label: 'Reviews',
-        group: 'work',
+        // Reached from the Work page and its records; the rail does not list it.
+        group: 'hidden',
         order: 17,
         path: '/reviews',
         view: { kind: 'reviews' },

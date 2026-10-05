@@ -6,6 +6,7 @@ import type {
   RunningNode,
   RunningPanelPart,
   Transaction,
+  WorkRoute,
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { Sandboxes } from '@merv/sandboxes/types';
@@ -48,7 +49,7 @@ export interface Experiments {
    */
   running(caller: Caller, include?: ReadonlySet<string>): Promise<RunningNode[]>;
   /** The sidebar of `work:<experimentId>`; null for any other key. */
-  runningPanel(caller: Caller, key: string): Promise<RunningPanelPart | null>;
+  runningPanel(caller: Caller, key: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
   /** What the optional Code plugin holds for a Git experiment; null without it. */
   codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;
   submitReview(caller: Caller, input: ExperimentReview, tx?: Transaction): Promise<Experiment>;

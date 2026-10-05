@@ -746,7 +746,12 @@ test("folded into a Code check, a machine adds its cost and size to the check's 
   );
   assert.deepEqual(sidebar.actions, []);
   const folded = await own.panel!(
-    { caller: operator, include: new Set(), once: async (_name, read) => await read() },
+    {
+      caller: operator,
+      include: new Set(),
+      once: async (_name, read) => await read(),
+      route: () => undefined,
+    },
     keyOf('dunes-eval'),
     'check:base',
   );

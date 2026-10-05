@@ -40,6 +40,7 @@ import {
   type WorkflowPolicy,
   type WorkflowSnapshot,
   type Workflows,
+  type WorkRoute,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
 import { parseChangeSpec } from './change-spec.js';
@@ -1697,7 +1698,11 @@ export class ReflectionService implements Reflections {
       return nodes.filter((node) => node !== null);
     });
   }
-  async runningPanel(caller: Caller, id: string): Promise<RunningPanelPart | null> {
+  async runningPanel(
+    caller: Caller,
+    id: string,
+    route?: WorkRoute,
+  ): Promise<RunningPanelPart | null> {
     caller = structuredClone(caller);
     const facts = await this.state.transaction(async (tx) => {
       await this.read(caller, tx);
@@ -1710,7 +1715,7 @@ export class ReflectionService implements Reflections {
       return wave ? await this.runningFacts(caller, id, tx) : null;
     });
     // Workflows reads the ladder in a transaction of its own, as it does for Tasks.process.
-    return facts && wavePanel(facts, await this.workflows.process(caller, id));
+    return facts && wavePanel(facts, await this.workflows.process(caller, id), route);
   }
   async approved(
     caller: Caller,

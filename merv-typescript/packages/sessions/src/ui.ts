@@ -12,7 +12,7 @@ export const sessionsUiPlugin = {
         id: 'sessions',
         // Reached from the Work page, which shows what is live; the rail does not list it.
         label: 'Agents and machines',
-        group: 'work',
+        group: 'hidden',
         order: 24,
         path: '/sessions',
         view: { kind: 'sessions' },
@@ -43,7 +43,7 @@ export const sessionsUiPlugin = {
         summary: async (read) => (await dispatch(read)).summary,
         panel: async (read, key) =>
           keyKind(key) === 'session'
-            ? await ctx.sessions.runningPanel(read.caller, keyId(key))
+            ? await ctx.sessions.runningPanel(read.caller, keyId(key), read.route)
             : null,
         sections: async (read, keys) => {
           const work = keys.filter((key) => keyKind(key) === 'work').map(keyId);

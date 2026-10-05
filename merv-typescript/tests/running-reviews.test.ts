@@ -549,6 +549,7 @@ test('an agent that took the review with its lease reads as an agent, and the si
     caller: f.operator,
     include: new Set(),
     once: async <T>(_name: string, value: () => Promise<T>) => await value(),
+    route: () => undefined,
   };
   assert.deepEqual(
     await contribution.sections(read, [`session:${lease.id}`, `fleet:${delivered.id}`]),

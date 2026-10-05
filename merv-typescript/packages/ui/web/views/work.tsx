@@ -16,7 +16,7 @@ import { newest, useHome, type Flow, type MapCycle } from './map-data';
 import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
 import { CreateReflection } from './research-programs';
-import type { Task } from './tasks';
+import type { Task } from '@merv/tasks/models';
 import { LiveLines, LiveUnder, WorkMap, WorkPlane, type Wave } from './work-map';
 
 /**

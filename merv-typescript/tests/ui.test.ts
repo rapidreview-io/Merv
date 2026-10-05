@@ -718,7 +718,7 @@ test('the Connections row reports mount health and serves mount status through u
   };
   const connections = shell.rows.find((entry) => entry.id === 'connections');
   assert.ok(connections, 'the mounts adapter registers its row');
-  assert.equal(connections.group, 'system');
+  assert.equal(connections.group, 'hidden');
   assert.equal(connections.readable, true);
   assert.equal(connections.status.count, undefined, 'an inventory reports no count');
   assert.equal(connections.status.state, 'degraded');

@@ -3,7 +3,6 @@ import {
   clip,
   dependencyRows,
   runningKey,
-  workRoute,
   type ProcessGraph,
   type ReviewRequest,
   type RunningAttention,
@@ -13,6 +12,7 @@ import {
   type RunningPhrase,
   type RunningSection,
   type WorkflowDependency,
+  type WorkRoute,
 } from '@merv/contracts';
 
 /**
@@ -222,11 +222,12 @@ export function taskPanel(
   record: TaskRecord,
   graph: ProcessGraph,
   brief: { id: string; title: string } | null,
+  route: WorkRoute,
 ): RunningPanelPart {
   const at = holding(task);
   const attention = need(task);
   const named = (row: RunningLinkRow): RunningLinkRow => ({ ...row, name: short(row.name) });
-  const { waitsOn, unblocks } = dependencyRows(record.dependencies, record.dependents);
+  const { waitsOn, unblocks } = dependencyRows(record.dependencies, record.dependents, route);
   // A failed prerequisite is why the task needs a person, but only while it is worked on: the
   // row still says failed after that, without the red.
   const failing = !!failedPrerequisite(task);
@@ -309,7 +310,7 @@ export function taskPanel(
       ],
     },
   ];
-  const route = workRoute('task', task.id);
+  const page = route('task', task.id);
   return {
     header: {
       kind: 'Task',
@@ -319,7 +320,7 @@ export function taskPanel(
     },
     sections,
     actions: [],
-    ...(route ? { route } : {}),
+    ...(page ? { route: page } : {}),
     live: task.lease !== null,
   };
 }

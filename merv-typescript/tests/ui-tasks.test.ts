@@ -781,6 +781,11 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
     ],
   });
   serve('/tools/workflow.status_and_next', reflecting);
+  // A wave opens on the page of the row that lists its workflow.
+  const waves = { id: 'reflections', path: '/reflections', workflow: 'reflection' };
+  serve('/tools/ui.shell', {
+    body: { result: { rows: [{ ...waves, view: { kind: 'reflections' } }] } },
+  });
   const ended: Record<string, unknown>[] = [];
   serve('/tools/research.end', (_call, body) => {
     ended.push(body);

@@ -19,48 +19,17 @@ import { RecordLink, RecordText, recordNames, useRecordNames } from '../markdown
 import { homeOf, pathOf, useRows } from '../navigation';
 import type { HomeData } from './map-data';
 import { useActorNames } from './people';
-import type { Task } from './tasks';
+import type { Task, TaskConfirmation } from '@merv/tasks/models';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { ReviewRequest } from '@merv/contracts/types';
 
 /** review.submit enumerates exactly these finding words and these verdicts. */
 const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
 const VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
-type Finding = (typeof FINDINGS)[number];
 type Verdict = (typeof VERDICTS)[number];
 
-export interface Review {
-  id: string;
-  subjectId: string;
-  subjectRevision: number;
-  claimable?: boolean;
-  /** The reader is the project's owner, who may decide it as owner. */
-  overridable?: true;
-  override?: true;
-  artifactIds: string[];
-  criteria: string[];
-  formatVersion: 2;
-  status: 'requested' | 'started' | 'submitted' | 'superseded';
-  reviewerId: string | null;
-  claimId: string | null;
-  verdict: Verdict | null;
-  returnTo?: string;
-  notes: string | null;
-  synopsis: string | null;
-  findings: {
-    criterionNumber: number;
-    status: Finding;
-    evidenceIds: string[];
-    notes: string;
-  }[];
-  createdAt: string;
-}
-/** The producer's own confirmation of the acceptance check with the same number. */
-export interface Confirmation {
-  checkNumber: number;
-  status: 'met' | 'not_met';
-  notes: string;
-  evidenceIds?: string[];
-}
+/** A review as review.get and review.list answer it. */
+export type Review = ReviewRequest;
 /** What a desk has said about one check so far: its word, the sentence, the files it cites. */
 export interface Draft {
   status?: string;
@@ -146,7 +115,7 @@ export function CriterionRows({
   draft,
 }: {
   criteria: string[];
-  confirmations?: Confirmation[];
+  confirmations?: TaskConfirmation[];
   /** The review whose findings the rows state, once there is one. */
   review?: Review;
   draft?: Drafting;

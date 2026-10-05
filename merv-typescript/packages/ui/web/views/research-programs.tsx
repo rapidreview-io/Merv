@@ -16,44 +16,11 @@ import { Tabs, recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
 import { useCommand } from '../mutations';
 import { Gate, StageMark } from '../process';
-import { ArtifactBody, type Artifact } from './artifacts';
+import type { Reflection } from '@merv/reflections/models';
+import { ArtifactBody } from './artifacts';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 import { ReviewSummary } from './reviews';
-
-// Browser read models intentionally omit server services and authentication types.
-interface Workflow {
-  workflow: string;
-  state: string;
-  revision: number;
-  updatedAt: string;
-}
-export interface Reflection {
-  id: string;
-  title: string;
-  ownerId: string;
-  attempt: number;
-  createdAt: string;
-  workflow: Workflow;
-  lenses: {
-    id: string;
-    perspective: string;
-    instructions: string;
-    workflow: Workflow;
-    producerId: string | null;
-    artifact: Artifact | null;
-  }[];
-  report: Artifact | null;
-  changeSpec: Artifact | null;
-  review: {
-    id: string;
-    status: string;
-    verdict: string | null;
-    synopsis: string | null;
-    reviewerId: string | null;
-    returnTo?: string;
-  } | null;
-}
 
 /** The gate this wave stands at, derived from its own record. */
 function WaveGate({ id, children }: { id: string; children?: ReactNode }) {

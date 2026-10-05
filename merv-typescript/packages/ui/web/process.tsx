@@ -1,9 +1,9 @@
-import { workRoute } from '@merv/contracts/running';
 import type { ProcessGraph, WorkflowDependency } from '@merv/contracts/workflow-guidance';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { KindLabel, StatusPill, cx, toneOf, useNow, words } from './components';
 import { elapsed } from './liveness';
+import { useRows } from './navigation';
 import type { WorkflowShape } from './shell-types';
 
 /**
@@ -286,27 +286,18 @@ export function StageList({ graph }: { graph: ProcessGraph }) {
 }
 
 /**
- * The view kind a workflow's records are read under. The page each opens at is the shared
- * contract's (`workRoute`), so a relation on a record and one in a Running sidebar go to
- * the same place.
- */
-const PLACE: Record<string, string> = {
-  task: 'tasks',
-  experiment: 'experiments',
-  research: 'research',
-  reflection: 'reflections',
-};
-
-/**
  * A record another one waits on, or holds up, on one line: its kind, its name as the
  * way to it, and the state it stands at. The state is the whole of the outcome — what
  * has succeeded, ended or is still moving says so in its own word and colour.
  */
 export function Dependency({ item }: { item: WorkflowDependency }) {
-  const route = workRoute(item.workflow, item.id);
+  // Its page, and the kind it is read as, are the row's that lists its workflow, as on the
+  // Running page's sidebars.
+  const row = useRows().find((entry) => entry.workflow === item.workflow);
+  const route = row && `${row.path}/${encodeURIComponent(item.id)}`;
   return (
     <p className="cluster">
-      <KindLabel kind={PLACE[item.workflow] ?? item.workflow} />
+      <KindLabel kind={row?.view.kind ?? item.workflow} />
       {route ? <Link to={route}>{item.name}</Link> : item.name}
       <StatusPill value={item.state} />
     </p>

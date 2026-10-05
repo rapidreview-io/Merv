@@ -11,11 +11,15 @@ export const reflectionUiPlugin = {
       ctx.ui.register({
         id: 'reflections',
         label: 'Reflections',
-        group: 'work',
+        // Reached from the Work page and its records; the rail does not list it.
+        group: 'hidden',
         order: 35,
         path: '/reflections',
+        workflow: 'reflection',
         view: { kind: 'reflections' },
         home: { tool: 'reflection.list', keep: ['id', 'title', 'ownerId', 'workflow', 'lenses'] },
+        // A wave names the review of it, which is asked for as work: a wave is no delivery.
+        needs: { name: 'title', owner: 'ownerId', subjectOnly: true },
         read: async (caller: Caller) =>
           JSON.parse(JSON.stringify(await reflections.list(caller))) as Json,
       }),
@@ -27,7 +31,8 @@ export const reflectionUiPlugin = {
         kinds: ['work'],
         lanes: ['work'],
         nodes: async (read) => ({ nodes: await reflections.running(read.caller, read.include) }),
-        panel: async (read, key) => await reflections.runningPanel(read.caller, keyId(key)),
+        panel: async (read, key) =>
+          await reflections.runningPanel(read.caller, keyId(key), read.route),
       }),
     );
   },

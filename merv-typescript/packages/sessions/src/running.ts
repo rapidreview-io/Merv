@@ -2,7 +2,7 @@ import {
   check,
   mapAsync,
   runningKey,
-  workRoute,
+  workLink,
   type Caller,
   type RunningAction,
   type RunningAttention,
@@ -20,6 +20,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type WorkRoute,
 } from '@merv/contracts';
 import { freshForMs, type DispatchReading, type SessionDispatch } from './dispatch.js';
 import { lastActivity } from './observations.js';
@@ -529,7 +530,11 @@ export class SessionRunning {
    * reading a lease that has closed. Null for a lease this project does not hold. The brief is
    * an operator's alone.
    */
-  async panel(caller: Caller, sessionId: string): Promise<RunningPanelPart | null> {
+  async panel(
+    caller: Caller,
+    sessionId: string,
+    route: WorkRoute = () => undefined,
+  ): Promise<RunningPanelPart | null> {
     return await this.read(caller, async (tx, operator) => {
       const row = await tx.get<PanelRow>(
         `SELECT ${LEASE},x.j #>> '{closedAt}' AS closed_at,
@@ -630,19 +635,11 @@ export class SessionRunning {
           ];
       sections.push({ title: 'Lease', place: 'activity', kind: 'facts', rows: terms });
 
-      const route = workRoute(row.workflow, row.instance_id);
       sections.push({
         title: 'Work',
         place: 'relations',
         kind: 'links',
-        rows: [
-          {
-            to: { key: runningKey('work', row.instance_id), ...(route ? { route } : {}) },
-            // Work a page shows is named by its workflow.
-            ...(route ? { kind: row.workflow[0]!.toUpperCase() + row.workflow.slice(1) } : {}),
-            name: clip(work, 200),
-          },
-        ],
+        rows: [{ ...workLink(route, row.workflow, row.instance_id), name: clip(work, 200) }],
       });
 
       const mode = row.workspace_mode ?? 'none';

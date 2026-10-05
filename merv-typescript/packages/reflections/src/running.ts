@@ -1,6 +1,5 @@
 import {
   runningKey,
-  workRoute,
   type ProcessGraph,
   type RunningAttention,
   type RunningNode,
@@ -9,6 +8,7 @@ import {
   type RunningRow,
   type RunningSection,
   type WorkflowSnapshot,
+  type WorkRoute,
 } from '@merv/contracts';
 import { REFLECTION_WORKFLOW_ENDABLE } from './definitions.js';
 import type { ChangeSpec, Reflection } from './types.js';
@@ -192,7 +192,11 @@ function planned({ next, items }: ChangeSpec): string {
  * concluded, and while it is open the work it holds up. The review is Reviews' to add and its
  * sessions are Sessions', through the lens keys it absorbs.
  */
-export function wavePanel(facts: WaveFacts, graph: ProcessGraph): RunningPanelPart {
+export function wavePanel(
+  facts: WaveFacts,
+  graph: ProcessGraph,
+  route: WorkRoute = () => undefined,
+): RunningPanelPart {
   const { wave } = facts;
   const { state } = wave.workflow;
   const red = attention(facts);
@@ -235,7 +239,7 @@ export function wavePanel(facts: WaveFacts, graph: ProcessGraph): RunningPanelPa
     },
     sections,
     actions: [],
-    route: workRoute('reflection', wave.id),
+    route: route('reflection', wave.id),
     live: [wave.workflow, ...wave.lenses.map((lens) => lens.workflow)].some(
       (workflow) => stepOf(facts.leases, workflow).held,
     ),
