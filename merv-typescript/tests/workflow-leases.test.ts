@@ -2,6 +2,7 @@ import type { Task, TaskCheckpointInput, TaskContext, TaskDelivery } from '@merv
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -518,39 +519,52 @@ test('a leased status_and_next admission stays within a statement budget', async
     'leaseStep' | 'executionOf',
     (...args: unknown[]) => unknown
   >;
-  const leaseSteps = t.mock.method(engine, 'leaseStep');
-  const references = t.mock.method(engine, 'executionOf');
+  const measured = new AsyncLocalStorage<boolean>();
+  let leaseSteps = 0,
+    references = 0;
+  const leaseStep = engine.leaseStep.bind(engine);
+  const executionOf = engine.executionOf.bind(engine);
+  t.mock.method(engine, 'leaseStep', (...args: unknown[]) => {
+    if (measured.getStore()) leaseSteps++;
+    return leaseStep(...args);
+  });
+  t.mock.method(engine, 'executionOf', (...args: unknown[]) => {
+    if (measured.getStore()) references++;
+    return executionOf(...args);
+  });
   // Statements issued through the state's transactions, snapshot children included.
   const state = f.app.ctx.state as PostgresState;
   let statements = 0;
+  const count = () => {
+    if (measured.getStore()) statements++;
+  };
   const transaction = state.transaction.bind(state);
   t.mock.method(state, 'transaction', ((fn: (tx: Transaction) => unknown) =>
     transaction((tx) => {
       // Mutate in place: assertTransaction() compares the transaction object's identity.
       const { run, get, all } = tx;
       Object.assign(tx, {
-        run: (sql: string, ...p: never[]) => (statements++, run(sql, ...p)),
-        get: (sql: string, ...p: never[]) => (statements++, get(sql, ...p)),
-        all: (sql: string, ...p: never[]) => (statements++, all(sql, ...p)),
+        run: (sql: string, ...p: never[]) => (count(), run(sql, ...p)),
+        get: (sql: string, ...p: never[]) => (count(), get(sql, ...p)),
+        all: (sql: string, ...p: never[]) => (count(), all(sql, ...p)),
       });
       return fn(tx);
     })) as typeof state.transaction);
   // As the tool registry calls it, which marks a read tool.
   const policy: SessionToolPolicy = f.app.ctx.sessions;
-  const invocation = await policy.prepare(
-    worker,
-    'workflow.status_and_next',
-    { instanceId: f.task.id },
-    true,
+  // Background reconciliation can issue transactions while admission is awaiting PostgreSQL.
+  // Count only this invocation's async chain, not the application's unrelated consumers.
+  const invocation = await measured.run(true, () =>
+    policy.prepare(worker, 'workflow.status_and_next', { instanceId: f.task.id }, true),
   );
   assert.equal(invocation.tool, 'workflow.status_and_next');
   // The admission's lease check runs inside the session's own frame, so every Scope check it
   // makes for the worker resolves from that frame instead of re-reading the session row
   // (about 400 statements unframed, 127 framed with a second lease step, 70 now).
-  assert.ok(statements <= 100, `${statements} statements for one leased read`);
+  assert.ok(statements > 0 && statements <= 100, `${statements} statements for one leased read`);
   // The session's Scope check, and its admission.
-  assert.equal(leaseSteps.mock.callCount(), 2);
-  assert.equal(references.mock.callCount(), 0);
+  assert.equal(leaseSteps, 2);
+  assert.equal(references, 0);
 });
 
 test('logical task owner can reissue worker delivery while preserving immutable review input/output provenance', async (t) => {
