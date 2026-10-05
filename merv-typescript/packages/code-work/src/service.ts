@@ -20,6 +20,7 @@ import {
 import type {
   Caller,
   CodeAcceptedSince,
+  CodeRepositoryPrepareInput,
   Scope,
   State,
   StoredEvent,
@@ -103,8 +104,6 @@ export class CodeService extends CodeCommandService implements Code {
   private publicationStore: CodePublicationService;
   private publicationHost: PublicationHost;
   private readonly board: CodeRunningReader;
-  private storage: State;
-  private readonly baseScope: Scope;
   private publicationClosed = false;
   private publicationTimer?: NodeJS.Timeout;
   private networkOperations = new Set<Promise<unknown>>();
@@ -123,13 +122,11 @@ export class CodeService extends CodeCommandService implements Code {
     state: State,
     scope: Scope,
     sessions: Sessions,
-    workflows: Workflows,
-    utility: Pick<CodeUtility, 'github' | 'writers' | 'repositories'>,
-    repositories: CodeStoreOptions = {},
+    private readonly workflows: Workflows,
+    private readonly utility: Pick<CodeUtility, 'github' | 'writers' | 'repositories' | 'units'>,
+    private readonly repositories: CodeStoreOptions = {},
   ) {
     super(state, scope, sessions);
-    this.storage = state;
-    this.baseScope = scope;
     this.github = utility.github;
     this.writerStore = utility.writers;
     this.publicationHost = new PublicationHost(
@@ -170,89 +167,93 @@ export class CodeService extends CodeCommandService implements Code {
       bases: () => this.baseStore,
       receipt: (sql, projectId, instanceId) => this.newestReceipt(sql, projectId, instanceId),
     });
-    const initializeBase = this.initialize.bind(this);
-    this.initialize = async () => {
-      await initializeBase();
-
-      this.captureReader = new CodeCaptureReader(state, scope, sessions);
-      try {
-        this.unitStore = await createService(
-          new CodeUnitService(state, scope, workflows, this, this.writerStore, sessions),
+  }
+  override async initialize(): Promise<void> {
+    await super.initialize();
+    const { state, scope, sessions, utility, repositories } = this;
+    this.captureReader = new CodeCaptureReader(state, scope, sessions);
+    try {
+      this.unitStore = await createService(
+        new CodeUnitService(
+          state,
+          scope,
+          this.workflows,
+          this,
+          this.writerStore,
+          utility.units,
+          sessions,
+        ),
+      );
+      this.unitStore.publications = this.publicationStore;
+      if (utility.repositories) {
+        // Published only once it holds the writer lock and has finished what a crash left.
+        const store = new CodeStore(
+          state,
+          scope,
+          { ...utility.repositories.config, ...repositories.config },
+          {
+            imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
+            workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
+            frozen: async () => [],
+            fenced: (tx, fence, kind) => this.writerStore.fenced(tx, fence, kind),
+            advanced: (tx, fence, input) => this.writerStore.advanced(tx, fence, input),
+            quarantined: (tx, fence, id) => this.writerStore.quarantined(tx, fence, id),
+            maintained: () => this.writerStore.expire(),
+          },
+          repositories.remote ?? this.linkedRepository(),
+          repositories.fault,
+          utility.repositories,
         );
-        this.unitStore.publications = this.publicationStore;
-        if (utility.repositories) {
-          // Published only once it holds the writer lock and has finished what a crash left.
-          const store = new CodeStore(
-            state,
-            scope,
-            { ...utility.repositories.config, ...repositories.config },
-            {
-              imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
-              workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
-              frozen: async () => [],
-              fenced: (tx, fence, kind) => this.writerStore.fenced(tx, fence, kind),
-              advanced: (tx, fence, input) => this.writerStore.advanced(tx, fence, input),
-              quarantined: (tx, fence, id) => this.writerStore.quarantined(tx, fence, id),
-              maintained: () => this.writerStore.expire(),
+        await store.initialize();
+        this.store = store;
+        this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, store);
+        this.mirrorStore = new CodeMirrorService(
+          state,
+          scope,
+          store.repositories,
+          repositories.mirror ?? new GitMirrorTransport(store.repositories, this.published()),
+          repositories.mirrorConfig,
+        );
+        const bases = new CodeBaseService(
+          state,
+          store.repositories,
+          {
+            changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
+            sponsors: (tx, projectId, members) =>
+              this.unitStore.baseSponsors(tx, projectId, members),
+            serviceWork: sessions.serviceWork,
+            resolved: async (tx, projectId, key, commit) => {
+              await this.unitStore.retainBaseResult(tx, projectId, key, commit);
+              await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
             },
-            repositories.remote ?? this.linkedRepository(),
-            repositories.fault,
-            utility.repositories,
-          );
-          await store.initialize();
-          this.store = store;
-          this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, store);
-          const mirror = new CodeMirrorService(
-            state,
-            scope,
-            store.repositories,
-            repositories.mirror ?? new GitMirrorTransport(store.repositories, this.published()),
-            repositories.mirrorConfig,
-          );
-          this.mirrorStore = mirror;
-          const bases = new CodeBaseService(
-            state,
-            store.repositories,
-            {
-              changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
-              sponsors: (tx, projectId, members) =>
-                this.unitStore.baseSponsors(tx, projectId, members),
-              serviceWork: sessions.serviceWork,
-              resolved: async (tx, projectId, key, commit) => {
-                await this.unitStore.retainBaseResult(tx, projectId, key, commit);
-                await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
-              },
-            },
-            repositories.autoMerge !== false,
-          );
-          await bases.initialize();
-          this.unitStore.bases = bases;
-          this.baseStore = bases;
-          bases.start();
-        }
-        // The mirror reads the project's GitHub link, so it only starts looking for refs to
-        // publish once that store exists.
-        this.mirrorStore?.initialize();
-        await this.publicationStore.initialize();
-        await migrateRepositorySync(state);
-        // The first pass waits a period, so Reviews, which every publication checks, is bound;
-        // a tick while a pass runs starts nothing, and closing stops the pass.
-        let pass: Promise<unknown> | undefined;
-        this.publicationTimer = setInterval(() => {
-          pass ??= this.network(() => this.publicationStore.syncDue(() => this.publicationClosed))
-            .catch(() => undefined)
-            .finally(() => (pass = undefined));
-        }, 30_000);
-        this.publicationTimer.unref();
-      } catch (error) {
-        await this.close();
-        throw error;
+          },
+          repositories.autoMerge !== false,
+        );
+        await bases.initialize();
+        this.unitStore.bases = bases;
+        this.baseStore = bases;
+        bases.start();
       }
-    };
+      // The mirror reads the project's GitHub link, so it only starts looking for refs to
+      // publish once that store exists.
+      this.mirrorStore?.initialize();
+      await this.publicationStore.initialize();
+      await migrateRepositorySync(state);
+      // The first pass waits a period, so Reviews, which every publication checks, is bound;
+      // a tick while a pass runs starts nothing, and closing stops the pass.
+      let pass: Promise<unknown> | undefined;
+      this.publicationTimer = setInterval(() => {
+        pass ??= this.network(() => this.publicationStore.syncDue(() => this.publicationClosed))
+          .catch(() => undefined)
+          .finally(() => (pass = undefined));
+      }, 30_000);
+      this.publicationTimer.unref();
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
   }
-  async capture(...args: Parameters<CodeCaptureReader['capture']>) {
-    return await this.captureReader.capture(...args);
-  }
+  capture: Code['capture'] = (...args) => this.captureReader.capture(...args);
   async checkCapture(
     caller: Caller,
     ref: CodeCaptureRef,
@@ -291,24 +292,18 @@ export class CodeService extends CodeCommandService implements Code {
       if (binding) await this.writerStore.requireAdmitted(input, binding, tx);
       return super.completeCommand(caller, input);
     };
-    const tx = this.storage.ambient;
-    return tx ? complete(tx) : this.storage.transaction(complete);
+    const tx = this.state.ambient;
+    return tx ? complete(tx) : this.state.transaction(complete);
   }
-  controlPublication(caller: Caller, input: unknown): Promise<unknown> {
-    return this.publicationHost.control(caller, input);
-  }
-  publications(...args: Parameters<CodePublicationService['publications']>) {
-    return this.publicationStore.publications(...args);
-  }
-  syncPublications(...args: Parameters<CodePublicationService['syncPublications']>) {
-    return this.network(() => this.publicationStore.syncPublications(...args));
-  }
-  publicationDetails(...args: Parameters<CodePublicationService['publicationDetails']>) {
-    return this.network(() => this.publicationStore.publicationDetails(...args));
-  }
-  mergePublication(...args: Parameters<CodePublicationService['mergePublication']>) {
-    return this.network(() => this.publicationStore.mergePublication(...args));
-  }
+  controlPublication: Code['controlPublication'] = (...args) =>
+    this.publicationHost.control(...args);
+  publications: Code['publications'] = (caller) => this.publicationStore.publications(caller);
+  syncPublications: Code['syncPublications'] = (caller) =>
+    this.network(() => this.publicationStore.syncPublications(caller));
+  publicationDetails: Code['publicationDetails'] = (...args) =>
+    this.network(() => this.publicationStore.publicationDetails(...args));
+  mergePublication: Code['mergePublication'] = (...args) =>
+    this.network(() => this.publicationStore.mergePublication(...args));
   bindReviews(reviews: import('@merv/contracts').Reviews): () => void {
     this.unitStore.reviews = reviews;
     const releasePublication = this.publicationHost.bindReviews(reviews);
@@ -344,15 +339,10 @@ export class CodeService extends CodeCommandService implements Code {
     };
   }
 
-  async declareUnit(...args: Parameters<CodeUnitService['declareUnit']>) {
-    return await this.unitStore.declareUnit(...args);
-  }
-  async acceptUnit(...args: Parameters<CodeUnitService['acceptUnit']>) {
-    return await this.unitStore.acceptUnit(...args);
-  }
-  async publishOnAcceptance(...args: Parameters<CodeUnitService['publishOnAcceptance']>) {
-    return await this.unitStore.publishOnAcceptance(...args);
-  }
+  declareUnit: Code['declareUnit'] = (...args) => this.unitStore.declareUnit(...args);
+  acceptUnit: Code['acceptUnit'] = (...args) => this.unitStore.acceptUnit(...args);
+  publishOnAcceptance: Code['publishOnAcceptance'] = (...args) =>
+    this.unitStore.publishOnAcceptance(...args);
   /**
    * The accepted units whose code the project's main does not contain yet. It takes no
    * transaction, because the house rule is that Git never runs inside one: the candidates are
@@ -379,15 +369,12 @@ export class CodeService extends CodeCommandService implements Code {
       for (const line of walk.stdout.toString('utf8').split('\n'))
         if (line) beyond.add(line.trim());
     }
-    const missing = candidates.filter((item) => beyond.has(item.commit));
-    const unitIds = missing
-      .filter((item) => !item.quarantined)
-      .map((item) => item.unitId)
-      .sort();
-    const quarantined = missing
-      .filter((item) => item.quarantined)
-      .map((item) => item.unitId)
-      .sort();
+    const missing = (quarantined: boolean) =>
+      candidates
+        .filter((item) => beyond.has(item.commit) && !!item.quarantined === quarantined)
+        .map((item) => item.unitId)
+        .sort();
+    const [unitIds, quarantined] = [missing(false), missing(true)];
     return {
       unitIds,
       quarantined,
@@ -395,41 +382,27 @@ export class CodeService extends CodeCommandService implements Code {
       hash: digest({ formatVersion: 1, main, unitIds, quarantined }),
     };
   }
-  async baseStatus(...args: Parameters<CodeUnitService['baseStatus']>) {
-    return await this.unitStore.baseStatus(...args);
-  }
-  async pinBase(...args: Parameters<CodeUnitService['pinBase']>) {
-    return await this.unitStore.pinBase(...args).catch(refuse);
-  }
-  async basePin(...args: Parameters<CodeUnitService['basePin']>) {
-    return await this.unitStore.basePin(...args);
-  }
+  baseStatus: Code['baseStatus'] = (...args) => this.unitStore.baseStatus(...args);
+  pinBase: Code['pinBase'] = (...args) => this.unitStore.pinBase(...args).catch(refuse);
+  basePin: Code['basePin'] = (...args) => this.unitStore.basePin(...args);
   /** Plugin wiring, not part of the Code contract: no other plugin reconciles Code's view. */
-  async reconcileAll() {
-    await this.unitStore.reconcileAll();
-  }
+  reconcileAll = () => this.unitStore.reconcileAll();
   async transitioned(...args: Parameters<CodeUnitService['transitioned']>) {
     await this.unitStore.transitioned(...args);
     // An acceptance journals the ref it is kept under; the journal takes it up after this.
     this.store?.wake();
   }
   /** One maintenance pass now, as the timer would make it. */
-  async maintainStore() {
-    await this.store?.maintain();
-  }
+  maintainStore = async () => void (await this.store?.maintain());
   /** One publication pass now, as the timer would make it. */
-  async mirrorStep() {
-    await this.mirrorStore?.run();
-  }
+  mirrorStep = async () => void (await this.mirrorStore?.run());
   async controlBase(caller: Caller, input: unknown) {
-    if (!this.baseStore)
-      throw new MervError('code_unavailable', 'Hosted bases are unavailable', 503);
-    return this.baseStore.control(this.baseScope, caller, input);
+    check(this.baseStore, 'code_unavailable', 'Hosted bases are unavailable', 503);
+    return this.baseStore.control(this.scope, caller, input);
   }
   async retryMirror(caller: Caller, input: unknown) {
-    if (!this.mirrorStore)
-      throw new MervError('code_store_unavailable', 'This server keeps no Code repositories', 503);
-    return await this.mirrorStore.retry(caller, input);
+    this.requireStore();
+    return await this.mirrorStore!.retry(caller, input);
   }
   async sessionChanged(event: StoredEvent, tx: Transaction) {
     check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
@@ -468,7 +441,7 @@ export class CodeService extends CodeCommandService implements Code {
     const store = this.requireStore();
     caller = structuredClone(caller);
     await store.maintain(false);
-    const status = await this.storage.transaction(async (tx) => {
+    const status = await this.state.transaction(async (tx) => {
       check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
       return await this.writerStore.fence(caller, input, tx);
     });
@@ -489,29 +462,19 @@ export class CodeService extends CodeCommandService implements Code {
       /^[0-9a-f]{40,64}$/.test(named) &&
       (await this.store.contains(caller.projectId, named));
     if (!binding) return await this.unitStore.bindLocal(caller, input, stored);
-    return await this.storage.transaction(async (tx) => {
+    return await this.state.transaction(async (tx) => {
       await this.github.assertBinding(caller, binding, tx, 'read');
       return await this.unitStore.bindLocal(caller, input, stored, tx);
     });
   }
   /** The Running page's reads, each on the page's snapshot (running.ts). */
-  runningHolds(caller: Caller) {
-    return this.board.holds(caller);
-  }
-  runningChecks(caller: Caller) {
-    return this.board.checks(caller);
-  }
-  runningPanel(caller: Caller, key: string) {
-    return this.board.panel(caller, key);
-  }
-  runningCode(caller: Caller, keys: readonly string[]) {
-    return this.board.sections(caller, keys);
-  }
-  async hosted(...args: Parameters<CodeUnitService['hosted']>) {
-    return await this.unitStore.hosted(...args);
-  }
+  runningHolds: Code['runningHolds'] = (caller) => this.board.holds(caller);
+  runningChecks: Code['runningChecks'] = (caller) => this.board.checks(caller);
+  runningPanel: Code['runningPanel'] = (caller, key) => this.board.panel(caller, key);
+  runningCode: Code['runningCode'] = (caller, keys) => this.board.sections(caller, keys);
+  hosted: Code['hosted'] = (...args) => this.unitStore.hosted(...args);
   async ensureRepository(caller: Caller, tx: Transaction): Promise<void> {
-    await this.baseScope.require(caller, 'write', tx);
+    await this.scope.require(caller, 'write', tx);
     if (await this.unitStore.hosted(caller, tx)) return;
     const store = this.requireStore();
     await declareManagedProject(tx, caller.projectId);
@@ -522,9 +485,7 @@ export class CodeService extends CodeCommandService implements Code {
     await declareManagedProject(tx, projectId);
     this.store.wake();
   }
-  async unit(...args: Parameters<CodeUnitService['unit']>) {
-    return await this.unitStore.unit(...args);
-  }
+  unit: Code['unit'] = (...args) => this.unitStore.unit(...args);
   async status(caller: Caller) {
     const status = await this.unitStore.status(caller);
     const publication =
@@ -538,11 +499,11 @@ export class CodeService extends CodeCommandService implements Code {
         : {};
     if (!this.store) return { ...status, ...publication };
     const technical = await this.store.describe(caller.projectId);
-    const configuredCheck = await this.storage.read((sql) => projectCheck(sql, caller.projectId));
+    const configuredCheck = await this.state.read((sql) => projectCheck(sql, caller.projectId));
     return {
       ...status,
       ...publication,
-      bases: await this.storage.read(
+      bases: await this.state.read(
         (sql) => this.baseStore?.records(sql, caller.projectId) ?? Promise.resolve([]),
       ),
       ...technical,
@@ -555,20 +516,16 @@ export class CodeService extends CodeCommandService implements Code {
       throw new MervError('code_store_unavailable', 'This server keeps no Code repositories', 503);
     return this.store;
   }
-  async importRepository(caller: Caller, input: unknown) {
-    return await this.requireStore().importRepository(caller, input);
-  }
-  async prepareRepository(
-    caller: Caller,
-    input: import('@merv/contracts').CodeRepositoryPrepareInput,
-  ) {
+  importRepository = async (caller: Caller, input: unknown) =>
+    this.requireStore().importRepository(caller, input);
+  async prepareRepository(caller: Caller, value: CodeRepositoryPrepareInput) {
     caller = structuredClone(caller);
-    input = parseCodeInput(repositoryPrepareSchema, input);
-    await this.storage.transaction((tx) => this.ensureRepository(caller, tx));
+    const input = parseCodeInput(repositoryPrepareSchema, value);
+    await this.state.transaction((tx) => this.ensureRepository(caller, tx));
     await this.requireStore().maintain(false);
     return prepareRepository(this, caller, input, (operation) =>
       reconcileRepository(
-        this.storage,
+        this.state,
         this.requireStore().repositories,
         this.github,
         this.unitStore,
@@ -581,24 +538,16 @@ export class CodeService extends CodeCommandService implements Code {
   /** The binding and hosting a preparation compares; status() reads far more than these. */
   async repositoryState(caller: Caller) {
     const store = this.requireStore();
-    return await this.storage.transaction(async (tx) => {
-      await this.baseScope.require(caller, 'read', tx);
+    return await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
       const project = await this.unitStore.project(tx, caller.projectId);
       return { project, store: { hosted: !!(await store.stored(tx, caller.projectId)) } };
     });
   }
-  async rebindRepository(caller: Caller, input: unknown) {
-    return await this.requireStore().rebindRepository(caller, input);
-  }
-  async configureRepository(caller: Caller, input: unknown) {
-    return await configureWorkRepository(
-      this.storage,
-      this.baseScope,
-      this.requireStore(),
-      caller,
-      input,
-    );
-  }
+  rebindRepository = async (caller: Caller, input: unknown) =>
+    this.requireStore().rebindRepository(caller, input);
+  configureRepository = async (caller: Caller, input: unknown) =>
+    configureWorkRepository(this.state, this.scope, this.requireStore(), caller, input);
   /**
    * The second workspace protocol as the API forwards it: opaque bodies and bundle bytes.
    * Absent when this server keeps no repositories, which the API answers as unavailable.

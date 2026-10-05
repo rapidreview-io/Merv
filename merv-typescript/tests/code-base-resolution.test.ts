@@ -825,6 +825,7 @@ test('conflict recovery creates and links the task atomically', async (t) => {
   assert.equal((await f.record())!.state, 'awaiting_resolution');
   assert.equal((await f.record())!.resolutionTaskId, null);
   f.units.resolutionTasks = {
+    resume: provider.resume,
     create: async (input, tx) => {
       await provider.create(input, tx);
       throw new Error('Crash before linkage');
@@ -868,7 +869,7 @@ test('conflict recovery creates and links the task atomically', async (t) => {
 
 test('a service task derives its base from prerequisites when it names no commit', async (t) => {
   const f = await fixture(t);
-  const provider = f.units.resolutionTasks!;
+  const provider = f.tasks.serviceTasks('code');
   const brief = {
     projectId: f.admin.projectId,
     title: 'Consolidate',

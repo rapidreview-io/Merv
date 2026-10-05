@@ -372,19 +372,8 @@ function BaseBody({
   );
 }
 
-function PublishedBody({
-  published,
-  model,
-  onSelect,
-}: {
-  published: CodePublication;
-  model: GitModel;
-  onSelect(id: string): void;
-}) {
+function PublishedBody({ published }: { published: CodePublication }) {
   const pull = published.pull;
-  // The wave that replaced this one is a ring on this very drawing, so it is named by
-  // its own title and selected by pressing it — never printed as the id it is keyed by.
-  const successor = model.nodes.find((node) => node.id === published.successor);
   return (
     <>
       <KV
@@ -408,16 +397,7 @@ function PublishedBody({
             'Merged',
             <Short value={(published.merge?.commitSha ?? pull?.mergeCommitSha)!} />,
           ],
-          !!published.stale && [
-            'Superseded',
-            successor ? (
-              <button type="button" className="btn-text" onClick={() => onSelect(successor.id)}>
-                {successor.name}
-              </button>
-            ) : (
-              'by a later wave'
-            ),
-          ],
+          !!published.stale && ['Superseded', 'main moved before it merged'],
         ]}
       />
       {/* What the published repository holds and this server did not write is the one
@@ -550,7 +530,7 @@ export function CodeCard({
           onDone={onDone}
         />
       )}
-      {!!published && <PublishedBody published={published} model={model} onSelect={onSelect} />}
+      {!!published && <PublishedBody published={published} />}
       {!unit && open}
     </div>
   );

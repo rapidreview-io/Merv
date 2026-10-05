@@ -103,12 +103,6 @@ export class PublicationHost {
       );
     }
     const envelope = record.approval!;
-    check(
-      envelope.source === 'unit',
-      'publication_retired',
-      'This publication belongs to a retired workflow',
-      409,
-    );
     const accepted = await tx.get<{ acceptance_json: string }>(
       'SELECT acceptance_json FROM code_units WHERE project_id=? AND unit_id=?',
       caller.projectId,
@@ -138,25 +132,12 @@ export class PublicationHost {
       409,
     );
   }
-  /** Where a publication stands is Code's own row; the unit's blockers are read back from it. */
+  /**
+   * Where a publication stands is Code's own row; the unit's blockers are read back from it.
+   * An accepted unit has no producing state to return to, so this is all an outcome changes.
+   */
   async reconcile(caller: Caller, tx: Transaction) {
     await this.changed(caller.projectId, tx);
-  }
-  async apply(
-    caller: Caller,
-    record: CodePublication,
-    outcome: 'stale' | 'resume' | 'published',
-    tx: Transaction,
-  ) {
-    // A unit has no producing state to return to and is already accepted: what an outcome
-    // changes for it is what its own publication row now says, which it reads back here.
-    if (record.approval!.source !== 'unit')
-      throw new MervError(
-        'publication_retired',
-        'This publication belongs to a retired workflow',
-        409,
-      );
-    await this.reconcile(caller, tx);
   }
   async ancestor(projectId: string, base: string, head: string) {
     const repos = this.repositories();
@@ -350,7 +331,9 @@ export class PublicationHost {
         ...controls,
         blockers: [
           ...(controls.disabled ? ['code_publication_disabled'] : []),
-          ...(controls.visibility?.incomplete ? ['code_rules_visibility_incomplete'] : []),
+          ...(controls.visibility?.incomplete && !controls.acknowledgement
+            ? ['code_rules_visibility_incomplete']
+            : []),
           ...(!controls.canary ? ['code_publication_canary_required'] : []),
         ],
       };

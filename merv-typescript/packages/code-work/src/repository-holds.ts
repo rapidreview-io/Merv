@@ -28,5 +28,15 @@ END $$;
 CREATE TRIGGER research_publication_repository_hold AFTER INSERT OR UPDATE ON code_publications FOR EACH ROW EXECUTE FUNCTION research_publication_repository_hold();
 `,
     },
+    {
+      // A publication's hold follows `settled` alone; every lock, unlock and sync pass
+      // rewrote it before.
+      version: 2,
+      sql: `
+DROP TRIGGER research_publication_repository_hold ON code_publications;
+CREATE TRIGGER research_publication_repository_hold AFTER INSERT ON code_publications FOR EACH ROW EXECUTE FUNCTION research_publication_repository_hold();
+CREATE TRIGGER research_publication_repository_settled AFTER UPDATE OF settled ON code_publications FOR EACH ROW WHEN (OLD.settled IS DISTINCT FROM NEW.settled) EXECUTE FUNCTION research_publication_repository_hold();
+`,
+    },
   ]);
 }

@@ -30,10 +30,7 @@ export interface CodePublication {
    * not repeated here: this row already carries them, and it is immutable.
    */
   approval?: {
-    /**
-     * Who opened the publication. Only `unit` publications are live; any other value, or none,
-     * is a retained envelope from a retired opener that is read but never synced or merged.
-     */
+    /** Who opened the publication: always `unit`, an accepted unit of work. */
     source?: string;
     integrationBase: string;
     /** The review's pinned provenance; null where the passing review carried none. */
@@ -41,7 +38,6 @@ export interface CodePublication {
     acceptanceHash: string;
   };
   stale?: boolean;
-  successor?: string | null;
   verified?: boolean;
   incident?: {
     commitSha: string | null;

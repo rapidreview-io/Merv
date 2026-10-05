@@ -55,7 +55,6 @@ interface Row {
   synced_at: string;
   settled: number;
   stale: number;
-  successor: string | null;
   verified: number;
   incident_json: string | null;
 }
@@ -64,8 +63,7 @@ interface Row {
  * An unsettled unit publication not tried in 30 seconds or, once its pull request is open and
  * waits on a person, in `idle`: ten minutes for Code's own pass, as each read costs ~7 GitHub calls.
  */
-const due =
-  "settled=0 AND (synced_at<? OR (pull_json IS NULL AND synced_at<?)) AND record_json::jsonb->'approval'->>'source' = 'unit'";
+const due = 'settled=0 AND (synced_at<? OR (pull_json IS NULL AND synced_at<?))';
 const since = (idle: number) => [idle, 30_000].map((ms) => new Date(Date.now() - ms).toISOString());
 const IDLE = 600_000;
 
@@ -96,7 +94,6 @@ export class CodePublicationService implements CodePublicationApi {
           }))(JSON.parse(row.binding_json))
         : {}),
       stale: !!row.stale,
-      successor: row.successor,
       verified: !!row.verified,
       incident: row.incident_json ? JSON.parse(row.incident_json) : null,
       review: row.review_json ? JSON.parse(row.review_json) : null,
@@ -314,7 +311,6 @@ export class CodePublicationService implements CodePublicationApi {
           'UPDATE code_publications SET verified=1 WHERE proposal_id=?',
           record.proposalId,
         );
-        await this.host.apply(caller, record, 'published', tx);
         await this.host.main(caller, pull.mergeCommitSha!, tx);
         // Commit the wake-up with the verified receipt and admitted main, never with a preview.
         await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
@@ -350,7 +346,7 @@ export class CodePublicationService implements CodePublicationApi {
           "UPDATE code_publications SET stale=1,settled=1,error='code_main_changed' WHERE proposal_id=?",
           row.proposal_id,
         );
-        await this.host.apply(caller, current, 'stale', tx);
+        await this.host.reconcile(caller, tx);
         return;
       }
       await tx.run(
@@ -366,7 +362,6 @@ export class CodePublicationService implements CodePublicationApi {
         row.proposal_id,
       );
       await this.host.main(caller, record.headOid, tx, main);
-      await this.host.apply(caller, current, 'published', tx);
       await recorded(this.state, tx, caller, 'code.publication_verified', record.proposalId, {
         destination: 'local',
         unitId: record.instanceId,
@@ -551,12 +546,6 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return this.locked(caller, input.proposalId, async (row, lock) => {
       const record = this.decode(row);
-      check(
-        record.approval?.source === 'unit',
-        'publication_retired',
-        'This publication belongs to a retired workflow',
-        409,
-      );
       const replay = await this.state.transaction(async (tx) => {
         await this.scope.require(caller, 'admin', tx);
         const old = await tx.get<{ input_hash: string }>(
@@ -663,7 +652,7 @@ export class CodePublicationService implements CodePublicationApi {
                   canonical(closed),
                   record.proposalId,
                 );
-              await this.host.apply(caller, record, 'stale', tx);
+              await this.host.reconcile(caller, tx);
             });
             return this.decode(
               await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),

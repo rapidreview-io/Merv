@@ -561,7 +561,7 @@
         },
         {
           "name": "code.publication.sync",
-          "description": "Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.",
+          "description": "Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs and emit exact-head approval status. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.",
           "readOnly": false
         },
         {
@@ -684,7 +684,7 @@
         },
         {
           "name": "code.publication.sync",
-          "description": "Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.",
+          "description": "Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs and emit exact-head approval status. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.",
           "readOnly": false
         },
         {

@@ -1,6 +1,7 @@
 import { baseKey } from './base-plan.js';
 import { pendingMerge, pinMerge } from '@merv/code/pending-merge';
 import type { CodeWriterService } from '@merv/code/writers';
+import type { CodeUnitStore } from '@merv/code/units';
 import type { CodeBaseRecord } from '@merv/contracts';
 import {
   canonical,
@@ -26,7 +27,7 @@ import {
   type WorkflowProvidedBlockerInput,
   type Workflows,
 } from '@merv/contracts';
-import { checkBriefSections, checkResolutionCheck } from './base-check.js';
+import { checkFailure } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
 import {
@@ -40,6 +41,8 @@ import type {
   CodeCaptureRef,
   CodeCaptures,
   CodeUnits,
+  ResolutionInput,
+  ResolutionWork,
   ResolutionWorkCreator,
 } from './types.js';
 
@@ -126,6 +129,12 @@ const PROVIDER = 'code';
 const EXPLICIT_BASE =
   'Import the project repository into managed Code, then create new work with accepted code prerequisites in dependsOn';
 const IMPORT = 'An administrator imports it with `merv code-import`';
+/**
+ * The units a project pass derives again: those still waiting for a base, and those whose
+ * publication has not settled. A settled one's blocker never changes again, so it is skipped.
+ */
+const RECONCILED =
+  '(base_json IS NULL AND acceptance_json IS NULL) OR publication_id IN (SELECT proposal_id FROM code_publications WHERE settled=0)';
 
 /** Work-unit policy for durable Code records; absent deployments do not install this integration. */
 export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
@@ -143,9 +152,10 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     private readonly workflows: Workflows,
     private readonly captures: CodeCaptures,
     writers: CodeWriterService,
+    units: CodeUnitStore,
     private readonly sessions: Pick<import('@merv/sessions/types').Sessions, 'contributors'>,
   ) {
-    super(state, scope, writers);
+    super(state, scope, writers, units);
     this.unobserve = writers.changes.observe(async (change, tx) => {
       if (change.kind === 'binding') await this.reconcileProject(tx, change.projectId);
       else await this.reconcileUnit(tx, change.projectId, change.unitId);
@@ -882,7 +892,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
           message: `Base resolution task “${task?.instance.name ?? record.resolutionTaskId}” (${record.resolutionTaskId}) is ${task?.instance.state ?? 'missing'}. ${record.resolutionError ?? `Conflicting paths: ${(record.conflict?.paths ?? []).join(', ')}`}`,
           next:
             task?.instance.state === 'suspended'
-              ? 'A signed-in human operator must extend review_rounds with workflow.extend_limit to resume this same task, or cancel/replan the waiting work. Keep this waiter pending.'
+              ? `${this.resolutionTasks?.resume ?? 'The resolution task resumes as its own next move says'}, or an operator cancels/replans the waiting work. Keep this waiter pending.`
               : 'Complete the existing resolution task and its independent review; this unit continues from the accepted result.',
           related: [
             {
@@ -1095,26 +1105,12 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       if (!base.resolutionTaskId && this.resolutionTasks) {
         const [left, right] = await this.bases.inputs(tx, projectId, base);
         if (!left || !right) continue;
-        const brief = await this.resolutionBrief(tx, projectId, base, left, right);
         const task = await this.resolutionTasks.create(
           {
             projectId,
             requestId: `base:${base.key}`,
-            ...brief,
             baseReference: left,
-            checks: [
-              `The first completed merge on the task branch must have exactly two parents: the current checkpoint descending from ${left}, and frozen right input ${right}, in that order. Later rounds add ordinary corrective commits.`,
-              // A base whose check failed has no conflicting path to resolve, so asking for
-              // that would contradict the brief's own Project check section three lines down.
-              checkBriefSections(base)
-                ? 'Leave no conflict markers.'
-                : 'Resolve every conflicting path and leave no conflict markers.',
-              // A base whose check failed merged cleanly, so what this round owes is the
-              // failing command passing, not paths resolved. That sentence is where
-              // "resolution rounds supply reviewed verification evidence" reaches a worker.
-              checkResolutionCheck(base) ??
-                'Run the project build and tests as far as this workspace permits; retain commands, results, and any checks that could not run as review evidence.',
-            ],
+            work: await this.resolutionWork(tx, projectId, base, left, right),
           },
           tx,
         );
@@ -1153,61 +1149,39 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     );
   }
 
-  private async resolutionBrief(
+  /** Each side of a conflicted base: its accepted commits and the units accepted with them. */
+  private async resolutionWork(
     tx: Transaction,
     projectId: string,
     base: CodeBaseRecord,
     left: string,
     right: string,
-  ): Promise<{ title: string; goal: string }> {
+  ): Promise<ResolutionWork> {
     const records = await this.bases!.records(tx, projectId);
-    const inputs = (key: string) =>
-      records.find((record) => record.key === key)?.members ??
-      base.members.filter((commit) => baseKey([commit]) === key);
-    const names = new Map<string, string[]>();
-    const titles = new Map<string, string[]>();
+    const units = new Map<string, ResolutionInput['units']>();
     for (const unit of await tx.all<UnitRow>(
       `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
       projectId,
     )) {
       const accepted = JSON.parse(unit.acceptance_json!) as AcceptanceBody;
       if (!accepted.code || !base.members.includes(accepted.code.commit)) continue;
-      const facts = await this.dependencies(tx, projectId, unit.unit_id);
-      const title = facts?.instance.name ?? 'Accepted work';
-      titles.set(accepted.code.commit, [...(titles.get(accepted.code.commit) ?? []), title]);
-      const entries = names.get(accepted.code.commit) ?? [];
-      entries.push(`${facts?.instance.name ?? unit.unit_id} (${unit.unit_id})`);
-      names.set(accepted.code.commit, entries);
+      const name = (await this.dependencies(tx, projectId, unit.unit_id))?.instance.name ?? null;
+      const entries = units.get(accepted.code.commit) ?? [];
+      units.set(accepted.code.commit, [...entries, { id: unit.unit_id, name }]);
     }
-    const side = (key: string) =>
-      inputs(key)
-        .map((commit) => `${commit}: ${(names.get(commit) ?? ['Accepted input']).join('; ')}`)
-        .join('\n');
-    // Each section gets its own room, so long provenance cannot push the right input or Git's diagnostics out of the brief.
-    const bounded = (value: string, limit: number) =>
-      value.length <= limit ? value : `${value.slice(0, limit)}\n[Truncated in the task brief.]`;
-    const titleSide = (key: string) => {
-      const items = inputs(key).flatMap((commit) => titles.get(commit) ?? ['Accepted work']);
-      const first = items[0] ?? 'Accepted work';
-      const label = first.length > 80 ? `${first.slice(0, 79)}…` : first;
-      return `‘${label}’${items.length > 1 ? ` and ${items.length - 1} more` : ''}`;
-    };
-    // A failing project check is a conflict with no paths: every heading and the opening
-    // sentence a worker reads first would lie, so the brief says what has to pass instead.
-    const checked = checkBriefSections(base);
-    const sections = checked ?? [
-      `Conflicting paths:\n${bounded((base.conflict?.paths ?? []).join('\n'), 4000)}`,
-      `Git messages:\n${bounded(base.conflict?.messages ?? '', 4000)}`,
-    ];
+    const side = (key: string, commit: string) => ({
+      commit,
+      inputs: (
+        records.find((record) => record.key === key)?.members ??
+        base.members.filter((member) => baseKey([member]) === key)
+      ).map((member) => ({ commit: member, units: units.get(member) ?? [] })),
+    });
     return {
-      title: checked
-        ? `Make the project check pass on ${titleSide(base.left)} with ${titleSide(base.right)}`
-        : `Merge ${titleSide(base.left)} with ${titleSide(base.right)}`,
-      goal: `${
-        checked
-          ? `The merge of ${titleSide(base.left)} and ${titleSide(base.right)} is clean; its project check failed.`
-          : `Resolve conflicts between ${titleSide(base.left)} and ${titleSide(base.right)}.`
-      }\n\nLeft input ${left} (the workspace starts here):\n${bounded(side(base.left), 8000)}\n\nRight input ${right} (frozen):\n${bounded(side(base.right), 8000)}\n\n${sections[0]}\n\nUse code.merge operation start on the clean initial checkout; wait for code.operation. The right input is frozen and never follows a branch. ${checked ? 'Make the command pass on the merged tree, retain its commands and results as evidence' : 'Resolve the files, retain conflict decisions and test evidence'}, then use code.merge operation complete. code.commit and final captures save single-parent WIP before completion. After interruption on any machine, continue from the downloaded checkpoint and its pendingMerge metadata; do not restart over saved WIP. After the first completed merge, later rounds use code.commit for corrections on this same branch. Retain the operation receipt, parent evidence, and commands and results for independent review.\n\n${sections[1]}`,
+      kind: 'base',
+      left: side(base.left, left),
+      right: side(base.right, right),
+      conflict: { paths: base.conflict?.paths ?? [], messages: base.conflict?.messages ?? '' },
+      check: checkFailure(base),
     };
   }
 
@@ -1331,7 +1305,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     const units = new Set(
       (
         await tx.all<{ unit_id: string }>(
-          'SELECT unit_id FROM code_units WHERE project_id=? AND ((base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL)',
+          `SELECT unit_id FROM code_units WHERE project_id=? AND (${RECONCILED})`,
           projectId,
         )
       ).map((row) => row.unit_id),
@@ -1350,7 +1324,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
           await sql.all<{ project_id: string }>(
             resolving
               ? "SELECT DISTINCT project_id FROM code_bases WHERE state='awaiting_resolution' AND health='healthy' AND resolution_task_id IS NULL"
-              : 'SELECT DISTINCT project_id FROM code_units WHERE (base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL',
+              : `SELECT DISTINCT project_id FROM code_units WHERE ${RECONCILED}`,
           )
         ).map((row) => row.project_id),
       );
@@ -1409,12 +1383,14 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
           disabled?: boolean;
           canary?: unknown;
           visibility?: { incomplete?: boolean };
+          acknowledgement?: unknown;
         })
       : {};
     // A failed canary explicitly disables publication. Missing setup also blocks merging,
-    // but must not say an operator needs to clear a disablement that never happened.
+    // but must not say an operator needs to clear a disablement that never happened. Rules
+    // the App cannot see wait on an administrator's acknowledgement; a merge still reads them.
     if (enforcement.disabled) return { ...publication, state: 'disabled' };
-    if (!enforcement.canary || enforcement.visibility?.incomplete)
+    if (!enforcement.canary || (enforcement.visibility?.incomplete && !enforcement.acknowledgement))
       return { ...publication, state: 'setup_required' };
     return publication;
   }

@@ -1,7 +1,7 @@
 # Experiments
 
 Experiments owns research questions, attempts, evidence selections and the two
-independent review gates. It registers four current contracts: managed-Git execution at `experiment@28`/`32` (small/large uploads), kept for live work, and native Sandboxes execution at `experiment@36`/`40`, which every new experiment uses. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes describe planning, design review, execution and results review.
+independent review gates. It registers four current contracts: managed-Git execution at `experiment@28`/`32` (small/large uploads), kept for live work, and native Sandboxes execution at `experiment@36`/`40`, which every new experiment uses. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
 Other stored versions remain read-only history. Their attempts, submissions, evidence, verdicts and pinned workflow graphs are retained, but their old runtime implementations are not registered. They cannot dispatch, accept attachments or transitions, or acquire new review claims, and they do not occupy a current execution slot. No old record is upgraded into another contract. Creating a current experiment starts planning; it does not launch a process or decide whether a scientific claim is true.
 

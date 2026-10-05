@@ -13,6 +13,7 @@ import type {
   SandboxCheckVerdict,
 } from '@merv/sandboxes/types';
 import type { ServerGit } from '@merv/code/git';
+import type { ResolutionWork } from './types.js';
 
 /**
  * The project check of one base, on the Code side. A base that merged cleanly is not sealed
@@ -159,30 +160,21 @@ const printed = (receipt: NonNullable<CodeBaseCheck['receipt']>) => {
   return `${receipt.output.head}${gap}${receipt.output.tail}`;
 };
 
-/**
- * The two sections a failing project check puts in the resolution brief in place of Git's,
- * or null when Git is what conflicted. Both headings would otherwise lie: a check failure
- * has no conflicting paths and Git said nothing about it.
- */
-export function checkBriefSections(base: CodeBaseRecord): [string, string] | null {
+/** What the failed project check of a base ran, where, and printed; null when none failed. */
+export function checkFailure(
+  base: CodeBaseRecord,
+): Extract<ResolutionWork, { kind: 'base' }>['check'] {
   const verdict = base.checkState === 'failed' ? base.check : null;
   const receipt = verdict?.receipt;
-  if (!verdict || !receipt || base.conflict?.paths.length) return null;
-  const machine = receipt.environment
-    ? `${receipt.environment.provider} ${receipt.environment.offerId}`
-    : 'a rented machine';
-  const outcome = receipt.timedOut
-    ? `timed out after ${verdict.spec?.timeoutSeconds ?? 0} seconds`
-    : `exited ${receipt.exitCode}`;
-  return [
-    `Project check:\n\`${verdict.spec?.command ?? ''}\` ${outcome} on ${machine}. The merge itself was clean; this command has to pass on the merged tree.`,
-    `Check output:\n${bounded(printed(receipt), 4000)}`,
-  ];
-}
-
-/** What the worker who resolves a failing check is asked to have done. */
-export function checkResolutionCheck(base: CodeBaseRecord): string | null {
-  const verdict = base.checkState === 'failed' ? base.check : null;
-  if (!verdict?.receipt) return null;
-  return `The project check \`${verdict.spec?.command ?? ''}\` ${verdict.receipt.timedOut ? 'timed out' : `failed with exit ${verdict.receipt.exitCode}`}. Make it pass on the merged tree, and retain the command and its result as review evidence.`;
+  if (!verdict || !receipt) return null;
+  return {
+    command: verdict.spec?.command ?? '',
+    machine: receipt.environment
+      ? `${receipt.environment.provider} ${receipt.environment.offerId}`
+      : 'a rented machine',
+    exitCode: receipt.exitCode,
+    timedOut: receipt.timedOut,
+    timeoutSeconds: verdict.spec?.timeoutSeconds ?? 0,
+    output: bounded(printed(receipt), 4000),
+  };
 }

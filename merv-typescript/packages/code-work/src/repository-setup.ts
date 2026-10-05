@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { check, githubBranchSchema } from '@merv/contracts';
-import { parseCodeInput } from '@merv/code/input';
 import type {
   Caller,
   CodeRepositoryPreparation,
@@ -27,16 +26,14 @@ export const repositoryPrepareSchema = z
 
 /**
  * Import the selected branch into the project's hosted repository, then integrate it. Retries
- * keep the administrator's exact selection.
+ * keep the administrator's exact selection, which the caller has already parsed.
  */
 export async function prepareRepository(
   code: PreparationHost,
   caller: Caller,
-  value: CodeRepositoryPrepareInput,
+  input: CodeRepositoryPrepareInput,
   reconcile: (operation: CodeStoreOperation) => Promise<CodeRepositoryPreparation>,
 ): Promise<CodeRepositoryPreparation> {
-  caller = structuredClone(caller);
-  const input = parseCodeInput(repositoryPrepareSchema, value);
   const connection = await code.github.status(caller);
   check(
     connection.revision === input.expectedRevision && connection.baseBranch === input.baseBranch,

@@ -214,25 +214,47 @@ export interface CodeRunning {
   /** The Code section of each `work:<id>` key that has a unit; nothing for the rest. */
   runningCode(caller: Caller, keys: readonly string[]): Promise<RunningSection[]>;
 }
+/** One accepted commit of a resolution input, and the units accepted with it. */
+export interface ResolutionInput {
+  commit: string;
+  /** `name` is null where the unit's work is gone. */
+  units: { id: string; name: string | null }[];
+}
+/**
+ * What the reviewed work Code asks for has to achieve, as facts; its owner words the brief.
+ * `base`: two inputs of a base whose merge conflicted, or merged cleanly and failed the
+ * project check. `sync`: a GitHub branch head to integrate with Merv main.
+ */
+export type ResolutionWork =
+  | {
+      kind: 'base';
+      /** The workspace starts at `left`; `right` stays frozen. */
+      left: { commit: string; inputs: ResolutionInput[] };
+      right: { commit: string; inputs: ResolutionInput[] };
+      conflict: { paths: string[]; messages: string };
+      /** The failed project check of the merge; `output` is already bounded. */
+      check: {
+        command: string;
+        machine: string;
+        exitCode: number | null;
+        timedOut: boolean;
+        timeoutSeconds: number;
+        output: string;
+      } | null;
+    }
+  | { kind: 'sync'; branch: string; main: string; head: string };
 /**
  * The port a work owner binds so Code can open the reviewed work that resolves a base or
- * integrates a GitHub branch. It runs in Code's transaction; no public input selects it.
+ * integrates a GitHub branch, starting at `baseReference`. It runs in Code's transaction; no
+ * public input selects it.
  */
 export interface ResolutionWorkCreator {
   create(
-    input: {
-      projectId: string;
-      requestId: string;
-      title: string;
-      goal: string;
-      checks: string[];
-    } & (
-      | { baseReference: string; dependsOn?: never }
-      /** Prerequisites of the same project; the base is derived from them. */
-      | { dependsOn: string[]; baseReference?: never }
-    ),
+    input: { projectId: string; requestId: string; baseReference: string; work: ResolutionWork },
     tx: Transaction,
   ): Promise<{ id: string }>;
+  /** What resumes the work once it is suspended, said to whatever waits on it. */
+  readonly resume: string;
 }
 export interface Code
   extends

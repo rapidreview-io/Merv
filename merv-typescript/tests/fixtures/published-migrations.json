@@ -841,6 +841,12 @@
       "published": false
     },
     {
+      "component": "code_research_repository_holds",
+      "version": 2,
+      "hash": "7e1e9cedec90c25eda357b15362589f311720d03591016b81c9fbb2147c24957",
+      "published": false
+    },
+    {
       "component": "code_research_check_configuration",
       "version": 1,
       "hash": "5b59c689e27a8666be981e87bb1cfbc2660d908891919dfb57243149ab05c02b",

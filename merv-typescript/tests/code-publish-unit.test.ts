@@ -1,4 +1,5 @@
 import { CodeService as CoreCodeService } from '@merv/code/service';
+import { CodeUnitStore } from '@merv/code/units';
 import { CodeService } from '@merv/code-work/service';
 import type { CodeCapture } from '@merv/code-work/types';
 import { CodeRepositories } from '@merv/code/store/repository';
@@ -511,7 +512,7 @@ test('a quarantine never reaches work that has ended, but a publication wait doe
   assert.equal((await f.code.unit(f.admin, publishing.id)).publication?.state, 'setup_required');
 });
 
-test('incomplete rules visibility needs setup even with a canary, while failed enforcement is disabled', async (t) => {
+test('incomplete rules visibility needs setup even with a canary until acknowledged, while failed enforcement is disabled', async (t) => {
   const f = await fixture(t, true);
   await f.canary();
   const work = await f.declare('Publishing');
@@ -534,6 +535,14 @@ test('incomplete rules visibility needs setup even with a canary, while failed e
   await f.code.reconcileAll();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'setup_required');
   assert.equal((await f.blockers(work.id))[0].code, 'code_publication_setup_required');
+  // An administrator who checked the rules by hand acknowledges what the App cannot see.
+  await f.code.controlPublication(f.admin, {
+    action: 'acknowledge_rules',
+    reason: 'Main requires pull requests and strict merv/consolidation-approved checks.',
+    requestId: 'rules-checked',
+  });
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'pending');
+  assert.equal((await f.blockers(work.id))[0].code, 'code_publication_pending');
   await f.code.controlPublication(f.admin, {
     action: 'record_canary',
     staleMerged: true,
@@ -709,7 +718,13 @@ test('a disabled project and a published tree mismatch both show on the unit', a
     reason: 'The disposable stale pull request merged under a bypass.',
     requestId: 'failed-canary',
   });
-  const core = new WorkUnitRecords(f.state, f.scope, new CodeWriterService(f.state, f.scope, 900));
+  const writers = new CodeWriterService(f.state, f.scope, 900);
+  const core = new WorkUnitRecords(
+    f.state,
+    f.scope,
+    writers,
+    new CodeUnitStore(f.state, f.scope, writers),
+  );
   assert.equal((await core.unit(f.admin, work.id)).publication?.state, 'pending');
   core.close();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'disabled');

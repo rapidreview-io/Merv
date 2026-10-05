@@ -70,7 +70,6 @@ test('completed legacy checkpoints replay exactly without reopening the retired 
   };
   assert.equal((await service.completeCommand(caller, input)).status, 'succeeded');
   Object.assign(service, {
-    storage: state,
     writerStore: { row: async () => ({ generation: 0 }), requireAdmitted: async () => {} },
   });
   const replay = (value: unknown) =>

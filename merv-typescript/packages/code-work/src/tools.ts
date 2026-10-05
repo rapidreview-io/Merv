@@ -54,7 +54,7 @@ export const codeToolsPlugin = {
         name: 'code.publication.sync',
         conversation: 'propose' as const,
         description:
-          'Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs, emit exact-head approval status and close superseded PRs. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.',
+          'Reconcile reviewed integrations: advance Merv main for sealed local destinations; for GitHub destinations open approved snapshot PRs and emit exact-head approval status. Local integration requires no GitHub credentials. Requires project write authority and refuses leased workers.',
         inputSchema: z.object({}).strict(),
         handler: (caller: Caller) => ctx.codeWork.syncPublications(caller),
       },
