@@ -1142,6 +1142,26 @@ test('a control the owner did not send is not drawn, and one it sent is its own 
   assert.equal($('#running-panel table'), null);
 });
 
+test('an extension whose answer was lost is never offered as a retry: a second one adds again', async (t) => {
+  t.after(unmount);
+  drawn();
+  answers(board(), { 'sandbox:sbx_h100': sandboxPanel(Date.now(), false) });
+  const sent: unknown[] = [];
+  serve('/tools/sandbox.extend', (_, input) => {
+    sent.push(input);
+    return { status: 502, body: { error: { code: 'upstream', message: 'Bad gateway' } } };
+  });
+  await mount(page());
+  await press(card('sandbox:sbx_h100'));
+  const panels = reads('ui.running_panel');
+  await press(button('Extend lease')!);
+  assert.equal(sent.length, 1);
+  assert.ok(!button('Retry same request'), 'a lost extension is not sent again as the same one');
+  assert.ok(button('Extend lease'));
+  assert.match($('#running-panel [role="alert"]')!.textContent!, /may already be extended/);
+  assert.ok(reads('ui.running_panel') > panels, 'the lease is read again to say where it stands');
+});
+
 test('an operator reads names; a reader reads the words left for them, and a row of nothing goes', async (t) => {
   t.after(unmount);
   drawn();

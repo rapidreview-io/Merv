@@ -66,7 +66,7 @@ const rowOf = (rows: Row[], kind: string) => rows.find((row) => row.view.kind ==
 /**
  * Whether a record is its owner's move. A gate with no blocker is simply running — unless
  * it holds the owner's own move (`asked`): work sent back for changes, or never begun,
- * reports only `begin` as ready, which no page here sends, while its delivery already waits
+ * reports only `begin` as ready, which no page here sends, while its submission already waits
  * on them. Refused, it is theirs where it asks for their input, or where a prerequisite
  * ended without succeeding and what happens next is theirs to decide.
  */
@@ -80,22 +80,12 @@ const yours = (decision: WorkflowDecision, mine: boolean, asked: boolean) => {
 
 /** What each ready action asks of the person whose record it is, by the action's own name. */
 const ASKS: Record<string, string> = {
-  submit_delivery: 'Deliver the work for review',
   submit_design: 'Submit the design for review',
   submit_results: 'Submit the results for review',
 };
-/** The owner's move the gate holds open: the same edge the record's own page hangs its desk on. */
+/** The owner's move the gate holds open. */
 const askOf = (decision: WorkflowDecision) =>
   decision.actions.find((action) => action.action in ASKS && action.status !== 'blocked');
-/**
- * The asks a page of this app can carry out, by the tool the gate names: the control's
- * words, and the place on the record's own page where the desk for it stands. An ask
- * with no desk here is made through an agent, so its card offers no control at all.
- */
-export const DELIVER = 'deliver';
-const DESKS: Record<string, { label: string; at: string }> = {
-  'task.submit_delivery': { label: 'Submit delivery', at: DELIVER },
-};
 /** What a reviewer is asked to read, by the state its subject waits in. */
 const READS: Record<string, string> = {
   in_review: 'Review this delivery',
@@ -213,9 +203,10 @@ export function needsYou(
       // Whoever began the step holds it; before anyone has, it is its owner's.
       const began = decision.workStart?.actorId;
       const ask = !began || began === me ? askOf(decision) : undefined;
-      if (!yours(decision, item.owner === me, !!ask)) continue;
       const next = ask || decision.nextAction;
-      const desk = next?.status !== 'blocked' && DESKS[next?.tool ?? ''];
+      // A task's delivery names its worker's own commit, which only a leased worker can make.
+      if (next?.tool === 'task.submit_delivery' || !yours(decision, item.owner === me, !!ask))
+        continue;
       const verdict = lastVerdict.get(item.id);
       // A cycle is stopped only when its gate refuses on its own wave or consolidation task,
       // declared after the work it reflects on, which may fail and stop nothing.
@@ -238,7 +229,6 @@ export function needsYou(
         sentence,
         // Where the server's reason is the headline, the fold does not say it again.
         says: said(decision).filter((text) => text !== sentence),
-        desk: desk ? { label: desk.label, to: `${row.path}/${item.id}#${desk.at}` } : undefined,
       });
     }
   }
@@ -276,8 +266,8 @@ export function needsYou(
 /**
  * The one control a needs-you card carries, and only where it does the move. A
  * review the gate says is ready to claim is claimed where it stands — the same one
- * command the verdict page sends — and the page then opens the desk it unlocked; a
- * delivery is made at the desk on the task's own page, so the control goes there. A
+ * command the verdict page sends — and the page then opens the desk it unlocked; a move
+ * another plugin names a control for goes to that control's page. A
  * move no page of this app can make has no control: the record's name is already
  * the way to it, and an accent that only repeated that link would promise an act.
  */
@@ -363,6 +353,25 @@ function Block({ title, count, children }: { title: string; count?: number; chil
   );
 }
 
+/** A row that cannot speak for itself needs someone, and says so in its own state. */
+const unwellOf = (rows: Row[]) =>
+  rows.filter((row) => row.status.state === 'degraded' || row.status.state === 'unavailable');
+
+/** What Now lists, from the one home the whole page shares; the rail counts exactly this. */
+export function useNow(rows: Row[]) {
+  const session = useSession();
+  const home = useHome();
+  // The publication verbs refuse a key and a bearer actor outright, so whether the reader
+  // is a person is part of whose move a Code blocker is.
+  const lines = needsYou(
+    rows,
+    home.data,
+    { ...session.actor, signedIn: session.account.kind === 'user' },
+    namesOf(home.data?.actors),
+  );
+  return { home, lines, count: lines.length + unwellOf(rows).length };
+}
+
 /** What needs the reader: their own moves, then every row that cannot speak for itself. */
 export function NeedsYou({
   rows,
@@ -373,10 +382,7 @@ export function NeedsYou({
   lines: Line[];
   load: Pick<Loaded<HomeData>, 'loading' | 'error' | 'data' | 'loadedAt'>;
 }) {
-  // A row that cannot speak for itself needs someone, and says so in its own state.
-  const unwell = rows.filter(
-    (row) => row.status.state === 'degraded' || row.status.state === 'unavailable',
-  );
+  const unwell = unwellOf(rows);
   const count = lines.length + unwell.length;
   return (
     <>
@@ -410,16 +416,7 @@ export function NeedsYou({
 }
 
 export function OverviewView({ shell }: { shell: ShellData }) {
-  const session = useSession();
-  const home = useHome();
-  // The publication verbs refuse a key and a bearer actor outright, so whether the reader
-  // is a person is part of whose move a Code blocker is.
-  const lines = needsYou(
-    shell.rows,
-    home.data,
-    { ...session.actor, signedIn: session.account.kind === 'user' },
-    namesOf(home.data?.actors),
-  );
+  const { home, lines } = useNow(shell.rows);
   return (
     <div className="page-stage overview">
       <h1 className="page-title">Now</h1>

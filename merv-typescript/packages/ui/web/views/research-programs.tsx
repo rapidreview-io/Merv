@@ -58,7 +58,7 @@ export interface Reflection {
 /** The gate this wave stands at, derived from its own record. */
 function WaveGate({ id, children }: { id: string; children?: ReactNode }) {
   const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 8000 });
-  return <Gate graph={process.error ? undefined : process.data}>{children}</Gate>;
+  return <Gate graph={process.data}>{children}</Gate>;
 }
 
 export function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void }) {
@@ -104,7 +104,8 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   const data = useTool<Reflection>('reflection.get', { reflectionId: id }, { every: 8000 });
   const nameOf = useActorNames();
   const [params, setParams] = useSearchParams();
-  const wave = data.error ? undefined : data.data;
+  // A read that fails keeps what was last read, as every record page does.
+  const wave = data.data;
   if (!wave)
     return (
       <div className="page-stage">

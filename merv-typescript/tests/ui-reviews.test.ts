@@ -156,6 +156,31 @@ test('a task review offers no return route, because its domain takes none', asyn
   assert.equal('returnTo' in (submitted.body ?? {}), false);
 });
 
+test('a Git task review is passed from a browser only by its owner deciding as owner', async (t) => {
+  t.after(async () => await unmount());
+  const verdicts = async (review: Record<string, unknown>, workflow = 'task') => {
+    serve('/tools/review.get', { body: { result: review } });
+    serve('/tools/workflow.status_and_next', {
+      body: { result: desk(workflow, workflow === 'task' ? 'in_review' : 'experiment_review') },
+    });
+    await mount(page());
+    await settle(10);
+    const words = [...document.querySelectorAll('.entry-form .crit-pick')].map(
+      (button) => button.textContent,
+    );
+    await unmount();
+    return words;
+  };
+  // Only a leased reviewer in a checkout of the delivered commit passes it otherwise.
+  assert.deepEqual(await verdicts(claimed), ['needs changes', 'fail']);
+  assert.deepEqual(await verdicts({ ...claimed, override: true }), [
+    'pass',
+    'needs changes',
+    'fail',
+  ]);
+  assert.deepEqual(await verdicts(claimed, 'experiment'), ['pass', 'needs changes', 'fail']);
+});
+
 test('a Git task review nobody interactive can pass offers no claim, and says what holds it', async (t) => {
   t.after(async () => await unmount());
   const refusal =

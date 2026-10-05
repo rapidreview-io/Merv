@@ -308,6 +308,28 @@ test('a signed-in person reads and sets their own daily Fleet tokens in the sess
   );
 });
 
+test('without Fleet the session room draws no Fleet tokens row', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  const user = {
+    issuer: 'https://login.example',
+    subject: 'subject-1',
+    createdAt: project.createdAt,
+  };
+  boot('Operator');
+  serve('/account', { body: { kind: 'user', user, projects: [project] } });
+  serve('/tools/fleet.daily_tokens', {
+    status: 404,
+    body: { error: { code: 'tool_not_found', message: 'Unknown tool' } },
+  });
+  await open('/settings/session');
+  assert.ok(text().includes('Role'));
+  assert.ok(!text().includes('Fleet tokens a day'));
+});
+
 test('the only operator is offered no control that would leave the project without one', async (t) => {
   t.after(async () => {
     await unmount();
@@ -573,4 +595,14 @@ test('a project opens on Work, which leads the rail over Now and the paper; ther
   );
   assert.ok(!links.some((link) => link.getAttribute('href') === '/'));
   assert.equal(rail().querySelector('[aria-current="page"]')?.getAttribute('href'), '/work');
+});
+
+test('the rail counts what Now lists, an unwell row included', async (t) => {
+  t.after(async () => await unmount());
+  const sick = { ...row('paper', 'paper', 'work', 15, 'Paper'), status: { state: 'degraded' } };
+  boot('Operator', { rows: [sick, ...rows.slice(1)] });
+  serve('/tools/ui.home', { body: { result: {} } });
+  await open('/now');
+  assert.equal(document.querySelector('.ov-count')?.textContent, '1');
+  assert.equal(rail().querySelector('.rail-count')?.textContent, '1');
 });

@@ -68,8 +68,8 @@ export interface Draft {
 export const BLANK: Draft = { notes: '', evidenceIds: [] };
 /**
  * Whether a desk holds anything it has not sent. A desk that does marks itself with
- * `data-draft`, and the split pane's Escape then stays on the record: a verdict or a
- * delivery half written lives only in this page's state, one keypress from the list.
+ * `data-draft`, and the split pane's Escape then stays on the record: a verdict half
+ * written lives only in this page's state, one keypress from the list.
  */
 export const drafted = (values: Record<number, Draft>) =>
   Object.values(values).some(
@@ -77,16 +77,13 @@ export const drafted = (values: Record<number, Draft>) =>
   );
 /**
  * A desk writing on the rows: the words it may choose between, the files it may
- * cite, and what it has written. The reviewer's desk and the producer's are the
- * same rows with different words.
+ * cite, and what it has written.
  */
 export interface Drafting {
   words: readonly string[];
   files: string[];
   values: Record<number, Draft>;
   set(number: number, value: Draft): void;
-  /** True while the desk's command is in flight or kept for a retry: what was sent stays what is shown. */
-  locked?: boolean;
 }
 
 /** A finding word as the pill every state on these pages is: a dot and the word, in its colour. */
@@ -134,8 +131,8 @@ export function ReviewSummary({
  * check of the same number, what the reviewer found, and every file either of them
  * cited, readable in place. A row holds only what has happened yet: before a
  * delivery it is the check alone, after one the claim and its evidence fill in, and
- * after the review the finding does. The same rows carry a desk's draft while a
- * delivery or a verdict is still being written.
+ * after the review the finding does. The same rows carry the verdict desk's draft
+ * while a verdict is still being written.
  */
 export function CriterionRows({
   criteria,
@@ -200,7 +197,7 @@ export function CriterionRows({
                 <Evidence key={id} artifactId={id} artifact={artifacts.get(id)} />
               ))}
               {draft && (
-                <fieldset className="stack crit-draft" disabled={draft.locked}>
+                <fieldset className="stack crit-draft">
                   <div className="cluster">
                     {draft.words.map((status) => (
                       <button
@@ -520,6 +517,9 @@ function Controls({
         review={review}
         action={submit}
         routes={ROUTES[guidance.data.workflow]?.[guidance.data.state] ?? []}
+        // A Git task passes only from a leased reviewer in a checkout of the delivered commit,
+        // which no browser is, unless its owner decides as owner.
+        passes={guidance.data.workflow !== 'task' || !!review.override}
         values={values}
         onDone={onDone}
       />
@@ -583,12 +583,14 @@ function Desk({
   review,
   action,
   routes,
+  passes,
   values,
   onDone,
 }: {
   review: Review;
   action: WorkflowActionStatus;
   routes: { value: string; label: string }[];
+  passes: boolean;
   values: Record<number, Draft>;
   onDone(): void;
 }) {
@@ -659,7 +661,7 @@ function Desk({
         </p>
       )}
       <div className="cluster">
-        {VERDICTS.map((value) => (
+        {VERDICTS.filter((value) => passes || value !== 'pass').map((value) => (
           <button
             key={value}
             type="button"

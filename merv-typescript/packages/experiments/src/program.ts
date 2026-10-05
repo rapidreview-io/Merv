@@ -140,10 +140,23 @@ export function epochAfter(
   action: string,
   attemptIndex: number,
 ): { computeEpoch?: string } {
+  const { state, data, revision, version } = experiment.workflow;
   const to = EXPERIMENT_WORKFLOW.edges.find(
-    (edge) => edge.from === experiment.workflow.state && edge.action === action,
+    (edge) => edge.from === state && edge.action === action,
   )?.to;
-  return to ? { computeEpoch: experimentEpoch(attemptIndex, to) } : {};
+  if (!to) return {};
+  // A retry keeps the epoch its compute runs under. Work started before Experiments recorded one
+  // ran under attempt:state on a native contract, and under the revision Sandboxes fell back to.
+  if (to === state)
+    return {
+      computeEpoch:
+        typeof data.computeEpoch === 'string'
+          ? data.computeEpoch
+          : nativeExperiment(version)
+            ? experimentEpoch(attemptIndex, to)
+            : String(revision),
+    };
+  return { computeEpoch: experimentEpoch(attemptIndex, to) };
 }
 /** An experiment in one of these states is over: complete, abandoned or failed. */
 export const TERMINAL = ['complete', 'abandoned', 'failed'] as const;
@@ -1453,13 +1466,11 @@ export abstract class ExperimentProgram {
               ...(await executionOutputs(this.artifacts, context.caller, context.tx)).map(
                 (artifact) => artifact.id,
               ),
-              ...(nativeExperiment(context.snapshot.version)
-                ? ((await this.sandboxes?.captures(
-                    context.caller.projectId,
-                    context.snapshot.id,
-                    context.tx,
-                  )) ?? [])
-                : []),
+              ...((await this.sandboxes?.captures(
+                context.caller.projectId,
+                context.snapshot.id,
+                context.tx,
+              )) ?? []),
             ]),
           ],
         };
