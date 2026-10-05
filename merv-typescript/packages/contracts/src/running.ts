@@ -281,6 +281,8 @@ export type RunningSection = RunningSectionFrame &
     /** The workflow drawn with the record's place in it (UI_DESIGN: workflows are drawn). */
     | { kind: 'ladder'; graph: ProcessGraph }
     | { kind: 'stream'; items: RunningStreamItem[]; total: number }
+    /** The unit's agent sessions, newest first, each read live (operators only). */
+    | { kind: 'agent'; sessions: import('./agent-stream.js').AgentStreamSession[] }
   );
 
 /** The sidebar's head. The status line uses the node's words. */

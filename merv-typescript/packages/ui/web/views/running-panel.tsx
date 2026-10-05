@@ -308,6 +308,8 @@ function readable(
       return section;
     case 'stream':
       return section.items.length ? section : null;
+    case 'agent':
+      return section.sessions.length ? section : null;
   }
 }
 
@@ -335,6 +337,8 @@ function Body({ section }: { section: RunningSection }) {
       return <StageList graph={section.graph} />;
     case 'stream':
       return <Stream items={section.items} />;
+    case 'agent':
+      return null;
   }
 }
 
