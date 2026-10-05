@@ -33,7 +33,7 @@ async function fixture(t: TestContext, options: { timeoutMs?: number; maxAttempt
   return { blobs, server };
 }
 
-test('S3 uses signed conditional writes, keeps legacy project/hash keys and verifies duplicate content', async (t) => {
+test('S3 uses signed conditional writes, keeps legacy project/hash keys and checks duplicate content by size', async (t) => {
   const { blobs, server } = await fixture(t);
   const first = await blobs.put('project_1', content);
   assert.deepEqual(first, { hash, size: content.byteLength });
@@ -42,7 +42,7 @@ test('S3 uses signed conditional writes, keeps legacy project/hash keys and veri
   assert.equal(server.objects.size, 1);
   assert.deepEqual(
     server.requests.map((r) => r.method),
-    ['PUT', 'GET', 'PUT', 'GET'],
+    ['PUT', 'GET', 'PUT', 'HEAD'],
   );
   for (const request of server.requests) {
     assert.equal(request.key, `evidence/v1/project_1/${hash}`);

@@ -1,5 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   chmodSync,
   closeSync,
@@ -17,7 +16,6 @@ import {
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { promisify } from 'node:util';
 import {
   codeCommitCommandSchema,
   effectiveWorkspace,
@@ -31,7 +29,21 @@ import {
   type WorkspaceLaunch,
   type WorkspaceSession,
 } from '@merv/contracts';
-import { WorkspaceError } from './git.js';
+import { unitRef } from '../store/refs.js';
+import {
+  changedNames,
+  commitInput,
+  commitReceipt,
+  diffStats,
+  DriverGit,
+  hash,
+  identity,
+  MAX_FILE,
+  oid,
+  pathStat,
+  syncPath,
+  WorkspaceError,
+} from './git.js';
 
 /** The capability a runner with a repository of its own advertises; its policies name no driver. */
 export const LOCAL_DRIVER = 'git.local';
@@ -90,7 +102,6 @@ type CommitRow = {
   acknowledged: number;
 };
 type FenceRow = { owner_oid: string; status: 'preparing' | 'armed' | 'revoked' };
-const execute = promisify(execFile);
 const privateDirectory = (path: string): void => {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   const stat = lstatSync(path);
@@ -102,25 +113,6 @@ const privateDirectory = (path: string): void => {
     throw new Error('Unsafe runner directory');
   chmodSync(path, 0o700);
 };
-const syncPath = (path: string): void => {
-  const fd = openSync(path, 'r');
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-};
-const statIfPresent = (path: string) => {
-  try {
-    return lstatSync(path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-};
-const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-/** Changed files above this size are refused at capture and commit. */
-const MAX_FILE = 50 * 1024 * 1024;
 // What a merge, rebase, cherry-pick, revert or bisect left half-done in a checkout's admin that
 // `reset` does not clear (it clears an unmerged index and MERGE_HEAD, and keeps the worktree).
 const HALF_DONE = ['rebase-merge', 'rebase-apply', 'sequencer', 'BISECT_LOG', 'BISECT_START'];
@@ -132,26 +124,11 @@ const repositoryIdentity = (row: RepositoryRow) => ({
 });
 /** A checkout's own ref: its lineage branch, else a detached HEAD. */
 const onRef = (row: WorkspaceRow) => (row.branch ? ['-B', row.branch] : ['--detach']);
-const oid = (value: string): string => {
-  const result = value.trim();
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result))
-    throw new WorkspaceError('workspace_invalid_oid');
-  return result;
-};
 const segment = (value: string): string => {
   if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,179}$/.test(value) || value === '.' || value === '..')
     throw new WorkspaceError('workspace_invalid_segment');
   return value;
 };
-// Declaration namespaces allow dots; Git refs also forbid '..', trailing dots and '.lock'.
-// Reserve the encoded prefix so a literal namespace cannot collide with an encoded one.
-const refSegment = (value: string): string =>
-  value.includes('..') ||
-  value.endsWith('.') ||
-  value.endsWith('.lock') ||
-  value.startsWith('encoded-')
-    ? `encoded-${Buffer.from(value).toString('base64url')}`
-    : value;
 const marker = (path: string, value: unknown) => {
   const encoded = JSON.stringify(value);
   if (existsSync(path)) {
@@ -178,9 +155,11 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
   private readonly db: DatabaseSync;
   private readonly root: string;
   private readonly emptyTemplate: string;
+  private readonly runner: DriverGit;
   private serial: Promise<unknown> = Promise.resolve();
   private disposed = false;
   private closedOwnerOid?: string;
+  private checked?: RepositoryRow;
 
   constructor(
     private readonly host: LocalWorkspaceHost,
@@ -190,6 +169,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     this.root = realpathSync(join(host.directory, 'workspaces'));
     this.emptyTemplate = join(this.root, 'empty-template');
     this.safeDirectory(this.emptyTemplate);
+    this.runner = new DriverGit(this.emptyTemplate);
     this.db = new DatabaseSync(host.path);
     this.db
       .exec(`PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA fullfsync=ON;
@@ -303,7 +283,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       const path = join(this.root, 'checkouts', layout, lineage + suffix);
       const branch =
         policy.mode === 'persistent'
-          ? `codex/merv/${policy.perBase ? 'per-base' : 'shared'}/${[namespace, project, instance].map(refSegment).join('/')}${suffix}`
+          ? `codex/merv/${policy.perBase ? 'per-base' : 'shared'}/${[namespace, project, instance].map(unitRef).join('/')}${suffix}`
           : null;
       const recorded = this.db
         .prepare('SELECT base_oid FROM runner_checkout_slots WHERE slot_id=?')
@@ -324,7 +304,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
           throw this.host.launch(String(slot.owner_launch_id))?.status === 'uncertain'
             ? new WorkspaceError('workspace_owned_by_another_launch')
             : new WorkspaceDeferred('checkout_busy', 'workspace_owned_by_another_launch');
-        if (!slot && statIfPresent(path)) throw new WorkspaceError('workspace_foreign_checkout');
+        if (!slot && pathStat(path)) throw new WorkspaceError('workspace_foreign_checkout');
         const epoch = Number(slot?.epoch ?? 0) + 1;
         this.db
           .prepare(
@@ -474,25 +454,12 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       const parentTree = oid(
         await this.checkoutGit(row, ['rev-parse', `${command.expectedHead}^{tree}`]),
       );
-      const timestamp = `${Math.floor(Date.parse(command.createdAt) / 1000)} +0000`;
+      const { env, stdin } = commitInput(command);
+      const commit = ['commit-tree', journal.tree_oid!, '-p', command.expectedHead];
       const target =
         parentTree === journal.tree_oid
           ? command.expectedHead
-          : oid(
-              await this.checkoutGit(
-                row,
-                ['commit-tree', journal.tree_oid!, '-p', command.expectedHead],
-                {
-                  GIT_AUTHOR_NAME: 'Merv Agent Runner',
-                  GIT_AUTHOR_EMAIL: 'merv@localhost',
-                  GIT_COMMITTER_NAME: 'Merv Agent Runner',
-                  GIT_COMMITTER_EMAIL: 'merv@localhost',
-                  GIT_AUTHOR_DATE: timestamp,
-                  GIT_COMMITTER_DATE: timestamp,
-                },
-                command.message.endsWith('\n') ? command.message : `${command.message}\n`,
-              ),
-            );
+          : oid(await this.checkoutGit(row, commit, env, stdin));
       this.db
         .prepare(
           'UPDATE runner_code_commits SET target_oid=? WHERE command_id=? AND target_oid IS NULL',
@@ -567,9 +534,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
           const earlier = ['rebase-merge/orig-head', 'rebase-apply/orig-head']
             .concat(existsSync(join(admin, 'sequencer')) ? ['ORIG_HEAD'] : [])
             .map((name) => join(admin, name))
-            .map((path) =>
-              statIfPresent(path)?.isFile() ? readFileSync(path, 'utf8').trim() : '',
-            );
+            .map((path) => (pathStat(path)?.isFile() ? readFileSync(path, 'utf8').trim() : ''));
           if (row.branch)
             earlier.push(
               (await this.optionalRef(repository.bare_path, `refs/heads/${row.branch}`)) ?? '',
@@ -621,16 +586,11 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
             '--name-only',
           ]);
           if (staged.trim())
-            await this.checkoutGit(row, [
-              '-c',
-              'user.name=Merv Agent Runner',
-              '-c',
-              'user.email=merv@localhost',
-              'commit',
-              '--no-verify',
-              '-m',
-              `merv: capture ${record.sessionId}`,
-            ]);
+            await this.checkoutGit(
+              row,
+              ['commit', '--no-verify', '-m', `merv: capture ${record.sessionId}`],
+              identity,
+            );
         }
         const snapshot = await this.snapshot(row);
         this.db
@@ -759,6 +719,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     const snapshot = structuredClone(input);
     const operation = this.serial.then(() => {
       if (this.disposed) throw new WorkspaceError('workspace_manager_closed');
+      this.checked = undefined;
       return action(snapshot);
     });
     this.serial = operation.catch(() => {});
@@ -936,17 +897,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     env?: Record<string, string>,
     refused?: Set<string>,
   ): Promise<void> {
-    const changed = await this.checkoutGit(
-      row,
-      ['ls-files', '--modified', '--others', '--exclude-standard', '-z'],
-      env,
-    );
-    const staged = await this.checkoutGit(
-      row,
-      ['diff', '--cached', '--no-ext-diff', '--no-textconv', '--name-only', '-z'],
-      env,
-    );
-    for (const name of new Set((changed + staged).split('\0').filter(Boolean))) {
+    for (const name of await changedNames((args) => this.checkoutGit(row, args, env))) {
       const file = resolve(row.path, name);
       // A tracked final-component symlink is Git data. Never traverse a symlink parent.
       try {
@@ -954,14 +905,13 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       } catch (error) {
         const parts = name.split('/');
         const link = parts.findIndex(
-          (_, i) =>
-            i > 0 && !!statIfPresent(join(row.path, ...parts.slice(0, i)))?.isSymbolicLink(),
+          (_, i) => i > 0 && !!pathStat(join(row.path, ...parts.slice(0, i)))?.isSymbolicLink(),
         );
         if (!refused || link < 0) throw error;
         refused.add(parts.slice(0, link).join('/'));
         continue;
       }
-      const stat = statIfPresent(file);
+      const stat = pathStat(file);
       if (stat?.isFile() && stat.size > MAX_FILE)
         if (refused) refused.add(name);
         else throw new WorkspaceError('workspace_file_too_large');
@@ -1010,16 +960,8 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     command: CodeCommitCommand,
     journal: CommitRow,
   ): Promise<CodeCommitReceipt> {
-    const receipt: CodeCommitReceipt = {
-      commandId: command.id,
-      repositoryId: row.repository_id!,
-      workspaceId: `workspace_${hash(row.slot_id)}`,
-      baseOid: row.base_oid,
-      parentOid: command.expectedHead,
-      headOid: journal.target_oid!,
-      treeOid: journal.tree_oid!,
-      stats: await this.stats(row, journal.target_oid!),
-    };
+    const stats = await this.stats(row, journal.target_oid!);
+    const receipt = commitReceipt(command, journal.target_oid!, journal.tree_oid!, stats);
     this.db
       .prepare(
         'UPDATE runner_code_commits SET receipt_json=? WHERE command_id=? AND receipt_json IS NULL',
@@ -1032,17 +974,19 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     if (name === '..' || name.startsWith(`..${sep}`) || isAbsolute(name))
       throw new WorkspaceError('workspace_path_escape');
     let current = root;
-    if (statIfPresent(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
+    if (pathStat(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
     for (const part of name.split(sep).filter(Boolean)) {
       current = join(current, part);
-      if (statIfPresent(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
+      if (pathStat(current)?.isSymbolicLink()) throw new WorkspaceError('workspace_symlink');
     }
   }
   private safeDirectory(path: string): void {
     this.within(this.root, path);
     privateDirectory(path);
   }
+  /** The repository is validated once per operation, before its first Git work. */
   private async repository(fresh = false): Promise<RepositoryRow> {
+    if (!fresh && this.checked) return this.checked;
     if (!this.config) throw new WorkspaceError('workspace_repository_required');
     let row = this.repositoryRow();
     // The configured source is read only to bootstrap or to add a checkout (`fresh`): running
@@ -1079,6 +1023,9 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     await this.materializeBare(row, `bootstrap-${row.repository_id}`, async (temporary) => {
       await this.git(
         [
+          // The source is a local path, the one transport this driver ever uses.
+          '-c',
+          'protocol.file.allow=always',
           'clone',
           '--bare',
           '--no-local',
@@ -1107,7 +1054,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       this.db.prepare("UPDATE runner_repository SET status='ready' WHERE singleton=1").run();
       row = { ...row, status: 'ready' };
     }
-    return row;
+    return (this.checked = row);
   }
   private repositoryRow(): RepositoryRow | undefined {
     return this.db.prepare('SELECT * FROM runner_repository WHERE singleton=1').get() as
@@ -1314,31 +1261,8 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     };
   }
   private async stats(row: WorkspaceRow, head: string): Promise<SessionWorkspace['stats']> {
-    const repository = await this.repository();
-    const git = (args: string[]) => this.git(['--git-dir', repository.bare_path, ...args]);
-    const commits = Number((await git(['rev-list', '--count', `${row.base_oid}..${head}`])).trim());
-    const changes = await git([
-      'diff',
-      '--no-ext-diff',
-      '--no-textconv',
-      '--numstat',
-      '-z',
-      row.base_oid,
-      head,
-    ]);
-    let files = 0,
-      insertions = 0,
-      deletions = 0;
-    for (const entry of changes.split('\0').filter(Boolean)) {
-      const match = /^(\d+|-)\t(\d+|-)\t/.exec(entry);
-      if (!match) continue;
-      files++;
-      insertions += match[1] === '-' ? 0 : Number(match[1]);
-      deletions += match[2] === '-' ? 0 : Number(match[2]);
-    }
-    if ([commits, files, insertions, deletions].some((n) => !Number.isSafeInteger(n) || n < 0))
-      throw new WorkspaceError('workspace_invalid_stats');
-    return { commitCount: commits, filesChanged: files, insertions, deletions };
+    const bare = (await this.repository()).bare_path;
+    return diffStats((args) => this.git(['--git-dir', bare, ...args]), row.base_oid, head);
   }
   private async rev(bare: string, ref: string): Promise<string> {
     return oid(
@@ -1359,57 +1283,10 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     env?: Record<string, string>,
     input?: string,
   ): Promise<string> {
-    const options = [
-      '-c',
-      'core.hooksPath=/dev/null',
-      '-c',
-      'core.fsmonitor=false',
-      '-c',
-      'credential.helper=',
-      '-c',
-      'protocol.allow=never',
-      '-c',
-      'protocol.file.allow=always',
-      '-c',
-      'submodule.recurse=false',
-      '-c',
-      'core.attributesFile=/dev/null',
-      '-c',
-      'commit.gpgsign=false',
-      '-c',
-      'tag.gpgsign=false',
-      '-c',
-      'gc.auto=0',
-    ];
-    try {
-      const operation = execute('git', [...options, ...args], {
-        timeout,
-        maxBuffer: 32 * 1024 * 1024,
-        encoding: 'utf8',
-        env: {
-          PATH: '/usr/bin:/bin',
-          HOME: this.emptyTemplate,
-          GIT_CONFIG_NOSYSTEM: '1',
-          GIT_CONFIG_SYSTEM: '/dev/null',
-          GIT_CONFIG_GLOBAL: '/dev/null',
-          GIT_ATTR_NOSYSTEM: '1',
-          GIT_TERMINAL_PROMPT: '0',
-          GIT_ASKPASS: '/usr/bin/false',
-          GIT_SSH_COMMAND: '/usr/bin/false',
-          LC_ALL: 'C',
-          LANG: 'C',
-          ...env,
-        },
-      });
-      operation.child.stdin?.end(input);
-      const result = await operation;
-      return result.stdout;
-    } catch (error) {
-      if (allowOne && (error as { code?: number }).code === 1) return '';
-      throw new WorkspaceError(
-        (error as { killed?: boolean }).killed ? 'workspace_git_timeout' : 'workspace_git_failed',
-      );
-    }
+    const result = await this.runner.run(args, { env, stdin: input, timeoutMs: timeout });
+    if (result.code === 0) return result.stdout;
+    if (allowOne && result.code === 1) return '';
+    throw new WorkspaceError(result.timedOut ? 'workspace_git_timeout' : 'workspace_git_failed');
   }
 }
 
