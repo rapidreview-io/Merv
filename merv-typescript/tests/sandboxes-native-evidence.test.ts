@@ -230,7 +230,9 @@ test('one directory capture becomes one atomic immutable collection with no capt
     { name: 'outputs/model.bin', object_id: 'obj_b' },
   ]);
   await Promise.all([f.publish(), f.publish()]);
+  const read = f.calls.length;
   await f.publish();
+  assert.equal(f.calls.length, read, 'a settled workflow is not listed again');
   const all = await f.artifacts.list(f.caller);
   assert.equal(all.length, 1);
   assert.deepEqual(

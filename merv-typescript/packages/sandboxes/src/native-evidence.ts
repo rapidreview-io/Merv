@@ -89,6 +89,8 @@ const referenceSchema = z.tuple([
 
 /** Registers immutable native receipts, never downloads/reuploads captured bytes. */
 export class NativeEvidence {
+  /** Ended workflows whose every Capture is registered: a later pass has nothing to read. */
+  private readonly settled = new Set<string>();
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -124,6 +126,8 @@ export class NativeEvidence {
     // A terminal Capture can still gain committed-object receipts during native
     // storage recovery. Freeze its immutable collection only after workflow cleanup ends.
     if (workflow.state === 'running' || workflow.state === 'cleaning_up') return;
+    const key = JSON.stringify([connection.id, workflow.namespace, workflow.id]);
+    if (this.settled.has(key)) return;
     await this.connections.get(connection.id);
     for (const node of await this.captures(work, connection, workflow.id)) {
       const registered = await this.state.read((sql) =>
@@ -289,6 +293,7 @@ export class NativeEvidence {
         );
       });
     }
+    this.settled.add(key);
   }
   private async captures(work: NativeWorkRow, connection: NativeConnectionRow, workflowId: string) {
     const captures: z.infer<typeof captureSchema>[] = [];

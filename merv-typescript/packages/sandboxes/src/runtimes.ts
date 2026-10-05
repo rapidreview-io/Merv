@@ -174,7 +174,7 @@ export function runtimeOffer(
 /** Bounded server-side consumer of the protected runtime admission routes. */
 export class SandboxRuntimeRunner implements Omit<
   SandboxRuntimes,
-  'connected' | 'leaseSeconds' | 'profiles' | 'describe'
+  'connected' | 'profiles' | 'describe'
 > {
   readonly profileId: string;
   readonly #profile: SandboxRuntimeProfile & { ttlSeconds: number };

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import test from 'node:test';
-import { createService, type Caller, type MervError } from '@merv/contracts';
+import { createService, MervError, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import { hostMigration, migration } from '../packages/pi/src/schema.js';
 import type { PiCommand, PiHostRecord } from '../packages/pi/src/types.js';
@@ -444,6 +444,28 @@ test('a turn whose machine a rollout takes before it shows anything waits for a 
   await f.pi.tick();
   const ended = await command(f, sent);
   assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_lost']);
+});
+
+test('a turn whose fresh machine Fleet refuses ends refused, not lost', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
+  const request = f.fleet.request.bind(f.fleet);
+  for (const [refusal, reason] of [
+    [new MervError('fleet_compute_cap', "Today's compute is used up", 429), 'wallet_refused'],
+    [
+      new MervError('sandbox_not_connected', 'Hosted agents are not set up', 403),
+      'runtime_refused',
+    ],
+  ] as const) {
+    f.fleet.request = request;
+    const sent = await f.send(await f.create());
+    f.fleet.request = async () => {
+      throw refusal;
+    };
+    await released(f, sent.runtimeId, { intent: 'run' });
+    await f.pi.tick();
+    const ended = await command(f, sent);
+    assert.deepEqual([ended.status, ended.error], ['interrupted', reason]);
+  }
 });
 
 test('a claim still loading when its turn moves to a fresh machine, or is kept at a restart, leaves that turn waiting', async (t) => {

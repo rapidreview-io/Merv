@@ -240,33 +240,6 @@ export class PiService implements Pi, FleetOwner {
     await this.credentials.initialize();
     await this.state.migrate('pi', [migration, hostMigration, usageMigration]);
     if (!this.config.enabled) return;
-    // A release may find live slots and turns created before Identity owned their credentials.
-    // Adopt only records that Pi still considers active; never recreate ended authority.
-    await this.state.transaction(async (tx) => {
-      const hosts = await tx.all<{ data_json: string }>(
-        "SELECT data_json FROM pi_hosts WHERE status='live'",
-      );
-      for (const row of hosts) {
-        const host = decode<PiHostRecord>(row);
-        for (const role of roles)
-          if (host[role]) await this.syncWorkerCredential(tx, host, host[role]!);
-      }
-      const turns = await tx.all<{ data_json: string }>(
-        "SELECT data_json FROM pi_commands WHERE status='working'",
-      );
-      for (const row of turns) {
-        const command = decode<PiCommandRecord>(row);
-        const host = command.hostId ? await this.host(tx, command.hostId) : null;
-        if (
-          host?.status === 'live' &&
-          roles.some(
-            (role) =>
-              host[role]?.allocationId === command.runtimeId && host[role]?.epoch === command.epoch,
-          )
-        )
-          await this.syncModelCredential(tx, command);
-      }
-    });
     this.disposers.push(this.fleet.registerOwner('pi-host', this));
     // Pi issues conversation callers: Scope asks it whether one is current, and the tool registry
     // refuses every one until its rules are registered.
@@ -2318,22 +2291,29 @@ export class PiService implements Pi, FleetOwner {
 
   private async reconcile(): Promise<void> {
     const renter = await this.hostCaller().catch(() => undefined);
-    const hosts = await this.state.read((sql) =>
-      sql.all<{ data_json: string }>("SELECT data_json FROM pi_hosts WHERE status='live'"),
-    );
-    for (const row of hosts) {
-      const seen = decode<PiHostRecord>(row);
+    // Most passes find nothing to do: one read looks at every live host, and only a host with
+    // something due takes the writer lock. One host's failure leaves the others' passes alone;
+    // the next pass retries it.
+    const due = await this.read(async (tx) => {
+      const ids: string[] = [];
+      for (const row of await tx.all<{ data_json: string }>(
+        "SELECT data_json FROM pi_hosts WHERE status='live'",
+      )) {
+        const host = decode<PiHostRecord>(row);
+        if (await this.settle(tx, host, renter, true).catch(() => false)) ids.push(host.id);
+      }
+      return ids;
+    }).catch(() => []);
+    for (const id of due) {
       try {
-        // Most passes find nothing to do: look first, and take the writer lock only to act.
-        if (!(await this.read((tx) => this.settle(tx, seen, renter, true)))) continue;
         await this.state.transaction(async (tx) => {
-          const host = await this.host(tx, seen.id);
+          const host = await this.host(tx, id);
           if (host?.status === 'live') await this.settle(tx, host, renter);
         });
-        this.streams.wake(seen.id);
+        this.streams.wake(id);
         this.announce();
       } catch {
-        // One host's failure leaves the others' passes alone; the next pass retries it.
+        /* retried on the next pass */
       }
     }
     // Fleet's progress is what open pages are waiting on: one read sees every live conversation.
@@ -2436,15 +2416,23 @@ export class PiService implements Pi, FleetOwner {
     if (unplaced.length) {
       if (dry) return true;
       const fresh = !host.current;
+      let reason: PiInterruption = 'runtime_lost';
       if (fresh && renter) {
         const { source } = await this.conversation(tx, unplaced[0].conversationId);
         const machine = await this.starting(await this.person(tx, host.key), source, tx);
-        host.current = await this.rent(renter, host, machine, tx).catch(() => null);
+        // Fleet refusing the rental, its daily cap among them, is no lost machine.
+        host.current = await this.rent(renter, host, machine, tx).catch((error: unknown) => {
+          reason =
+            error instanceof MervError && error.code === 'fleet_compute_cap'
+              ? 'wallet_refused'
+              : 'runtime_refused';
+          return null;
+        });
       }
       const queued = fresh || fact(host.current)?.phase === 'queued';
       for (const turn of unplaced)
         if (host.current) await this.reassign(tx, turn, host.current, queued);
-        else await this.interrupt(tx, turn, 'runtime_lost');
+        else await this.interrupt(tx, turn, reason);
       changed = true;
     }
     const { current } = host;

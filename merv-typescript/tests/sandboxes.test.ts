@@ -557,7 +557,7 @@ test('sandbox operations retain their original project and target while queued',
       const input = { id: 'sbx_one', seconds: 600, params: { id: 'sbx_one' } };
       const pending =
         operation === 'read'
-          ? service.read(source, 'sandboxes-sandboxes', { params: input.params })
+          ? service.read(source, 'sandboxes-sandboxes', input.params)
           : service[operation](source, input);
       source.projectId = stranger.projectId;
       input.id = input.params.id = 'sbx_missing';

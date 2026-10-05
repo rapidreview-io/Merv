@@ -148,7 +148,7 @@ test('native machine reads aggregate all pinned payers and pages without copying
   );
 });
 
-test('native machines refuse cross-work provenance, looping pages, and unavailable roots', async (t) => {
+test('native machines refuse cross-work provenance and unavailable roots; a looping work hides only its own', async (t) => {
   const f = await foundation(t);
   f.control.malformed = true;
   await assert.rejects(f.reader.list('project_test'), { code: 'sandbox_machines_invalid' });
@@ -156,8 +156,12 @@ test('native machines refuse cross-work provenance, looping pages, and unavailab
     code: 'sandbox_machines_invalid',
   });
   f.control.malformed = false;
+  // One work's looping pages hide only that work's machines.
   f.control.repeat = true;
-  await assert.rejects(f.reader.list('project_test'), { code: 'sandbox_machines_invalid' });
+  assert.deepEqual(
+    (await f.reader.list('project_test')).map((row) => (row as { id: string }).id),
+    ['sbx_three'],
+  );
   f.control.repeat = false;
   f.control.refuse = true;
   await assert.rejects(f.reader.list('project_test'), { code: 'sandbox_access_revoked' });

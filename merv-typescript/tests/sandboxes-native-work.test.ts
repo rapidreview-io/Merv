@@ -314,6 +314,24 @@ test('unknown assignment issuance retries the identical encrypted secret and has
   assert.equal((await f.readWork())!.closed_at, null);
 });
 
+test('open work at rest under a live assignment is reconciled every 30 s, not on every pass', async (t) => {
+  const f = await fixture(t);
+  await f.work.launchConnections(f.session());
+  await f.work.reconcile();
+  assert.equal((await f.readWork())!.transition_pending, false);
+  const rested = f.calls.length;
+  await f.work.reconcile();
+  assert.equal(f.calls.length, rested);
+  await f.state.transaction((tx) =>
+    tx.run(
+      'UPDATE sandbox_native_work SET evidence_checked_at=?',
+      new Date(Date.now() - 31_000).toISOString(),
+    ),
+  );
+  await f.work.reconcile();
+  assert.ok(f.calls.length > rested);
+});
+
 test('lease tombstones fence credentials even before any native issuance row exists', async (t) => {
   const f = await fixture(t);
   await f.state.transaction((tx) => f.work.revokeAssignment('lease_one', tx));

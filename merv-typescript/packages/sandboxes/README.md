@@ -34,12 +34,11 @@ and the existing memory cache. Native machine controls link to Sandboxes. There 
 no second resource ledger. A short `check` assignment permits bounded verification;
 existing SSH sessions are not forcibly terminated by certificate revocation.
 
-Execution rework stays within the existing scientific attempt. Assignment handoff and
-`retry_running` recover the same native requests; revised commands use new idempotency
-keys. Submitting results moves compute authority to brief review and queues old-phase
-cleanup. A reviewer may reuse retained evidence and warm machines, but must not depend
-on a previous phase's unfinished long-running jobs. No additional research-round
-counter or compute scheduler is introduced.
+A work's compute follows its workflow instance's compute epoch. Within one epoch,
+assignment handoff and `retry_running` recover the same native requests; revised commands
+use new idempotency keys. A new epoch fences the older attempt's assignments and queues its
+cleanup. A later step may reuse retained evidence and warm machines, but must not depend on
+an earlier epoch's unfinished long-running jobs. No compute scheduler is introduced.
 
 Terminal native Captures become one artifact collection each, containing immutable
 file references without another upload. Empty or partial captures retain explicit
@@ -60,13 +59,14 @@ The backend stores connection/work/assignment bindings, revocation and cleanup
 intents, and capture-to-artifact IDs. Native Sandboxes owns execution, billing and
 storage. Reconciliation pages native resources, fences old assignment access,
 cancels obsolete attempts, lets finalizers finish, then releases remaining rentals. Open work
-is polled only while it holds a live assignment or running work; settled closed work leaves Compute.
+is polled while it has running work, and every 30 s while it holds a live assignment; settled
+closed work leaves Compute. A terminal workflow whose Captures are all registered is not read again.
 Handoffs retain accepted jobs and warm machines in the same work namespace.
 
 Sandboxes publishes rows that a service outside this process owns. merv-sandboxes serves a
 manifest of rows — what each row holds, never how it looks — and this plugin validates that
 manifest, registers one sidebar row per manifest row, and proxies each row's reads with the
-calling project's own credentials. Protected Fleet runtimes remain separate from research
+calling project's own credentials. Protected Fleet runtimes remain separate from project
 compute. Its transport has no Cordis dependencies, and the thin `@merv/sandboxes/ui` adapter injects
 `sandboxes`, `ui` and `scope`. It mirrors the rows into the sidebar registry and draws the
 project's machines on the Running page; `scope` answers only whether the reader holds `write`, so
