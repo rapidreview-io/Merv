@@ -299,7 +299,7 @@ export class NativeEvidence {
         await this.connections.client.request<unknown>(
           `/v1/delegations/works/${work.native_grant_id}/workflows/${workflowId}/captures`,
           this.connections.bearer(connection),
-          { query: { limit: '10', ...(after ? { after } : {}) } },
+          { query: { limit: '1', ...(after ? { after } : {}) } },
         ),
       );
       check(parsed.success, 'sandbox_evidence_invalid', 'Invalid native capture page', 502);
