@@ -26,7 +26,7 @@ const row = (id: string) => ({
   status: {},
   readable: true,
 });
-const shell = { rows: [row('feed'), row('artifacts')], plugins: [] };
+const shell = { rows: [row('feed'), row('artifacts'), row('tasks')], plugins: [] };
 const page = () =>
   createElement(
     MemoryRouter,

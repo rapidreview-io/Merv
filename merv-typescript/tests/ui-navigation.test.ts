@@ -7,9 +7,8 @@ import {
   dormantOwner,
   headed,
   holds,
+  leadRows,
   topRows,
-  working,
-  WORK,
 } from '../packages/ui/web/navigation.js';
 import type { PluginState, Row } from '../packages/ui/web/shell-types.js';
 
@@ -24,8 +23,10 @@ const row = (id: string, kind: string, group: string, order: number, path = `/${
   readable: false,
 });
 
-test('the rail lists places, hides the rows other pages absorbed, and owns the Work row', () => {
+test('the rail lists places, hides the rows other pages absorbed, and leads with the lead row', () => {
+  const work = row('work', 'work', 'lead', 14);
   const rows = [
+    work,
     row('connections', 'connections', 'system', 40, '/external-connections'),
     row('settings', 'settings', 'settings', 100),
     row('research-provider', 'research', 'work', 8, '/cycles'),
@@ -43,10 +44,10 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     sections.map((section) => section.id),
     ['research', 'activity'],
   );
-  // The wave of work is one row the shell owns, leading the rail over every section; the
-  // kinds inside it, a reflection among them, are not places.
-  assert.equal(working(rows), true);
-  assert.equal(working([row('feed', 'feed', 'activity', 30)]), false);
+  // The wave of work is the lead row, standing over every section; the kinds inside it, a
+  // reflection among them, are not places.
+  assert.deepEqual(leadRows(rows), [work]);
+  assert.deepEqual(leadRows([row('feed', 'feed', 'activity', 30)]), []);
   // The paper stands with Work and Now, so it is not one of the sections' rows.
   assert.deepEqual(
     topRows(rows).map((entry) => entry.id),
@@ -61,6 +62,7 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
     'reflections',
     'connections',
     'paper',
+    'work',
   ])
     assert.ok(!shown.includes(hidden), `${hidden} is registered but not a place`);
   // Every row the rail does show is the registration itself, untouched.
@@ -69,11 +71,10 @@ test('the rail lists places, hides the rows other pages absorbed, and owns the W
       entry,
       rows.find((original) => original.id === entry.id),
     );
-  assert.deepEqual({ path: WORK.path, kind: WORK.view.kind }, { path: '/work', kind: 'work' });
   assert.deepEqual(rows, before);
   // No page is nowhere: a record of the work, and the agents behind it, light the Work row.
   const lit = (pathname: string) =>
-    [WORK, ...sections.flatMap((section) => section.rows)]
+    [work, ...sections.flatMap((section) => section.rows)]
       .filter((entry) => holds(entry, pathname, rows))
       .map((entry) => entry.id);
   assert.deepEqual(lit('/work'), ['work']);

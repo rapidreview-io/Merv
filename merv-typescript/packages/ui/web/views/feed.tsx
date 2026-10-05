@@ -154,7 +154,10 @@ export function FeedView({ shell }: ViewProps) {
   const listed = useTool<Artifact[]>(
     shell.rows.some((row) => row.view.kind === 'artifacts') ? 'artifact.list' : null,
   );
-  const names = useMemo(() => recordNames(listed.data, home.data), [listed.data, home.data]);
+  const names = useMemo(
+    () => recordNames(listed.data, home.data, shell.rows),
+    [listed.data, home.data, shell.rows],
+  );
   const files = useMemo(
     () => new Map((listed.data ?? []).map((file) => [file.id, file])),
     [listed.data],

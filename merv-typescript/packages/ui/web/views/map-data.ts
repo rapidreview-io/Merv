@@ -42,7 +42,7 @@ export type MapReflection = {
 };
 /**
  * What Now and the rail read, as the server composes it (`ui.home`): the project's
- * records and the gate of every open workflow in it, and of ended work another plugin
+ * records, under the id of the row that lists them, and the gate of every open workflow in it, and of ended work another plugin
  * still holds. A part the server could not answer for is null.
  */
 export interface HomeData {
@@ -51,7 +51,7 @@ export interface HomeData {
   experiments: MapExperiment[] | null;
   tasks: MapTask[] | null;
   reviews: MapReview[] | null;
-  cycles: MapCycle[] | null;
+  research: MapCycle[] | null;
   workflows: { workflows: WorkflowDecision[] } | null;
   reflections: MapReflection[] | null;
 }

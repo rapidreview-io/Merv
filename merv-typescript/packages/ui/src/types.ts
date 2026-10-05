@@ -31,9 +31,14 @@ export interface UiRow {
   /** Row-owned read-only data for views without a domain tool, served through ui.read. */
   /** The owning row validates any pagination or lookup parameters. */
   read?(caller: Caller, params?: Record<string, unknown>): Json | Promise<Json>;
+  /**
+   * This row's part of ui.home, the one read Now and the rail poll, under the row's id: the
+   * read-only tool that lists its records, and the fields of each record those pages read.
+   */
+  home?: { tool: string; keep: readonly string[] };
 }
 
-export interface UiRowDescription extends Omit<UiRow, 'status' | 'read'> {
+export interface UiRowDescription extends Omit<UiRow, 'status' | 'read' | 'home'> {
   status: UiRowStatus;
   readable: boolean;
 }

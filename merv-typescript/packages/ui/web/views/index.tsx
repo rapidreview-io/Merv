@@ -1,7 +1,6 @@
 import type { ComponentType } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { EmptyState } from '../components';
-import { WORK } from '../navigation';
 import type { Row, ShellData } from '../shell';
 import { ArtifactsView } from './artifacts';
 import { CodeView } from './code';
@@ -17,6 +16,7 @@ import { ReviewsView } from './reviews';
 import { SessionsView } from './sessions';
 import { SettingsView } from './settings';
 import { TasksView } from './tasks';
+import { WorkView } from './work';
 
 export interface ViewProps {
   row: Row;
@@ -31,7 +31,7 @@ export const MOVED: Record<string, string> = {
   // What a project is connected to is a setting.
   connections: '/settings/connections',
   // What is running is drawn on the Work page.
-  running: WORK.path,
+  running: '/work',
 };
 
 /**
@@ -56,6 +56,7 @@ const views: Record<string, ComponentType<ViewProps>> = {
   pi: PiView,
   research: ResearchView,
   reflections: ReflectionsView,
+  work: WorkView,
   'legacy-history': LegacyHistoryView,
   // Two generic kinds: a row a remote service describes through its manifest.
   collection: CollectionView,

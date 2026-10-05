@@ -2207,6 +2207,7 @@ test('a card names the records its input points at, folds what is long or nested
     input: { requestId: 'request_2', expectedRevision: 0 },
   };
   serve('/tools/ui.home', { body: { result: { tasks: [{ id: task, title: 'Weight decay' }] } } });
+  serve('/tools/ui.shell', { body: { result: { rows: [{ id: 'tasks', path: '/tasks' }] } } });
   boot(
     () =>
       snapshot(conversation(), [{ ...command('c1', 'completed'), proposals: [create, advance] }]),

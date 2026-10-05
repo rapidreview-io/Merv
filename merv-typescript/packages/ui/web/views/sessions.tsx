@@ -27,7 +27,6 @@ import {
 } from '../components';
 import { ArrowRightIcon } from '../icons';
 import { ListPage, Segments, useListFilter } from '../list-filters';
-import { WORK } from '../navigation';
 import { ThreeStates } from '../states';
 import {
   clock,
@@ -333,7 +332,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
         <div className="page-stage stack stack--lg sessions-ops">
           {/* Work shows what is live; this is everything there is and has been, a step under it. */}
           <p className="cluster muted">
-            <Link to={WORK.path}>← Work</Link>
+            <Link to="/work">← Work</Link>
             {fleet && <Link to={fleet.path}>Fleet requests</Link>}
           </p>
           <section className="stack" aria-label="Dispatch">

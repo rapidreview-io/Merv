@@ -15,6 +15,10 @@ export const reviewUiPlugin = {
         order: 17,
         path: '/reviews',
         view: { kind: 'reviews' },
+        home: {
+          tool: 'review.list',
+          keep: ['id', 'subjectId', 'status', 'reviewerId', 'claimable', 'verdict', 'createdAt'],
+        },
         status: async (caller: Caller) => ({ count: await reviews.open(caller) }),
       }),
     );

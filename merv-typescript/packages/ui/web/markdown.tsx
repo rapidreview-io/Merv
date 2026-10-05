@@ -1,6 +1,7 @@
 import { Fragment, memo, useMemo, useRef, type ReactNode } from 'react';
 import { Link, useHref } from 'react-router-dom';
 import { useTool } from './api';
+import type { ShellData } from './shell-types';
 
 /**
  * Briefs, deliveries and reports are written in Markdown, and they are most of
@@ -76,39 +77,41 @@ interface NamedFile {
   id: string;
   title: string;
 }
-export interface NamedHome {
-  actors?: { id: string; name: string }[] | null;
-  experiments?: { id: string; name: string }[] | null;
-  tasks?: { id: string; title: string }[] | null;
-  cycles?: { id: string; name: string }[] | null;
-  reflections?: { id: string; title: string }[] | null;
-  reviews?: { id: string; subjectId: string }[] | null;
-}
+type Listed = { id: string; name?: string; title?: string; subjectId?: string };
+/** `ui.home`: the people, and each row's records under the row's id. */
+export type NamedHome = object;
+type Parts = { actors?: { id: string; name: string }[] | null } & Record<string, Listed[] | null>;
+type NamedRow = Pick<ShellData['rows'][number], 'id' | 'path'>;
 
 /**
- * Names for the ids a text mentions, from lists the app already reads. A review is
- * named by what it judges, so reviews are read after the records they point at; a person
- * is a name and no link. An id no list names is simply absent from the map.
+ * Names for the ids a text mentions, from lists the app already reads: a record opens at
+ * its row's page. One with no name of its own, a review, is named by what it judges, so it
+ * is named after the records it points at; a person is a name and no link. An id no list
+ * names is simply absent from the map.
  */
-export function recordNames(files?: NamedFile[] | null, home?: NamedHome | null): RecordNames {
+export function recordNames(
+  files?: NamedFile[] | null,
+  home?: NamedHome | null,
+  rows: readonly NamedRow[] = [],
+): RecordNames {
   const names = new Map<string, Named>();
+  const parts = (home ?? {}) as Parts;
   for (const file of files ?? [])
     names.set(file.id, { name: file.title, to: `/artifacts/${file.id}` });
-  for (const task of home?.tasks ?? [])
-    names.set(task.id, { name: task.title, to: `/tasks/${task.id}` });
-  for (const experiment of home?.experiments ?? [])
-    names.set(experiment.id, { name: experiment.name, to: `/experiments/${experiment.id}` });
-  for (const cycle of home?.cycles ?? [])
-    names.set(cycle.id, { name: cycle.name, to: `/research/${cycle.id}` });
-  for (const reflection of home?.reflections ?? [])
-    names.set(reflection.id, { name: reflection.title, to: `/reflections/${reflection.id}` });
-  for (const actor of home?.actors ?? [])
+  const listed = rows.flatMap((row) => {
+    const records = parts[row.id];
+    return Array.isArray(records)
+      ? records.map((record) => ({ ...record, to: `${row.path}/${record.id}` }))
+      : [];
+  });
+  for (const { id, name = '', title = '', to } of listed)
+    if (name || title) names.set(id, { name: name || title, to });
+  for (const actor of parts.actors ?? [])
     // A directory name that is itself an identifier names nobody.
     if (!/[0-9a-f]{16,}/.test(actor.name)) names.set(actor.id, { name: actor.name });
-  for (const review of home?.reviews ?? []) {
-    const subject = names.get(review.subjectId);
-    if (subject)
-      names.set(review.id, { name: `Review of ${subject.name}`, to: `/reviews/${review.id}` });
+  for (const { id, name, title, subjectId, to } of listed) {
+    const subject = !name && !title && subjectId && names.get(subjectId);
+    if (subject) names.set(id, { name: `Review of ${subject.name}`, to });
   }
   return names;
 }
@@ -124,8 +127,14 @@ export function useRecordNames(text: string): RecordNames {
   const files = useTool<NamedFile[]>(
     ids.some((id) => prefixOf(id) === 'art') ? 'artifact.list' : null,
   );
-  const home = useTool<NamedHome>(ids.some((id) => prefixOf(id) !== 'art') ? 'ui.home' : null);
-  return useMemo(() => recordNames(files.data, home.data), [files.data, home.data]);
+  const others = ids.some((id) => prefixOf(id) !== 'art');
+  const home = useTool<NamedHome>(others ? 'ui.home' : null);
+  // The rows say where each list's records open; the shell already polls this read.
+  const shell = useTool<ShellData>(others ? 'ui.shell' : null, {}, { every: 30000 });
+  return useMemo(
+    () => recordNames(files.data, home.data, shell.data?.rows),
+    [files.data, home.data, shell.data],
+  );
 }
 
 /**

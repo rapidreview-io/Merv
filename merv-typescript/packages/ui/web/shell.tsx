@@ -13,9 +13,8 @@ import {
   documentTitle,
   headed,
   holds as held,
+  leadRows,
   topRows,
-  working,
-  WORK,
 } from './navigation';
 import { stepped } from './record-picker';
 import { useNow } from './views/overview';
@@ -188,7 +187,7 @@ function AccountFoot() {
 }
 
 /**
- * The one navigation. Work, Now and the paper first, then every other registered
+ * The one navigation. The lead rows (Work), Now and the paper first, then every other registered
  * collection as its own row under the heading of the section it belongs to, then
  * Settings and the account at the foot. Nothing is hidden behind a row or a title.
  */
@@ -200,6 +199,16 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   // as often as the rows beside it.
   const needsYou = useNow(rows, pathname === '/now' ? undefined : 30000).count;
   const holds = (row: Row) => held(row, pathname, rows);
+  const place = (row: Row) => (
+    <RailRow
+      key={row.id}
+      to={row.path}
+      label={row.label}
+      icon={iconOf(row)}
+      active={holds(row)}
+      sick={unwell(row)}
+    />
+  );
   return (
     <aside className="sidebar" aria-label="Primary">
       <div className="rail-util">
@@ -230,49 +239,18 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         )}
       </div>
       <nav className="rail-nav">
-        {working(rows) && (
-          <RailRow to={WORK.path} icon={iconOf(WORK)} label={WORK.label} active={holds(WORK)} />
-        )}
+        {leadRows(rows).map(place)}
         <RailRow to="/now" icon="now" label="Now" active={pathname === '/now'} count={needsYou} />
-        {topRows(rows).map((row) => (
-          <RailRow
-            key={row.id}
-            to={row.path}
-            label={row.label}
-            icon={iconOf(row)}
-            active={holds(row)}
-            sick={unwell(row)}
-          />
-        ))}
+        {topRows(rows).map(place)}
         {buildNavigation(rows).map((section) => (
           <div className="rail-group" key={section.id} role="group" aria-label={section.label}>
             {headed(section) && <h3 className="rail-group-head">{section.label}</h3>}
-            {section.rows.map((row) => (
-              <RailRow
-                key={row.id}
-                to={row.path}
-                label={row.label}
-                icon={iconOf(row)}
-                active={holds(row)}
-                sick={unwell(row)}
-              />
-            ))}
+            {section.rows.map(place)}
           </div>
         ))}
       </nav>
       <div className="sidebar-foot">
-        {rows
-          .filter((row) => row.group === 'settings')
-          .map((row) => (
-            <RailRow
-              key={row.id}
-              to={row.path}
-              label={row.label}
-              icon={iconOf(row)}
-              active={holds(row)}
-              sick={unwell(row)}
-            />
-          ))}
+        {rows.filter((row) => row.group === 'settings').map(place)}
         <AccountFoot />
       </div>
     </aside>

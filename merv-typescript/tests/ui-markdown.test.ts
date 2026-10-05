@@ -237,18 +237,26 @@ test('a record id is recognised in text and in a code span, and only as a whole 
 
 test('names come from the lists the app already reads, a review named by what it judges', () => {
   const review = `review_${'c'.repeat(32)}`;
-  const names = recordNames([{ id: ART, title: 'Delivery: grokking curve, seed 7' }], {
-    tasks: [{ id: TASK, title: 'Reproduce grokking' }],
-    reviews: [
-      { id: review, subjectId: TASK },
-      { id: 'review_unnamed', subjectId: 'wf_unknown' },
+  const names = recordNames(
+    [{ id: ART, title: 'Delivery: grokking curve, seed 7' }],
+    {
+      tasks: [{ id: TASK, title: 'Reproduce grokking' }],
+      reviews: [
+        { id: review, subjectId: TASK },
+        { id: 'review_unnamed', subjectId: 'wf_unknown' },
+      ],
+      actors: [
+        { id: 'actor_1', name: 'Codex producer' },
+        { id: 'actor_2', name: 'a3f0c2d19b7e4f6a8c5d' },
+      ],
+      experiments: null,
+    },
+    [
+      { id: 'tasks', path: '/tasks' },
+      { id: 'experiments', path: '/experiments' },
+      { id: 'reviews', path: '/reviews' },
     ],
-    actors: [
-      { id: 'actor_1', name: 'Codex producer' },
-      { id: 'actor_2', name: 'a3f0c2d19b7e4f6a8c5d' },
-    ],
-    experiments: null,
-  });
+  );
   assert.deepEqual(names.get(ART), {
     name: 'Delivery: grokking curve, seed 7',
     to: `/artifacts/${ART}`,
@@ -564,6 +572,7 @@ test('ids outside Markdown are named the same way, and a document reads its own 
   serve('/tools/ui.home', {
     body: { result: { tasks: [{ id: TASK, title: 'Reproduce grokking' }] } },
   });
+  serve('/tools/ui.shell', { body: { result: { rows: [{ id: 'tasks', path: '/tasks' }] } } });
   await mount(
     createElement(
       MemoryRouter,
@@ -669,6 +678,9 @@ test('experiment references display names for bare IDs and explicit paper links'
   t.after(unmount);
   const id = 'wf_1234567890abcdef1234567890abcdef';
   serve('/tools/ui.home', { body: { result: { experiments: [{ id, name: 'retrieval-check' }] } } });
+  serve('/tools/ui.shell', {
+    body: { result: { rows: [{ id: 'experiments', path: '/experiments' }] } },
+  });
   await mount(
     page(
       `The experiment ${id} is ongoing. See [${id}](/experiments/${id}) and [old label](/experiments/${id}).`,

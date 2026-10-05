@@ -2,7 +2,6 @@ import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
-import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
@@ -148,18 +147,6 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
   const [maxCycles, setMaxCycles] = useState('10');
   // What a cycle may wait on is the work this page lists, chosen by name.
   const work = useWorkPicks({ includeFailed: true });
-  // Code owns publication readiness. This is an early warning for the person opening a
-  // research cycle, never an admission check on research or a claim that live rules passed.
-  const code = useTool<CodeProjectStatus>('code.status');
-  const hosted = code.data?.project?.durability === 'code';
-  const publishingBlocked =
-    hosted &&
-    ['github_automation_disabled', 'github_repository_required'].includes(
-      code.data?.mirror?.blockedBy ?? '',
-    );
-  const canaryBlocked =
-    hosted &&
-    !!code.data?.publication?.controls.blockers.includes('code_publication_canary_required');
   const command = useCommand<ResearchRecord>({
     tool: 'research.create',
     validate: (value) =>
@@ -185,23 +172,6 @@ export function CreateResearch({ onSaved }: { onSaved: () => void }) {
       }}
     >
       <h2>New cycle</h2>
-      {(publishingBlocked || canaryBlocked) && (
-        <div className="card" role="note">
-          <p>Research can proceed, but publishing accepted code to main needs operator setup.</p>
-          {publishingBlocked && (
-            <p>
-              Repository automation does not permit publishing. An operator can check{' '}
-              <Link to="/settings/integrations">repository automation</Link>.
-            </p>
-          )}
-          {canaryBlocked && (
-            <p>
-              The required merge-safety check has not been recorded. An operator can complete
-              publication setup on <Link to="/code">Code</Link>.
-            </p>
-          )}
-        </div>
-      )}
       <fieldset disabled={command.locked}>
         <Field label="Name" required maxLength={200} value={name} onChange={setName} />
         <RecordPicker

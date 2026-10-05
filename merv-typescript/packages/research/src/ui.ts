@@ -7,6 +7,17 @@ export const researchUiPlugin = {
   inject: ['research', 'ui'],
   apply(ctx: Context) {
     const research = ctx.research;
+    // The wave of work, framed by its cycle: it leads the rail, and a project opens on it.
+    ctx.effect(() =>
+      ctx.ui.register({
+        id: 'work',
+        label: 'Work',
+        group: 'lead',
+        order: 14,
+        path: '/work',
+        view: { kind: 'work' },
+      }),
+    );
     ctx.effect(() =>
       ctx.ui.register({
         id: 'research',
@@ -15,6 +26,7 @@ export const researchUiPlugin = {
         order: 14,
         path: '/research',
         view: { kind: 'research' },
+        home: { tool: 'research.list', keep: ['id', 'name', 'ownerId', 'workflow'] },
         read: async (caller) => JSON.parse(JSON.stringify(await research.list(caller))) as Json,
         // Open work: a cycle that has not yet completed, been abandoned or failed.
         status: async (caller) => ({ count: await research.active(caller) }),

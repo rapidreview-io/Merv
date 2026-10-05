@@ -4,7 +4,6 @@ import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
 import { LoadState, RecordPage } from '../components';
 import { recordRoutes } from '../list-filters';
-import { WORK } from '../navigation';
 import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
@@ -18,7 +17,7 @@ function CycleDetail({ row, shell }: ViewProps) {
   if (!cycle.data)
     return (
       <div className="page-stage">
-        <LoadState {...cycle} back={{ to: WORK.path, label: 'Work' }} />
+        <LoadState {...cycle} back={{ to: '/work', label: 'Work' }} />
       </div>
     );
   const record = cycle.data;
@@ -33,7 +32,7 @@ function CycleDetail({ row, shell }: ViewProps) {
   ];
   return (
     <RecordPage
-      back={<Link to={WORK.path}>← Work</Link>}
+      back={<Link to="/work">← Work</Link>}
       kind={row.view.kind}
       name={record.name}
       state={<StageMark graph={process.data} shapes={shell.workflows} workflow={record.workflow} />}
@@ -78,4 +77,4 @@ function CycleDetail({ row, shell }: ViewProps) {
 }
 
 /** The cycle is read from the Work page it frames; its own list is that page now. */
-export const ResearchView = recordRoutes(CycleDetail, WORK.path);
+export const ResearchView = recordRoutes(CycleDetail, '/work');

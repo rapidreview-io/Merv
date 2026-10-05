@@ -16,6 +16,19 @@ export const taskUiPlugin = {
         order: 15,
         path: '/tasks',
         view: { kind: 'tasks' },
+        home: {
+          tool: 'task.list',
+          keep: [
+            'id',
+            'title',
+            'goal',
+            'producerId',
+            'acceptanceChecks',
+            'deliveryIds',
+            'dependencies',
+            'workflow',
+          ],
+        },
         // One record, with the gate it stands at: the process graph is derived from the
         // same record, so the page reads both in one answer rather than two.
         read: async (caller: Caller, params) => {

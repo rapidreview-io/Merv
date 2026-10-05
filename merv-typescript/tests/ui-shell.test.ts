@@ -45,6 +45,8 @@ const rows = [
   row('paper', 'paper', 'work', 15, 'Paper'),
   row('artifacts', 'artifacts', 'work', 21, 'Files'),
   row('settings', 'settings', 'settings', 100, 'Settings'),
+  // Registered by @merv/research: the lead row, standing over Now.
+  row('work', 'work', 'lead', 14, 'Work'),
 ];
 const plugin = (id: string, state = 'active') => ({ id, name: `@merv/${id}`, state });
 
@@ -239,7 +241,7 @@ test('Settings keeps its title in every room, and folds its diagnostics under on
   const folds = [...document.querySelectorAll<HTMLDetailsElement>('details.fold')];
   assert.deepEqual(
     folds.map((fold) => fold.querySelector('summary')!.textContent),
-    ['Plugins 3 all active', 'Sidebar rows 3 all ready'],
+    ['Plugins 3 all active', 'Sidebar rows 4 all ready'],
   );
   assert.ok(
     folds.every((fold) => !fold.open),
@@ -589,7 +591,7 @@ test('an address this app moved elsewhere opens there, whether or not a plugin r
   assert.equal(where, '/work?key=work:wf_index');
 });
 
-test('a project opens on Work, which leads the rail over Now and the paper; there is no Home', async (t) => {
+test('a project opens on its lead row, Work, which leads the rail over Now and the paper; there is no Home', async (t) => {
   t.after(async () => await unmount());
   boot('Operator', { rows: [...rows, row('tasks', 'tasks', 'work', 10, 'Tasks')] });
   await open('/');

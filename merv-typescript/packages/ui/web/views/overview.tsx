@@ -127,7 +127,7 @@ const opened = ({ id, workflow }: Pick<Open, 'id' | 'workflow'>, name: string, o
 const openWork = (home: HomeData | undefined): [string, Open[]][] => [
   ['tasks', (home?.tasks ?? []).map((item) => opened(item, item.title, item.producerId))],
   ['experiments', (home?.experiments ?? []).map((item) => opened(item, item.name, item.ownerId))],
-  ['research', (home?.cycles ?? []).map((item) => opened(item, item.name, item.ownerId))],
+  ['research', (home?.research ?? []).map((item) => opened(item, item.name, item.ownerId))],
 ];
 
 /**
