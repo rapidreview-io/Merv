@@ -1002,29 +1002,12 @@ export class ResearchService implements Research {
     if (!asks) return { unitIds: [], quarantined: [] };
     if (tx) return null;
     const since = await this.use('code', checks, (code) => code.acceptedSince(caller));
-    return { unitIds: await this.unretired(caller, since.unitIds), quarantined: since.quarantined };
-  }
-
-  /**
-   * The units whose workflow instance was not retired. Code keeps the acceptance of a retired
-   * instance as history (the 2026-09-22 retirement deleted the instance itself), but no task can
-   * depend on an instance that no longer exists, so no cycle integrates that code.
-   */
-  private async unretired(caller: Caller, unitIds: string[]): Promise<string[]> {
-    if (!unitIds.length) return unitIds;
-    const retired = new Set(
-      (
-        await this.state.read(
-          async (sql) =>
-            await sql.all<{ id: string }>(
-              `SELECT id FROM wf_retired_instances WHERE project_id=? AND id IN (${unitIds.map(() => '?').join(',')})`,
-              caller.projectId,
-              ...unitIds,
-            ),
-        )
-      ).map((row) => row.id),
+    // Code keeps the acceptance of an instance the 2026-09-22 retirement deleted as history, but
+    // no task can depend on an instance that no longer exists, so no cycle integrates that code.
+    const live = new Set(
+      since.unitIds.length ? (await this.workflows.list(caller)).map(({ id }) => id) : [],
     );
-    return unitIds.filter((id) => !retired.has(id));
+    return { unitIds: since.unitIds.filter((id) => live.has(id)), quarantined: since.quarantined };
   }
 
   /**

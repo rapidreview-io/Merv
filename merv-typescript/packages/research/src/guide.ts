@@ -1,8 +1,7 @@
 /** How Merv's research works, which the research tools contribute to the guide every main agent
- * is given, before the registry's own part on tools, sessions and consent (@merv/api/guide).
+ * is given, before the registry's own part on tools and consent (@merv/api/guide).
  * Every dotted name here is a registered tool (tests/app.test.ts). */
 export const researchGuide = `Merv is a review-gated research system. A project holds:
-- its Introduction: Merv writes it from the Problem whenever the Problem changes, so do not write it yourself (project.get);
 - a living paper, carried as project context in worker and reviewer assignments: a Problem document with four fixed sections (problem, scope, goals, constraints), Literature with its citations, then Methods and Results (paper.read, paper.patch, paper.cite);
 - tasks: a goal and deliverables, delivered, then reviewed;
 - experiments: a plan, a design review, the run, then a results review;
@@ -17,4 +16,4 @@ Understand the project paper before defining or judging a piece of work. An expe
 
 Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.
 
-When you are working with a person and can write the paper, and any Problem section is empty, start no other work: interview them, a few pointed questions at a time, until you can write all four honestly; then write them with paper.patch (kind problem). Never invent this content.`;
+Automatic research spends compute: when you are working with a person, get their yes before starting it, unless their message asked for exactly that.`;

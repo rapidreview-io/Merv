@@ -395,6 +395,10 @@ test('retiring the versions that can no longer start deletes their records and n
               delete row.corpus;
               delete row.paper;
             }
+            // research@8 drops three child columns no cycle ever set.
+            if (table === 'research_cycles')
+              for (const column of ['consolidation_id', 'methods_update_id', 'results_update_id'])
+                delete row[column];
             // reflections@3 and reviews@11 add a column after the retirement; jsonb orders keys
             // by length.
             const added = {

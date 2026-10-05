@@ -172,7 +172,7 @@ export const taskToolsPlugin = {
     // A main agent works with a person; a Fleet worker produces the tasks it directs.
     ctx.effect(() =>
       ctx.tools.contributeInstructions(
-        'When you create a task, direct its goal and checks, then leave production to a Fleet worker. You may read the task, propose next work, and create artifacts, but never start work context, save work checkpoints, or submit a task delivery yourself.',
+        "When you create a task, direct its goal and checks, then leave production to a Fleet worker. You may read the task, propose next work, and create artifacts, but never start work context, save work checkpoints, or submit a task delivery yourself. task.get returns Merv's own guidance for a task: follow it.",
       ),
     );
   },
