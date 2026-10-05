@@ -1724,7 +1724,9 @@
         "contextBuilder",
         "domainEvents"
       ],
-      "optional": [],
+      "optional": [
+        "sessions"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -3499,6 +3501,11 @@
       "optional": false
     },
     {
+      "from": "reflections",
+      "to": "sessions",
+      "optional": true
+    },
+    {
       "from": "research",
       "to": "state",
       "optional": false
@@ -3898,7 +3905,7 @@
     "plugins": 70,
     "providers": 32,
     "adapters": 38,
-    "dependencies": 194
+    "dependencies": 195
   },
   "network": [
     {

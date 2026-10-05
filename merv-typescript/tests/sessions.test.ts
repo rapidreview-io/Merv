@@ -425,12 +425,13 @@ test('activation is metadata-only and once; active heartbeat is bounded, expiry 
   assert.equal((await f.sessions.get(f.source, session.id)).status, 'expired');
   await f.sessions.sweep();
   assert.equal((await f.scope.require(f.source, 'write')).active, true);
+  // Its credential is gone; its agent waits, dormant, for the work to come back to it.
   assert.equal(
     (await f.state.read(
       async (sql) =>
         await sql.get<{ active: number }>('SELECT active FROM actors WHERE id=?', session.actorId),
     ))!.active,
-    0,
+    1,
   );
   await f.events.drain();
   assert.equal(

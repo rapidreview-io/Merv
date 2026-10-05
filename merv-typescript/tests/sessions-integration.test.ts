@@ -427,11 +427,12 @@ test('a real session survives restart and a released worker yields bounded conte
   );
   assert.equal(released.status, 200, JSON.stringify(released.body));
   assert.equal(released.body.session.status, 'released');
+  // Its credential is revoked; its agent waits, dormant, for the task to come back to it.
   assert.equal(
     (await f.app.ctx.scope.actors(await f.source())).find(
       (actor) => actor.id === work.session.actorId,
     )!.active,
-    false,
+    true,
   );
   assert.equal(
     (await f.app.ctx.scope.require(await f.source(), 'write')).active,

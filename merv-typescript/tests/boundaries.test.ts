@@ -159,6 +159,8 @@ const optionalCapabilities: Record<string, readonly string[]> = {
     'codeWork',
   ],
   knowledge: ['codeWork'],
+  // A lens's continuity key, registered while Sessions is loaded; without it no session runs.
+  reflections: ['sessions'],
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.

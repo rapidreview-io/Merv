@@ -42,6 +42,15 @@ separate real-agent acceptance harness, not a production runner.
 
 The older `POST /sessions/:id/huggingface`, which returned the account token itself as `{hfToken}`, answers `{hfToken: null}` from 2026-10-08 and is then removed; runners before `huggingface-access` still call it.
 
+## Continuity
+
+When work comes back to a state it was in, the agent that held that state takes it up again with its own conversation, as a new session with a new lease and credential. Each offer with no named `agentId` gets `session.continuity.key`: the instance's workflow's registered provider's key (`registerContinuity(workflow, provider)`, one per workflow; `null` means never), else `[instanceId, state, role]`. The role is part of every key, so a reviewer never continues a producer's conversation; a reviewer of a later round does continue the earlier reviewer's.
+
+- `session_conversations` holds one row per `(project_id, continuity_key)`: the key's latest closed session and its agent, and the conversation that session's runner declared (`harness`, `conversation_id`, `sha256`, `size`), `uploaded_at` once delivered. A close takes the row for its session; the agent the row named before is retired (`superseded`) when it is another.
+- An offer whose key's row is delivered, and whose agent is active, belongs to the same source and holds no live session, reuses that agent and its actor, from any runner, and carries `continuity.resume` (`sessionId`, `harness`, `conversationId`, `sha256`, `size`) in the frozen session. Fingerprints and replay are unchanged.
+- A session with a key leaves its agent active at close, with no credential; the agent is retired when superseded, or by the sweep once its key's row is 14 days old. Review independence still excludes it: it is the same actor, a contributor under every session it held.
+- `POST /sessions/:id/conversation` declares and delivers the redacted conversation file exactly as a transcript is declared and delivered, to `conversations-<projectId>/<sha256>`, answering `{conversation}`; 409 `conversation_unkept` for a session with no key, `conversation_superseded` once a later session of the key closed. `POST /sessions/:id/resume` (`runnerId`, `hostRef`, live and attached) answers `{download: {url, expiresAt}}`, a signed GET of the conversation the session resumes. A hosted machine waits for a declared conversation as for a transcript.
+
 ## Transcripts
 
 The runner that held a session keeps one copy of what the agent process printed, for operators. Nothing in Merv reads it back: there is no GET, tool, page or event. `POST /sessions/:id/transcript` takes `runnerId`, `hostRef`, `sha256`, `size` (1 byte to `MAX_TRANSCRIPT_BYTES`, 64 MiB), `logBytes` and `truncated` in a body of at most 4 KiB, and answers `{transcript: {sessionId, sha256, size, uploadedAt}}`.

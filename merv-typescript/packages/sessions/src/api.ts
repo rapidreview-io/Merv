@@ -49,6 +49,8 @@ export interface SessionRoutes {
   transcript(caller: Caller, input: unknown): Promise<unknown>;
   stream(caller: Caller, input: unknown): Promise<unknown>;
   readonly streams: Sessions['streams'];
+  conversation(caller: Caller, input: unknown): Promise<unknown>;
+  resume(caller: Caller, input: unknown): Promise<unknown>;
   heartbeat(caller: Caller, input: unknown): Promise<unknown>;
   release(caller: Caller, input: unknown): Promise<unknown>;
 }
@@ -90,7 +92,7 @@ const managedRoute = (method: string, path: string): boolean =>
     ].includes(path)) ||
   (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
   (method === 'POST' &&
-    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|stream|huggingface|huggingface-access|launch-connections)$/.test(
+    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|stream|conversation|resume|huggingface|huggingface-access|launch-connections)$/.test(
       path,
     )) ||
   (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
@@ -175,7 +177,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
-    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|stream|huggingface|huggingface-access|launch-connections))?$/.exec(
+    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|stream|conversation|resume|huggingface|huggingface-access|launch-connections))?$/.exec(
       path,
     );
   if (route) {
@@ -209,6 +211,17 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
       const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
       return { transcript: await sessions.transcript(caller, input) };
     }
+    if (req.method === 'POST' && route[2] === 'conversation') {
+      const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
+      return { conversation: await sessions.conversation(caller, input) };
+    }
+    if (req.method === 'POST' && route[2] === 'resume')
+      return {
+        download: await sessions.resume(
+          caller,
+          bound(await r.json(undefined, 4096), 'sessionId', sessionId),
+        ),
+      };
     if (req.method === 'POST' && route[2]) {
       const input = bound(await r.json(), 'sessionId', sessionId);
       const session =
@@ -290,6 +303,7 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
     if (
       path.endsWith('/huggingface') ||
       path.endsWith('/huggingface-access') ||
+      path.endsWith('/resume') ||
       path.endsWith('/launch-connections')
     )
       res.setHeader('Cache-Control', 'no-store');

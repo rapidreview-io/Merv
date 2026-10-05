@@ -43,6 +43,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
+import type {} from '@merv/sessions/types';
 import { parseChangeSpec } from './change-spec.js';
 import { waveNode, wavePanel, type WaveFacts } from './running.js';
 import {
@@ -1754,6 +1755,14 @@ export const reflectionsPlugin = {
     await ctx.effect(async function* () {
       yield await ctx.domainEvents.subscribe(
         leaseReleaseConsumer('reflections.lease-release.v1', 'reflection_leases', ctx.reviews),
+      );
+    });
+    // A restart makes new lens instances: each perspective's author still takes its own up again.
+    ctx.inject(['sessions'], (ctx) => {
+      ctx.effect(() =>
+        ctx.sessions.registerContinuity(LENS_WORKFLOW.name, ({ data, role }) =>
+          JSON.stringify([LENS_WORKFLOW.name, data.reflectionId, data.perspective, role]),
+        ),
       );
     });
   },

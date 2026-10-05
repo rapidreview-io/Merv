@@ -13,7 +13,7 @@ export type TranscriptFacts = Omit<SessionTranscriptDeclaration, 'hostRef' | 'de
  * not inside a longer identifier (mcp__merv__…, max_…), but also right after a JSON escape such as
  * \n or \u0022.
  */
-const bearer =
+export const bearer =
   /(?:(?<![A-Za-z0-9_-])|(?<=\\(?:[nrtbf]|u[0-9a-fA-F]{4})))(?:m[iks]_[A-Za-z0-9_-]{43}|m[er]_[0-9a-f]{64}|(?:pi[rw]|rr_sk)_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sbxt_[A-Za-z0-9_-]{32,}|hf_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})(?![A-Za-z0-9_-])/;
 /** Bearers and each exact secret of at least 16 characters, as one global pattern. */
 export const blankPattern = (secrets: string[]) =>

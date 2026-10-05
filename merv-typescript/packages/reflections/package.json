@@ -13,6 +13,7 @@
     "zod": "^3.25.0",
     "@merv/paper": "0.1.0",
     "@merv/experiments": "0.1.0",
-    "@merv/reviews": "0.1.0"
+    "@merv/reviews": "0.1.0",
+    "@merv/sessions": "0.1.0"
   }
 }

@@ -580,10 +580,11 @@ export class SessionRunning {
       created_at: string;
       activated_at: string | null;
       closed_at: string | null;
+      continues: string | null;
     }>(
       `SELECT s.id,s.status,x.j #>> '{execution,state}' AS state,x.j #>> '{role}' AS role,
         x.j #>> '{createdAt}' AS created_at,x.j #>> '{activatedAt}' AS activated_at,
-        x.j #>> '{closedAt}' AS closed_at
+        x.j #>> '{closedAt}' AS closed_at,x.j #>> '{continuity,resume,sessionId}' AS continues
         FROM (SELECT id,status,session_json,_merv_rowid FROM worker_sessions
           WHERE project_id=? AND instance_id IN (${instanceIds.map(() => '?').join(',')})
           ORDER BY _merv_rowid DESC LIMIT ${agentLimit}) s
@@ -598,6 +599,7 @@ export class SessionRunning {
       live: row.status === 'offered' || row.status === 'active',
       startedAt: row.activated_at ?? row.created_at,
       ...(row.closed_at ? { endedAt: row.closed_at } : {}),
+      ...(row.continues ? { continues: row.continues } : {}),
       events: `/sessions/${encodeURIComponent(row.id)}/events`,
     }));
   }

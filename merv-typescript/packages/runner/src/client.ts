@@ -19,6 +19,7 @@ import type {
   Session,
   SessionDeferral,
   SessionReleaseOutcome,
+  SessionConversationDeclaration,
   SessionTranscript,
   SessionTranscriptDeclaration,
   SessionUsageReport,
@@ -100,18 +101,21 @@ const sessionSchema = z
   })
   .passthrough();
 const leaseSchema = z.object({ session: z.union([z.null(), sessionSchema]), reason: label });
-const transcriptSchema = z.object({
-  transcript: z
-    .object({
-      sessionId: z.string(),
-      sha256: z.string(),
-      size: z.number(),
-      uploadedAt: z.string().nullable(),
-      upload: z
-        .object({ url: z.string().url(), headers: z.record(z.string()), expiresAt: z.string() })
-        .optional(),
-    })
-    .passthrough(),
+const keptSchema = z
+  .object({
+    sessionId: z.string(),
+    sha256: z.string(),
+    size: z.number(),
+    uploadedAt: z.string().nullable(),
+    upload: z
+      .object({ url: z.string().url(), headers: z.record(z.string()), expiresAt: z.string() })
+      .optional(),
+  })
+  .passthrough();
+const transcriptSchema = z.object({ transcript: keptSchema });
+const conversationSchema = z.object({ conversation: keptSchema });
+const downloadSchema = z.object({
+  download: z.object({ url: z.string().url(), expiresAt: z.string() }).passthrough(),
 });
 const streamSchema = z.object({
   stream: z.object({ until: z.number().int().nonnegative().safe() }).passthrough(),
@@ -509,6 +513,27 @@ export class RunnerClient {
     const t = transcriptSchema.safeParse(
       await this.request(`/sessions/${encodeURIComponent(id)}/transcript`, { runnerId, ...input }),
     ).data?.transcript;
+    return this.kept(id, input, t);
+  }
+  /** The conversation a session kept: declared and delivered as its transcript is. */
+  async conversation(
+    id: string,
+    runnerId: string,
+    input: SessionConversationDeclaration,
+  ): Promise<SessionTranscript> {
+    const t = conversationSchema.safeParse(
+      await this.request(`/sessions/${encodeURIComponent(id)}/conversation`, {
+        runnerId,
+        ...input,
+      }),
+    ).data?.conversation;
+    return this.kept(id, input, t);
+  }
+  private kept(
+    id: string,
+    input: { sha256: string; deliver?: true },
+    t: z.infer<typeof keptSchema> | undefined,
+  ): SessionTranscript {
     // It names this session and file; a delivery not yet stored carries a PUT to https or loopback.
     if (
       !t ||
@@ -535,6 +560,27 @@ export class RunnerClient {
     ).data?.stream.until;
     if (until === undefined) throw new RunnerControlError('invalid_control_response', 0);
     return { until };
+  }
+
+  /** The conversation a live session resumes: `size` bytes from the store's signed GET. */
+  async resume(id: string, runnerId: string, hostRef: string, size: number): Promise<Buffer> {
+    const reply = downloadSchema.safeParse(
+      await this.request(`/sessions/${encodeURIComponent(id)}/resume`, { runnerId, hostRef }),
+    ).data?.download;
+    if (!reply || !secureUrl(new URL(reply.url)))
+      throw new RunnerControlError('invalid_control_response', 0);
+    try {
+      const response = await this.fetcher(reply.url, {
+        redirect: 'error',
+        credentials: 'omit',
+        signal: AbortSignal.timeout(60_000 + Math.ceil(size / 128)),
+      });
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (response.ok && bytes.length === size) return bytes;
+    } catch {
+      // Reported below.
+    }
+    throw new RunnerControlError('resume_download_failed', 0);
   }
   /** The store's signed PUT: its own headers and the bytes, never a Merv bearer. 412 is stored. */
   async putSigned(

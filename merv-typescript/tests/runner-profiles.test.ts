@@ -254,14 +254,10 @@ test('Codex uses the fixed MCP allowlist, retains sandboxed shell, and has no im
   assert.equal(spec.args.at(-1), '-');
   assert.equal(spec.args[spec.args.indexOf('--sandbox') + 1], 'workspace-write');
   assert.equal(spec.args[spec.args.indexOf('-C') + 1], spec.cwd);
-  for (const flag of [
-    '--ignore-user-config',
-    '--ignore-rules',
-    '--ephemeral',
-    '--skip-git-repo-check',
-    '--json',
-  ])
+  for (const flag of ['--ignore-user-config', '--ignore-rules', '--skip-git-repo-check', '--json'])
     assert(spec.args.includes(flag));
+  // The thread is kept, so the runner can take it up again when the work comes back.
+  assert(!spec.args.includes('--ephemeral'));
   assert.equal(settings['approval_policy'], '"never"');
   assert.equal(settings['features.shell_tool'], 'true');
   assert.equal(settings['sandbox_workspace_write.network_access'], 'false');

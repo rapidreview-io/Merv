@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
-import { closeSync, constants, fstatSync, openSync, readSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -32,6 +40,12 @@ import {
 import { ProcessHost, usageFile } from './process-host.js';
 import { readTranscript, type TranscriptFacts } from './transcript.js';
 import { AgentStream } from './agent-stream.js';
+import {
+  conversationFile,
+  keepConversation,
+  restoreConversation,
+  type ConversationFacts,
+} from './conversation.js';
 import { assignmentUser, RunnerWorkspaces, type RepositoryDriverFactory } from './workspaces.js';
 import {
   buildLaunch,
@@ -212,24 +226,34 @@ const view = (s: Session) => {
     expiresAt: s.expiresAt,
     hardDeadline: s.hardDeadline,
     ...(s.workspace ? { workspace: s.workspace } : {}),
+    ...(s.continuity ? { continuity: s.continuity } : {}),
     execution: { policy: { readOnly, workspace, tools: tools.map(({ name }) => ({ name })) } },
   };
 };
 type SessionView = ReturnType<typeof view>;
-/** What a launch owes of its transcript, kept in its metadata: hashes and sizes, never bytes. */
-type Transcript =
+/**
+ * What a launch owes of its transcript and of the conversation it kept, each in its metadata
+ * under its own name: hashes and sizes, never bytes.
+ */
+type Owed<Facts> =
   | { state: 'none' | 'uploaded' }
   | { state: 'refused'; code: string }
-  | ({ state: 'owed'; tries?: number } & TranscriptFacts);
+  | ({ state: 'owed'; tries?: number } & Facts);
+type Transcript = Owed<TranscriptFacts>;
+const kinds = ['transcript', 'conversation'] as const;
+type Kind = (typeof kinds)[number];
 /**
  * Ten PUTs at most, a minute apart after a failure; one at a time, off the tick. The delivery
  * after the tenth only confirms it.
  */
 const transcriptTries = 10,
   transcriptRetryMs = 60_000;
-/** A declaration's facts: what the transcript route is sent. */
-const factsOf = ({ state: _state, tries: _tries, ...facts }: Transcript & { state: 'owed' }) =>
-  facts;
+/** A declaration's facts: what its route is sent. */
+const factsOf = <Facts extends object>({
+  state: _state,
+  tries: _tries,
+  ...facts
+}: { state: 'owed'; tries?: number } & Facts) => facts as Facts;
 /** What a put-off preparation recorded, in words the release route accepts, else a default. */
 const deferralOf = (record: LaunchRecord): SessionDeferral | undefined => {
   if (record.metadata.releaseOutcome !== 'preparation_deferred') return undefined;
@@ -276,6 +300,7 @@ export class MachineRunner implements Runner {
   private finalPendingRequests = 0;
   /** The one transcript PUT in flight; it writes no ledger state, so it may outlive a stop. */
   private uploading?: AbortController;
+  /** When each kind of a launch's files may be put again, by `kind:launch`. */
   private readonly transcriptRetry = new Map<string, number>();
   /** Each launched agent's live stream, kept until its log is sent to the end. */
   private readonly streams = new Map<string, AgentStream>();
@@ -765,6 +790,7 @@ export class MachineRunner implements Runner {
             ? await this.client.launchConnections(session.id, this.ledger.runnerId, record.id)
             : [];
         if (this.stopping) return false;
+        const resume = await this.restore(record.id, profile, session, workspace.path);
         const command = buildLaunch(profile, {
           prompt,
           connections,
@@ -778,6 +804,7 @@ export class MachineRunner implements Runner {
             ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
             : {}),
           shellEnvFile: join(record.runDirectory, 'shell-env.sh'),
+          ...(resume && { resume }),
         });
         if (command.shellEnv)
           writeFileSync(command.env.CLAUDE_ENV_FILE!, command.shellEnv, { mode: 0o600 });
@@ -867,6 +894,9 @@ export class MachineRunner implements Runner {
    * once nothing is. One whose driver is gone waits for it.
    */
   private async settle(record: LaunchRecord): Promise<boolean> {
+    // First, before the hosted reset wipes the harness's home: the conversation it wrote.
+    if (record.metadata.conversation === undefined)
+      record = this.save(record.id, { conversation: this.keep(record) });
     // ProcessHost proves its process group ended; the hosted boundary also removes escaped
     // descendants. Never capture a tree a previous worker can still change.
     if (this.resetAssignment && record.metadata.assignmentStopped !== true) {
@@ -912,34 +942,40 @@ export class MachineRunner implements Runner {
     return await this.deliver(record);
   }
   /**
-   * Before the release: what the process printed, declared (no store I/O on the server) so a
-   * hosted machine is kept for it. A final refusal or a local fault ends it; the release never
-   * waits on it. The file is read once; each release try declares it again.
+   * Before the release: what the process printed and the conversation it kept, declared (no store
+   * I/O on the server) so a hosted machine is kept for them. A final refusal or a local fault
+   * ends one; the release never waits on them. The log is read once; each release try declares
+   * them again.
    */
   private async declare(record: LaunchRecord): Promise<LaunchRecord> {
-    try {
-      let t = record.metadata.transcript as Transcript | undefined;
-      if (!t) {
-        const file = readTranscript(record.runDirectory, [this.sourceBearer]);
-        t = file ? { state: 'owed', ...file.facts } : { state: 'none' };
-        record = this.save(record.id, { transcript: t });
+    for (const kind of kinds)
+      try {
+        let t = record.metadata[kind] as Owed<TranscriptFacts | ConversationFacts> | undefined;
+        // The conversation was kept when the launch settled; the log is read here, once.
+        if (!t) {
+          const file = readTranscript(record.runDirectory, [this.sourceBearer]);
+          t = file ? { state: 'owed', ...file.facts } : { state: 'none' };
+          record = this.save(record.id, { transcript: t });
+        }
+        if (t.state === 'owed') await this.send(kind, record, factsOf(t));
+      } catch (error) {
+        if (error instanceof RunnerControlError && !error.final) this.lastError = error.code;
+        else
+          record = this.save(record.id, {
+            [kind]: {
+              state: 'refused',
+              code: error instanceof RunnerControlError ? error.code : `${kind}_unreadable`,
+            },
+          });
       }
-      if (t.state === 'owed')
-        await this.client.transcript(record.sessionId, this.ledger.runnerId, {
-          hostRef: record.id,
-          ...factsOf(t),
-        });
-    } catch (error) {
-      if (error instanceof RunnerControlError && !error.final) this.lastError = error.code;
-      else
-        record = this.save(record.id, {
-          transcript: {
-            state: 'refused',
-            code: error instanceof RunnerControlError ? error.code : 'transcript_unreadable',
-          },
-        });
-    }
     return record;
+  }
+  private send(kind: Kind, record: LaunchRecord, facts: object, deliver?: true) {
+    const input = { hostRef: record.id, ...facts, ...(deliver && { deliver }) };
+    // Each kind's facts were read for it; their route checks them again.
+    return kind === 'transcript'
+      ? this.client.transcript(record.sessionId, this.ledger.runnerId, input as never)
+      : this.client.conversation(record.sessionId, this.ledger.runnerId, input as never);
   }
   /**
    * Last, after everything workflow-visible: one background PUT at a time, recorded once
@@ -947,63 +983,122 @@ export class MachineRunner implements Runner {
    * between them takes the same path. True once nothing is owed.
    */
   private async deliver(record: LaunchRecord): Promise<boolean> {
-    const t = record.metadata.transcript as Transcript | undefined;
+    let done = true;
+    for (const kind of kinds) done = (await this.deliverOne(kind, record)) && done;
+    return done;
+  }
+  private async deliverOne(kind: Kind, record: LaunchRecord): Promise<boolean> {
+    const t = record.metadata[kind] as Owed<TranscriptFacts | ConversationFacts> | undefined;
     if (t?.state !== 'owed') return true;
-    if (
-      this.uploading ||
-      this.stopping ||
-      (this.transcriptRetry.get(record.id) ?? 0) > this.clock()
-    )
+    const retry = `${kind}:${record.id}`;
+    if (this.uploading || this.stopping || (this.transcriptRetry.get(retry) ?? 0) > this.clock())
       return false;
     // Past the tenth PUT a delivery only confirms: stored, or abandoned.
     const tries = (t.tries ?? 0) + 1,
       spent = tries > transcriptTries;
-    this.save(record.id, { transcript: { ...t, tries } });
+    this.save(record.id, { [kind]: { ...t, tries } });
     try {
-      const reply = await this.client.transcript(record.sessionId, this.ledger.runnerId, {
-        hostRef: record.id,
-        ...factsOf(t),
-        deliver: true,
-      });
-      if (reply.uploadedAt) return this.delivered(record.id);
-      if (spent) return this.delivered(record.id, 'transcript_abandoned');
-      // The declaration is write-once: a log changed or removed since cannot be delivered.
-      const file = readTranscript(record.runDirectory, [this.sourceBearer]);
-      if (file?.facts.sha256 !== t.sha256) return this.delivered(record.id, 'transcript_changed');
+      const reply = await this.send(kind, record, factsOf(t), true);
+      if (reply.uploadedAt) return this.delivered(kind, record.id);
+      if (spent) return this.delivered(kind, record.id, `${kind}_abandoned`);
+      // The declaration is write-once: a file changed or removed since cannot be delivered.
+      const bytes = this.kept(kind, record);
+      if (!bytes || createHash('sha256').update(bytes).digest('hex') !== t.sha256)
+        return this.delivered(kind, record.id, `${kind}_changed`);
       const abort = (this.uploading = new AbortController());
       // Off the tick: presence, leases and other launches go on. 128 KiB/s (~1 Mbit/s) is the
       // slowest link it waits for.
       void this.client
         .putSigned(
           reply.upload!,
-          file.bytes,
+          bytes,
           AbortSignal.any([
             abort.signal,
-            AbortSignal.timeout(60_000 + Math.ceil(file.bytes.length / 128)),
+            AbortSignal.timeout(60_000 + Math.ceil(bytes.length / 128)),
           ]),
         )
         .catch((error: unknown) => {
           this.lastError = diagnostic(error);
-          this.transcriptRetry.set(record.id, this.clock() + transcriptRetryMs);
+          this.transcriptRetry.set(retry, this.clock() + transcriptRetryMs);
         })
         .finally(() => {
           this.uploading = undefined;
         });
     } catch (error) {
       if (error instanceof RunnerControlError && error.final)
-        return this.delivered(record.id, error.code);
-      if (spent) return this.delivered(record.id, 'transcript_abandoned');
+        return this.delivered(kind, record.id, error.code);
+      if (spent) return this.delivered(kind, record.id, `${kind}_abandoned`);
       this.lastError = diagnostic(error);
-      this.transcriptRetry.set(record.id, this.clock() + transcriptRetryMs);
+      this.transcriptRetry.set(retry, this.clock() + transcriptRetryMs);
     }
     return false;
   }
-  private delivered(id: string, refused?: string): true {
-    this.transcriptRetry.delete(id);
+  /** The bytes a declaration named, read again: the log, or the conversation's redacted copy. */
+  private kept(kind: Kind, record: LaunchRecord): Buffer | undefined {
+    if (kind === 'transcript')
+      return readTranscript(record.runDirectory, [this.sourceBearer])?.bytes;
+    try {
+      return readFileSync(conversationFile(record.runDirectory));
+    } catch {
+      return undefined;
+    }
+  }
+  private delivered(kind: Kind, id: string, refused?: string): true {
+    this.transcriptRetry.delete(`${kind}:${id}`);
     this.save(id, {
-      transcript: refused ? { state: 'refused', code: refused } : { state: 'uploaded' },
+      [kind]: refused ? { state: 'refused', code: refused } : { state: 'uploaded' },
     });
     return true;
+  }
+  /**
+   * An ended launch's conversation, where its session may be continued: redacted into its run
+   * directory, then owed like its transcript. Read once, before anything resets its home.
+   */
+  private keep(record: LaunchRecord): Owed<ConversationFacts> {
+    if (!(record.metadata.session as unknown as SessionView | undefined)?.continuity)
+      return { state: 'none' };
+    try {
+      const facts = keepConversation(
+        record.runDirectory,
+        record.metadata.profile as RunnerProfile,
+        [this.sourceBearer],
+      );
+      return facts ? { state: 'owed', ...facts } : { state: 'none' };
+    } catch {
+      return { state: 'refused', code: 'conversation_unreadable' };
+    }
+  }
+  /**
+   * Before a launch whose session continues a conversation: that conversation, fetched, checked
+   * against the SHA-256 Sessions recorded and put where the harness finds it. Anything that fails
+   * launches it fresh, as every launch was before, and says why.
+   */
+  private async restore(
+    id: string,
+    profile: RunnerProfile,
+    session: Session,
+    cwd: string,
+  ): Promise<string | undefined> {
+    const resume = session.continuity?.resume;
+    if (!resume) return undefined;
+    try {
+      check(profile.harness === resume.harness, 'resume_other_harness', 'Kept by another harness');
+      const bytes = await this.client.resume(session.id, this.ledger.runnerId, id, resume.size);
+      check(
+        createHash('sha256').update(bytes).digest('hex') === resume.sha256,
+        'resume_hash_mismatch',
+        'Not the conversation Sessions recorded',
+      );
+      restoreConversation(profile, cwd, resume.conversationId, bytes);
+      this.save(id, { resumed: resume.conversationId });
+      return resume.conversationId;
+    } catch (error) {
+      const code = diagnostic(error);
+      this.save(id, { resumed: { unavailable: code } });
+      this.lastError = 'resume_unavailable';
+      process.stderr.write(`merv-runner: launch ${id} resume unavailable: ${code}\n`);
+      return undefined;
+    }
   }
   /** The one release: its outcome, or only its usage once closed. The reply says if attached. */
   private async release(record: LaunchRecord): Promise<LaunchRecord> {

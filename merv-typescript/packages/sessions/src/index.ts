@@ -49,6 +49,7 @@ import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
 import { SessionTranscripts } from './transcripts.js';
 import { SessionStreams } from './stream.js';
+import { SessionConversations } from './conversations.js';
 import type {
   ManagedEnrollmentInput,
   ManagedModelGrant,
@@ -59,6 +60,9 @@ import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage
 import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
 import type {
   Session,
+  ContinuityProvider,
+  SessionContinuity,
+  SessionConversationDeclaration,
   LaunchConnectionsProvider,
   NativeMcpConnection,
   SessionControl,
@@ -196,6 +200,23 @@ const transcriptRefusals = {
   fallback: [
     'invalid_transcript',
     'A transcript names its host, SHA-256, size, log size and truncation',
+  ],
+} as const;
+const conversationSchema = controlSchema.extend({
+  hostRef: trimmed(512),
+  harness: z.enum(['claude', 'codex']),
+  conversationId: z
+    .string()
+    .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/),
+  size: z.number().int().min(1).max(MAX_TRANSCRIPT_BYTES),
+  deliver: z.literal(true).optional(),
+});
+const conversationRefusals = {
+  ...controlRefusals,
+  fallback: [
+    'invalid_conversation',
+    'A conversation names its host, harness, conversation id, SHA-256 and size',
   ],
 } as const;
 const releaseSchema = controlSchema
@@ -421,6 +442,7 @@ export class LeasedSessions implements Sessions {
   transcripts!: SessionTranscripts;
   /** Each worker agent's live stream, read by the events route. */
   streams!: SessionStreams;
+  conversations!: SessionConversations;
   /** Optional private account credential reader; never exposed through the tool registry. */
   secrets?: Pick<Secrets, 'resolveHuggingFaceToken'> &
     Partial<Pick<Secrets, 'createHuggingFaceAccess'>>;
@@ -504,6 +526,18 @@ export class LeasedSessions implements Sessions {
       this.streams = await createService(
         new SessionStreams(state, scope, this.clock, (caller, id, runnerId, tx) =>
           this.controlled(caller, id, runnerId, tx),
+        ),
+      );
+      this.conversations = await createService(
+        new SessionConversations(
+          state,
+          this.clock,
+          (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
+          async (agentId, reason, tx) => {
+            const agent = await this.directory.get(agentId, tx);
+            if (!agent.persistent && !(await this.currentAgentExecution(agent, tx)))
+              await this.directory.retire(agent, reason, tx);
+          },
         ),
       );
       this.board = new SessionRunning(state, scope, this.dispatcher, this.clock, this.thresholds);
@@ -867,8 +901,12 @@ export class LeasedSessions implements Sessions {
         ? 'offer_expired'
         : undefined;
     if (failure) await this.dispatcher.failed(session, failure, tx);
-    const agent = await this.directory.get(session.agentId!, tx);
-    if (!agent.persistent) await this.directory.retire(agent, reason, tx);
+    // A session that may be continued leaves its agent dormant, its credential revoked above.
+    if (session.continuity) await this.conversations.closed(session, tx);
+    else {
+      const agent = await this.directory.get(session.agentId!, tx);
+      if (!agent.persistent) await this.directory.retire(agent, reason, tx);
+    }
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: 'system:sessions',
@@ -1055,10 +1093,35 @@ export class LeasedSessions implements Sessions {
       'Session secret was already used',
       409,
     );
+    // Continuity, for work no agent was named for: the key of the work as it stands, and the
+    // conversation its latest closed session kept, taken up by the same agent where it can be.
+    let continuity: SessionContinuity | undefined, resumed: Agent | undefined;
+    if (!input.agentId) {
+      const unit = await this.workflows.get(caller, input.instanceId, tx);
+      const key = this.conversations.key({
+        instanceId: unit.id,
+        workflow: unit.workflow,
+        state: unit.state,
+        data: unit.data,
+        role,
+      });
+      const latest =
+        key === null ? null : await this.conversations.latest(caller.projectId, key, tx);
+      const agent = latest && (await this.directory.get(latest.agentId, tx));
+      if (
+        agent &&
+        agent.status === 'active' &&
+        digest(agent.source) === owner.hash &&
+        !(await this.currentAgentExecution(agent, tx))
+      )
+        resumed = agent;
+      if (key !== null) continuity = { key, ...(resumed && { resume: latest!.resume }) };
+    }
     const id = newId('session');
     const agent = input.agentId
       ? await this.directory.controlled(caller, input.agentId, tx)
-      : await this.directory.create(
+      : (resumed ??
+        (await this.directory.create(
           caller,
           {
             name: `Agent ${input.runnerId}`.slice(0, 200),
@@ -1068,10 +1131,11 @@ export class LeasedSessions implements Sessions {
           },
           tx,
           false,
-        );
+        )));
     await this.directory.require(agent, tx, 409);
+    // A resumed agent is Sessions' choice, not the runner's: it may have run anywhere.
     check(
-      agent.runnerId === input.runnerId,
+      resumed || agent.runnerId === input.runnerId,
       'agent_forbidden',
       'Agent belongs to another runner',
       403,
@@ -1144,6 +1208,7 @@ export class LeasedSessions implements Sessions {
       closedAt: null,
       closeReason: null,
       outcome: null,
+      ...(continuity && { continuity }),
       ...frozen,
     };
     await tx.run(
@@ -2169,6 +2234,30 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     return await this.streams.append(structuredClone(caller), input);
   }
+  /** Runner-only, live or closed: the conversation a session kept, declared then delivered. */
+  async conversation(
+    caller: Caller,
+    input: SessionControl & SessionConversationDeclaration,
+  ): Promise<SessionTranscript> {
+    caller = structuredClone(caller);
+    this.ensureOpen();
+    return await this.conversations.record(
+      caller,
+      closed(conversationSchema, input, conversationRefusals),
+    );
+  }
+  async resume(caller: Caller, input: SessionControl & { hostRef: string }) {
+    caller = structuredClone(caller);
+    this.ensureOpen();
+    return await this.conversations.download(
+      caller,
+      closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals),
+    );
+  }
+  registerContinuity(workflow: string, provider: ContinuityProvider): () => void {
+    this.ensureOpen();
+    return this.conversations.register(workflow, provider);
+  }
   async heartbeat(caller: Caller, input: SessionControl): Promise<Session> {
     caller = structuredClone(caller);
     input = closed(controlSchema, input, controlRefusals);
@@ -2668,7 +2757,10 @@ export class LeasedSessions implements Sessions {
         ...(full ? [] : [isoNow(this.clock)]),
       ),
       agents: full
-        ? await tx.all<{ id: string }>("SELECT id FROM agents WHERE status='active'")
+        ? // A dormant agent, which holds no credential, waits for its work, not its delegation.
+          await tx.all<{ id: string }>(
+            "SELECT id FROM agents a WHERE status='active' AND (token_hash IS NOT NULL OR EXISTS (SELECT 1 FROM worker_sessions s WHERE s.actor_id=a.actor_id AND s.status IN ('offered','active')))",
+          )
         : [],
     }));
     // A session that failed is retried by the next full pass, not by every tick and lease.
@@ -2679,6 +2771,9 @@ export class LeasedSessions implements Sessions {
     if (full) {
       await this.alone('service-work', () => this.readFirst((tx) => this.serviceWork.expire(tx)));
       await this.alone('session-events', () => this.streams.prune());
+      await this.alone('conversations', () =>
+        this.readFirst((tx) => this.conversations.expire(tx)),
+      );
     }
   }
   /** One live session's upkeep: a closure found, stranding or a change of quiet. */
@@ -2769,9 +2864,9 @@ export const sessionsPlugin = {
       // Transcripts go to the object store; while Blobs is unloaded a runner is told to retry.
       ctx.inject(['blobs'], (ctx) => {
         ctx.effect(() => {
-          sessions.transcripts.blobs = ctx.blobs;
+          sessions.transcripts.blobs = sessions.conversations.blobs = ctx.blobs;
           return () => {
-            sessions.transcripts.blobs = undefined;
+            sessions.transcripts.blobs = sessions.conversations.blobs = undefined;
           };
         });
       });
