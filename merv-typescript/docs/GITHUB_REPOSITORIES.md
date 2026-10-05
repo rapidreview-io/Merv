@@ -8,7 +8,7 @@ GitHub belongs to the **Code** utility (`@merv/code`), which needs only State an
 2. The connection owner explicitly chooses a base branch and automation mode: **off**, **read**, or **write**. Linking alone grants nothing. Any project operator may disable automation; enabling it requires the connecting human.
 3. `code.repository.prepare` binds the project to that repository and imports the selected branch into Code's repository on the server. Runners prepare checkouts from Code's repository and move history only as bundles through `/code/v2/*` (see [Code operations](CODE_OPERATIONS.md)).
 4. With **write** automation, Code's mirror copies its `refs/merv/*` work, accepted and base refs to `merv/*` branches. It never forces a ref: a branch moved by someone else waits for an operator.
-5. A unit accepted to publish opens a publication with its passing review already sealed. **Sync with GitHub** (`code.publication.sync`) creates `merv/proposals/<publication>` and its draft PR, sets the `merv/consolidation-approved` status on that exact head and readies the PR. The branch must be absent or already contain that exact commit; Merv never replaces a different head.
+5. A unit accepted to publish opens a publication with its passing review already sealed. Code syncs it every 30 seconds as the project owner; **Sync with GitHub** (`code.publication.sync`) does the same at once. A sync creates `merv/proposals/<publication>` and its draft PR, sets the `merv/consolidation-approved` status on that exact head and readies the PR. The branch must be absent or already contain that exact commit; Merv never replaces a different head.
 6. A signed-in project operator explicitly merges the reviewed head using a **merge commit**. Merv rechecks head, repository, base branch, observed base, the approval status, branch rules and CI results. GitHub enforces branch protection. Merv then verifies that the merge commit's tree is the reviewed tree before recording it and advancing main.
 
 Acceptance means independent review passed. It does not claim GitHub publication or merging succeeded. PRs, errors and merge receipts are separately visible on the Code page. External outages can be retried without reopening the accepted work.
@@ -68,7 +68,7 @@ All controls require a bearer and selected project, except the browser-bound pub
 | `POST /code/github/automation`                                   | Revision-checked mode/base change                      |
 | `GET /code/github/branches`, `GET /pulls`, `GET /pulls/<number>` | Owner's live repository/PR inspection                  |
 | `GET /code/publications`, `GET /<publication>`                   | Project publication records and exact PR details       |
-| `POST /code/publications/sync`                                   | Reconcile one queued publication                       |
+| `POST /code/publications/sync`                                   | Reconcile every due publication now                    |
 | `POST /code/publications/merge`                                  | Signed-in operator's exact-head merge request          |
 
 Remote writes use deterministic refs and recovery reads. A lost PR-create reply is reconciled by its exact branch; a lost merge reply is reconciled against the same PR/head and actual merge SHA. Network work stays outside database writers. Code aborts and drains admitted network work on unload. GitHub replies have bounded size/pagination and safe diagnostics that omit upstream bodies and secrets.

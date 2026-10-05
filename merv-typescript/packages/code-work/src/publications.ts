@@ -12,6 +12,7 @@ import {
   newId,
   now,
   recorded,
+  sourceCaller,
   type Caller,
   type CodePublication,
   type CodePublicationApi,
@@ -58,6 +59,9 @@ interface Row {
   verified: number;
   incident_json: string | null;
 }
+
+/** An unsettled unit publication nobody tried in the last 30 seconds (the one parameter). */
+const due = "settled=0 AND synced_at<? AND record_json::jsonb->'approval'->>'source' = 'unit'";
 
 /** What a unit's publication reads of its pull request: which one, and whether it closed unmerged. */
 const reading = (pull: GitHubPullRequest | null) =>
@@ -375,16 +379,15 @@ export class CodePublicationService implements CodePublicationApi {
     await this.scope.require(caller, 'write');
     const records = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const active = "record_json::jsonb->'approval'->>'source' = 'unit'";
       return (
         await tx.all<Row>(
-          `SELECT * FROM code_publications WHERE project_id=? AND settled=0 AND synced_at<? AND ${active} ORDER BY synced_at,proposal_id LIMIT 1`,
+          `SELECT * FROM code_publications WHERE project_id=? AND ${due} ORDER BY synced_at,proposal_id`,
           caller.projectId,
           new Date(Date.now() - 30_000).toISOString(),
         )
       ).map((row) => this.decode(row));
     });
-    // One network reconciliation per poll keeps runner heartbeats bounded; each intent is restartable.
+    // Each intent is restartable, and one tried in the last 30 seconds waits for the next pass.
     for (const record of records) {
       try {
         await this.locked(caller, record.proposalId, async (row, lock) => {
@@ -483,6 +486,27 @@ export class CodePublicationService implements CodePublicationApi {
       }
     }
     return this.publications(caller);
+  }
+  /**
+   * Nothing else carries an accepted unit to main, so Code syncs every project with a
+   * publication due, as its owner: the person Fleet already works for there. A project with
+   * no live operator waits for someone with write access to sync it.
+   */
+  async syncDue() {
+    const projects = await this.state.read((sql) =>
+      sql.all<{ project_id: string }>(
+        `SELECT DISTINCT project_id FROM code_publications WHERE ${due}`,
+        new Date(Date.now() - 30_000).toISOString(),
+      ),
+    );
+    if (!projects.length) return;
+    const owners = new Map(
+      (await this.scope.projectOwners()).map((owner) => [owner.projectId, owner.source]),
+    );
+    for (const { project_id } of projects) {
+      const owner = owners.get(project_id);
+      if (owner) await this.syncPublications(sourceCaller(owner)).catch(() => undefined);
+    }
   }
   async publicationDetails(caller: Caller, proposalId: string) {
     caller = structuredClone(caller);

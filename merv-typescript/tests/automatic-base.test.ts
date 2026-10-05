@@ -20,6 +20,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code-work/service';
+import type { WorkUnitRecords } from '@merv/code-work/unit-store';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeWriterService } from '@merv/code/writers';
 import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-work/src/bases.js';
@@ -492,6 +493,12 @@ test('a unit whose checkouts Code prepares starts only from what Code’s reposi
   );
   await f.code.reconcileAll();
   assert.deepEqual(await f.published(work), []);
+  // What a base builds on is what acceptedSince weighs against main.
+  const units = (f.code as unknown as { unitStore: WorkUnitRecords }).unitStore;
+  assert.deepEqual(
+    (await units.acceptedCandidates(f.admin)).candidates.map((item) => item.unitId),
+    [harness.id],
+  );
 
   await run(
     "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,phase) VALUES ('cop_import',?,'actor:fixture','import','import','hash','{}','completed',?,'now','now','refs_applied')",

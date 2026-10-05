@@ -115,6 +115,19 @@ export const unitColumns =
 export const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const CODE_DRIVER = 'code.v2';
 
+/**
+ * Whether a completed import delivered this commit, as its tip or as history it contains: the
+ * commits each import was found to contain are recorded with it, outside any transaction, so
+ * this is a read. A tip matches both patterns, which is right.
+ */
+export const importedCommit = async (sql: Sql, projectId: string, commit: string) =>
+  !!(await sql.get(
+    "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND (result_json LIKE ? OR result_json LIKE ?) LIMIT 1",
+    projectId,
+    `%"head":"${commit}"%`,
+    `%"contained":[%"${commit}"%`,
+  ));
+
 /** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
 export class WorkUnitRecords {
   protected readonly code: CodeUnitStore;
@@ -210,11 +223,7 @@ export class WorkUnitRecords {
         if (!accepted.code) continue;
         if (
           accepted.storage !== 'code' &&
-          !(await tx.get(
-            "SELECT id FROM code_operations WHERE project_id=? AND kind='import' AND status='completed' AND result_json LIKE ? LIMIT 1",
-            caller.projectId,
-            `%"head":"${accepted.code.commit}"%`,
-          ))
+          !(await importedCommit(tx, caller.projectId, accepted.code.commit))
         )
           continue;
         candidates.push({
