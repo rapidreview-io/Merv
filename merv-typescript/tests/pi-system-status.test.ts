@@ -53,30 +53,27 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
             secret: 'omit',
           },
         ],
-      };
-    },
-    stuck: async (candidate: Caller) => {
-      onlyProject(candidate);
-      return {
-        total: 1,
-        counts: { work_blocked: 1, dispatch_failing: 1 },
-        items: [
-          {
-            kind: 'work_blocked',
-            instanceId: 'task-1',
-            code: 'runner_incompatible',
-            why: 'Fleet cannot supply local Git',
-            next: 'Start a project runner',
-          },
-          {
-            kind: 'dispatch_failing',
-            instanceId: 'task-2',
-            code: 'retrying',
-            why: 'Failed at https://private.example/secret?token=abc',
-            next: 'Retry shortly',
-          },
-        ],
-        truncated: false,
+        stuck: {
+          total: 1,
+          counts: { work_blocked: 1, dispatch_failing: 1 },
+          items: [
+            {
+              kind: 'work_blocked',
+              instanceId: 'task-1',
+              code: 'runner_incompatible',
+              why: 'Fleet cannot supply local Git',
+              next: 'Start a project runner',
+            },
+            {
+              kind: 'dispatch_failing',
+              instanceId: 'task-2',
+              code: 'retrying',
+              why: 'Failed at https://private.example/secret?token=abc',
+              next: 'Retry shortly',
+            },
+          ],
+          truncated: false,
+        },
       };
     },
     statusSections: async () => ({}),
@@ -84,7 +81,7 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
   const result = await systemStatus(caller, sessions);
   assert.equal(result.scope, 'project');
   if (result.scope !== 'project') throw new Error('Expected project status');
-  assert.deepEqual(seen, ['project-a', 'project-a']);
+  assert.deepEqual(seen, ['project-a']);
   assert.equal(result.dispatch.state, 'running');
   assert.equal(result.workers.liveShown, 0);
   assert.equal(result.waiting.total, 1);
@@ -116,8 +113,8 @@ test('system.status is a read-only conversation tool and project access is check
       sessions: [],
       queue: [],
       queueTotal: 0,
+      stuck: { total: 0, counts: {}, items: [], truncated: false },
     }),
-    stuck: async () => ({ total: 0, counts: {}, items: [], truncated: false }),
     statusSections: async () => ({}),
   } as unknown as Sessions;
   sessionsToolsPlugin.apply({

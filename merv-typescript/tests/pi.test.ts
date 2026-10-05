@@ -44,9 +44,9 @@ test('Pi offers and runs system.status in a conversation', async (t) => {
         sessions: [],
         queueTotal: 0,
         queue: [],
+        stuck: { total: 0, counts: {}, items: [], truncated: false },
       };
     },
-    stuck: async () => ({ total: 0, counts: {}, items: [], truncated: false }),
     statusSections: async () => ({}),
   } as unknown as Sessions;
   sessionsToolsPlugin.apply({

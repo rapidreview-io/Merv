@@ -148,7 +148,8 @@ export class AgentObservations {
         execution_label: string;
         execution_role: Session['role'];
       }>(
-        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY (a.agent_json::jsonb #>> '{createdAt}') DESC,a._merv_rowid DESC`,
+        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role
+          FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY a._merv_rowid DESC`,
         projectId,
       )
     ).map((row) =>

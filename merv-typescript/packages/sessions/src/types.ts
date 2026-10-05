@@ -344,7 +344,8 @@ export interface Sessions {
     sessionId: string,
     tx?: Transaction,
   ): Promise<SessionWorkspaceObservation>;
-  projectStatus(caller: Caller): Promise<SessionsProjectStatus>;
+  /** With `report`, `stuck` carries the whole of what `stuck` would read, at the same moment. */
+  projectStatus(caller: Caller, report?: boolean): Promise<SessionsProjectStatus>;
   /**
    * The Running page's Sessions lane: a node for every offered or active lease of the project,
    * whoever offered it, with where it runs and the work it is on. Read-only, never for a

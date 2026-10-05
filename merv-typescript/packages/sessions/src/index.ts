@@ -360,7 +360,12 @@ interface Row {
   token_hash: string;
   fingerprint: string;
   session_json: string;
+  attachment_json: string | null;
+  result_json: string | null;
 }
+/** A session row with its workspace capture, read in one statement. */
+const SESSION =
+  'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
 interface MessageRow {
   id: string;
   project_id: string;
@@ -589,7 +594,7 @@ export class LeasedSessions implements Sessions {
     return await readFirst(this.state, fn);
   }
   private async row(tx: Transaction, id: string): Promise<Row> {
-    const row = await tx.get<Row>('SELECT * FROM worker_sessions WHERE id=?', id);
+    const row = await tx.get<Row>(`${SESSION} WHERE id=?`, id);
     check(row, 'session_not_found', 'Session not found', 404);
     return row;
   }
@@ -637,16 +642,12 @@ export class LeasedSessions implements Sessions {
         { messageId: row.id },
       );
   }
-  private async decode(row: Row, tx: Transaction): Promise<Session> {
+  private decode(row: Row): Session {
     const session: Session = JSON.parse(row.session_json);
-    const workspace = await tx.get<{ attachment_json: string; result_json: string | null }>(
-      'SELECT attachment_json,result_json FROM session_workspaces WHERE session_id=?',
-      row.id,
-    );
-    if (workspace)
+    if (row.attachment_json !== null)
       session.workspace = {
-        attachment: JSON.parse(workspace.attachment_json),
-        result: workspace.result_json === null ? null : JSON.parse(workspace.result_json),
+        attachment: JSON.parse(row.attachment_json),
+        result: row.result_json === null ? null : JSON.parse(row.result_json),
       };
     return session;
   }
@@ -755,7 +756,7 @@ export class LeasedSessions implements Sessions {
     }
     check(caller.session, 'session_required', 'Worker authority requires a session', 401);
     const row = await this.row(tx, caller.session.id);
-    const session = await this.decode(row, tx);
+    const session = this.decode(row);
     check(
       session.actorId === caller.actorId && session.projectId === caller.projectId,
       'forbidden',
@@ -824,7 +825,7 @@ export class LeasedSessions implements Sessions {
       await this.managed.controlled(caller, id, runnerId, tx);
       const row = await this.row(tx, id);
       check(row.project_id === caller.projectId, 'session_not_found', 'Session not found', 404);
-      return await this.decode(row, tx);
+      return this.decode(row);
     }
     const owner = await ownerOf(this.scope, caller, tx),
       row = await this.row(tx, id);
@@ -836,7 +837,7 @@ export class LeasedSessions implements Sessions {
       'Session belongs to another source authority',
       403,
     );
-    const session = await this.decode(row, tx);
+    const session = this.decode(row);
     if (runnerId !== undefined)
       check(
         session.runnerId === runnerId,
@@ -1023,7 +1024,7 @@ export class LeasedSessions implements Sessions {
       ...(input.agentId ? { agentId: input.agentId } : {}),
     });
     const old = await tx.get<Row>(
-      'SELECT * FROM worker_sessions WHERE owner_hash=? AND runner_id=? AND request_id=?',
+      `${SESSION} WHERE owner_hash=? AND runner_id=? AND request_id=?`,
       owner.hash,
       input.runnerId,
       input.requestId,
@@ -1035,7 +1036,7 @@ export class LeasedSessions implements Sessions {
         'Session request was already used for different input',
         409,
       );
-      return await this.decode(old, tx);
+      return this.decode(old);
     }
     // Authority first: a caller who may not offer learns nothing about live sessions or secrets.
     const role = await this.workflows.leaseRole(caller, input, tx);
@@ -1221,23 +1222,16 @@ export class LeasedSessions implements Sessions {
   }
   private async currentAgentExecution(agent: Agent, tx: Transaction): Promise<Session | null> {
     const row = await tx.get<Row>(
-      "SELECT * FROM worker_sessions WHERE actor_id=? AND status IN ('offered','active')",
+      `${SESSION} WHERE actor_id=? AND status IN ('offered','active')`,
       agent.actorId,
     );
-    return row ? await this.decode(row, tx) : null;
+    return row ? this.decode(row) : null;
   }
   private async agentStatus(agent: Agent, tx: Transaction): Promise<AgentStatus> {
-    return {
-      agent,
-      current: await this.currentAgentExecution(agent, tx),
-      assignments: await mapAsync(
-        await tx.all<Row>(
-          'SELECT * FROM worker_sessions WHERE actor_id=? ORDER BY _merv_rowid',
-          agent.actorId,
-        ),
-        (row) => this.decode(row, tx),
-      ),
-    };
+    const assignments = (
+      await tx.all<Row>(`${SESSION} WHERE actor_id=? ORDER BY _merv_rowid`, agent.actorId)
+    ).map((row) => this.decode(row));
+    return { agent, current: assignments.find(live) ?? null, assignments };
   }
   async agents(caller: Caller): Promise<AgentStatus[]> {
     this.ordinary(caller);
@@ -1329,7 +1323,7 @@ export class LeasedSessions implements Sessions {
     check(text(executionId), 'invalid_session', 'An execution identifier is required');
     return await this.transaction(async (tx) => {
       const agent = await this.directory.authenticate(token, tx);
-      const session = await this.decode(await this.row(tx, executionId), tx);
+      const session = this.decode(await this.row(tx, executionId));
       check(
         session.agentId === agent.id,
         'agent_forbidden',
@@ -1351,10 +1345,10 @@ export class LeasedSessions implements Sessions {
       return await this.directory.reset(agent, reason, tx);
     });
   }
-  async projectStatus(caller: Caller): Promise<SessionsProjectStatus> {
+  async projectStatus(caller: Caller, report?: boolean): Promise<SessionsProjectStatus> {
     this.ordinary(caller);
     this.ensureOpen();
-    return await this.dispatcher.projectStatus(caller);
+    return await this.dispatcher.projectStatus(caller, report);
   }
   async running(caller: Caller) {
     this.ordinary(caller);
@@ -1425,14 +1419,15 @@ export class LeasedSessions implements Sessions {
     return await this.reading(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       await this.workflows.get(caller, instanceId, tx);
-      const rows = await tx.all<Row>(
-        'SELECT * FROM worker_sessions WHERE project_id=? AND instance_id=? ORDER BY _merv_rowid DESC LIMIT 20',
-        caller.projectId,
-        instanceId,
-      );
-      const latest = rows[0] ? await this.decode(rows[0], tx) : null;
-      const currentRow = rows.find((row) => live(JSON.parse(row.session_json)));
-      let current: Session | null = currentRow ? await this.decode(currentRow, tx) : null;
+      const sessions = (
+        await tx.all<Row>(
+          `${SESSION} WHERE project_id=? AND instance_id=? ORDER BY _merv_rowid DESC LIMIT 20`,
+          caller.projectId,
+          instanceId,
+        )
+      ).map((row) => this.decode(row));
+      const latest = sessions[0] ?? null;
+      let current: Session | null = sessions.find(live) ?? null;
       if (current) {
         try {
           await this.valid(current, tx);
@@ -1478,7 +1473,7 @@ export class LeasedSessions implements Sessions {
           'Message requestId was used for different input',
           409,
         );
-        const session = await this.decode(await this.row(tx, old.session_id), tx);
+        const session = this.decode(await this.row(tx, old.session_id));
         return this.publicMessage(old, session);
       }
       const row = await this.row(tx, input.sessionId);
@@ -1488,7 +1483,7 @@ export class LeasedSessions implements Sessions {
         'Session not found in this project',
         404,
       );
-      const session = await this.decode(row, tx);
+      const session = this.decode(row);
       check(
         live(session),
         'session_ended',
@@ -1554,7 +1549,7 @@ export class LeasedSessions implements Sessions {
           'Workers can read only their own messages',
           403,
         );
-      const session = await this.decode(row, tx);
+      const session = this.decode(row);
       const rows = await tx.all<MessageRow>(
         'SELECT * FROM session_messages WHERE project_id=? AND session_id=? ORDER BY _merv_rowid',
         caller.projectId,
@@ -1587,7 +1582,7 @@ export class LeasedSessions implements Sessions {
         'Message not found in this session',
         404,
       );
-      const session = await this.decode(await this.row(tx, row.session_id), tx);
+      const session = this.decode(await this.row(tx, row.session_id));
       check(
         live(session) && session.actorId === caller.actorId,
         'session_ended',
@@ -1752,12 +1747,12 @@ export class LeasedSessions implements Sessions {
     const read = async (sql: Transaction): Promise<SessionWorkspaceObservation> => {
       await this.scope.require(caller, 'read', sql);
       const row = await sql.get<Row>(
-        'SELECT * FROM worker_sessions WHERE id=? AND project_id=?',
+        `${SESSION} WHERE id=? AND project_id=?`,
         sessionId,
         caller.projectId,
       );
       check(row, 'session_not_found', 'Session not found in this project', 404);
-      const session = await this.decode(row, sql);
+      const session = this.decode(row);
       const event = session.workspace?.result
         ? await sql.get<{ id: number; created_at: string }>(
             "SELECT id,created_at FROM events WHERE project_id=? AND subject_id=? AND type='session.workspace_result' ORDER BY id LIMIT 1",
@@ -1801,13 +1796,9 @@ export class LeasedSessions implements Sessions {
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const owner = await ownerOf(this.scope, caller, tx);
-      return await mapAsync(
-        await tx.all<Row>(
-          'SELECT * FROM worker_sessions WHERE owner_hash=? ORDER BY _merv_rowid',
-          owner.hash,
-        ),
-        (row) => this.decode(row, tx),
-      );
+      return (
+        await tx.all<Row>(`${SESSION} WHERE owner_hash=? ORDER BY _merv_rowid`, owner.hash)
+      ).map((row) => this.decode(row));
     });
   }
   async get(caller: Caller, sessionId: string): Promise<Session> {
@@ -2034,7 +2025,7 @@ export class LeasedSessions implements Sessions {
   async authorizeHuggingFaceGrant(grant: HuggingFaceGrant): Promise<AccountIdentity | null> {
     return this.reading(async (tx) => {
       const row = await this.managed.huggingFaceBinding(grant, tx);
-      const session = await this.decode(await this.row(tx, grant.sessionId), tx);
+      const session = this.decode(await this.row(tx, grant.sessionId));
       check(
         grant.exp * 1000 <= Date.parse(session.hardDeadline),
         'unauthorized',
@@ -2304,9 +2295,9 @@ export class LeasedSessions implements Sessions {
       if (agent) check(current, 'agent_idle', 'Agent has no current assignment', 409);
       const row = current
         ? await this.row(tx, current.id)
-        : await tx.get<Row>('SELECT * FROM worker_sessions WHERE id=?', credential.subject);
+        : await tx.get<Row>(`${SESSION} WHERE id=?`, credential.subject);
       check(row, 'unauthorized', 'Invalid session bearer credential', 401);
-      const session = await this.decode(row, tx),
+      const session = this.decode(row),
         error = await this.reconcile(session, tx);
       if (error) return { error };
       if (session.status === 'offered') {
@@ -2405,7 +2396,7 @@ export class LeasedSessions implements Sessions {
     return await this.transaction(async (tx) => {
       check(caller.session, 'session_required', 'Session authority is required', 401);
       await this.scope.require(caller, 'read', tx);
-      return await this.decode(await this.row(tx, caller.session.id), tx);
+      return this.decode(await this.row(tx, caller.session.id));
     });
   }
   /** Tool names per session, read once: a policy is frozen at offer, and the tool listing
@@ -2431,7 +2422,7 @@ export class LeasedSessions implements Sessions {
   private async session(caller: Caller, tx: Transaction): Promise<Session> {
     await this.scope.require(caller, 'read', tx);
     check(caller.session, 'session_required', 'Session authority is required', 401);
-    return await this.decode(await this.row(tx, caller.session.id), tx);
+    return this.decode(await this.row(tx, caller.session.id));
   }
   private async admit(
     caller: Caller,
@@ -2688,7 +2679,7 @@ export class LeasedSessions implements Sessions {
   }
   /** One live session's upkeep: a closure found, stranding or a change of quiet. */
   private async upkeep(id: string, tx: Transaction, calls?: Map<string, string>) {
-    const session = await this.decode(await this.row(tx, id), tx);
+    const session = this.decode(await this.row(tx, id));
     if (await this.reconcile(session, tx)) return;
     const stranded = await this.managed.stranded(id, tx);
     if (stranded !== undefined)

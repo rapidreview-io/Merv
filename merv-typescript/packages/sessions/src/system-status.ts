@@ -1,5 +1,5 @@
 import type { Caller } from '@merv/contracts';
-import type { Sessions } from './types.js';
+import type { Sessions, StuckReport } from './types.js';
 
 /** Provider/runner diagnostics can embed private endpoints; a status overview never needs one. */
 const safe = (value: string) => value.replace(/https?:\/\/[^\s]+/gi, '[URL omitted]');
@@ -29,10 +29,8 @@ export async function systemStatus(caller: Caller, sessions: Sessions) {
       ...(await sessions.statusSections(caller, null)),
     };
   }
-  const [project, blockers] = await Promise.all([
-    sessions.projectStatus(caller),
-    sessions.stuck(caller),
-  ]);
+  const project = await sessions.projectStatus(caller, true);
+  const blockers = project.stuck as StuckReport;
   const sections = await sessions.statusSections(caller, project);
   return {
     scope: 'project' as const,

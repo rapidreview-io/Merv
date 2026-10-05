@@ -30,6 +30,9 @@ import type {
   ManagedBindingRow,
 } from './managed-types.js';
 
+/** A session's allocation by either binding: two index lookups, never a scan of every one. */
+const boundTo = `SELECT * FROM session_managed_runners WHERE allocation_id IN (SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?
+  UNION ALL SELECT allocation_id FROM session_managed_assignments WHERE session_id=?)`;
 const profile = z
   .object({
     name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/),
@@ -371,13 +374,7 @@ export class ManagedRunnerBindings {
           bearer ? tokenDigest(tokenOrSessionId) : tokenOrSessionId,
         );
         const session: Session | undefined = found && JSON.parse(found.session_json);
-        const row =
-          session &&
-          (await tx.get<ManagedBindingRow>(
-            'SELECT m.* FROM session_managed_runners m WHERE m.bound_session_id=? OR EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.allocation_id=m.allocation_id AND a.session_id=?)',
-            session.id,
-            session.id,
-          ));
+        const row = session && (await tx.get<ManagedBindingRow>(boundTo, session.id, session.id));
         const platform: RunnerPlatform | undefined = row && JSON.parse(row.platform_json);
         const now = this.clock();
         check(
@@ -693,11 +690,7 @@ export class ManagedRunnerBindings {
   /** Whether a live session's machine is no longer current, so no runner is left to release it:
    *  undefined while it is (or none is bound), else whether a release retired it. */
   async stranded(sessionId: string, tx: Transaction): Promise<boolean | undefined> {
-    const row = await tx.get<ManagedBindingRow>(
-      'SELECT m.* FROM session_managed_runners m WHERE m.bound_session_id=? OR EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.allocation_id=m.allocation_id AND a.session_id=?)',
-      sessionId,
-      sessionId,
-    );
+    const row = await tx.get<ManagedBindingRow>(boundTo, sessionId, sessionId);
     if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
     return !!(await this.validator.retired?.(this.identity(row), tx));
   }
