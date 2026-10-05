@@ -976,7 +976,9 @@ for (const code of ['code_base_pending', 'code_merge_required', 'code_dependenci
     await f.sessions.setDispatch(f.owner, { enabled: true });
     await f.instance();
     f.onBuild(() => {
-      throw new MervError(code, 'The base cannot be pinned yet', 409);
+      throw Object.assign(new MervError(code, 'The base cannot be pinned yet', 409), {
+        wait: true,
+      });
     });
     // A wait, not a failure: skipped for this request only, and the target is left alone.
     assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retry_backoff');

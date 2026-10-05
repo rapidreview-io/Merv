@@ -145,7 +145,8 @@ const options = [
 export class DriverGit {
   constructor(
     private readonly home: string,
-    private readonly assignmentRoot?: string,
+    /** The root of assignment-owned checkouts, whose Git runs as their user through `git`. */
+    private readonly assignment?: { root: string; uid: number; gid: number; git: string },
   ) {}
 
   run(
@@ -155,19 +156,22 @@ export class DriverGit {
     return new Promise((resolve) => {
       // Hosted checkouts become assignment-owned before the worker runs. Never run Git
       // against their mutable config, objects or hooks with the supervisor's identity.
+      const user = this.assignment;
       const inAssignment =
         input.cwd &&
-        this.assignmentRoot &&
-        relative(this.assignmentRoot, input.cwd) !== '..' &&
-        !relative(this.assignmentRoot, input.cwd).startsWith('../');
+        user &&
+        relative(user.root, input.cwd) !== '..' &&
+        !relative(user.root, input.cwd).startsWith('../');
       const checkout = inAssignment ? lstatSync(input.cwd!) : undefined;
       const dot = checkout ? lstatSync(join(input.cwd!, '.git')) : undefined;
-      const assignmentOwned = checkout && process.getuid?.() === 0 && checkout.uid === 12001;
-      if (assignmentOwned && (checkout.gid !== 12001 || dot?.uid !== 12001 || dot.gid !== 12001))
+      const assignmentOwned = checkout && process.getuid?.() === 0 && checkout.uid === user!.uid;
+      if (
+        assignmentOwned &&
+        (checkout.gid !== user!.gid || dot?.uid !== user!.uid || dot.gid !== user!.gid)
+      )
         throw new WorkspaceError('workspace_foreign_checkout');
-      const helper = '/opt/merv/python/merv_sandboxes/runtimes/assignment.py';
       const child = execFile(
-        assignmentOwned ? helper : 'git',
+        assignmentOwned ? user!.git : 'git',
         [...(assignmentOwned ? ['--git'] : []), ...options, ...args],
         {
           cwd: input.cwd,

@@ -657,7 +657,7 @@ export function buildLaunch(
     'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
     'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
     'Tool arguments are constrained by the server. Stop when the handoff completes or the lease/revision is no longer valid.',
-    'Continue the same assigned work after an interruption or a returned review. Read all earlier submissions, verdicts, unmet criteria and reviewer notes in its context; inspect any omitted feedback through the referenced records. Retain verification commands, results and unresolved questions as evidence. A suspended assignment waits for a human operator; do not replace it or fail work that waits on it.',
+    'Continue the same assigned work after an interruption or a return. Read everything its context holds from earlier attempts, including the feedback on them; open anything omitted through the referenced records. Keep the commands you ran, their results and open questions as evidence. Work that waits for an operator is not yours to replace or fail.',
     // Workers read the assignment's tool list as the boundary of what they may look at and
     // then invent what the project already holds. The list binds writes; reads are open.
     'The tool list inside the assignment names the tools that carry your writes, bound to this work. Reading is not bounded that way: every read tool this server offers you works on anything in this project, whether or not the assignment names it.',
@@ -672,11 +672,11 @@ export function buildLaunch(
           'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment. Use huggingface_hub, datasets, transformers or hf download normally; do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
         ]
       : []),
-    'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging receipt does not change a reviewed or approved plan; if the message requires a plan change, follow the workflow gate and do not quietly change immutable evidence.',
+    'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
     sealed(session)
-      ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. Explicitly allowed MCP checkpoint and verdict operations remain available.'
+      ? 'The checkout you were given is the thing under review and must be left exactly as you found it: the local filesystem is read-only. The MCP tools the assignment allows remain available.'
       : session.execution.policy.readOnly
-        ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your verdict what you checked yourself and what you took on trust. Nothing you write there is recorded; your verdict is the only thing this lease writes.'
+        ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your handoff what you checked yourself and what you took on trust. Nothing you write there is recorded; your handoff is the only thing this lease writes.'
         : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
     ...(profile.harness === 'claude'
       ? [

@@ -26,7 +26,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'usage.read',
         description:
-          'Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to (a research cycle id gives the cycle). Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded.',
+          'Read what closed sessions cost: for the project, or with instanceId for that workflow instance together with everything it depends on and fans out to. Set includeDependencies false for the one instance alone. Wall-clock is measured by Merv from activation to close. Tokens and model are self-reported by the launching machine and unverified; reportedSessions says how many sessions reported, and accounting states what Merv cannot know. budgets lists the budgets in force and which dimensions are exceeded.',
         readOnly: true,
         inputSchema: z
           .object({
@@ -42,7 +42,7 @@ export const sessionsToolsPlugin = {
         name: 'usage.set_budget',
         conversation: 'propose',
         description:
-          'Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure (a research cycle id budgets the cycle). Give maxWallMinutes or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a token budget trusts unverified self-reports and is judged only while every session in its scope that was activated reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. An instance budget whose dependency closure is too large to walk cannot be judged either: it pauses every automatic offer with reason usage_unavailable until its bounds are cleared. A budget covers worker sessions only, never the charges of a remote job.',
+          'Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure. Give maxWallMinutes or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a token budget trusts unverified self-reports and is judged only while every session in its scope that was activated reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. An instance budget whose dependency closure is too large to walk cannot be judged either: it pauses every automatic offer with reason usage_unavailable until its bounds are cleared. A budget covers worker sessions only, never the charges of a remote job.',
         inputSchema: budgetSchema,
         handler: async (caller: Caller, input: SessionBudgetInput) =>
           await sessions.setBudget(caller, input),
@@ -96,7 +96,7 @@ export const sessionsToolsPlugin = {
       ctx.tools.register({
         name: 'session.find',
         description:
-          'Find the current and latest worker session for one task or experiment instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.',
+          'Find the current and latest worker session for one workflow instanceId. Use current.id as the destination for session.message; no current session means there is no live worker to address.',
         readOnly: true,
         inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { instanceId: string }) =>

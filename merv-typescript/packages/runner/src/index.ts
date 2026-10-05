@@ -31,7 +31,7 @@ import {
 } from './ledger.js';
 import { ProcessHost, usageFile } from './process-host.js';
 import { readTranscript, type TranscriptFacts } from './transcript.js';
-import { RunnerWorkspaces, type RepositoryDriverFactory } from './workspaces.js';
+import { assignmentUser, RunnerWorkspaces, type RepositoryDriverFactory } from './workspaces.js';
 import {
   buildLaunch,
   sealed,
@@ -372,6 +372,7 @@ export class MachineRunner implements Runner {
               {
                 directory: this.ledger.directory,
                 assignmentWorkspaceDirectory: this.config.assignmentWorkspaceDirectory,
+                assignmentUser,
                 workInstanceId: this.config.workInstanceId,
                 previousWorkspace: (id) => this.previousWorkspace(id),
                 path: this.ledger.path,

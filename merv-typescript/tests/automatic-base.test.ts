@@ -393,7 +393,7 @@ test('one accepted commit becomes the base, through code-less successes and howe
   const waiting = await f.declare([notes.work, pending]);
   assert.deepEqual((await f.code.unit(f.admin, waiting.id)).baseStatus, { status: 'waiting' });
   assert.deepEqual(await f.published(waiting), [], 'Workflows already reports the wait');
-  await assert.rejects(f.pin(waiting), { code: 'code_base_pending', status: 409 });
+  await assert.rejects(f.pin(waiting), { code: 'code_base_pending', status: 409, wait: true });
 
   // The notes carry no code, so the base is what they were built on.
   const through = await f.declare([notes.work]);

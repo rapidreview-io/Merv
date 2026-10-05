@@ -395,9 +395,11 @@ export class ResearchService implements Research {
     this.open();
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
+      const cycles = await this.workflows.open('research', caller.projectId, tx);
       const open = await tx.get<{ count: number }>(
-        "SELECT COUNT(*)::integer AS count FROM research_cycles c JOIN wf_instances w ON w.id=c.id WHERE c.project_id=? AND w.state NOT IN ('complete','abandoned','failed')",
+        'SELECT COUNT(*)::integer AS count FROM research_cycles WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))',
         caller.projectId,
+        JSON.stringify(cycles.map((cycle) => cycle.id)),
       );
       return open!.count;
     });
@@ -1503,6 +1505,7 @@ export class ResearchService implements Research {
     const release = await automaticResearch(
       this.state,
       this.scope,
+      this.workflows,
       events,
       async (caller, row, tx) => await this.reconcileAutomatic(caller, row, tx),
     );
@@ -1525,8 +1528,10 @@ export class ResearchService implements Research {
     if (!this.automaticBound || this.closed) return;
     await this.state.transaction(async (tx) => {
       // One resume per project: its consumer reconciles every open cycle there.
+      const cycles = await this.workflows.open('research', null, tx);
       const rows = await tx.all<{ project_id: string; source_json: string; research_id: string }>(
-        "SELECT DISTINCT ON (a.project_id) a.project_id,a.source_json,a.research_id FROM research_automation a JOIN wf_instances w ON w.id=a.research_id WHERE w.state NOT IN ('complete','abandoned','failed') ORDER BY a.project_id,a.cycle_index,a.research_id",
+        'SELECT DISTINCT ON (project_id) project_id,source_json,research_id FROM research_automation WHERE research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY project_id,cycle_index,research_id',
+        JSON.stringify(cycles.map((cycle) => cycle.id)),
       );
       for (const row of rows)
         await this.state.appendEvent(tx, {

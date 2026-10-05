@@ -75,6 +75,7 @@ function machine(
           directory,
           path: join(directory, 'ledger.sqlite'),
           assignmentWorkspaceDirectory,
+          assignmentUser: { uid: 12001, gid: 12001, git: '/nonexistent/assignment-git' },
           workInstanceId,
           previousWorkspace,
           terminal: (id) => terminal.has(id),
