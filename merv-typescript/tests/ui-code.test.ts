@@ -55,6 +55,7 @@ const row = {
   status: {},
   readable: true,
 };
+const lists = ['tasks', 'experiments'].map((id) => ({ ...row, id, path: `/${id}` }));
 /** Where the page thinks it is, which is the one thing that says a node is selected. */
 let where = '';
 const Probe = () => {
@@ -83,7 +84,8 @@ const page = (rows = [row], { at = '/code', manages = true, signedIn = manages }
         CodePage as any,
         {
           row,
-          shell: { rows, plugins: [] },
+          // The rows the records it names open under.
+          shell: { rows: [...rows, ...lists], plugins: [] },
           manages,
           signedIn,
           named: () => undefined,

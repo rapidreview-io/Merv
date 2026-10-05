@@ -5,7 +5,6 @@ import type { CodeUnit } from '@merv/contracts/code-work-models';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { recordRoutes } from '../list-filters';
-import { WORK } from '../navigation';
 import {
   Evidence,
   KV,
@@ -110,7 +109,7 @@ function ExperimentRecord({
   const names = useRecordNames(e.intent);
   return (
     <RecordPage
-      back={<Link to={WORK.path}>← Work</Link>}
+      back={<Link to="/work">← Work</Link>}
       kind="experiments"
       name={e.name}
       state={<StageMark graph={process} workflow={e.workflow} />}
@@ -184,7 +183,7 @@ function ExperimentDetail({ row }: ViewProps) {
         <LoadState
           loading={record.loading}
           error={record.error ?? reviews.error ?? exhibit.error}
-          back={{ to: WORK.path, label: 'Work' }}
+          back={{ to: '/work', label: 'Work' }}
         />
       </div>
     );
@@ -201,4 +200,4 @@ function ExperimentDetail({ row }: ViewProps) {
   );
 }
 
-export const ExperimentsView = recordRoutes(ExperimentDetail, WORK.path);
+export const ExperimentsView = recordRoutes(ExperimentDetail, '/work');

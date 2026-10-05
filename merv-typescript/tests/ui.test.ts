@@ -362,6 +362,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     shell.rows.map((entry) => entry.id),
     [
       'research',
+      'work',
 
       'tasks',
       'experiments',
@@ -471,10 +472,10 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   const home = (await tool('ui.home', operator)).body.result as Record<string, unknown>;
   assert.deepEqual(Object.keys(home).sort(), [
     'actors',
-    'cycles',
     'experiments',
     'project',
     'reflections',
+    'research',
     'reviews',
     'tasks',
     'workflows',
@@ -487,6 +488,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   await app.setEnabled('feed', false);
   assert.deepEqual(await rowIds(), [
     'research',
+    'work',
 
     'tasks',
     'experiments',
@@ -505,6 +507,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   await app.setEnabled('feed', true);
   assert.deepEqual(await rowIds(), [
     'research',
+    'work',
 
     'tasks',
     'experiments',
@@ -543,6 +546,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal((await raw(url, '/ui/')).status, 200);
   assert.deepEqual(await rowIds(), [
     'research',
+    'work',
 
     'tasks',
     'experiments',

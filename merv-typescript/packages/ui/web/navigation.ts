@@ -35,21 +35,11 @@ const HIDDEN = new Set(
 /** Fleet's page is a collection like any published one, so it is named by its row. */
 const HIDDEN_ROWS = new Set(['fleet']);
 
-/** The one row the shell owns: the current wave of work, framed by its cycle. */
-export const WORK: Row = {
-  id: 'work',
-  label: 'Work',
-  group: 'work',
-  order: 14,
-  path: '/work',
-  view: { kind: 'work' },
-  status: {},
-  readable: false,
-};
-
-/** Work leads the rail, and a project opens on it, wherever the work it draws is registered. */
-export const working = (rows: Row[]) =>
-  rows.some((row) => ['tasks', 'experiments'].includes(row.view.kind));
+/**
+ * Rows of the `lead` group stand above Now, a project opens on the first of them, and a
+ * page the rail does not show is reached from them.
+ */
+export const leadRows = (rows: Row[]) => rows.filter((row) => row.group === 'lead');
 
 /**
  * The paper stands with Work and Now rather than inside a section: it is what the
@@ -65,12 +55,12 @@ const shows = (row: Row) =>
 
 /**
  * The rail row an address lights: the row it stands under, and — for a page the rail does
- * not show, a record of the work or the agents and machines behind it — Work, where it is
- * reached from, so no page is ever nowhere.
+ * not show, a record of the work or the agents and machines behind it — the lead row, where
+ * it is reached from, so no page is ever nowhere.
  */
 export function holds(row: Row, pathname: string, rows: Row[]): boolean {
   const under = (other: Row) => pathname === other.path || pathname.startsWith(`${other.path}/`);
-  return under(row) || (row === WORK && rows.some((other) => under(other) && !shows(other)));
+  return under(row) || (row.group === 'lead' && rows.some((o) => under(o) && !shows(o)));
 }
 
 const SECTION_LABELS: Record<string, string> = {
@@ -97,7 +87,9 @@ export const humanizeGroup = (group: string) =>
  */
 export function buildNavigation(rows: Row[]): NavSection[] {
   const sorted = rows
-    .filter((row) => row.group !== 'settings' && shows(row) && row.view.kind !== 'paper')
+    .filter(
+      (row) => !['settings', 'lead'].includes(row.group) && shows(row) && row.view.kind !== 'paper',
+    )
     .sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
   const sections = new Map<string, NavSection>();
   for (const row of sorted) {

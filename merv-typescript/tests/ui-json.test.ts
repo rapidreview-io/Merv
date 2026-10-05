@@ -133,9 +133,11 @@ test('a hash is its two ends with all of it in the title; a long string is cut u
 
 test('a record id is the record’s name, an address is a link, and nothing else is one', async (t) => {
   t.after(async () => await unmount());
-  const names = recordNames([{ id: ART, title: 'curve.png' }], {
-    tasks: [{ id: TASK, title: 'Reproduce grokking' }],
-  });
+  const names = recordNames(
+    [{ id: ART, title: 'curve.png' }],
+    { tasks: [{ id: TASK, title: 'Reproduce grokking' }] },
+    [{ id: 'tasks', path: '/tasks' }],
+  );
   await tree(
     {
       task: TASK,
@@ -215,6 +217,7 @@ test('a JSON file is read as a tree, names its records, and one control shows it
   serve('/tools/ui.home', {
     body: { result: { tasks: [{ id: TASK, title: 'Reproduce grokking' }] } },
   });
+  serve('/tools/ui.shell', { body: { result: { rows: [{ id: 'tasks', path: '/tasks' }] } } });
   await file(artifact('metrics.json', content.length), content);
   await settle(10);
   assert.equal(document.querySelector('pre.doc'), null);

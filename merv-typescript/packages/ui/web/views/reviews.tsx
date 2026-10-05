@@ -3,7 +3,6 @@ import { useState, type ReactNode } from 'react';
 import { refreshTools, useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { recordRoutes } from '../list-filters';
-import { WORK } from '../navigation';
 import {
   Ago,
   Area,
@@ -297,7 +296,7 @@ export function ReviewDetail() {
   if (!review.data)
     return (
       <div className="page-stage">
-        <LoadState {...review} back={{ to: WORK.path, label: 'Work' }} />
+        <LoadState {...review} back={{ to: '/work', label: 'Work' }} />
       </div>
     );
   const r = review.data;
@@ -346,7 +345,7 @@ export function ReviewDetail() {
   const reviewer = nameOf(r.reviewerId);
   return (
     <RecordPage
-      back={<Link to={WORK.path}>← Work</Link>}
+      back={<Link to="/work">← Work</Link>}
       kind="reviews"
       // A review is named by what it judged, and the name is the way back to it.
       name={subject ? <Link to={subject.to}>{subject.name}</Link> : 'Review'}
@@ -743,4 +742,4 @@ export function Unmet({ text, at }: { text: string; at?: number }) {
   );
 }
 
-export const ReviewsView = recordRoutes(ReviewDetail, WORK.path);
+export const ReviewsView = recordRoutes(ReviewDetail, '/work');

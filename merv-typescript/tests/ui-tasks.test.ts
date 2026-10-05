@@ -7,7 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { click, mount, serve, settle, text, unmount } from './ui-render.js';
+import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 const { createElement, useState } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
@@ -418,15 +418,6 @@ test('a form that has locked its fields locks the records chosen in them too', a
 
 test('a new cycle names its prerequisites by picking them, and the tool is sent their ids', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/code.status', {
-    body: {
-      result: {
-        project: { durability: 'code' },
-        mirror: { blockedBy: 'github_automation_disabled' },
-        publication: { controls: { blockers: ['code_publication_canary_required'] } },
-      },
-    },
-  });
   const listed = (id: string, state: string) => ({ id, workflow: { state } });
   serve('/tools/task.list', {
     body: {
@@ -449,14 +440,9 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
     createElement(MemoryRouter, null, createElement(CreateResearch, { onSaved: () => saved++ })),
   );
   await settle(10);
-  const preflight = document.querySelector('[role="note"]')!;
-  assert.match(preflight.textContent!, /Research can proceed/);
-  assert.match(preflight.textContent!, /Repository automation does not permit publishing/);
-  assert.match(preflight.textContent!, /required merge-safety check has not been recorded/);
-  assert.deepEqual(
-    [...preflight.querySelectorAll('a')].map((link) => link.getAttribute('href')),
-    ['/settings/integrations', '/code'],
-  );
+  // Code's readiness is Code's to say, on Now and on Code: the form says nothing of it.
+  assert.equal(document.querySelector('[role="note"]'), null);
+  assert.ok(!requests.some((request) => request.includes('code.status')));
   assert.equal(document.querySelector('textarea'), null, 'nowhere to type an id');
   const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
   const name = document.querySelector<HTMLInputElement>('input[maxlength="200"]')!;

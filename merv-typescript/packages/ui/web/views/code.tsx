@@ -80,13 +80,13 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
   // The model is rebuilt only when something it is made of answers again, so the ten-second
   // poll costs a render and not a re-derivation of the whole project.
   const { model, names } = useMemo(() => {
-    const names = new Map(recordNames(null, home.data));
+    const names = new Map(recordNames(null, home.data, shell.rows));
     if (branch) names.set(MAIN, { name: branch });
     return {
       model: gitModel(read.data?.status, read.data?.commands ?? [], published, names),
       names,
     };
-  }, [read.data, home.data, branch]);
+  }, [read.data, home.data, branch, shell.rows]);
   const merges = model.nodes.filter((node) => node.kind === 'base').length;
   const unlinked = !!github && (github.status === 'disconnected' || !github.repository);
   // With no repository and nothing Merv made, the page has one thing to say and one

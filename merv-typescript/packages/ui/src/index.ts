@@ -45,6 +45,11 @@ export class UiRegistry implements Ui {
       'invalid_row',
       'Row view must declare a kind',
     );
+    check(
+      row.home === undefined || (typeof row.home.tool === 'string' && Array.isArray(row.home.keep)),
+      'invalid_row',
+      'Row home must name a tool and the fields it keeps',
+    );
     check(!this.entries.has(row.id), 'row_conflict', `Row is already registered: ${row.id}`, 409);
     const entry: UiRow = { ...row, view: structuredClone(row.view) };
     this.entries.set(row.id, entry);
@@ -58,7 +63,7 @@ export class UiRegistry implements Ui {
   }
 
   async describe(caller: Caller): Promise<UiRowDescription[]> {
-    return await mapAsync(this.rows(), async ({ status, read, ...row }) => {
+    return await mapAsync(this.rows(), async ({ status, read, home: _home, ...row }) => {
       let live: UiRowStatus = {};
       try {
         live = (await status?.(caller)) ?? {};
@@ -127,14 +132,14 @@ export const uiPlugin = {
       ctx.tools.register({
         name: 'ui.home',
         description:
-          'Read what the Now page and the rail draw in one answer: the project, its records, the people who own them, and the gate every unfinished workflow stands at.',
+          'Read what the Now page and the rail draw in one answer: the project, the records of every row that declares them, the people who own them, and the gate every unfinished workflow stands at.',
         inputSchema: z.object({}).strict(),
         // One snapshot for every part: sequential reads on one connection cost tens of
         // milliseconds; parallel parts each queued on the writer lock cost seconds.
         // The page's own read: a person's agent reads the records themselves.
         conversation: 'never',
         readOnly: true,
-        handler: async (caller: Caller) => await homeRead(ctx.tools, caller),
+        handler: async (caller: Caller) => await homeRead(ctx.tools, ui.rows(), caller),
       }),
     );
     const running: RunningSources = {

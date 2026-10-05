@@ -93,7 +93,7 @@ const home = (over: Record<string, unknown>) => ({
   experiments: null,
   tasks: null,
   reviews: null,
-  cycles: null,
+  research: null,
   files: null,
   posts: null,
   workflows: null,
@@ -529,7 +529,7 @@ test('an operator’s move with no control here is still theirs, and promises no
 
 test('a cycle its abandoned wave stopped names the wave, not the work it reflects on', () => {
   const data = home({
-    cycles: [{ id: 'wf_cycle', name: 'Cycle 1', ownerId: me.id, workflow: flow('reflecting') }],
+    research: [{ id: 'wf_cycle', name: 'Cycle 1', ownerId: me.id, workflow: flow('reflecting') }],
     workflows: {
       workflows: [
         gate('wf_cycle', {
@@ -561,7 +561,7 @@ test('a cycle its abandoned wave stopped names the wave, not the work it reflect
 
 test('work a cycle reflects on may fail and stop nothing: the next cycle still asks for its input', () => {
   const data = home({
-    cycles: [
+    research: [
       { id: 'wf_cycle', name: 'Cycle 1', ownerId: me.id, workflow: flow('consolidating') },
       { id: 'wf_next', name: 'Cycle 2', ownerId: me.id, workflow: flow('reflecting') },
     ],

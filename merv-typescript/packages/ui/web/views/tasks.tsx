@@ -2,7 +2,6 @@ import { Link, useParams } from 'react-router-dom';
 import type { CodeUnit } from '@merv/contracts/code-work-models';
 import { useTool, type Loaded } from '../api';
 import { recordRoutes } from '../list-filters';
-import { WORK } from '../navigation';
 import { Evidence, KV, LoadState, RecordPage, Stamp, timeRows, useArtifacts } from '../components';
 import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
@@ -96,7 +95,7 @@ function TaskDetail({ row }: ViewProps) {
   if (!t)
     return (
       <div className="page-stage">
-        <LoadState {...record} back={{ to: WORK.path, label: 'Work' }} />
+        <LoadState {...record} back={{ to: '/work', label: 'Work' }} />
       </div>
     );
   // Deliveries, the reviews that answered them and the returns, once the reviews are read;
@@ -107,7 +106,7 @@ function TaskDetail({ row }: ViewProps) {
     : [];
   return (
     <RecordPage
-      back={<Link to={WORK.path}>← Work</Link>}
+      back={<Link to="/work">← Work</Link>}
       kind={row.view.kind}
       name={t.title}
       standing={t.goal}
@@ -161,4 +160,4 @@ function TaskDetail({ row }: ViewProps) {
   );
 }
 
-export const TasksView = recordRoutes(TaskDetail, WORK.path);
+export const TasksView = recordRoutes(TaskDetail, '/work');
