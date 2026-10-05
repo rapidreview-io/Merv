@@ -110,14 +110,14 @@ const privateDirectory = (path: string) => {
   return path;
 };
 /** Pin one assignment-produced bundle as a private regular file before root Git parses it. */
-const stageAssignmentBundle = (source: string, target: string): void => {
+const stageAssignmentBundle = (source: string, target: string, owner?: number): void => {
   const input = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = fstatSync(input);
     if (
       !info.isFile() ||
       info.nlink !== 1 ||
-      ![process.getuid?.(), 12001].includes(info.uid) ||
+      ![process.getuid?.(), owner].includes(info.uid) ||
       info.size > 8 * 1024 * 1024 * 1024
     )
       throw new WorkspaceError('workspace_foreign_path');
@@ -221,12 +221,16 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         resolve(assignmentRoot) !== assignmentRoot ||
         realpathSync(assignmentRoot) !== assignmentRoot ||
         !lstatSync(assignmentRoot).isDirectory() ||
-        (lstatSync(assignmentRoot).mode & 0o022) !== 0
+        (lstatSync(assignmentRoot).mode & 0o022) !== 0 ||
+        !host.assignmentUser
       )
         throw new WorkspaceError('workspace_assignment_root_invalid');
       this.assignmentRoot = assignmentRoot;
     }
-    this.git = new DriverGit(template, this.assignmentRoot);
+    this.git = new DriverGit(
+      template,
+      this.assignmentRoot ? { root: this.assignmentRoot, ...host.assignmentUser! } : undefined,
+    );
     this.db = new DatabaseSync(host.path);
     this.db.exec(`PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS code_v2_repositories (
@@ -1048,7 +1052,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     try {
       await this.git.ok(['update-ref', ref, commit], { cwd: row.path });
       await this.git.ok(['bundle', 'create', bundle, ref], { cwd: row.path });
-      stageAssignmentBundle(bundle, staged);
+      stageAssignmentBundle(bundle, staged, this.host.assignmentUser?.uid);
       await this.git.ok(['--git-dir', cache, 'bundle', 'unbundle', staged]);
       if (!(await this.has(cache, commit))) throw new WorkspaceError('workspace_transfer_lost');
     } finally {

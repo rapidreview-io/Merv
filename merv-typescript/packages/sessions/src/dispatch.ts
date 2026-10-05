@@ -178,7 +178,8 @@ function deferredRuns<T extends Failure>(
 /**
  * Refusals that say who asked, what they sent or what raced, never that the offer cannot be
  * built. Counting them would let a revoked key, a replayed secret or a lost race hold every
- * healthy target in the queue until an admin came.
+ * healthy target in the queue until an admin came. A refusal its component marked a wait
+ * (MervError.wait) is not counted either.
  */
 const uncountedOfferCodes = new Set([
   'dispatch_disabled',
@@ -191,24 +192,6 @@ const uncountedOfferCodes = new Set([
   'invalid_deadline',
   'nested_session_offer',
   'agent_busy',
-  // A base that turned pending or contested between candidacy and the offer. The work is
-  // published as blocked by whoever derives bases, and nothing about the target is broken.
-  'code_base_pending',
-  'code_merge_required',
-  // A base made from several accepted commits that is still being merged, waits for the one
-  // task that resolves its conflict, or needs an operator: a wait, never the target's fault.
-  'code_base_wait',
-  'code_base_admission',
-  'code_merge_conflict',
-  'code_base_blocked',
-  'code_quarantined',
-  'code_dependencies_changed',
-  // The unit's last writer ended between candidacy and the offer and its machine has not
-  // handed over what it left, or that handover needs an operator. Both are published where
-  // blocked work is shown; neither says anything against the target.
-  'code_writer_busy',
-  'code_recovery_required',
-  'code_capture_quarantined',
 ]);
 /** session.dispatch: whether automatic work runs, and whether only on the project's own machines. */
 export const dispatchSchema = z
@@ -782,7 +765,7 @@ export class SessionDispatch {
       cause instanceof MervError
         ? { code: cause.code, message: cause.message }
         : { code: 'offer_failed', message: cause instanceof Error ? cause.message : String(cause) };
-    if (uncountedOfferCodes.has(failure.code)) return;
+    if ((cause instanceof MervError && cause.wait) || uncountedOfferCodes.has(failure.code)) return;
     try {
       await this.state.transaction(async (tx) => {
         const owner = await ownerOf(this.scope, caller, tx);

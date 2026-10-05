@@ -58,19 +58,13 @@ const VERBS: Record<SessionRole, RunningVerb> = {
   reviewer: 'reviews',
   reader: 'reads',
 };
-const KINDS: Record<string, string> = {
-  task: 'Task',
-  experiment: 'Experiment',
-  reflection: 'Reflection',
-  research: 'Research',
-};
 const machineWho = 'An operator checks the machine or halts the lease';
 /**
- * A lease is labelled for the agent that takes it (`Work: …`, `Review: …`) and the role
- * already says which, so the record is named by the rest; a lens's closing enum word reads
- * as words. The Sessions page names work the same way (views/agent-sessions-panel.tsx).
+ * A lease is labelled for the agent that takes it (`Work: …`, `Review: …`, or a recipe's dotted
+ * name) and the role already says which, so the record is named by the rest; a closing enum
+ * word reads as words. The Sessions page names work the same way (views/agent-sessions-panel.tsx).
  */
-const PURPOSE = /^(?:Work|Review|experiment\.\w+):\s+/;
+const PURPOSE = /^(?:Work|Review|[a-z]+(?:\.\w+)+):\s+/;
 const LENS = /: ([a-z]+(?:_[a-z]+)+)$/;
 export const workName = (label: string) =>
   label.replace(PURPOSE, '').replace(LENS, (_, lens: string) => `: ${lens.replaceAll('_', ' ')}`);
@@ -644,7 +638,8 @@ export class SessionRunning {
         rows: [
           {
             to: { key: runningKey('work', row.instance_id), ...(route ? { route } : {}) },
-            ...(KINDS[row.workflow] ? { kind: KINDS[row.workflow] } : {}),
+            // Work a page shows is named by its workflow.
+            ...(route ? { kind: row.workflow[0]!.toUpperCase() + row.workflow.slice(1) } : {}),
             name: clip(work, 200),
           },
         ],
@@ -781,7 +776,7 @@ export class SessionRunning {
         allowed: operator && holding,
         guard: {
           title: 'Halt this lease?',
-          consequence: `${who} holds this lease on ${clip(work, 90)} as ${row.role}. Halting closes it now and returns the work to the queue; its runner must stop the worker itself. No verdict, claim standing or review state changes. A remote job it started keeps running.${lease.fleet ? ' Its Fleet machine is then released.' : ''}`,
+          consequence: `${who} holds this lease on ${clip(work, 90)} as ${row.role}. Halting closes it now and returns the work to the queue; its runner must stop the worker itself. The work’s state does not change. A remote job it started keeps running.${lease.fleet ? ' Its Fleet machine is then released.' : ''}`,
         },
         expect: { field: 'halted', min: 1, nothing: 'Nothing was halted.' },
       };

@@ -441,7 +441,7 @@ export interface Sessions {
       usage?: SessionUsageReport;
     },
   ): Promise<Session>;
-  /** Open to leased workers too: a reflection lens reads what the cycle it reflects on cost. */
+  /** Open to leased workers too: a worker may read what the work it is on cost. */
   usage(caller: Caller, input?: UsageQuery): Promise<UsageRollup>;
   /** Everything that stopped moving and why, for anyone who may read the project but no leased worker. */
   stuck(caller: Caller): Promise<StuckReport>;

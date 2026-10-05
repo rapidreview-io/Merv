@@ -116,6 +116,8 @@ export {
 } from './session-inputs.js';
 export { WorkspaceDeferred } from './workspace-driver.js';
 export type {
+  CheckoutSlotClaim,
+  CheckoutSlotLedger,
   WorkspaceDriver,
   WorkspaceDriverFactory,
   WorkspaceDriverHost,
@@ -214,6 +216,9 @@ import type {
   ProcessGraph,
 } from './workflow-guidance.js';
 export class MervError extends Error {
+  /** Set by the refusing component when the refusal only means "not yet": nothing is wrong
+   *  with what was asked, so whoever retries it does not count it as a failure. */
+  wait?: boolean;
   constructor(
     public code: string,
     message: string,
@@ -1781,6 +1786,13 @@ export interface Workflows {
   get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot>;
   list(caller: Caller, tx?: Transaction): Promise<WorkflowSnapshot[]>;
   history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;
+  /**
+   * System reads for a caller already authorized for what it asks. `open`: the instances of
+   * `workflow` in a nonterminal state of their own pinned version, in one project or (null)
+   * every project, oldest first. `movedBy`: who moved an instance to `revision`, if anyone.
+   */
+  open(workflow: string, projectId: string | null, tx?: Transaction): Promise<WorkflowSnapshot[]>;
+  movedBy(instanceId: string, revision: number, tx?: Transaction): Promise<string | null>;
   catalog(): WorkflowDefinition[];
   /**
    * The stored contract of a version, loaded or not, or null when none is stored. It never

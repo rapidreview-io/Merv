@@ -146,6 +146,32 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     });
   }
 
+  async open(workflow: string, projectId: string | null, tx?: Transaction) {
+    // Each version's terminal states are read once, from its own pinned definition.
+    return await this.read(tx, async (tx) =>
+      (
+        await tx.all<InstanceRow>(
+          `WITH d AS (SELECT version,definition_json::jsonb->'terminal' AS terminal FROM wf_definitions WHERE name=?)
+          SELECT i.* FROM wf_instances i JOIN d ON d.version=i.version WHERE i.workflow=? AND NOT d.terminal @> to_jsonb(i.state)
+          AND (?::text IS NULL OR i.project_id=?) ORDER BY i.created_at,i.id`,
+          workflow,
+          workflow,
+          projectId,
+          projectId,
+        )
+      ).map(this.snapshot),
+    );
+  }
+
+  async movedBy(instanceId: string, revision: number, tx?: Transaction) {
+    const sql = 'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?';
+    return await this.read(
+      tx,
+      async (tx) =>
+        (await tx.get<{ actor_id: string }>(sql, instanceId, revision))?.actor_id ?? null,
+    );
+  }
+
   async workStarts(
     caller: Caller,
     instanceId: string,

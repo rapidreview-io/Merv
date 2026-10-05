@@ -1,6 +1,6 @@
 import type { CodeCommitCommand, CodeCommitReceipt } from './code.js';
 import type { SessionWorkspace } from './sessions-models.js';
-import type { WorkflowExecution } from './index.js';
+import type { WorkflowExecution, WorkflowWorkspacePolicy } from './index.js';
 
 /**
  * What a machine runner asks of whatever prepares its checkouts. The runner schedules,
@@ -43,12 +43,35 @@ export interface WorkspaceDriver {
   commitOutcome?(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
   acknowledgeCommit?(commandId: string): void;
 }
+/** One launch's claim of a checkout path, with the workspace row it opens. */
+export interface CheckoutSlotClaim {
+  launchId: string;
+  slotId: string;
+  path: string;
+  branch: string | null;
+  base: string;
+  policy: WorkflowWorkspacePolicy;
+  readOnly: boolean;
+  repositoryId: string | null;
+}
+type SlotOwner = { launch_id: string; slot_id: string; epoch: number };
+/** A runner's checkout-slot ledger, lent to the driver of the runner's own repository. */
+export interface CheckoutSlotLedger {
+  /** The base a slot was first claimed at, if it ever was. */
+  base(slotId: string): string | undefined;
+  claim(claim: CheckoutSlotClaim): void;
+  requireOwnership(row: SlotOwner): void;
+  /** Frees the slot its owner still holds and closes the launch's workspace row. */
+  release(row: SlotOwner): void;
+}
 /** What a runner lends a driver: its ledger's place on disk and what it knows of a launch. */
 export interface WorkspaceDriverHost {
   /** The ledger directory; a driver keeps what it owns in a directory of its own inside it. */
   directory: string;
   /** Image-provisioned root for assignment-owned independent hosted checkouts. */
   assignmentWorkspaceDirectory?: string;
+  /** Who owns the checkouts under that root, and the wrapper that runs Git as that user. */
+  assignmentUser?: { uid: number; gid: number; git: string };
   /** A hosted machine retained for this one work item; every phase uses the same cwd. */
   workInstanceId?: string;
   /** Last fully settled phase of this same work item, authenticated by the runner's private ledger. */

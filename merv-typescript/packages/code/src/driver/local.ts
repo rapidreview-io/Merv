@@ -18,8 +18,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   codeCommitCommandSchema,
+  type CheckoutSlotLedger,
   effectiveWorkspace,
-  WorkspaceDeferred,
   type CodeCommitCommand,
   type CodeCommitReceipt,
   type SessionWorkspace,
@@ -65,6 +65,8 @@ export interface LocalWorkspaceHost {
   launch(launchId: string): LocalLaunchFacts | undefined;
   /** A diagnostic the runner keeps with the launch and reports. */
   note(launchId: string, code: string, detail: Record<string, unknown>): void;
+  /** The runner's checkout-slot ledger: it owns the slot and workspace tables. */
+  slots: CheckoutSlotLedger;
 }
 type LocalSession = WorkspaceSession & { projectId: string };
 type WorkspaceRow = {
@@ -148,8 +150,8 @@ const marker = (path: string, value: unknown) => {
 
 /**
  * Checkouts of a runner's own local repository: a private bare copy of it, checkout ownership
- * and immutable per-launch captures, independent of server persistence. Its rows share the
- * runner's workspace tables with the runner's scratch directories.
+ * and immutable per-launch captures, independent of server persistence. Its checkouts are claimed
+ * in the runner's slot ledger, which the runner lends it, as its scratch directories are.
  */
 export class LocalWorkspaceDriver implements WorkspaceDriver {
   private readonly db: DatabaseSync;
@@ -177,24 +179,6 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
         source_path TEXT NOT NULL,base_ref TEXT NOT NULL,initial_oid TEXT NOT NULL,
         bare_path TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('preparing','ready'))
       );
-      CREATE TABLE IF NOT EXISTS runner_checkout_slots (
-        slot_id TEXT PRIMARY KEY,path TEXT NOT NULL UNIQUE,branch TEXT,base_oid TEXT NOT NULL,
-        owner_launch_id TEXT UNIQUE,epoch INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS runner_workspaces (
-        launch_id TEXT PRIMARY KEY REFERENCES launches(id),slot_id TEXT NOT NULL,
-        epoch INTEGER NOT NULL,path TEXT NOT NULL,policy_json TEXT NOT NULL,read_only INTEGER NOT NULL,
-        base_oid TEXT NOT NULL,branch TEXT,repository_id TEXT,
-        status TEXT NOT NULL CHECK(status IN ('preparing','ready','capturing','captured','closing','closed')),
-        attachment_json TEXT,result_json TEXT,canceled INTEGER NOT NULL DEFAULT 0
-      );
-      CREATE TRIGGER IF NOT EXISTS immutable_workspace_identity
-        BEFORE UPDATE OF launch_id,slot_id,epoch,path,policy_json,read_only,base_oid,branch,repository_id ON runner_workspaces
-        BEGIN SELECT RAISE(ABORT,'immutable workspace identity'); END;
-      CREATE TRIGGER IF NOT EXISTS immutable_workspace_attachment BEFORE UPDATE OF attachment_json ON runner_workspaces
-        WHEN OLD.attachment_json IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable workspace attachment'); END;
-      CREATE TRIGGER IF NOT EXISTS immutable_workspace_result BEFORE UPDATE OF result_json ON runner_workspaces
-        WHEN OLD.result_json IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable workspace result'); END;
       CREATE TABLE IF NOT EXISTS runner_workspace_fences (
         launch_id TEXT PRIMARY KEY REFERENCES launches(id),owner_oid TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('preparing','armed','revoked'))
@@ -284,54 +268,21 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
         policy.mode === 'persistent'
           ? `codex/merv/${policy.perBase ? 'per-base' : 'shared'}/${[namespace, project, instance].map(unitRef).join('/')}${suffix}`
           : null;
-      const recorded = this.db
-        .prepare('SELECT base_oid FROM runner_checkout_slots WHERE slot_id=?')
-        .get(slotId);
-      if (recorded && policy.mode === 'persistent' && !policy.perBase) {
-        if (pinned && recorded.base_oid !== pinned)
-          throw new WorkspaceError('workspace_base_changed');
-        base = String(recorded.base_oid);
+      const recorded = this.host.slots.base(slotId);
+      if (recorded !== undefined && policy.mode === 'persistent' && !policy.perBase) {
+        if (pinned && recorded !== pinned) throw new WorkspaceError('workspace_base_changed');
+        base = recorded;
       }
-      this.db.exec('BEGIN IMMEDIATE');
-      try {
-        const slot = this.db
-          .prepare('SELECT * FROM runner_checkout_slots WHERE slot_id=?')
-          .get(slotId);
-        // An owner that is running or settling frees the slot by itself, within the capture
-        // bound; one whose process is uncertain needs an operator, so that refusal counts.
-        if (slot?.owner_launch_id)
-          throw this.host.launch(String(slot.owner_launch_id))?.status === 'uncertain'
-            ? new WorkspaceError('workspace_owned_by_another_launch')
-            : new WorkspaceDeferred('checkout_busy', 'workspace_owned_by_another_launch');
-        if (!slot && pathStat(path)) throw new WorkspaceError('workspace_foreign_checkout');
-        const epoch = Number(slot?.epoch ?? 0) + 1;
-        this.db
-          .prepare(
-            `INSERT INTO runner_checkout_slots VALUES(?,?,?,?,?,?)
-          ON CONFLICT(slot_id) DO UPDATE SET owner_launch_id=excluded.owner_launch_id,epoch=excluded.epoch`,
-          )
-          .run(slotId, path, branch, base, record.id, epoch);
-        this.db
-          .prepare(
-            `INSERT INTO runner_workspaces(launch_id,slot_id,epoch,path,policy_json,read_only,base_oid,branch,repository_id,status)
-          VALUES(?,?,?,?,?,?,?,?,?,'preparing')`,
-          )
-          .run(
-            record.id,
-            slotId,
-            epoch,
-            path,
-            JSON.stringify(policy),
-            Number(session.execution.policy.readOnly),
-            base,
-            branch,
-            repository.repository_id,
-          );
-        this.db.exec('COMMIT');
-      } catch (error) {
-        this.db.exec('ROLLBACK');
-        throw error;
-      }
+      this.host.slots.claim({
+        launchId: record.id,
+        slotId,
+        path,
+        branch,
+        base,
+        policy,
+        readOnly: session.execution.policy.readOnly,
+        repositoryId: repository.repository_id,
+      });
       await this.prepareCheckout(this.row(record.id)!);
       return this.get(record.id)!;
     });
@@ -497,7 +448,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       if (!row) return undefined;
       if (row.result_json) return JSON.parse(row.result_json) as SessionWorkspace;
       if (row.canceled || row.status === 'captured' || row.status === 'closed') return undefined;
-      this.requireOwnership(row);
+      this.host.slots.requireOwnership(row);
       if (row.status === 'preparing') {
         // No command ran before successful preparation. Preserve every unverified path.
         try {
@@ -606,7 +557,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
         throw new WorkspaceError('workspace_process_stop_unconfirmed');
       const row = this.row(record.id);
       if (!row || row.status === 'closed') return;
-      this.requireOwnership(row);
+      this.host.slots.requireOwnership(row);
       if (!['captured', 'closing'].includes(row.status))
         throw new WorkspaceError('workspace_capture_required');
       this.db
@@ -621,22 +572,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
           const bare = (await this.repository()).bare_path;
           await this.git(['--git-dir', bare, 'worktree', 'remove', '--force', '--', row.path]);
         });
-      this.db.exec('BEGIN IMMEDIATE');
-      try {
-        this.requireOwnership(row);
-        this.db
-          .prepare(
-            'UPDATE runner_checkout_slots SET owner_launch_id=NULL WHERE slot_id=? AND owner_launch_id=? AND epoch=?',
-          )
-          .run(row.slot_id, record.id, row.epoch);
-        this.db
-          .prepare("UPDATE runner_workspaces SET status='closed' WHERE launch_id=?")
-          .run(record.id);
-        this.db.exec('COMMIT');
-      } catch (error) {
-        this.db.exec('ROLLBACK');
-        throw error;
-      }
+      this.host.slots.release(row);
     });
   }
   /** Each tip neither HEAD nor an earlier rescue contains is kept under `refs/merv/rescued/<launch>[-n]`. */
@@ -736,13 +672,6 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     )
       throw new WorkspaceError('workspace_unknown_launch');
   }
-  private requireOwnership(row: WorkspaceRow): void {
-    const slot = this.db
-      .prepare('SELECT owner_launch_id,epoch FROM runner_checkout_slots WHERE slot_id=?')
-      .get(row.slot_id);
-    if (slot?.owner_launch_id !== row.launch_id || Number(slot.epoch) !== row.epoch)
-      throw new WorkspaceError('workspace_ownership_changed');
-  }
   private commitRow(id: string): CommitRow | undefined {
     return this.db.prepare('SELECT * FROM runner_code_commits WHERE command_id=?').get(id) as
       CommitRow | undefined;
@@ -787,7 +716,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
     const launch = this.host.launch(row.launch_id);
     if (launch?.status !== 'running' || launch.deadline <= Date.now())
       throw new WorkspaceError('workspace_process_not_running');
-    this.requireOwnership(row);
+    this.host.slots.requireOwnership(row);
     if (this.row(row.launch_id)?.status !== 'ready')
       throw new WorkspaceError('workspace_not_ready');
     if (row.read_only) throw new WorkspaceError('workspace_readonly_commit');
@@ -813,7 +742,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
   }
   private async armFence(row: WorkspaceRow): Promise<void> {
     if (!row.repository_id) return;
-    this.requireOwnership(row);
+    this.host.slots.requireOwnership(row);
     const repository = await this.repository();
     let fence = this.fence(row);
     if (!fence) {
@@ -1124,7 +1053,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       throw new WorkspaceError('workspace_not_bare');
   }
   private async prepareCheckout(row: WorkspaceRow): Promise<void> {
-    this.requireOwnership(row);
+    this.host.slots.requireOwnership(row);
     const repository = await this.repository();
     this.within(this.root, row.path);
     // A persistent branch's lineage records its base once; a changed record is refused

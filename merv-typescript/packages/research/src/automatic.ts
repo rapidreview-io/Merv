@@ -9,6 +9,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type Workflows,
 } from '@merv/contracts';
 import type { ResearchAutomation } from './models.js';
 
@@ -32,6 +33,7 @@ export const automaticStatus = (row: AutomaticRow): ResearchAutomation => ({
 export async function automaticResearch(
   state: State,
   scope: Scope,
+  workflows: Pick<Workflows, 'open'>,
   events: DomainEvents,
   reconcile: (
     caller: Caller,
@@ -58,10 +60,13 @@ export async function automaticResearch(
       if (event.type === 'research.resume' && (await tx.get(later, event.projectId, event.id)))
         return;
       // Only a defining cycle reads the paper, so only it can be unblocked by a patch.
+      const cycles = (await workflows.open('research', event.projectId, tx)).filter(
+        (cycle) => event.type !== 'paper.patched' || cycle.state === 'defining',
+      );
       const rows = await tx.all<AutomaticRow>(
-        "SELECT a.* FROM research_automation a JOIN wf_instances w ON w.id=a.research_id WHERE a.project_id=? AND w.state NOT IN ('complete','abandoned','failed') AND (?<>'paper.patched' OR w.state='defining') ORDER BY a.cycle_index,a.research_id",
+        'SELECT * FROM research_automation WHERE project_id=? AND research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY cycle_index,research_id',
         event.projectId,
-        event.type,
+        JSON.stringify(cycles.map((cycle) => cycle.id)),
       );
       for (const row of rows) {
         let blocker: ResearchAutomation['blocker'];

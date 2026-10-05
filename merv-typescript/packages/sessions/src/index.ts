@@ -918,12 +918,10 @@ export class LeasedSessions implements Sessions {
   }
   /** The record moved by this worker's own hand: its handoff landed. */
   private async handedOff(session: Session, tx: Transaction): Promise<boolean> {
-    const moved = await tx.get<{ actor_id: string }>(
-      'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?',
-      session.instanceId,
-      session.expectedRevision + 1,
+    return (
+      (await this.workflows.movedBy(session.instanceId, session.expectedRevision + 1, tx)) ===
+      session.actorId
     );
-    return moved?.actor_id === session.actorId;
   }
   /** The closure a live session's check finds, recorded; on a snapshot the refusal to record it
    *  propagates, so a writer records it, unless the caller only `report`s it. */
@@ -1643,8 +1641,8 @@ export class LeasedSessions implements Sessions {
   }
   /**
    * Unlike the dispatch reads this admits a leased worker: it discloses totals, never a
-   * credential or another worker's input, and a reflection lens needs it to say what a
-   * cycle cost. The scope check still bounds it to the caller's project.
+   * credential or another worker's input, and a worker may need to say what the work it
+   * reviews cost. The scope check still bounds it to the caller's project.
    */
   async usage(caller: Caller, input: UsageQuery = {}): Promise<UsageRollup> {
     this.ordinary(caller);

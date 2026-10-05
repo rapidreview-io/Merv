@@ -66,6 +66,30 @@ export interface CodeStoreOptions {
 }
 
 /** One Code capability over machine commands, units, bases and publications. */
+/**
+ * Refusals at a lease that only mean "not yet": a base still pending, contested, merging or
+ * needing an operator, or a last writer still handing over what it left. Each is published
+ * where blocked work is shown and says nothing against the work, so it is marked a wait.
+ */
+const waits = new Set([
+  'code_base_pending',
+  'code_merge_required',
+  'code_base_wait',
+  'code_base_admission',
+  'code_merge_conflict',
+  'code_base_blocked',
+  'code_quarantined',
+  'code_dependencies_changed',
+  'code_writer_busy',
+  'code_recovery_required',
+  'code_capture_quarantined',
+]);
+/** Rethrows a refusal, marked as a wait when it is one of those. */
+function refuse(error: unknown): never {
+  if (error instanceof MervError && waits.has(error.code)) error.wait = true;
+  throw error;
+}
+
 export class CodeService extends CodeCommandService implements Code {
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
@@ -371,7 +395,7 @@ export class CodeService extends CodeCommandService implements Code {
     return await this.unitStore.baseStatus(...args);
   }
   async pinBase(...args: Parameters<CodeUnitService['pinBase']>) {
-    return await this.unitStore.pinBase(...args);
+    return await this.unitStore.pinBase(...args).catch(refuse);
   }
   async basePin(...args: Parameters<CodeUnitService['basePin']>) {
     return await this.unitStore.basePin(...args);
@@ -415,7 +439,7 @@ export class CodeService extends CodeCommandService implements Code {
   }
   async reserveWriter(...args: Parameters<CodeWriterService['reserveWriter']>) {
     check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
-    return await this.writerStore.reserveWriter(...args);
+    return await this.writerStore.reserveWriter(...args).catch(refuse);
   }
   async writerStatus(...args: Parameters<CodeWriterService['writerStatus']>) {
     check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
@@ -427,11 +451,13 @@ export class CodeService extends CodeCommandService implements Code {
     tx: Transaction,
   ): Promise<void> {
     const base = await this.baseStatus(caller, input.unitId, tx);
-    if (base.status === 'blocked')
-      throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
-    if (!input.writer) return;
-    const writer = await this.writerStatus(caller, input.unitId, tx);
-    if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
+    const blocked =
+      base.status === 'blocked'
+        ? base.blockers[0]!
+        : input.writer
+          ? (await this.writerStatus(caller, input.unitId, tx)).blocked
+          : null;
+    if (blocked) refuse(new MervError(blocked.code, blocked.message, 409));
   }
   /** Every admitted upload of the unit is first given the chance to finish; then the fence. */
   async fenceUnit(caller: Caller, input: unknown) {
