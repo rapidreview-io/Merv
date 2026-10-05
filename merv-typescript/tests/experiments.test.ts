@@ -976,6 +976,33 @@ test('plan and results reviewers write the paper with every verdict, atomically 
     }
 });
 
+test('a retry keeps the compute epoch of work started before Experiments recorded one', async (t) => {
+  const f = await fixture(t);
+  // Sandboxes derived an earlier contract's epoch from the revision; a native one kept attempt:state.
+  for (const version of [28, 36]) {
+    let experiment = await f.create();
+    await f.attach(experiment, 'plan', plan);
+    experiment = await f.submitReview(await f.transition(experiment, 'submit_design'));
+    await f.state.transaction((tx) =>
+      tx.run(
+        `UPDATE wf_instances SET version=?, data_json=(data_json::jsonb - 'computeEpoch')::text WHERE id=?`,
+        version,
+        experiment.id,
+      ),
+    );
+    experiment = await f.experiments.get(f.producer, experiment.id);
+    const held = version === 28 ? String(experiment.workflow.revision) : '1:running';
+    experiment = await f.transition(experiment, 'retry_running', {
+      evidence: { reason: 'Fixture recovery' },
+    });
+    assert.equal(experiment.workflow.data.computeEpoch, held);
+    experiment = await f.transition(experiment, 'retry_running', {
+      evidence: { reason: 'Fixture recovery' },
+    });
+    assert.equal(experiment.workflow.data.computeEpoch, held);
+  }
+});
+
 test('native experiments fence compute by attempt and state and retain service captures', async (t) => {
   const f = await fixture(t);
   const native = nativeWorkFixture();

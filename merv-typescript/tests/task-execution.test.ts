@@ -211,6 +211,33 @@ test('metadata admission avoids rendering, binds each session to its own record 
   }
 });
 
+test('a task lease of an earlier contract admits its Sandboxes captures', async (t) => {
+  const { app, operator, offer, release, run, create } = await fixture(t);
+  const native = nativeWorkFixture();
+  t.after((app.ctx.tasks as TaskService).bindSandboxes(native.service));
+  const task = await create('legacy-contract');
+  await app.ctx.state.transaction((tx) =>
+    tx.run('UPDATE wf_instances SET version=31 WHERE id=?', task.id),
+  );
+  const leased = await offer(task);
+  const capture = await app.ctx.artifacts.createCollection!(
+    await app.ctx.scope.serviceActor('sandboxes', operator.projectId),
+    {
+      title: 'Captured evidence',
+      sourceKey: 'legacy-test',
+      files: [
+        { name: 'r.txt', hash: 'c'.repeat(64), size: 1, provider: 'sandboxes', reference: 'o' },
+      ],
+    },
+  );
+  native.verified.set(task.id, [capture.id]);
+  const read = await run(leased.worker, 'artifact.get', { artifactId: capture.id }, (caller) =>
+    app.ctx.artifacts.get(caller, capture.id),
+  );
+  assert.equal(read.id, capture.id);
+  await release(leased.session.id);
+});
+
 test('current native task leases leave compute to Sandboxes and admit registered capture evidence', async (t) => {
   const { app, operator, offer, release, run, create, work, held } = await fixture(t);
   const native = nativeWorkFixture();

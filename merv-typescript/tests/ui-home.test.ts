@@ -50,6 +50,12 @@ const task = (id: string, producerId: string, state = 'in_progress') => ({
   dependencies: [],
   workflow: flow(state),
 });
+const experiment = (id: string, ownerId: string, state = 'planned') => ({
+  id,
+  name: `Experiment ${id}`,
+  ownerId,
+  workflow: flow(state),
+});
 /** A gate as workflow.status_and_next answers it, with only what the page reads filled in. */
 const gate = (instanceId: string, over: Record<string, unknown> = {}) => ({
   instanceId,
@@ -101,7 +107,6 @@ const home = (over: Record<string, unknown>) => ({
 
 test('a move is one sentence made from the gate’s facts, never the agent’s instruction', () => {
   const ready = (action: string) => ({ nextAction: { action }, dependencies: [] });
-  assert.equal(recordSentence(ready('submit_delivery')), 'Deliver the work for review');
   assert.equal(recordSentence(ready('submit_design')), 'Submit the design for review');
   assert.equal(recordSentence(ready('submit_results')), 'Submit the results for review');
   assert.equal(recordSentence(ready('an_action_nobody_named')), 'Needs your input');
@@ -114,8 +119,8 @@ test('a move is one sentence made from the gate’s facts, never the agent’s i
   );
   // Work a review sent back says so, in the ask's own words.
   assert.equal(
-    recordSentence(ready('submit_delivery'), true),
-    'Changes requested: deliver the work for review',
+    recordSentence(ready('submit_design'), true),
+    'Changes requested: submit the design for review',
   );
 
   assert.equal(reviewSentence(false, 'in_review'), 'Review this delivery');
@@ -127,8 +132,8 @@ test('a move is one sentence made from the gate’s facts, never the agent’s i
 
 test('only the reader’s own moves are listed, and a code the page cannot read is never promoted', () => {
   const data = home({
+    experiments: [experiment('wf_mine', me.id)],
     tasks: [
-      task('wf_mine', me.id),
       task('wf_theirs', 'actor_ada'),
       task('wf_waits', 'actor_ada'),
       task('wf_odd', me.id),
@@ -139,8 +144,8 @@ test('only the reader’s own moves are listed, and a code the page cannot read 
       workflows: [
         gate('wf_mine', {
           nextAction: {
-            action: 'submit_delivery',
-            tool: 'task.submit_delivery',
+            action: 'submit_design',
+            tool: 'experiment.transition',
             status: 'needs_input',
           },
           blockers: [blocker('input_required', INPUT)],
@@ -165,32 +170,31 @@ test('only the reader’s own moves are listed, and a code the page cannot read 
   // reader's move, and neither is their own record under a code this page cannot read.
   assert.deepEqual(
     lines.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
-    [['wf_mine', 'Deliver the work for review']],
+    [['wf_mine', 'Submit the design for review']],
   );
   // The server’s words are kept whole for whoever operates the agents, and only there.
   assert.deepEqual(lines[0].says, [INSTRUCTION, INPUT]);
   assert.ok(!lines[0].sentence.includes('artifactIds'));
-  // A card carries a control only where a page of this app makes the move: a delivery has
-  // its desk on the task's own page.
-  assert.deepEqual(lines[0].desk, { label: 'Submit delivery', to: '/tasks/wf_mine#deliver' });
+  // A card carries a control only where a page of this app makes the move.
+  assert.equal(lines[0].desk, undefined);
 });
 
-test('work whose delivery waits on the reader is theirs even when its gate reports no blocker', () => {
+test('work whose submission waits on the reader is theirs even when its gate reports no blocker', () => {
   // Sent back for changes, or never begun: only `begin` is ready and nothing blocks.
   const waiting = {
     nextAction: { action: 'begin', tool: 'workflow.begin', status: 'ready' },
     actions: [
       { action: 'begin', tool: 'workflow.begin', status: 'ready' },
-      { action: 'submit_delivery', tool: 'task.submit_delivery', status: 'needs_input' },
+      { action: 'submit_design', tool: 'experiment.transition', status: 'needs_input' },
     ],
   };
   const data = home({
-    tasks: [
-      task('wf_returned', me.id),
-      task('wf_fresh', me.id),
-      task('wf_held', me.id),
-      task('wf_theirs', 'actor_ada'),
-      task('wf_out', me.id, 'in_review'),
+    experiments: [
+      experiment('wf_returned', me.id),
+      experiment('wf_fresh', me.id),
+      experiment('wf_held', me.id),
+      experiment('wf_theirs', 'actor_ada'),
+      experiment('wf_out', me.id, 'design_review'),
     ],
     workflows: {
       workflows: [
@@ -231,12 +235,36 @@ test('work whose delivery waits on the reader is theirs even when its gate repor
   // Work an agent began, work that is another's, and work out for review with somebody else
   // stay off the list; so does that review, which is its reviewer's.
   assert.deepEqual(Object.keys(yours).sort(), ['wf_fresh', 'wf_returned']);
-  assert.equal(yours.wf_returned.sentence, 'Changes requested: deliver the work for review');
-  assert.equal(yours.wf_fresh.sentence, 'Deliver the work for review');
-  assert.deepEqual(yours.wf_returned.desk, {
-    label: 'Submit delivery',
-    to: '/tasks/wf_returned#deliver',
+  assert.equal(yours.wf_returned.sentence, 'Changes requested: submit the design for review');
+  assert.equal(yours.wf_fresh.sentence, 'Submit the design for review');
+});
+
+test('a task’s delivery is never the reader’s move: only its leased worker can make one', () => {
+  const data = home({
+    tasks: [task('wf_waiting', me.id), task('wf_returned', me.id)],
+    workflows: {
+      workflows: [
+        // Nobody holds the task: its gate asks for the delivery's input, as it would of a worker.
+        gate('wf_waiting', {
+          nextAction: {
+            action: 'submit_delivery',
+            tool: 'task.submit_delivery',
+            status: 'needs_input',
+          },
+          blockers: [blocker('input_required', INPUT)],
+        }),
+        gate('wf_returned', {
+          nextAction: { action: 'begin', tool: 'workflow.begin', status: 'ready' },
+          actions: [
+            { action: 'begin', tool: 'workflow.begin', status: 'ready' },
+            { action: 'submit_delivery', tool: 'task.submit_delivery', status: 'needs_input' },
+          ],
+        }),
+      ],
+    },
   });
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.deepEqual(needsYou(rows as any, data as any, me, named), []);
 });
 
 test('a review is yours when the server says so and its gate lets you claim it, and claimed here only then', () => {
@@ -294,7 +322,7 @@ const line = (over: Record<string, unknown>) => ({
   name: 'Check training configuration',
   to: '/tasks/wf_1',
   at: new Date().toISOString(),
-  sentence: 'Deliver the work for review',
+  sentence: 'Waiting on a person to merge the pull request',
   says: [INSTRUCTION, INPUT],
   ...over,
 });
@@ -325,7 +353,7 @@ test('a needs-you card reads kind, name, sentence, who and when, and carries its
   t.after(async () => await unmount());
   await mount(
     standing([
-      line({ desk: { label: 'Submit delivery', to: '/tasks/wf_1#deliver' } }),
+      line({ desk: { label: 'Merge reviewed proposal', to: '/code' } }),
       line({ id: 'wf_3', kind: 'experiments', sentence: 'Submit the design for review' }),
     ]),
   );
@@ -336,12 +364,17 @@ test('a needs-you card reads kind, name, sentence, who and when, and carries its
     [...yours.querySelectorAll('.kind, .ov-name, .ov-say, .ov-meta time')].map(
       (node) => node.textContent,
     ),
-    ['Task', 'Check training configuration', 'Deliver the work for review', 'just now'],
+    [
+      'Task',
+      'Check training configuration',
+      'Waiting on a person to merge the pull request',
+      'just now',
+    ],
   );
   // The control goes to the desk where the move is made, which the name beside it does not.
   const open = yours.querySelector<HTMLAnchorElement>('a.btn--primary')!;
-  assert.equal(open.textContent?.trim(), 'Submit delivery');
-  assert.equal(open.getAttribute('href'), '/tasks/wf_1#deliver');
+  assert.equal(open.textContent?.trim(), 'Merge reviewed proposal');
+  assert.equal(open.getAttribute('href'), '/code');
   assert.equal(
     undoable.querySelector('.btn'),
     null,
@@ -409,7 +442,8 @@ test('a Code blocker whose next move is a person’s stands on Now, in the perso
     updatedAt: '2026-09-21T09:00:00.000Z',
   };
   const data = home({
-    tasks: [task('wf_pub', me.id, 'done'), task('wf_quiet', me.id)],
+    tasks: [task('wf_pub', me.id, 'done')],
+    experiments: [experiment('wf_quiet', me.id)],
     workflows: {
       workflows: [
         gate('wf_pub', { terminal: true, state: 'done', providerBlockers: [publication] }),
@@ -417,8 +451,8 @@ test('a Code blocker whose next move is a person’s stands on Now, in the perso
         // sentence and its own desk, exactly as if Code had published nothing about it.
         gate('wf_quiet', {
           providerBlockers: [{ ...publication, instanceId: 'wf_quiet', code: 'code_base_wait' }],
-          nextAction: { action: 'submit_delivery', tool: 'task.submit_delivery', status: 'ready' },
-          actions: [{ action: 'submit_delivery', tool: 'task.submit_delivery', status: 'ready' }],
+          nextAction: { action: 'submit_design', tool: 'experiment.transition', status: 'ready' },
+          actions: [{ action: 'submit_design', tool: 'experiment.transition', status: 'ready' }],
         }),
       ],
     },
@@ -438,9 +472,9 @@ test('a Code blocker whose next move is a person’s stands on Now, in the perso
   assert.ok(!line.says.includes(line.sentence));
   // The quiet record is read by its gate and not by Code's opinion of it.
   assert.equal(ordinary?.id, 'wf_quiet');
-  assert.equal(ordinary.sentence, 'Deliver the work for review');
+  assert.equal(ordinary.sentence, 'Submit the design for review');
   assert.equal(ordinary.who, undefined);
-  assert.deepEqual(ordinary.desk, { label: 'Submit delivery', to: '/tasks/wf_quiet#deliver' });
+  assert.equal(ordinary.desk, undefined);
 
   // The publication verbs answer a signed-in person and nobody else, so for a reader — and
   // an operator holding a key rather than an account — the wait is not theirs: it is the red

@@ -466,9 +466,7 @@ export class TaskService implements Tasks {
               ...(await executionOutputs(this.artifacts, caller, tx)).map(
                 (artifact) => artifact.id,
               ),
-              ...(nativeTask(snapshot.version)
-                ? await this.captureArtifactIds(caller.projectId, snapshot.id, tx)
-                : []),
+              ...(await this.captureArtifactIds(caller.projectId, snapshot.id, tx)),
             ]),
           ],
         };

@@ -179,6 +179,20 @@ test('before its report a wave opens on its first lens, and an address it cannot
   assert.deepEqual(read(), ['The evidence lens']);
 });
 
+test('a read that fails after the wave was read keeps the wave on the page', async (t) => {
+  t.after(async () => await unmount());
+  await mount(page('/reflections/wf_wave'));
+  await settle(20);
+  serve('/tools/reflection.get', {
+    status: 503,
+    body: { error: { code: 'unavailable', message: 'Reflections is reconnecting' } },
+  });
+  const { refreshTools } = await import('../packages/ui/web/api.js');
+  await act(async () => refreshTools('reflection.get'));
+  await settle(20);
+  assert.deepEqual(pressed(), ['Report']);
+});
+
 test('the Work page is its title line and the map: nothing is listed, and Filter narrows what is drawn', async (t) => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const global = globalThis as any;

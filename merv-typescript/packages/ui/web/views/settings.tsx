@@ -162,16 +162,17 @@ function Plugins({ shell }: ViewProps) {
   );
 }
 
+interface TokenLimit {
+  tokens: number;
+  usedToday: number;
+  remaining?: number;
+  lastRefusedTokens?: number | null;
+  blocked?: boolean;
+  resetsAt?: string;
+}
+
 /** A person's own daily limit of Fleet workers' model tokens, and what they used today. */
-function DailyTokens() {
-  const limit = useTool<{
-    tokens: number;
-    usedToday: number;
-    remaining?: number;
-    lastRefusedTokens?: number | null;
-    blocked?: boolean;
-    resetsAt?: string;
-  }>('fleet.daily_tokens');
+function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
   const [draft, setDraft] = useState<string>();
   const save = useCommand<{ tokens: number }>({
     tool: 'fleet.daily_tokens',
@@ -179,11 +180,10 @@ function DailyTokens() {
     validate: (value) => Number.isSafeInteger(value?.tokens),
     onSuccess: () => {
       setDraft(undefined);
-      limit.reload();
+      reload();
     },
   });
-  if (!limit.data) return null;
-  const value = draft ?? String(limit.data.tokens);
+  const value = draft ?? String(limit.tokens);
   const tokens = Number(value);
   return (
     <form
@@ -203,22 +203,19 @@ function DailyTokens() {
         value={value}
         onChange={(event) => setDraft(event.target.value)}
       />
-      <span className="muted">{limit.data.usedToday.toLocaleString()} used today</span>
-      {limit.data.blocked && (
+      <span className="muted">{limit.usedToday.toLocaleString()} used today</span>
+      {limit.blocked && (
         <span role="status">
-          Fleet is waiting for model tokens. {limit.data.remaining?.toLocaleString()} remain.
-          {limit.data.lastRefusedTokens != null &&
-            ` The last rejected request needed a reservation of ${limit.data.lastRefusedTokens.toLocaleString()}.`}
-          {limit.data.resetsAt && ` Usage resets at ${limit.data.resetsAt} (UTC).`}
+          Fleet is waiting for model tokens. {limit.remaining?.toLocaleString()} remain.
+          {limit.lastRefusedTokens != null &&
+            ` The last rejected request needed a reservation of ${limit.lastRefusedTokens.toLocaleString()}.`}
+          {limit.resetsAt && ` Usage resets at ${limit.resetsAt} (UTC).`}
         </span>
       )}
       <button
         className="btn"
         disabled={
-          save.busy ||
-          !Number.isSafeInteger(tokens) ||
-          tokens < 1 ||
-          value === String(limit.data.tokens)
+          save.busy || !Number.isSafeInteger(tokens) || tokens < 1 || value === String(limit.tokens)
         }
       >
         Save
@@ -231,6 +228,8 @@ function DailyTokens() {
 /** The signed-in session, and the one control that ends it. */
 function SessionSection() {
   const { account, actor, project, signOut } = useSession();
+  // Without Fleet there is no limit to read, so the row is left out.
+  const limit = useTool<TokenLimit>(account.kind === 'user' ? 'fleet.daily_tokens' : null);
   return (
     <div className="page-stage stack">
       <KV
@@ -239,7 +238,10 @@ function SessionSection() {
           // A directory name that is an identifier names nobody, so the row is left out.
           !!personName(actor.name) && ['Name', actor.name],
           ['Role', <StatusPill value={actor.role} />],
-          account.kind === 'user' && ['Fleet tokens a day', <DailyTokens />],
+          !!limit.data && [
+            'Fleet tokens a day',
+            <DailyTokens limit={limit.data} reload={limit.reload} />,
+          ],
         ]}
       />
       {account.kind === 'user' && <HuggingFaceSettings />}

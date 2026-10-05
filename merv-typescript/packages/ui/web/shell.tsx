@@ -18,8 +18,7 @@ import {
   WORK,
 } from './navigation';
 import { stepped } from './record-picker';
-import { needsYou } from './views/overview';
-import { useHome } from './views/map-data';
+import { useNow } from './views/overview';
 
 import type { Row, ShellData } from './shell-types';
 export type { RowStatus, Row, PluginState, ShellData, WorkflowShape } from './shell-types';
@@ -74,17 +73,6 @@ function RailRow({
       )}
     </Link>
   );
-}
-
-/**
- * The rail's one number: how many open records are the signed-in actor's move,
- * read exactly as the pages read it, from the one home the whole page shares.
- * Reviewer names are not needed for a count, so none are looked up.
- */
-function useNeedsYou(rows: Row[]): number {
-  const { actor } = useSession();
-  const home = useHome();
-  return needsYou(rows, home.data, actor, () => undefined).length;
 }
 
 /** The theme the page wears: the system's, as index.html follows it, until one is chosen here. */
@@ -208,7 +196,8 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   const { project, account, chooseProject } = useSession();
   const { pathname } = useLocation();
   const rows = shell?.rows ?? [];
-  const needsYou = useNeedsYou(rows);
+  // The rail's one number is what Now lists, read exactly as Now reads it.
+  const needsYou = useNow(rows).count;
   const holds = (row: Row) => held(row, pathname, rows);
   return (
     <aside className="sidebar" aria-label="Primary">

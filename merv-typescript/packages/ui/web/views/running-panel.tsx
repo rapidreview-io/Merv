@@ -32,12 +32,15 @@ import { Phrase, Reading, Target, silent, steadyText, valueText } from './runnin
  * One control. The input is sent exactly as its owner wrote it — a halt with no lease named
  * halts every lease — and where the owner said what a confirmed act must hold (`expect`),
  * an answer short of it keeps the guard open with the owner's own sentence under it, and
- * nothing on the page is refreshed as though it had happened.
+ * nothing on the page is refreshed as though it had happened. An extension adds to what is
+ * left, so one whose answer was lost is never offered again as the same request: the lease
+ * is read again instead, and pressing once more extends it once more.
  */
 export function Act({ action }: { action: RunningAction }) {
   const [unmet, setUnmet] = useState(false);
   const met = useRef<boolean>();
   const { expect } = action;
+  const adds = action.verb === 'extend';
   const command = useCommand<Record<string, unknown>>({
     tool: action.tool,
     idempotent: true,
@@ -55,14 +58,18 @@ export function Act({ action }: { action: RunningAction }) {
     met.current = undefined;
     setUnmet(false);
     await command.submit(action.input);
+    if (adds && met.current === undefined) refreshTools('ui.running', 'ui.running_panel');
     return met.current === true;
   };
-  const label = command.retry ? 'Retry same request' : action.label;
+  const lost = adds && command.retry;
+  const label = command.retry && !adds ? 'Retry same request' : action.label;
   const busy = command.busy ? 'Working…' : undefined;
   const note =
     command.error || unmet ? (
       <p className="error-message" role="alert">
-        {command.error ?? expect?.nothing}
+        {lost
+          ? 'The answer was lost, so the lease may already be extended. Check how long it has left before extending it again.'
+          : (command.error ?? expect?.nothing)}
       </p>
     ) : null;
   if (action.guard) {
