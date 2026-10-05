@@ -1,5 +1,5 @@
 {
-  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12–19 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Task@20-27 and experiment@17-24 definitions and execution policies verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c.",
+  "note": "Production truth as of 2026-09-22 (release 20260922T144623Z, commit 94860148). A definition or execution policy is immutable once published: re-registering a changed one fails with workflow_version_conflict and the server exits at startup. A published row that stops matching is a bug in the code, never in this file — restore the version byte-identically and publish the change as a new version. Only an unpublished row may be updated deliberately, and only before its release. Context recipes are immutable per (type, version) the same way, and every registered recipe version must be listed here. A row marked retired is a version the code has deliberately stopped registering (founder, 2026-09-19: legacy reflection waves need not stay readable); production still holds it, and it must never be registered again under a different fingerprint. The version retirement of 2026-09-22 (owner decision) unregistered task@1, experiment@1-4, reflection@2 and research@2-5 with their execution policies, and the recipes experiment.plan@1, reflection.synthesis@7 and reflection.review@7; the records of their instances are deleted by the retirement migrations, and wf_retired_instances names them. Project-paper context recipes experiment.*@10, task.work@3, task.review@4 and reflection lens/synthesis/review@9 verified in production on 2026-09-26. Experiment attempt-review recipe@11 and reflection synthesis/review recipes@10 verified in production on 2026-09-27; ranked reflection recipes remain unpublished. The format retirement of 2026-09-28 (owner decision) stopped registering every context recipe without format 2, all marked retired: register refuses them with recipe_format_retired, their rows stay in production, and the packages they saved still replay from their format-2 successors. Task definitions and execution policies 12–19 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Task@20-27 and experiment@17-24 definitions and execution policies verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c. The retirement of 2026-10-05 stopped registering task@31 and @35, experiment@28 and @32, reflection@3 and reflection.lens@2 with their execution policies; production held no instance of any of them, so no records were deleted.",
   "definitions": [
     {
       "name": "consolidation",
@@ -54,7 +54,8 @@
       "name": "reflection.lens",
       "version": 2,
       "fingerprint": "d0fa31e08617ba348181ee951f9c0fe40c2e292116ded3d823b96af9fe526ee8",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "research",
@@ -191,7 +192,8 @@
       "name": "reflection",
       "version": 3,
       "fingerprint": "5e0093bff552b86ce6278304b51fd50782dc67fa366bdb06d3b4d1780538edcb",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "consolidation",
@@ -495,7 +497,8 @@
       "name": "task",
       "version": 31,
       "fingerprint": "b90679e6a7d2fa72cae891c7f40f4130f0f5c7630adda68dc6e02985a8c7f062",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "task",
@@ -522,7 +525,8 @@
       "name": "task",
       "version": 35,
       "fingerprint": "737a40002e3e08f2ce3afa8b7221a56d8a19a1955c55ef39ef7930e41a1028dc",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "experiment",
@@ -549,7 +553,8 @@
       "name": "experiment",
       "version": 28,
       "fingerprint": "a0a785c9f43c62eac686e385ec4fd2f6209f2434d96203609e5251c73825c65e",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "experiment",
@@ -576,7 +581,8 @@
       "name": "experiment",
       "version": 32,
       "fingerprint": "db2de68f3956450a276e38b57d526f44ec9d0bc2665eddf80d0397e0844160b6",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "name": "experiment",
@@ -845,7 +851,8 @@
       "version": 2,
       "state": "reflecting",
       "fingerprint": "215ae15c87ea90885352b5223e4f8cb0c70bff57a5f60eeb7d51e4eadad50f8e",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "research",
@@ -1333,21 +1340,24 @@
       "version": 3,
       "state": "in_review",
       "fingerprint": "765f26fc31dab023fbd7676c38ff38c7901c7ed318555ac0656f87a42389d1b6",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "reflection",
       "version": 3,
       "state": "reflecting",
       "fingerprint": "f4efc6a1348012a3920f4f85968d3b2d7c4a19b2142f7c1ea721844cfc7c5cde",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "reflection",
       "version": 3,
       "state": "synthesizing",
       "fingerprint": "dec725959810b5c636b232643f33bd0f2408d60c7312107b77659c7e0a0b359f",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "consolidation",
@@ -2419,28 +2429,32 @@
       "version": 28,
       "state": "design_review",
       "fingerprint": "edf4ab3f4e9a76e1ec09ee33191a5c6c49feff2198f4221b51207a0ae0713a6d",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
       "version": 28,
       "state": "experiment_review",
       "fingerprint": "4c56dc441f9617e2672d4ef116e42c26747d5620150ad1444470c780829b6119",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
       "version": 28,
       "state": "planned",
       "fingerprint": "9bd12b31840117fc7d01f481da068eb9fdfb0c8f4e33b5cceae4090fb9391989",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
       "version": 28,
       "state": "running",
       "fingerprint": "405c2254eb1bf89632f631bd6cf12a1f80ab7138bbecb07e517eb041f2bc532f",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
@@ -2455,14 +2469,16 @@
       "version": 31,
       "state": "in_progress",
       "fingerprint": "a02bc7774077cf55dd2596ef06bd93c90cb20cbba7327d469d8a30b07986a340",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "task",
       "version": 31,
       "state": "in_review",
       "fingerprint": "4d31088cff4ef736c80ab397bdfa49ed8636f5844ae2ea0cdd877dce5658fcc4",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "task",
@@ -2517,14 +2533,16 @@
       "version": 35,
       "state": "in_progress",
       "fingerprint": "afef273dc6f0af1724cb712798b1f091c13c72799bb861e34aec80e20ca17d7b",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "task",
       "version": 35,
       "state": "in_review",
       "fingerprint": "4d31088cff4ef736c80ab397bdfa49ed8636f5844ae2ea0cdd877dce5658fcc4",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
@@ -2619,28 +2637,32 @@
       "version": 32,
       "state": "design_review",
       "fingerprint": "edf4ab3f4e9a76e1ec09ee33191a5c6c49feff2198f4221b51207a0ae0713a6d",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
       "version": 32,
       "state": "experiment_review",
       "fingerprint": "4c56dc441f9617e2672d4ef116e42c26747d5620150ad1444470c780829b6119",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
       "version": 32,
       "state": "planned",
       "fingerprint": "fb0f3a13b8029d54dee4b77885e5337ad13da5596502548b97a57c523dc6b5a1",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",
       "version": 32,
       "state": "running",
       "fingerprint": "32089159be376fc32b6b5957244be3fcce4ba87b0165f650b0df9e3e6994c1ef",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "workflow": "experiment",

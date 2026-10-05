@@ -235,14 +235,15 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     return await inTransaction(this.state, undefined, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const held = [...include].filter((key) => keyKind(key) === 'work').map(keyId);
-      const ended = TERMINAL.map(() => '?').join(','),
-        kept = held.map(() => '?').join(',') || 'NULL';
+      const ids = [
+        ...(await this.workflows.open('experiment', caller.projectId, tx)).map((w) => w.id),
+        ...held,
+      ];
       const rows = await this.standingRows(
         caller,
         tx,
-        `(w.state NOT IN (${ended}) OR e.id IN (${kept}))`,
-        ...TERMINAL,
-        ...held,
+        `e.id IN (${ids.map(() => '?').join(',') || 'NULL'})`,
+        ...ids,
       );
       const context: StandingContext = {
         released: await this.releases(caller, rows, tx),
@@ -517,14 +518,15 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const rows = await tx.all<{ name: string; state: string; version: number }>(
-        'SELECT e.name,w.state,w.version FROM experiments e JOIN wf_instances w ON w.id=e.id WHERE e.project_id=?',
+      const rows = await tx.all<{ name: string }>(
+        'SELECT name FROM experiments WHERE project_id=?',
         caller.projectId,
       );
       return {
         names: rows.map((row) => row.name.toLowerCase()),
-        active: rows.filter((row) => currentExperiment(row.version) && !terminal.has(row.state))
-          .length,
+        active: (await this.workflows.open('experiment', caller.projectId, tx)).filter((w) =>
+          currentExperiment(w.version),
+        ).length,
       };
     });
   }
@@ -599,10 +601,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           tx,
         );
         const createdAt = now();
-        // tested_claim_ids belongs to the retired research claims; the column is NOT NULL, so
-        // new rows store an empty list and nothing reads it.
         await tx.run(
-          'INSERT INTO experiments(id,project_id,name,intent,details,owner_id,created_by,created_at,tested_claim_ids,attempt_index,workspace) VALUES(?,?,?,?,?,?,?,?,?,1,?)',
+          'INSERT INTO experiments(id,project_id,name,intent,details,owner_id,created_by,created_at,attempt_index,workspace) VALUES(?,?,?,?,?,?,?,?,1,?)',
           workflow.id,
           caller.projectId,
           input.name,
@@ -611,7 +611,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           owner.id,
           caller.actorId,
           createdAt,
-          '[]',
           'git',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);

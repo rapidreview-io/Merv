@@ -172,9 +172,9 @@ New tasks and experiments always use the native contracts (task@39/43 and experi
 whether or not the project is connected. Their execution policies grant no compute tools, so they
 need no new versions.
 
-The older contracts (task@31/35 and experiment@28/32) stay registered while live work uses them.
-Their compute grants name tools that no longer exist and are inert. They are retired later
-through the usual version-retirement process.
+The older contracts (task@31/35 and experiment@28/32) were retired on 2026-10-05: production held
+no instance of any of them. Their compute grants went with them, and the `experiments@6`
+migration drops `experiment_compute_runs`, which held no rows.
 
 ## Removed
 

@@ -9,7 +9,7 @@ context recipe, and the task UI displays it. Delivery/reissue/verdict commands
 enforce those registered checks inside their transaction. See
 [workflow guidance](../../docs/WORKFLOW_GUIDANCE.md).
 
-Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@31`/`35` (small/large uploads), native Sandboxes work at `task@39`/`43`, and conflict-resolution service work at `task@6`/`11`. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
+Tasks registers only the contracts current creation selects: ordinary managed-Git work at `task@39`/`43` (small/large uploads), on which Sandboxes attaches native compute, and conflict-resolution service work at `task@6`/`11`. Service work suspends where ordinary work fails and adds `revise_suspended` and `resume`. Numeric versions identify immutable implementation contracts, not retry counts.
 
 Other stored versions remain read-only history: records, evidence, verdicts, context packages and pinned graphs are retained. Their runtime implementations are not registered, so they cannot dispatch or accept new contexts, checkpoints, claims or submissions. No old record is upgraded into another contract. The program retains private registration handles; generic workflow tools cannot bypass task gates.
 
@@ -34,14 +34,11 @@ Creation and type registration copy their inputs before asynchronous work. A typ
 
 ## Work prerequisites
 
-Tasks owns no compute. New ordinary tasks use the native contracts (`task@39`/`43`), and
-Sandboxes attaches native compute to a leased assignment where the project has a funded
+Tasks owns no compute. Sandboxes attaches native compute to a leased assignment where the project has a funded
 connection: `execute` for work, `check` for review. Conflict-resolution service tasks declare
 `computeProfile: 'none'`. The assignment carries the guidance from
 `@merv/sandboxes/compute-capability`, and delivery admits the capture collections Sandboxes
-verified for the task. The older `task@31`/`35` contracts stay registered for live work; their
-pinned policies still name the retired `task.compute_*` tools, which are no longer registered
-and so grant nothing. See [compute as an assignment capability](../../docs/COMPUTE_CAPABILITY.md).
+verified for the task. See [compute as an assignment capability](../../docs/COMPUTE_CAPABILITY.md).
 
 `task.create.dependsOn` accepts existing same-project work IDs (array, one ID, null
 or omitted). Workflows owns the durable DAG and its completion checks. Tasks

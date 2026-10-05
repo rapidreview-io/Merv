@@ -1647,25 +1647,24 @@ test('standalone Reflections can create and complete its own work without Resear
   assert.equal((await f.app.ctx.reflections.approved(f.owner, wave.id)).id, wave.id);
 });
 
-test('an open reflection of either published version pauses new tasks and experiments, and ended ones cost nothing', async (t) => {
+test('an open reflection pauses new tasks and experiments, and ended ones cost nothing', async (t) => {
   const f = await fixture(t);
   const state = f.app.ctx.state;
   // Rows only, as the engine reads them: the pause is the engine's, whatever else a wave holds.
-  const seed = async (version: number, at: string, count: number, prefix: string) =>
+  const seed = async (at: string, count: number, prefix: string) =>
     await state.transaction(
       async (tx) =>
         await tx.run(
           `INSERT INTO wf_instances (id,project_id,workflow,version,state,revision,data_json,created_at,updated_at)
-           SELECT ? || n, ?, 'reflection', ?, ?, 0, '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+           SELECT ? || n, ?, 'reflection', 4, ?, 0, '{}', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
            FROM generate_series(1, ?::int) AS n`,
           prefix,
           f.owner.projectId,
-          version,
           at,
           count,
         ),
     );
-  await seed(3, 'approved', 20_000, 'wf_ended_');
+  await seed('approved', 20_000, 'wf_ended_');
   await state.transaction(async (tx) => await tx.run('ANALYZE wf_instances'));
   // The pause query as a start sends it, run again under EXPLAIN ANALYZE.
   const pauses: { sql: string; params: unknown[] }[] = [];
@@ -1709,20 +1708,17 @@ test('an open reflection of either published version pauses new tasks and experi
   assert.equal(touched, 0, 'the pause reads no ended instance');
   await experiment('after-ended-waves');
 
-  for (const [version, ended] of [
-    [3, 'approved'],
-    [4, 'abandoned'],
-  ] as const) {
-    await seed(version, 'in_review', 1, `wf_open_${version}_`);
-    await assert.rejects(task(`paused-task-${version}`), { code: 'workflow_creation_paused' });
-    await assert.rejects(experiment(`paused-experiment-${version}`), {
+  for (const ended of ['approved', 'abandoned']) {
+    await seed('in_review', 1, `wf_open_${ended}_`);
+    await assert.rejects(task(`paused-task-${ended}`), { code: 'workflow_creation_paused' });
+    await assert.rejects(experiment(`paused-experiment-${ended}`), {
       code: 'workflow_creation_paused',
     });
     await state.transaction(
       async (tx) =>
-        await tx.run(`UPDATE wf_instances SET state=? WHERE id=?`, ended, `wf_open_${version}_1`),
+        await tx.run(`UPDATE wf_instances SET state=? WHERE id=?`, ended, `wf_open_${ended}_1`),
     );
-    await task(`resumed-task-${version}`);
-    await experiment(`resumed-experiment-${version}`);
+    await task(`resumed-task-${ended}`);
+    await experiment(`resumed-experiment-${ended}`);
   }
 });

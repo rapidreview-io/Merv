@@ -108,4 +108,12 @@ ALTER TABLE reflections ADD COLUMN abandoned TEXT;
 DROP INDEX reflection_open_project;
 CREATE UNIQUE INDEX reflection_open_project ON reflections(project_id) WHERE approved IS NULL AND abandoned IS NULL;
 `,
+  // corpus and paper were only ever written by the retired reflection@1; every wave since stored
+  // the placeholder 'null' in both.
+  4: `
+DROP TRIGGER reflection_identity_immutable ON reflections;
+ALTER TABLE reflections DROP COLUMN corpus, DROP COLUMN paper;
+CREATE TRIGGER reflection_identity_immutable BEFORE UPDATE OF id,project_id,title,owner_id,created_at ON reflections
+FOR EACH ROW EXECUTE FUNCTION reflection_identity_immutable_guard();
+`,
 };
