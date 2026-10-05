@@ -802,7 +802,7 @@
       "component": "sandboxes-native",
       "version": 3,
       "hash": "50e8d53e7a5b37abb34e07682fb03e8541863d287f27d0959fd607051e93042d",
-      "published": false
+      "published": true
     },
     {
       "component": "code_repository_sync",
