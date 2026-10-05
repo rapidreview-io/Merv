@@ -293,7 +293,7 @@
     }
     return [...merged.values()];
   }
-  const radius = (loc) => 10 + Math.sqrt(loc) * 0.32;
+  const radius = (loc) => 6 + Math.sqrt(loc) * 0.2;
 
   function layoutWorld(nodes, chs) {
     const deps = new Map(nodes.map((n) => [n.id, new Set()]));
@@ -360,7 +360,7 @@
     }
     // Settle the layered start into a map: springs along channels, repulsion between plugins,
     // and a weak pull toward each plugin's depth so foundations stay south.
-    const ROW = 120;
+    const ROW = 170;
     const regionsOf = new Map();
     const placedIn = new Set();
     for (const region of A.regions || [])
@@ -396,7 +396,7 @@
             dy = 0.01;
             d = 0.014;
           }
-          const want = a.r + b.r + 90;
+          const want = a.r + b.r + 150;
           const f = d < want ? (want - d) * 0.5 : ((want * want * 12) / (d * d * d)) * 4;
           a.x -= (dx / d) * f;
           a.y -= (dy / d) * f * 0.6;
@@ -407,7 +407,7 @@
         const dx = l.b.x - l.a.x,
           dy = l.b.y - l.a.y,
           d = Math.hypot(dx, dy) || 1;
-        const f = (d - (l.a.r + l.b.r + 150)) * 0.004 * l.w * cool;
+        const f = (d - (l.a.r + l.b.r + 230)) * 0.004 * l.w * cool;
         l.a.x += (dx / d) * f;
         l.a.y += (dy / d) * f;
         l.b.x -= (dx / d) * f;
@@ -489,43 +489,6 @@
     // Land is the union of each plugin's surroundings, so close neighbours share a continent.
     for (const n of nodes) el('circle', { cx: n.x, cy: n.y, r: n.r + 78, class: 'land-b' }, landG);
     for (const n of nodes) el('circle', { cx: n.x, cy: n.y, r: n.r + 68, class: 'land-a' }, landG);
-    // Region names, like a map's: each plugin is named in its first region only.
-    const claimed = new Set();
-    const labelBoxes = [];
-    for (const region of A.regions || []) {
-      const own = region.members
-        .map(mapId)
-        .filter((id, i, all) => all.indexOf(id) === i && !claimed.has(id) && pos.has(id));
-      own.forEach((id) => claimed.add(id));
-      if (!own.length || own.includes(RESEARCH)) continue;
-      const cx = own.reduce((s, id) => s + pos.get(id).x, 0) / own.length;
-      const top = Math.min(...own.map((id) => pos.get(id).y - pos.get(id).r));
-      const bottom = Math.max(...own.map((id) => pos.get(id).y + pos.get(id).r));
-      const width = region.label.length * 11.5;
-      const clear = (x, y) =>
-        nodes.every((n) => {
-          const nx0 = n.x - Math.max(n.r, label(n.id).length * 4.5) - 6,
-            nx1 = n.x + Math.max(n.r, label(n.id).length * 4.5) + 6;
-          const ny0 = n.y - n.r - 12,
-            ny1 = n.y + n.r + 32;
-          return x + width / 2 < nx0 || x - width / 2 > nx1 || y < ny0 || y - 16 > ny1;
-        }) &&
-        labelBoxes.every((b) => Math.abs(b.x - x) > (b.w + width) / 2 || Math.abs(b.y - y) > 22);
-      const spot = [
-        [cx, top - 30],
-        [cx, bottom + 58],
-        [cx, top - 60],
-        [cx, bottom + 88],
-      ].find(([x, y]) => clear(x, y));
-      if (!spot) continue;
-      labelBoxes.push({ x: spot[0], y: spot[1], w: width });
-      const t = el(
-        'text',
-        { x: spot[0], y: spot[1], class: 'region', 'text-anchor': 'middle' },
-        landG,
-      );
-      t.textContent = region.label;
-    }
     worldEdges = [];
     const OFF = {
       call: 0,
@@ -553,14 +516,14 @@
       const d = `M${from[0]} ${from[1]}Q${cx} ${cy} ${to[0]} ${to[1]}`;
       const w =
         c.kind === 'call' || c.kind === 'hook'
-          ? 1.2 + Math.sqrt(c.items.length) * 0.9
+          ? 0.6 + Math.sqrt(c.items.length) * 0.4
           : c.kind === 'idle'
-            ? 1.6
-            : 1.4 + Math.sqrt(c.items.length) * 0.6;
+            ? 0.8
+            : 0.7 + Math.sqrt(c.items.length) * 0.3;
       const g = el('g', { class: 'edge k-' + c.kind }, edgeG);
       const kcls = 'k-' + c.kind + (c.undeclared && c.kind === 'call' ? ' undeclared' : '');
-      el('path', { d, class: 'base ' + kcls, 'stroke-width': w + 2 }, g);
-      el('path', { d, class: 'flow ' + kcls, 'stroke-width': w + 2.4 }, g);
+      el('path', { d, class: 'base ' + kcls, 'stroke-width': w }, g);
+      el('path', { d, class: 'flow ' + kcls, 'stroke-width': w + 2 }, g);
       g.addEventListener('mouseenter', () => !pinned && showCard(channelCard(c)));
       g.addEventListener('mouseleave', () => !pinned && hideCard());
       g.addEventListener('click', (ev) => {
@@ -584,11 +547,11 @@
       g.__id = n.id;
       el('circle', { r: n.r, class: 'core' }, g);
       if (n.realm === 'machine') el('circle', { r: n.r + 2.5, class: 'core2' }, g);
-      if (n.p) ringSegments(g, n.p, n.r + 6, 4);
+      if (n.p) ringSegments(g, n.p, n.r + 4, 2);
       if (n.id === RESEARCH)
         n.members.forEach((id, i) => {
           const [x, y] = polar(n.r * 0.55, (i / n.members.length) * TAU - Math.PI / 2);
-          el('circle', { cx: x, cy: y, r: 4, class: 'dotlet' }, g);
+          el('circle', { cx: x, cy: y, r: 2.5, class: 'dotlet' }, g);
         });
       const reach = channels.some(
         (c) => c.kind === 'table' && mapId(c.from) === n.id && c.items.some((t) => t.runtime > 0),
@@ -596,10 +559,9 @@
       const undeclared = channels.some(
         (c) => c.kind === 'call' && c.declared === null && mapId(c.from) === n.id,
       );
-      if (reach) el('circle', { cx: n.r * 0.78, cy: -n.r * 0.78, r: 4.5, class: 'badge-table' }, g);
-      if (undeclared)
-        el('circle', { cx: -n.r * 0.78, cy: -n.r * 0.78, r: 4.5, class: 'badge-warn' }, g);
-      const t = el('text', { y: n.r + 24, class: 'name' }, g);
+      if (reach) el('circle', { cx: n.r + 7, cy: -n.r - 3, r: 2.6, class: 'badge-table' }, g);
+      if (undeclared) el('circle', { cx: -n.r - 7, cy: -n.r - 3, r: 2.6, class: 'badge-warn' }, g);
+      const t = el('text', { y: n.r + 22, class: 'name' }, g);
       t.textContent = label(n.id);
       g.addEventListener('mouseenter', () => {
         light(n.id);
@@ -677,11 +639,11 @@
     const left = panelWidth();
     const k = Math.min(
       (W - left - 40) / ((ext.x1 - ext.x0) * s),
-      (H - 40) / ((ext.y1 - ext.y0) * s),
+      (H - 110) / ((ext.y1 - ext.y0) * s),
     );
     const to = {
       x: at.x + ((ext.x0 + ext.x1) / 2) * s - left / 2 / k,
-      y: at.y + ((ext.y0 + ext.y1) / 2) * s,
+      y: at.y + ((ext.y0 + ext.y1) / 2) * s + 20 / k,
       k,
     };
     focus.k = k;
@@ -707,7 +669,7 @@
   }
 
   /* ---------------- the scene: one plugin, its contract and its neighbours ---------------- */
-  const SCENE = { R: 300, RN: 640 };
+  const SCENE = { R: 300, RN: 720 };
   function buildScene(g, p) {
     const { R, RN } = SCENE;
     const id = p.id;
@@ -788,7 +750,7 @@
     ];
     for (const n of nbrs) {
       const q = P.get(n.id);
-      n.r = n.agents ? 26 : 12 + Math.sqrt(q ? q.loc : 400) * 0.2;
+      n.r = n.agents ? 22 : 9 + Math.sqrt(q ? q.loc : 400) * 0.16;
       [n.x, n.y] = polar(RN, n.a);
     }
     const nbrById = new Map(nbrs.map((n) => [n.id, n]));
@@ -955,8 +917,9 @@
     const wire = (d, kind, w, owners, opts = {}) => {
       const gg = el('g', { class: 'wire' }, lines);
       const kc = 'k-' + kind + (opts.warn ? ' undeclared' : '');
-      el('path', { d, class: 'edge base ' + kc, 'stroke-width': w + 1.6 }, gg);
-      if (kind !== 'idle') el('path', { d, class: 'edge flow ' + kc, 'stroke-width': w + 3 }, gg);
+      el('path', { d, class: 'edge base ' + kc, 'stroke-width': w * 0.6 + 0.5 }, gg);
+      if (kind !== 'idle')
+        el('path', { d, class: 'edge flow ' + kc, 'stroke-width': w * 0.6 + 3 }, gg);
       wires.push({ g: gg, owners });
       return gg;
     };
@@ -1028,7 +991,7 @@
         },
         portG,
       );
-      const size = 5 + Math.sqrt(pt.callers.length) * 2.4;
+      const size = 3.5 + Math.sqrt(pt.callers.length) * 1.7;
       if (pt.kind === 'method') el('circle', { r: size, class: 'p-method' }, pg);
       else if (pt.kind === 'value')
         el('rect', { x: -4, y: -4, width: 8, height: 8, class: 'p-value' }, pg);
@@ -1119,8 +1082,8 @@
         );
         ig.innerHTML = ICON.agent;
       }
-      if (q) ringSegments(ng, q, n.r + 5, 3);
-      const right = Math.cos(n.a) >= -0.2 && Math.cos(n.a) <= 0.2 ? null : Math.cos(n.a) > 0;
+      if (q) ringSegments(ng, q, n.r + 4, 1.6);
+      const right = Math.cos(n.a) >= 0;
       const t = el(
         'text',
         {
@@ -1138,10 +1101,10 @@
       theirs.forEach((it, i) => {
         const a =
           n.a + Math.PI + (theirs.length > 1 ? -fan / 2 + (fan * i) / (theirs.length - 1) : 0);
-        const [x, y] = polar(n.r + 11, a);
+        const [x, y] = polar(n.r + 10, a);
         const d = el(
           'circle',
-          { cx: x, cy: y, r: it.hook ? 4.5 : 4, class: 'mdot' + (it.hook ? ' hook' : '') },
+          { cx: x, cy: y, r: it.hook ? 3 : 2.6, class: 'mdot' + (it.hook ? ' hook' : '') },
           ng,
         );
         const m = members.get(it.svc + '.' + it.name);
@@ -1206,7 +1169,7 @@
     }
     const fileCaption = el(
       'text',
-      { x: 0, y: -(R - 78) - 12, class: 'caption small', 'text-anchor': 'middle' },
+      { x: 0, y: R - 50, class: 'caption small', 'text-anchor': 'middle' },
       coreG,
     );
     fileCaption.textContent = plural(p.files.length, 'file');
@@ -1582,10 +1545,9 @@
     let body;
     if (!focus)
       body = `<h2>Merv’s plugins</h2>
-        <p>Each circle is a plugin; its size is how much code it has. Plugins near the bottom are the foundations; the ones above depend on them. Named regions group plugins with a shared job.</p>
-        <p><b>Hover</b> a plugin to see who it talks to. <b>Click</b> it to open it. Turn on the eye (top right) to see every connection at once.</p>
+        <p>Each circle is a plugin, sized by its code. Foundations sit at the bottom; plugins above depend on them.</p>
+        <p><b>Hover</b> to see who a plugin talks to. <b>Click</b> to open it.</p>
         <ul class="key">
-          ${key(ring, 'var(--call)', 'The coloured ring shows what a plugin offers:')}
           ${key(dot, 'var(--call)', 'methods other plugins call')}
           ${key(dot, 'var(--hook)', 'hooks other plugins plug into')}
           ${key(dot, 'var(--tool)', 'tools for agents')}
@@ -1594,7 +1556,7 @@
           ${key(dot, 'var(--table)', '<b>Red dot</b>: it queries another plugin’s tables directly')}
           ${key(dot, 'var(--warn)', '<b>Amber dot</b>: it calls a service it never declared')}
         </ul>
-        <p class="muted">Hatched circles are research logic; the dashed one is the shared library. Compiled from the code on ${esc(A.snapshot)}.</p>`;
+        <p class="muted">Hatched: research logic. Dashed: shared library.</p>`;
     else {
       const p = P.get(focus.id);
       const users = new Set(),
