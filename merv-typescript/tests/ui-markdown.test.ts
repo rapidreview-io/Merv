@@ -555,6 +555,10 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
         createElement(Markdown, { source: source.slice(0, end), names }),
       ),
     );
+    // React sets a highlighted token's colours one property at a time, and jsdom prints
+    // those back normalised: the static markup's are read the same way before comparing.
+    for (const node of whole.querySelectorAll<HTMLElement>('[style]'))
+      node.setAttribute('style', node.style.cssText);
     assert.equal(
       document.querySelector('.md')!.innerHTML,
       whole.firstElementChild!.innerHTML,
@@ -633,7 +637,7 @@ test('a file is named by a short human type, never by its media type', () => {
   assert.equal(label('application/octet-stream', 'metrics.json'), 'JSON');
   assert.equal(fileType({ mediaType: 'text/plain', title: 'notes.md' }).reads, 'markdown');
   assert.equal(fileType({ mediaType: 'application/json', title: 'm' }).reads, 'json');
-  assert.equal(fileType({ mediaType: 'text/csv', title: 'm' }).reads, 'text');
+  assert.equal(fileType({ mediaType: 'text/csv', title: 'm' }).reads, 'csv');
 });
 
 test('a Markdown file is read as a document, and one control shows its source', async (t) => {
@@ -675,7 +679,10 @@ test('a Markdown file is read as a document, and one control shows its source', 
   await settle(0);
   assert.equal(toggle.getAttribute('aria-pressed'), 'true');
   assert.equal(document.querySelector('.md'), null);
-  assert.match(document.querySelector('pre.doc')?.textContent ?? '', /^# Result\n\| a \| b \|/);
+  assert.match(
+    document.querySelector('.code-block pre')?.textContent ?? '',
+    /^# Result\n\| a \| b \|/,
+  );
 });
 
 test('experiment references display names for bare IDs and explicit paper links', async (t) => {

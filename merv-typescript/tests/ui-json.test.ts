@@ -220,7 +220,7 @@ test('a JSON file is read as a tree, names its records, and one control shows it
   serve('/tools/ui.shell', { body: { result: { rows: [{ id: 'tasks', path: '/tasks' }] } } });
   await file(artifact('metrics.json', content.length), content);
   await settle(10);
-  assert.equal(document.querySelector('pre.doc'), null);
+  assert.equal(document.querySelector('.code-block pre'), null);
   assert.match(text(), /seed7/);
   assert.equal(document.querySelector('.json a')?.textContent, 'Reproduce grokking');
 
@@ -229,9 +229,9 @@ test('a JSON file is read as a tree, names its records, and one control shows it
   await press(source);
   assert.equal(source.getAttribute('aria-pressed'), 'true');
   assert.equal(document.querySelector('.json'), null);
-  assert.equal(document.querySelector('pre.doc')?.textContent, content);
+  assert.equal(document.querySelector('.code-block pre')?.textContent, content);
   await press(source);
-  assert.equal(document.querySelector('pre.doc'), null);
+  assert.equal(document.querySelector('.code-block pre'), null);
   assert.ok(document.querySelector('.json'));
 });
 
@@ -243,7 +243,7 @@ test('JSON that does not parse stays the text it was, with no source to turn to'
   await file(artifact('broken.json', content.length), content);
   await settle(10);
   assert.equal(document.querySelector('.json'), null);
-  assert.equal(document.querySelector('pre.doc')?.textContent, content);
+  assert.equal(document.querySelector('.code-block pre')?.textContent, content);
   assert.equal(document.querySelector('button[aria-label="View source"]'), null);
 });
 

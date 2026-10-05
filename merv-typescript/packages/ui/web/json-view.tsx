@@ -12,7 +12,7 @@
  * or a digest is its two ends in the mono, with all of it one click from the
  * clipboard. Nothing else is ever a link.
  */
-import { useState, type MouseEvent, type ReactNode } from 'react';
+import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { CopyButton } from './components';
 import { ChevronRightIcon } from './icons';
 import { RecordLink, safeHref, splitIds, type RecordNames } from './markdown';
@@ -226,5 +226,55 @@ export function JsonView({ value, names }: { value: unknown; names?: RecordNames
         <Node value={value} depth={0} names={names} />
       </ul>
     </div>
+  );
+}
+
+/** How many lines of a JSON Lines file are drawn at a time. */
+const LINES = 100;
+
+/**
+ * A JSON Lines file: each line its own tree, numbered as the file numbers it, and a
+ * line that does not parse kept as the text it was, marked so. Blank lines are
+ * skipped and keep their numbers, so a number here is the line an editor shows.
+ */
+export function JsonLines({ content, names }: { content: string; names?: RecordNames }) {
+  const [shown, setShown] = useState(LINES);
+  const lines = useMemo(
+    () =>
+      content
+        .split('\n')
+        .map((text, at) => ({ number: at + 1, text: text.trim() }))
+        .filter((line) => line.text),
+    [content],
+  );
+  const rest = lines.length - shown;
+  return (
+    <ol className="jsonl">
+      {lines.slice(0, shown).map(({ number, text }) => {
+        const json = readJson(text);
+        return (
+          <li key={number} className="jsonl-line">
+            <span className="jsonl-number">{number}</span>
+            {json ? (
+              <JsonView value={json.value} names={names} />
+            ) : (
+              <span className="jsonl-bad">
+                <span className="jsonl-mark" role="img" aria-label="Not JSON" title="Not JSON">
+                  !
+                </span>
+                <code>{text}</code>
+              </span>
+            )}
+          </li>
+        );
+      })}
+      {rest > 0 && (
+        <li>
+          <button type="button" className="btn-text" onClick={() => setShown(shown + LINES)}>
+            Show {Math.min(LINES, rest)} more
+          </button>
+        </li>
+      )}
+    </ol>
   );
 }

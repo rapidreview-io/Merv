@@ -47,6 +47,7 @@ const PATHS = {
   sidebar:
     'M5.5 4.5h13a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2v-11a2 2 0 0 1 2-2M9.5 4.5v15',
   switch: 'M4 9h15l-4-4M20 15H5l4 4',
+  wrap: 'M4.5 6.5h15M4.5 12h12a3 3 0 0 1 0 6H12M14 16l-2 2 2 2M4.5 17.5h4',
 
   file: 'M13 3H6.5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V8zM13 3v5h5.5',
   'file-text':
@@ -111,6 +112,7 @@ export const CopyIcon = named('copy');
 export const SourceIcon = named('source');
 export const SidebarIcon = named('sidebar');
 export const SwitchIcon = named('switch');
+export const WrapIcon = named('wrap');
 
 const CODE =
   /\.(m?[jt]sx?|py|rs|go|java|kt|swift|rb|php|c|h|cc|cpp|hpp|cs|sh|bash|zsh|sql|css|html?|xml|toml|ya?ml|ipynb|diff|patch)$/i;

@@ -24,6 +24,7 @@ import {
   words,
   type KVRow,
 } from '../components';
+import { CodeBlock } from '../code-block';
 import { ArrowRightIcon, ExternalIcon } from '../icons';
 import { RecordLink, type RecordNames } from '../markdown';
 import { useCommand } from '../mutations';
@@ -304,7 +305,7 @@ function BaseBody({
     !!base.check?.receipt && [
       'Check output',
       <span className="stack stack--tight">
-        <pre className="mono code-check-output">{printed(base.check.receipt)}</pre>
+        <CodeBlock code={printed(base.check.receipt)} label="Output" />
         {base.check.receipt.isolation.facts.map((fact) => (
           <span className="muted" key={fact}>
             {fact}

@@ -1,6 +1,9 @@
 import { Fragment, memo, useMemo, useRef, type ReactNode } from 'react';
 import { Link, useHref } from 'react-router-dom';
 import { useTool } from './api';
+import { CodeBlock, NUMBERED_FROM } from './code-block';
+import { TeX } from './math';
+import { Mermaid } from './mermaid';
 import { pathOf, useRows } from './navigation';
 import type { Row } from './shell-types';
 
@@ -12,13 +15,16 @@ import type { Row } from './shell-types';
  * records a text mentions (`recordNames`, `RecordLink`), and one component that
  * draws the tree as React elements. Nothing is ever handed to the browser as
  * HTML: a tag an author wrote is text, an image is a link that loads nothing, and
- * an address the app would not open itself never becomes an href.
+ * an address the app would not open itself never becomes an href. Code, diagrams
+ * and formulas are drawn by components of their own (`CodeBlock`, `Mermaid`, `TeX`),
+ * each of which loads what it needs the first time it is shown.
  */
 
 export type Align = 'left' | 'center' | 'right' | null;
 export type Inline =
   | { type: 'text'; value: string }
   | { type: 'code'; value: string }
+  | { type: 'math'; value: string }
   | { type: 'strong' | 'em' | 'del'; children: Inline[] }
   | { type: 'link'; href: string; external: boolean; title?: string; children: Inline[] }
   | { type: 'break' }
@@ -32,6 +38,7 @@ export type Block =
   | { type: 'heading'; level: number; children: Inline[] }
   | { type: 'paragraph'; children: Inline[] }
   | { type: 'code'; lang?: string; value: string }
+  | { type: 'math'; value: string }
   | { type: 'quote'; children: Block[] }
   | { type: 'list'; ordered: boolean; start: number; loose: boolean; items: ListItem[] }
   | { type: 'table'; align: Align[]; head: Inline[][]; rows: Inline[][][] }
@@ -248,6 +255,8 @@ interface Scan {
   /** The bracket that closes each opening one; -1 where none does. */
   closes: Map<number, number>;
   passes: number;
+  /** Every `$` that may close inline math, in order; listed the first time a `$` is met. */
+  dollars?: number[];
 }
 /**
  * One pass matches every bracket after it, so a second is needed only where the
@@ -293,6 +302,33 @@ function codeAt(scan: Scan, at: number): { value: string; end: number } | null {
   const value = scan.source.slice(at + run, end - run).replaceAll('\n', ' ');
   const padded = value.length > 2 && value.startsWith(' ') && value.endsWith(' ');
   return { value: padded && value.trim() ? value.slice(1, -1) : value, end };
+}
+
+/**
+ * Where inline math opening at the `$` at `at` closes, or -1. Pandoc's rule, which
+ * keeps prices prices: the opening `$` has no space after it, and the closing one
+ * has no space before it and no digit after it, so "$5 and $10" is text.
+ */
+function mathEnd(scan: Scan, at: number): number {
+  const { source } = scan;
+  const next = source[at + 1];
+  if (!next || next === '$' || white(next)) return -1;
+  if (!scan.dollars) {
+    scan.dollars = [];
+    for (let to = source.indexOf('$'); to >= 0; to = source.indexOf('$', to + 1)) {
+      const before = source[to - 1]!;
+      if (to && !white(before) && before !== '\\' && !/[0-9]/.test(source[to + 1] ?? ''))
+        scan.dollars.push(to);
+    }
+  }
+  const closers = scan.dollars;
+  let low = 0;
+  for (let high = closers.length; low < high;) {
+    const middle = (low + high) >> 1;
+    if (closers[middle]! <= at + 1) low = middle + 1;
+    else high = middle;
+  }
+  return low < closers.length ? closers[low]! : -1;
 }
 
 /** The bracket that closes the one at `at`, reading escapes and code as the text does. */
@@ -509,6 +545,14 @@ export function parseInline(source: string, depth = 0, linked = false): Inline[]
       while (source[at] === '`') held += source[at++];
       continue;
     }
+    if (char === '$') {
+      const end = mathEnd(scan, at);
+      if (end > 0) {
+        push({ type: 'math', value: source.slice(at + 1, end) });
+        at = end + 1;
+        continue;
+      }
+    }
     if (char === '[' || (char === '!' && source[at + 1] === '[')) {
       const image = char === '!';
       const link = depth < MAX_DEPTH ? linkAt(scan, image ? at + 1 : at) : null;
@@ -587,6 +631,9 @@ const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+|$)/;
 const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
 const QUOTE = /^ {0,3}> ?/;
 const ITEM = /^( {0,3})([-*+]|\d{1,9}[.)])(?:( +)([^]*))?$/;
+const DISPLAY = /^ {0,3}\$\$/;
+/** A fence in one of these is a formula, typeset rather than shown as code. */
+const MATH_FENCES = new Set(['math', 'latex', 'tex']);
 const DIVIDER = /^ {0,3}\|?[ \t]*:?-+:?(?:[ \t]*\|[ \t]*:?-+:?)*[ \t]*\|?$/;
 const blank = (line: string | undefined) => !line || !line.trim();
 const indentOf = (line: string) => line.length - line.trimStart().length;
@@ -611,6 +658,28 @@ function cellsOf(line: string): string[] {
     .replace(/(?<!\\)\|$/, '');
   return row.split(/(?<!\\)\|/).map((cell) => cell.trim().replaceAll('\\|', '|'));
 }
+/**
+ * Display math opening at line `at`: `$$` at the margin, and the formula up to the
+ * next `$$` that ends a line, on that line or a later one. A blank line ends the
+ * search, as it ends a formula in TeX, so an unclosed `$$` is only ever a
+ * paragraph's text and the search never runs on past it.
+ */
+function displayAt(lines: string[], at: number): { value: string; next: number } | null {
+  const first = lines[at]!.trim().slice(2);
+  if (first.trimEnd().endsWith('$$') && first.trim().length > 2)
+    return { value: first.trimEnd().slice(0, -2).trim(), next: at + 1 };
+  const body = [first];
+  for (let to = at + 1; to < lines.length && !blank(lines[to]); to++) {
+    const line = lines[to]!.trimEnd();
+    if (line.endsWith('$$')) {
+      body.push(line.slice(0, -2));
+      const value = body.join('\n').trim();
+      return value ? { value, next: to + 1 } : null;
+    }
+    body.push(line);
+  }
+  return null;
+}
 /** A header row, then a divider row with as many columns: that and nothing less is a table. */
 function tableAt(lines: string[], at: number): Align[] | null {
   const head = lines[at]!;
@@ -633,6 +702,7 @@ function tableAt(lines: string[], at: number): Align[] | null {
 function interrupts(lines: string[], at: number): boolean {
   const line = lines[at]!;
   if (FENCE.test(line) || HEADING.test(line) || RULE.test(line) || QUOTE.test(line)) return true;
+  if (DISPLAY.test(line) && displayAt(lines, at)) return true;
   const item = ITEM.exec(line);
   // Only a list that starts at one may cut into a paragraph: "…in\n1986. A year" is prose.
   if (item?.[4]?.trim() && (!/\d/.test(item[2]!) || parseInt(item[2]!, 10) === 1)) return true;
@@ -709,7 +779,17 @@ function parseBlocks(lines: string[], depth: number): Block[] {
         body.push(lines[at]!.slice(Math.min(indentOf(lines[at]!), inset)));
       at++;
       const lang = fence[2]!.trim().split(/\s+/)[0];
-      blocks.push({ type: 'code', ...(lang ? { lang } : {}), value: body.join('\n') });
+      blocks.push(
+        lang && MATH_FENCES.has(lang.toLowerCase())
+          ? { type: 'math', value: body.join('\n') }
+          : { type: 'code', ...(lang ? { lang } : {}), value: body.join('\n') },
+      );
+      continue;
+    }
+    const display = DISPLAY.test(line) && displayAt(lines, at);
+    if (display) {
+      blocks.push({ type: 'math', value: display.value });
+      at = display.next;
       continue;
     }
     const heading = HEADING.exec(line);
@@ -811,6 +891,8 @@ function inlines(nodes: Inline[], names: RecordNames | undefined, linked = false
         return node.value;
       case 'code':
         return <code key={key}>{node.value}</code>;
+      case 'math':
+        return <TeX key={key} tex={node.value} />;
       case 'strong':
         return <strong key={key}>{inlines(node.children, names, linked)}</strong>;
       case 'em':
@@ -865,11 +947,18 @@ function blocks(nodes: Block[], names: RecordNames | undefined, under: number): 
       case 'paragraph':
         return <p key={key}>{inlines(node.children, names)}</p>;
       case 'code':
-        return (
-          <pre key={key} data-lang={node.lang}>
-            <code>{node.value}</code>
-          </pre>
+        return node.lang?.toLowerCase() === 'mermaid' ? (
+          <Mermaid key={key} source={node.value} />
+        ) : (
+          <CodeBlock
+            key={key}
+            code={node.value}
+            lang={node.lang}
+            numbered={node.value.split('\n', NUMBERED_FROM + 2).length > NUMBERED_FROM}
+          />
         );
+      case 'math':
+        return <TeX key={key} tex={node.value} display />;
       case 'quote':
         return <blockquote key={key}>{blocks(node.children, names, under)}</blockquote>;
       case 'rule':

@@ -5,8 +5,13 @@ import { call, refreshTools, useScopeVersion, useTool } from '../api';
 import { Ago, KV, LoadState, RecordPage, Short, timeRows } from '../components';
 import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
-import { JsonView, readJson } from '../json-view';
+import { CodeBlock } from '../code-block';
+import { DelimitedTable, parseDelimited } from '../csv';
+import { languageOf } from '../highlight';
+import { JsonLines, JsonView, readJson } from '../json-view';
 import { MAX_READ, Markdown, useRecordNames } from '../markdown';
+import { Mermaid } from '../mermaid';
+import { NotebookView, readNotebook } from '../notebook';
 import { useSession } from '../session';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
@@ -312,26 +317,76 @@ const ENDING_NAMES: [RegExp, string][] = [
   [/\.ipynb$/i, 'Notebook'],
   [/\.py$/i, 'Python'],
   [/\.log$/i, 'Log'],
+  [/\.svg$/i, 'SVG image'],
+  [/\.(mmd|mermaid)$/i, 'Mermaid'],
+  [/\.png$/i, 'PNG image'],
+  [/\.jpe?g$/i, 'JPEG image'],
+  [/\.gif$/i, 'GIF image'],
+  [/\.webp$/i, 'WEBP image'],
 ];
 const VAGUE = new Set(['', 'text/plain', 'application/octet-stream']);
+/** The pictures a file is drawn as, from its own bytes: the four raster types and SVG. */
+const IMAGES: Record<string, string> = {
+  'PNG image': 'image/png',
+  'JPEG image': 'image/jpeg',
+  'GIF image': 'image/gif',
+  'WEBP image': 'image/webp',
+  'SVG image': 'image/svg+xml',
+};
+/** What a file read as each word is shown as. */
+const READS: Record<string, FileType['reads']> = {
+  Markdown: 'markdown',
+  JSON: 'json',
+  'JSON Lines': 'jsonl',
+  CSV: 'csv',
+  TSV: 'tsv',
+  Notebook: 'notebook',
+  Mermaid: 'mermaid',
+};
+/** The language each of these is written in, for its source. */
+const SOURCE_LANGS: Partial<Record<FileType['reads'], string>> = {
+  markdown: 'markdown',
+  json: 'json',
+  notebook: 'json',
+};
 
 export interface FileType {
   /** The short human word for it: Markdown, JSON, PNG image. */
   label: string;
   icon: IconName;
-  /** How the body is read where it is shown: as a document, as a tree of JSON, or as it is. */
-  reads: 'markdown' | 'json' | 'text';
+  /**
+   * How the body is read where it is shown: as a document, a tree, lines of trees, a
+   * table, a notebook, a diagram or a picture; as code in `lang`; or as text, which
+   * may be a terminal's.
+   */
+  reads:
+    | 'markdown'
+    | 'json'
+    | 'jsonl'
+    | 'csv'
+    | 'tsv'
+    | 'notebook'
+    | 'mermaid'
+    | 'image'
+    | 'code'
+    | 'text';
+  /** What its text is written in, for colour, where that is a language this page colours. */
+  lang?: string;
+  /** The media type a picture is drawn as. */
+  image?: string;
 }
 /**
  * What a file is, said once for the list, the record and the document head: a glyph
  * and a short word instead of the media type, which stays in hover titles for whoever
  * needs the machine's name for it. A type nobody listed is named from its own subtype
  * (`image/png` is a PNG image, `text/x-python` is Python), so nothing reads as a MIME string.
+ * It is also the one place that decides how a file is shown.
  */
 export function fileType(file: { mediaType?: string | null; title?: string | null }): FileType {
   const type = (file.mediaType ?? '').toLowerCase().split(';')[0]!.trim();
   const name = file.title ?? '';
-  const ending = VAGUE.has(type) && ENDING_NAMES.find(([pattern]) => pattern.test(name))?.[1];
+  const vague = VAGUE.has(type);
+  const ending = vague && ENDING_NAMES.find(([pattern]) => pattern.test(name))?.[1];
   const [family = '', subtype = ''] = type.split('/');
   const bare = subtype.replace(/^(x-|vnd\.)/, '').replace(/\+\w+$/, '');
   const word = bare.length <= 4 ? bare.toUpperCase() : bare[0]!.toUpperCase() + bare.slice(1);
@@ -342,11 +397,21 @@ export function fileType(file: { mediaType?: string | null; title?: string | nul
       : ['image', 'audio', 'video', 'font'].includes(family) && word
         ? `${word} ${family}`
         : word.replaceAll(/[._-]+/g, ' ') || 'File';
-  const label = ending || TYPE_NAMES[type] || derived;
+  // Code is known by the end of its name where its type is vague, and by its subtype where not.
+  const language = vague ? languageOf(name) : languageOf(bare);
+  const label =
+    ending || (vague && language?.label) || TYPE_NAMES[type] || language?.label || derived;
+  const image = IMAGES[label];
+  const reads = READS[label] ?? (image ? 'image' : language ? 'code' : 'text');
+  const lang =
+    SOURCE_LANGS[reads] ??
+    (image === IMAGES['SVG image'] ? 'xml' : language && (vague ? name : bare));
   return {
     label,
     icon: fileIcon(type, name),
-    reads: label === 'Markdown' ? 'markdown' : label === 'JSON' ? 'json' : 'text',
+    reads,
+    ...(lang ? { lang } : {}),
+    ...(image ? { image } : {}),
   };
 }
 
@@ -357,45 +422,87 @@ const TypeGlyph = ({ type, size }: { type: FileType; size?: number }) => (
   </span>
 );
 
+/** A picture fitted to the column; a press shows it at its own size, and another fits it again. */
+function FileImage({ src, title }: { src: string; title: string }) {
+  const [full, setFull] = useState(false);
+  return (
+    <button
+      type="button"
+      className="file-image"
+      aria-pressed={full}
+      title={full ? 'Fit to width' : 'Show at full size'}
+      onClick={() => setFull(!full)}
+    >
+      <img src={src} alt={title} />
+    </button>
+  );
+}
+
 function InlineArtifact({
   artifactId,
-  reads,
+  type,
+  title,
   source,
   onUnread,
 }: {
   artifactId: string;
-  reads: FileType['reads'];
+  type: FileType;
+  title: string;
   /** Shown as the text its author typed rather than as what it reads as. */
   source: boolean;
-  /** Told once a JSON file turns out not to parse: what is shown is already its source. */
+  /** Told once a file that should parse turns out not to: what is shown is already its source. */
   onUnread: () => void;
 }) {
   const read = useTool<ArtifactContent>('artifact.read', { artifactId });
   const content = read.data?.encoding === 'utf8' ? read.data.content : undefined;
+  const { reads } = type;
   // Parsed whichever way it is being shown, so turning to the source and back reads it once.
-  const json = useMemo(
-    () => (reads === 'json' && content !== undefined ? readJson(content) : undefined),
-    [content, reads],
+  const parsed = useMemo(() => {
+    if (content === undefined) return undefined;
+    if (reads === 'json') return { json: readJson(content) };
+    if (reads === 'csv' || reads === 'tsv')
+      return { table: parseDelimited(content, reads === 'csv' ? ',' : '\t') };
+    if (reads === 'notebook') return { notebook: readNotebook(content) };
+    return {};
+  }, [content, reads]);
+  const unread = !!parsed && Object.values(parsed).some((value) => value === undefined);
+  const names = useRecordNames(
+    !source && !unread && (reads === 'json' || reads === 'jsonl') && content ? content : '',
   );
-  const tree = source ? undefined : json;
-  const names = useRecordNames(tree && content ? content : '');
-  const unread = reads === 'json' && content !== undefined && !json;
   useEffect(() => {
     if (unread) onUnread();
   }, [unread, onUnread]);
   if (!read.data) return <LoadState loading={read.loading} error={read.error} />;
+  const { encoding } = read.data;
+  // A picture is drawn from the file's own bytes, never from an address: an SVG as an
+  // image, where its scripts do not run, and never into the page.
+  if (type.image && !source && (encoding === 'base64' || type.image === 'image/svg+xml'))
+    return (
+      <FileImage
+        title={title}
+        src={
+          encoding === 'base64'
+            ? `data:${type.image};base64,${read.data.content}`
+            : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(read.data.content)}`
+        }
+      />
+    );
   if (content === undefined)
     return <div className="empty">Binary file · {bytes(read.data.artifact.size)}</div>;
-  return reads === 'markdown' && !source ? (
-    <div className="doc-read">
-      <Markdown source={content} />
-    </div>
-  ) : tree ? (
-    <JsonView value={tree.value} names={names} />
-  ) : (
-    // JSON that does not parse stays exactly as it was written.
-    <pre className="doc">{content}</pre>
-  );
+  // A file that does not parse stays exactly as it was written.
+  if (source || unread || reads === 'code' || reads === 'text' || reads === 'image')
+    return <CodeBlock code={content} lang={type.lang} label={type.label} numbered />;
+  if (reads === 'markdown')
+    return (
+      <div className="doc-read">
+        <Markdown source={content} />
+      </div>
+    );
+  if (reads === 'mermaid') return <Mermaid source={content} />;
+  if (reads === 'jsonl') return <JsonLines content={content} names={names} />;
+  if (parsed?.json) return <JsonView value={parsed.json.value} names={names} />;
+  if (parsed?.table) return <DelimitedTable rows={parsed.table} />;
+  return parsed?.notebook ? <NotebookView notebook={parsed.notebook} /> : null;
 }
 
 /** Native capture receipts keep useful files even when their finalizer did not finish. */
@@ -475,8 +582,10 @@ function Take({ artifact }: { artifact: Artifact }) {
  * the far end. Where something above it has already said the name, the head says the
  * word for the type instead: the file's own page, whose heading is the title, and a
  * cited file, whose disclosure is — that one keeps the way to the file's page as a
- * glyph. A Markdown file is read as a document and a JSON file as a tree, and the one
- * control on the head turns either back into the text its author typed.
+ * glyph. A file is read as what it is (`fileType`): Markdown as a document, JSON as a
+ * tree, a table as a table, a notebook as its cells, a diagram or a picture as drawn,
+ * code and logs as code; and the one control on the head turns any of them that is
+ * drawn as something else back into the text its author typed.
  */
 export function ArtifactBody({
   artifactId,
@@ -498,7 +607,11 @@ export function ArtifactBody({
   const type = fileType(artifact);
   const inline = artifact.size <= 2_000_000;
   const sourced =
-    type.reads === 'markdown' ? artifact.size <= MAX_READ : type.reads === 'json' && !unread;
+    type.reads === 'markdown'
+      ? artifact.size <= MAX_READ
+      : type.reads === 'image'
+        ? type.image === 'image/svg+xml'
+        : type.reads !== 'code' && type.reads !== 'text' && !unread;
   return (
     <div className="doc-frame">
       <div className="doc-head">
@@ -514,8 +627,8 @@ export function ArtifactBody({
         </span>
         <span className="doc-tools">
           <span className="faint tabular">{bytes(artifact.size)}</span>
-          {/* Past the length a document is read at, and where JSON does not parse, the
-              source is already what is shown. */}
+          {/* Past the length a document is read at, for code and text, and where a file
+              does not parse, the source is already what is shown. */}
           {inline && sourced && (
             <button
               type="button"
@@ -544,7 +657,8 @@ export function ArtifactBody({
         <InlineArtifact
           key={`${scope}:${artifactId}`}
           artifactId={artifactId}
-          reads={type.reads}
+          type={type}
+          title={artifact.title}
           source={source}
           onUnread={markUnread}
         />

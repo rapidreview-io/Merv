@@ -6,6 +6,7 @@ import { useSession } from './session';
 import { cx } from './components';
 import { ChevronsIcon, RowIcon, SidebarIcon, SwitchIcon } from './icons';
 import { signedInEmail } from './auth';
+import { onWorn, worn } from './theme';
 import { initials, personName } from './views/people';
 import {
   accountLines,
@@ -74,13 +75,6 @@ function RailRow({
   );
 }
 
-/** The theme the page wears: the system's, as index.html follows it, until one is chosen here. */
-const worn = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
-const onWorn = (changed: () => void) => {
-  const watch = new MutationObserver(changed);
-  watch.observe(document.documentElement, { attributeFilter: ['data-theme'] });
-  return () => watch.disconnect();
-};
 function wear(theme: 'light' | 'dark') {
   document.documentElement.dataset.theme = theme;
   try {

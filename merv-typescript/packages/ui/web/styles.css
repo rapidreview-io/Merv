@@ -1898,6 +1898,364 @@ select.input,
   }
 }
 
+/* Code. ------------------------------------------------------------------ */
+/* Code wherever it stands (code-block.tsx): a fence, a file, a check's output. A
+   quiet head says what it is and holds its two moves; the body is the mono on the
+   soft ground inside one hairline. Colour comes as both themes' values on each
+   token (highlight.ts), and the theme the page wears picks one. Line numbers are
+   the stylesheet's, beside each line and never inside it, so a copy is the code. */
+.code-block {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--bg-soft);
+  overflow: hidden;
+}
+.code-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 30px;
+  padding: 0 var(--space-1) 0 var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.code-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.code-body {
+  margin: 0;
+  padding: 10px var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+}
+/* The code element is the block's text, not an inline code span (as `.md code` draws one). */
+pre.code-body > code {
+  counter-reset: line;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  font: inherit;
+}
+/* Each line is a box as wide as the block or its own text, so a tint spans the line. */
+.code-line {
+  display: inline-block;
+  min-width: 100%;
+  vertical-align: top;
+}
+.code-block--wrap .code-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.code-block--numbered .code-line {
+  position: relative;
+  padding-left: calc(var(--gutter) + var(--space-4));
+  counter-increment: line;
+}
+.code-block--numbered .code-line::before {
+  content: counter(line);
+  position: absolute;
+  left: 0;
+  width: var(--gutter);
+  text-align: right;
+  color: var(--ghost);
+  user-select: none;
+}
+.code-line--add {
+  background: rgba(var(--supports-rgb), 0.12);
+}
+.code-line--del {
+  background: rgba(var(--refutes-rgb), 0.12);
+}
+.code-body [style] {
+  color: var(--shiki-light);
+  font-style: var(--shiki-light-font-style);
+  font-weight: var(--shiki-light-font-weight);
+  text-decoration: var(--shiki-light-text-decoration);
+}
+html[data-theme='dark'] .code-body [style] {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+  font-weight: var(--shiki-dark-font-weight);
+  text-decoration: var(--shiki-dark-text-decoration);
+}
+/* A terminal's sixteen colours are the app's own inks, so they read on either ground. */
+:is(.code-body, .nb-output, .pi-returned) {
+  --ansi-0: var(--faint);
+  --ansi-1: var(--refutes);
+  --ansi-2: var(--supports);
+  --ansi-3: var(--qualifies);
+  --ansi-4: var(--kind-blue);
+  --ansi-5: var(--kind-purple);
+  --ansi-6: var(--kind-teal);
+  --ansi-7: var(--muted);
+}
+.ansi-fg0 {
+  color: var(--ansi-0);
+}
+.ansi-fg1 {
+  color: var(--ansi-1);
+}
+.ansi-fg2 {
+  color: var(--ansi-2);
+}
+.ansi-fg3 {
+  color: var(--ansi-3);
+}
+.ansi-fg4 {
+  color: var(--ansi-4);
+}
+.ansi-fg5 {
+  color: var(--ansi-5);
+}
+.ansi-fg6 {
+  color: var(--ansi-6);
+}
+.ansi-fg7 {
+  color: var(--ansi-7);
+}
+.ansi-bg0 {
+  background: color-mix(in srgb, var(--ansi-0) 20%, transparent);
+}
+.ansi-bg1 {
+  background: color-mix(in srgb, var(--ansi-1) 20%, transparent);
+}
+.ansi-bg2 {
+  background: color-mix(in srgb, var(--ansi-2) 20%, transparent);
+}
+.ansi-bg3 {
+  background: color-mix(in srgb, var(--ansi-3) 20%, transparent);
+}
+.ansi-bg4 {
+  background: color-mix(in srgb, var(--ansi-4) 20%, transparent);
+}
+.ansi-bg5 {
+  background: color-mix(in srgb, var(--ansi-5) 20%, transparent);
+}
+.ansi-bg6 {
+  background: color-mix(in srgb, var(--ansi-6) 20%, transparent);
+}
+.ansi-bg7 {
+  background: color-mix(in srgb, var(--ansi-7) 20%, transparent);
+}
+.ansi-bold {
+  font-weight: 600;
+}
+.ansi-dim {
+  opacity: 0.7;
+}
+/* A diagram is drawn at its own width on the page's ground; a wide one scrolls inside its block. */
+.mermaid-view {
+  padding: var(--space-3);
+  overflow-x: auto;
+  background: var(--bg-elev);
+}
+.mermaid-view svg {
+  display: block;
+  height: auto;
+}
+.mermaid-error {
+  padding: 6px var(--space-3);
+  border-top: 1px solid var(--line);
+  font-size: var(--text-xs);
+  color: var(--refutes);
+}
+/* A formula on a line of its own scrolls inside its block when it is wider than the page. */
+.math--display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 0;
+}
+.math--source {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+pre.math--source {
+  white-space: pre-wrap;
+}
+
+/* Files read in place. ------------------------------------------------------ */
+/* Code, a log or the source of anything drawn: the block runs the column, and a
+   long file scrolls inside it. */
+.doc-frame > .code-block,
+.doc-frame > .mermaid {
+  margin: 14px 0;
+}
+.doc-frame .code-body {
+  max-height: 70vh;
+}
+/* A picture fits the column until it is pressed, then stands at its own size. */
+.file-image {
+  display: block;
+  width: 100%;
+  padding: 14px 0;
+  border: 0;
+  background: none;
+  overflow: auto;
+  cursor: zoom-in;
+}
+.file-image img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.file-image[aria-pressed='true'] {
+  cursor: zoom-out;
+}
+.file-image[aria-pressed='true'] img {
+  max-width: none;
+}
+/* A table file: its size above, then the rows under a head that stays in view, each
+   numbered at the left in the faint mono, numbers set flush right in even figures. */
+.table-file {
+  padding: 10px 0;
+}
+.table-file-size {
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+}
+.table-file-scroll {
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.table-file table {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--text-sm);
+}
+.table-file :is(th, td) {
+  padding: 5px var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  white-space: nowrap;
+  max-width: 40ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-file thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom-color: var(--line);
+  background: var(--bg-soft);
+  font-weight: 600;
+  color: var(--muted);
+}
+.table-file .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.table-file-index {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  text-align: right;
+  color: var(--faint);
+}
+.table-file > .btn-text {
+  margin-top: var(--space-2);
+}
+/* JSON Lines: each line its own tree beside the number its editor gives it. */
+.jsonl {
+  list-style: none;
+  padding: 10px 0;
+}
+.jsonl-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  border-bottom: 1px solid var(--line-soft);
+}
+.jsonl-line > .json {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+}
+.jsonl-number {
+  flex: none;
+  min-width: 4ch;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+.jsonl-bad {
+  display: flex;
+  gap: var(--space-2);
+  padding: 5px 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.jsonl-mark {
+  font-weight: 600;
+  color: var(--refutes);
+}
+/* A notebook: each code cell beside the count it ran at, its outputs under it. */
+.notebook {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: 14px 0;
+}
+.nb-cell {
+  display: grid;
+  grid-template-columns: 5ch minmax(0, 1fr);
+  gap: var(--space-2);
+}
+.nb-cell--markdown {
+  display: block;
+  padding-left: calc(5ch + var(--space-2));
+}
+.nb-count {
+  padding-top: 7px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+.nb-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.nb-output {
+  max-height: 480px;
+  overflow: auto;
+  padding: 2px var(--space-3);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nb-output--error {
+  border-left: 2px solid var(--refutes);
+}
+.nb-markup {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding-left: var(--space-3);
+  font-size: var(--text-xs);
+}
+.nb-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
 /* Markdown. -------------------------------------------------------------- */
 /* A brief, a delivery or a report, read as the document it is (markdown.tsx): the
    body sans at a reading measure, and nothing in it louder than the page around
@@ -1928,6 +2286,16 @@ select.input,
   max-width: var(--md-measure);
 }
 .md > .md-table {
+  max-width: 100%;
+}
+/* A block of code, a diagram or a formula is as wide as the text column, wider where a
+   line needs it, and never the page's scroller. */
+.md > :is(.code-block, .mermaid) {
+  width: fit-content;
+  min-width: min(var(--md-measure), 100%);
+  max-width: 100%;
+}
+.md > .math--display {
   max-width: 100%;
 }
 .md :is(li, blockquote) p {
@@ -2026,7 +2394,7 @@ select.input,
   border-radius: var(--radius-sm);
   background: var(--bg-soft);
 }
-.md pre {
+.md > pre {
   /* As wide as the text column, wider where a line needs it, and never the page's scroller. */
   width: fit-content;
   min-width: min(var(--md-measure), 100%);
@@ -2038,7 +2406,7 @@ select.input,
   line-height: 1.55;
   overflow-x: auto;
 }
-.md pre code {
+.md > pre code {
   padding: 0;
   background: none;
   font-size: inherit;
@@ -2376,11 +2744,6 @@ select.input,
 .history-detail {
   align-self: start;
   overflow-wrap: anywhere;
-}
-.history-detail .doc {
-  max-height: 65vh;
-  overflow: auto;
-  white-space: pre-wrap;
 }
 @media (max-width: 900px) {
   .history-layout--selected {
@@ -4095,12 +4458,9 @@ del.cut {
 }
 /* What a project check printed is evidence: it keeps its own line breaks, and a long run
    of output scrolls inside the row rather than widening the card. */
-.code-check-output {
-  margin: 0;
+/* A check's output is a terminal's, kept to a few lines on the card. */
+.kv .code-body {
   max-height: 16em;
-  overflow: auto;
-  white-space: pre-wrap;
-  font-size: var(--text-sm);
 }
 /* What Git holds for a record it cannot be reused from wears the refusal, so the
    section says it with its colour rather than with a second sentence. */

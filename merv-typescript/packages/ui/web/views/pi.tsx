@@ -23,6 +23,8 @@ import {
 } from '../api';
 import { Ago, cx, KV, relativeTime, Summary, useNow, type KVRow } from '../components';
 import { ChevronsIcon } from '../icons';
+import { hasAnsi } from '../ansi';
+import { AnsiText } from '../code-block';
 import { JsonView, readJson } from '../json-view';
 import { MarkdownPieces, RecordText, useRecordNames, type RecordNames } from '../markdown';
 import {
@@ -234,14 +236,17 @@ const linked = (text: string) =>
       part
     ),
   );
-/** What came back for a call: a tree where it is JSON, and otherwise text with its links live. */
+/**
+ * What came back for a call: a tree where it is JSON, a terminal's colours where a command
+ * printed them, and otherwise text with its links live.
+ */
 function Returned({ text }: { text: string }) {
   const names = useRecordNames(text);
   const json = useMemo(() => readJson(text), [text]);
   return json ? (
     <JsonView value={json.value} names={names} />
   ) : (
-    <p className="pi-returned">{linked(text)}</p>
+    <p className="pi-returned">{hasAnsi(text) ? <AnsiText text={text} /> : linked(text)}</p>
   );
 }
 

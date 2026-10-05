@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useScopeVersion, useTool } from '../api';
 import { KV, LoadState, Stamp, StatusPill, Summary, words } from '../components';
 import { ChevronLeftIcon, ChevronRightIcon, CloseIcon } from '../icons';
+import { JsonView } from '../json-view';
 import { ListPage, Tabs, useListFilter } from '../list-filters';
 import { Markdown } from '../markdown';
 import { ThreeStates } from '../states';
@@ -236,7 +237,7 @@ function Detail({
           <details className="history-technical">
             <Summary>Original record</Summary>
             <KV rows={[['Hash', <span className="mono">{detail.data.hash}</span>]]} />
-            <pre className="doc">{JSON.stringify(detail.data.data, null, 2)}</pre>
+            <JsonView value={detail.data.data} />
           </details>
         </>
       )}

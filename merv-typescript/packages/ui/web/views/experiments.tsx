@@ -4,6 +4,7 @@ import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/ex
 import type { CodeUnit } from '@merv/contracts/code-work-models';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
+import { CodeBlock } from '../code-block';
 import { recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
 import {
@@ -139,7 +140,7 @@ function ExperimentRecord({
                 {/\.(md|markdown)$/i.test(shown.path) ? (
                   <Markdown source={shown.content} />
                 ) : (
-                  <pre className="doc doc--inline">{shown.content}</pre>
+                  <CodeBlock code={shown.content} lang={shown.path} label="Text" numbered />
                 )}
                 <figcaption className="muted">{shown.path}</figcaption>
               </figure>
