@@ -193,7 +193,7 @@ const configuration = z
   .strict()
   .refine(
     (value) => value.connections.length > 0 || !!value.native,
-    'Configure a native connection application or a legacy project connection',
+    'Configure a native connection application or a project connection',
   );
 
 const secretNames = new Set(['token', 'secret', 'authorization', 'credential']);

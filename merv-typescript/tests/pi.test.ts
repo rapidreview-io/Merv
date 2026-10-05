@@ -138,7 +138,6 @@ test('a model catalog Pi cannot use is refused at start, naming the field, and b
     [[{ ...luna, id: '-luna' }], 'models.0.id'],
     [[luna, luna], 'models'],
     [Array.from({ length: 9 }, (_, index) => ({ ...luna, id: `model-${index}` })), 'models'],
-    [[{ ...luna, outputUsdPerM: undefined }], 'models.0.outputUsdPerM'],
     [[{ ...luna, effort: 'high' }], 'models.0.effort'],
     [[{ ...luna, provider: 'openai' }], 'models.0'],
     [[{ ...luna, label: 'GPT-6 Luna, the everyday one' }], 'models.0.label'],
@@ -1719,7 +1718,7 @@ test('each conversation keeps its model; a pick is the person’s default for ne
   // The picker's catalog carries no effort.
   assert.deepEqual(
     picked.models.map((model) => Object.keys(model).sort()),
-    Array(3).fill(['id', 'inputUsdPerM', 'label', 'outputUsdPerM']),
+    Array(3).fill(['id', 'label']),
   );
   // A pick moves nothing in the list and leaves the other conversations as they were.
   assert.deepEqual(await listed(), order);
@@ -1792,7 +1791,7 @@ test('a turn answers on the model its conversation has when a worker claims it',
 test('the note naming the model stays within the worker’s limit, however long the names', async (t) => {
   const [id, label] = [`m${'-'.repeat(99)}`, 'L'.repeat(24)];
   const f = await fixture(t, {
-    pi: { models: [{ id, label, inputUsdPerM: 1, outputUsdPerM: 1, effort: 'none' }] },
+    pi: { models: [{ id, label, effort: 'none' }] },
   });
   const { work } = await f.claimed(await f.send(await f.create()));
   assert.ok(work.notes[0].startsWith(`Model: you are ${label} (${id}).`));

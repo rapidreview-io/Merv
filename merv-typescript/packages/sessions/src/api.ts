@@ -195,6 +195,8 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
             : route[2] === 'heartbeat'
               ? await sessions.heartbeat(caller, input)
               : await sessions.release(caller, input);
+      // Runners released before the unconditional call ask for launch connections only when
+      // attach says so; self-hosted ones may still be running.
       return { session, ...(route[2] === 'attach' ? { launchConnections: true } : {}) };
     }
   }

@@ -13,7 +13,6 @@ export const createInput = z
   .strict();
 /** A model id as the provider names it, e.g. 'gpt-6-luna'. */
 export const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
-const usdPerM = z.number().finite().min(0).max(1000);
 /** pi.send; `model` is the one the page shows, which must still be the conversation's. */
 export const sendInput = z
   .object({ commandId: id, text: z.string().trim().min(1).max(32_000), model: modelId.optional() })
@@ -68,15 +67,13 @@ export const piConfig = z
     baseUrl: z.string().url().optional(),
     /** MERV_PI_MODELS: what a person may pick per conversation; the first is the default. Reasoning
      * models only (every GPT-5 and GPT-6): the relay sets each call's effort, and the worker asks
-     * for reasoning on any model. Prices are for accounting; the picker shows labels only. */
+     * for reasoning on any model. The picker shows labels only. */
     models: z
       .array(
         z
           .object({
             id: modelId,
             label: z.string().trim().min(1).max(24),
-            inputUsdPerM: usdPerM,
-            outputUsdPerM: usdPerM,
             effort: z.enum(['none', 'low']),
           })
           .strict(),
@@ -85,20 +82,8 @@ export const piConfig = z
       .max(8)
       .refine((all) => new Set(all.map((m) => m.id)).size === all.length, 'Model ids repeat')
       .default([
-        {
-          id: 'gpt-6.1-sol',
-          label: 'GPT-6.1 Sol',
-          inputUsdPerM: 2,
-          outputUsdPerM: 10,
-          effort: 'low',
-        },
-        {
-          id: 'gpt-6-luna',
-          label: 'GPT-6 Luna',
-          inputUsdPerM: 0.1,
-          outputUsdPerM: 0.5,
-          effort: 'none',
-        },
+        { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', effort: 'low' },
+        { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
       ]),
     secretEnv: z
       .string()

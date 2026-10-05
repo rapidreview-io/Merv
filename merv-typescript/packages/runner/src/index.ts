@@ -755,9 +755,7 @@ export class MachineRunner implements Runner {
                 .catch(() => null)
             : null;
         const connections =
-          profile.harness !== 'command' &&
-          !sealed(session) &&
-          this.client.supportsLaunchConnections(session.id, record.id)
+          profile.harness !== 'command' && !sealed(session)
             ? await this.client.launchConnections(session.id, this.ledger.runnerId, record.id)
             : [];
         if (this.stopping) return false;
