@@ -337,6 +337,10 @@ test('the machine cache is re-keyed by a rebind and bricked only by a changed ob
   // A changed identity re-keys the row and rebuilds the repository at the same path. The
   // status is written before the removal, so a concurrent call cannot be handed a half-built
   // path: what the row says while `git init` is running is what proves it.
+  // A checkout kept from the old identity is a worktree of the repository about to go.
+  const kept = join(path, '..', 'checkouts', 'work', 'unit');
+  const commit = git(path, ['commit-tree', '-m', 'kept', git(path, ['mktree'], '')]);
+  git(path, ['worktree', 'add', '--quiet', '--detach', kept, commit]);
   const git0 = (inner as unknown as { git: { ok(args: string[]): Promise<string> } }).git;
   const during: string[] = [];
   const ok = git0.ok.bind(git0);
@@ -358,6 +362,7 @@ test('the machine cache is re-keyed by a rebind and bricked only by a changed ob
     },
   );
   assert.deepEqual(during, ['preparing'], 'the row said preparing while the repository was built');
+  assert.ok(!existsSync(kept), 'no checkout is left pointing into the removed repository');
 });
 
 test('a reviewed repository integration can join unrelated histories without replacing either', async (t) => {

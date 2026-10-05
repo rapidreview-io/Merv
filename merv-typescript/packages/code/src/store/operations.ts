@@ -337,6 +337,7 @@ export class CodeStore {
   private maintaining?: Promise<void>;
   private readonly jobs = new Map<string, Promise<void>>();
   private readonly parts = new Map<string, Promise<unknown>>();
+  private readonly exporting = new Map<string, Promise<void>>();
   private readonly exports = new Map<
     string,
     {
@@ -980,7 +981,22 @@ export class CodeStore {
   ): Promise<CodeExport> {
     this.assertOpen();
     await this.managedRead(caller, input.sessionId);
-    return this.owned(() => this.writeExport(caller, input));
+    // The session's one bundle path is cut by one request at a time; one asked again waits.
+    const session = `${caller.projectId}\0${input.sessionId}`;
+    const previous = this.exporting.get(session);
+    const job = this.owned(async () => {
+      await previous;
+      return await this.writeExport(caller, input);
+    });
+    const settled = job.then(
+      () => {},
+      () => {},
+    );
+    this.exporting.set(session, settled);
+    void settled.then(() => {
+      if (this.exporting.get(session) === settled) this.exporting.delete(session);
+    });
+    return await job;
   }
 
   private async writeExport(
@@ -2277,9 +2293,13 @@ export class CodeStore {
           async (target) => {
             const stop = new AbortController();
             const watch = setInterval(() => {
-              void diskBytes(directory).then((bytes) => {
-                if (bytes > CODE_BUNDLE_MAX_BYTES) stop.abort();
-              });
+              // A measurement that fails is only skipped; the next one is a second away.
+              void diskBytes(directory).then(
+                (bytes) => {
+                  if (bytes > CODE_BUNDLE_MAX_BYTES) stop.abort();
+                },
+                () => {},
+              );
             }, 1000);
             try {
               const fetch = await git
@@ -2349,17 +2369,19 @@ export class CodeStore {
       );
       return null;
     }
-    const tips = (
-      await git.ok(['for-each-ref', '--format=%(objectname)', '--count=50', 'refs/merv/imports'], {
-        env: this.repositories.environment(row.project_id),
-      })
-    )
-      .toString('utf8')
-      .split('\n')
-      .filter(Boolean);
     const part = join(directory, 'bundle.part');
+    // What every earlier import reached is held: the repository is the scratch's alternate.
     const made = await git.run(
-      ['bundle', 'create', part, 'refs/merv/fetched', ...(tips.length ? ['--not', ...tips] : [])],
+      [
+        '-c',
+        'core.alternateRefsPrefixes=refs/merv/imports/',
+        'bundle',
+        'create',
+        part,
+        'refs/merv/fetched',
+        '--not',
+        '--alternate-refs',
+      ],
       { env, timeoutMs: FETCH_TIMEOUT_MS },
     );
     const size = await stat(part).then(

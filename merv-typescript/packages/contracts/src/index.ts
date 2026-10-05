@@ -695,7 +695,7 @@ export interface Blobs {
   put(namespace: string, bytes: Uint8Array): Promise<{ hash: string; size: number }>;
   get(namespace: string, hash: string): Promise<Buffer>;
   /**
-   * Signed GET valid 60 s, served as identity-encoded application/octet-stream whatever the
+   * Signed GET valid 1 h, served as identity-encoded application/octet-stream whatever the
    * uploader sent, saved as `filename` (default: the hash): `blob_not_found` when nothing is
    * stored, `blob_corrupt` when the stored size is not expectedSize. Never expands the inline
    * content limit.

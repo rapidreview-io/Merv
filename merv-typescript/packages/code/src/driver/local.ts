@@ -653,6 +653,8 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       this.db
         .prepare("UPDATE runner_workspaces SET status='closing' WHERE launch_id=?")
         .run(record.id);
+      // Each commit's private index is needed only until its launch is captured.
+      rmSync(join(this.root, 'operations', hash(record.id)), { recursive: true, force: true });
       const policy = JSON.parse(row.policy_json) as WorkflowWorkspacePolicy;
       if (!row.canceled && policy.mode !== 'none' && !policy.retain && existsSync(row.path))
         await this.bounded(row, async () => {

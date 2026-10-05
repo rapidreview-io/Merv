@@ -516,6 +516,24 @@ test('the credential of a push exists only in the environment of that one Git ch
   ]);
 });
 
+test('a remote ref that only ends with the published name is not the published ref', async () => {
+  const fake = {
+    run: async () => ({
+      code: 0,
+      stdout: Buffer.from(`${'a'.repeat(40)}\trefs/heads/x/refs/heads/merv/work/unit\n`),
+      stderr: '',
+    }),
+  } as unknown as ServerGit;
+  const transport = new GitMirrorTransport(
+    { git: fake, environment: () => ({}) } as unknown as CodeRepositories,
+    {
+      target: async () => ({ id: 101, fullName: 'fixture/private' }),
+      token: async (_projectId, use) => await use('token'),
+    },
+  );
+  assert.equal(await transport.lsRemote('project', 'refs/heads/merv/work/unit'), null);
+});
+
 test('disconnected projects cannot hide connected mirrors beyond the first batch', async (t) => {
   const f = await mirrored(t);
   const other = await f.scope.bootstrap({ projectName: 'disconnected', actorName: 'owner' });
