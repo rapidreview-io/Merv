@@ -678,9 +678,10 @@ export class MachineRunner implements Runner {
   private deadline(session: Session): number {
     return Math.min(Date.parse(session.expiresAt), Date.parse(session.hardDeadline));
   }
-  /** One tick of a launch's supervision; true once it has ended and owes nothing more. */
+  /** One tick of a launch's supervision; true once it has ended and owes nothing more. The
+   *  tick's host.reconcile() has asked its guardian already, so the ledger is read as it is. */
   private async reconcileLaunch(initial: LaunchRecord): Promise<boolean> {
-    let record = await this.host.inspect(initial.id);
+    let record = this.ledger.get(initial.id)!;
     if (terminalLaunch(record) && record.metadata.remoteClosed === true) return this.settle(record);
     let session: Session;
     try {
