@@ -30,7 +30,7 @@ export interface RunnerSnapshot {
     deadline: number;
     exitCode?: number | null;
     releasePending: boolean;
-    /** An ended launch whose transcript is declared and not yet delivered. */
+    /** An ended launch whose transcript or kept conversation is declared and not yet delivered. */
     transcriptPending: boolean;
     workspace?: { status: string; headOid?: string; capturePending: boolean };
   }[];

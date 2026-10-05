@@ -1272,8 +1272,10 @@ export class MachineRunner implements Runner {
         deadline: r.deadline,
         exitCode: r.exitCode,
         releasePending: terminalLaunch(r) && r.metadata.usageReported !== true,
+        // The conversation is owed as the transcript is: a hosted machine waits for both.
         transcriptPending:
-          terminalLaunch(r) && (r.metadata.transcript as Transcript | undefined)?.state === 'owed',
+          terminalLaunch(r) &&
+          kinds.some((kind) => (r.metadata[kind] as Transcript | undefined)?.state === 'owed'),
         ...(workspace
           ? {
               workspace: {

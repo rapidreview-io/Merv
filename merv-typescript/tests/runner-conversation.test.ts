@@ -198,7 +198,7 @@ fs.appendFileSync(file, JSON.stringify({ type: 'user', first: input.split('\\n')
   return path;
 };
 /** The stand-in server, with the routes a continued session's runner calls and a store. */
-function continuing(t: TestContext, bytes: Buffer, recorded = bytes) {
+function continuing(t: TestContext, bytes: Buffer, recorded = bytes, stores = true) {
   const root = directory(t);
   const config = join(root, 'claude');
   mkdirSync(config);
@@ -235,7 +235,7 @@ function continuing(t: TestContext, bytes: Buffer, recorded = bytes) {
           sessionId: work.id,
           sha256: body.sha256,
           size: body.size,
-          uploadedAt: body.deliver ? 'now' : null,
+          uploadedAt: body.deliver && stores ? 'now' : null,
         },
       });
     }
@@ -299,4 +299,21 @@ test('a conversation whose bytes are not the ones recorded launches fresh and sa
   assert.deepEqual(kept.resumed, { unavailable: 'resume_hash_mismatch' });
   // The fresh conversation is the one kept now, under the id the harness printed.
   assert.notEqual(declared[0]!.conversationId, id);
+});
+
+test('a launch whose conversation is still owed stays pending once its transcript is settled', async (t) => {
+  const { f, work } = continuing(
+    t,
+    Buffer.from('{"type":"user","first":"earlier turn"}\n'),
+    undefined,
+    false,
+  );
+  const runner = f.make();
+  await runner.start();
+  await until(runner, () => (settled(f, work.id).conversation?.tries ?? 0) > 0, 'a delivery try');
+  // This stand-in has no transcript route: the transcript is settled, the conversation owed.
+  assert.notEqual(settled(f, work.id).transcript?.state, 'owed');
+  assert.equal(settled(f, work.id).conversation?.state, 'owed');
+  // A hosted machine leaves once nothing is pending: not before the conversation is delivered.
+  assert.equal(runner.snapshot().launches[0]?.transcriptPending, true);
 });
