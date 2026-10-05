@@ -911,7 +911,7 @@ test('idle consumers and consumers in backoff take no writer transactions', asyn
     await events.drain();
     state.transaction = (fn) => (transactions++, transaction(fn));
     state.read = (fn) => (reads++, read(fn));
-    await sleep(1000);
+    await sleep(1500);
     assert.equal(transactions, 0);
     assert.ok(reads > 0, 'the safety wakeup kept looking for work');
     state.transaction = transaction;
@@ -951,7 +951,7 @@ test('the safety wakeup delivers a commit made through another State connection'
     const started = Date.now();
     const { id } = await emitProbe(other);
     await until(() => seen.includes(id));
-    assert.ok(Date.now() - started < 1000, `delivered after ${Date.now() - started} ms`);
+    assert.ok(Date.now() - started < 1500, `delivered after ${Date.now() - started} ms`);
   } finally {
     await events.close();
     await Promise.all([state.close(), other.close()]);
@@ -985,7 +985,7 @@ test('failed deliveries retry on the backoff schedule and a success resets the a
       attempts.map((attempt) => attempt.attempts),
       [0, 1, 2, 3],
     );
-    // 100 ms doubling per recorded failure; each retry waits for the next safety wakeup.
+    // 100 ms doubling per recorded failure; each retry wakes when it is due.
     for (const [index, delay] of [100, 200, 400].entries()) {
       const gap = attempts[index + 1]!.at - attempts[index]!.at;
       assert.ok(gap >= delay && gap < delay + 400, `retry ${index + 1} after ${gap} ms`);

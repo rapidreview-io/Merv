@@ -1250,12 +1250,15 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     if (!this.bases) return;
     const records = await this.bases.records(tx, projectId);
     // Generic Code consumers share storage but do not opt into work-unit quarantine policy.
-    const units: UnitRow[] = [];
+    // With no quarantined base nothing is reached, so only units still marked need clearing.
+    const units: Array<UnitRow & { terminal: boolean }> = [];
     for (const row of await tx.all<UnitRow>(
-      `SELECT ${unitColumns} FROM code_units WHERE project_id=?`,
+      `SELECT ${unitColumns} FROM code_units WHERE project_id=?${records.some((base) => base.quarantined) ? '' : ' AND quarantine_base_key IS NOT NULL'}`,
       projectId,
-    ))
-      if (await this.dependencies(tx, projectId, row.unit_id)) units.push(row);
+    )) {
+      const relations = await this.dependencies(tx, projectId, row.unit_id);
+      if (relations) units.push({ ...row, terminal: relations.instance.terminal });
+    }
     const tainted = new Map<string, string>();
     const reached = new Map<string, string>();
     let changed = true;
@@ -1317,10 +1320,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       // As in reconcileUnit: a quarantine is a refusal to let more work start on this base,
       // and work that has ended cleared its rows when it ended with nothing left to withdraw
       // one afterwards, so a row written here would block it for good.
-      if (
-        (key || unit.quarantine_base_key) &&
-        !(await this.dependencies(tx, projectId, unit.unit_id))?.instance.terminal
-      )
+      if ((key || unit.quarantine_base_key) && !unit.terminal)
         await this.setBlockers(
           tx,
           projectId,
@@ -1353,17 +1353,21 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     for (const unitId of [...units].sort()) await this.reconcileUnit(tx, projectId, unitId);
   }
 
-  /** Rebuild projects with open bases or retained writers whose facts may change while detached. */
-  async reconcileAll(): Promise<void> {
+  /** Rebuild projects whose facts may change while detached; `resolving`, those owed a task. */
+  async reconcileAll(resolving = false): Promise<void> {
+    if (resolving && !this.bases?.enabled) return;
     const projects = await this.state.read(async (sql) => {
       const ids = new Set(
         (
           await sql.all<{ project_id: string }>(
-            'SELECT DISTINCT project_id FROM code_units WHERE (base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL',
+            resolving
+              ? "SELECT DISTINCT project_id FROM code_bases WHERE state='awaiting_resolution' AND health='healthy' AND resolution_task_id IS NULL"
+              : 'SELECT DISTINCT project_id FROM code_units WHERE (base_json IS NULL AND acceptance_json IS NULL) OR publishes_at IS NOT NULL',
           )
         ).map((row) => row.project_id),
       );
-      for (const writer of await this.writers.writerIdentities(sql)) ids.add(writer.projectId);
+      if (!resolving)
+        for (const writer of await this.writers.writerIdentities(sql)) ids.add(writer.projectId);
       return [...ids].sort();
     });
     for (const projectId of projects)
@@ -1378,12 +1382,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
    * those.
    */
   async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
-    if (
-      this.bases?.enabled &&
-      (await this.bases.records(tx, event.projectId)).some(
-        (base) => base.resolutionTaskId === event.subjectId,
-      )
-    ) {
+    if (this.bases?.enabled && (await this.bases.forTask(tx, event.projectId, event.subjectId))) {
       await this.reconcileProject(tx, event.projectId);
       return;
     }

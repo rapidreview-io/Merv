@@ -8,9 +8,11 @@ import type {
   CodeStoreOperation,
 } from '@merv/contracts';
 import type { Code } from './types.js';
+import type { CodeService } from './service.js';
 import type { GitHubBinding } from '@merv/code/github';
 
-type PreparationHost = Pick<Code, 'github' | 'status' | 'importRepository'> & {
+type PreparationHost = Pick<Code, 'github' | 'importRepository'> & {
+  repositoryState(caller: Caller): ReturnType<CodeService['repositoryState']>;
   bindLocal(
     caller: Caller,
     input: Parameters<Code['bindLocal']>[1],
@@ -51,13 +53,7 @@ export async function prepareRepository(
     'Select a repository and enable repository access first',
     409,
   );
-  const before = await code.status(caller);
-  check(
-    before.store,
-    'code_store_unavailable',
-    'Repository storage is not configured on this server',
-    503,
-  );
+  const before = await code.repositoryState(caller);
   if (before.project?.durability === 'code') {
     check(reconcile, 'code_sync_unavailable', 'Managed repository integration is unavailable', 503);
     const operation = await code.importRepository(caller, {
@@ -137,7 +133,7 @@ export async function prepareRepository(
     },
     requestId: `${input.requestId}:import`,
   });
-  const after = await code.status(caller);
+  const after = await code.repositoryState(caller);
   const current = await code.github.status(caller);
   check(
     current.revision === input.expectedRevision && current.baseBranch === input.baseBranch,
@@ -158,8 +154,7 @@ export async function prepareRepository(
     409,
   );
   // A successful transfer is not enough: the selected commit itself must be retained.
-  const ready =
-    operation.status === 'completed' && after.project.main.stored && after.store?.hosted;
+  const ready = operation.status === 'completed' && after.project.main.stored && after.store.hosted;
   return {
     state: ready ? 'ready' : operation.status === 'prepared' ? 'importing' : 'failed',
     baseBranch: input.baseBranch,

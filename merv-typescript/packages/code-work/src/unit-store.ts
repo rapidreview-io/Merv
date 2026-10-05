@@ -295,7 +295,7 @@ export class WorkUnitRecords {
     };
   }
 
-  protected async project(sql: Sql, projectId: string): Promise<CodeProjectBinding | null> {
+  async project(sql: Sql, projectId: string): Promise<CodeProjectBinding | null> {
     return this.code.project(sql, projectId);
   }
 

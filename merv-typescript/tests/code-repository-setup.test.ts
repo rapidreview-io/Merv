@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { codeRepositoryImportInputSchema } from '@merv/contracts';
 import type { Caller, CodeRepositoryPrepareInput, CodeStoreOperation } from '@merv/contracts';
-import type { Code } from '../packages/code-work/src/types.js';
 import { prepareRepository } from '../packages/code-work/src/repository-setup.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
@@ -40,7 +39,7 @@ function fixture() {
       }),
       branches: async () => [{ name: selection.baseBranch, sha: state.branchHead }],
     },
-    status: async () => ({
+    repositoryState: async () => ({
       project: state.main
         ? { repositoryId: state.repositoryId, main: { oid: state.main, stored: state.stored } }
         : null,
@@ -57,7 +56,7 @@ function fixture() {
       if (state.reboundDuringImport) state.repositoryId = 'github:99';
       return { id: 'import-1', status: state.operation };
     },
-  } as unknown as Pick<Code, 'github' | 'status' | 'bindLocal' | 'importRepository'>;
+  } as unknown as Parameters<typeof prepareRepository>[0];
   return { state, run: (input = selection) => prepareRepository(code, caller, input) };
 }
 
