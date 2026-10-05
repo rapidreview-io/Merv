@@ -572,6 +572,34 @@ export interface Sql {
 export interface Transaction extends Sql {
   readonly transactionId: symbol;
 }
+/** Whose day a model call counts toward: a person's sign-in identity, else the acting actor.
+ *  Every feature keys a person alike, so one day counts all their calls. */
+export const personKey = (
+  user: { issuer: string; subject: string } | null | undefined,
+  actor: { projectId: string; actorId: string },
+) =>
+  digest(
+    user
+      ? { issuer: user.issuer, subject: user.subject }
+      : { projectId: actor.projectId, actorId: actor.actorId },
+  );
+/** The provider endpoint model relays call upstream. */
+export const RESPONSES_URL = 'https://api.openai.com/v1/responses';
+/** A daily token ledger, `table(person,day,tokens)`. `charge` adds a call's most to the day unless
+ *  the day's total would pass `ceiling` (false then); `settle` corrects that day by `delta`. */
+export const dailyTokens = (table: string) => ({
+  charge: async (sql: Sql, person: string, day: string, tokens: number, ceiling: number) =>
+    tokens <= ceiling &&
+    !!(await sql.get(
+      `INSERT INTO ${table}(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=${table}.tokens+excluded.tokens WHERE ${table}.tokens+excluded.tokens <= ? RETURNING tokens`,
+      person,
+      day,
+      tokens,
+      ceiling,
+    )),
+  settle: (sql: Sql, person: string, day: string, delta: number) =>
+    sql.run(`UPDATE ${table} SET tokens=tokens+? WHERE person=? AND day=?`, delta, person, day),
+});
 export interface Migration {
   /** A positive integer that fits PostgreSQL INTEGER. */
   version: number;
@@ -1043,9 +1071,14 @@ export interface Scope {
   /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
    * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
-  /** A credential-free producer owned by a server provider, scoped to one project; only
-   * Fleet's review director, 'fleet-review', is a reviewer instead. `provider` is a lowercase
-   * slug, and `role` defaults to the provider's own. */
+  /** The person who created the project by signing in, or null (a bootstrapped or imported one). */
+  projectCreator(
+    projectId: string,
+    tx?: Transaction,
+  ): Promise<{ issuer: string; subject: string } | null>;
+  /** A credential-free service actor owned by a server provider, scoped to one project. `provider`
+   * is a lowercase slug; `role` defaults to producer, and scope@9's trigger refuses a role the
+   * provider may not hold. */
   serviceActor(
     provider: string,
     projectId: string,

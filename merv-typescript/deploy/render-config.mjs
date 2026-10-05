@@ -457,10 +457,13 @@ if (legacySourceId !== undefined) {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(legacySourceId)) {
     throw new Error('Invalid MERV_TS_LEGACY_SOURCE_ID');
   }
-  config.plugins.push({
-    id: 'legacy-history-ui',
-    name: new URL('../dist/src/legacy-history-ui.js', import.meta.url).href,
-    config: { sourceId: legacySourceId },
-  });
+  config.plugins.push(
+    { id: 'legacy-history', name: '@merv/legacy-history' },
+    {
+      id: 'legacy-history-ui',
+      name: '@merv/legacy-history/ui',
+      config: { sourceId: legacySourceId },
+    },
+  );
 }
 writeFileSync(process.argv[2] ?? '/tmp/merv-config.json', JSON.stringify(config), { mode: 0o600 });

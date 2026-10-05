@@ -224,7 +224,7 @@ async function fixture(
     if (options.sourceKind.startsWith('service')) {
       const vouchedBy = await scope.delegationSource(source);
       source = {
-        ...(await scope.serviceActor('fleet-review', project.id)),
+        ...(await scope.serviceActor('fleet-review', project.id, undefined, 'reviewer')),
         service: { vouchedBy },
       };
     }

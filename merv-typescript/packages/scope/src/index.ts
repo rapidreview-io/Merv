@@ -1,6 +1,6 @@
 import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
-import { ACTOR_WITH_MEMBER, needs, permits, serviceRole, workerRoles } from './roles.js';
+import { ACTOR_WITH_MEMBER, needs, permits, workerRoles } from './roles.js';
 import { visible, createService, receipted, sha256Hex, within } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { postgresMigrations as memberships } from './memberships.postgres.js';
@@ -187,11 +187,20 @@ export class ProjectScope implements Scope {
         });
     return [...owners].map(([projectId, source]) => ({ projectId, source }));
   }
+  async projectCreator(projectId: string, tx?: Transaction) {
+    const row = await within(this.state, tx, (sql) =>
+      sql.get<{ issuer: string; subject: string }>(
+        'SELECT issuer,subject FROM user_project_requests WHERE project_id=?',
+        projectId,
+      ),
+    );
+    return row ? { issuer: row.issuer, subject: row.subject } : null;
+  }
   async serviceActor(
     provider: string,
     projectId: string,
     tx?: Transaction,
-    role: 'producer' | 'reviewer' = serviceRole(provider),
+    role: 'producer' | 'reviewer' = 'producer',
   ): Promise<Caller> {
     check(
       typeof provider === 'string' && /^[a-z][a-z0-9-]{0,62}$/.test(provider),

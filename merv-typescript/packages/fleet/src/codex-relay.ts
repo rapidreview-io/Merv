@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
+import { check, dailyTokens, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
 import type { ModelRelayConfig } from './types.js';
 
@@ -155,6 +155,7 @@ export function codexPayload(raw: unknown, grant: ManagedModelGrant) {
 }
 
 const day = () => new Date().toISOString().slice(0, 10);
+const ledger = dailyTokens('fleet_model_usage');
 
 /** A person's daily Fleet model tokens: their own limit, else the deployment's. */
 async function ceiling(sql: Sql, person: string, fallback: number) {
@@ -244,15 +245,7 @@ export function codexModelRelay(
       const today = day();
       const charged = await state.transaction(async (tx) => {
         const limit = await ceiling(tx, grant.person, options.dailyTokensPerPerson);
-        const admitted =
-          most <= limit &&
-          (await tx.get(
-            'INSERT INTO fleet_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=fleet_model_usage.tokens+excluded.tokens WHERE fleet_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
-            grant.person,
-            today,
-            most,
-            limit,
-          ));
+        const admitted = await ledger.charge(tx, grant.person, today, most, limit);
         if (admitted)
           await tx.run(
             'DELETE FROM fleet_model_blockers WHERE person=? AND day=?',
@@ -284,14 +277,8 @@ export function codexModelRelay(
     // Settles the day the call was charged to, even past midnight.
     onUsage: async (record, grant, reserved) => {
       log(record);
-      await state.transaction((tx) =>
-        tx.run(
-          'UPDATE fleet_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
-          record.inputTokens + record.outputTokens - reserved.tokens,
-          grant.person,
-          reserved.day,
-        ),
-      );
+      const delta = record.inputTokens + record.outputTokens - reserved.tokens;
+      await state.transaction((tx) => ledger.settle(tx, grant.person, reserved.day, delta));
     },
   };
 }

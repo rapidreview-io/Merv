@@ -1,3 +1,4 @@
+import { RESPONSES_URL } from '@merv/contracts';
 import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
@@ -20,8 +21,6 @@ export type PiRelayConfig = Omit<
     /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
     models: readonly { id: string; effort: 'none' | 'low' }[];
   };
-
-const responsesUrl = 'https://api.openai.com/v1/responses';
 
 /** Pi's relay: one model call at a time per conversation, as a person's conversations share one
  *  machine, in the Pi-shaped request its worker sends. */
@@ -71,7 +70,7 @@ export function piModelRelay({ models, authority, ...config }: PiRelayConfig): P
  */
 export async function piTitle(model: string, key: string, user: string, reply: string) {
   try {
-    const response = await fetch(responsesUrl, {
+    const response = await fetch(RESPONSES_URL, {
       method: 'POST',
       redirect: 'error',
       signal: AbortSignal.timeout(10_000),

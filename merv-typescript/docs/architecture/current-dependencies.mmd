@@ -25,6 +25,7 @@ flowchart BT
     identity["identity"]
     knowledge["knowledge"]
     merv_knowledge_tools["merv-knowledge-tools"]
+    legacyHistory["legacyHistory"]
     merv_legacy_history_ui["merv-legacy-history-ui"]
     mounts["mounts"]
     merv_mounts_ui["merv-mounts-ui"]
@@ -147,8 +148,9 @@ flowchart BT
   knowledge -. optional .-> codeWork
   merv_knowledge_tools --> knowledge
   merv_knowledge_tools --> tools
-  merv_legacy_history_ui --> state
-  merv_legacy_history_ui --> scope
+  legacyHistory --> state
+  legacyHistory --> scope
+  merv_legacy_history_ui --> legacyHistory
   merv_legacy_history_ui --> ui
   mounts --> tools
   mounts --> scope

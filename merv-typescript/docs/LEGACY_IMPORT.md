@@ -4,7 +4,7 @@ Production imported the Python system's projects, memberships, artifacts, figure
 
 What production still serves from the import:
 
-- The read-only history archive: `src/legacy-history.ts`, its UI adapter `src/legacy-history-ui.ts` and the figure/feed file links in `src/legacy-media-links.ts`, composed when `MERV_TS_LEGACY_SOURCE_ID` names the imported source.
+- The read-only history archive, `packages/legacy-history`: its reader `@merv/legacy-history` (`src/history.ts`), its UI adapter `@merv/legacy-history/ui` and the figure/feed file links in `src/media-links.ts`, composed when `MERV_TS_LEGACY_SOURCE_ID` names the imported source.
 - Imported artifacts as ordinary native artifacts. Those over the 2 MB inline limit (up to 512 MiB) are read through the authorized 60-minute download in [production blob storage](PRODUCTION_BLOBS.md#large-retained-artifacts).
 - The `legacy_foundation_imports` receipt table and the `legacy-foundation-import` and `legacy-history` migrations. Their published hashes stay pinned by `tests/published-migrations.test.ts`.
 
@@ -48,4 +48,4 @@ Legacy membership has no role column. Its HTTP routes explicitly let **any human
 
 Derived and OAuth credentials carry audience, expiry, family, parent and quota restrictions that cannot be discarded. Do not activate them as unrestricted TypeScript keys. Old session/review capability hashes and transport sessions remain historical records, not new credentials.
 
-Completed artifact figures and retained feed images, embeds and link previews became native artifacts with deterministic IDs derived from project, record type, record ID and attachment slot; the history UI derives the same IDs with `legacy-media-links`. Historical lineage rows whose bytes were never retained stay metadata-only in the archive. Unfinished legacy work was not resumed; it stays visibly historical.
+Completed artifact figures and retained feed images, embeds and link previews became native artifacts with deterministic IDs derived from project, record type, record ID and attachment slot; the history UI derives the same IDs with `media-links`. Historical lineage rows whose bytes were never retained stay metadata-only in the archive. Unfinished legacy work was not resumed; it stays visibly historical.

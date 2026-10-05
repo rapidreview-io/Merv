@@ -5,7 +5,7 @@ import {
   type LegacyHistoryFileRetention,
   type LegacyHistoryReceipt,
   type LegacyHistoryType,
-} from '../../src/legacy-history.js';
+} from '@merv/legacy-history/history';
 
 export interface ArchivedFixtureRecord {
   projectId: string;

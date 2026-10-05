@@ -9,7 +9,7 @@ import {
   LegacyHistoryReader,
   legacyHistoryTypes,
   type LegacyHistoryType,
-} from '../src/legacy-history.js';
+} from '@merv/legacy-history/history';
 import { seedLegacyHistory, type ArchivedFixtureRecord } from './fixtures/legacy-history.js';
 import { stateConfig } from './fixtures/state.js';
 

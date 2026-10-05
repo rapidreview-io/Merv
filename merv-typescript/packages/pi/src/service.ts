@@ -2,9 +2,11 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
   check,
+  dailyTokens,
   delegationEnd,
   digest,
   newId,
+  personKey,
   plain,
   MervError,
   type Blobs,
@@ -83,6 +85,7 @@ import type {
 } from './types.js';
 
 const active = new Set(['waiting', 'starting', 'working', 'saving']);
+const piLedger = dailyTokens('pi_model_usage');
 const hash = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const equal = (left: string, right: string) =>
   left.length === right.length && timingSafeEqual(Buffer.from(left), Buffer.from(right));
@@ -485,11 +488,7 @@ export class PiService implements Pi, FleetOwner {
       403,
     );
     const actor = await this.scope.require(caller, 'read', tx);
-    return digest(
-      actor.user
-        ? { issuer: actor.user.issuer, subject: actor.user.subject }
-        : { projectId: caller.projectId, actorId: caller.actorId },
-    );
+    return personKey(actor.user, caller);
   }
   private async owned(caller: Caller, id: string, tx: Transaction): Promise<PiConversationRecord> {
     const userId = await this.user(caller, tx);
@@ -2266,17 +2265,9 @@ export class PiService implements Pi, FleetOwner {
       Math.ceil(JSON.stringify(body).length / 4) + (Number(body.max_output_tokens) || 128_000);
     const day = this.time().slice(0, 10);
     const ceiling = this.config.dailyTokensPerPerson;
-    const charged =
-      most <= ceiling &&
-      (await this.state.transaction((tx) =>
-        tx.get(
-          'INSERT INTO pi_model_usage(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=pi_model_usage.tokens+excluded.tokens WHERE pi_model_usage.tokens+excluded.tokens <= ? RETURNING tokens',
-          grant.userId,
-          day,
-          most,
-          ceiling,
-        ),
-      ));
+    const charged = await this.state.transaction((tx) =>
+      piLedger.charge(tx, grant.userId, day, most, ceiling),
+    );
     check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
     return { day, tokens: most };
   }
@@ -2286,14 +2277,8 @@ export class PiService implements Pi, FleetOwner {
     reserved: PiModelCharge,
   ): Promise<void> {
     // Settles the day the call was charged to, even past midnight.
-    await this.state.transaction((tx) =>
-      tx.run(
-        'UPDATE pi_model_usage SET tokens=tokens+? WHERE person=? AND day=?',
-        usage.inputTokens + usage.outputTokens - reserved.tokens,
-        grant.userId,
-        reserved.day,
-      ),
-    );
+    const delta = usage.inputTokens + usage.outputTokens - reserved.tokens;
+    await this.state.transaction((tx) => piLedger.settle(tx, grant.userId, reserved.day, delta));
   }
   async validateModel(grant: Awaited<ReturnType<PiService['authorizeModel']>>): Promise<void> {
     this.ready();

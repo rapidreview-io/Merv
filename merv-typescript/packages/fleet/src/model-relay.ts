@@ -1,13 +1,12 @@
 import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { RESPONSES_URL } from '@merv/contracts';
 import type {
   ModelRelayConfig,
   ModelRelayFailure,
   ModelRelayGrant,
   ModelRelayHandle,
 } from './types.js';
-
-const responsesUrl = 'https://api.openai.com/v1/responses';
 
 class RelayFailure extends Error {
   constructor(
@@ -309,7 +308,7 @@ export class ModelRelay<
       await validate();
       phase = 'upstream';
       const upstream = await interruptible(
-        (this.config.fetchImpl ?? fetch)(responsesUrl, {
+        (this.config.fetchImpl ?? fetch)(RESPONSES_URL, {
           method: 'POST',
           redirect: 'error',
           signal,

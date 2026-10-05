@@ -7,7 +7,8 @@ import { useRunSchema } from './database.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { SignJWT } from 'jose';
 import type { Project } from '@merv/contracts';
-import { legacyHistoryUiPlugin } from '../src/legacy-history-ui.js';
+import { legacyHistoryPlugin } from '@merv/legacy-history';
+import { legacyHistoryUiPlugin } from '@merv/legacy-history/ui';
 import { seedLegacyHistory } from '../tests/fixtures/legacy-history.js';
 
 /**
@@ -411,6 +412,7 @@ async function main() {
     ],
     { sourceId },
   );
+  await app.ctx.plugin(legacyHistoryPlugin);
   const history = app.ctx.plugin(legacyHistoryUiPlugin, { sourceId });
   await history;
   const credentialsFile = join(directory, 'private-preview.json');

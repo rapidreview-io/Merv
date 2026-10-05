@@ -7,7 +7,7 @@ import { digest, type Migration, type State } from '@merv/contracts';
 import { PostgresState } from '@merv/state';
 import { createApp } from './fixtures/app.js';
 import { initializeLegacyFoundationImports } from '../src/legacy-import.js';
-import { initializeLegacyHistory } from '../src/legacy-history.js';
+import { initializeLegacyHistory } from '@merv/legacy-history/history';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { modelMigrations } from '../packages/fleet/src/codex-relay.js';
 import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';

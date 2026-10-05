@@ -124,8 +124,9 @@ export interface Tools {
   validateSession(caller: Caller, name: string, input: Data): Promise<void>;
   /** Adds a part to the guide every main agent is given (MCP instructions, Pi's prompt). */
   contributeInstructions(text: string): () => void;
-  /** The contributed parts in contribution order, then the registry's own, joined by blank lines. */
-  instructions(): string;
+  /** The contributed parts in contribution order, then the registry's own, joined by blank lines.
+   *  A session is given only its policy's own instructions. */
+  instructions(caller?: 'session'): string;
   /** Adds a reader of what a main agent's turn is told about the project as it is now: source
    *  material beside the person's message (Pi's turn context), never instructions. */
   contributeContext(read: (caller: Caller) => Promise<string | undefined>): () => void;

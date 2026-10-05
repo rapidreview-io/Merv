@@ -130,7 +130,7 @@ test('managed funding shares creator identity across projects and separates acco
   assert.equal(f.roots.size, 3);
   await assert.rejects(f.service.begin(f.a), { code: 'sandbox_managed_required' });
   await assert.rejects(
-    f.state.read((tx) => managedAccountSubject('imported-without-owner', tx)),
+    f.state.transaction((tx) => managedAccountSubject(f.scope, 'imported-without-owner', tx)),
     { code: 'compute_account_missing' },
   );
 });

@@ -1,5 +1,5 @@
 import { check, digest, type Data } from '@merv/contracts';
-import type { LegacyHistoryType } from './legacy-history.js';
+import type { LegacyHistoryType } from './history.js';
 
 export type MediaKind = 'artifacts' | 'figures' | 'postImages' | 'postEmbeds' | 'linkPreviewImages';
 export type MediaSlot = 'figure' | 'image' | 'embed' | 'link-preview-image';
