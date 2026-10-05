@@ -235,11 +235,14 @@ export class CodeService extends CodeCommandService implements Code {
         this.mirrorStore?.initialize();
         await this.publicationStore.initialize();
         await migrateRepositorySync(state);
-        // The first pass waits a period, so Reviews, which every publication checks, is bound.
-        this.publicationTimer = setInterval(
-          () => void this.network(() => this.publicationStore.syncDue()).catch(() => undefined),
-          30_000,
-        );
+        // The first pass waits a period, so Reviews, which every publication checks, is bound;
+        // a tick while a pass runs starts nothing, and closing stops the pass.
+        let pass: Promise<unknown> | undefined;
+        this.publicationTimer = setInterval(() => {
+          pass ??= this.network(() => this.publicationStore.syncDue(() => this.publicationClosed))
+            .catch(() => undefined)
+            .finally(() => (pass = undefined));
+        }, 30_000);
         this.publicationTimer.unref();
       } catch (error) {
         await this.close();
@@ -631,10 +634,9 @@ export class CodeService extends CodeCommandService implements Code {
     this.captureReader?.close();
     this.unitStore?.close();
     super.close();
-    // Every read is refused from here on. Running admissions still reach the database, which
-    // outlives Code, and are waited for before the writer lock is given up.
-    await Promise.all([merging, mirroring]);
+    // Every read is refused from here on. Running admissions and GitHub calls still reach the
+    // database, which outlives Code, and are waited for before the writer lock is given up.
+    await Promise.all([merging, mirroring, Promise.allSettled([...this.networkOperations])]);
     await this.store?.close();
-    await Promise.allSettled([...this.networkOperations]);
   }
 }

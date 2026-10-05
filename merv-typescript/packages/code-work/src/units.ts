@@ -90,7 +90,7 @@ function publicationBlockers(publication: CodeUnitPublication): WorkflowProvided
     setup_required: {
       code: 'code_publication_setup_required',
       message: `publication setup is incomplete${named}`,
-      next: 'An operator checks code.status publication controls, completes the required merge-safety check or rules visibility, then merges the reviewed pull request.',
+      next: "An operator fixes what code.status names (the publication's lastError, its required merge-safety check or rules visibility); Code then continues and a signed-in operator merges the reviewed pull request.",
     },
     disabled: {
       code: 'code_publication_disabled',
@@ -100,9 +100,7 @@ function publicationBlockers(publication: CodeUnitPublication): WorkflowProvided
     closed: {
       code: 'code_publication_closed',
       message: `the pull request was closed without merging${named}`,
-      next: pull
-        ? `A signed-in project operator reopens pull request #${pull.number} on GitHub, or creates the successor work that carries this accepted commit to main.`
-        : 'Create the successor work that carries this accepted commit to main.',
+      next: 'An operator creates the successor work that carries this accepted commit to main.',
     },
     unsealed: {
       code: 'code_publish_unverifiable',

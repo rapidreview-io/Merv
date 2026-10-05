@@ -125,6 +125,13 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
         who: 'An operator',
         whose: 'operator',
       };
+    case 'code_publication_closed':
+      // Code never reads a closed pull request again, so a reopen changes nothing here.
+      return {
+        sentence: 'The pull request was closed unmerged; an operator creates successor work',
+        who: 'An operator',
+        whose: 'operator',
+      };
     case 'code_publication_incident':
       return {
         sentence: 'A publication incident is kept here until an operator clears it',

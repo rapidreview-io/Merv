@@ -60,8 +60,14 @@ interface Row {
   incident_json: string | null;
 }
 
-/** An unsettled unit publication nobody tried in the last 30 seconds (the one parameter). */
-const due = "settled=0 AND synced_at<? AND record_json::jsonb->'approval'->>'source' = 'unit'";
+/**
+ * An unsettled unit publication not tried in 30 seconds or, once its pull request is open and
+ * waits on a person, in `idle`: ten minutes for Code's own pass, as each read costs ~7 GitHub calls.
+ */
+const due =
+  "settled=0 AND (synced_at<? OR (pull_json IS NULL AND synced_at<?)) AND record_json::jsonb->'approval'->>'source' = 'unit'";
+const since = (idle: number) => [idle, 30_000].map((ms) => new Date(Date.now() - ms).toISOString());
+const IDLE = 600_000;
 
 /** What a unit's publication reads of its pull request: which one, and whether it closed unmerged. */
 const reading = (pull: GitHubPullRequest | null) =>
@@ -194,14 +200,16 @@ export class CodePublicationService implements CodePublicationApi {
         error instanceof MervError && /^[a-z_]{1,100}$/.test(error.code)
           ? error.code
           : 'github_unavailable';
-      await this.state.transaction((tx) =>
-        tx.run(
+      await this.state.transaction(async (tx) => {
+        await tx.run(
           'UPDATE code_publications SET error=? WHERE proposal_id=? AND lock_id=?',
           code,
           id,
           lock,
-        ),
-      );
+        );
+        // A unit reads a failing sync as an operator's wait (unit-store publicationOf).
+        if (row.error !== code) await this.host.reconcile(caller, tx);
+      });
       throw error;
     } finally {
       await this.state.transaction((tx) =>
@@ -376,21 +384,23 @@ export class CodePublicationService implements CodePublicationApi {
       'Worker credentials cannot publish pull requests',
       403,
     );
-    await this.scope.require(caller, 'write');
+    await this.sync(caller, 30_000);
+    return this.publications(caller);
+  }
+  private async sync(caller: Caller, idle: number, stopped = () => false) {
     const records = await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      return (
-        await tx.all<Row>(
-          `SELECT * FROM code_publications WHERE project_id=? AND ${due} ORDER BY synced_at,proposal_id`,
-          caller.projectId,
-          new Date(Date.now() - 30_000).toISOString(),
-        )
-      ).map((row) => this.decode(row));
+      return tx.all<{ proposal_id: string }>(
+        `SELECT proposal_id FROM code_publications WHERE project_id=? AND ${due} ORDER BY synced_at,proposal_id`,
+        caller.projectId,
+        ...since(idle),
+      );
     });
-    // Each intent is restartable, and one tried in the last 30 seconds waits for the next pass.
-    for (const record of records) {
+    // Each intent is restartable, and one tried too recently waits for a later pass.
+    for (const { proposal_id } of records) {
+      if (stopped()) return;
       try {
-        await this.locked(caller, record.proposalId, async (row, lock) => {
+        await this.locked(caller, proposal_id, async (row, lock) => {
           if (this.decode(row).destination === 'local') {
             await this.publishLocal(caller, row, lock);
             return;
@@ -485,18 +495,17 @@ export class CodePublicationService implements CodePublicationApi {
         /* Durable status is returned; a later authorized poll can reconcile the same intent. */
       }
     }
-    return this.publications(caller);
   }
   /**
    * Nothing else carries an accepted unit to main, so Code syncs every project with a
    * publication due, as its owner: the person Fleet already works for there. A project with
-   * no live operator waits for someone with write access to sync it.
+   * no live operator waits for someone with write access to sync it. It stops once `stopped`.
    */
-  async syncDue() {
+  async syncDue(stopped = () => false) {
     const projects = await this.state.read((sql) =>
       sql.all<{ project_id: string }>(
         `SELECT DISTINCT project_id FROM code_publications WHERE ${due}`,
-        new Date(Date.now() - 30_000).toISOString(),
+        ...since(IDLE),
       ),
     );
     if (!projects.length) return;
@@ -505,7 +514,7 @@ export class CodePublicationService implements CodePublicationApi {
     );
     for (const { project_id } of projects) {
       const owner = owners.get(project_id);
-      if (owner) await this.syncPublications(sourceCaller(owner)).catch(() => undefined);
+      if (owner) await this.sync(sourceCaller(owner), IDLE, stopped).catch(() => undefined);
     }
   }
   async publicationDetails(caller: Caller, proposalId: string) {

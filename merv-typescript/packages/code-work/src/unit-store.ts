@@ -90,6 +90,7 @@ export interface PublicationRow {
   pull_json: string | null;
   merge_json: string | null;
   incident_json: string | null;
+  error: string | null;
   stale: number;
   verified: number;
 }
@@ -315,7 +316,7 @@ export class WorkUnitRecords {
       // Declared to publish, accepted, and nothing opened: its own facts could not be sealed.
       return row.publishes_at && row.acceptance_json ? { state: 'unsealed' } : null;
     const publication = await sql.get<PublicationRow>(
-      'SELECT record_json,pull_json,merge_json,incident_json,stale,verified FROM code_publications WHERE proposal_id=? AND project_id=?',
+      'SELECT record_json,pull_json,merge_json,incident_json,error,stale,verified FROM code_publications WHERE proposal_id=? AND project_id=?',
       row.publication_id,
       projectId,
     );
@@ -338,7 +339,10 @@ export class WorkUnitRecords {
           ? 'stale'
           : pull && pull.state === 'closed' && !pull.merged
             ? 'closed'
-            : 'pending';
+            : // A sync failing before any pull request opens waits on an operator, not the server.
+              !pull && publication.error
+              ? 'setup_required'
+              : 'pending';
     return {
       state,
       ...(destination ? { destination } : {}),

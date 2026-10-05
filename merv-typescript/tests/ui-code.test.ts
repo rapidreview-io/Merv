@@ -1961,6 +1961,12 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
     who: 'An operator',
     whose: 'operator',
   });
+  // A closed publication is settled, so the way on is successor work, which is an operator's.
+  assert.deepEqual(said('code_publication_closed'), {
+    sentence: 'The pull request was closed unmerged; an operator creates successor work',
+    who: 'An operator',
+    whose: 'operator',
+  });
   assert.deepEqual(said('code_publication_incident'), {
     sentence: 'A publication incident is kept here until an operator clears it',
     who: 'An operator',
@@ -2030,7 +2036,6 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
   for (const quiet of [
     'code_base_wait',
     'code_base_blocked',
-    'code_publication_closed',
     'code_dependencies_changed',
     'input_required',
   ])
@@ -2040,6 +2045,7 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
   for (const code of [
     'code_publication_pending',
     'code_publication_stale',
+    'code_publication_closed',
     'code_publication_disabled',
     'code_publication_setup_required',
     'code_publication_incident',

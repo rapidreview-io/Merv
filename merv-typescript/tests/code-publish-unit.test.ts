@@ -796,6 +796,9 @@ test('reviewed local work reaches main without GitHub and keeps the exact review
   assert.equal(wakes[0].data.destination, 'local');
 });
 
+type Pass = { syncDue(stopped?: () => boolean): Promise<void> };
+const passOf = (code: unknown) => (code as { publicationStore: Pass }).publicationStore;
+
 test('Code carries accepted local work to main by itself, every due publication in one pass', async (t) => {
   const f = await fixture(t, false, true);
   const first = await f.declare('First');
@@ -807,13 +810,75 @@ test('Code carries accepted local work to main by itself, every due publication 
   await f.accept(first, f.feature);
   await f.accept(second, f.root0);
   // Nobody syncs: the pass Code runs on its own acts as the project's owner.
-  const store = (f.code as unknown as { publicationStore: { syncDue(): Promise<void> } })
-    .publicationStore;
-  await store.syncDue();
+  await passOf(f.code).syncDue();
   assert.equal((await f.code.status(f.admin)).project?.main.oid, f.feature);
   assert.equal((await f.code.unit(f.admin, first.id)).publication?.state, 'published');
   // Whichever went second, the same pass settled it: integrated, or stale behind main.
   assert.notEqual((await f.code.unit(f.admin, second.id)).publication?.state, 'pending');
+});
+
+test('an open pull request is read rarely, and a closed one names the move that works', async (t) => {
+  const f = await fixture(t, true);
+  await f.canary();
+  const work = await f.declare('Publishing');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  const tried = (ago: number) =>
+    f.state.transaction((tx) =>
+      tx.run('UPDATE code_publications SET synced_at=?', new Date(Date.now() - ago).toISOString()),
+    );
+  await passOf(f.code).syncDue();
+  assert.equal(f.remote!.pulls.length, 1);
+  const calls = f.remote!.calls.length;
+  // Waiting on a person is not GitHub work: a minute later nothing is read again.
+  await tried(60_000);
+  await passOf(f.code).syncDue();
+  assert.equal(f.remote!.calls.length, calls);
+  // Ten minutes later it is, so a pull request closed on GitHub still reaches the unit.
+  f.remote!.pulls[0].state = 'closed';
+  await tried(601_000);
+  await passOf(f.code).syncDue();
+  assert.ok(f.remote!.calls.length > calls);
+  const [blocker] = await f.blockers(work.id);
+  assert.equal(blocker.code, 'code_publication_closed');
+  // A closed publication is settled and never read again, so reopening it is no way out.
+  assert.doesNotMatch(blocker.next ?? '', /reopen/);
+});
+
+test('a sync that keeps failing before its pull request opens waits on an operator', async (t) => {
+  const f = await fixture(t);
+  const work = await f.declare('Local integration');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  // Reviews is unbound from publication, so every check of the reviewed facts fails.
+  const host = (f.code as unknown as { publicationHost: { bindReviews(r: unknown): () => void } })
+    .publicationHost;
+  host.bindReviews(f.reviews)();
+  await f.sync();
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'setup_required');
+  assert.equal((await f.blockers(work.id))[0].code, 'code_publication_setup_required');
+  host.bindReviews(f.reviews);
+  await f.sync();
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'published');
+  assert.deepEqual(await f.blockers(work.id), []);
+});
+
+test('a pass stops between publications once Code is closing', async (t) => {
+  const f = await fixture(t, false, true);
+  for (const name of ['First', 'Second']) {
+    const work = await f.declare(name);
+    await f.publishes(work);
+    await f.pin(work);
+    await f.accept(work, f.feature);
+  }
+  let tries = 0;
+  await passOf(f.code).syncDue(() => tries++ > 0);
+  assert.deepEqual((await f.code.publications(f.admin)).map((item) => item.verified).sort(), [
+    false,
+    true,
+  ]);
 });
 
 test('local integration refuses a main that moved after review', async (t) => {
