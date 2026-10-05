@@ -11,14 +11,7 @@ import {
 } from '@merv/contracts';
 import { isoNow, readFirst } from './common.js';
 import { postgresMigrations } from './stream.postgres.js';
-import type { Session } from './types.js';
-
-/** What a runner sends of its agent's output: the events read from the log's bytes [from, to). */
-export interface SessionStreamBatch {
-  from: number;
-  to: number;
-  events: AgentEvent[];
-}
+import type { Session, SessionStreamBatch, SessionStreamReads } from './types.js';
 
 /** How long after its session closed a stream still takes the agent's last words. */
 export const STREAM_GRACE_MS = 10 * 60_000;
@@ -82,7 +75,7 @@ const view = (row: Row): AgentStreamEvent => ({
  * Pushes come from this process's own ingests; a page also re-reads every two seconds, so a
  * batch another app instance took arrives too.
  */
-export class SessionStreams {
+export class SessionStreams implements SessionStreamReads {
   private readonly readers = new Map<string, Set<() => void>>();
   private open = 0;
   constructor(

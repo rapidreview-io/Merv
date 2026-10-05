@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/contracts';
-import type { SessionStreamBatch } from '@merv/sessions/stream';
+import type { SessionStreamBatch } from '@merv/sessions/types';
 import {
   agentLines,
   AgentStream,

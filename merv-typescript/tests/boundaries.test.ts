@@ -451,8 +451,10 @@ function assertComponentReferences(
       // Identity's credential store is a public shared authority, also usable by standalone services.
       const credentials =
         ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
+      // API's server-sent-events writer, for the HTTP adapters that stream to a page.
+      const events = isAdapter && specifier === '@merv/api/event-stream';
       // Pure rules (no service, see the test below) that any unit may run.
-      if (!utility && !credentials && !pureRules.has(specifier)) {
+      if (!utility && !credentials && !events && !pureRules.has(specifier)) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,

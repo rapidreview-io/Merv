@@ -1,7 +1,6 @@
-import type { NativeMcpConnection } from '@merv/contracts';
+import type { AgentEvent, AgentStreamEvent, NativeMcpConnection } from '@merv/contracts';
 export type { NativeMcpConnection } from '@merv/contracts';
 import type { HuggingFaceAccess } from '@merv/secrets/types';
-import type { SessionStreams } from './stream.js';
 import type {
   AgentObservation,
   BudgetStatus,
@@ -473,7 +472,7 @@ export interface Sessions {
   /** Runner-only, live or just closed: one batch of what its agent printed (SessionStreamBatch). */
   stream(caller: Caller, input: unknown): Promise<{ until: number; seq: number }>;
   /** What the events route reads of agents' live streams: operator authority, events, wakes. */
-  readonly streams: Pick<SessionStreams, 'authorize' | 'after' | 'snapshot' | 'subscribe'>;
+  readonly streams: SessionStreamReads;
   /** Runner-only: the conversation the session kept, declared and delivered as a transcript is. */
   conversation(
     caller: Caller,
@@ -553,4 +552,19 @@ export interface DispatchDemandInput {
 }
 export interface DispatchDemand {
   candidates: { instanceId: string; expectedRevision: number }[];
+}
+
+/** What the events route reads of agents' live streams: operator authority, events, wakes. */
+export interface SessionStreamReads {
+  authorize(caller: Caller, sessionId: string): Promise<{ growing: boolean }>;
+  after(sessionId: string, after: number, limit: number): Promise<AgentStreamEvent[]>;
+  snapshot(sessionId: string): Promise<AgentStreamEvent[]>;
+  subscribe(sessionId: string, wake: () => void): () => void;
+}
+
+/** What a runner sends of its agent's output: the events read from the log's bytes [from, to). */
+export interface SessionStreamBatch {
+  from: number;
+  to: number;
+  events: AgentEvent[];
 }

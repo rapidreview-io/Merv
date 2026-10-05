@@ -1,7 +1,7 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/contracts';
-import type { SessionStreamBatch } from '@merv/sessions/stream';
+import type { SessionStreamBatch } from '@merv/sessions/types';
 import { RunnerControlError } from './client.js';
 import { blankPattern } from './transcript.js';
 

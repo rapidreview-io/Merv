@@ -1,6 +1,5 @@
 import { nativeMcpConnectionsSchema } from '@merv/contracts';
-import type { NativeMcpConnection } from '@merv/sessions/types';
-import type { SessionStreamBatch } from '@merv/sessions/stream';
+import type { NativeMcpConnection, SessionStreamBatch } from '@merv/sessions/types';
 import { z } from 'zod';
 import {
   canonical,
