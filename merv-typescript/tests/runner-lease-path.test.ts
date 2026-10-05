@@ -376,3 +376,19 @@ test('a guardian lost before it launched anything is ended a minute later and re
   assert.ok(['crash_loop', 'host_failed'].includes(fake.releases(work.id)[0].body?.outcome));
   assert.equal(fake.releases(work.id)[0].body?.reason, 'local_process_guardian_lost_before_launch');
 });
+
+test('a guardian no launch reached in time is released as a launch timeout', async (t) => {
+  const work = offer('timeout');
+  const fake = server(() => null);
+  const f = machine(t, [node('a')], fake.fetch);
+  const ledger = f.ledger();
+  const id = launchId(work.id);
+  ledger.reserve({ id, sessionId: work.id, deadline: Date.now() + 3_600_000, metadata: {} });
+  fake.sessions.set(work.id, { ...work, runnerId: ledger.runnerId, hostRef: id, status: 'active' });
+  ledger.close();
+  ended(f.config.directory, id, { reason: 'launch_timeout' });
+  const runner = f.make();
+  await runner.start();
+  await until(runner, () => fake.releases(work.id).length > 0, 'released');
+  assert.equal(fake.releases(work.id)[0].body?.reason, 'local_process_launch_timeout');
+});

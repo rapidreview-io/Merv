@@ -514,7 +514,8 @@ export class ProjectScope implements Scope {
   }
   async recognizesCredential(token: string): Promise<boolean> {
     if (typeof token !== 'string' || token.length < 32 || token.length > 200) return false;
-    if (token.startsWith('ms_')) return true;
+    // Sessions' bearers (session, managed runner, enrollment), which Scope does not store.
+    if (/^m[ers]_/.test(token)) return true;
     if (await this.userKeys.recognizes(token)) return true;
     return await this.state.read(
       async (sql) =>

@@ -94,6 +94,8 @@ export interface LaunchSpec {
   /** In-memory spawn input. Never persist this object or copy it to a process ledger. */
   env: Record<string, string>;
   stdin: string;
+  /** The bearers this launch carries, which no variable name reveals; the output never shows them. */
+  secrets: string[];
 }
 export interface LaunchRequest {
   session: Session;
@@ -712,6 +714,7 @@ export function buildLaunch(
         : args,
     cwd: request.cwd,
     stdin,
+    secrets: Object.values(bearers),
     env: {
       ...safeEnvironment,
       ...bearers,

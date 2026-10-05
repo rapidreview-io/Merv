@@ -991,7 +991,7 @@ test(
 );
 
 test(
-  'scratch runner refuses a declared persistent workspace before spawning or activating work',
+  'a scratch runner is not offered work on a repository of its own, and nothing is counted',
   { timeout: 20_000 },
   async (t) => {
     const f = await fixture(t);
@@ -1071,22 +1071,16 @@ test(
     const runner = f.make();
     await runner.start();
     await f.enabled(true);
+    // It names `runner.2` without `git.local`, so the lease declines rather than failing work.
     await until(
-      async () => (await f.sessions()).some((session) => session.outcome === 'workspace_failed'),
+      () => runner.snapshot().lastDeclined === 'runner_incompatible',
       runner,
-      'explicit workspace refusal',
+      'incompatible decline',
     );
     await f.enabled(false);
-    assert.equal(runner.snapshot().launches.length, 1);
-    assert.ok(terminal(runner.snapshot().launches[0].status));
-    assert.equal(childResults(f.runnerDirectory).length, 0);
+    assert.equal(runner.snapshot().launches.length, 0);
+    assert.deepEqual(await f.sessions(), []);
     assert.equal((await f.app.ctx.workflows.workStarts(f.source, target.id)).length, 0);
-    assert.equal(
-      (await f.sessions())[0].hostRef,
-      null,
-      'No process was bound for the unsupported workspace',
-    );
-    assert.equal((await f.sessions())[0].execution.policy.workspace?.mode, 'persistent');
   },
 );
 

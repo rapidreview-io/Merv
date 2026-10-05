@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
-import { closeSync, lstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -184,6 +184,7 @@ function terminalReason(record: LaunchRecord): string {
   if (reason === 'host_rebooted') return 'local_process_host_rebooted';
   if (reason === 'guardian_lost_before_launch') return 'local_process_guardian_lost_before_launch';
   if (reason === 'socket_failed') return 'local_process_socket_failed';
+  if (reason === 'launch_timeout') return 'local_process_launch_timeout';
   if (record.exitSignal && /^SIG[A-Z0-9]{1,20}$/.test(record.exitSignal))
     return `local_process_signal_${record.exitSignal}`;
   if (Number.isSafeInteger(record.exitCode) && record.exitCode! >= 0 && record.exitCode! <= 255)
@@ -1046,17 +1047,19 @@ export class MachineRunner implements Runner {
    */
   private readUsage(record: LaunchRecord): SessionUsageReport | undefined {
     const read = (path: string, limit: number, tail = false) => {
-      const stat = lstatSync(path);
-      if (!stat.isFile() || (!tail && stat.size > limit)) throw new Error('Not a readable report');
-      const bytes = Buffer.alloc(Math.min(stat.size, limit)),
-        fd = openSync(path, 'r');
+      // Never a link, and never a wait on a FIFO swapped in before the open.
+      const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       try {
+        const stat = fstatSync(fd);
+        if (!stat.isFile() || (!tail && stat.size > limit))
+          throw new Error('Not a readable report');
+        const bytes = Buffer.alloc(Math.min(stat.size, limit));
         readSync(fd, bytes, 0, bytes.length, stat.size - bytes.length);
+        const text = bytes.toString('utf8');
+        return bytes.length < stat.size ? text.slice(text.indexOf('\n') + 1) : text;
       } finally {
         closeSync(fd);
       }
-      const text = bytes.toString('utf8');
-      return bytes.length < stat.size ? text.slice(text.indexOf('\n') + 1) : text;
     };
     try {
       return sessionUsageReportSchema.parse(JSON.parse(read(usageFile(record), 4096)));
