@@ -187,7 +187,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-03",
+  "snapshot": "2026-10-05",
   "groups": [
     {
       "id": "front",
@@ -2122,7 +2122,8 @@
         "state",
         "scope",
         "artifacts",
-        "sessions"
+        "sessions",
+        "domainEvents"
       ],
       "kind": "service",
       "runtime": "server",
@@ -3820,6 +3821,11 @@
       "optional": true
     },
     {
+      "from": "sandboxes",
+      "to": "domainEvents",
+      "optional": true
+    },
+    {
       "from": "merv-sandboxes-tools",
       "to": "sandboxes",
       "optional": false
@@ -4074,7 +4080,7 @@
     "plugins": 69,
     "providers": 31,
     "adapters": 38,
-    "dependencies": 192
+    "dependencies": 193
   },
   "network": [
     {

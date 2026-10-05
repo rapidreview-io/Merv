@@ -1,12 +1,26 @@
 # Sandboxes
 
-## Native research integration
+## Native compute as an assignment capability
 
-When `native` is configured, newly connected Tasks and Experiments use the native
-Sandboxes MCP interface. Their existing workflow owners pin the project connection
-and stable work namespace; Sessions privately requests bounded assignment access,
-and Runner supplies it to Codex or Claude. Fleet protected hosts and Code checks
-keep their separate connections. Existing pinned work keeps the legacy adapter.
+When `native` is configured, Sandboxes attaches compute to a leased worker session of any
+workflow (docs/COMPUTE_CAPABILITY.md). Its launch-connections provider derives everything from
+the session: the profile from `computeProfile(policy, references.computeProfile)` in
+`@merv/sandboxes/compute-capability`, and the epoch from the instance's workflow data
+`computeEpoch`, else its revision. The first launch in a project with a funded connection pins
+the work, keyed by workflow name and instance id; a project without one runs the work without
+compute, and the profile `none` attaches nothing. Sessions privately requests the bounded
+assignment access and Runner supplies it to Codex or Claude. Fleet protected hosts and Code
+checks keep their separate connections.
+
+Sandboxes follows the lifecycle itself through two durable consumers that start from the
+beginning of the event log and are safe to replay: `sandboxes.native-leases.v1` revokes a
+closed session's assignment, and `sandboxes.native-work.v1` moves pinned work to its instance's
+current epoch on every `workflow.transition` (only ever forward, cancelling the older attempt's
+jobs and access) and closes it on the terminal move. Units read retained evidence with
+`ctx.sandboxes.captures(projectId, instanceId, tx)`. The native service is sent `work_kind`
+`experiment` for the `experiment` workflow and `task` for every other one, until it confirms
+other kinds. Leases issued before 2026-10-04 still carry `sandboxConnectionId`/`sandboxAttempt`/
+`sandboxProfile` references and are issued exactly as they name.
 
 Settings → Integrations enables compute through the same Supabase sign-in used by
 the native Sandboxes console. First sign-in creates one personal backing account;

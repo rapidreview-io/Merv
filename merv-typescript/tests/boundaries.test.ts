@@ -140,7 +140,8 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
-  sandboxes: ['api', 'artifacts', 'scope', 'sessions', 'state'],
+  // Native compute follows session closes and workflow transitions through its own consumers.
+  sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['reviews', 'sandboxes'],
@@ -443,7 +444,9 @@ function assertComponentReferences(
       // Sandboxes publishes the shared managed GPU ledger; owner policy stays in Tasks/Experiments.
       const managedCompute =
         ['tasks', 'experiments'].includes(owner) && specifier === '@merv/sandboxes/managed-compute';
-      if (!utility && !credentials && !managedCompute) {
+      // The compute capability's rule and guidance are pure: any unit may render them.
+      const computeCapability = specifier === '@merv/sandboxes/compute-capability';
+      if (!utility && !credentials && !managedCompute && !computeCapability) {
         assert.ok(
           typeOnly,
           `${path}: importing another component requires an explicit type-only import: ${specifier}`,

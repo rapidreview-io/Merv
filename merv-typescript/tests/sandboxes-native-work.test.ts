@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { randomBytes } from 'node:crypto';
-import { type Scope, type Transaction, sha256Hex } from '@merv/contracts';
+import { type Scope, type StoredEvent, type Transaction, sha256Hex } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { NativeConnections } from '../packages/sandboxes/src/native-connections.js';
 import { NativeWorkService, type NativeResources } from '../packages/sandboxes/src/native-work.js';
@@ -25,10 +25,41 @@ type Assignment = {
   expires_at: string;
   revoked_at: string | null;
 };
-async function fixture(t: TestContext) {
+/** The instance columns Sandboxes reads; Workflows owns the real table. */
+const WF_INSTANCES = `CREATE TABLE wf_instances (id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
+  workflow TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'open',
+  revision INTEGER NOT NULL, data_json TEXT NOT NULL)`;
+const transitionEvent = (
+  workflow: string,
+  id: string,
+  revision: number,
+  terminal = false,
+): StoredEvent => ({
+  id: 0,
+  projectId: 'project',
+  actorId: 'system:test',
+  type: 'workflow.transition',
+  subjectId: id,
+  data: { workflow, revision, terminal },
+  createdAt: new Date().toISOString(),
+});
+async function fixture(
+  t: TestContext,
+  { workflow = 'task', id = 'task_work', pinned = true } = {},
+) {
   const state = await openState(':memory:');
   await state.migrate('native-work-test', nativeMigrations);
   t.after(() => state.close());
+  await state.transaction(async (tx) => {
+    await tx.run(WF_INSTANCES);
+    await tx.run(
+      'INSERT INTO wf_instances(id,project_id,workflow,revision,data_json) VALUES(?,?,?,1,?)',
+      id,
+      'project',
+      workflow,
+      JSON.stringify({ computeEpoch: '1' }),
+    );
+  });
   const calls: {
     path: string;
     body?: Record<string, any>;
@@ -62,8 +93,8 @@ async function fixture(t: TestContext) {
         work_grant_id: 'grant_work',
         namespace: 'ns_work',
         member_id: 'member',
-        work_ref: 'task_work',
-        work_kind: 'task',
+        work_ref: body.work_ref,
+        work_kind: body.work_kind,
         revoked_at: closed ? new Date().toISOString() : null,
       };
     else if (path.endsWith('/assignments') && method === 'POST') {
@@ -76,7 +107,7 @@ async function fixture(t: TestContext) {
         account_id: 'account',
         member_id: 'member',
         project_ref: 'project',
-        work_ref: 'task_work',
+        work_ref: id,
         revoked_at: null,
       };
       assignments.set(body.lease_ref, reply as Assignment);
@@ -131,32 +162,73 @@ async function fixture(t: TestContext) {
     );
   });
   const work = new NativeWorkService(state, connections);
-  await state.transaction(async (tx) => {
-    await work.pin('project', 'task', 'task_work', tx);
-    await work.transition('project', 'task', 'task_work', { attempt: '1' }, tx);
-  });
-  const session = (id = 'lease_one'): Session =>
-    ({
+  /** A move of the instance as Workflows commits it, delivered to the transition consumer. */
+  const move = async (change: { attempt?: string; closed?: boolean }, tx: Transaction) => {
+    const instance = (await tx.get<{ revision: number; data_json: string }>(
+      'SELECT revision,data_json FROM wf_instances WHERE id=?',
       id,
+    ))!;
+    const data = {
+      ...JSON.parse(instance.data_json),
+      ...(change.attempt ? { computeEpoch: change.attempt } : {}),
+    };
+    await tx.run(
+      'UPDATE wf_instances SET revision=?,data_json=? WHERE id=?',
+      instance.revision + 1,
+      JSON.stringify(data),
+      id,
+    );
+    await work.transitioned(
+      transitionEvent(workflow, id, instance.revision + 1, !!change.closed),
+      tx,
+    );
+  };
+  if (pinned)
+    await state.transaction(async (tx) => {
+      await work.pin('project', workflow, id, tx);
+      await work.transitioned(transitionEvent(workflow, id, 1), tx);
+    });
+  /** A lease issued before compute became a capability: it names its scope. */
+  const session = (lease = 'lease_one'): Session =>
+    ({
+      id: lease,
       projectId: 'project',
-      instanceId: 'task_work',
+      instanceId: id,
       hardDeadline: new Date(Date.now() + 3_600_000).toISOString(),
-      lease: { leaseId: id, instanceId: 'task_work', projectId: 'project', workflow: 'task' },
+      lease: { leaseId: lease, instanceId: id, projectId: 'project', workflow },
       execution: {
-        workflow: 'task',
+        workflow,
         policy: { readOnly: false },
         references: {
           sandboxConnectionId: 'connection',
-          sandboxWorkKind: 'task',
-          sandboxWorkId: 'task_work',
+          sandboxWorkKind: workflow,
+          sandboxWorkId: id,
           sandboxAttempt: '1',
           sandboxProfile: 'execute',
         },
       },
     }) as unknown as Session;
+  /** A lease of any workflow now: Sandboxes derives profile and epoch from it. */
+  const leased = (
+    lease = 'lease_one',
+    {
+      policy = { readOnly: false, workspace: { mode: 'persistent' } } as object,
+      references = {} as Record<string, string>,
+      revision = 1,
+    } = {},
+  ): Session =>
+    ({
+      id: lease,
+      projectId: 'project',
+      instanceId: id,
+      expectedRevision: revision,
+      hardDeadline: new Date(Date.now() + 3_600_000).toISOString(),
+      lease: { leaseId: lease, instanceId: id, projectId: 'project', workflow },
+      execution: { workflow, policy, references },
+    }) as unknown as Session;
   const readWork = () =>
     state.read((sql) =>
-      sql.get<NativeWorkRow>("SELECT * FROM sandbox_native_work WHERE work_id='task_work'"),
+      sql.get<NativeWorkRow>('SELECT * FROM sandbox_native_work WHERE work_id=?', id),
     );
   const readAssignment = (lease = 'lease_one') =>
     state.read((sql) =>
@@ -173,6 +245,8 @@ async function fixture(t: TestContext) {
     assignments,
     tombstones,
     session,
+    leased,
+    move,
     readWork,
     readAssignment,
     onResources: (fn: () => Promise<void>) => {
@@ -198,20 +272,14 @@ test('native work pins one payer and returns only verified capture IDs from the 
   await f.state.transaction(async (tx) => {
     assert.equal(await f.work.connected('project', tx), true);
     await f.work.pin('project', 'task', 'task_work', tx);
-    assert.equal(
-      (await f.work.references('project', 'task', 'task_work', '1', 'execute', tx))
-        .sandboxConnectionId,
-      'connection',
-    );
-    await assert.rejects(f.work.references('project', 'task', 'task_work', 'other', 'check', tx), {
-      code: 'sandbox_scope_conflict',
-    });
+    assert.equal((await f.readWork())!.connection_id, 'connection');
+    assert.equal((await f.readWork())!.desired_attempt, '1');
     await tx.run("UPDATE sandbox_native_work SET namespace='ns_work' WHERE work_id='task_work'");
     await tx.run(
       "INSERT INTO sandbox_native_captures VALUES('connection','ns_work','wf','node','verified'),('connection','other','wf','node','unrelated')",
     );
-    assert.deepEqual(await f.work.artifactIds('project', 'task', 'task_work', tx), ['verified']);
-    assert.deepEqual(await f.work.artifactIds('other', 'task', 'task_work', tx), []);
+    assert.deepEqual(await f.work.captures('project', 'task_work', tx), ['verified']);
+    assert.deepEqual(await f.work.captures('other', 'task_work', tx), []);
   });
   assert.equal(f.calls.length, 0);
 });
@@ -256,14 +324,7 @@ for (const reason of ['release', 'attempt', 'closed'] as const)
     f.onIssue(() =>
       f.state.transaction(async (tx) => {
         if (reason === 'release') await f.work.revokeAssignment('lease_one', tx);
-        else
-          await f.work.transition(
-            'project',
-            'task',
-            'task_work',
-            reason === 'closed' ? { closed: true } : { attempt: '2' },
-            tx,
-          );
+        else await f.move(reason === 'closed' ? { closed: true } : { attempt: '2' }, tx);
       }),
     );
     await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_scope_conflict' });
@@ -274,9 +335,7 @@ for (const reason of ['release', 'attempt', 'closed'] as const)
 test('attempt reconciliation fences old assignments and cancels only old provenance while retaining warm machines', async (t) => {
   const f = await fixture(t);
   await f.work.launchConnections(f.session());
-  await f.state.transaction((tx) =>
-    f.work.transition('project', 'task', 'task_work', { attempt: '2' }, tx),
-  );
+  await f.state.transaction((tx) => f.move({ attempt: '2' }, tx));
   f.resources(() => ({
     namespace: 'ns_work',
     next: { workflows: null, jobs: null, sandboxes: null },
@@ -336,9 +395,7 @@ test('attempt reconciliation fences old assignments and cancels only old provena
 test('closure pages both streams, preserves finalizers, retries evidence independently, and confirms stopped machines', async (t) => {
   const f = await fixture(t);
   await f.work.launchConnections(f.session());
-  await f.state.transaction((tx) =>
-    f.work.transition('project', 'task', 'task_work', { closed: true }, tx),
-  );
+  await f.state.transaction((tx) => f.move({ closed: true }, tx));
   let terminal = false,
     stopped = false,
     failEvidence = true;
@@ -407,9 +464,7 @@ test('closure pages both streams, preserves finalizers, retries evidence indepen
 test('repeated pagination cursors cannot falsely confirm cleanup', async (t) => {
   const f = await fixture(t);
   await f.work.launchConnections(f.session());
-  await f.state.transaction((tx) =>
-    f.work.transition('project', 'task', 'task_work', { closed: true }, tx),
-  );
+  await f.state.transaction((tx) => f.move({ closed: true }, tx));
   f.resources(() => ({
     namespace: 'ns_work',
     workflows: [],
@@ -463,11 +518,7 @@ test('connection disconnection during issuance withholds the bearer and expired 
 test('a transition during resource enumeration cannot cancel the newly admitted attempt', async (t) => {
   const f = await fixture(t);
   await f.work.launchConnections(f.session());
-  f.onResources(() =>
-    f.state.transaction((tx) =>
-      f.work.transition('project', 'task', 'task_work', { attempt: '2' }, tx),
-    ),
-  );
+  f.onResources(() => f.state.transaction((tx) => f.move({ attempt: '2' }, tx)));
   f.resources(() => ({
     namespace: 'ns_work',
     next: { workflows: null, jobs: null, sandboxes: null },
@@ -496,9 +547,7 @@ test('closing after an unknown work-creation reply recovers its stable grant bef
   f.loseWorkReply();
   await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_unavailable' });
   assert.equal((await f.readWork())!.native_grant_id, null);
-  await f.state.transaction((tx) =>
-    f.work.transition('project', 'task', 'task_work', { closed: true }, tx),
-  );
+  await f.state.transaction((tx) => f.move({ closed: true }, tx));
   await f.work.reconcile();
   assert.equal(f.calls.filter((c) => c.path === '/v1/delegations/works').length, 2);
   assert.ok(
@@ -543,7 +592,7 @@ test('reconciliation excludes revoked roots without retiring pending cleanup on 
       VALUES('project','task','revoked_work','revoked_connection','old_grant','old_namespace',?,TRUE)`,
       new Date().toISOString(),
     );
-    await f.work.transition('project', 'task', 'task_work', { closed: true }, tx);
+    await f.move({ closed: true }, tx);
   });
   const before = f.calls.length;
   await f.work.reconcile();
@@ -574,7 +623,7 @@ test('pending cleanup takes a bounded reconciliation slot ahead of ordinary evid
         `ordinary_${i}`,
         `ordinary_grant_${i}`,
       );
-    await f.work.transition('project', 'task', 'task_work', { closed: true }, tx);
+    await f.move({ closed: true }, tx);
     await tx.run(
       "UPDATE sandbox_native_work SET evidence_checked_at='2099-01-01' WHERE work_id='task_work'",
     );
@@ -586,4 +635,222 @@ test('pending cleanup takes a bounded reconciliation slot ahead of ordinary evid
     ),
   );
   assert.equal((await f.readWork())!.transition_pending, false);
+});
+
+test('any workflow gets compute: a reflection-like lease is pinned on first launch, checks, and is sent as a task', async (t) => {
+  const f = await fixture(t, { workflow: 'reflection.lens', id: 'lens_work', pinned: false });
+  assert.equal(await f.readWork(), undefined);
+  const [connection] = await f.work.launchConnections(
+    f.leased('lease_one', { policy: { readOnly: false, tools: [] } }),
+  );
+  assert.equal(connection!.name, 'sandboxes');
+  const work = (await f.readWork())!;
+  assert.equal(work.work_kind, 'reflection.lens');
+  assert.equal(work.connection_id, 'connection');
+  assert.equal(work.desired_attempt, '1');
+  assert.equal(work.epoch_revision, 1);
+  const created = f.calls.find((c) => c.path === '/v1/delegations/works')!;
+  assert.deepEqual(created.body, { work_ref: 'lens_work', work_kind: 'task' });
+  const issued = f.calls.find((c) => c.path.endsWith('/assignments') && c.method === 'POST')!;
+  assert.equal(issued.body!.profile, 'check');
+  assert.equal(issued.body!.attempt_ref, '1');
+  assert.equal((await f.readAssignment())!.work_kind, 'reflection.lens');
+  // A second lease reuses the pinned work and its grant.
+  await f.work.launchConnections(f.leased('lease_two'));
+  assert.equal(f.calls.filter((c) => c.path === '/v1/delegations/works').length, 1);
+  assert.equal((await f.readAssignment('lease_two'))!.profile, 'execute');
+});
+
+test('a unit can withhold compute, an unfunded project gets none, and a stale lease is refused', async (t) => {
+  const f = await fixture(t, { workflow: 'task', id: 'service_task', pinned: false });
+  assert.deepEqual(
+    await f.work.launchConnections(
+      f.leased('lease_one', { references: { computeProfile: 'none' } }),
+    ),
+    [],
+  );
+  assert.equal(await f.readWork(), undefined);
+  await assert.rejects(f.work.launchConnections(f.leased('lease_two', { revision: 2 })), {
+    code: 'sandbox_scope_conflict',
+  });
+  assert.equal(await f.readWork(), undefined);
+  await f.state.transaction((tx) =>
+    tx.run("UPDATE sandbox_native_projects SET connection_id=NULL WHERE project_id='project'"),
+  );
+  assert.deepEqual(await f.work.launchConnections(f.leased('lease_three')), []);
+  assert.equal(await f.readWork(), undefined);
+  assert.equal(f.calls.length, 0);
+});
+
+test('the compute epoch follows computeEpoch: a retry keeps access, a new epoch fences it, a replay never rolls it back', async (t) => {
+  const f = await fixture(t);
+  await f.work.launchConnections(f.leased('lease_one'));
+  await f.state.transaction((tx) =>
+    tx.run('UPDATE sandbox_native_work SET transition_pending=FALSE'),
+  );
+  // retry_running: a new revision with the same epoch.
+  await f.state.transaction((tx) => f.move({ attempt: '1' }, tx));
+  let work = (await f.readWork())!;
+  assert.equal(work.desired_attempt, '1');
+  assert.equal(work.epoch_revision, 2);
+  assert.equal(work.transition_pending, false);
+  await f.work.reconcile();
+  assert.equal((await f.readAssignment())!.revoked_at, null);
+  await f.state.transaction((tx) => f.move({ attempt: '2:running' }, tx));
+  work = (await f.readWork())!;
+  assert.equal(work.desired_attempt, '2:running');
+  assert.equal(work.transition_pending, true);
+  await f.work.reconcile();
+  assert.ok((await f.readAssignment())!.revoked_at);
+  // Replaying every event from the beginning leaves the work where the instance stands.
+  for (const revision of [1, 2, 3])
+    await f.state.transaction((tx) =>
+      f.work.transitioned(
+        {
+          id: revision,
+          projectId: 'project',
+          actorId: 'system:test',
+          type: 'workflow.transition',
+          subjectId: 'task_work',
+          data: { workflow: 'task', revision, terminal: false },
+          createdAt: new Date().toISOString(),
+        },
+        tx,
+      ),
+    );
+  assert.equal((await f.readWork())!.desired_attempt, '2:running');
+  // Without computeEpoch the epoch is the revision.
+  await f.state.transaction((tx) =>
+    tx.run("UPDATE wf_instances SET data_json='{}' WHERE id='task_work'"),
+  );
+  await f.state.transaction((tx) => f.move({}, tx));
+  assert.equal((await f.readWork())!.desired_attempt, '4');
+});
+
+test('the transition consumer closes work only on the terminal move that stands, or when the instance is gone', async (t) => {
+  const f = await fixture(t);
+  const event = (revision: number, terminal: boolean, subjectId = 'task_work'): StoredEvent => ({
+    id: revision,
+    projectId: 'project',
+    actorId: 'system:test',
+    type: 'workflow.transition',
+    subjectId,
+    data: { workflow: 'task', revision, terminal },
+    createdAt: new Date().toISOString(),
+  });
+  await f.state.transaction((tx) => f.move({ attempt: '2' }, tx));
+  await f.state.transaction((tx) => f.work.transitioned(event(1, true), tx));
+  assert.equal((await f.readWork())!.closed_at, null);
+  // Unpinned instances and other workflows are not Sandboxes' to touch.
+  await f.state.transaction((tx) => f.work.transitioned(event(1, true, 'unpinned'), tx));
+  assert.equal(
+    await f.state.read((sql) =>
+      sql.get('SELECT 1 FROM sandbox_native_work WHERE work_id=?', 'unpinned'),
+    ),
+    undefined,
+  );
+  await f.state.transaction((tx) => f.move({ closed: true }, tx));
+  const closed = (await f.readWork())!;
+  assert.ok(closed.closed_at);
+  assert.equal(closed.transition_pending, true);
+  await f.state.transaction((tx) => f.work.transitioned(event(3, true), tx));
+  assert.equal((await f.readWork())!.closed_at, closed.closed_at);
+
+  const g = await fixture(t);
+  await g.state.transaction(async (tx) => {
+    await tx.run("DELETE FROM wf_instances WHERE id='task_work'");
+    await g.work.transitioned(event(2, false), tx);
+  });
+  assert.ok((await g.readWork())!.closed_at);
+});
+
+test('the session.closed consumer revokes that lease, fences one still issuing, and skips old history', async (t) => {
+  const f = await fixture(t);
+  const closed = (lease: string, at = new Date()): StoredEvent => ({
+    id: 1,
+    projectId: 'project',
+    actorId: 'system:sessions',
+    type: 'session.closed',
+    subjectId: lease,
+    data: { sessionId: lease },
+    createdAt: at.toISOString(),
+  });
+  await f.work.launchConnections(f.leased('lease_one'));
+  await f.state.transaction((tx) => f.work.sessionClosed(closed('lease_one'), tx));
+  assert.equal((await f.readAssignment())!.revoke_pending, true);
+  await f.work.reconcile();
+  assert.ok(f.tombstones.has('lease_one'));
+  assert.ok((await f.readAssignment())!.revoked_at);
+  // A lease that closed before its issuance committed can never be issued.
+  await f.state.transaction((tx) => f.work.sessionClosed(closed('lease_two'), tx));
+  await assert.rejects(f.work.launchConnections(f.leased('lease_two')), {
+    code: 'sandbox_scope_conflict',
+  });
+  // Replayed history older than any lease adds no tombstone, and revokes what it did issue.
+  const old = new Date(Date.now() - 30 * 24 * 3_600_000);
+  await f.state.transaction(async (tx) => {
+    await f.work.sessionClosed(closed('lease_ancient', old), tx);
+    await f.work.sessionClosed(closed('lease_one', old), tx);
+  });
+  const tombstones = await f.state.read((sql) =>
+    sql.all<{ lease_id: string }>('SELECT lease_id FROM sandbox_native_revoked_leases ORDER BY 1'),
+  );
+  assert.deepEqual(
+    tombstones.map((row) => row.lease_id),
+    ['lease_one', 'lease_two'],
+  );
+});
+
+test('leases issued before the change keep their named scope beside new leases of the same work', async (t) => {
+  const f = await fixture(t);
+  const [legacy] = await f.work.launchConnections(f.session('lease_old'));
+  const [current] = await f.work.launchConnections(f.leased('lease_new'));
+  assert.ok(legacy && current && legacy.bearer !== current.bearer);
+  assert.equal(f.calls.filter((c) => c.path === '/v1/delegations/works').length, 1);
+  assert.equal((await f.readAssignment('lease_old'))!.attempt_ref, '1');
+  assert.equal((await f.readAssignment('lease_new'))!.attempt_ref, '1');
+  // A legacy lease whose attempt the epoch has left is refused.
+  await f.state.transaction((tx) => f.move({ attempt: '2' }, tx));
+  await assert.rejects(f.work.launchConnections(f.session('lease_late')), {
+    code: 'sandbox_scope_conflict',
+  });
+});
+
+test('migration 3 accepts any workflow name and derives existing epochs from their instances', async (t) => {
+  const state = await openState(':memory:');
+  t.after(() => state.close());
+  await state.transaction(async (tx) => tx.run(WF_INSTANCES));
+  await state.migrate('native-work-migration', nativeMigrations.slice(0, 2));
+  await state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at)
+      VALUES('connection','project','root','account','member','sealed','2026-10-01')`,
+    );
+    await tx.run(
+      `INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,desired_attempt)
+      VALUES('project','experiment','exp','connection','1:running')`,
+    );
+    await tx.run(
+      "INSERT INTO wf_instances(id,project_id,workflow,revision,data_json) VALUES('exp','project','experiment',7,'{}')",
+    );
+  });
+  await state.migrate('native-work-migration', nativeMigrations);
+  const row = await state.read((sql) =>
+    sql.get<NativeWorkRow>("SELECT * FROM sandbox_native_work WHERE work_id='exp'"),
+  );
+  // The in-flight attempt is kept until the instance next moves.
+  assert.equal(row!.desired_attempt, '1:running');
+  assert.equal(row!.epoch_revision, 7);
+  await state.transaction((tx) =>
+    tx.run(
+      "INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id) VALUES('project','reflection.lens','lens','connection')",
+    ),
+  );
+  await assert.rejects(
+    state.transaction((tx) =>
+      tx.run(
+        "INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id) VALUES('project','not a workflow','bad','connection')",
+      ),
+    ),
+  );
 });

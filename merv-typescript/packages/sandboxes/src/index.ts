@@ -5,6 +5,7 @@ import {
   idSchema,
   type Caller,
   type Json,
+  type Transaction,
   type UiManifestRow,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
@@ -241,6 +242,7 @@ const toRow = (row: UiManifestRow): SandboxRow => ({
 export class SandboxService implements Sandboxes {
   nativeWork?: NativeSandboxWork;
   nativeMachines?: NativeMachineReads;
+  #nativeWork?: NativeWorkService;
   readonly #client: SandboxClient;
   readonly #connections: SandboxConnection[];
   readonly #refreshMs: number;
@@ -483,19 +485,16 @@ export class SandboxService implements Sandboxes {
     return this.#run(undefined, operation);
   }
 
-  bindNativeWork(work: NativeSandboxWork): void {
+  bindNativeWork(work: NativeWorkService): void {
+    this.#nativeWork = work;
     this.nativeWork = {
-      guidance: (profile) => {
-        check(!this.#closed, 'sandboxes_closed', 'The sandboxes service is closed', 503);
-        return work.guidance(profile);
-      },
-      connected: (...args) => this.nativeOperation(() => work.connected(...args)),
-      pin: (...args) => this.nativeOperation(() => work.pin(...args)),
-      references: (...args) => this.nativeOperation(() => work.references(...args)),
-      transition: (...args) => this.nativeOperation(() => work.transition(...args)),
-      revokeAssignment: (...args) => this.nativeOperation(() => work.revokeAssignment(...args)),
-      artifactIds: (...args) => this.nativeOperation(() => work.artifactIds(...args)),
+      connected: (projectId, tx) => this.nativeOperation(() => work.connected(projectId, tx)),
     };
+  }
+
+  async captures(projectId: string, instanceId: string, tx: Transaction): Promise<string[]> {
+    const work = this.#nativeWork;
+    return work ? await this.nativeOperation(() => work.captures(projectId, instanceId, tx)) : [];
   }
 
   bindNativeMachines(reader: NativeMachineReads): void {
@@ -843,7 +842,7 @@ export const sandboxesPlugin = {
     }
     // Native compute is available only with its real authority/evidence owners.
     // Fleet and Code continue using their existing dedicated connections.
-    ctx.inject(['state', 'scope', 'artifacts', 'sessions'], async (ctx) => {
+    ctx.inject(['state', 'scope', 'artifacts', 'sessions', 'domainEvents'], async (ctx) => {
       const settings = config.native!;
       const secret = process.env[settings.applicationSecretEnv];
       check(
@@ -882,6 +881,23 @@ export const sandboxesPlugin = {
           service.nativeOperation(() => work.launchConnections(session)),
         ),
       );
+      // Sandboxes follows every workflow's lifecycle itself. Both handlers act only on work and
+      // leases it already holds and read the instance as it stands, so a replay of the whole
+      // history changes nothing; from the beginning, nothing logged while it was unloaded is lost.
+      await ctx.effect(async function* () {
+        yield await ctx.domainEvents.subscribe({
+          id: 'sandboxes.native-leases.v1',
+          types: ['session.closed'],
+          from: 'beginning',
+          handle: (event, tx) => service.nativeOperation(() => work.sessionClosed(event, tx)),
+        });
+        yield await ctx.domainEvents.subscribe({
+          id: 'sandboxes.native-work.v1',
+          types: ['workflow.transition'],
+          from: 'beginning',
+          handle: (event, tx) => service.nativeOperation(() => work.transitioned(event, tx)),
+        });
+      });
       let stopping = false;
       let pending: Promise<void> | undefined;
       const tick = () => {

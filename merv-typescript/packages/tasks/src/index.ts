@@ -1,4 +1,3 @@
-import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import {
   check,
   CheckedTransitions,
@@ -65,7 +64,8 @@ import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code } from '@merv/code-work/types';
-import type { SandboxCompute, ComputeOutputs } from '@merv/sandboxes/types';
+import type { SandboxCompute, ComputeOutputs, Sandboxes } from '@merv/sandboxes/types';
+import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { ManagedCompute, initializeManagedCompute } from '@merv/sandboxes/managed-compute';
 import { WorkMachines, rentalGuidance } from '@merv/sandboxes/managed-compute';
 import type { SandboxRentalInput } from '@merv/sandboxes/types';
@@ -328,7 +328,7 @@ export class TaskService implements Tasks {
   private closed = false;
   private code?: Code;
   private compute?: ManagedCompute;
-  private nativeWork?: NativeSandboxWork;
+  private sandboxes?: Pick<Sandboxes, 'captures' | 'nativeWork'>;
   private machines?: WorkMachines;
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
@@ -484,8 +484,6 @@ export class TaskService implements Tasks {
         };
       },
       release: async ({ lease, reason, tx }) => {
-        if (nativeTask(lease.version))
-          await this.requireNativeWork().revokeAssignment(lease.leaseId, tx);
         await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
           task_id: lease.instanceId,
         });
@@ -1207,20 +1205,12 @@ export class TaskService implements Tasks {
     };
   }
 
-  bindNativeWork(service: NativeSandboxWork): () => void {
-    this.nativeWork = service;
+  /** Captures and native funding, read from Sandboxes; it attaches compute to leases itself. */
+  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'nativeWork'>): () => void {
+    this.sandboxes = service;
     return () => {
-      if (this.nativeWork === service) this.nativeWork = undefined;
+      if (this.sandboxes === service) this.sandboxes = undefined;
     };
-  }
-  private requireNativeWork(): NativeSandboxWork {
-    check(
-      this.nativeWork,
-      'native_compute_unavailable',
-      'Native Sandboxes integration is unavailable',
-      503,
-    );
-    return this.nativeWork;
   }
   private async captureArtifactIds(
     projectId: string,
@@ -1229,26 +1219,11 @@ export class TaskService implements Tasks {
   ): Promise<string[]> {
     return [
       ...new Set([
-        ...((await this.nativeWork?.artifactIds(projectId, 'task', workId, tx)) ?? []),
+        ...((await this.sandboxes?.captures(projectId, workId, tx)) ?? []),
         ...((await this.compute?.artifactIds(projectId, workId, tx)) ?? []),
       ]),
     ];
   }
-  private async nativeTransition(
-    caller: Caller,
-    workflow: { id: string; version: number; revision: number; state: string },
-    tx: Transaction,
-  ) {
-    if (nativeTask(workflow.version))
-      await this.requireNativeWork().transition(
-        caller.projectId,
-        'task',
-        workflow.id,
-        { attempt: String(workflow.revision), closed: ['done', 'failed'].includes(workflow.state) },
-        tx,
-      );
-  }
-
   bindCompute(adapter: SandboxCompute): () => void {
     this.compute?.close();
     this.machines?.close();
@@ -1628,7 +1603,7 @@ export class TaskService implements Tasks {
         // Once Code keeps the project's history, new Git work lives there and nowhere else.
         const version = taskVersion(
           this.artifacts.largeUploadAvailable,
-          !service && !!(await this.nativeWork?.connected(caller.projectId, tx)),
+          !service && !!(await this.sandboxes?.nativeWork?.connected(caller.projectId, tx)),
           !!service,
         );
         const workflow = await (
@@ -1667,10 +1642,6 @@ export class TaskService implements Tasks {
           typeVersion,
           JSON.stringify(contextInputs),
         );
-        if (nativeTask(workflow.version)) {
-          await this.requireNativeWork().pin(caller.projectId, 'task', workflow.id, tx);
-          await this.nativeTransition(caller, workflow, tx);
-        }
         await this.requireCode().declareUnit(caller, workflow.id, tx, service?.baseReference);
         await recorded(this.state, tx, caller, 'task.created', workflow.id, {
           briefId: brief.id,
@@ -2133,7 +2104,7 @@ export class TaskService implements Tasks {
       brief:
         `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}` +
         (nativeTask(task.workflow.version)
-          ? this.nativeWork!.guidance(purpose === 'review' ? 'check' : 'execute')
+          ? computeGuidance(purpose === 'review' ? 'check' : 'execute')
           : !serviceOwned(task.workflow.version)
             ? rentalGuidance('task.compute_', purpose === 'review', true) +
               `\nCurrent work machines: ${JSON.stringify((await this.machines?.rows(caller.projectId, task.id, tx)) ?? [])}`
@@ -2193,16 +2164,8 @@ export class TaskService implements Tasks {
       ? await this.currentLease(caller, snapshot.id, snapshot.revision, tx)
       : null;
     return {
-      ...(nativeTask(snapshot.version)
-        ? await this.requireNativeWork().references(
-            caller.projectId,
-            'task',
-            snapshot.id,
-            String(snapshot.revision),
-            snapshot.state === 'in_review' ? 'check' : 'execute',
-            tx,
-          )
-        : {}),
+      // Conflict resolution is service work: it gets no compute.
+      ...(serviceOwned(snapshot.version) ? { computeProfile: 'none' } : {}),
       artifacts: lease
         ? await this.leaseArtifactIds(caller, lease, tx)
         : [
@@ -2807,7 +2770,6 @@ export class TaskService implements Tasks {
         ),
       checked,
     );
-    await this.nativeTransition(caller, moved, tx);
     return moved;
   }
 
@@ -3217,8 +3179,7 @@ export const tasksPlugin = {
     });
     ctx.inject(['sandboxes'], (ctx) => {
       if (ctx.sandboxes.compute) ctx.effect(() => tasks.bindCompute(ctx.sandboxes.compute!));
-      if (ctx.sandboxes.nativeWork)
-        ctx.effect(() => tasks.bindNativeWork(ctx.sandboxes.nativeWork!));
+      ctx.effect(() => tasks.bindSandboxes(ctx.sandboxes));
     });
     // Keep the graph registration until every consumer of Tasks has been disposed.
     ctx.effect(function* () {

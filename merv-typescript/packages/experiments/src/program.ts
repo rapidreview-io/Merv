@@ -1,4 +1,5 @@
-import type { NativeSandboxWork } from '@merv/sandboxes/types';
+import type { Sandboxes } from '@merv/sandboxes/types';
+import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import {
   requireDirecting,
   excludedFromReview,
@@ -128,6 +129,22 @@ export function reviewedSubmission(
     : undefined;
 }
 
+/**
+ * The compute epoch of an attempt in a state, kept in workflow data as `computeEpoch`. Sandboxes
+ * cancels compute started under an older epoch, so a retry in the same state keeps it.
+ */
+export const experimentEpoch = (attemptIndex: number, state: string) => `${attemptIndex}:${state}`;
+/** The workflow data that sets the epoch the move `action` leads to. */
+export function epochAfter(
+  experiment: Pick<Experiment, 'workflow'>,
+  action: string,
+  attemptIndex: number,
+): { computeEpoch?: string } {
+  const to = EXPERIMENT_WORKFLOW.edges.find(
+    (edge) => edge.from === experiment.workflow.state && edge.action === action,
+  )?.to;
+  return to ? { computeEpoch: experimentEpoch(attemptIndex, to) } : {};
+}
 /** An experiment in one of these states is over: complete, abandoned or failed. */
 export const TERMINAL = ['complete', 'abandoned', 'failed'] as const;
 export const EXPERIMENT_WORKFLOW: WorkflowDefinition = {
@@ -442,7 +459,7 @@ function execution(state: ActiveState, version: number): WorkflowExecutionPolicy
  */
 export abstract class ExperimentProgram {
   protected closed = false;
-  protected nativeWork?: NativeSandboxWork;
+  protected sandboxes?: Pick<Sandboxes, 'captures' | 'nativeWork'>;
   private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   private contexts = new Map<ActiveState, ContextRegistration>();
   /** The owner edge each transaction's command is taking after running its exit checks itself. */
@@ -518,26 +535,20 @@ export abstract class ExperimentProgram {
     tx: Transaction,
   ) {
     const { id, revision, version } = experiment.workflow;
+    const data = {
+      ...transition.data,
+      ...epochAfter(experiment, transition.action, experiment.attempt.index),
+    };
     return await this.checked.take(
       tx,
       { instanceId: id, revision, action: transition.action },
       () =>
         this.handleFor(version).transition(
           caller,
-          { instanceId: experiment.id, ...transition },
+          { instanceId: experiment.id, ...transition, data },
           tx,
         ),
     );
-  }
-
-  protected requireNativeWork(): NativeSandboxWork {
-    check(
-      this.nativeWork,
-      'native_compute_unavailable',
-      'Native Sandboxes integration is unavailable',
-      503,
-    );
-    return this.nativeWork;
   }
 
   protected revision(experiment: Experiment, expected: number): void {
@@ -1084,18 +1095,7 @@ export abstract class ExperimentProgram {
     const review = experiment.reviewId
       ? await this.reviews.get(context.caller, experiment.reviewId, context.tx)
       : null;
-    const native = nativeExperiment(context.snapshot.version);
     return {
-      ...(native
-        ? await this.requireNativeWork().references(
-            context.caller.projectId,
-            'experiment',
-            experiment.id,
-            `${experiment.attempt.index}:${context.snapshot.state}`,
-            context.snapshot.state === 'running' ? 'execute' : 'check',
-            context.tx,
-          )
-        : {}),
       ...(context.snapshot.state === 'running' ? await this.pinnedBase(context) : {}),
       ...(context.snapshot.state === 'experiment_review'
         ? {
@@ -1306,7 +1306,7 @@ export abstract class ExperimentProgram {
       brief:
         `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
         (nativeExperiment(experiment.workflow.version)
-          ? this.nativeWork!.guidance(state === 'running' ? 'execute' : 'check')
+          ? computeGuidance(state === 'running' ? 'execute' : 'check')
           : rentalGuidance('compute.', reviewing(state), true) +
             `\nCurrent work machines: ${JSON.stringify(experiment.machines ?? [])}`),
       references: [
@@ -1460,12 +1460,11 @@ export abstract class ExperimentProgram {
                 (artifact) => artifact.id,
               ),
               ...(nativeExperiment(context.snapshot.version)
-                ? await this.nativeWork!.artifactIds(
+                ? ((await this.sandboxes?.captures(
                     context.caller.projectId,
-                    'experiment',
                     context.snapshot.id,
                     context.tx,
-                  )
+                  )) ?? [])
                 : []),
             ]),
           ],
@@ -1477,15 +1476,6 @@ export abstract class ExperimentProgram {
 
   private async release(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
     this.state.assertTransaction(tx);
-    if (nativeExperiment(lease.version)) {
-      check(
-        this.nativeWork,
-        'native_sandboxes_unavailable',
-        'Native Sandboxes connection is unavailable',
-        503,
-      );
-      await this.nativeWork.revokeAssignment(lease.leaseId, tx);
-    }
     await releasedLease(tx, this.reviews, 'experiment_leases', lease, reason, {
       experiment_id: lease.instanceId,
       state: lease.state,

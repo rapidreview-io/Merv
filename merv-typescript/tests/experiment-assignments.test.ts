@@ -1484,14 +1484,17 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   assert.equal(created.baseTaskId, undefined);
 });
 
-test('native experiment leases dynamically admit verified captures and revoke each assignment on handoff', async (t) => {
+test('native experiment leases admit verified captures and leave compute to Sandboxes', async (t) => {
   const f = await fixture(t);
   const native = nativeWorkFixture();
-  f.experiments.bindNativeWork(native.service);
+  f.experiments.bindSandboxes(native.service);
   const experiment = await f.create();
   const first = await f.offer(experiment);
-  assert.equal(first.session.execution.references.sandboxProfile, 'check');
-  assert.equal(first.session.execution.references.sandboxAttempt, '1:planned');
+  // Sandboxes derives compute from the lease itself: the unit names no scope or profile.
+  assert.equal(first.session.execution.references.sandboxConnectionId, undefined);
+  assert.equal(first.session.execution.references.computeProfile, undefined);
+  assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
+  assert.match(first.session.assignment.brief, /brief verification only/);
   assert.ok(!first.session.execution.policy.tools.some((tool) => tool.name.startsWith('compute.')));
   const worker = await f.sessions.authenticate(first.secret);
   const service = await f.scope.serviceActor('sandboxes', f.source.projectId);
@@ -1524,17 +1527,8 @@ test('native experiment leases dynamically admit verified captures and revoke ea
     capture.id,
   );
   await f.release(first.session.id);
-  assert.ok(native.revoked.includes(first.session.id));
   const next = await f.offer(experiment);
-  assert.equal(
-    next.session.execution.references.sandboxWorkId,
-    first.session.execution.references.sandboxWorkId,
-  );
-  assert.equal(native.pins.size, 1);
+  assert.equal(next.session.execution.references.sandboxConnectionId, undefined);
+  assert.ok((next.session.execution.references.artifacts as string[]).includes(capture.id));
   await f.release(next.session.id);
-  assert.ok(native.revoked.includes(next.session.id));
-  assert.equal(
-    native.changes.some((change) => change.closed),
-    false,
-  );
 });

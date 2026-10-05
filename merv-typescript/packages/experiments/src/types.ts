@@ -1,4 +1,3 @@
-import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import type {
   Caller,
   CodeUnit,
@@ -10,7 +9,7 @@ import type {
   WorkComputeAccess,
 } from '@merv/contracts';
 import type {} from 'cordis';
-import type { SandboxCompute, ComputeOutputs } from '@merv/sandboxes/types';
+import type { SandboxCompute, ComputeOutputs, Sandboxes } from '@merv/sandboxes/types';
 import type { PaperChanges } from '@merv/paper/types';
 import type {
   Experiment,
@@ -44,7 +43,7 @@ export interface ComputeInput {
 }
 
 export interface Experiments extends WorkComputeAccess {
-  bindNativeWork(service: NativeSandboxWork): () => void;
+  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'nativeWork'>): () => void;
   bindCompute(adapter: SandboxCompute): () => void;
   computeOffers(caller: Caller): Promise<import('@merv/contracts').Data>;
   computeRun(caller: Caller, input: ComputeInput): Promise<unknown>;

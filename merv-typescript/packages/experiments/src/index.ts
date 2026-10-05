@@ -1,4 +1,3 @@
-import type { NativeSandboxWork } from '@merv/sandboxes/types';
 import { visible, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import { paperChangesSchema, parsed } from '@merv/contracts';
@@ -26,7 +25,7 @@ import {
   type WorkflowDependency,
 } from '@merv/contracts';
 import type { Code, CodeCaptureRef } from '@merv/code-work/types';
-import type { SandboxCompute } from '@merv/sandboxes/types';
+import type { SandboxCompute, Sandboxes } from '@merv/sandboxes/types';
 import { ExperimentCompute, type ComputeRunning } from './compute.js';
 import { initializeManagedCompute } from '@merv/sandboxes/managed-compute';
 import {
@@ -75,7 +74,10 @@ import {
   approvedSubmission,
   currentEvidence,
   designCriteria,
+  epochAfter,
   EXPERIMENT_LIMITS,
+  EXPERIMENT_WORKFLOW,
+  experimentEpoch,
   ExperimentProgram,
   feasibilityCriterion,
   programVersion,
@@ -216,27 +218,13 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       this.code = undefined;
     };
   }
-  bindNativeWork(service: NativeSandboxWork): () => void {
+  /** Captures and native funding, read from Sandboxes; it attaches compute to leases itself. */
+  bindSandboxes(service: Pick<Sandboxes, 'captures' | 'nativeWork'>): () => void {
     this.open();
-    this.nativeWork = service;
+    this.sandboxes = service;
     return () => {
-      if (this.nativeWork === service) this.nativeWork = undefined;
+      if (this.sandboxes === service) this.sandboxes = undefined;
     };
-  }
-  private async nativeTransition(
-    caller: Caller,
-    workflow: { id: string; version: number; state: string },
-    attemptIndex: number,
-    tx: Transaction,
-  ) {
-    if (nativeExperiment(workflow.version))
-      await this.requireNativeWork().transition(
-        caller.projectId,
-        'experiment',
-        workflow.id,
-        { attempt: `${attemptIndex}:${workflow.state}`, closed: terminal.has(workflow.state) },
-        tx,
-      );
   }
   bindCompute(adapter: SandboxCompute): () => void {
     this.open();
@@ -554,8 +542,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           id,
         )
       ).map(submissionMetadata);
-      const nativeIds =
-        (await this.nativeWork?.artifactIds(caller.projectId, 'experiment', id, tx)) ?? [];
+      const nativeIds = (await this.sandboxes?.captures(caller.projectId, id, tx)) ?? [];
       return {
         id,
         projectId: row.project_id,
@@ -699,7 +686,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         const workflow = await this.handleFor(
           programVersion(
             this.artifacts.largeUploadAvailable,
-            !!(await this.nativeWork?.connected(caller.projectId, tx)),
+            !!(await this.sandboxes?.nativeWork?.connected(caller.projectId, tx)),
           ),
         ).start(
           caller,
@@ -711,6 +698,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
             data: {
               workspace: 'git',
               name: input.name,
+              computeEpoch: experimentEpoch(1, EXPERIMENT_WORKFLOW.initial),
             },
           },
           tx,
@@ -732,10 +720,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           'git',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
-        if (nativeExperiment(workflow.version)) {
-          await this.requireNativeWork().pin(caller.projectId, 'experiment', workflow.id, tx);
-          await this.nativeTransition(caller, workflow, 1, tx);
-        }
         await this.code!.declareUnit(caller, workflow.id, tx);
         await this.record(
           caller,
@@ -989,7 +973,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           },
           tx,
         );
-        await this.nativeTransition(caller, moved, experiment.attempt.index, tx);
         if (input.transition === 'retry_running')
           await this.feedback(
             experiment,
@@ -1192,7 +1175,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       },
       tx,
     );
-    await this.nativeTransition(caller, moved, experiment.attempt.index, tx);
     const review = await this.reviews.request(
       caller,
       {
@@ -1326,7 +1308,17 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
             action,
             input: { ...input },
             requestId: childRequest(caller, 'experiment', 'review', input.requestId),
-            data: { verdict: input.verdict, reviewId: review.id, returnTo: input.returnTo ?? null },
+            data: {
+              verdict: input.verdict,
+              reviewId: review.id,
+              returnTo: input.returnTo ?? null,
+              ...epochAfter(
+                experiment,
+                action,
+                experiment.attempt.index +
+                  (['revise_design', 'revise_plan'].includes(action) ? 1 : 0),
+              ),
+            },
           },
           tx,
         );
@@ -1401,12 +1393,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
               tx,
             );
         }
-        await this.nativeTransition(
-          caller,
-          moved,
-          experiment.attempt.index + (['revise_design', 'revise_plan'].includes(action) ? 1 : 0),
-          tx,
-        );
         await tx.run(
           'UPDATE experiments SET review_id=NULL,conclusion=? WHERE id=?',
           conclusion,
@@ -1671,8 +1657,7 @@ export const experimentsPlugin = {
     });
     ctx.inject(['sandboxes'], (ctx) => {
       if (ctx.sandboxes.compute) ctx.effect(() => experiments.bindCompute(ctx.sandboxes.compute!));
-      if (ctx.sandboxes.nativeWork)
-        ctx.effect(() => experiments.bindNativeWork(ctx.sandboxes.nativeWork!));
+      ctx.effect(() => experiments.bindSandboxes(ctx.sandboxes));
     });
     ctx.effect(function* () {
       yield () => experiments.close();

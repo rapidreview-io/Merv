@@ -1,8 +1,0 @@
-import type { NativeComputeProfile } from './native-types.js';
-
-/** Assignment overlay only; tool schemas and operational instructions come from native MCP. */
-export const nativeWorkGuidance = (profile: NativeComputeProfile): string =>
-  '\nUse the native Sandboxes MCP connection for this work. Inspect existing machines and jobs before renting or rerunning: rentals and accepted jobs survive worker handoff. Keep stable idempotency keys only when recovering the same request. New or revised work needs a new key, even within the same experiment attempt. Save useful paths and progress for your successor; release unused machines. Retain important files through explicit workflow Capture nodes; captured files register as Merv artifact collections without another upload. Native outputs shortcuts also create a temporary Snapshot, whose artifact_id is not a Merv collection ID and may incur a second upload. Check capture outcomes and use artifact.read for registered evidence; a Snapshot alone does not satisfy the evidence requirement. Files only on a machine disappear on release or expiry.' +
-  (profile === 'check'
-    ? ' This assignment permits brief verification only: jobs on existing rentals need a positive timeout of at most 300 seconds. Do not run training or full evaluations, change submitted evidence, or treat a short check as design approval. SSH also remains for brief checks; a certificate does not make arbitrary commands safe.'
-    : ' Execute only the authorized work and approved plan, within the account allowance. Emit unbuffered progress and inspect native job output and exit status.');

@@ -976,44 +976,28 @@ test('plan and results reviewers write the paper with every verdict, atomically 
     }
 });
 
-test('native experiments pin only new work, retain service captures and change phase authority without rebinding work', async (t) => {
+test('native experiments fence compute by attempt and state, retain service captures and select versions by funding', async (t) => {
   const f = await fixture(t);
   const legacy = await f.create('Legacy');
   const native = nativeWorkFixture();
-  t.after(f.experiments.bindNativeWork(native.service));
+  t.after(f.experiments.bindSandboxes(native.service));
   let experiment = await f.create('Native');
   assert.equal(legacy.workflow.version, 28);
   assert.equal(experiment.workflow.version, 36);
   assert.equal((await f.experiments.get(f.producer, legacy.id)).workflow.version, 28);
-  assert.deepEqual(native.changes.at(-1), {
-    workId: experiment.id,
-    attempt: '1:planned',
-    closed: false,
-  });
+  assert.equal(experiment.workflow.data.computeEpoch, '1:planned');
   const planning = await f.workflows.assignment(f.producer, experiment.id);
   assert.match(planning.brief, /native Sandboxes MCP/);
   assert.ok(!planning.execution.tools.some((tool) => tool.name.startsWith('compute.')));
   await f.attach(experiment, 'plan', plan);
   experiment = await f.transition(experiment, 'submit_design');
-  assert.deepEqual(native.changes.at(-1), {
-    workId: experiment.id,
-    attempt: '1:design_review',
-    closed: false,
-  });
+  assert.equal(experiment.workflow.data.computeEpoch, '1:design_review');
   experiment = await f.submitReview(experiment, 'needs_changes', 'planned');
-  assert.deepEqual(native.changes.at(-1), {
-    workId: experiment.id,
-    attempt: '2:planned',
-    closed: false,
-  });
+  assert.equal(experiment.workflow.data.computeEpoch, '2:planned');
   await f.attach(experiment, 'plan', plan);
   experiment = await f.transition(experiment, 'submit_design');
   experiment = await f.submitReview(experiment);
-  assert.deepEqual(native.changes.at(-1), {
-    workId: experiment.id,
-    attempt: '2:running',
-    closed: false,
-  });
+  assert.equal(experiment.workflow.data.computeEpoch, '2:running');
   const service = await f.scope.serviceActor('sandboxes', f.producer.projectId);
   const capture = await f.artifacts.createCollection(service, {
     title: 'Retained output',
@@ -1047,18 +1031,9 @@ test('native experiments pin only new work, retain service captures and change p
   experiment = await f.transition(experiment, 'retry_running', {
     evidence: { reason: 'Fixture recovery' },
   });
-  assert.deepEqual(native.changes.at(-1), {
-    workId: experiment.id,
-    attempt: '2:running',
-    closed: false,
-  });
-  assert.equal(native.pins.size, 1);
+  assert.equal(experiment.workflow.data.computeEpoch, '2:running');
   experiment = await f.transition(experiment, 'abandon', {
     evidence: { reason: 'End fixture work' },
   });
-  assert.deepEqual(native.changes.at(-1), {
-    workId: experiment.id,
-    attempt: '2:abandoned',
-    closed: true,
-  });
+  assert.equal(experiment.workflow.data.computeEpoch, '2:abandoned');
 });

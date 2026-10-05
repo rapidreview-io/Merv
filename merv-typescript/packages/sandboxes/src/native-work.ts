@@ -1,4 +1,3 @@
-import { nativeWorkGuidance } from './native-guidance.js';
 import { randomBytes } from 'node:crypto';
 import {
   check,
@@ -6,8 +5,10 @@ import {
   type Json,
   type Sql,
   type State,
+  type StoredEvent,
   type Transaction,
 } from '@merv/contracts';
+import { computeEpoch, computeProfile } from './compute-capability.js';
 import type { NativeMcpConnection, Session } from '@merv/sessions/types';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeAssignmentRow, NativeConnectionRow, NativeWorkRow } from './native-schema.js';
@@ -74,6 +75,18 @@ const identifier = (value: unknown): value is string =>
   typeof value === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(value);
 const reference = (value: unknown): value is string =>
   typeof value === 'string' && /^[\x21-\x7e]{1,256}$/.test(value);
+/** A workflow name, as the workflow engine accepts one. */
+export const workflowName = (value: unknown): value is string =>
+  typeof value === 'string' && /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/.test(value);
+/**
+ * The work kind the native service is sent. It knows only `task` and `experiment`; every
+ * workflow other than `experiment` is sent as `task` until the service confirms other kinds.
+ */
+export const nativeWorkKind = (workflow: string): NativeWorkKind =>
+  workflow === 'experiment' ? 'experiment' : 'task';
+/** A launch or close never waits on a session that ended longer ago than any lease can run. */
+const LEASE_HORIZON_MS = 8 * 24 * 3_600_000;
+type InstanceRow = { workflow: string; revision: number; data_json: string };
 const workflowTerminal = (state: string) => ['completed', 'failed', 'cancelled'].includes(state);
 const jobTerminal = (state: string) =>
   ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(state);
@@ -92,7 +105,6 @@ const route = (work: NativeWorkRow) => {
 
 /** Stable work binding and unfinished cleanup intents, never a second native job ledger. */
 export class NativeWorkService implements NativeSandboxWork {
-  guidance = nativeWorkGuidance;
   private publisher?: Publisher;
   private reconciling?: Promise<void>;
   constructor(
@@ -102,23 +114,31 @@ export class NativeWorkService implements NativeSandboxWork {
   setEvidencePublisher(publisher: Publisher): void {
     this.publisher = publisher;
   }
-  async connected(projectId: string, tx?: Transaction): Promise<boolean> {
+  async connected(projectId: string, tx?: Sql): Promise<boolean> {
     const row = await this.connections.current(projectId, tx);
     if (this.connections.config.managed && !row?.billing_subject) return false;
     return !!row && !row.revoke_pending;
   }
-  private row(sql: Sql, project: string, kind: NativeWorkKind, work: string) {
+  private row(sql: Sql, project: string, workflow: string, work: string) {
     return sql.get<NativeWorkRow>(
       'SELECT * FROM sandbox_native_work WHERE project_id=? AND work_kind=? AND work_id=?',
       project,
-      kind,
+      workflow,
       work,
     );
   }
-  async pin(project: string, kind: NativeWorkKind, work: string, tx: Transaction): Promise<void> {
+  private instance(sql: Sql, project: string, id: string) {
+    return sql.get<InstanceRow>(
+      'SELECT workflow,revision,data_json FROM wf_instances WHERE id=? AND project_id=?',
+      id,
+      project,
+    );
+  }
+  /** Binds the work to the project's current funded connection, its payer from then on. */
+  async pin(project: string, workflow: string, work: string, tx: Transaction): Promise<void> {
     this.state.assertTransaction(tx);
-    valid(identifier(work) && ['task', 'experiment'].includes(kind));
-    const existing = await this.row(tx, project, kind, work);
+    valid(identifier(work) && workflowName(workflow));
+    const existing = await this.row(tx, project, workflow, work);
     if (existing) return;
     const connection = await this.connections.current(project, tx);
     valid(connection && !connection.revoke_pending);
@@ -131,58 +151,80 @@ export class NativeWorkService implements NativeSandboxWork {
     await tx.run(
       'INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id) VALUES(?,?,?,?)',
       project,
-      kind,
+      workflow,
       work,
       connection.id,
     );
   }
-  async references(
-    project: string,
-    kind: NativeWorkKind,
-    work: string,
-    attempt: string,
-    profile: NativeComputeProfile,
-    tx: Transaction,
-  ) {
-    this.state.assertTransaction(tx);
-    const row = await this.row(tx, project, kind, work);
-    valid(
-      row &&
-        !row.closed_at &&
-        row.desired_attempt === attempt &&
-        ['execute', 'check'].includes(profile),
+  /**
+   * Derives the epoch from the instance as it now stands. It only moves forward: a row already
+   * derived at this revision or a later one is left, so a replayed event changes nothing. A
+   * changed epoch queues reconciliation, which cancels the older attempt's jobs and access.
+   */
+  private async advance(tx: Transaction, row: NativeWorkRow, instance: InstanceRow) {
+    if (row.closed_at || (row.epoch_revision !== null && row.epoch_revision >= instance.revision))
+      return;
+    const epoch = computeEpoch(
+      JSON.parse(instance.data_json) as Record<string, unknown>,
+      instance.revision,
     );
-    return {
-      sandboxConnectionId: row.connection_id,
-      sandboxWorkId: work,
-      sandboxWorkKind: kind,
-      sandboxAttempt: attempt,
-      sandboxProfile: profile,
-    };
-  }
-  async transition(
-    project: string,
-    kind: NativeWorkKind,
-    work: string,
-    change: { attempt?: string; closed?: boolean },
-    tx: Transaction,
-  ): Promise<void> {
-    this.state.assertTransaction(tx);
-    valid(change.attempt === undefined || reference(change.attempt));
-    const row = await this.row(tx, project, kind, work);
-    valid(row);
     await tx.run(
-      `UPDATE sandbox_native_work SET desired_attempt=COALESCE(?,desired_attempt),
-      closed_at=CASE WHEN ? THEN COALESCE(closed_at,?) ELSE closed_at END,transition_pending=TRUE
-      WHERE project_id=? AND work_kind=? AND work_id=?`,
-      change.attempt ?? null,
-      change.closed ? 'true' : 'false',
-      now(),
-      project,
-      kind,
-      work,
+      `UPDATE sandbox_native_work SET desired_attempt=?::text,epoch_revision=?,
+      transition_pending=CASE WHEN desired_attempt IS DISTINCT FROM ?::text THEN TRUE ELSE transition_pending END
+      WHERE project_id=? AND work_kind=? AND work_id=? AND (epoch_revision IS NULL OR epoch_revision<?)`,
+      epoch,
+      instance.revision,
+      epoch,
+      row.project_id,
+      row.work_kind,
+      row.work_id,
+      instance.revision,
     );
   }
+  private async close(tx: Transaction, row: NativeWorkRow) {
+    await tx.run(
+      `UPDATE sandbox_native_work SET closed_at=?,transition_pending=TRUE
+      WHERE project_id=? AND work_kind=? AND work_id=? AND closed_at IS NULL`,
+      now(),
+      row.project_id,
+      row.work_kind,
+      row.work_id,
+    );
+  }
+  /**
+   * The `workflow.transition` consumer. Only work already pinned is touched: its epoch follows
+   * the instance, and a terminal move closes it. The instance is read as it stands now, so the
+   * consumer may replay any event any number of times.
+   */
+  async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
+    this.state.assertTransaction(tx);
+    const workflow = event.data.workflow;
+    if (!workflowName(workflow)) return;
+    const row = await this.row(tx, event.projectId, workflow, event.subjectId);
+    if (!row || row.closed_at) return;
+    const instance = await this.instance(tx, event.projectId, event.subjectId);
+    // A retired instance's compute ends with it.
+    if (!instance || instance.workflow !== workflow) return await this.close(tx, row);
+    await this.advance(tx, row, instance);
+    if (event.data.terminal === true && event.data.revision === instance.revision)
+      await this.close(tx, row);
+  }
+  /** The `session.closed` consumer: the ended lease's native access is revoked. */
+  async sessionClosed(event: StoredEvent, tx: Transaction): Promise<void> {
+    this.state.assertTransaction(tx);
+    // A session's id is its lease's id.
+    const lease = event.subjectId;
+    if (!identifier(lease)) return;
+    // A tombstone also fences an issuance still in flight. A session that ended before any
+    // lease could still be running cannot be issued anything, so replayed history adds none.
+    if (
+      Date.parse(event.createdAt) < Date.now() - LEASE_HORIZON_MS &&
+      !(await tx.get('SELECT 1 FROM sandbox_native_assignments WHERE lease_id=?', lease))
+    )
+      return;
+    await this.revokeAssignment(lease, tx);
+  }
+  /** Queue assignment access revocation, including credentials still being issued. */
   async revokeAssignment(leaseId: string, tx: Transaction): Promise<void> {
     this.state.assertTransaction(tx);
     valid(identifier(leaseId));
@@ -202,21 +244,16 @@ export class NativeWorkService implements NativeSandboxWork {
       leaseId,
     );
   }
-  async artifactIds(
-    project: string,
-    kind: NativeWorkKind,
-    work: string,
-    tx: Transaction,
-  ): Promise<string[]> {
+  /** Only collections verified and registered by this instance's evidence bridge. */
+  async captures(project: string, instanceId: string, tx: Transaction): Promise<string[]> {
     this.state.assertTransaction(tx);
     return (
       await tx.all<{ artifact_id: string }>(
         `SELECT DISTINCT c.artifact_id FROM sandbox_native_captures c
       JOIN sandbox_native_work w ON w.connection_id=c.connection_id AND w.namespace=c.namespace
-      WHERE w.project_id=? AND w.work_kind=? AND w.work_id=? ORDER BY c.artifact_id`,
+      WHERE w.project_id=? AND w.work_id=? ORDER BY c.artifact_id`,
         project,
-        kind,
-        work,
+        instanceId,
       )
     ).map((r) => r.artifact_id);
   }
@@ -230,7 +267,7 @@ export class NativeWorkService implements NativeSandboxWork {
       this.connections.bearer(connection),
       {
         method: 'POST',
-        body: { work_ref: work.work_id, work_kind: work.work_kind },
+        body: { work_ref: work.work_id, work_kind: nativeWorkKind(work.work_kind) },
       },
     );
     valid(
@@ -238,7 +275,7 @@ export class NativeWorkService implements NativeSandboxWork {
         identifier(reply.namespace) &&
         reply.member_id === connection.member_id &&
         reply.work_ref === work.work_id &&
-        reply.work_kind === work.work_kind &&
+        reply.work_kind === nativeWorkKind(work.work_kind) &&
         (reply.revoked_at === null || typeof reply.revoked_at === 'string'),
     );
     return this.state.transaction(async (tx) => {
@@ -269,11 +306,11 @@ export class NativeWorkService implements NativeSandboxWork {
     sql: Sql,
     session: Readonly<Session>,
     connectionId: string,
-    kind: NativeWorkKind,
+    workflow: string,
     attempt: string,
   ) {
     await this.connections.assertReady(session.projectId, sql);
-    const work = await this.row(sql, session.projectId, kind, session.instanceId);
+    const work = await this.row(sql, session.projectId, workflow, session.instanceId);
     const revoked = await sql.get(
       'SELECT lease_id FROM sandbox_native_revoked_leases WHERE lease_id=?',
       session.lease.leaseId,
@@ -296,6 +333,11 @@ export class NativeWorkService implements NativeSandboxWork {
     );
     return work;
   }
+  /**
+   * The launch-connections provider, for a leased session of any workflow. Everything comes
+   * from the session: the profile from its fixed policy and `computeProfile` reference, the
+   * epoch from its instance. The work is pinned on its first launch in a funded project.
+   */
   async launchConnections(session: Readonly<Session>): Promise<NativeMcpConnection[]> {
     check(
       !this.state.ambient,
@@ -304,14 +346,56 @@ export class NativeWorkService implements NativeSandboxWork {
       500,
     );
     const refs = session.execution.references;
-    if (refs.sandboxConnectionId === undefined) return [];
+    // Leases issued before compute became a capability name their scope; honour them as issued.
+    if (refs.sandboxConnectionId !== undefined) return await this.launchIssued(session);
+    const workflow = session.execution.workflow;
+    const profile = computeProfile(session.execution.policy, refs.computeProfile);
+    if (profile === 'none') return [];
+    valid(
+      workflowName(workflow) &&
+        identifier(session.instanceId) &&
+        identifier(session.lease.leaseId) &&
+        session.lease.instanceId === session.instanceId &&
+        session.lease.projectId === session.projectId &&
+        session.lease.workflow === workflow,
+    );
+    const { projectId, instanceId } = session;
+    // A project without a funded connection runs its work without compute, read without
+    // taking the writer lock.
+    const current = await this.state.read(async (sql) => {
+      if (!(await this.connected(projectId, sql))) return null;
+      return {
+        row: await this.row(sql, projectId, workflow, instanceId),
+        instance: await this.instance(sql, projectId, instanceId),
+      };
+    });
+    if (!current) return [];
+    // The lease names the instance at its current revision, or it is not live.
+    const atLease = (instance: InstanceRow | undefined): instance is InstanceRow =>
+      !!instance &&
+      instance.workflow === workflow &&
+      instance.revision === session.expectedRevision;
+    valid(atLease(current.instance));
+    let work = current.row;
+    if (!work || work.epoch_revision === null || work.epoch_revision < current.instance.revision)
+      work = await this.state.transaction(async (tx) => {
+        const instance = await this.instance(tx, projectId, instanceId);
+        valid(atLease(instance));
+        await this.pin(projectId, workflow, instanceId, tx);
+        await this.advance(tx, (await this.row(tx, projectId, workflow, instanceId))!, instance);
+        return (await this.row(tx, projectId, workflow, instanceId))!;
+      });
+    valid(work.desired_attempt !== null);
+    return await this.issue(session, work.connection_id, workflow, work.desired_attempt, profile);
+  }
+  private async launchIssued(session: Readonly<Session>): Promise<NativeMcpConnection[]> {
     const {
       sandboxConnectionId: connectionId,
       sandboxWorkKind: kind,
       sandboxWorkId: workId,
       sandboxAttempt: attempt,
       sandboxProfile: profile,
-    } = refs;
+    } = session.execution.references;
     valid(
       identifier(connectionId) &&
         (kind === 'task' || kind === 'experiment') &&
@@ -326,6 +410,17 @@ export class NativeWorkService implements NativeSandboxWork {
     );
     const policy = session.execution.policy;
     if (policy.readOnly && policy.workspace?.mode !== 'none' && policy.workspace?.retain) return [];
+    return await this.issue(session, connectionId, kind, attempt, profile);
+  }
+  private async issue(
+    session: Readonly<Session>,
+    connectionId: string,
+    workflow: string,
+    attempt: string,
+    profile: NativeComputeProfile,
+  ): Promise<NativeMcpConnection[]> {
+    const kind = workflow;
+    const workId = session.instanceId;
     const connection = await this.connections.get(connectionId);
     check(
       !this.connections.config.managed || connection.billing_subject,

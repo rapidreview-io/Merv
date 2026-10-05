@@ -325,30 +325,28 @@ test('metadata admission avoids rendering, binds each session to its own record 
   }
 });
 
-test('current native task leases pin trusted scope, preserve handoffs and admit registered capture evidence', async (t) => {
+test('current native task leases leave compute to Sandboxes and admit registered capture evidence', async (t) => {
   const { app, operator, offer, release, run, create, work, held } = await fixture(t);
   const old = await create('legacy-before-connection');
   const native = nativeWorkFixture();
-  t.after((app.ctx.tasks as TaskService).bindNativeWork(native.service));
+  t.after((app.ctx.tasks as TaskService).bindSandboxes(native.service));
   const task = await create('native-connected');
   assert.equal(old.workflow.version, 31);
   assert.equal(task.workflow.version, 39);
   assert.equal((await app.ctx.tasks.get(operator, old.id)).workflow.version, 31);
   const first = await offer(task);
-  assert.equal(first.session.execution.references.sandboxWorkId, task.id);
-  assert.equal(first.session.execution.references.sandboxProfile, 'execute');
-  assert.equal(first.session.execution.references.sandboxAttempt, String(task.workflow.revision));
+  // Sandboxes derives compute from the lease itself: the unit names no scope or profile.
+  assert.equal(first.session.execution.references.sandboxConnectionId, undefined);
+  assert.equal(first.session.execution.references.computeProfile, undefined);
   assert.ok(
     !first.session.execution.policy.tools.some((tool) => tool.name.startsWith('task.compute_')),
   );
   assert.match(first.session.assignment.brief, /native Sandboxes MCP/);
   assert.doesNotMatch(first.session.assignment.brief, /task\.compute_/);
   await release(first.session.id);
-  assert.ok(native.revoked.includes(first.session.id));
   const second = await offer(task);
   const commandId = await work.commit(held.get(second.session.id)!);
   assert.deepEqual(second.session.execution.references, first.session.execution.references);
-  assert.equal(native.pins.size, 1);
   const service = await app.ctx.scope.serviceActor('sandboxes', operator.projectId);
   const capture = await app.ctx.artifacts.createCollection!(service, {
     title: 'Captured evidence',
@@ -404,11 +402,6 @@ test('current native task leases pin trusted scope, preserve handoffs and admit 
     (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
   );
   assert.equal(delivered.workflow.state, 'in_review');
-  assert.deepEqual(native.changes.at(-1), {
-    workId: task.id,
-    attempt: String(delivered.workflow.revision),
-    closed: false,
-  });
   await release(second.session.id);
   const independent = await app.ctx.scope.issueActor(operator, {
     name: 'Independent',
@@ -421,8 +414,7 @@ test('current native task leases pin trusted scope, preserve handoffs and admit 
   };
   const reviewLease = await work.lease(delivered, reviewer);
   const reviewSession = reviewLease.session;
-  assert.equal(reviewSession.execution.references.sandboxProfile, 'check');
-  assert.equal(reviewSession.execution.references.sandboxWorkId, task.id);
+  assert.match(reviewSession.assignment.brief, /brief verification only/);
   assert.ok((reviewSession.execution.references.artifacts as string[]).includes(capture.id));
   await work.release(reviewLease);
   await app.ctx.domainEvents.drain();
@@ -432,5 +424,4 @@ test('current native task leases pin trusted scope, preserve handoffs and admit 
     reason: 'End fixture work',
     requestId: 'native-close',
   });
-  assert.equal(native.changes.at(-1)?.closed, true);
 });

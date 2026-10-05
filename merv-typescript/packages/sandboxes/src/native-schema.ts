@@ -86,6 +86,25 @@ CREATE UNIQUE INDEX sandbox_native_managed_flow ON sandbox_native_flows(project_
  WHERE billing_subject IS NOT NULL AND completed_at IS NULL;
 `,
   },
+  {
+    // Compute is a capability of any workflow's assignment: work_kind now holds the workflow
+    // name. epoch_revision is the instance revision desired_attempt was last derived at, so an
+    // epoch only ever moves forward; existing rows take their instance's current revision.
+    version: 3,
+    sql: `
+ALTER TABLE sandbox_native_work DROP CONSTRAINT sandbox_native_work_work_kind_check;
+ALTER TABLE sandbox_native_work ADD CONSTRAINT sandbox_native_work_workflow
+  CHECK (work_kind ~ '^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$');
+ALTER TABLE sandbox_native_work ADD COLUMN epoch_revision INTEGER;
+DO $$
+BEGIN
+  IF to_regclass('wf_instances') IS NOT NULL THEN
+    UPDATE sandbox_native_work w SET epoch_revision=i.revision FROM wf_instances i
+    WHERE i.id=w.work_id AND i.project_id=w.project_id AND i.workflow=w.work_kind;
+  END IF;
+END $$;
+`,
+  },
 ];
 
 export interface NativeConnectionRow {
@@ -102,13 +121,15 @@ export interface NativeConnectionRow {
 }
 export interface NativeWorkRow {
   project_id: string;
-  work_kind: 'task' | 'experiment';
+  /** The workflow name; the native service is sent nativeWorkKind() of it. */
+  work_kind: string;
   work_id: string;
   connection_id: string;
   native_grant_id: string | null;
   namespace: string | null;
   desired_attempt: string | null;
   closed_at: string | null;
+  epoch_revision: number | null;
   transition_pending: boolean;
   evidence_checked_at: string | null;
   last_error: string | null;
@@ -117,7 +138,7 @@ export interface NativeAssignmentRow {
   lease_id: string;
   session_id: string;
   project_id: string;
-  work_kind: 'task' | 'experiment';
+  work_kind: string;
   work_id: string;
   attempt_ref: string;
   profile: 'execute' | 'check';

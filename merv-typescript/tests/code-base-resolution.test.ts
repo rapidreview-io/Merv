@@ -928,6 +928,8 @@ async function deliver(f: Fixture, taskId: string) {
     requestId: 'produce',
     secret,
   });
+  // Conflict resolution is service work: Sandboxes attaches no compute to it.
+  assert.equal(session.execution.references.computeProfile, 'none');
   const base = (await f.state.transaction((tx) => f.code.basePin(f.admin, taskId, tx)))!.reference;
   const workspace = {
     repositoryId: 'repository',

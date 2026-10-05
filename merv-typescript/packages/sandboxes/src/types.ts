@@ -1,4 +1,4 @@
-import type { Caller, Json } from '@merv/contracts';
+import type { Caller, Json, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
 import type { ComputeOutputs, SandboxComputeOutput } from './models.js';
 import type { NativeSandboxWork, NativeSandboxesConfig } from './native-types.js';
@@ -294,8 +294,13 @@ export interface SandboxMachines {
 }
 
 export interface Sandboxes {
-  /** Stable native authority for new research work; absent on legacy deployments. */
+  /** Whether a project's native compute is funded, for version selection; absent on legacy deployments. */
   nativeWork?: NativeSandboxWork;
+  /**
+   * The artifact collections native compute verified and registered for one workflow
+   * instance, in the caller's transaction. Empty where native compute is not configured.
+   */
+  captures(projectId: string, instanceId: string, tx: Transaction): Promise<string[]>;
   nativeMachines?: import('./native-types.js').NativeMachineReads;
   /** Rows from the last accepted manifest, already named and routed for the UI registry. */
   rows(): SandboxRow[];

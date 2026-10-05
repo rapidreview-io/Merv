@@ -76,7 +76,9 @@ const referenceSchema = z.tuple([
   z.literal(1),
   id,
   id,
-  z.enum(['task', 'experiment']),
+  // The workflow the captured work belongs to; references minted before 2026-10-04 say task or
+  // experiment, which are those workflows' names.
+  z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/),
   id,
   id,
   id,

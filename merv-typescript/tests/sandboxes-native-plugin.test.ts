@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Context } from 'cordis';
 import { ArtifactStore } from '@merv/artifacts';
+import { DurableEvents } from '@merv/domain-events';
 import { DiskBlobs } from '@merv/blobs';
 import { createService, type ArtifactFileProvider } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
@@ -25,6 +26,7 @@ async function foundation(t: TestContext) {
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
   );
+  const events = await createService(new DurableEvents(state));
   const files = new Map<string, ArtifactFileProvider>();
   const register = artifacts.registerFileProvider.bind(artifacts);
   t.mock.method(
@@ -112,11 +114,13 @@ async function foundation(t: TestContext) {
     ctx.provide('scope', scope);
     ctx.provide('artifacts', artifacts);
     ctx.provide('sessions', sessions as never);
+    ctx.provide('domainEvents', events);
   };
   t.after(async () => {
     await ctx.fiber.dispose();
     await api.stop();
     await tools.close();
+    await events.close();
     await state.close();
     await rm(directory, { recursive: true, force: true });
   });
@@ -125,6 +129,7 @@ async function foundation(t: TestContext) {
   return {
     ctx,
     state,
+    events,
     scope,
     artifacts,
     files,
@@ -253,6 +258,7 @@ test('native plugin unload drains reconciliation and fences captured work handle
   await ready;
   await entered.promise;
   const retired = f.ctx.sandboxes.nativeWork!;
+  const sandboxes = f.ctx.sandboxes;
   let drained = false;
   const disposing = fiber.dispose().then(() => {
     drained = true;
@@ -266,7 +272,7 @@ test('native plugin unload drains reconciliation and fences captured work handle
   assert.equal(f.files.size, 0);
   await assert.rejects(retired.connected(f.project.id), { code: 'sandboxes_closed' });
   await assert.rejects(
-    f.state.transaction((tx) => retired.revokeAssignment('lease_after_unload', tx)),
+    f.state.transaction((tx) => sandboxes.captures(f.project.id, 'work_after_unload', tx)),
     { code: 'sandboxes_closed' },
   );
 });
@@ -338,4 +344,75 @@ test('unloading while native migration waits cannot publish late providers', asy
   assert.equal(f.ctx.sandboxes, undefined);
   assert.equal(f.launcher(), undefined);
   assert.equal(f.files.size, 0);
+});
+
+test('native plugin follows session closes and workflow transitions through its own durable consumers', async (t) => {
+  const f = await foundation(t);
+  f.owners();
+  const ready = f.published();
+  const fiber = f.ctx.plugin(sandboxesPlugin, f.config);
+  await ready;
+  const project = f.project.id;
+  const later = new Date(Date.now() + 3_600_000).toISOString();
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      `CREATE TABLE wf_instances (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, workflow TEXT NOT NULL,
+      revision INTEGER NOT NULL, data_json TEXT NOT NULL)`,
+    );
+    await tx.run(
+      `INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at)
+      VALUES('connection',?,'root','account','member','sealed',?)`,
+      project,
+      new Date().toISOString(),
+    );
+    await tx.run(
+      `INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,desired_attempt,epoch_revision)
+      VALUES(?,'reflection','work_one','connection','1',1)`,
+      project,
+    );
+    await tx.run(
+      `INSERT INTO sandbox_native_assignments(lease_id,session_id,project_id,work_kind,work_id,attempt_ref,profile,expires_at,credentials)
+      VALUES('lease_one','lease_one',?,'reflection','work_one','1','check',?,'sealed')`,
+      project,
+      later,
+    );
+    await tx.run(
+      `INSERT INTO wf_instances(id,project_id,workflow,revision,data_json) VALUES('work_one',?,'reflection',2,'{}')`,
+      project,
+    );
+    await f.state.appendEvent(tx, {
+      projectId: project,
+      actorId: 'system:sessions',
+      type: 'session.closed',
+      subjectId: 'lease_one',
+      data: { sessionId: 'lease_one' },
+    });
+    await f.state.appendEvent(tx, {
+      projectId: project,
+      actorId: 'system:workflows',
+      type: 'workflow.transition',
+      subjectId: 'work_one',
+      data: { workflow: 'reflection', revision: 2, terminal: true },
+    });
+  });
+  await f.events.drain();
+  const work = await f.state.read((sql) =>
+    sql.get<{ desired_attempt: string; closed_at: string | null }>(
+      "SELECT * FROM sandbox_native_work WHERE work_id='work_one'",
+    ),
+  );
+  assert.equal(work!.desired_attempt, '2');
+  assert.ok(work!.closed_at);
+  const assignment = await f.state.read((sql) =>
+    sql.get<{ revoke_pending: boolean }>(
+      "SELECT * FROM sandbox_native_assignments WHERE lease_id='lease_one'",
+    ),
+  );
+  assert.equal(assignment!.revoke_pending, true);
+  assert.ok(
+    await f.state.read((sql) =>
+      sql.get("SELECT 1 FROM sandbox_native_revoked_leases WHERE lease_id='lease_one'"),
+    ),
+  );
+  await fiber.dispose();
 });

@@ -1,43 +1,22 @@
-import type { Json, Transaction, WorkflowExecutionReferences } from '@merv/contracts';
+import type { Json, Transaction } from '@merv/contracts';
 
 export interface NativeMachineReads {
   list(projectId: string): Promise<Json[]>;
   record(projectId: string, id: string): Promise<Json | null>;
 }
 
+/** The work kinds the native service accepts; every workflow maps to one (nativeWorkKind). */
 export type NativeWorkKind = 'task' | 'experiment';
+/** The profiles a native assignment is issued with; `none` issues no assignment. */
 export type NativeComputeProfile = 'execute' | 'check';
 
-/** Server capabilities. Workflow owners decide research authority; these calls only
- * pin it and queue native reconciliation in their existing database transaction. */
+/**
+ * What a unit may still ask Sandboxes directly. Sandboxes pins, attaches, fences, closes and
+ * revokes native work itself (docs/COMPUTE_CAPABILITY.md); `connected` remains only for the
+ * units' version selection until the older compute path is retired.
+ */
 export interface NativeSandboxWork {
-  guidance(profile: NativeComputeProfile): string;
   connected(projectId: string, tx?: Transaction): Promise<boolean>;
-  pin(projectId: string, kind: NativeWorkKind, workId: string, tx: Transaction): Promise<void>;
-  references(
-    projectId: string,
-    kind: NativeWorkKind,
-    workId: string,
-    attempt: string,
-    profile: NativeComputeProfile,
-    tx: Transaction,
-  ): Promise<WorkflowExecutionReferences>;
-  transition(
-    projectId: string,
-    kind: NativeWorkKind,
-    workId: string,
-    change: { attempt?: string; closed?: boolean },
-    tx: Transaction,
-  ): Promise<void>;
-  /** Queue assignment access revocation, including credentials still being issued. */
-  revokeAssignment(leaseId: string, tx: Transaction): Promise<void>;
-  /** Only collections verified and registered by this work's evidence bridge. */
-  artifactIds(
-    projectId: string,
-    kind: NativeWorkKind,
-    workId: string,
-    tx: Transaction,
-  ): Promise<string[]>;
 }
 
 export interface NativeSandboxesConfig {
