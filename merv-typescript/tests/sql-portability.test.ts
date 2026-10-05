@@ -28,6 +28,7 @@ import { postgresMigrations as migrations21 } from '../packages/sessions/src/ind
 import { managedNoncePostgresMigration } from '../packages/sessions/src/managed-nonce.postgres.js';
 import { postgresMigrations as migrations22 } from '../packages/sessions/src/observations.postgres.js';
 import { postgresMigrations as migrations26 } from '../packages/sessions/src/transcripts.postgres.js';
+import { postgresMigrations as migrations27 } from '../packages/sessions/src/conversations.postgres.js';
 import { postgresMigrations as migrations23 } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as migrations24 } from '../packages/workflows/src/index.postgres.js';
 import {
@@ -61,6 +62,7 @@ const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/sessions/src/managed-nonce.ts': { 8: managedNoncePostgresMigration },
   'packages/sessions/src/observations.ts': migrations22,
   'packages/sessions/src/transcripts.ts': migrations26,
+  'packages/sessions/src/conversations.ts': migrations27,
   'packages/tasks/src/index.ts': migrations23,
   'packages/workflows/src/index.ts': migrations24,
   'packages/code-work/src/legacy-units.ts': migrations25,
@@ -108,7 +110,7 @@ test('every native migration file is listed here', () => {
 
 test('domain migrations are PostgreSQL without SQLite constructs', () => {
   const all = migrations();
-  assert.equal(all.length, 107);
+  assert.equal(all.length, 108);
   all.push(
     ...[
       { owner: 'fleet', version: fleetMigration.version, postgres: fleetMigration.sql },

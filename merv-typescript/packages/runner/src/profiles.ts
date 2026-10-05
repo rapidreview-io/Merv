@@ -117,6 +117,8 @@ export interface LaunchRequest {
   disabledSkillPaths?: string[];
   /** Claude only, required: a private runner-owned path for the launch's `shellEnv`. */
   shellEnvFile?: string;
+  /** The conversation this launch continues, already restored where its harness finds it. */
+  resume?: string;
 }
 
 const maximumSkillEntries = 4096;
@@ -215,6 +217,11 @@ const INTERNET_READS = ['web.search', 'web.extract'] as const;
 const claudeTool = (name: string) => `mcp__merv__${name.replace(/[^A-Za-z0-9_-]/g, '_')}`;
 
 export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';
+/** Claude's session ids and Codex's thread ids. */
+export const conversationIdPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** The isolated assignment's Codex home, which the hosted image's launcher fixes. */
+export const assignmentCodexHome = '/home/assignment/.codex';
 export const mcpUrlVariable = 'MERV_MCP_URL';
 const runtimeVariables = [
   'PATH',
@@ -288,7 +295,6 @@ function codexArgs(
     'exec',
     '--ignore-user-config',
     '--ignore-rules',
-    '--ephemeral',
     '--skip-git-repo-check',
     '--sandbox',
     sealed(request.session) ? 'read-only' : 'workspace-write',
@@ -412,7 +418,8 @@ function codexArgs(
       }),
     );
   }
-  args.push('-');
+  // `exec resume` takes exec's own options before it and reads the next turn from stdin.
+  args.push(...(request.resume ? ['resume', request.resume] : []), '-');
   return args;
 }
 
@@ -439,7 +446,7 @@ function claudeArgs(
     '--output-format',
     'stream-json',
     '--verbose',
-    '--no-session-persistence',
+    ...(request.resume ? ['--resume', request.resume] : []),
     '--setting-sources',
     '',
     '--strict-mcp-config',
@@ -642,13 +649,19 @@ export function buildLaunch(
       'Private MCP connection conflicts with configured server',
     );
   }
+  check(
+    request.resume === undefined ||
+      (profile.harness !== 'command' && conversationIdPattern.test(request.resume)),
+    'invalid_runner_launch',
+    'Only a Claude or Codex launch resumes, a conversation named by its UUID',
+  );
   const url = endpoint(request.mcpUrl);
   const safeEnvironment =
     profile.harness === 'codex' && profile.isolatedLauncher
       ? {
           PATH: '/usr/bin:/bin',
           HOME: '/home/assignment',
-          CODEX_HOME: '/home/assignment/.codex',
+          CODEX_HOME: assignmentCodexHome,
           USER: 'assignment',
           TMPDIR: '/tmp',
           LANG: 'C.UTF-8',
@@ -661,6 +674,11 @@ export function buildLaunch(
         ? claudeArgs(profile, request, url)
         : [...(profile.args ?? [])];
   const stdin = [
+    ...(request.resume
+      ? [
+          'You are continuing your earlier work on this unit; it was returned to you with review feedback.',
+        ]
+      : []),
     request.prompt,
     ...(profile.harness === 'command' ? [] : [searching(internet(profile, session))]),
     ...(profile.harness === 'codex' &&

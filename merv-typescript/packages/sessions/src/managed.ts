@@ -736,7 +736,11 @@ export class ManagedRunnerBindings {
         row.bound_session_id,
       );
       const owed = await tx.get<{ declared_at: string }>(
-        'SELECT declared_at FROM session_transcripts WHERE session_id=? AND uploaded_at IS NULL',
+        // A conversation the session kept is owed as its transcript is.
+        `SELECT declared_at FROM session_transcripts WHERE session_id=? AND uploaded_at IS NULL
+         UNION ALL SELECT updated_at FROM session_conversations WHERE session_id=? AND sha256 IS NOT NULL AND uploaded_at IS NULL
+         ORDER BY 1 LIMIT 1`,
+        row.bound_session_id,
         row.bound_session_id,
       );
       const policy = effectiveWorkspace(session.execution.policy);

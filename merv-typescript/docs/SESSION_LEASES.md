@@ -220,15 +220,17 @@ Neither exposes an agent tool; the optional `sessions-tools` adapter registers `
 `usage.set_budget`, `session.stuck` and `session.release_hold`. A normal source credential controls these routes;
 use `X-Merv-Project-Id` when project selection is required.
 
-| Route                           | Input / result                                                                                                                                                               |
-| ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /sessions/offer`          | `instanceId`, `expectedRevision`, `runnerId`, `requestId`, `secret`, optional `hardDeadlineSeconds`; returns `{session}`.                                                    |
-| `GET /sessions`                 | Returns `{sessions}` belonging to this exact source authority.                                                                                                               |
-| `GET /sessions/:id`             | Returns `{session}` after checking source ownership.                                                                                                                         |
-| `POST /sessions/:id/attach`     | `runnerId`, immutable `hostRef`; returns `{session, prompt}`: the worker prompt the runner sends before its own lines.                                                       |
-| `POST /sessions/:id/heartbeat`  | `runnerId`; returns `{session}`.                                                                                                                                             |
-| `POST /sessions/:id/release`    | `runnerId`, optional `reason`, `outcome` and `usage`; returns `{session}`.                                                                                                   |
-| `POST /sessions/:id/transcript` | The holding runner's `runnerId`, `hostRef` and transcript facts, optional `deliver`; returns `{transcript}` ([Sessions README](../packages/sessions/README.md#transcripts)). |
+| Route                             | Input / result                                                                                                                                                                  |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /sessions/offer`            | `instanceId`, `expectedRevision`, `runnerId`, `requestId`, `secret`, optional `hardDeadlineSeconds`; returns `{session}`.                                                       |
+| `GET /sessions`                   | Returns `{sessions}` belonging to this exact source authority.                                                                                                                  |
+| `GET /sessions/:id`               | Returns `{session}` after checking source ownership.                                                                                                                            |
+| `POST /sessions/:id/attach`       | `runnerId`, immutable `hostRef`; returns `{session, prompt}`: the worker prompt the runner sends before its own lines.                                                          |
+| `POST /sessions/:id/heartbeat`    | `runnerId`; returns `{session}`.                                                                                                                                                |
+| `POST /sessions/:id/release`      | `runnerId`, optional `reason`, `outcome` and `usage`; returns `{session}`.                                                                                                      |
+| `POST /sessions/:id/transcript`   | The holding runner's `runnerId`, `hostRef` and transcript facts, optional `deliver`; returns `{transcript}` ([Sessions README](../packages/sessions/README.md#transcripts)).    |
+| `POST /sessions/:id/conversation` | The holding runner's `runnerId`, `hostRef` and conversation facts, optional `deliver`; returns `{conversation}` ([Sessions README](../packages/sessions/README.md#continuity)). |
+| `POST /sessions/:id/resume`       | `runnerId`, `hostRef` of a live attached session that continues a conversation; returns `{download}`, a signed GET.                                                             |
 
 Generate `secret` as `ms_` followed by 32 random bytes encoded as unpadded base64url
 (43 characters). Keep it out of prompts, files, URLs and logs. Supply it as the

@@ -10,8 +10,8 @@
   "apiEntries": 39,
   "serverPlugins": 69,
   "machinePlugins": 1,
-  "directDependencyCount": 194,
-  "optionalDependencyCount": 24,
+  "directDependencyCount": 195,
+  "optionalDependencyCount": 25,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -38,7 +38,7 @@
     "sandboxes": 6,
     "scope": 27,
     "secrets": 2,
-    "sessions": 6,
+    "sessions": 7,
     "state": 22,
     "tasks": 4,
     "tools": 24,
@@ -646,7 +646,9 @@
         "contextBuilder",
         "domainEvents"
       ],
-      "optional": [],
+      "optional": [
+        "sessions"
+      ],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true

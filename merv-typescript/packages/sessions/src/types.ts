@@ -145,7 +145,33 @@ export interface Session {
   execution: WorkflowExecution;
   lease: WorkflowLease;
   workspace?: SessionWorkspaceRecord;
+  /** Set at the offer and frozen with it, where the session's conversation may be continued. */
+  continuity?: SessionContinuity;
 }
+/** The conversation a session continues: the one its key's latest closed session kept. */
+export interface SessionResume {
+  sessionId: string;
+  harness: 'claude' | 'codex';
+  /** Claude's session id or Codex's thread id. */
+  conversationId: string;
+  sha256: string;
+  size: number;
+}
+/** Which earlier work a session continues: an opaque key, and the conversation it resumes. */
+export interface SessionContinuity {
+  key: string;
+  resume?: SessionResume;
+}
+/** What a continuity provider is shown of the work a session is offered. */
+export interface ContinuityUnit {
+  instanceId: string;
+  workflow: string;
+  state: string;
+  data: Data;
+  role: SessionRole;
+}
+/** A workflow's continuity key for the work, or null where no session continues another. */
+export type ContinuityProvider = (unit: Readonly<ContinuityUnit>) => string | null;
 /** Project-visible address for a worker, without its delegation or frozen assignment. */
 export type SessionLookup = Pick<
   Session,
@@ -182,6 +208,15 @@ export interface SessionTranscriptDeclaration {
   logBytes: number;
   truncated: boolean;
   /** Ready to deliver: Sessions HEADs the store and records the upload once the bytes are there, else signs one PUT. */
+  deliver?: true;
+}
+/** What a runner says about the conversation file it kept: the harness's own, redacted. */
+export interface SessionConversationDeclaration {
+  hostRef: string;
+  harness: 'claude' | 'codex';
+  conversationId: string;
+  sha256: string;
+  size: number;
   deliver?: true;
 }
 export interface SessionTranscript {
@@ -434,6 +469,18 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & SessionTranscriptDeclaration,
   ): Promise<SessionTranscript>;
+  /** Runner-only: the conversation the session kept, declared and delivered as a transcript is. */
+  conversation(
+    caller: Caller,
+    input: SessionControl & SessionConversationDeclaration,
+  ): Promise<SessionTranscript>;
+  /** Runner-only, live session: a signed GET of the conversation the session resumes. */
+  resume(
+    caller: Caller,
+    input: SessionControl & { hostRef: string },
+  ): Promise<{ url: string; expiresAt: string }>;
+  /** Keys `workflow`'s sessions for continuity, one provider per workflow, until disposed. */
+  registerContinuity(workflow: string, provider: ContinuityProvider): () => void;
   heartbeat(caller: Caller, input: SessionControl): Promise<Session>;
   release(
     caller: Caller,
