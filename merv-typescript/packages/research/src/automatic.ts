@@ -53,9 +53,15 @@ export async function automaticResearch(
       'actor.permissions_changed',
     ],
     handle: async (event, tx) => {
+      // Startup and each provider bind ask for a resume; a later one still to come answers this.
+      const later = "SELECT 1 FROM events WHERE project_id=? AND type='research.resume' AND id>?";
+      if (event.type === 'research.resume' && (await tx.get(later, event.projectId, event.id)))
+        return;
+      // Only a defining cycle reads the paper, so only it can be unblocked by a patch.
       const rows = await tx.all<AutomaticRow>(
-        "SELECT a.* FROM research_automation a JOIN wf_instances w ON w.id=a.research_id WHERE a.project_id=? AND w.state NOT IN ('complete','abandoned','failed') ORDER BY a.cycle_index,a.research_id",
+        "SELECT a.* FROM research_automation a JOIN wf_instances w ON w.id=a.research_id WHERE a.project_id=? AND w.state NOT IN ('complete','abandoned','failed') AND (?<>'paper.patched' OR w.state='defining') ORDER BY a.cycle_index,a.research_id",
         event.projectId,
+        event.type,
       );
       for (const row of rows) {
         let blocker: ResearchAutomation['blocker'];

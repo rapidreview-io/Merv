@@ -402,69 +402,72 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       parseExperimentInput(experimentGetSchema, { experimentId: id });
-      const row = await this.row(caller, id, tx),
-        workflow = await this.workflows.get(caller, id, tx);
-      const starts = await this.workflows.workStarts(caller, id, tx);
-      const attempts = (
-        await tx.all<AttemptRow>(
-          'SELECT * FROM experiment_attempts WHERE experiment_id=? ORDER BY attempt_index',
-          id,
-        )
+      return await this.experiment(caller, await this.row(caller, id, tx), tx);
+    });
+  }
+  /** The experiment a row describes, for a caller already authorized to read it. */
+  private async experiment(caller: Caller, row: ExperimentRow, tx: Transaction) {
+    const workflow = await this.workflows.get(caller, row.id, tx);
+    const starts = await this.workflows.workStarts(caller, row.id, tx);
+    const attempts = (
+      await tx.all<AttemptRow>(
+        'SELECT * FROM experiment_attempts WHERE experiment_id=? ORDER BY attempt_index',
+        row.id,
       )
-        .map(attemptMetadata)
-        .map((attempt) => ({
-          ...attempt,
-          startedAt:
-            starts
-              .filter(
-                (start) =>
-                  start.state === 'running' &&
-                  start.revision >= attempt.startedRevision &&
-                  (attempt.endedRevision === null || start.revision <= attempt.endedRevision),
-              )
-              .sort((a, b) => a.startedAt.localeCompare(b.startedAt))[0]?.startedAt ?? null,
-        }));
-      const attempt = attempts.find((attempt) => attempt.index === row.attempt_index)!;
-      const evidence = (
-        await tx.all<{ record: string; selected: number }>(
-          `SELECT e.record,CASE WHEN s.evidence_id=e.id THEN 1 ELSE 0 END AS selected
+    )
+      .map(attemptMetadata)
+      .map((attempt) => ({
+        ...attempt,
+        startedAt:
+          starts
+            .filter(
+              (start) =>
+                start.state === 'running' &&
+                start.revision >= attempt.startedRevision &&
+                (attempt.endedRevision === null || start.revision <= attempt.endedRevision),
+            )
+            .sort((a, b) => a.startedAt.localeCompare(b.startedAt))[0]?.startedAt ?? null,
+      }));
+    const attempt = attempts.find((attempt) => attempt.index === row.attempt_index)!;
+    const evidence = (
+      await tx.all<{ record: string; selected: number }>(
+        `SELECT e.record,CASE WHEN s.evidence_id=e.id THEN 1 ELSE 0 END AS selected
     FROM experiment_evidence e LEFT JOIN experiment_slots s ON s.experiment_id=e.experiment_id AND s.attempt_index=e.attempt_index AND s.role=e.role AND s.path=e.path
     WHERE e.experiment_id=? ORDER BY e.sequence`,
-          id,
-        )
-      ).map(
-        ({ record, selected }) =>
-          ({ figureIds: [], ...JSON.parse(record), current: !!selected }) as ExperimentEvidence,
-      );
-      const submissions = (
-        await tx.all<SubmissionRow>(
-          'SELECT record FROM experiment_submissions WHERE experiment_id=? ORDER BY attempt_index,stage,round',
-          id,
-        )
-      ).map(submissionMetadata);
-      return {
-        id,
-        projectId: row.project_id,
-        name: row.name,
-        intent: row.intent,
-        details: row.details,
-        ownerId: row.owner_id,
-        createdBy: row.created_by,
-        createdAt: row.created_at,
-        ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
-        ...(typeof workflow.data.baseTaskId === 'string'
-          ? { baseTaskId: workflow.data.baseTaskId }
-          : {}),
-        workflow,
-        attempt,
-        attempts,
-        evidence,
-        submissions,
-        reviewId: row.review_id,
-        conclusion: row.conclusion,
-        captureArtifactIds: (await this.sandboxes?.captures(caller.projectId, id, tx)) ?? [],
-      };
-    });
+        row.id,
+      )
+    ).map(
+      ({ record, selected }) =>
+        ({ figureIds: [], ...JSON.parse(record), current: !!selected }) as ExperimentEvidence,
+    );
+    const submissions = (
+      await tx.all<SubmissionRow>(
+        'SELECT record FROM experiment_submissions WHERE experiment_id=? ORDER BY attempt_index,stage,round',
+        row.id,
+      )
+    ).map(submissionMetadata);
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      name: row.name,
+      intent: row.intent,
+      details: row.details,
+      ownerId: row.owner_id,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
+      ...(typeof workflow.data.baseTaskId === 'string'
+        ? { baseTaskId: workflow.data.baseTaskId }
+        : {}),
+      workflow,
+      attempt,
+      attempts,
+      evidence,
+      submissions,
+      reviewId: row.review_id,
+      conclusion: row.conclusion,
+      captureArtifactIds: (await this.sandboxes?.captures(caller.projectId, row.id, tx)) ?? [],
+    };
   }
   /**
    * What Code holds for an experiment: its pinned base, where a base stands, its acceptance.
@@ -487,11 +490,11 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       return await mapAsync(
-        await tx.all<{ id: string }>(
-          'SELECT id FROM experiments WHERE project_id=? ORDER BY created_at,id',
+        await tx.all<ExperimentRow>(
+          'SELECT * FROM experiments WHERE project_id=? ORDER BY created_at,id',
           caller.projectId,
         ),
-        async (row) => await this.get(caller, row.id, tx),
+        async (row) => await this.experiment(caller, row, tx),
       );
     });
   }
