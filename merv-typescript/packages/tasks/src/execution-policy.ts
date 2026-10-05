@@ -17,7 +17,6 @@ export function taskExecutionPolicy(
   purpose: 'work' | 'review',
   workspace: TaskWorkspace,
   largeUploads = false,
-  compute = false,
 ): WorkflowExecutionPolicy {
   const instance = { instanceId: target('instanceId') };
   const task = { taskId: target('instanceId') };
@@ -54,32 +53,6 @@ export function taskExecutionPolicy(
       }),
       grant('workflow.assignment', instance),
       grant('task.get', task),
-      ...(compute ? [grant('task.compute_status', task)] : []),
-      ...(compute
-        ? [
-            ...(purpose === 'review' ? [grant('task.compute_offers', {})] : []),
-            ...(purpose === 'review'
-              ? [
-                  grant('task.compute_run', {
-                    ...task,
-                    ...revision,
-                    purpose: { kind: 'literal', value: 'check' },
-                  }),
-                  grant('task.compute_cancel', task),
-                ]
-              : []),
-            ...['machines', 'rent', 'ssh', 'extend', 'release'].map((name) =>
-              grant(`task.compute_${name}`, task),
-            ),
-          ]
-        : []),
-      ...(compute && purpose === 'work'
-        ? [
-            grant('task.compute_offers', {}),
-            grant('task.compute_run', { ...task, ...revision }),
-            grant('task.compute_cancel', task),
-          ]
-        : []),
       grant('task.context', assignment),
       grant('task.checkpoint', {
         ...assignment,

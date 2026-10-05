@@ -1485,33 +1485,6 @@ test('every experiment lease admits verified captures and leaves compute to Sand
   const f = await fixture(t);
   const native = nativeWorkFixture();
   f.experiments.bindSandboxes(native.service);
-  // Sandboxes attaches compute to a lease of the earlier contracts too, so its captures count.
-  const legacy = await f.create();
-  await f.state.transaction((tx) =>
-    tx.run('UPDATE wf_instances SET version=28 WHERE id=?', legacy.id),
-  );
-  const leased = await f.offer(legacy);
-  const output = await f.artifacts.createCollection(
-    await f.scope.serviceActor('sandboxes', f.source.projectId),
-    {
-      title: 'Legacy capture',
-      sourceKey: 'legacy-lease',
-      files: [
-        { name: 'out.txt', size: 1, hash: 'b'.repeat(64), provider: 'sandboxes', reference: 'p' },
-      ],
-    },
-  );
-  native.verified.set(legacy.id, [output.id]);
-  const legacyWorker = await f.sessions.authenticate(leased.secret);
-  assert.equal(
-    (
-      await f.run(legacyWorker, 'artifact.get', { artifactId: output.id }, (caller) =>
-        f.artifacts.get(caller, output.id),
-      )
-    ).id,
-    output.id,
-  );
-  await f.release(leased.session.id);
   const experiment = await f.create();
   const first = await f.offer(experiment);
   // Sandboxes derives compute from the lease itself: the unit names no scope or profile.

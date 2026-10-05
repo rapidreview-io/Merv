@@ -54,12 +54,10 @@ export const reviewing = (state: string) =>
   state === 'design_review' || state === 'experiment_review';
 export const producing = (state: string) => state === 'planned' || state === 'running';
 
-/** The executable contracts: new work selects a native one, live work keeps its own. */
-const programVersions: Record<number, { largeUploads: boolean; native: boolean }> = {
-  28: { largeUploads: false, native: false },
-  32: { largeUploads: true, native: false },
-  36: { largeUploads: false, native: true },
-  40: { largeUploads: true, native: true },
+/** The executable contracts: new work selects one by its uploads, live work keeps its own. */
+const programVersions: Record<number, { largeUploads: boolean }> = {
+  36: { largeUploads: false },
+  40: { largeUploads: true },
 };
 function programContract(version: number) {
   const contract = programVersions[version];
@@ -73,13 +71,12 @@ export const runningNode = {
   versions: Object.keys(programVersions).map(Number),
   state: 'running',
 };
-export const nativeExperiment = (version: number) => programContract(version).native;
 const CODE_DRIVER = 'code.v2';
-/** New experiments always run on a native contract. */
+/** The contract a new experiment runs on. */
 export const programVersion = (largeUploads = false): number =>
   Number(
     Object.entries(programVersions).find(
-      ([, contract]) => contract.largeUploads === largeUploads && contract.native,
+      ([, contract]) => contract.largeUploads === largeUploads,
     )![0],
   );
 /**
@@ -138,21 +135,19 @@ export function epochAfter(
   action: string,
   attemptIndex: number,
 ): { computeEpoch?: string } {
-  const { state, data, revision, version } = experiment.workflow;
+  const { state, data } = experiment.workflow;
   const to = EXPERIMENT_WORKFLOW.edges.find(
     (edge) => edge.from === state && edge.action === action,
   )?.to;
   if (!to) return {};
-  // A retry keeps the epoch its compute runs under. Work started before Experiments recorded one
-  // ran under attempt:state on a native contract, and under the revision Sandboxes fell back to.
+  // A retry keeps the epoch its compute runs under; work started before Experiments recorded
+  // one ran under attempt:state.
   if (to === state)
     return {
       computeEpoch:
         typeof data.computeEpoch === 'string'
           ? data.computeEpoch
-          : nativeExperiment(version)
-            ? experimentEpoch(attemptIndex, to)
-            : String(revision),
+          : experimentEpoch(attemptIndex, to),
     };
   return { computeEpoch: experimentEpoch(attemptIndex, to) };
 }
@@ -405,18 +400,6 @@ function execution(state: ActiveState, version: number): WorkflowExecutionPolicy
       ),
       grant('workflow.assignment', { instanceId: target('instanceId') }),
       grant('experiment.get_state', experiment),
-      ...(!nativeExperiment(version) ? [grant('compute.offers', {})] : []),
-      ...(!nativeExperiment(version)
-        ? ['machines', 'rent', 'ssh', 'extend', 'release'].map((name) =>
-            grant(`compute.${name}`, experiment),
-          )
-        : []),
-      ...(!nativeExperiment(version) && state !== 'running'
-        ? [
-            grant('compute.run', { ...experiment, purpose: { kind: 'literal', value: 'check' } }),
-            grant('compute.cancel', experiment),
-          ]
-        : []),
       grant('artifact.get', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
       grant('artifact.read', { artifactId: { kind: 'oneOf', name: 'artifacts' } }),
       grant('review.get', { reviewId: { kind: 'oneOf', name: 'reviews' } }),
@@ -456,9 +439,6 @@ function execution(state: ActiveState, version: number): WorkflowExecutionPolicy
               })),
             ),
             ...(state === 'running' ? [grant('experiment.exhibit', experiment)] : []),
-            ...(!nativeExperiment(version) && state === 'running'
-              ? [grant('compute.run', experiment), grant('compute.cancel', experiment)]
-              : []),
             ...(state === 'running' ? [grant('code.commit', {}), grant('code.operation', {})] : []),
           ]),
     ],

@@ -44,7 +44,7 @@ original response; changed input under the same request ID conflicts.
 
 ## Task versions
 
-Current ordinary tasks (`task@31`, `35`, `39`, `43`) have `mark_failed` from `in_progress` and `in_review`, advancing the revision once. Current conflict-resolution service tasks (`task@6`, `11`) suspend instead. Other workflow versions are read-only history: their original records and definitions remain, but new closure commands are refused along with other mutations. Previously committed command responses remain replayable without changing history.
+Current ordinary tasks (`task@39`, `43`) have `mark_failed` from `in_progress` and `in_review`, advancing the revision once. Current conflict-resolution service tasks (`task@6`, `11`) suspend instead. Other workflow versions are read-only history: their original records and definitions remain, but new closure commands are refused along with other mutations. Previously committed command responses remain replayable without changing history.
 
 ## Validation
 

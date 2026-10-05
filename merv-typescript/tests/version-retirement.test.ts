@@ -389,6 +389,12 @@ test('retiring the versions that can no longer start deletes their records and n
             if (table === 'research_cycles' && row.id === 'l-res6') row.predecessor_id = null;
             if (table === 'research_automation' && row.research_id === 'l-res6')
               row.root_id = 'l-res6';
+            // experiments@6 and reflections@4 drop columns after the retirement.
+            if (table === 'experiments') delete row.tested_claim_ids;
+            if (table === 'reflections') {
+              delete row.corpus;
+              delete row.paper;
+            }
             // reflections@3 and reviews@11 add a column after the retirement; jsonb orders keys
             // by length.
             const added = {
@@ -410,7 +416,6 @@ test('retiring the versions that can no longer start deletes their records and n
   }
   expected.session_managed_runners = [];
   expected.session_managed_assignments = [];
-  expected.experiment_compute_runs = [];
   expected.session_messages = [];
   const after = await snapshot(client);
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))

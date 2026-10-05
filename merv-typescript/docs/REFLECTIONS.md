@@ -2,7 +2,7 @@
 
 Reflections is a peer domain program alongside Tasks and Experiments. Research coordinates the outer cycle; Reflections owns five independent lenses, synthesis, and independent review. It depends on State, Scope, Artifacts, Paper, Workflows, Reviews and Context Builder. It does not depend on Knowledge or Research.
 
-New waves use `reflection@4` and `reflection.lens@3`, which are versions 3 and 2 with an ending; waves already on version 3 keep it and its lens@2 lenses, and cannot be ended. Earlier versions are [retired](#retired-versions). They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
+Waves use `reflection@4` and `reflection.lens@3`, which can be ended. Earlier versions are [retired](#retired-versions). They read live research. Creating a wave does not capture a Knowledge snapshot, copy the paper, or create an input artifact. Only one unfinished wave can exist in a project.
 
 ## Work during a wave
 
@@ -94,3 +94,7 @@ of every `reflection@3` wave a retired research cycle had opened as its reflecti
 ids stay listed in `wf_retired_instances` and the `events` log still names them; their artifacts
 are kept. `reflection.get` and `Reflections.approved` no longer return `corpus`, `paper`,
 `experimentIds` or `paperProposal`: only the retired waves could hold them.
+
+`reflection@3` and `reflection.lens@2`, which could not be ended, were retired on 2026-10-05.
+Production held no instance of either, so no records were deleted. The `reflections@4` migration
+drops the `corpus` and `paper` columns, which only `reflection@1` ever filled.

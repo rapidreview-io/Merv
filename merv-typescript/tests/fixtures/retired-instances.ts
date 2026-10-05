@@ -414,10 +414,10 @@ DELETE FROM component_migrations WHERE component='sessions' AND version=12;`);
     await client.query(
       "DELETE FROM component_migrations WHERE component='sessions' AND version=11",
     );
-    await client.query('DROP TABLE experiment_compute_runs');
-    await client.query(
-      "DELETE FROM component_migrations WHERE component='experiments' AND version=5",
-    );
+    // experiments@5 made compute runs and experiments@6 dropped them with the tested claims,
+    // which the historical rows still hold.
+    await client.query(`ALTER TABLE experiments ADD COLUMN tested_claim_ids TEXT NOT NULL DEFAULT '[]';
+DELETE FROM component_migrations WHERE component='experiments' AND version IN (5,6);`);
     // Session messaging shipped after both retirements. Rewind its empty table with its version
     // so the historical sessions can be removed and the current server can replay it on boot.
     await client.query('DROP TABLE session_messages');
@@ -427,8 +427,11 @@ DELETE FROM component_migrations WHERE component='sessions' AND version=12;`);
     await client.query(
       "DELETE FROM component_migrations WHERE component='sessions' AND version IN (7,8)",
     );
-    // reflections@3 (a wave can be abandoned) came after the retirement too.
-    await client.query('ALTER TABLE reflections DROP COLUMN abandoned');
+    // reflections@3 (a wave can be abandoned) came after the retirement too, and reflections@4
+    // dropped the corpus and paper the historical waves still hold.
+    await client.query(`ALTER TABLE reflections ADD COLUMN corpus TEXT NOT NULL DEFAULT 'null',
+ADD COLUMN paper TEXT NOT NULL DEFAULT 'null', DROP COLUMN abandoned;
+DELETE FROM component_migrations WHERE component='reflections' AND version=4;`);
     await client.query(
       'CREATE UNIQUE INDEX reflection_open_project ON reflections(project_id) WHERE approved IS NULL',
     );

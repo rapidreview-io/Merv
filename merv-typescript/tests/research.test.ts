@@ -1272,35 +1272,6 @@ test('the reference lookup names a research cycle and its reflection', async (t)
   );
 });
 
-test('a version-3 wave keeps its lenses, its path to approval and its lack of an ending', async (t) => {
-  const f = await fixture(t);
-  const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'legacy' });
-  // As production holds it: a wave started before version 4, with version-2 lenses.
-  await f.app.ctx.state.transaction(async (tx) => {
-    await tx.run('UPDATE wf_instances SET version=3 WHERE id=?', wave.id);
-    for (const lens of wave.lenses)
-      await tx.run('UPDATE wf_instances SET version=2 WHERE id=?', lens.id);
-  });
-  await assert.rejects(
-    f.app.ctx.reflections.end(f.owner, {
-      reflectionId: wave.id,
-      expectedRevision: 0,
-      reason: 'Version 3 has no ending.',
-      requestId: f.id(),
-    }),
-    { code: 'invalid_transition' },
-  );
-  const cycle = await f.research.create(f.owner, { name: 'Legacy', requestId: f.id() });
-  assert.equal((await f.app.ctx.reflections.get(f.owner, wave.id)).workflow.version, 3);
-  const record = { ...cycle, reflectionId: wave.id };
-  await f.app.ctx.state.transaction((tx) =>
-    tx.run('UPDATE research_cycles SET reflection_id=? WHERE id=?', wave.id, cycle.id),
-  );
-  const approved = await f.reflect(record);
-  assert.equal(approved.workflow.state, 'approved');
-  assert.equal(approved.workflow.version, 3);
-});
-
 const planned = (
   overrides: Partial<Extract<ChangeSpec, { version: 3 }>> = {},
 ): Extract<ChangeSpec, { version: 3 }> => ({

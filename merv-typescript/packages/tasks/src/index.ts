@@ -168,33 +168,25 @@ export const TASK_WORKFLOW: WorkflowDefinition = {
     { from: 'in_review', action: 'mark_failed', to: 'failed' },
   ],
 };
-/** The executable contracts: new work selects a native one, live work keeps its own. */
-const taskVersions: Record<
-  number,
-  { workspace: TaskWorkspace; largeUploads: boolean; native: boolean }
-> = {
-  6: { workspace: 'resolution', largeUploads: false, native: false },
-  11: { workspace: 'resolution', largeUploads: true, native: false },
-  31: { workspace: 'code', largeUploads: false, native: false },
-  35: { workspace: 'code', largeUploads: true, native: false },
-  39: { workspace: 'code', largeUploads: false, native: true },
-  43: { workspace: 'code', largeUploads: true, native: true },
+/** The executable contracts: new work selects one by its uploads, live work keeps its own. */
+const taskVersions: Record<number, { workspace: TaskWorkspace; largeUploads: boolean }> = {
+  6: { workspace: 'resolution', largeUploads: false },
+  11: { workspace: 'resolution', largeUploads: true },
+  39: { workspace: 'code', largeUploads: false },
+  43: { workspace: 'code', largeUploads: true },
 };
 function taskContract(version: number) {
   const contract = taskVersions[version];
   check(contract, 'workflow_version_retired', `Task workflow ${version} is retired`, 409);
   return contract;
 }
-export const nativeTask = (version: number) => taskContract(version).native;
 export const taskWorkspace = (version: number): TaskWorkspace => taskContract(version).workspace;
-/** New work always runs on a native contract; only service tasks keep their own. */
+/** Service tasks are the resolution contracts; every other task runs on a Code one. */
 const taskVersion = (largeUploads = false, service = false): number =>
   Number(
     Object.entries(taskVersions).find(
       ([, contract]) =>
-        contract.largeUploads === largeUploads &&
-        contract.native === !service &&
-        (contract.workspace === 'resolution') === service,
+        contract.largeUploads === largeUploads && (contract.workspace === 'resolution') === service,
     )![0],
   );
 const serviceOwned = (version: number) => taskVersions[version]?.workspace === 'resolution';
@@ -736,7 +728,6 @@ export class TaskService implements Tasks {
             'work',
             taskWorkspace(version),
             taskContract(version).largeUploads,
-            !serviceOwned(version) && !nativeTask(version),
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -751,7 +742,6 @@ export class TaskService implements Tasks {
             'review',
             taskWorkspace(version),
             taskContract(version).largeUploads,
-            !serviceOwned(version) && !nativeTask(version),
           ),
           references: async (context) => await this.workflowExecutionReferences(context),
           lease: this.leaseHooks(),
@@ -2137,15 +2127,18 @@ export class TaskService implements Tasks {
   async running(caller: Caller, include: Iterable<string> = []): Promise<RunningNode[]> {
     caller = structuredClone(caller);
     const held = [...new Set([...include].filter((key) => keyKind(key) === 'work').map(keyId))];
-    const kept = held.length ? ` OR t.id IN (${held.map(() => '?').join(',')})` : '';
     return await this.state.snapshot(
       async () =>
         await this.state.transaction(async (tx) => {
           await this.scope.require(caller, 'read', tx);
-          const rows = await tx.all<RunningTaskRow>(
-            `SELECT t.id,t.title,t.review_id,w.version,w.state,w.revision FROM tasks t JOIN wf_instances w ON w.id=t.id WHERE t.project_id=? AND (w.state NOT IN ('done','failed')${kept}) ORDER BY t.created_at,t.id`,
-            caller.projectId,
+          const ids = [
+            ...(await this.workflows.open('task', caller.projectId, tx)).map((w) => w.id),
             ...held,
+          ];
+          const rows = await tx.all<RunningTaskRow>(
+            `SELECT t.id,t.title,t.review_id,w.version,w.state,w.revision FROM tasks t JOIN wf_instances w ON w.id=t.id WHERE t.project_id=? AND t.id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY t.created_at,t.id`,
+            caller.projectId,
+            ...ids,
           );
           const leases = await this.liveLeases(caller, tx);
           const blocked = new Set(

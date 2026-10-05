@@ -27,51 +27,43 @@ export const LENSES = [
       'Identify the highest-information next experiments and project-scope changes justified by the current research. Distinguish actionable proposals from established findings. Weigh what the work cost: usage.read reports it for the project or, given a research cycle id, for that cycle, and the limits in workflow.status_and_next show which loops ran out of rounds. Treat token and cost figures as runner-reported and unverified.',
   },
 ] as const;
+/**
+ * A wave that cannot finish, for want of five lens authors say, is abandoned by its owner or an
+ * operator, which lifts the pause on new work; its lenses end with it. Edge order is part of
+ * each fingerprint; never reorder it. Version 3 of the wave and 2 of the lens, which could not
+ * be ended, are retired.
+ */
 export const REFLECTION_WORKFLOW: WorkflowDefinition = {
   name: 'reflection',
-  version: 3,
+  version: 4,
   blocksStarts: ['task', 'experiment'],
   initial: 'reflecting',
-  states: ['reflecting', 'synthesizing', 'in_review', 'approved'],
-  terminal: ['approved'],
+  states: ['reflecting', 'synthesizing', 'in_review', 'approved', 'abandoned'],
+  terminal: ['approved', 'abandoned'],
   edges: [
     { from: 'reflecting', action: 'join', to: 'synthesizing' },
     { from: 'synthesizing', action: 'submit', to: 'in_review' },
     { from: 'in_review', action: 'approve', to: 'approved' },
     { from: 'in_review', action: 'revise_synthesis', to: 'synthesizing' },
     { from: 'in_review', action: 'restart_lenses', to: 'reflecting' },
+    ...['reflecting', 'synthesizing', 'in_review'].map((from) => ({
+      from,
+      action: 'abandon',
+      to: 'abandoned',
+    })),
   ],
 };
 export const LENS_WORKFLOW: WorkflowDefinition = {
   name: 'reflection.lens',
-  version: 2,
+  version: 3,
   initial: 'reflecting',
-  states: ['reflecting', 'complete'],
-  terminal: ['complete'],
-  edges: [{ from: 'reflecting', action: 'submit', to: 'complete' }],
-};
-/** A published definition never changes, so a version that can be ended is a new version. */
-const endable = (definition: WorkflowDefinition, live: string[]): WorkflowDefinition => ({
-  ...definition,
-  version: definition.version + 1,
-  states: [...definition.states, 'abandoned'],
-  terminal: [...definition.terminal, 'abandoned'],
+  states: ['reflecting', 'complete', 'abandoned'],
+  terminal: ['complete', 'abandoned'],
   edges: [
-    ...definition.edges,
-    ...live.map((from) => ({ from, action: 'abandon', to: 'abandoned' })),
+    { from: 'reflecting', action: 'submit', to: 'complete' },
+    { from: 'reflecting', action: 'abandon', to: 'abandoned' },
   ],
-});
-/**
- * Version 4 is version 3 with an ending: a wave that cannot finish, for want of five lens
- * authors say, is abandoned by its owner or an operator, which lifts the pause on new work.
- * Its lenses are version 3, which the wave's ending ends with it.
- */
-export const REFLECTION_WORKFLOW_ENDABLE = endable(REFLECTION_WORKFLOW, [
-  'reflecting',
-  'synthesizing',
-  'in_review',
-]);
-export const LENS_WORKFLOW_ENDABLE = endable(LENS_WORKFLOW, ['reflecting']);
+};
 export const REFLECTION_CRITERIA = [
   'Research coverage is explained, including unfinished work and any new results observed during the wave; factual conclusions and claim changes cite exact evidence and preserve uncertainty.',
   'Five independently authored lens reports are reconciled, including disagreements, negative results and methodological limitations.',

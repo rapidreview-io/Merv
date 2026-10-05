@@ -4,8 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { digest } from '@merv/contracts';
-import { nativeTask } from '@merv/tasks';
-import { nativeExperiment } from '../packages/experiments/src/program.js';
+import { taskWorkspace } from '@merv/tasks';
+import { currentExperiment } from '../packages/experiments/src/program.js';
 import { createApp } from './fixtures/app.js';
 
 // Captured before retirement. These include the graph, success states and every fixed
@@ -13,12 +13,8 @@ import { createApp } from './fixtures/app.js';
 const current = {
   'task@6': '9e61a6e5e930fedbdb21dc5312637e3acea38f886e5a3674f9294bd854f8263c',
   'task@11': 'c01c239aec645fcff44e7727737c332a8086ecd2ea022df5e5c8d6b1680e5d60',
-  'task@31': 'a3f8c5370031fcc7b8c5bc3bbdfaaf379f7f15ec1de3df4b2e07a0baaa73fd2e',
-  'task@35': '471c6614ab9fefda1426e1165839a1678fdc512352c9e0e688e3921a5c7af84b',
   'task@39': '125c77e994c38591382d2819f27672d2775fa4c06f65b7416204f4cbfe87cbd0',
   'task@43': 'c1f2f37f67bc6ee96c86d7345419b6708d6938fd4f535c55f29720a84d22779b',
-  'experiment@28': '2d803d79781cda656f6607697fc66a4fb9af15098e3a3410f2bd8ac314f43854',
-  'experiment@32': '82baa1d27a93b1cef4f526e86f1b7e561fc842ae615995edc9d97e7746d80129',
   'experiment@36': 'f6a4a1ea1ee638d8edd729414215fed080599dae1aadc4dac5255d2718c6a44c',
   'experiment@40': '183e98516c3c980d63cbf45603684978a2a8338afdff451674700b59693d5e07',
 };
@@ -62,11 +58,11 @@ test('only current work contracts register, with unchanged permissions across re
   }
 });
 
-test('retired contracts cannot silently become scratch or non-native work', () => {
-  for (const version of [2, 5, 28, 29, 30, 36, 40, 999])
-    assert.throws(() => nativeTask(version), { code: 'workflow_version_retired' });
-  for (const version of [1, 5, 8, 25, 27, 33, 37, 999])
-    assert.throws(() => nativeExperiment(version), { code: 'workflow_version_retired' });
+test('retired contracts cannot silently become current work', () => {
+  for (const version of [2, 5, 28, 29, 30, 31, 35, 36, 40, 999])
+    assert.throws(() => taskWorkspace(version), { code: 'workflow_version_retired' });
+  for (const version of [1, 5, 8, 25, 27, 28, 32, 33, 37, 999])
+    assert.equal(currentExperiment(version), false);
 });
 
 test('retired work survives restart as readable history, with no new claims or mutations', async (t) => {
@@ -88,8 +84,8 @@ test('retired work survives restart as readable history, with no new claims or m
   const reviews: string[] = [];
   // Reproduce stored, pinned records from a former installation. No old owner code is loaded.
   for (const [name, version, active] of [
-    ['task', 28, 31],
-    ['experiment', 25, 28],
+    ['task', 28, 39],
+    ['experiment', 25, 36],
   ] as const) {
     const pinned = (await app.ctx.workflows.pinned(name, active))!;
     const handle = await app.ctx.workflows.register({ ...pinned.definition, version });
@@ -128,7 +124,7 @@ test('retired work survives restart as readable history, with no new claims or m
         );
       } else {
         await tx.run(
-          'INSERT INTO experiments(id,project_id,name,intent,details,owner_id,created_by,created_at,tested_claim_ids,attempt_index,review_id) VALUES(?,?,?,?,?,?,?,?,?,1,?)',
+          'INSERT INTO experiments(id,project_id,name,intent,details,owner_id,created_by,created_at,attempt_index,review_id) VALUES(?,?,?,?,?,?,?,?,1,?)',
           workflow.id,
           owner.projectId,
           name,
@@ -137,7 +133,6 @@ test('retired work survives restart as readable history, with no new claims or m
           owner.actorId,
           owner.actorId,
           workflow.createdAt,
-          '[]',
           review.id,
         );
         await tx.run(

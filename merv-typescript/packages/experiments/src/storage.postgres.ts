@@ -177,4 +177,13 @@ CREATE TABLE experiment_compute_runs (
 );
 CREATE INDEX experiment_compute_runs_project_state ON experiment_compute_runs(project_id,state);
 `,
+  // Compute runs went with the non-native contracts, which never recorded one, and tested claims
+  // with research claims; the column held '[]' for every experiment since.
+  6: `
+DROP TABLE experiment_compute_runs;
+DROP TRIGGER experiments_identity_immutable ON experiments;
+ALTER TABLE experiments DROP COLUMN tested_claim_ids;
+CREATE TRIGGER experiments_identity_immutable BEFORE UPDATE OF id,project_id,name,intent,details,owner_id,created_by,created_at ON experiments
+FOR EACH ROW EXECUTE FUNCTION experiments_identity_immutable_guard();
+`,
 };
