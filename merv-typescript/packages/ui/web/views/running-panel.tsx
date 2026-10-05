@@ -18,6 +18,7 @@ import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { StageList } from '../process';
+import { AgentLive } from './agent-live';
 import { Phrase, Reading, Target, silent, steadyText, valueText } from './running-phrase';
 
 /**
@@ -338,7 +339,7 @@ function Body({ section }: { section: RunningSection }) {
     case 'stream':
       return <Stream items={section.items} />;
     case 'agent':
-      return null;
+      return <AgentLive sessions={section.sessions} />;
   }
 }
 
@@ -368,7 +369,11 @@ function Section({ section: sent }: { section: RunningSection }) {
       </details>
     );
   return (
-    <section className="running-section" aria-label={section.title}>
+    <section
+      // The live stream takes the sidebar's whole width, also maximized.
+      className={cx('running-section', section.kind === 'agent' && 'running-section--agent')}
+      aria-label={section.title}
+    >
       <h3 className={heading}>{head}</h3>
       <Body section={section} />
     </section>

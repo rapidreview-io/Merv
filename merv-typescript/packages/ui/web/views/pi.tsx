@@ -28,7 +28,7 @@ import { AnsiText } from '../code-block';
 import { JsonView, readJson } from '../json-view';
 import { MarkdownPieces, RecordText, useRecordNames, type RecordNames } from '../markdown';
 import {
-  PiStreamError,
+  StreamError,
   readPiEvents,
   type PiConversation,
   type PiDelta,
@@ -829,13 +829,13 @@ function useConversation() {
         else if (Date.now() - since > 5000) return void connect();
       } catch (cause) {
         if (!alive()) return;
-        if (cause instanceof PiStreamError && [401, 403, 404, 410].includes(cause.status)) {
+        if (cause instanceof StreamError && [401, 403, 404, 410].includes(cause.status)) {
           setStreamError('This conversation isn’t available right now.');
           setUnavailable(true);
           return;
         }
         // Too many pages hold this conversation open: this one waits its turn quietly.
-        busyStream = cause instanceof PiStreamError && cause.status === 429;
+        busyStream = cause instanceof StreamError && cause.status === 429;
         if (!busyStream) setStreamError(RECONNECTING);
       }
       if (!alive()) return;

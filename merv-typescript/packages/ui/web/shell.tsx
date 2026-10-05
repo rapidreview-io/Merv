@@ -33,7 +33,7 @@ const unwell = (row: Row) =>
 
 /**
  * One destination in the rail: a thin line glyph, its label, and, on the ground
- * pill, the place you are in. Only Now carries a count; a second dot appears
+ * pill, the place you are in. Only Home carries a count; a second dot appears
  * only when the row behind it is unwell.
  */
 function RailRow({
@@ -181,7 +181,7 @@ function AccountFoot() {
 }
 
 /**
- * The one navigation. The lead rows (Work), Now and the top rows (Paper) first, then every other
+ * The one navigation. Home, the lead rows (Work) and the top rows (Paper) first, then every other
  * collection as its own row under the heading of the section it belongs to, then
  * Settings and the account at the foot. Nothing is hidden behind a row or a title.
  */
@@ -189,9 +189,9 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
   const { project, account, chooseProject } = useSession();
   const { pathname } = useLocation();
   const rows = shell?.rows ?? [];
-  // The rail's one number is what Now lists, read exactly as Now reads it; away from Now,
-  // as often as the rows beside it.
-  const needsYou = useNow(rows, pathname === '/now' ? undefined : 30000).count;
+  // The rail's one number is what Home lists as needing the reader, read exactly as Home reads
+  // it; away from Home, as often as the rows beside it.
+  const needsYou = useNow(rows, pathname === '/' ? undefined : 30000).count;
   const holds = (row: Row) => held(row, pathname, rows);
   const place = (row: Row) => (
     <RailRow
@@ -233,8 +233,8 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
         )}
       </div>
       <nav className="rail-nav">
+        <RailRow to="/" icon="home" label="Home" active={pathname === '/'} count={needsYou} />
         {leadRows(rows).map(place)}
-        <RailRow to="/now" icon="now" label="Now" active={pathname === '/now'} count={needsYou} />
         {topRows(rows).map(place)}
         {buildNavigation(rows).map((section) => (
           <div className="rail-group" key={section.id} role="group" aria-label={section.label}>

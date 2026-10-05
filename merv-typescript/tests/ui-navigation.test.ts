@@ -51,7 +51,7 @@ test('the rail lists places, hides the rows other pages absorbed, and leads with
   // reflection among them, are not places.
   assert.deepEqual(leadRows(rows), [work]);
   assert.deepEqual(leadRows([row('feed', 'feed', 'activity', 30)]), []);
-  // The paper stands with Work and Now, so it is not one of the sections' rows.
+  // The paper stands with Home and Work, so it is not one of the sections' rows.
   assert.deepEqual(
     topRows(rows).map((entry) => entry.id),
     ['paper'],
@@ -246,13 +246,15 @@ test('a missing page speaks of a plugin only where the shell can show one that i
   assert.equal(dormantOwner('/feed', kinds, rows, [plugin('feed-ui', 'active')]), undefined);
 });
 
-test('a retired address and a record’s way back lead to the lead row, and to Now without one', () => {
+test('a retired address and a record’s way back lead to the lead row, and to Home without one', () => {
   const work = row('work', 'work', 'lead', 14);
   const tasks = row('tasks', 'tasks', 'work', 15);
   assert.equal(MOVED.running([work, tasks]), '/work');
   assert.deepEqual(homeOf([work, tasks]), { to: '/work', label: 'work' });
   // Research off: no row answers /work, so a link there would land on a missing page.
-  assert.equal(MOVED.running([tasks]), '/now');
-  assert.deepEqual(homeOf([tasks]), { to: '/now', label: 'Now' });
+  assert.equal(MOVED.running([tasks]), '/');
+  assert.deepEqual(homeOf([tasks]), { to: '/', label: 'Home' });
   assert.equal(MOVED.connections([tasks]), '/settings/connections');
+  // What needs the reader is Home's first part, whatever the composition.
+  assert.equal(MOVED.now([work, tasks]), '/');
 });

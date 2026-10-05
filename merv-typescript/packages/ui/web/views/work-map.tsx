@@ -232,7 +232,7 @@ const Plane = createContext<{ selected: RunningKey | null; onSelect(key: Running
   onSelect: () => undefined,
 });
 /** Reads the board at the pace of what moves on it; every clock is the payload's own. */
-function useLive() {
+export function useLive() {
   const [cadence, setCadence] = useState(cadenceOf(undefined));
   const board = useTool<RunningBoard>('ui.running', {}, { every: cadence });
   const every = cadenceOf(board.data);

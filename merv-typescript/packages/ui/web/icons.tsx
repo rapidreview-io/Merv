@@ -2,13 +2,13 @@
  * Every glyph the UI draws: one thin monochrome line on the same 24-unit grid,
  * at 16px with a 1.5px stroke, taking the colour of the text it sits in. The
  * first group names places and is keyed by view kind (plus the shell's own
- * `home`, `now` and `work`), so a row registered by a plugin is recognised by the
+ * `home` and `work`), so a row registered by a plugin is recognised by the
  * same name the KIND table uses; the rail and an empty list draw from it. The
  * second group is what a control says instead of a word, and the third is what
  * a file is before anyone opens it.
  */
 const PATHS = {
-  now: 'M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16M12 7.5V12l3 2',
+  home: 'M4.5 10.5 12 4.5l7.5 6V19a1 1 0 0 1-1 1h-4v-5.5h-5V20h-4a1 1 0 0 1-1-1z',
   paper: 'M13 3H6.5a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V8zM13 3v5h5.5',
   work: 'M8.5 12.5 11 15l4.5-4.5M5.5 4h13a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z',
   reflections:

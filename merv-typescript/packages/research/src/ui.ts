@@ -7,7 +7,7 @@ export const researchUiPlugin = {
   inject: ['research', 'ui'],
   apply(ctx: Context) {
     const research = ctx.research;
-    // The wave of work, framed by its cycle: it leads the rail, and a project opens on it.
+    // The wave of work, framed by its cycle: it stands under Home at the head of the rail.
     ctx.effect(() =>
       ctx.ui.register({
         id: 'work',
