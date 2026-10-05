@@ -1,5 +1,5 @@
 {
-  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a. Sandboxes-compute@1 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Artifacts@7, sandboxes-compute@2 and sandboxes-work-machines@1 verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c. Code bases@3 verified in production on 2026-10-03, release 20261003T120803Z-4e8cd3e9-2db825538cb9.",
+  "note": "Applied migrations on production (Supabase PostgreSQL) as of release 20260922T111103Z, plus fleet@1 and sessions@7 verified on the Fleet control deployment on 2026-09-23, and pi@1 and sessions@8 reported deployed on 2026-09-24. Each hash is digest() of that component version\u2019s PostgreSQL SQL string, the same value State stores in component_migrations.hash. Sessions@10 verified in production on 2026-09-26, release 20260926T220758Z-ccc0ccaa-ae7376222ca8. Identity credentials@1 verified in production on 2026-09-27, release 20260927T040223Z-24752679-9c6fb829ffa7. Fleet workflow migrations@1-3 verified in production on 2026-09-27. Artifacts@2-5 in production since release 20260928T233620Z-708f3ee5-9d87ca6f021a. Sandboxes-compute@1 verified in production on 2026-09-29, release 20260929T022117Z-76062bce-50acb1b175b3. Artifacts@7, sandboxes-compute@2 and sandboxes-work-machines@1 verified in production on 2026-09-30, release 20260930T182318Z-c46d3c5e-6aaaf8dc09e4. New entries from commit98ef0d1ed verified in production on2026-10-01, release20261001T091635Z-98ef0d1e-fd4bd037069c. Code bases@3 verified in production on 2026-10-03, release 20261003T120803Z-4e8cd3e9-2db825538cb9. Knowledge@3 and paper@3 verified in production on 2026-10-05, release 20261005T085855Z-2627df50-4b39ca6eda19.",
   "migrations": [
     {
       "component": "identity-credentials",
@@ -292,7 +292,7 @@
       "component": "knowledge",
       "version": 3,
       "hash": "b94d6857b21eba9efe47172516237495957295bb556808d7c3dd325e87239ffc",
-      "published": false
+      "published": true
     },
     {
       "component": "legacy-foundation-import",
@@ -322,7 +322,7 @@
       "component": "paper",
       "version": 3,
       "hash": "ef3ef76a437ebcf19c9844fc7e7d9fab0dc052eee3cdbd6af590d284e425d679",
-      "published": false
+      "published": true
     },
     {
       "component": "reflections",
