@@ -63,7 +63,7 @@ import { types as nodeTypes } from 'node:util';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
-import type { Code, CodeCapture } from '@merv/code-work/types';
+import type { Code } from '@merv/code-work/types';
 import type { SandboxCompute, ComputeOutputs } from '@merv/sandboxes/types';
 import { ManagedCompute, initializeManagedCompute } from '@merv/sandboxes/managed-compute';
 import { WorkMachines, rentalGuidance } from '@merv/sandboxes/managed-compute';
@@ -200,6 +200,12 @@ const taskVersion = (largeUploads = false, native = false, service = false): num
     )![0],
   );
 const serviceOwned = (version: number) => taskVersions[version]?.workspace === 'resolution';
+/** The workflow node a Git task's commit is made in. */
+const producing = {
+  name: 'task',
+  versions: Object.keys(taskVersions).map(Number),
+  state: 'in_progress',
+};
 /** A record another plugin answers 404 for is simply not there to speak of. */
 const absent = (error: unknown): null => {
   if (error instanceof MervError && error.status === 404) return null;
@@ -218,23 +224,6 @@ export const serviceWorkflow: WorkflowDefinition = {
     { from: 'suspended', action: 'resume', to: 'in_progress' },
   ],
 };
-/** What Tasks asks of Code; a test may bind exactly this much. */
-type TaskCode = Pick<
-  Code,
-  | 'source'
-  | 'capture'
-  | 'acceptUnit'
-  | 'declareUnit'
-  | 'baseStatus'
-  | 'pinBase'
-  | 'basePin'
-  | 'unit'
-  | 'hosted'
-  | 'reserveWriter'
-  | 'writerStatus'
-  | 'bindServiceTasks'
-  | 'ensureRepository'
->;
 interface TaskRow {
   id: string;
   project_id: string;
@@ -336,7 +325,7 @@ const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
 
 export class TaskService implements Tasks {
   private closed = false;
-  private code?: TaskCode;
+  private code?: Code;
   private compute?: ManagedCompute;
   private nativeWork?: NativeSandboxWork;
   private machines?: WorkMachines;
@@ -407,7 +396,7 @@ export class TaskService implements Tasks {
   }
 
   /** The optional Cordis child owns this binding, not the task lifecycle. */
-  bindCode(code: TaskCode): () => void {
+  bindCode(code: Code): () => void {
     check(!this.closed, 'tasks_closed', 'Tasks is closed', 503);
     const binding = Symbol('code');
     this.codeBinding = binding;
@@ -422,7 +411,7 @@ export class TaskService implements Tasks {
   }
 
   /** Current tasks require Code-managed Git. */
-  private requireCode(): TaskCode {
+  private requireCode(): Code {
     check(this.code, 'code_unavailable', 'Git tasks require Code captures', 503);
     return this.code;
   }
@@ -528,8 +517,7 @@ export class TaskService implements Tasks {
       // Version 6 is created only by the service binding; its runner remains a producer.
       if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
         await this.scope.require(caller, 'admin', tx);
-      this.requireCode();
-      await this.requireBase(caller, snapshot, tx);
+      await this.requireCode().requireLeasable(caller, { unitId: snapshot.id, writer: true }, tx);
       this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'work');
       return 'producer';
     }
@@ -551,25 +539,6 @@ export class TaskService implements Tasks {
     await this.reviewCommit(caller, snapshot, review, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');
     return 'reviewer';
-  }
-
-  /**
-   * Refuses work whose base Code cannot derive, with Code's own blocker code. This only reads:
-   * it runs under lease admission, the dispatch candidate scan and every assignment check.
-   * The refusal makes the task no candidate at all, so it is never launched and never held;
-   * Code publishes the reason where status and the stuck report find it.
-   */
-  private async requireBase(
-    caller: Caller,
-    snapshot: WorkflowSnapshot,
-    tx: Transaction,
-  ): Promise<void> {
-    const base = await this.requireCode().baseStatus(caller, snapshot.id, tx);
-    if (base.status === 'blocked')
-      throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
-    // The last writer's machine still owes its final capture, or an operator must fence it.
-    const writer = await this.requireCode().writerStatus(caller, snapshot.id, tx);
-    if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
   }
 
   private async currentLease(
@@ -1078,7 +1047,6 @@ export class TaskService implements Tasks {
     review: ReviewRequest,
     tx: Transaction,
   ): Promise<string> {
-    const code = this.requireCode();
     const delivered = snapshot.data.deliveryCode as unknown as TaskDeliveryCode | undefined;
     const recordId = snapshot.data.deliveryCodeArtifactId;
     check(
@@ -1089,19 +1057,19 @@ export class TaskService implements Tasks {
       'This Git task’s review does not pin a delivered commit',
       409,
     );
-    const capture = await code.capture(caller, delivered.ref, tx),
-      p = capture.provenance;
+    const checked = await this.requireCode().checkCapture(
+      caller,
+      delivered.ref,
+      {
+        unitId: snapshot.id,
+        revision: delivered.revision,
+        workflow: producing,
+        sessionId: delivered.sessionId,
+      },
+      tx,
+    );
     check(
-      p.projectId === caller.projectId &&
-        p.instanceId === snapshot.id &&
-        p.sessionId === delivered.sessionId &&
-        p.revision === delivered.revision &&
-        p.workflow.name === 'task' &&
-        Object.hasOwn(taskVersions, p.workflow.version) &&
-        p.workflow.state === 'in_progress' &&
-        !p.readOnly &&
-        capture.status === 'ready' &&
-        capture.workspace?.headOid === delivered.headOid,
+      checked.status === 'ready' && checked.capture.workspace.headOid === delivered.headOid,
       'task_commit_provenance',
       'The delivered commit no longer matches the receipt its delivery sealed',
       409,
@@ -2112,8 +2080,11 @@ export class TaskService implements Tasks {
     if (facts.review)
       await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
     else {
-      this.requireCode();
-      await this.requireBase(context.caller, facts.workflow, context.tx);
+      await this.requireCode().requireLeasable(
+        context.caller,
+        { unitId: facts.workflow.id, writer: true },
+        context.tx,
+      );
     }
     this.contextType({ type: facts.row.type_name, typeVersion: facts.row.type_version }, purpose);
     return { ...facts, purpose };
@@ -2682,47 +2653,44 @@ export class TaskService implements Tasks {
     snapshot: WorkflowSnapshot,
     commandId: unknown,
     tx: Transaction,
-  ): Promise<CodeCapture & { workspace: NonNullable<CodeCapture['workspace']> }> {
+  ) {
     check(
       typeof commandId === 'string' && commandId.length > 0 && caller.session,
       'task_commit_required',
       'A Git task delivers this worker’s own successful code.commit; only a leased worker can obtain one',
       409,
     );
-    const capture = await this.requireCode().capture(
-        caller,
-        { kind: 'code-commit', commandId },
-        tx,
-      ),
-      p = capture.provenance;
+    const checked = await this.requireCode().checkCapture(
+      caller,
+      { kind: 'code-commit', commandId },
+      {
+        unitId: snapshot.id,
+        revision: snapshot.revision,
+        workflow: producing,
+        sessionId: caller.session.id,
+        actorId: caller.actorId,
+      },
+      tx,
+    );
     check(
-      p.projectId === caller.projectId &&
-        p.instanceId === snapshot.id &&
-        p.sessionId === caller.session.id &&
-        p.actorId === caller.actorId &&
-        p.revision === snapshot.revision &&
-        p.workflow.name === 'task' &&
-        Object.hasOwn(taskVersions, p.workflow.version) &&
-        p.workflow.state === 'in_progress' &&
-        !p.readOnly,
+      checked.status !== 'foreign',
       'task_commit_provenance',
       'Deliver a commit this worker made for this task revision',
       409,
     );
     check(
-      capture.status !== 'pending',
+      checked.status !== 'pending',
       'task_commit_pending',
       'Wait for code.operation to report succeeded',
       409,
     );
-    const { workspace } = capture;
     check(
-      capture.status === 'ready' && workspace,
+      checked.status === 'ready',
       'task_commit_failed',
       'The code.commit operation did not succeed; commit again and deliver that operation',
       409,
     );
-    return { ...capture, workspace };
+    return checked.capture;
   }
 
   private async checkReissue({

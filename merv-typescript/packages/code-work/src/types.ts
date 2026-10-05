@@ -56,6 +56,21 @@ export interface CodeCapture {
   eventId: number | null;
   error?: string;
 }
+/**
+ * The writable session a capture must come from: one unit at one revision, in one state of
+ * one of its workflow's versions and, where named, one session and actor.
+ */
+export interface CodeCaptureOrigin {
+  unitId: string;
+  revision: number;
+  workflow: { name: string; versions: readonly number[]; state: string };
+  sessionId?: string;
+  actorId?: string;
+}
+/** A capture read against its origin; `foreign` when it came from anywhere else. */
+export type CheckedCodeCapture =
+  | { status: 'ready'; capture: CodeCapture & { workspace: SessionWorkspace } }
+  | { status: 'foreign' | Exclude<CodeCapture['status'], 'ready'>; capture: CodeCapture };
 export interface CodeCaptures {
   /** Historical, project-scoped immutable facts; never renders context or admits a new command. */
   capture(caller: Caller, ref: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture>;
@@ -123,6 +138,16 @@ export interface CodeWriters {
     unitId: string,
     tx: Transaction,
   ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  /**
+   * Refuses, with Code's own blocker, a unit no lease could take now: its base cannot be
+   * derived or, for a writer, the last writer's machine still owes its final capture or an
+   * operator must fence it. Pure reads, like the two statuses it asks.
+   */
+  requireLeasable(
+    caller: Caller,
+    input: { unitId: string; writer: boolean },
+    tx: Transaction,
+  ): Promise<void>;
 }
 /** The project's repository on the server's disk; refused where the server keeps none. */
 export interface CodeRepositoryControls {
@@ -218,6 +243,13 @@ export interface Code
     CodeRepositoryControls,
     CodePublicationApi,
     CodeRunning {
+  /** A capture, checked to come from exactly this origin, and whether it holds its result. */
+  checkCapture(
+    caller: Caller,
+    ref: CodeCaptureRef,
+    origin: CodeCaptureOrigin,
+    tx?: Transaction,
+  ): Promise<CheckedCodeCapture>;
   bindServiceTasks(provider: ResolutionWorkCreator): () => void;
   controlPublication(caller: Caller, input: unknown): Promise<unknown>;
   readonly github: import('@merv/contracts').CodeGitHub;

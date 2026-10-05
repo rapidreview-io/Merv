@@ -9,13 +9,42 @@ import {
   type Sql,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
-import type { CodeCapture, CodeCaptureRef } from './types.js';
+import type {
+  CheckedCodeCapture,
+  CodeCapture,
+  CodeCaptureOrigin,
+  CodeCaptureRef,
+} from './types.js';
 import { parseCodeInput } from '@merv/code/input';
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 export const codeCaptureRefSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('session-final'), sessionId: id }).strict(),
   z.object({ kind: z.literal('code-commit'), commandId: id }).strict(),
 ]);
+/** Whether a capture came from exactly this origin's writable session, and holds its result. */
+export function checkedCapture(
+  capture: CodeCapture,
+  projectId: string,
+  origin: CodeCaptureOrigin,
+): CheckedCodeCapture {
+  const p = capture.provenance;
+  if (
+    p.projectId !== projectId ||
+    p.instanceId !== origin.unitId ||
+    p.revision !== origin.revision ||
+    p.workflow.name !== origin.workflow.name ||
+    !origin.workflow.versions.includes(p.workflow.version) ||
+    p.workflow.state !== origin.workflow.state ||
+    p.readOnly ||
+    (origin.sessionId !== undefined && p.sessionId !== origin.sessionId) ||
+    (origin.actorId !== undefined && p.actorId !== origin.actorId)
+  )
+    return { status: 'foreign', capture };
+  const { workspace } = capture;
+  return capture.status === 'ready' && workspace
+    ? { status: 'ready', capture: { ...capture, workspace } }
+    : { status: capture.status === 'ready' ? 'failed' : capture.status, capture };
+}
 /** A reader over records owned by Code and Sessions, not another mutable head ledger. */
 export class CodeCaptureReader {
   private closed = false;

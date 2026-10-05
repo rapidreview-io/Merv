@@ -13,7 +13,6 @@ import { postgresMigrations } from './program.postgres.js';
 import {
   check,
   digest,
-  MervError,
   reviewHistory,
   type Artifact,
   type Artifacts,
@@ -69,6 +68,12 @@ function programContract(version: number) {
   return contract;
 }
 export const currentExperiment = (version: number) => Object.hasOwn(programVersions, version);
+/** The workflow node an experiment's Git work is captured from. */
+export const runningNode = {
+  name: 'experiment',
+  versions: Object.keys(programVersions).map(Number),
+  state: 'running',
+};
 export const nativeExperiment = (version: number) => programContract(version).native;
 const CODE_DRIVER = 'code.v2';
 export const programVersion = (largeUploads = false, native = false): number =>
@@ -297,23 +302,6 @@ export const resultsCriteria = [
   'The report’s conclusions follow from the evidence, including negative findings and limitations.',
 ];
 
-/** What Experiments asks of Code; a test may bind exactly this much. */
-export type ExperimentCode = Pick<
-  Code,
-  | 'capture'
-  | 'acceptUnit'
-  | 'declareUnit'
-  | 'baseStatus'
-  | 'pinBase'
-  | 'basePin'
-  | 'unit'
-  | 'hosted'
-  | 'reserveWriter'
-  | 'writerStatus'
-  | 'source'
-  | 'ensureRepository'
->;
-
 interface FrozenInputs {
   experiment: Data;
   /** The paper, section by section. */
@@ -469,7 +457,7 @@ export abstract class ExperimentProgram {
     protected readonly workflows: Workflows,
     protected readonly reviews: Reviews,
     private readonly contextBuilder: ContextBuilder,
-    protected code: ExperimentCode | undefined,
+    protected code: Code | undefined,
     protected readonly paper: Paper,
     private readonly limits = EXPERIMENT_LIMITS,
   ) {}
@@ -754,29 +742,31 @@ export abstract class ExperimentProgram {
       409,
     );
     check(this.code, 'code_unavailable', 'Code capture reader is unavailable', 503);
-    const capture = await this.code.capture(caller, submission.codeCaptureRef, tx);
-    const p = capture.provenance;
+    const checked = await this.code.checkCapture(
+      caller,
+      submission.codeCaptureRef,
+      {
+        unitId: experiment.id,
+        revision: submission.subjectRevision - 1,
+        workflow: runningNode,
+        sessionId: submission.sessionId,
+        actorId: submission.producerId,
+      },
+      tx,
+    );
     check(
-      p.projectId === experiment.projectId &&
-        p.instanceId === experiment.id &&
-        p.sessionId === submission.sessionId &&
-        p.actorId === submission.producerId &&
-        p.revision === submission.subjectRevision - 1 &&
-        p.workflow.name === 'experiment' &&
-        Object.hasOwn(programVersions, p.workflow.version) &&
-        p.workflow.state === 'running' &&
-        !p.readOnly,
+      checked.status !== 'foreign',
       'experiment_capture_provenance',
       'The code capture must belong to the exact producing experiment node',
       409,
     );
     check(
-      capture.status === 'ready' && capture.workspace,
+      checked.status === 'ready',
       'experiment_capture_pending',
       'The producing worker must stop and report its final Git capture before review',
       409,
     );
-    return capture;
+    return checked.capture;
   }
 
   /**
@@ -883,13 +873,11 @@ export abstract class ExperimentProgram {
    */
   private async requireBase({ caller, snapshot, tx }: WorkflowCheckContext): Promise<void> {
     check(this.code, 'code_unavailable', 'Git assignments require Code', 503);
-    const base = await this.code.baseStatus(caller, snapshot.id, tx);
-    if (base.status === 'blocked')
-      throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
-    if (snapshot.state !== 'running') return;
-    // The last writer's machine still owes its final capture, or an operator must fence it.
-    const writer = await this.code.writerStatus(caller, snapshot.id, tx);
-    if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
+    await this.code.requireLeasable(
+      caller,
+      { unitId: snapshot.id, writer: snapshot.state === 'running' },
+      tx,
+    );
   }
 
   private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {

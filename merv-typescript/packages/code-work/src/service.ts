@@ -35,7 +35,7 @@ import {
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import { CodeBaseService } from './bases.js';
-import { CodeCaptureReader } from './captures.js';
+import { checkedCapture, CodeCaptureReader } from './captures.js';
 import { CodeCommandService } from './commands.js';
 import { CodeWorkspaceProtocol } from './protocol.js';
 import { PublicationHost } from './publication-host.js';
@@ -43,7 +43,13 @@ import { CodePublicationService } from './publications.js';
 import { migrateRepositorySync, reconcileRepository } from './repository-sync.js';
 import { prepareRepository, repositoryPrepareSchema } from './repository-setup.js';
 import { CodeRunningReader } from './running.js';
-import type { Code, ResolutionWorkCreator } from './types.js';
+import type {
+  CheckedCodeCapture,
+  Code,
+  CodeCaptureOrigin,
+  CodeCaptureRef,
+  ResolutionWorkCreator,
+} from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
 import { archiveCommit } from './base-check.js';
 import type { CodeWriterService } from '@merv/code/writers';
@@ -261,6 +267,14 @@ export class CodeService extends CodeCommandService implements Code {
   async capture(...args: Parameters<CodeCaptureReader['capture']>) {
     return await this.captureReader.capture(...args);
   }
+  async checkCapture(
+    caller: Caller,
+    ref: CodeCaptureRef,
+    origin: CodeCaptureOrigin,
+    tx?: Transaction,
+  ): Promise<CheckedCodeCapture> {
+    return checkedCapture(await this.capture(caller, ref, tx), caller.projectId, origin);
+  }
   override async completeCommand(caller: Caller, value: unknown) {
     caller = structuredClone(caller);
     const input = parseCodeInput(codeCommandCompletionSchema, value);
@@ -447,6 +461,18 @@ export class CodeService extends CodeCommandService implements Code {
   async writerStatus(...args: Parameters<CodeWriterService['writerStatus']>) {
     check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
     return await this.writerStore.writerStatus(...args);
+  }
+  async requireLeasable(
+    caller: Caller,
+    input: { unitId: string; writer: boolean },
+    tx: Transaction,
+  ): Promise<void> {
+    const base = await this.baseStatus(caller, input.unitId, tx);
+    if (base.status === 'blocked')
+      throw new MervError(base.blockers[0]!.code, base.blockers[0]!.message, 409);
+    if (!input.writer) return;
+    const writer = await this.writerStatus(caller, input.unitId, tx);
+    if (writer.blocked) throw new MervError(writer.blocked.code, writer.blocked.message, 409);
   }
   /** Every admitted upload of the unit is first given the chance to finish; then the fence. */
   async fenceUnit(caller: Caller, input: unknown) {

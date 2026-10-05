@@ -25,7 +25,7 @@ import {
   type WorkflowCheckContext,
   type WorkflowDependency,
 } from '@merv/contracts';
-import type { CodeCaptureRef } from '@merv/code-work/types';
+import type { Code, CodeCaptureRef } from '@merv/code-work/types';
 import type { SandboxCompute } from '@merv/sandboxes/types';
 import { ExperimentCompute, type ComputeRunning } from './compute.js';
 import { initializeManagedCompute } from '@merv/sandboxes/managed-compute';
@@ -86,7 +86,7 @@ import {
   reviewing,
   rolesFor,
   TERMINAL,
-  type ExperimentCode,
+  runningNode,
 } from './program.js';
 import {
   attemptMetadata,
@@ -205,7 +205,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     }
   }
   /** The optional Cordis child owns this binding, not the experiment lifecycle. */
-  bindCode(code: ExperimentCode): () => void {
+  bindCode(code: Code): () => void {
     this.open();
     const binding = Symbol('code');
     this.codeBinding = binding;
@@ -1124,18 +1124,19 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     );
     check(this.code, 'code_unavailable', 'Code captures are unavailable', 503);
     const ref: CodeCaptureRef = { kind: 'session-final', sessionId: caller.session.id };
-    const capture = await this.code.capture(caller, ref, tx),
-      p = capture.provenance;
+    const checked = await this.code.checkCapture(
+      caller,
+      ref,
+      {
+        unitId: experiment.id,
+        revision: experiment.workflow.revision,
+        workflow: runningNode,
+        actorId: caller.actorId,
+      },
+      tx,
+    );
     check(
-      capture.status === 'pending' &&
-        p.hostRef &&
-        p.projectId === experiment.projectId &&
-        p.instanceId === experiment.id &&
-        p.revision === experiment.workflow.revision &&
-        p.actorId === caller.actorId &&
-        p.workflow.state === 'running' &&
-        currentExperiment(p.workflow.version) &&
-        !p.readOnly,
+      checked.status === 'pending' && checked.capture.provenance.hostRef,
       'experiment_capture_provenance',
       'Submit from the exact attached running Git worker before final capture',
       409,
