@@ -207,3 +207,19 @@ test('a callback that writes the instance fails the call; under a snapshot State
   );
   assert.equal((await transition()).state, 'done');
 });
+
+test('a callback misusing State fails the read instead of showing as a blocker', async (t) => {
+  const f = await fixture(t);
+  const instance = await f.start();
+  let stale: Transaction | undefined;
+  await f.state.transaction(async (tx) => void (stale = tx));
+  const faults: [string, (tx: Transaction) => Promise<unknown>][] = [
+    ['invalid_sql_parameters', (tx) => tx.get('SELECT ?', 1, 2)],
+    // A service handed a finished transaction refuses it before using it.
+    ['invalid_transaction', async () => f.state.assertTransaction(stale!)],
+  ];
+  for (const [code, write] of faults) {
+    f.fault.write = write;
+    await assert.rejects(f.workflows.evaluate(f.owner, instance.id), { code });
+  }
+});

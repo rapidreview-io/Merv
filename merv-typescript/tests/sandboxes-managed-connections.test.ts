@@ -33,6 +33,7 @@ async function fixture(t: TestContext) {
     lose: false,
     resources: false,
     racingResource: false,
+    busy: new Set<string>(),
     pause: undefined as ReturnType<typeof deferred<void>> | undefined,
     entered: deferred<void>(),
   };
@@ -71,7 +72,7 @@ async function fixture(t: TestContext) {
     }
     if (path.endsWith('/resources'))
       return json({
-        workflows: controls.resources ? [{ id: 'historical' }] : [],
+        workflows: controls.resources || controls.busy.has(path) ? [{ id: 'historical' }] : [],
         jobs: [],
         sandboxes: [],
         next: { workflows: null, jobs: null, sandboxes: null },
@@ -218,6 +219,24 @@ test('work with retained resources cannot be silently rebound to managed funding
   assert.ok(!f.calls.includes('DELETE /v1/delegations/works/old_work'));
 });
 
+test('one busy work keeps every old work grant in place', async (t) => {
+  const f = await fixture(t);
+  await prior(f);
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,native_grant_id,namespace)
+      VALUES(?,'experiment','running','old','busy_work','busy_ns')`,
+      f.a.projectId,
+    ),
+  );
+  f.controls.busy.add('/v1/delegations/works/busy_work/resources');
+  await assert.rejects(f.service.enableManaged(f.a), { code: 'sandbox_migration_required' });
+  assert.deepEqual(
+    f.calls.filter((call) => call.startsWith('DELETE /v1/delegations/works/')),
+    [],
+  );
+});
+
 test('active assignments block a funding change before external issuance', async (t) => {
   const f = await fixture(t);
   await prior(f);
@@ -249,5 +268,30 @@ test('a resource admitted before revocation prevents rebinding and preserves the
   await assert.rejects(
     f.state.read((tx) => f.service.assertReady(f.a.projectId, tx)),
     { code: 'sandbox_connection_pending' },
+  );
+});
+
+test('an unreadable expired flow does not stall the flows behind it', async (t) => {
+  const f = await fixture(t);
+  const expired = (ms: number) => new Date(Date.now() - ms).toISOString();
+  await f.state.transaction(async (tx) => {
+    const flow = `INSERT INTO sandbox_native_flows(id,project_id,operator_ref,browser_hash,expires_at,payload)
+      VALUES(?,?,'operator','hash',?,?)`;
+    await tx.run(flow, 'bad', f.a.projectId, expired(2000), 'not-a-sealed-payload');
+    await tx.run(
+      flow,
+      'good',
+      f.a.projectId,
+      expired(1000),
+      f.service.credentials.seal({}, 'flow:good'),
+    );
+  });
+  await f.service.reconcileRevocations();
+  const left = await f.state.read((sql) =>
+    sql.all<{ id: string }>('SELECT id FROM sandbox_native_flows ORDER BY id'),
+  );
+  assert.deepEqual(
+    left.map(({ id }) => id),
+    ['bad'],
   );
 });
