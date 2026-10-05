@@ -2018,6 +2018,7 @@
       "requires": [],
       "optional": [
         "api",
+        "artifacts",
         "state",
         "scope",
         "artifacts",
@@ -3586,6 +3587,11 @@
     },
     {
       "from": "sandboxes",
+      "to": "artifacts",
+      "optional": true
+    },
+    {
+      "from": "sandboxes",
       "to": "state",
       "optional": true
     },
@@ -3864,7 +3870,7 @@
     "plugins": 69,
     "providers": 31,
     "adapters": 38,
-    "dependencies": 192
+    "dependencies": 193
   },
   "network": [
     {

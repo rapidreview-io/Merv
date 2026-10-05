@@ -31,6 +31,15 @@ export interface SandboxesConfig {
   runtimes?: (SandboxRuntimeProfile & { key: string })[];
   /** Enables native work bindings and shared-account consent for newly created work. */
   native?: NativeSandboxesConfig;
+  /** Read-only downloads of files the retired Merv-side compute path captured. */
+  legacyCaptures?: LegacyCapturesConfig;
+}
+
+/** The ML grant those captures were written under and the storage origins their links use. */
+export interface LegacyCapturesConfig {
+  namespace: string;
+  tokenEnv: string;
+  storageOrigins: string[];
 }
 
 /** Fixed by the operator; Fleet work cannot select a provider, offer, image or release. */

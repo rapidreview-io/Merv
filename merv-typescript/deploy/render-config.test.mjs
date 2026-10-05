@@ -728,3 +728,32 @@ test('managed ML requires both native and ML configuration and never renders its
   ])
     assert.notEqual(run({ ...settings, ...invalid }).status, 0);
 });
+
+test('files the retired compute path captured stay downloadable under the ML grant', (t) => {
+  const { run, plugin, output } = renderer(t);
+  const settings = {
+    MERV_SANDBOXES_NATIVE_ENABLED: 'true',
+    MERV_SANDBOXES_URL: 'https://sandboxes.example',
+    MERV_SANDBOXES_APPLICATION_ID: 'merv',
+    MERV_SANDBOXES_APPLICATION_SECRET: 'synthetic-app-secret-only',
+    MERV_SANDBOXES_ENCRYPTION_KEY: Buffer.alloc(32, 97).toString('base64url'),
+    MERV_SANDBOXES_ML_NAMESPACE: 'merv-ml',
+    MERV_SANDBOXES_ML_TOKEN: 'sbxt_fixture_captures',
+    MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'https://bucket.example',
+  };
+  assert.equal(run(settings).status, 0);
+  assert.deepEqual(plugin('sandboxes').config.legacyCaptures, {
+    namespace: 'merv-ml',
+    tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
+    storageOrigins: ['https://bucket.example'],
+  });
+  assert.ok(!readFileSync(output, 'utf8').includes(settings.MERV_SANDBOXES_ML_TOKEN));
+  assert.equal(run({ ...settings, MERV_SANDBOXES_ML_STORAGE_ORIGIN: undefined }).status, 0);
+  assert.equal(plugin('sandboxes').config.legacyCaptures, undefined);
+  for (const invalid of [
+    { MERV_SANDBOXES_ML_STORAGE_ORIGIN: 'http://bucket.example' },
+    { MERV_SANDBOXES_ML_NAMESPACE: undefined },
+    { MERV_SANDBOXES_ML_TOKEN: '' },
+  ])
+    assert.notEqual(run({ ...settings, ...invalid }).status, 0);
+});

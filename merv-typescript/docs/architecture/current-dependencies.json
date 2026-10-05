@@ -10,8 +10,8 @@
   "apiEntries": 39,
   "serverPlugins": 68,
   "machinePlugins": 1,
-  "directDependencyCount": 192,
-  "optionalDependencyCount": 23,
+  "directDependencyCount": 193,
+  "optionalDependencyCount": 24,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -750,6 +750,7 @@
       "requires": [],
       "optional": [
         "api",
+        "artifacts",
         "state",
         "scope",
         "artifacts",

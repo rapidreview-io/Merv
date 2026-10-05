@@ -160,10 +160,11 @@ The capability ships before the older path is removed. What it settled:
   `MERV_SANDBOXES_ML_NAMESPACE` and `MERV_SANDBOXES_ML_TOKEN` remain: Merv-managed native ML
   (`native.managed`) uses them, and the renderer now reads them only when
   `MERV_SANDBOXES_MANAGED_ML_ENABLED` is set.
-- **Retained captures.** Capture collections the older path registered remain artifacts, but
-  their member files name the `sandboxes` file provider, which is no longer registered: their
-  manifests still read, and member downloads answer `download_unsupported`. The objects stay
-  retained in Sandboxes storage, so a read-only provider could be restored if they are needed.
+- **Retained captures.** Capture collections the older path registered remain artifacts whose
+  member files name the `sandboxes` file provider. A read-only provider (`legacy-captures.ts`)
+  keeps them downloadable under the same ML grant when the deployment sets
+  `MERV_SANDBOXES_ML_STORAGE_ORIGIN` (rendered as `legacyCaptures`). Without it, their manifests
+  still read and member downloads answer `download_unsupported`.
 
 ## Versions
 

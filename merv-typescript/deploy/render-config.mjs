@@ -147,6 +147,7 @@ let connections = [];
 // MERV_FLEET_RUNTIME_* variables, which then only let an image older than the catalog render.
 let runtimes = [];
 let native;
+let legacyCaptures;
 if (process.env.MERV_SANDBOXES_URL !== undefined) {
   httpsOrigin('MERV_SANDBOXES_URL');
   connections = sandboxConnections(undefined, nativeComputeEnabled);
@@ -177,6 +178,19 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
     if (!/^sbxt_[A-Za-z0-9_-]{4,512}$/.test(process.env.MERV_SANDBOXES_ML_TOKEN ?? ''))
       throw new Error('Missing or invalid MERV_SANDBOXES_ML_TOKEN');
     native.managed = { namespace, tokenEnv: 'MERV_SANDBOXES_ML_TOKEN' };
+  }
+  // Files the retired Merv-side compute path captured stay downloadable under the same ML grant.
+  if (process.env.MERV_SANDBOXES_ML_STORAGE_ORIGIN !== undefined) {
+    const namespace = process.env.MERV_SANDBOXES_ML_NAMESPACE;
+    if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(namespace ?? ''))
+      throw new Error('Invalid MERV_SANDBOXES_ML_NAMESPACE');
+    if (!/^sbxt_[A-Za-z0-9_-]{4,512}$/.test(process.env.MERV_SANDBOXES_ML_TOKEN ?? ''))
+      throw new Error('Missing or invalid MERV_SANDBOXES_ML_TOKEN');
+    legacyCaptures = {
+      namespace,
+      tokenEnv: 'MERV_SANDBOXES_ML_TOKEN',
+      storageOrigins: [httpsOrigin('MERV_SANDBOXES_ML_STORAGE_ORIGIN')],
+    };
   }
   if (fleetEnabled) {
     runtimes =
@@ -215,6 +229,7 @@ if (process.env.MERV_SANDBOXES_URL !== undefined) {
         urlEnv: 'MERV_SANDBOXES_URL',
         connections,
         ...(native ? { native } : {}),
+        ...(legacyCaptures ? { legacyCaptures } : {}),
         ...(runtimes.length
           ? { runtimes: runtimes.map(({ label, slots, agent, ...profile }) => profile) }
           : {}),

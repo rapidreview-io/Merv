@@ -11,6 +11,7 @@ import {
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { SandboxClient, sandboxRoute } from './client.js';
+import { legacyCaptureDownloads } from './legacy-captures.js';
 import { parseManifest } from './manifest.js';
 import { machinesRoute } from './running.js';
 import { SandboxCheckRunner } from './checks.js';
@@ -157,6 +158,14 @@ const configuration = z
           })
           .strict()
           .optional(),
+      })
+      .strict()
+      .optional(),
+    legacyCaptures: z
+      .object({
+        namespace: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,62}$/),
+        tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,127}$/),
+        storageOrigins: z.array(z.string().min(1).max(512)).min(1).max(8),
       })
       .strict()
       .optional(),
@@ -750,6 +759,22 @@ export const sandboxesPlugin = {
           ),
         );
       });
+      const legacy = config.legacyCaptures;
+      if (legacy)
+        ctx.inject(['artifacts'], (ctx) => {
+          if (!ctx.artifacts.registerFileProvider) return;
+          const download = legacyCaptureDownloads(
+            process.env[config.urlEnv],
+            config.timeoutMs ?? 15_000,
+            legacy,
+          );
+          ctx.effect(() =>
+            ctx.artifacts.registerFileProvider!('sandboxes', {
+              download: (projectId, reference) =>
+                service.nativeOperation(() => download(projectId, reference)),
+            }),
+          );
+        });
     };
     if (!config.native) {
       publish(ctx, new SandboxService(config));

@@ -216,4 +216,5 @@ configuration, was removed on 2026-10-04. Its ledgers, `managed_compute_runs` an
 `work_compute_machines`, stay in the database untouched: `compute-ledgers.ts` keeps their
 published `sandboxes-compute` and `sandboxes-work-machines` migrations registered with native
 Sandboxes, and nothing reads or writes them. Capture collections that path registered remain
-artifacts, but their member files (provider `sandboxes`) no longer have a download provider.
+artifacts; with `legacyCaptures` configured (`MERV_SANDBOXES_ML_STORAGE_ORIGIN`), the read-only
+`sandboxes` file provider in `legacy-captures.ts` keeps their member files downloadable.
