@@ -8,11 +8,14 @@ import {
   type StoredEvent,
   type Transaction,
 } from '@merv/contracts';
-import { computeEpoch, computeProfile } from './compute-capability.js';
+import { computeEpoch, computeProfile, type ComputeProfile } from './compute-capability.js';
 import type { NativeMcpConnection, Session } from '@merv/sessions/types';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeAssignmentRow, NativeConnectionRow, NativeWorkRow } from './native-schema.js';
-import type { NativeComputeProfile, NativeWorkKind } from './native-types.js';
+import type { NativeWorkKind } from './native-types.js';
+
+/** The profiles a native assignment is issued with; `none` issues no assignment. */
+type NativeComputeProfile = Exclude<ComputeProfile, 'none'>;
 
 export interface NativeWorkflow {
   id: string;

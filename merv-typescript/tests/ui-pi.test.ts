@@ -1660,9 +1660,9 @@ test('research.advance tells Pi the transition and every child ID while keeping 
 });
 
 const models = [
-  { id: 'gpt-6-luna', label: 'GPT-6 Luna', inputUsdPerM: 0.1, outputUsdPerM: 0.5 },
-  { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10 },
-  { id: 'gpt-6-astra', label: 'GPT-6 Astra', inputUsdPerM: 10, outputUsdPerM: 50 },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna' },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol' },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra' },
 ];
 /** A snapshot of a conversation answering on `model`, with the catalog. */
 const modelled = (

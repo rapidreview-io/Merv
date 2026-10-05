@@ -329,9 +329,8 @@ export interface PiWork {
   notes: string[];
   /** Bounded project paper source with current/published revision labels. */
   projectPaper?: string;
-  /** The agent's instructions (at most 32,000 characters), the same on every turn; an older Main
-   * sends none and the worker keeps its own. */
-  instructions?: string;
+  /** The agent's instructions (at most 32,000 characters), the same on every turn. */
+  instructions: string;
 }
 /** Agent tool machine.switch, seen by the model as switch_machine. Input: switchMachineInput. */
 export type PiSwitchMachineResult =

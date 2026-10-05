@@ -560,7 +560,6 @@ export function harnessUsage(
         usage = {
           inputTokens: input + cache.reduce((sum, count) => sum + count, 0),
           outputTokens,
-          ...(typeof event.total_cost_usd === 'number' && { costUsd: event.total_cost_usd }),
           ...(profile.model && { model: profile.model }),
         };
     } catch {

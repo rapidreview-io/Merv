@@ -7,14 +7,8 @@ export interface NativeMachineReads {
 
 /** The work kinds the native service accepts; every workflow maps to one (nativeWorkKind). */
 export type NativeWorkKind = 'task' | 'experiment';
-/** The profiles a native assignment is issued with; `none` issues no assignment. */
-export type NativeComputeProfile = 'execute' | 'check';
-
-/**
- * What a unit may still ask Sandboxes directly. Sandboxes pins, attaches, fences, closes and
- * revokes native work itself (docs/COMPUTE_CAPABILITY.md); `connected` remains only for the
- * units' version selection until the older compute path is retired.
- */
+/** The native application Sandboxes pins, attaches, fences, closes and revokes work through
+ * (docs/COMPUTE_CAPABILITY.md). */
 export interface NativeSandboxesConfig {
   applicationId: string;
   applicationSecretEnv: string;

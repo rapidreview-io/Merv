@@ -496,6 +496,7 @@ test('a conversation moved from Astra to Luna replays Astra’s reasoning to Ast
       },
     ],
     notes: [],
+    instructions: 'You are a test agent.',
   });
   let served = 0;
   const fetchImpl: typeof fetch = async (input, init) => {

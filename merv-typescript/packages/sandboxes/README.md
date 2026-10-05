@@ -54,7 +54,7 @@ variable names only. `MERV_TS_PUBLIC_ORIGIN` determines the consent callback. Na
 Supabase email/Google login and the application redirect registration must be
 configured before activation. Both products use the same verified Supabase identity;
 their browser sessions remain separate. No shared signing-key change is required.
-Legacy `connections` may be empty only when native integration is configured.
+Project `connections` may be empty only when native integration is configured.
 
 The backend stores connection/work/assignment bindings, revocation and cleanup
 intents, and capture-to-artifact IDs. Native Sandboxes owns execution, billing and

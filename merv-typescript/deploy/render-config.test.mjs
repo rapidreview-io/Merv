@@ -223,19 +223,20 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   // The catalog is checked as Main checks it, so a dry run refuses what would stop Main; the
   // older single model is ignored.
   const models = [
-    {
-      id: 'gpt-6-luna',
-      label: 'GPT-6 Luna',
-      inputUsdPerM: 0.1,
-      outputUsdPerM: 0.5,
-      effort: 'none',
-    },
-    { id: 'gpt-6-sol', label: 'GPT-6 Sol', inputUsdPerM: 2, outputUsdPerM: 10, effort: 'none' },
-    { id: 'gpt-6-astra', label: 'GPT-6 Astra', inputUsdPerM: 10, outputUsdPerM: 50, effort: 'low' },
+    { id: 'gpt-6-luna', label: 'GPT-6 Luna', effort: 'none' },
+    { id: 'gpt-6-sol', label: 'GPT-6 Sol', effort: 'none' },
+    { id: 'gpt-6-astra', label: 'GPT-6 Astra', effort: 'low' },
   ];
   assert.equal(run({ ...pi, MERV_PI_MODELS: JSON.stringify(models) }).status, 0);
   const rendered = JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config;
   assert.deepEqual(rendered.models, models);
+  // An older env file's retired prices are dropped, not rendered.
+  const priced = models.map((model) => ({ ...model, inputUsdPerM: 1, outputUsdPerM: 2 }));
+  assert.equal(run({ ...pi, MERV_PI_MODELS: JSON.stringify(priced) }).status, 0);
+  assert.deepEqual(
+    JSON.parse(readFileSync(output)).plugins.find((p) => p.id === 'pi').config.models,
+    models,
+  );
   assert.notEqual(run({ ...pi, MERV_PI_MODELS: 'gpt-6-sol' }).status, 0);
   const [luna] = models;
   for (const catalog of [
@@ -243,7 +244,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
     [{ ...luna, effort: 'medium' }],
     [{ ...luna, label: 'GPT-6 Luna, the quick one' }],
     [{ ...luna, id: '-luna' }],
-    [{ ...luna, inputUsdPerM: '0.1' }],
     [{ ...luna, provider: 'openai' }],
     [luna, luna],
     Array.from({ length: 9 }, (_, index) => ({ ...luna, id: `model-${index}` })),

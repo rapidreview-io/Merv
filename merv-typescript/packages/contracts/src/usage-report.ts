@@ -10,7 +10,7 @@ export const sessionUsageReportSchema: z.ZodType<SessionUsageReport> = z
   .object({
     inputTokens: z.number().int().min(0).max(1e12),
     outputTokens: z.number().int().min(0).max(1e12),
-    // Older runners and wrappers still send a cost; it is accepted and dropped.
+    // Older runners and a launch's own usage file may carry a cost; it is accepted and dropped.
     costUsd: z.number().min(0).max(1e6).optional(),
     model: z
       .string()

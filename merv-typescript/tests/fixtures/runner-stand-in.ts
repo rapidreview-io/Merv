@@ -115,6 +115,7 @@ export function server(
       return reply({ error: { code: 'not_found', message: 'No route' } }, 404);
     const session = sessions.get(decodeURIComponent(id ?? ''));
     if (!session) return reply({ error: { code: 'session_not_found', message: 'No' } }, 404);
+    if (action === 'launch-connections') return reply({ connections: [] });
     if (action === 'attach') {
       session.hostRef = body!.hostRef;
       if (body!.workspace) session.workspace = { attachment: body!.workspace, result: null };

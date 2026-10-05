@@ -257,6 +257,7 @@ async function fixture(
           modelToken: relayToken,
           tools: [tool],
           notes: [],
+          instructions: 'You are a test agent.',
           ...(options.projectPaper === undefined ? {} : { projectPaper: options.projectPaper }),
         };
         return json({ work });
@@ -526,12 +527,12 @@ test('call 65 is refused before it runs, the next request carries tool_choice no
 
 test('oversized tool output is cut to the turn budget before it reaches the relay', async () => {
   // A third of what the window leaves beside the longest answer and the turn's instructions and
-  // tools, at most 128,000: 3 × (272,000 − 128,000) − 272 bytes for gpt-6-luna, and
-  // 3 × (32,000 − 16,000) − 272 for a model the worker does not know.
+  // tools, at most 128,000: 3 × (272,000 − 128,000) − 172 bytes for gpt-6-luna, and
+  // 3 × (32,000 − 16,000) − 172 for a model the worker does not know.
   for (const [model, budget] of [
     ['gpt-6-luna', 128_000],
     ['gpt-6.1-sol', 128_000],
-    ['unknown-model', 15_909],
+    ['unknown-model', 15_942],
   ] as const) {
     const toolResult = { content: 'x'.repeat(150_000) };
     const app = await fixture({ toolCall: true, toolResult, model });
@@ -1172,6 +1173,7 @@ const assignment = (name: string, change: Partial<PiWork['command']> = {}): PiWo
   modelToken: relayToken,
   tools: [tool],
   notes: [`Note ${name}`],
+  instructions: 'You are a test agent.',
 });
 /** An answer whose stream shows its first text, then waits for `release` to finish. */
 function held(text: string, release: Promise<unknown>, started = () => {}): Response {
@@ -1353,6 +1355,7 @@ test('an assignment for another slot or with oversized notes is failed and never
     assignment('a', { epoch: 2 }),
     { ...assignment('a'), notes: Array.from({ length: 11 }, (_, index) => `${index}`) },
     { ...assignment('a'), instructions: 'x'.repeat(32_001) },
+    { ...assignment('a'), instructions: undefined as unknown as string },
     { ...assignment('a'), notes: ['x'.repeat(301)] },
   ]) {
     const server = slotServer(3, {
@@ -1504,7 +1507,7 @@ test('a conversation begun under older instructions continues under Main’s cur
       issued++;
       const previous = done.at(-1) as { checkpoint: string; checkpointHash: string } | undefined;
       const work = assignment(`t${issued}`, { conversationId: 'conv_a' });
-      // An older Main sends no instructions; the current one does.
+      // The instructions changed between the two turns.
       return {
         work: previous
           ? {
@@ -1512,7 +1515,7 @@ test('a conversation begun under older instructions continues under Main’s cur
               instructions: 'You are Merv’s agent. Current instructions.',
               checkpoint: { content: previous.checkpoint, hash: previous.checkpointHash },
             }
-          : work,
+          : { ...work, instructions: 'You are a read-only assistant. Older instructions.' },
       };
     },
     model(_name, body) {

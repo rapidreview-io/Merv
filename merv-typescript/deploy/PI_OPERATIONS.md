@@ -312,10 +312,10 @@ from step 1 have to be done again.
 ## Models
 
 - `MERV_PI_MODELS` is the catalog: a JSON array of 1 to 8 entries, the first
-  the default, each with `id`, `label`, `inputUsdPerM`, `outputUsdPerM` and
-  `effort`. `id` is the provider's model id; `label` (at most 24 characters)
-  is all the picker shows; the prices (USD per million tokens) are for
-  accounting only; `effort` (`none` or `low`) is the reasoning effort the relay
+  the default, each with `id`, `label` and `effort`. `id` is the provider's
+  model id; `label` (at most 24 characters) is all the picker shows; the
+  retired `inputUsdPerM`/`outputUsdPerM` prices are dropped by the render if an
+  env file still carries them; `effort` (`none` or `low`) is the reasoning effort the relay
   sets on every call, whatever the worker asks. Unset, the catalog is GPT-6.1 Sol at low effort, followed by GPT-6 Luna. `MERV_PI_MODEL` is ignored. The render makes the
   checks Main makes as it starts, so dry-run it on the edited env before you
   recreate Main; it refuses a bad catalog with `Invalid MERV_PI_MODELS entry`
@@ -326,7 +326,7 @@ from step 1 have to be done again.
   ```
   Production:
   ```
-  MERV_PI_MODELS=[{"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","inputUsdPerM":2,"outputUsdPerM":10,"effort":"low"},{"id":"gpt-6-luna","label":"GPT-6 Luna","inputUsdPerM":0.1,"outputUsdPerM":0.5,"effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","inputUsdPerM":2,"outputUsdPerM":10,"effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","inputUsdPerM":10,"outputUsdPerM":50,"effort":"low"}]
+  MERV_PI_MODELS=[{"id":"gpt-6.1-sol","label":"GPT-6.1 Sol","effort":"low"},{"id":"gpt-6-luna","label":"GPT-6 Luna","effort":"none"},{"id":"gpt-6-sol","label":"GPT-6 Sol","effort":"none"},{"id":"gpt-6-astra","label":"GPT-6 Astra","effort":"low"}]
   ```
 - GPT-6.1 Sol requires `low` or higher reasoning; `none` is unsupported. Its API pricing is $2 input / $10 output per million tokens below the long-context threshold. The bundled worker keeps the existing Sol 272K working-context budget.
 - **Reasoning models only** (every GPT-5 and GPT-6 model): the worker asks for

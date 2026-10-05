@@ -791,19 +791,19 @@ test('Codex usage is the last turn.completed, whatever else the stream holds', (
 });
 
 // Shaped as Claude Code's `--output-format stream-json` ends a run.
-const result = (usage: Record<string, unknown>, cost: unknown = 0.4213) =>
+const result = (usage: Record<string, unknown>) =>
   JSON.stringify({
     type: 'result',
     subtype: 'success',
     is_error: false,
     num_turns: 3,
     result: 'Done.',
-    total_cost_usd: cost,
+    total_cost_usd: 0.4213,
     usage,
   });
 const cached = { cache_creation_input_tokens: 3000, cache_read_input_tokens: 45000 };
 
-test('Claude usage is its result event: input with the cache it wrote and read, output and cost', () => {
+test('Claude usage is its result event: input with the cache it wrote and read, and output', () => {
   const init = '{"type":"system","subtype":"init","model":"claude-fixture"}';
   const assistant = '{"type":"assistant","message":{"usage":{"input_tokens":5,"output_tokens":1}}}';
   // A tool's output that merely mentions a result is parsed and ignored.
@@ -815,17 +815,13 @@ test('Claude usage is its result event: input with the cache it wrote and read, 
     {
       inputTokens: 48012,
       outputTokens: 900,
-      costUsd: 0.4213,
       model: 'claude-fixture',
     },
   );
-  assert.deepEqual(
-    harnessUsage(claude, stream(result({ input_tokens: 12, output_tokens: 9 }, null))),
-    {
-      inputTokens: 12,
-      outputTokens: 9,
-    },
-  );
+  assert.deepEqual(harnessUsage(claude, stream(result({ input_tokens: 12, output_tokens: 9 }))), {
+    inputTokens: 12,
+    outputTokens: 9,
+  });
   // A run stopped before its result says nothing, not zero; a malformed count says nothing.
   assert.equal(harnessUsage(claude, stream(init, assistant, said)), undefined);
   for (const bad of [
