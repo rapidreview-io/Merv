@@ -589,6 +589,12 @@
       "published": true
     },
     {
+      "component": "session_events",
+      "version": 1,
+      "hash": "377cae242243ca802725c9d63c02f70e33b8b08e9ab1b0ca7ab945e79559d450",
+      "published": false
+    },
+    {
       "component": "session_transcripts",
       "version": 1,
       "hash": "7ef0bfd48afc38dbb53888dc7ca9693913a600c36a5b6e4bc8367f689048dd60",

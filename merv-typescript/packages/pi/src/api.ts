@@ -2,6 +2,7 @@ import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { MervError, check, type Caller } from '@merv/contracts';
+import { serveEvents } from '@merv/api/event-stream';
 import type { MountHandler } from '@merv/api/types';
 import type { PiRuntime } from './types.js';
 
@@ -128,46 +129,14 @@ export class PiHttp {
     await this.pi.authorizeStream(caller, id);
     check(!res.destroyed, 'pi_unavailable', 'Connection closed', 503);
     this.responses.add(res);
-    let finish!: () => void;
-    const done = new Promise<void>((resolve) => {
-      finish = resolve;
-    });
     let sequence = -1;
     // A page's authority is read at most once a second, however often words arrive.
     let authorized = Date.now();
-    let running: Promise<void> | undefined;
-    let dirty = false;
-    let stopped = false;
-    const stop = () => {
-      if (stopped) return;
-      stopped = true;
-      if (res.headersSent) res.end();
-      finish();
-    };
-    const send = async (event: string, data: unknown): Promise<void> => {
-      if (stopped || res.destroyed) return;
-      if (res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`)) return;
-      await new Promise<void>((resolve) => {
-        const timeout = setTimeout(() => {
-          res.destroy();
-          finishWrite();
-        }, 5000);
-        const finishWrite = () => {
-          clearTimeout(timeout);
-          res.off('drain', finishWrite);
-          res.off('close', finishWrite);
-          resolve();
-        };
-        res.once('drain', finishWrite);
-        res.once('close', finishWrite);
-      });
-    };
-    const pump = () => {
-      dirty = true;
-      if (running || stopped) return;
-      running = (async () => {
-        while (dirty && !stopped) {
-          dirty = false;
+    try {
+      await serveEvents(req, res, {
+        rotateMs: this.rotateMs,
+        subscribe: (wake) => this.pi.streams.subscribe(id, wake),
+        step: async (send) => {
           if (Date.now() - authorized >= 1000) {
             await this.pi.authorizeStream(caller, id);
             authorized = Date.now();
@@ -188,42 +157,10 @@ export class PiHttp {
               sequence = event.sequence;
             }
           }
-        }
-      })()
-        .catch(stop)
-        .finally(() => {
-          running = undefined;
-          if (dirty && !stopped) pump();
-        });
-    };
-    let unsubscribe: (() => void) | undefined;
-    let refresh: ReturnType<typeof setInterval> | undefined;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
-    try {
-      unsubscribe = this.pi.streams.subscribe(id, pump);
-      res.once('close', stop);
-      req.once('aborted', stop);
-      res.writeHead(200, {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-store',
-        'x-accel-buffering': 'no',
-        'x-content-type-options': 'nosniff',
+        },
       });
-      res.flushHeaders();
-      refresh = setInterval(pump, 2000);
-      // Say the close is deliberate so the reader reconnects at once, without a notice.
-      deadline = setTimeout(() => void send('rotate', {}).then(stop, stop), this.rotateMs);
-      pump();
-      await done;
-      await running;
     } finally {
-      unsubscribe?.();
-      clearInterval(refresh);
-      clearTimeout(deadline);
-      res.off('close', stop);
-      req.off('aborted', stop);
       this.responses.delete(res);
-      stop();
     }
   }
 

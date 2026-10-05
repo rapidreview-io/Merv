@@ -1,0 +1,392 @@
+/**
+ * A worker agent's live stream over HTTP, on the default composition: the runner that holds a
+ * session sends batches of its agent's events, numbered here in arrival order, a retried batch
+ * once; an operator's page reads them as server-sent events, a snapshot first, then what
+ * follows, and from `after` on a reconnect; the unit's sidebar lists the sessions to read.
+ */
+import assert from 'node:assert/strict';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import test, { type TestContext } from 'node:test';
+import type { AgentEvent, Caller, WorkflowPolicy } from '@merv/contracts';
+import type { ApplicationConfig } from '../src/config.js';
+import { createApp } from './fixtures/app.js';
+
+const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
+const profile = { name: 'codex', harness: 'codex' as const, enabled: true, parallelism: 4 };
+const machine = { hostname: 'stream-host', system: 'Linux', architecture: 'x64' };
+
+async function fixture(t: TestContext) {
+  const directory = await mkdtemp(join(tmpdir(), 'merv-stream-'));
+  const env = `MERV_STREAM_TEST_${randomUUID().replaceAll('-', '')}`;
+  process.env[env] = randomBytes(48).toString('hex');
+  const config = JSON.parse(
+    readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
+  ) as ApplicationConfig;
+  const keep = ['state', 'domain-events', 'scope', 'workflows', 'identity', 'api', 'tools'];
+  config.plugins = config.plugins.flatMap((plugin) =>
+    plugin.id === 'sessions'
+      ? [{ ...plugin, config: { managedSecretEnv: env, sweepIntervalMs: 60_000 } }]
+      : keep.includes(plugin.id) || plugin.id === 'sessions-api'
+        ? [plugin]
+        : [],
+  );
+  const app = await createApp({ directory, config, port: 0 });
+  const readers: AbortController[] = [];
+  t.after(async () => {
+    for (const reader of readers) reader.abort();
+    await app.stop();
+    await rm(directory, { recursive: true, force: true });
+    delete process.env[env];
+  });
+  const scope = app.ctx.scope;
+  const policy: WorkflowPolicy = {
+    successStates: ['done'],
+    actions: [
+      {
+        name: 'finish',
+        states: ['working'],
+        transitions: ['finish'],
+        tool: 'finish',
+        instruction: 'Finish.',
+        check: async ({ caller, tx }) => {
+          await scope.require(caller, 'write', tx);
+        },
+      },
+    ],
+    assignments: [
+      {
+        state: 'working',
+        check: async ({ caller, tx }) => {
+          await scope.require(caller, 'write', tx);
+        },
+        build: () => ({
+          role: 'producer',
+          label: 'Stream work',
+          brief: 'Do the work',
+          references: [],
+          handoff: { instruction: 'Finish', tools: ['finish'] },
+          execution: { readOnly: false, tools: [] },
+          context: null,
+        }),
+        execution: { readOnly: false, tools: [] },
+        lease: {
+          role: () => 'producer',
+          acquire: ({ leaseId }) => ({ leaseId }),
+          check: () => {},
+          release: () => {},
+        },
+      },
+    ],
+  };
+  const handle = await app.ctx.workflows.register(
+    {
+      name: 'stream-test',
+      version: 1,
+      initial: 'working',
+      states: ['working', 'done'],
+      terminal: ['done'],
+      edges: [{ from: 'working', action: 'finish', to: 'done' }],
+    },
+    policy,
+  );
+  const url = app.ctx.api.url;
+  const http = async (method: string, path: string, token: string, body?: unknown) => {
+    const response = await fetch(`${url}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${token}`,
+        ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+      },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const text = await response.text();
+    return { status: response.status, body: JSON.parse(text) };
+  };
+  const ok = async (method: string, path: string, token: string, body?: unknown) => {
+    const result = await http(method, path, token, body);
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    return result.body;
+  };
+  const boot = await scope.bootstrap({ projectName: 'Streams', actorName: 'Owner' });
+  const owner: Caller = {
+    actorId: boot.actor.id,
+    projectId: boot.project.id,
+    credentialId: boot.credential.id,
+  };
+  const token = boot.token;
+  /** A dispatched session of `runnerId`, attached as `hostRef`, with its worker secret. */
+  const leased = async (runnerId = 'runner', hostRef = `launch-${randomUUID()}`) => {
+    await ok('POST', '/sessions/runners/heartbeat', token, {
+      runnerId,
+      machine,
+      platforms: [profile],
+      capacity: 4,
+    });
+    await app.ctx.sessions.setDispatch(owner, { enabled: true });
+    const instance = await handle.start(owner, {
+      workflow: 'stream-test',
+      requestId: randomUUID(),
+    });
+    const input = {
+      runnerId,
+      requestId: randomUUID(),
+      secret: secret(),
+      platform: { name: profile.name, harness: profile.harness },
+    };
+    const lease = await ok('POST', '/sessions/lease', token, input);
+    assert.ok(lease.session, JSON.stringify(lease));
+    await ok('POST', `/sessions/${lease.session.id}/attach`, token, { runnerId, hostRef });
+    return {
+      session: lease.session,
+      instance,
+      secret: input.secret,
+      control: { runnerId, hostRef },
+    };
+  };
+  /** An SSE reader: each frame as { event, data }, read until `count` have arrived. */
+  const events = (path: string, bearer: string) => {
+    const abort = new AbortController();
+    readers.push(abort);
+    const frames: { event: string; data: any }[] = [];
+    let buffer = '';
+    const response = fetch(`${url}${path}`, {
+      headers: { authorization: `Bearer ${bearer}` },
+      signal: abort.signal,
+    });
+    const reading = (async () => {
+      const reply = await response;
+      if (!reply.ok) return reply.status;
+      const decoder = new TextDecoder();
+      try {
+        for await (const chunk of reply.body!) {
+          buffer += decoder.decode(chunk, { stream: true });
+          for (let end; (end = buffer.indexOf('\n\n')) >= 0; buffer = buffer.slice(end + 2)) {
+            const frame = buffer.slice(0, end);
+            frames.push({
+              event: /^event: (.*)$/m.exec(frame)![1]!,
+              data: JSON.parse(/^data: (.*)$/m.exec(frame)![1]!),
+            });
+          }
+        }
+      } catch {
+        // Aborted by the test.
+      }
+      return 200;
+    })();
+    return {
+      frames,
+      status: async () => (await response).status,
+      async until(count: number) {
+        for (let tries = 0; frames.length < count && tries < 200; tries++)
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        assert.ok(frames.length >= count, JSON.stringify(frames));
+        return frames;
+      },
+      close: () => abort.abort(),
+      reading,
+    };
+  };
+  return { app, http, ok, owner, token, leased, events };
+}
+
+const thinking = (id: string, delta: string): AgentEvent => ({ kind: 'thinking', id, delta });
+const call: AgentEvent = { kind: 'tool_call', id: 't1', name: 'sandbox.run', input: '{}' };
+
+test('the runner that holds a session sends its agent’s events; a retry is taken once, in order', async (t) => {
+  const f = await fixture(t);
+  const { session, control } = await f.leased();
+  const path = `/sessions/${session.id}/stream`;
+  const first = { ...control, from: 0, to: 100, events: [thinking('a', 'Look'), call] };
+  assert.deepEqual(await f.ok('POST', path, f.token, first), { stream: { until: 100, seq: 2 } });
+  // The same batch again, as after a lost answer: answered, not added.
+  assert.deepEqual(await f.ok('POST', path, f.token, first), { stream: { until: 100, seq: 2 } });
+  // A batch overlapping what is held (a restarted runner reading from the start) is not added.
+  assert.deepEqual(
+    await f.ok('POST', path, f.token, { ...control, from: 0, to: 180, events: [call] }),
+    { stream: { until: 100, seq: 2 } },
+  );
+  const next = { ...control, from: 100, to: 150, events: [{ ...call, id: 't2' }] };
+  assert.deepEqual(await f.ok('POST', path, f.token, next), { stream: { until: 150, seq: 3 } });
+  const rows = await f.app.ctx.state.read((sql) =>
+    sql.all<{ seq: string; until: string; event: AgentEvent }>(
+      'SELECT seq,until,event FROM session_events WHERE session_id=? ORDER BY seq',
+      session.id,
+    ),
+  );
+  assert.deepEqual(
+    rows.map((row) => [Number(row.seq), Number(row.until), row.event.id]),
+    [
+      [1, 100, 'a'],
+      [2, 100, 't1'],
+      [3, 150, 't2'],
+    ],
+  );
+
+  // Another runner of the same source, the worker's own bearer, another host and a malformed
+  // batch are each refused.
+  const refused = async (bearer: string, body: unknown) => {
+    const reply = await f.http('POST', path, bearer, body);
+    return [reply.status, reply.body.error.code];
+  };
+  assert.deepEqual(await refused(f.token, { ...next, runnerId: 'other' }), [
+    403,
+    'session_forbidden',
+  ]);
+  assert.deepEqual(await refused(f.token, { ...next, hostRef: 'elsewhere' }), [
+    409,
+    'host_conflict',
+  ]);
+  assert.deepEqual((await refused((await f.leased()).secret, next))[0], 403);
+  assert.deepEqual(await refused(f.token, { ...next, events: [{ kind: 'thinking' }] }), [
+    400,
+    'invalid_stream',
+  ]);
+  assert.deepEqual(
+    await refused(f.token, {
+      ...next,
+      from: 150,
+      to: 151,
+      events: [{ kind: 'text', id: 'x', delta: 'y'.repeat(16_001) }],
+    }),
+    [400, 'invalid_stream'],
+  );
+});
+
+test('an operator’s page reads a snapshot, then live events, and from `after` on a reconnect; a reader is refused', async (t) => {
+  const f = await fixture(t);
+  const { session, control } = await f.leased();
+  const path = `/sessions/${session.id}/stream`;
+  await f.ok('POST', path, f.token, {
+    ...control,
+    from: 0,
+    to: 10,
+    events: [thinking('a', 'One')],
+  });
+
+  const page = f.events(`/sessions/${session.id}/events`, f.token);
+  const [snapshot] = await page.until(1);
+  assert.equal(snapshot!.event, 'snapshot');
+  assert.deepEqual(
+    snapshot!.data.events.map((event: { seq: number; event: AgentEvent }) => [
+      event.seq,
+      event.event,
+    ]),
+    [[1, thinking('a', 'One')]],
+  );
+  assert.equal(typeof snapshot!.data.events[0].at, 'string');
+  // A batch taken now reaches the open page at once.
+  await f.ok('POST', path, f.token, { ...control, from: 10, to: 20, events: [call] });
+  const [, live] = await page.until(2);
+  assert.equal(live!.event, 'events');
+  assert.deepEqual(
+    live!.data.events.map((event: { seq: number }) => event.seq),
+    [2],
+  );
+  page.close();
+
+  // A reconnect from seq 1 is sent only what followed it.
+  const again = f.events(`/sessions/${session.id}/events?after=1`, f.token);
+  const [resumed] = await again.until(1);
+  assert.equal(resumed!.event, 'events');
+  assert.deepEqual(
+    resumed!.data.events.map((event: { seq: number; event: AgentEvent }) => [
+      event.seq,
+      event.event,
+    ]),
+    [[2, call]],
+  );
+  again.close();
+
+  // Only an operator reads it; a worker's own bearer may only use /mcp; a stray query is refused.
+  const reader = await f.app.ctx.scope.issueActor(f.owner, { name: 'Reader', role: 'reader' });
+  assert.equal(await f.events(`/sessions/${session.id}/events`, reader.token).status(), 403);
+  assert.equal(
+    await f
+      .events(`/sessions/${(await f.leased()).session.id}/events`, (await f.leased()).secret)
+      .status(),
+    403,
+  );
+  assert.equal(await f.events(`/sessions/${session.id}/events?after=x`, f.token).status(), 400);
+  assert.equal(await f.events('/sessions/session_missing/events', f.token).status(), 404);
+});
+
+test('a closed session still takes its agent’s last words within its grace', async (t) => {
+  const f = await fixture(t);
+  const { session, control } = await f.leased();
+  await f.ok('POST', `/sessions/${session.id}/stream`, f.token, {
+    ...control,
+    from: 0,
+    to: 5,
+    events: [thinking('a', 'Bye')],
+  });
+  await f.ok('POST', `/sessions/${session.id}/halt`, f.token, { reason: 'halted_by_operator' });
+  // Within its grace the closed session still takes the agent's last words.
+  await f.ok('POST', `/sessions/${session.id}/stream`, f.token, {
+    ...control,
+    from: 5,
+    to: 9,
+    events: [{ kind: 'status', id: 's', text: 'Finished' }],
+  });
+  const rows = await f.app.ctx.state.read((sql) =>
+    sql.all('SELECT seq FROM session_events WHERE session_id=?', session.id),
+  );
+  assert.equal(rows.length, 2);
+});
+
+test('a unit’s sidebar lists its sessions for an operator alone, and a lease’s line says what its agent does', async (t) => {
+  const f = await fixture(t);
+  const { session, instance, control, secret: worker } = await f.leased();
+  await f.app.ctx.sessions.authenticate(worker); // the worker takes it up
+  const reader = await f.app.ctx.scope.issueActor(f.owner, { name: 'Reader', role: 'reader' });
+  const readerCaller: Caller = {
+    actorId: reader.actor.id,
+    projectId: f.owner.projectId,
+    credentialId: reader.credential.id,
+  };
+  const operatorSections = await f.app.ctx.sessions.runningWork(f.owner, [instance.id]);
+  const agent = operatorSections.find((section) => section.kind === 'agent');
+  assert.ok(agent && agent.kind === 'agent');
+  assert.deepEqual(
+    agent.sessions.map(({ startedAt, ...rest }) => ({ ...rest, startedAt: typeof startedAt })),
+    [
+      {
+        sessionId: session.id,
+        state: 'working',
+        role: 'producer',
+        live: true,
+        startedAt: 'string',
+        events: `/sessions/${session.id}/events`,
+      },
+    ],
+  );
+  const readerSections = await f.app.ctx.sessions.runningWork(readerCaller, [instance.id]);
+  assert.equal(
+    readerSections.find((section) => section.kind === 'agent'),
+    undefined,
+    'the live view is an operator’s',
+  );
+
+  // The lease's node says what its agent does now, from the newest event.
+  const line = async () =>
+    (await f.app.ctx.sessions.running(f.owner)).nodes.find(
+      (node) => node.key === `session:${session.id}`,
+    )!.lines[0];
+  await f.ok('POST', `/sessions/${session.id}/stream`, f.token, {
+    ...control,
+    from: 0,
+    to: 10,
+    events: [thinking('a', 'Hmm')],
+  });
+  assert.equal((await line())![0], 'Thinking · ');
+  await f.ok('POST', `/sessions/${session.id}/stream`, f.token, {
+    ...control,
+    from: 10,
+    to: 20,
+    events: [call],
+  });
+  assert.deepEqual((await line())!.slice(0, 2), ['Calling ', { mono: 'sandbox.run' }]);
+});

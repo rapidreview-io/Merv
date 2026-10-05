@@ -1071,3 +1071,41 @@ test('the Sessions lane words its states as the Sessions page does', () => {
     for (const part of phrase)
       if (typeof part === 'string') assert.doesNotMatch(part, /\b(idle|working|silent)\b/i);
 });
+
+test('an agent’s live stream is kept 30 days after its session ended, then the sweep deletes it', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.heartbeat();
+  await f.instance();
+  await f.instance();
+  const { session } = await f.active();
+  const kept = await f.active();
+  await f.state.transaction(async (tx) => {
+    for (const id of [session.id, kept.session.id])
+      await tx.run(
+        `INSERT INTO session_events(session_id,seq,at,until,event) VALUES(?,1,?,10,'{"kind":"status","id":"s","text":"Started"}')`,
+        id,
+        new Date(f.now()).toISOString(),
+      );
+  });
+  const count = async (id: string) =>
+    Number(
+      (await f.state.read((sql) =>
+        sql.get<{ n: string }>('SELECT COUNT(*) AS n FROM session_events WHERE session_id=?', id),
+      ))!.n,
+    );
+  await f.sessions.halt(f.owner, { sessionId: session.id, reason: 'halted_by_operator' });
+  // Closed: a page still waits for the agent's last words for ten minutes, then is told the end.
+  assert.deepEqual(await f.sessions.streams.authorize(f.owner, session.id), { growing: true });
+  f.advance(10 * 60_000 + 1);
+  assert.deepEqual(await f.sessions.streams.authorize(f.owner, session.id), { growing: false });
+  await assert.rejects(f.sessions.streams.authorize(f.reader, session.id), { code: 'forbidden' });
+  f.advance(29 * 86_400_000);
+  await f.sessions.sweep();
+  assert.equal(await count(session.id), 1, 'kept within 30 days of its end');
+  f.advance(86_400_000);
+  await f.sessions.sweep();
+  assert.equal(await count(session.id), 0);
+  // The other lapsed only at the first sweep, 29 days on: its stream is kept.
+  assert.equal(await count(kept.session.id), 1);
+});

@@ -31,6 +31,7 @@ import {
 } from './ledger.js';
 import { ProcessHost, usageFile } from './process-host.js';
 import { readTranscript, type TranscriptFacts } from './transcript.js';
+import { AgentStream } from './agent-stream.js';
 import { assignmentUser, RunnerWorkspaces, type RepositoryDriverFactory } from './workspaces.js';
 import {
   buildLaunch,
@@ -276,6 +277,8 @@ export class MachineRunner implements Runner {
   /** The one transcript PUT in flight; it writes no ledger state, so it may outlive a stop. */
   private uploading?: AbortController;
   private readonly transcriptRetry = new Map<string, number>();
+  /** Each launched agent's live stream, kept until its log is sent to the end. */
+  private readonly streams = new Map<string, AgentStream>();
 
   constructor(
     config: RunnerConfig,
@@ -544,6 +547,7 @@ export class MachineRunner implements Runner {
       }
     }
     this.ledger.settle(settled);
+    this.follow(settled);
     if (this.stopping) return;
     // One work host advances only after process cleanup, capture, release and transcript settled.
     // A terminal process alone is not enough: its durable handoff may still be outstanding.
@@ -1033,6 +1037,40 @@ export class MachineRunner implements Runner {
       remoteClosed: true,
       usageReported: true,
     });
+  }
+  /**
+   * Starts each launched agent's stream and moves every stream on by one batch, off the tick.
+   * A stream outlives its launch's settling until it has sent the log's end.
+   */
+  private follow(settled: string[]): void {
+    if (this.stopping) return;
+    const ended = settled.flatMap((id) => this.ledger.get(id) ?? []);
+    for (const record of [...this.ledger.open(), ...ended]) {
+      const profile = record.metadata.profile as RunnerProfile | undefined;
+      if (
+        this.streams.has(record.id) ||
+        !profile ||
+        profile.harness === 'command' ||
+        record.status === 'reserved' ||
+        record.status === 'starting'
+      )
+        continue;
+      this.streams.set(
+        record.id,
+        new AgentStream(
+          record.runDirectory,
+          profile.harness,
+          [this.sourceBearer],
+          (batch) => this.client.stream(record.sessionId, this.ledger.runnerId, record.id, batch),
+          this.clock,
+        ),
+      );
+    }
+    for (const record of [...this.ledger.open(), ...ended])
+      if (terminalLaunch(record)) this.streams.get(record.id)?.end();
+    for (const [id, stream] of this.streams)
+      if (stream.finished) this.streams.delete(id);
+      else stream.tick();
   }
   /** A final refusal is that call's answer: recorded once, never replayed. */
   private async answer<T>(call: () => Promise<T>): Promise<T | undefined> {

@@ -7,6 +7,7 @@ import {
   visible,
   type Caller,
   type Json,
+  type AgentStreamSession,
   type RunningAction,
   type RunningAttention,
   type RunningBoard,
@@ -578,9 +579,35 @@ export function sectionOf(value: unknown): RunningSection | null {
         ? { ...frame, kind: 'stream', items, total: value.total }
         : null;
     }
+    case 'agent': {
+      if (!Array.isArray(value.sessions) || value.sessions.length > 20) return null;
+      const sessions = kept(value.sessions, agentSessionOf);
+      return sessions.length ? { ...frame, kind: 'agent', sessions } : null;
+    }
     default:
       return null;
   }
+}
+
+/** One session of the live view: its words, its times and the route that reads its stream. */
+function agentSessionOf(value: unknown): AgentStreamSession | null {
+  if (!isObject(value) || !words(value.sessionId, 200) || !words(value.state, 200)) return null;
+  if (!words(value.role, 40) || typeof value.live !== 'boolean' || !instant(value.startedAt))
+    return null;
+  if (value.endedAt !== undefined && !instant(value.endedAt)) return null;
+  if (value.continues !== undefined && !words(value.continues, 200)) return null;
+  if (!words(value.events, 300) || !value.events.startsWith('/sessions/')) return null;
+  const { sessionId, state, role, live, startedAt, endedAt, continues, events } = value;
+  return {
+    sessionId,
+    state,
+    role,
+    live,
+    startedAt,
+    ...(endedAt ? { endedAt } : {}),
+    ...(continues ? { continues } : {}),
+    events,
+  };
 }
 
 function headerOf(value: unknown): RunningHeader | null {

@@ -1,6 +1,7 @@
 import type { NativeMcpConnection } from '@merv/contracts';
 export type { NativeMcpConnection } from '@merv/contracts';
 import type { HuggingFaceAccess } from '@merv/secrets/types';
+import type { SessionStreams } from './stream.js';
 import type {
   AgentObservation,
   BudgetStatus,
@@ -434,6 +435,10 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & SessionTranscriptDeclaration,
   ): Promise<SessionTranscript>;
+  /** Runner-only, live or just closed: one batch of what its agent printed (SessionStreamBatch). */
+  stream(caller: Caller, input: unknown): Promise<{ until: number; seq: number }>;
+  /** What the events route reads of agents' live streams: operator authority, events, wakes. */
+  readonly streams: Pick<SessionStreams, 'authorize' | 'after' | 'snapshot' | 'subscribe'>;
   heartbeat(caller: Caller, input: SessionControl): Promise<Session>;
   release(
     caller: Caller,

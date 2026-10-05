@@ -1,5 +1,6 @@
 import { nativeMcpConnectionsSchema } from '@merv/contracts';
 import type { NativeMcpConnection } from '@merv/sessions/types';
+import type { SessionStreamBatch } from '@merv/sessions/stream';
 import { z } from 'zod';
 import {
   canonical,
@@ -111,6 +112,9 @@ const transcriptSchema = z.object({
         .optional(),
     })
     .passthrough(),
+});
+const streamSchema = z.object({
+  stream: z.object({ until: z.number().int().nonnegative().safe() }).passthrough(),
 });
 /** Where a bearer or transcript may go: https, or plain http to this machine only. */
 const secureUrl = (url: URL) =>
@@ -514,6 +518,23 @@ export class RunnerClient {
     )
       throw new RunnerControlError('invalid_control_response', 0);
     return t;
+  }
+  /** One batch of what the agent printed; Sessions answers how far into the log it holds. */
+  async stream(
+    id: string,
+    runnerId: string,
+    hostRef: string,
+    batch: SessionStreamBatch,
+  ): Promise<{ until: number }> {
+    const until = streamSchema.safeParse(
+      await this.request(`/sessions/${encodeURIComponent(id)}/stream`, {
+        runnerId,
+        hostRef,
+        ...batch,
+      }),
+    ).data?.stream.until;
+    if (until === undefined) throw new RunnerControlError('invalid_control_response', 0);
+    return { until };
   }
   /** The store's signed PUT: its own headers and the bytes, never a Merv bearer. 412 is stored. */
   async putSigned(

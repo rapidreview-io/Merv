@@ -1,10 +1,11 @@
 import type { HuggingFaceAccess } from '@merv/secrets/types';
-import type { IncomingMessage } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { MervError, pathSegment, type Caller } from '@merv/contracts';
+import { check, MervError, pathSegment, type Caller } from '@merv/contracts';
+import { serveEvents } from '@merv/api/event-stream';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
-import type { NativeMcpConnection } from './types.js';
+import type { NativeMcpConnection, Sessions } from './types.js';
 
 /**
  * What Sessions' HTTP routes and credentials use of Sessions. Each body, and the enrollment's
@@ -46,6 +47,8 @@ export interface SessionRoutes {
   huggingface(caller: Caller, input: unknown): Promise<{ hfToken: string | null }>;
   workspaceResult(caller: Caller, input: unknown): Promise<unknown>;
   transcript(caller: Caller, input: unknown): Promise<unknown>;
+  stream(caller: Caller, input: unknown): Promise<unknown>;
+  readonly streams: Sessions['streams'];
   heartbeat(caller: Caller, input: unknown): Promise<unknown>;
   release(caller: Caller, input: unknown): Promise<unknown>;
 }
@@ -87,7 +90,7 @@ const managedRoute = (method: string, path: string): boolean =>
     ].includes(path)) ||
   (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
   (method === 'POST' &&
-    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|huggingface|huggingface-access|launch-connections)$/.test(
+    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|stream|huggingface|huggingface-access|launch-connections)$/.test(
       path,
     )) ||
   (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
@@ -172,7 +175,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
-    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|huggingface|huggingface-access|launch-connections))?$/.exec(
+    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|stream|huggingface|huggingface-access|launch-connections))?$/.exec(
       path,
     );
   if (route) {
@@ -197,6 +200,11 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
         caller,
         bound(await r.json(undefined, 4096), 'sessionId', sessionId),
       );
+    if (req.method === 'POST' && route[2] === 'stream') {
+      // A runner's batch is under a megabyte; this leaves it room.
+      const input = bound(await r.json(undefined, 2 << 20), 'sessionId', sessionId);
+      return { stream: await sessions.stream(caller, input) };
+    }
     if (req.method === 'POST' && route[2] === 'transcript') {
       const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
       return { transcript: await sessions.transcript(caller, input) };
@@ -220,6 +228,58 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
     }
   }
   throw unknownEndpoint();
+}
+
+/** The newest events a page is sent first; a reader further behind than this starts over. */
+const SNAPSHOT = 500;
+/**
+ * `GET /sessions/<id>/events[?after=<seq>]`: one worker agent's live stream for an operator's
+ * page, as server-sent events. `snapshot` carries the newest events (the page starts over),
+ * `events` what followed, `rotate` asks the page to reconnect with `after` set to the last seq it
+ * holds, and `end` says the stream will not grow. Authority is read again at most once a second.
+ */
+async function agentEvents(
+  req: IncomingMessage,
+  res: ServerResponse,
+  r: ApiRequest,
+  sessionId: string,
+  streams: Sessions['streams'],
+): Promise<void> {
+  const after = r.url.searchParams.get('after');
+  check(
+    [...r.url.searchParams.keys()].every((key) => key === 'after') &&
+      r.url.searchParams.getAll('after').length <= 1 &&
+      (after === null || /^(0|[1-9][0-9]{0,14})$/.test(after)),
+    'invalid_input',
+    'The events route takes only after=<seq>',
+  );
+  let seq = after === null ? -1 : Number(after);
+  const caller = await r.caller();
+  let { growing } = await streams.authorize(caller, sessionId);
+  let authorized = Date.now();
+  await serveEvents(req, res, {
+    rotateMs: 20_000,
+    subscribe: (wake) => streams.subscribe(sessionId, wake),
+    step: async (send) => {
+      if (Date.now() - authorized >= 1000) {
+        ({ growing } = await streams.authorize(caller, sessionId));
+        authorized = Date.now();
+      }
+      const events = seq < 0 ? [] : await streams.after(sessionId, seq, SNAPSHOT + 1);
+      if (seq < 0 || events.length > SNAPSHOT) {
+        const snapshot = await streams.snapshot(sessionId);
+        await send('snapshot', { events: snapshot });
+        seq = snapshot.at(-1)?.seq ?? 0;
+      } else if (events.length) {
+        await send('events', { events });
+        seq = events.at(-1)!.seq;
+      }
+      // Read after its authority said it would not grow: the page holds all there will be.
+      if (growing) return;
+      await send('end', {});
+      return false;
+    },
+  });
 }
 
 /** `/sessions`: an agent's own routes and runner enrollment authenticate themselves; every other
@@ -246,6 +306,9 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
       const enrolled = await sessions.enrollManaged(token, body, req.headers['x-merv-project-id']);
       return { controlToken: enrolled.controlToken };
     }
+    const events = /^\/sessions\/(session_[^/]+)\/events$/.exec(path);
+    if (events && req.method === 'GET')
+      return await agentEvents(req, res, r, pathSegment(events[1]!), sessions.streams);
     if ([...r.url.searchParams].length)
       throw new MervError('invalid_input', 'Session routes do not accept query parameters');
     return req.method === 'GET'

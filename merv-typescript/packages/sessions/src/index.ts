@@ -48,6 +48,7 @@ import { isoNow, liveTargets, ownerOf, readFirst, refused, targetKey } from './c
 import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
 import { SessionTranscripts } from './transcripts.js';
+import { SessionStreams } from './stream.js';
 import type {
   ManagedEnrollmentInput,
   ManagedModelGrant,
@@ -418,6 +419,8 @@ export class LeasedSessions implements Sessions {
   serviceWork!: SessionServiceWork;
   /** Public so the plugin can bind Blobs to it late. */
   transcripts!: SessionTranscripts;
+  /** Each worker agent's live stream, read by the events route. */
+  streams!: SessionStreams;
   /** Optional private account credential reader; never exposed through the tool registry. */
   secrets?: Pick<Secrets, 'resolveHuggingFaceToken'> &
     Partial<Pick<Secrets, 'createHuggingFaceAccess'>>;
@@ -495,6 +498,11 @@ export class LeasedSessions implements Sessions {
       // After the session and dispatch tables, which a transcript row names and reads.
       this.transcripts = await createService(
         new SessionTranscripts(state, this.clock, (caller, id, runnerId, tx) =>
+          this.controlled(caller, id, runnerId, tx),
+        ),
+      );
+      this.streams = await createService(
+        new SessionStreams(state, scope, this.clock, (caller, id, runnerId, tx) =>
           this.controlled(caller, id, runnerId, tx),
         ),
       );
@@ -2156,6 +2164,11 @@ export class LeasedSessions implements Sessions {
       closed(transcriptSchema, input, transcriptRefusals),
     );
   }
+  /** Runner-only, live or just closed: what the runner that held the session read of its agent. */
+  async stream(caller: Caller, input: unknown): Promise<{ until: number; seq: number }> {
+    this.ensureOpen();
+    return await this.streams.append(structuredClone(caller), input);
+  }
   async heartbeat(caller: Caller, input: SessionControl): Promise<Session> {
     caller = structuredClone(caller);
     input = closed(controlSchema, input, controlRefusals);
@@ -2663,8 +2676,10 @@ export class LeasedSessions implements Sessions {
       await this.alone(id, () => this.readFirst((tx) => this.upkeep(id, tx, calls)));
     for (const { id } of agents)
       await this.alone(id, () => this.readFirst((tx) => this.lapsed(id, tx)));
-    if (full)
+    if (full) {
       await this.alone('service-work', () => this.readFirst((tx) => this.serviceWork.expire(tx)));
+      await this.alone('session-events', () => this.streams.prune());
+    }
   }
   /** One live session's upkeep: a closure found, stranding or a change of quiet. */
   private async upkeep(id: string, tx: Transaction, calls?: Map<string, string>) {

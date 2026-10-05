@@ -15,6 +15,17 @@ export type TranscriptFacts = Omit<SessionTranscriptDeclaration, 'hostRef' | 'de
  */
 const bearer =
   /(?:(?<![A-Za-z0-9_-])|(?<=\\(?:[nrtbf]|u[0-9a-fA-F]{4})))(?:m[iks]_[A-Za-z0-9_-]{43}|m[er]_[0-9a-f]{64}|(?:pi[rw]|rr_sk)_[A-Za-z0-9_-]{16,}|sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sbxt_[A-Za-z0-9_-]{32,}|hf_[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16})(?![A-Za-z0-9_-])/;
+/** Bearers and each exact secret of at least 16 characters, as one global pattern. */
+export const blankPattern = (secrets: string[]) =>
+  new RegExp(
+    [
+      bearer.source,
+      ...secrets
+        .filter((secret) => secret.length >= 16)
+        .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    ].join('|'),
+    'g',
+  );
 /** Covers the longest private HF token (4096 bytes) as well as provider credentials. */
 const CARRY = 4096;
 /** Enough of what was already written for the bearer's lookbehind (`\u0022` is six). */
@@ -73,16 +84,7 @@ export function readTranscript(
       segments.push([0, headEnd], [from, end]);
       omitted = logBytes - headEnd - (end - from);
     }
-    const blank = new RegExp(
-      [
-        bearer.source,
-        ...secrets
-          .map((secret) => Buffer.from(secret).toString('latin1'))
-          .filter((secret) => secret.length >= 16)
-          .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-      ].join('|'),
-      'g',
-    );
+    const blank = blankPattern(secrets.map((secret) => Buffer.from(secret).toString('latin1')));
     const carry = Math.max(CARRY, ...secrets.map((secret) => Buffer.byteLength(secret)));
     let length = 0;
     for (const [index, [start, end]] of segments.entries()) {

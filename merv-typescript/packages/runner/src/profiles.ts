@@ -439,6 +439,8 @@ function claudeArgs(
     '--output-format',
     'stream-json',
     '--verbose',
+    // Thinking and text arrive while they are written, for the live view.
+    '--include-partial-messages',
     '--no-session-persistence',
     '--setting-sources',
     '',

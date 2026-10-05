@@ -715,6 +715,22 @@ for (const linger of [false, true])
       );
       await runner.tick();
       assert.equal(releases.length, 2, 'the durable ledger prevents a duplicate acknowledgement');
+      // What the agent printed after its handoff reached its live stream, within the grace.
+      const sessionId = runner.snapshot().launches[0]!.sessionId;
+      const streamed = async () =>
+        (
+          await f.app.ctx.state.read((sql) =>
+            sql.all<{ event: { kind: string; delta?: string; text?: string } }>(
+              'SELECT event FROM session_events WHERE session_id=? ORDER BY seq',
+              sessionId,
+            ),
+          )
+        ).map(({ event }) => event.delta ?? event.text);
+      await until(async () => (await streamed()).length === 2, runner, 'the streamed handoff');
+      assert.deepEqual(await streamed(), [
+        'Handed off.',
+        'Turn completed · 175540 tokens in · 1488 out',
+      ]);
     },
   );
 
