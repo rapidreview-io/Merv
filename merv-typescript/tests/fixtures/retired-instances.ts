@@ -402,6 +402,9 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     );
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
+    // sessions@12 (an index on closed usage) came later still.
+    await client.query(`DROP INDEX session_usage_closed;
+DELETE FROM component_migrations WHERE component='sessions' AND version=12;`);
     // Work-host bindings were introduced later as well. Rewind the empty child
     // table before its parent so the current server can replay sessions@11.
     await client.query('DROP TABLE session_managed_assignments');
