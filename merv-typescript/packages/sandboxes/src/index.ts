@@ -254,7 +254,7 @@ export class SandboxService implements Sandboxes {
   #closed = false;
   #closing?: Promise<void>;
   readonly #running = new Set<Promise<unknown>>();
-  readonly #offers = new Map<string, { at: number; value?: Json; reading?: Promise<Json> }>();
+  readonly #offers = new Map<string, { at: number; value?: Json; reading?: Promise<void> }>();
   readonly #machines = new Map<string, MachineCache>();
   #machinesTimer?: ReturnType<typeof setInterval>;
   /** The machines timer never inherits a caller's database scope: the first watch is a read's. */
@@ -322,7 +322,7 @@ export class SandboxService implements Sandboxes {
         })),
         describe: async (projectId, key) => {
           const found = profiles.find((entry) => entry.profile.key === key);
-          return found ? runtimeOffer(await this.#options(projectId), key, found.profile) : null;
+          return found ? runtimeOffer(this.#options(projectId), key, found.profile) : null;
         },
         connected: (projectId) =>
           this.#connections.some(
@@ -360,21 +360,21 @@ export class SandboxService implements Sandboxes {
     }
   }
 
-  /** GET /v1/options at most once per refresh period for each project. Once a project has an
-   * answer it is served at once while an older one refreshes behind it, since Pi describes
-   * machines inside writer transactions. A failed read keeps the answer (none hides every machine)
-   * and the next call reads again. */
-  #options(projectId: string): Promise<Json> {
+  /** GET /v1/options at most once per refresh period for each project. The last answer is served
+   * at once while a read runs behind it, never awaited, since Pi describes machines inside writer
+   * transactions. No answer yet, or none after a failed read, hides every machine; the next call
+   * reads again. */
+  #options(projectId: string): Json {
     const entry = this.#offers.get(projectId) ?? { at: 0 };
     this.#offers.set(projectId, entry);
     if (!entry.reading && Date.now() - entry.at >= this.#refreshMs)
       entry.reading = this.#run(projectId, (projectId) =>
         this.#client.read(this.#connectionFor(projectId), '/v1/options'),
       )
-        .then((value) => Object.assign(entry, { at: Date.now(), value }).value)
-        .catch(() => entry.value ?? null)
+        .then((value) => void Object.assign(entry, { at: Date.now(), value }))
+        .catch(() => undefined)
         .finally(() => (entry.reading = undefined));
-    return 'value' in entry ? Promise.resolve(entry.value!) : entry.reading!;
+    return entry.value ?? null;
   }
 
   /** Reads the manifest on a bounded cadence; disposal retires and drains this instance. */
@@ -384,6 +384,8 @@ export class SandboxService implements Sandboxes {
       this.#timer = setInterval(() => void this.refresh().catch(() => undefined), this.#refreshMs);
       this.#timer.unref();
       void this.refresh().catch(() => undefined);
+      // Read machine offers now so the first describe after boot already has an answer.
+      if (this.runtimes) for (const { projectId } of this.#connections) this.#options(projectId);
     }
     return () => this.close();
   }
@@ -845,7 +847,8 @@ export const sandboxesPlugin = {
         if (stopping || pending) return;
         pending = service
           .nativeOperation(async () => {
-            await connections.reconcileRevocations();
+            // A failing revocation pass never holds back assignment upkeep.
+            await connections.reconcileRevocations().catch(() => undefined);
             if (!stopping) await work.reconcile();
           })
           .catch(() => {

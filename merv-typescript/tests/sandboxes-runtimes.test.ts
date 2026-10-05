@@ -195,6 +195,10 @@ test('a machine is described from the service options, read once a refresh perio
   );
   const describe = (key: string) => service.runtimes!.describe(connection.projectId, key);
   const reads = () => calls.filter((call) => call.path === '/v1/options').length;
+  // Pi describes machines inside writer transactions, so nothing waits on the service: with no
+  // answer yet every machine is hidden at once while the first read runs.
+  assert.deepEqual(await Promise.all(['standard', 'large'].map(describe)), [null, null]);
+  await setImmediate();
   assert.deepEqual(await Promise.all(['standard', 'large', 'huge'].map(describe)), [
     { key: 'standard', vcpu: 0.5, memoryGiB: 4, diskGB: 8, maxHourlyUsd: 0.074016 },
     { key: 'large', vcpu: 2, memoryGiB: 8, diskGB: 16, maxHourlyUsd: 0.220032 },
@@ -208,7 +212,6 @@ test('a machine is described from the service options, read once a refresh perio
   assert.notEqual(await describe('large'), null);
   t.mock.timers.tick(1000);
   assert.notEqual(await describe('large'), null);
-  assert.equal(reads(), 2);
   await setImmediate();
   assert.equal(await describe('large'), null);
   assert.equal((await describe('standard'))?.vcpu, 0.5);
@@ -219,7 +222,16 @@ test('a machine is described from the service options, read once a refresh perio
   assert.equal((await describe('standard'))?.memoryGiB, 4);
   await setImmediate();
   assert.equal((await describe('standard'))?.memoryGiB, 4);
+  await setImmediate();
   assert.equal(reads(), 4);
+  await service.close();
+});
+
+test('starting the service reads machine offers before anyone asks', async (t) => {
+  const { calls, service } = fixture(t, () => Response.json({ offers: [] }));
+  service.start();
+  await setImmediate();
+  assert.ok(calls.some((call) => call.path === '/v1/options'));
   await service.close();
 });
 

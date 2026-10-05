@@ -230,34 +230,38 @@ export class NativeConnections {
         caller.projectId,
       ),
     );
-    for (const work of moving) {
-      if (!work.native_grant_id) continue;
-      const old = await this.get(work.connection_id);
-      const path = `/v1/delegations/works/${work.native_grant_id}`;
-      const empty = async () => {
-        const resources = await this.client.request<{
-          workflows: unknown[];
-          jobs: unknown[];
-          sandboxes: unknown[];
-          next: Record<string, unknown>;
-        }>(`${path}/resources`, this.bearer(old));
-        check(
-          ['workflows', 'jobs', 'sandboxes'].every(
-            (key) =>
-              Array.isArray(resources[key as 'jobs']) && resources[key as 'jobs'].length === 0,
-          ) &&
-            resources.next &&
-            Object.values(resources.next).every((value) => value === null),
-          'sandbox_migration_required',
-          'Existing compute resources must retain their original funding history',
-          409,
-        );
-      };
-      await empty();
+    const grants: { old: NativeConnectionRow; path: string }[] = [];
+    for (const work of moving)
+      if (work.native_grant_id)
+        grants.push({
+          old: await this.get(work.connection_id),
+          path: `/v1/delegations/works/${work.native_grant_id}`,
+        });
+    const empty = async ({ old, path }: (typeof grants)[number]) => {
+      const resources = await this.client.request<{
+        workflows: unknown[];
+        jobs: unknown[];
+        sandboxes: unknown[];
+        next: Record<string, unknown>;
+      }>(`${path}/resources`, this.bearer(old));
+      check(
+        ['workflows', 'jobs', 'sandboxes'].every(
+          (key) => Array.isArray(resources[key as 'jobs']) && resources[key as 'jobs'].length === 0,
+        ) &&
+          resources.next &&
+          Object.values(resources.next).every((value) => value === null),
+        'sandbox_migration_required',
+        'Existing compute resources must retain their original funding history',
+        409,
+      );
+    };
+    // Every work must be empty before any grant is retired, so one busy work leaves all intact.
+    for (const grant of grants) await empty(grant);
+    for (const grant of grants) {
       // Retire the old grant, then check again: a request admitted just before
       // revocation must not be orphaned or attributed to the replacement root.
-      await this.client.request(path, this.bearer(old), { method: 'DELETE' });
-      await empty();
+      await this.client.request(grant.path, this.bearer(grant.old), { method: 'DELETE' });
+      await empty(grant);
     }
     await this.state.transaction(async (tx) => {
       await this.authorize(caller, tx);
@@ -673,8 +677,23 @@ export class NativeConnections {
         this.now(),
       ),
     );
+    const later = (id: string) =>
+      this.state.transaction((tx) =>
+        tx.run(
+          'UPDATE sandbox_native_flows SET reconcile_after=? WHERE id=?',
+          new Date(this.clock() + 60_000).toISOString(),
+          id,
+        ),
+      );
     for (const row of flows) {
-      const payload = this.credentials.open<FlowSecrets>(row.payload, `flow:${row.id}`);
+      let payload: FlowSecrets;
+      try {
+        payload = this.credentials.open<FlowSecrets>(row.payload, `flow:${row.id}`);
+      } catch {
+        // An unreadable row backs off instead of stalling every flow behind it.
+        await later(row.id);
+        continue;
+      }
       if (!payload.exchangeStartedAt) {
         await this.state.transaction((tx) =>
           tx.run(
@@ -722,13 +741,7 @@ export class NativeConnections {
         });
       } catch {
         // Keep the encrypted bearer until native revocation is confirmed, including restarts.
-        await this.state.transaction((tx) =>
-          tx.run(
-            'UPDATE sandbox_native_flows SET reconcile_after=? WHERE id=?',
-            new Date(this.clock() + 60_000).toISOString(),
-            row.id,
-          ),
-        );
+        await later(row.id);
       }
     }
   }

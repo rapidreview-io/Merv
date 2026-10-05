@@ -218,8 +218,9 @@ export function readContext<C extends WorkflowCheckContext>(context: C): C {
 }
 
 /**
- * A callback's refusal is read as a blocker; a State fault never is. A write under a read is a
- * broken program, and a conflicting, busy or closed store says nothing about the work.
+ * A callback's refusal is read as a blocker; a State fault never is. A write under a read, a
+ * transaction that is not the live one or SQL whose bind markers do not match is a broken
+ * program, and a conflicting, busy or closed store says nothing about the work.
  */
 export function throwStateFault(error: MervError): void {
   if (error.code === 'read_only_scope')
@@ -228,7 +229,12 @@ export function throwStateFault(error: MervError): void {
       'Workflow callbacks must not write while the workflow is read',
       500,
     );
-  if (stateFault(error)) throw error;
+  if (
+    error.code === 'invalid_transaction' ||
+    error.code === 'invalid_sql_parameters' ||
+    stateFault(error)
+  )
+    throw error;
 }
 
 export async function evaluateAction(

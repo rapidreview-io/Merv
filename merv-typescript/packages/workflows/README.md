@@ -226,8 +226,8 @@ differs from what it read before them, even equal data in other bytes (a rewrite
 same bytes is not seen). It then checks that the registration is still installed. Under a
 snapshot it skips the reread, because State refuses every write there.
 A guard's refusal is read as a blocker; a State fault (`read_only_scope`,
-`nested_transaction`, `transaction_*`, `state_*`) never is, and a write under a read is
-`invalid_workflow_policy` 500.
+`nested_transaction`, `invalid_transaction`, `invalid_sql_parameters`, `transaction_*`,
+`state_*`) never is, and a write under a read is `invalid_workflow_policy` 500.
 
 **Lease hooks.** `lease.role` answers for the source, at discovery and at offer, whether
 the node may be leased now and which role its worker needs; it never runs once a lease
