@@ -180,12 +180,11 @@ async function fixture(t: TestContext, connected = false, human = connected) {
     });
     return request.id;
   };
-  /** Acceptance as a passing review leaves it: an admitted upload, then the owner's record. */
-  const accept = async (
-    work: WorkflowSnapshot,
-    commit: string,
-    storage: 'code' | 'legacy-local' = 'code',
-  ) => {
+  /**
+   * Acceptance as a passing review leaves it: an admitted upload, then the owner's record.
+   * `admitted: false` leaves out the upload, as a commit Code never admitted.
+   */
+  const accept = async (work: WorkflowSnapshot, commit: string, admitted = true) => {
     const commandId = `capture-${work.id}`;
     captures.set(commandId, {
       ref: { kind: 'code-commit', commandId },
@@ -210,7 +209,7 @@ async function fixture(t: TestContext, connected = false, human = connected) {
     });
     const reviewId = await reviewed(work);
     const done = await move(work);
-    if (storage === 'code')
+    if (admitted)
       await f.state.transaction(async (tx) => {
         await tx.run(
           "UPDATE code_workspaces SET generation=1,writer_state='closed',head_oid=? WHERE project_id=? AND unit_id=?",
@@ -227,18 +226,6 @@ async function fixture(t: TestContext, connected = false, human = connected) {
           work.id,
         );
       });
-    else
-      // A legacy acceptance keeps its commit in the runner's own repository; an import receipt
-      // is what lets later work build on it at all.
-      await f.state.transaction((tx) =>
-        tx.run(
-          "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES (?,?,'fixture',?,'import','hash','{}','completed',?,'now','now')",
-          commandId,
-          f.admin.projectId,
-          commandId,
-          JSON.stringify({ head: commit }),
-        ),
-      );
     return await f.state.transaction((tx) =>
       code.acceptUnit(
         f.admin,
@@ -451,8 +438,8 @@ test('acceptedSince names the accepted work main does not hold, and nothing else
   assert.deepEqual((await f.code.acceptedSince(f.admin)).unitIds, []);
   const dependency = await f.declare('Dependency');
   await f.accept(dependency, f.feature);
-  const legacy = await f.declare('Legacy');
-  await f.accept(legacy, f.clashing, 'legacy-local');
+  const other = await f.declare('Other');
+  await f.accept(other, f.clashing);
   const codeless = await f.declare('No code');
   const done = await f.move(codeless);
   await f.state.transaction(async (tx) => {
@@ -481,10 +468,9 @@ test('acceptedSince names the accepted work main does not hold, and nothing else
   );
 
   const since = await f.code.acceptedSince(f.admin);
-  // A code-less success is nothing main could be missing; an imported legacy acceptance is
-  // code this repository holds, so it is named like any other, and so is a quarantined
-  // one — separately, because nothing may be built on it.
-  assert.deepEqual(since.unitIds, [dependency.id, legacy.id].sort());
+  // A code-less success is nothing main could be missing; a quarantined acceptance is named
+  // separately, because nothing may be built on it.
+  assert.deepEqual(since.unitIds, [dependency.id, other.id].sort());
   assert.deepEqual(since.quarantined, [quarantined.id]);
   assert.equal(since.main, f.root0);
   assert.equal(since.hash, (await f.code.acceptedSince(f.admin)).hash);
@@ -492,7 +478,7 @@ test('acceptedSince names the accepted work main does not hold, and nothing else
   // Once main holds that commit the unit is no longer unpublished work.
   await f.setMain(f.feature);
   const after = await f.code.acceptedSince(f.admin);
-  assert.deepEqual(after.unitIds, [legacy.id]);
+  assert.deepEqual(after.unitIds, [other.id]);
   assert.notEqual(after.hash, since.hash);
 });
 
@@ -572,13 +558,14 @@ test('an acceptance that cannot be sealed is still recorded, and says so', async
     ['code_publish_unverifiable'],
   );
 
-  // Accepted with code Code's own repository never admitted: the same refusal, and the
-  // review that accepted it still stands.
-  const legacy = await f.declare('Legacy');
-  await f.publishes(legacy);
-  await f.pin(legacy);
-  await f.accept(legacy, f.clashing, 'legacy-local');
-  assert.equal((await f.code.unit(f.admin, legacy.id)).publication?.state, 'unsealed');
+  // Code that Code's own repository never admitted is not accepted at all.
+  const unadmitted = await f.declare('Unadmitted');
+  await f.publishes(unadmitted);
+  await f.pin(unadmitted);
+  await assert.rejects(f.accept(unadmitted, f.clashing, false), {
+    code: 'code_acceptance_unverifiable',
+  });
+  assert.equal((await f.code.unit(f.admin, unadmitted.id)).acceptance, null);
   assert.deepEqual(await f.code.publications(f.admin), []);
 });
 

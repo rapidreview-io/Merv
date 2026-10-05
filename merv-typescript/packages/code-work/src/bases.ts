@@ -229,16 +229,6 @@ export class CodeBaseService {
   async initialize(): Promise<void> {
     await migrateBases(this.state);
     await initializeCheckConfiguration(this.state);
-    // Resolution retains and mirrors its result; only a base resolved before that did is left.
-    if (this.hooks.resolved)
-      await this.state.transaction(async (tx) => {
-        for (const row of await tx.all<BaseRow>(
-          `SELECT ${columns} FROM code_bases WHERE state='resolved' AND health='healthy' AND NOT EXISTS (SELECT 1 FROM code_retained_commits r WHERE r.project_id=code_bases.project_id AND r.retention_key='base:'||code_bases.base_key)`,
-        )) {
-          const base = this.record(row);
-          await this.hooks.resolved!(tx, row.project_id, base.key, base.result!.commit);
-        }
-      });
   }
 
   /**

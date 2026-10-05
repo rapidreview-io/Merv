@@ -153,7 +153,7 @@ const connected = (over: Record<string, unknown> = {}) =>
     ...over,
   });
 const nothingMade = () => {
-  serve('/tools/ui.read', { body: { result: { commands: [], publications: [] } } });
+  serve('/tools/ui.read', { body: { result: { commands: [] } } });
   serve('/tools/ui.home', { body: { result: {} } });
 };
 
@@ -531,8 +531,10 @@ const servedProject = (over: Partial<CodeProjectStatus> = {}, records = bases())
     body: {
       result: {
         commands: commands(),
-        status: status(units(), records, over),
-        ...(!over.publication ? { publications: [published()] } : {}),
+        status: status(units(), records, {
+          publication: { records: [published()], controls: { blockers: [] } },
+          ...over,
+        }),
       },
     },
   });
@@ -634,7 +636,7 @@ test('changing Code project clears publications and fences a late answer from th
   setProject('code-first');
   servedProject();
   await mount(page());
-  assert.ok(document.querySelector('.pr-row'), 'legacy publications are in the UI read too');
+  assert.ok(document.querySelector('.pr-row'), 'publications are in the status the UI reads');
   delay = true;
   await act(async () => refreshTools('ui.read'));
   await settle();
@@ -988,8 +990,10 @@ test('the page builds its model from what it reads, and titles nothing twice', a
             unit('u7', { base: pin('main', 'c0'), baseStatus: { status: 'waiting' } }),
           ],
           [base('b1', { members: ['c1', 'c2'], state: 'queued' })],
+          {
+            publication: { records: [published()], controls: { blockers: [] } },
+          },
         ),
-        publications: [published()],
       },
     },
   });
@@ -1800,8 +1804,9 @@ test('a superseded publication names the wave that replaced it, and never its id
     body: {
       result: {
         commands: commands(),
-        status: status(units(), bases()),
-        publications: [stale, later],
+        status: status(units(), bases(), {
+          publication: { records: [stale, later], controls: { blockers: [] } },
+        }),
       },
     },
   });

@@ -15,21 +15,13 @@ export const codeUiPlugin = {
         order: 25,
         path: '/code',
         view: { kind: 'code' },
-        // `commands` are the commit receipts; the store transfers of the same name are
-        // inside status. A sealed proposal is read on the record that made it, not here.
-        read: async (caller) => {
-          const commands = await ctx.codeWork.list(caller);
-          const status = await ctx.codeWork.status(caller);
-          return {
-            commands,
-            status,
-            // Hosted status already carries the publications in this snapshot. Older
-            // runner-owned projects have them too, without hosted publication controls.
-            ...(!status.publication
-              ? { publications: await ctx.codeWork.publications(caller) }
-              : {}),
-          } as unknown as Json;
-        },
+        // `commands` are the commit receipts; the store transfers of the same name, and the
+        // publications, are inside status.
+        read: async (caller) =>
+          ({
+            commands: await ctx.codeWork.list(caller),
+            status: await ctx.codeWork.status(caller),
+          }) as unknown as Json,
       }),
     );
     // The Running page: the work Code holds for a person, its check machines, and the Code

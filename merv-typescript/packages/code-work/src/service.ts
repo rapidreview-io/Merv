@@ -1,7 +1,6 @@
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
 import type { CodeGitHubService, GitHubBinding } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
-import { rejectRetiredBackup } from '@merv/code/configuration';
 import { declareManagedProject } from '@merv/code/store/managed';
 import type { CodeService as CodeUtility } from '@merv/code/service';
 import {
@@ -51,7 +50,6 @@ import type {
   ResolutionWorkCreator,
 } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
-import { archiveCommit } from './base-check.js';
 import type { CodeWriterService } from '@merv/code/writers';
 
 /** Work-unit operations over the repositories owned by the core Code service. */
@@ -69,52 +67,6 @@ export interface CodeStoreOptions {
 
 /** One Code capability over machine commands, units, bases and publications. */
 export class CodeService extends CodeCommandService implements Code {
-  async source(
-    projectId: string,
-    instanceId: string,
-    commandId: string,
-  ): Promise<{ bytes: Uint8Array; sha256: string }> {
-    const row = await this.storage.read((sql) =>
-      sql.get<{ command_json: string; receipt_json: string | null; status: string }>(
-        'SELECT command_json,receipt_json,status FROM code_commands WHERE id=? AND project_id=?',
-        commandId,
-        projectId,
-      ),
-    );
-    const command = row && JSON.parse(row.command_json);
-    const receipt = row?.receipt_json && JSON.parse(row.receipt_json);
-    check(
-      command?.instanceId === instanceId &&
-        row?.status === 'succeeded' &&
-        typeof receipt?.headOid === 'string' &&
-        typeof receipt?.treeOid === 'string',
-      'code_source_unavailable',
-      'A succeeded commit for this work unit is required',
-      409,
-    );
-    const store = this.requireStore();
-    check(
-      await store.contains(projectId, receipt.headOid),
-      'code_source_unavailable',
-      'The committed source is not in Code’s repository',
-      409,
-    );
-    const env = store.repositories.environment(projectId);
-    const tree = (
-      await store.repositories.git.ok(['rev-parse', '--verify', `${receipt.headOid}^{tree}`], {
-        env,
-      })
-    )
-      .toString()
-      .trim();
-    check(
-      tree === receipt.treeOid,
-      'code_source_unavailable',
-      'The commit tree differs from its receipt',
-      409,
-    );
-    return await archiveCommit(store.repositories.git, env, receipt.headOid);
-  }
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
   private readonly writerStore: CodeWriterService;
@@ -150,7 +102,6 @@ export class CodeService extends CodeCommandService implements Code {
     utility: Pick<CodeUtility, 'github' | 'writers' | 'repositories'>,
     repositories: CodeStoreOptions = {},
   ) {
-    rejectRetiredBackup(repositories.config);
     super(state, scope, sessions);
     this.storage = state;
     this.baseScope = scope;

@@ -33,7 +33,6 @@ export const codePlugin = {
   Config: configuration,
   inject: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
   async apply(ctx: Context, config: z.infer<typeof configuration> = {}) {
-    rejectRetiredBackup(config.repositories);
     await ctx.effect(async function* () {
       const service = await createService(
         new CodeService(

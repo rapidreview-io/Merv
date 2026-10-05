@@ -40,7 +40,9 @@ test('retention refuses impossible transport before persisting an obligation', a
     },
   ])
     await assert.rejects(
-      state.transaction((tx) => code.units.retainCommit(caller, input, tx)),
+      state.transaction((tx) =>
+        code.units.retainStoredCommit(tx, { ...input, projectId: caller.projectId }),
+      ),
       {
         code:
           input.storage === 'external'
@@ -62,7 +64,7 @@ test('retention freezes its ref in the immutable intent and rejects tampered rec
   const input = { key: 'snapshot', unitId: 'workspace', commit, ref };
   await f.state.transaction(async (tx) => {
     await f.core.units.declareWorkspace(f.admin, { unitId: input.unitId }, tx);
-    await f.core.units.retainCommit(f.admin, input, tx);
+    await f.core.units.retainStoredCommit(tx, { ...input, projectId: f.admin.projectId });
     const row = await tx.get<{ id: string; payload_json: string; progress_json: string }>(
       "SELECT id,payload_json,progress_json FROM code_operations WHERE kind='retain-ref'",
     );
@@ -74,7 +76,9 @@ test('retention freezes its ref in the immutable intent and rejects tampered rec
     );
   });
   await assert.rejects(
-    f.state.transaction((tx) => f.core.units.retainCommit(f.admin, input, tx)),
+    f.state.transaction((tx) =>
+      f.core.units.retainStoredCommit(tx, { ...input, projectId: f.admin.projectId }),
+    ),
     { code: 'code_retention_conflict' },
   );
   await f.code.maintainStore();

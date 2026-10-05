@@ -9,15 +9,9 @@ import type {
 } from '@merv/contracts';
 import type { Code } from './types.js';
 import type { CodeService } from './service.js';
-import type { GitHubBinding } from '@merv/code/github';
 
 type PreparationHost = Pick<Code, 'github' | 'importRepository'> & {
   repositoryState(caller: Caller): ReturnType<CodeService['repositoryState']>;
-  bindLocal(
-    caller: Caller,
-    input: Parameters<Code['bindLocal']>[1],
-    binding?: GitHubBinding,
-  ): ReturnType<Code['bindLocal']>;
 };
 
 const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
@@ -31,12 +25,15 @@ export const repositoryPrepareSchema = z
   })
   .strict();
 
-/** Compose existing durable operations; retries keep the administrator's exact selection. */
+/**
+ * Import the selected branch into the project's hosted repository, then integrate it. Retries
+ * keep the administrator's exact selection.
+ */
 export async function prepareRepository(
   code: PreparationHost,
   caller: Caller,
   value: CodeRepositoryPrepareInput,
-  reconcile?: (operation: CodeStoreOperation) => Promise<CodeRepositoryPreparation>,
+  reconcile: (operation: CodeStoreOperation) => Promise<CodeRepositoryPreparation>,
 ): Promise<CodeRepositoryPreparation> {
   caller = structuredClone(caller);
   const input = parseCodeInput(repositoryPrepareSchema, value);
@@ -54,78 +51,16 @@ export async function prepareRepository(
     409,
   );
   const before = await code.repositoryState(caller);
-  if (before.project?.durability === 'code') {
-    check(reconcile, 'code_sync_unavailable', 'Managed repository integration is unavailable', 503);
-    const operation = await code.importRepository(caller, {
-      source: 'github',
-      ref: `refs/heads/${input.baseBranch}`,
-      expectedHead: input.headOid,
-      githubBinding: {
-        revision: connection.revision,
-        repositoryId: connection.repository.id,
-        baseBranch: input.baseBranch,
-      },
-      requestId: `${input.requestId}:import`,
-    });
-    if (operation.status !== 'completed')
-      return {
-        state: operation.status === 'prepared' ? 'importing' : 'failed',
-        baseBranch: input.baseBranch,
-        headOid: input.headOid,
-        operation,
-      };
-    check(
-      operation.head === input.headOid,
-      'code_branch_changed',
-      'The imported head differs from the selected head',
-      409,
-    );
-    return reconcile(operation);
-  }
-  const repositoryId = `github:${connection.repository.id}`;
   check(
-    !before.project || before.project.repositoryId === repositoryId,
-    'code_rebind_required',
-    'This project already keeps another repository. Preserve its history with code.repository.rebind before preparing this repository',
-    409,
-  );
-  // An already-bound head can be a retry after importing it. Never substitute a branch's
-  // newer head for the one the administrator selected, including after an uncertain answer.
-  if (before.project?.main.oid !== input.headOid) {
-    const branch = (await code.github.branches(caller)).find(
-      (branch) => branch.name === input.baseBranch,
-    );
-    check(
-      branch?.sha === input.headOid,
-      'code_branch_changed',
-      'The selected branch moved; reload its branches and choose its current commit',
-      409,
-    );
-  }
-  const selectedBinding = {
-    revision: connection.revision,
-    repository: connection.repository,
-    baseBranch: input.baseBranch,
-  };
-  const binding = await code.bindLocal(
-    caller,
-    {
-      repositoryId,
-      mainOid: input.headOid,
-      ...(input.expectedMainOid ? { expectedMainOid: input.expectedMainOid } : {}),
-      requestId: `${input.requestId}:bind`,
-    },
-    selectedBinding,
-  );
-  check(
-    binding.main.oid === input.headOid,
-    'code_main_changed',
-    'The prepared main changed; reload repository settings',
+    before.project?.durability === 'code',
+    'code_project_unhosted',
+    'This project’s repository is not kept by Code; import it with code.repository.import first',
     409,
   );
   const operation = await code.importRepository(caller, {
     source: 'github',
     ref: `refs/heads/${input.baseBranch}`,
+    expectedHead: input.headOid,
     githubBinding: {
       revision: connection.revision,
       repositoryId: connection.repository.id,
@@ -133,32 +68,18 @@ export async function prepareRepository(
     },
     requestId: `${input.requestId}:import`,
   });
-  const after = await code.repositoryState(caller);
-  const current = await code.github.status(caller);
+  if (operation.status !== 'completed')
+    return {
+      state: operation.status === 'prepared' ? 'importing' : 'failed',
+      baseBranch: input.baseBranch,
+      headOid: input.headOid,
+      operation,
+    };
   check(
-    current.revision === input.expectedRevision && current.baseBranch === input.baseBranch,
-    'github_conflict',
-    'Repository settings changed during preparation; inspect the current settings before continuing',
+    operation.head === input.headOid,
+    'code_branch_changed',
+    'The imported head differs from the selected head',
     409,
   );
-  check(
-    after.project?.repositoryId === repositoryId,
-    'code_rebind_required',
-    'The project repository changed during preparation; inspect its current binding before continuing',
-    409,
-  );
-  check(
-    after.project?.main.oid === input.headOid,
-    'code_main_changed',
-    'The project main changed during preparation; inspect its current state before continuing',
-    409,
-  );
-  // A successful transfer is not enough: the selected commit itself must be retained.
-  const ready = operation.status === 'completed' && after.project.main.stored && after.store.hosted;
-  return {
-    state: ready ? 'ready' : operation.status === 'prepared' ? 'importing' : 'failed',
-    baseBranch: input.baseBranch,
-    headOid: input.headOid,
-    operation,
-  };
+  return reconcile(operation);
 }

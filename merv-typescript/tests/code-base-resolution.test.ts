@@ -246,6 +246,29 @@ async function fixture(t: TestContext, human = false) {
       eventId: null,
     });
     await f.state.transaction(async (tx) => {
+      // Fixture inputs are retained in the real repository; the closed writer generation and
+      // its upload journal stand for Code having admitted the reviewed commit.
+      await tx.run(
+        "INSERT INTO code_workspaces(project_id,unit_id,declared_at,generation,writer_state) VALUES (?,?,'now',1,'closed') ON CONFLICT(project_id,unit_id) DO UPDATE SET generation=CASE WHEN code_workspaces.generation=0 THEN 1 ELSE code_workspaces.generation END,writer_state=CASE WHEN code_workspaces.generation=0 THEN 'closed' ELSE code_workspaces.writer_state END",
+        f.admin.projectId,
+        work.id,
+      );
+      if (
+        !(await tx.get(
+          "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='completed' AND result_json::jsonb->>'head'=?",
+          f.admin.projectId,
+          work.id,
+          commit,
+        ))
+      )
+        await tx.run(
+          "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at,unit_id) VALUES (?,?,'fixture',?,'upload','hash','{}','completed',?,'now','now',?)",
+          commandId,
+          f.admin.projectId,
+          commandId,
+          JSON.stringify({ head: commit }),
+          work.id,
+        );
       await code.acceptUnit(
         f.admin,
         {
@@ -263,14 +286,6 @@ async function fixture(t: TestContext, human = false) {
           reviewSessionId: null,
         },
         tx,
-      );
-      // Fixture inputs are retained in the real repository, in place of an upload journal.
-      await tx.run(
-        "INSERT INTO code_operations(id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES (?,?,'fixture',?,'import','hash','{}','completed',?,'now','now')",
-        commandId,
-        f.admin.projectId,
-        commandId,
-        JSON.stringify({ head: commit }),
       );
     });
   };

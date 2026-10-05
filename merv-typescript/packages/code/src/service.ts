@@ -5,7 +5,6 @@ import { CodeRepositories, type CodeRepositoryConfig } from './store/repository.
 import { CodeUnitStore } from './units.js';
 import { CodeWriterService } from './writers.js';
 import { CodeChanges } from './changes.js';
-import { rejectRetiredBackup } from './configuration.js';
 
 export interface CodeConfiguration {
   finalizeGraceSeconds?: number;
@@ -21,7 +20,6 @@ export class CodeService {
   readonly repositories?: CodeRepositories;
 
   constructor(state: State, scope: Scope, config: CodeConfiguration, github?: GitHubConfig) {
-    rejectRetiredBackup(config.repositories);
     this.changes = new CodeChanges(state);
     this.writers = new CodeWriterService(
       state,

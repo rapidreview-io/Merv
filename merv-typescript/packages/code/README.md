@@ -35,9 +35,8 @@ research state.
 Import maintenance, drain timing, automatic base merging and mirroring belong to the
 integration's `repositories` configuration. Disaster backup and restoration belong to
 [deployment operations](../../docs/RECOVERY_SNAPSHOTS.md), outside both plugins. Historical migration text and retained workflow evidence remain unchanged. A separate generic
-storage migration creates technical workspace, commit retention and repository hold records.
-Legacy installations hold repository changes until the research compatibility migration has
-transferred their retained Git facts; standalone Code never interprets acceptance or reviews.
+storage migration creates technical workspace, commit retention and repository hold records;
+standalone Code never interprets acceptance or reviews.
 
 The machine [Code workspace driver](src/driver/index.ts) supports isolated checkouts and
 cross-machine handoff. The [Runner](../runner/README.md) loads it only when enabled;

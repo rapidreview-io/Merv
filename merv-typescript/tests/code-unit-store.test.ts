@@ -27,18 +27,6 @@ class OwnerStore extends WorkUnitRecords {
   acceptFacts(caller: Caller, body: AcceptanceBody, tx: Transaction) {
     return this.retainUnitAcceptance(caller, body, tx);
   }
-  reviewFacts(caller: Caller, body: AcceptanceBody, tx: Transaction) {
-    return this.retainReviewAcceptance(caller, body, tx);
-  }
-  publishFacts(
-    caller: Caller,
-    unitId: string,
-    reviewId: string,
-    revision: number,
-    tx: Transaction,
-  ) {
-    return this.retainPublishedAcceptance(caller, unitId, reviewId, revision, tx);
-  }
 }
 
 async function fixture(t: TestContext) {
@@ -240,26 +228,4 @@ test('Code storage imports and rebinds while research retains unfinished bases a
   } finally {
     await store.close();
   }
-});
-
-test('review-round records stay separate from published acceptance and reject changed replay', async (t) => {
-  const f = await fixture(t);
-  const body = f.body('publication');
-  await f.state.transaction((tx) => f.store.declare(f.caller, body.unitId, tx));
-  const review = await f.state.transaction((tx) => f.store.reviewFacts(f.caller, body, tx));
-  assert.equal((await f.store.unit(f.caller, body.unitId)).acceptance, null);
-  await assert.rejects(
-    f.state.transaction((tx) =>
-      f.store.reviewFacts(f.caller, { ...body, submissionRef: 'changed' }, tx),
-    ),
-    { code: 'code_acceptance_conflict' },
-  );
-  await f.state.transaction((tx) =>
-    f.store.publishFacts(f.caller, body.unitId, body.reviewRef, 3, tx),
-  );
-  const published = (await f.store.unit(f.caller, body.unitId)).acceptance!;
-  assert.equal(published.reviewRef, body.reviewRef);
-  assert.equal(published.terminalRevision, 3);
-  assert.equal(published.acceptedAt, review.acceptedAt);
-  assert.notEqual(published.hash, review.hash);
 });

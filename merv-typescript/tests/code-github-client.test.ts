@@ -146,26 +146,23 @@ test('PR inspection refuses a head or base that changes while fetching review ev
   }
 });
 
-test('exact commit reads and repo routing reject substitution', async (t) => {
+test('repo routing rejects substitution before any request', async (t) => {
   let calls = 0;
   const api = client(() => {
     calls++;
-    return { ...commit, sha: merged };
+    return {};
   });
   t.after(() => api.close());
-  await assert.rejects(api.commit('private-test-token', 'example/research', sha), {
-    code: 'github_response',
-  });
   for (const repo of [
     '../research',
     'example/..',
     'https://evil.example/repo',
     'example/repo?next=evil',
   ])
-    await assert.rejects(api.commit('private-test-token', repo, sha), {
+    await assert.rejects(api.pull('private-test-token', repo, 3), {
       code: 'invalid_github_repository',
     });
-  assert.equal(calls, 1);
+  assert.equal(calls, 0);
 });
 
 test('write conflicts preserve safe diagnostics without returning upstream bodies', async (t) => {
@@ -275,10 +272,9 @@ test('required checks accept real commit-scoped status shape and reject wrong or
   );
 });
 
-test('rules inspect a caller-selected App status and comments preserve caller text once', async (t) => {
+test('rules inspect a caller-selected App status', async (t) => {
   const context = 'build/reproducibility';
-  const comments: { body: string }[] = [];
-  const api = client((url, init) => {
+  const api = client((url) => {
     if (url.pathname.endsWith('/rules/branches/main'))
       return [
         {
@@ -291,9 +287,7 @@ test('rules inspect a caller-selected App status and comments preserve caller te
       ];
     if (url.pathname.endsWith('/rulesets')) return [];
     if (url.pathname === '/apps/merv') return { id: 7 };
-    assert.equal(url.pathname, '/repos/example/research/issues/3/comments');
-    if (init.method === 'POST') comments.push(JSON.parse(String(init.body)));
-    return comments;
+    assert.fail(url.pathname);
   });
   t.after(() => api.close());
   assert.equal(
@@ -304,10 +298,6 @@ test('rules inspect a caller-selected App status and comments preserve caller te
     (await api.rules('private-test-token', 'example/research', 'main', 'other/check')).strict,
     false,
   );
-  const body = 'This build is retained under its original identifier.';
-  await api.commentOnce('private-test-token', 'example/research', 3, body);
-  await api.commentOnce('private-test-token', 'example/research', 3, body);
-  assert.deepEqual(comments, [{ body }]);
 });
 
 test('a forbidden ruleset detail is incomplete visibility, not a broken connection', async (t) => {

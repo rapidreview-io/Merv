@@ -1,6 +1,9 @@
 import { MervError } from '@merv/contracts';
 
-/** Refuse retired protection explicitly, before any credentials or storage are opened. */
+/**
+ * Refuse retired protection explicitly. Each plugin's Config runs this while parsing, before any
+ * credentials or storage are opened.
+ */
 export function rejectRetiredBackup(value: unknown): unknown {
   if (value && typeof value === 'object' && Object.hasOwn(value, 'backup'))
     throw new MervError(
