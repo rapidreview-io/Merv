@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import type { CodeUnit } from '@merv/contracts/code-work-models';
 import { useTool, type Loaded } from '../api';
 import { recordRoutes } from '../list-filters';
+import { homeOf } from '../navigation';
 import { Evidence, KV, LoadState, RecordPage, Stamp, timeRows, useArtifacts } from '../components';
 import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
@@ -76,7 +77,7 @@ export function TaskChecks({ task: t, reviews }: { task: Task; reviews: Loaded<R
 }
 
 /** The record and the gate it stands at arrive together, from the row that owns them. */
-function TaskDetail({ row }: ViewProps) {
+function TaskDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   const record = useTool<{ task: Task; process: ProcessGraph; codeUnit: CodeUnit | null }>(
     'ui.read',
@@ -84,18 +85,24 @@ function TaskDetail({ row }: ViewProps) {
     { every: 8000 },
   );
   const nameOf = useActorNames();
+  const back = homeOf(shell.rows);
   // The publication verbs answer a signed-in operator and nobody else, so the Code
   // section is told who is reading before it offers the move.
   const { actor, account } = useSession();
   const t = record.data?.task;
-  // Every round of review this task has been through: the list the wave beside this
-  // record already reads, so the newest verdict and the earlier ones cost one answer.
-  const reviews = useTool<Review[]>(t?.reviewId ? 'review.list' : null, {}, { every: 8000 });
+  // Every round of review this task has been through, the newest verdict and the earlier ones
+  // in one answer; once the task has ended, none of them changes again.
+  const ended = !!t && ['done', 'failed'].includes(t.workflow.state);
+  const reviews = useTool<Review[]>(
+    t?.reviewId ? 'review.list' : null,
+    { subjectId: id },
+    { every: ended ? undefined : 8000 },
+  );
   const process = record.data?.process;
   if (!t)
     return (
       <div className="page-stage">
-        <LoadState {...record} back={{ to: '/work', label: 'Work' }} />
+        <LoadState {...record} back={back} />
       </div>
     );
   // Deliveries, the reviews that answered them and the returns, once the reviews are read;
@@ -106,7 +113,7 @@ function TaskDetail({ row }: ViewProps) {
     : [];
   return (
     <RecordPage
-      back={<Link to="/work">← Work</Link>}
+      back={<Link to={back.to}>← {back.label}</Link>}
       kind={row.view.kind}
       name={t.title}
       standing={t.goal}
@@ -160,4 +167,4 @@ function TaskDetail({ row }: ViewProps) {
   );
 }
 
-export const TasksView = recordRoutes(TaskDetail, '/work');
+export const TasksView = recordRoutes(TaskDetail);

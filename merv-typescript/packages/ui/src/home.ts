@@ -2,16 +2,20 @@ import { clip, type Caller, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { UiRow } from './types.js';
 
-/**
- * The shell's own parts of what Now and the rail read, the read-only tool that owns each,
- * and the fields of each record the pages read. Every other part is a row's (`UiRow.home`).
- */
+/** The shell's own parts of what Now and the rail read, and the fields of each record they read. */
 const PARTS: [key: string, tool: string, keep?: string[]][] = [
   ['project', 'project.get'],
   ['actors', 'actor.list', ['id', 'name', 'role', 'kind', 'active', 'sessionId']],
-  // Without an instance, this one answers for every workflow in the project at once.
-  ['workflows', 'workflow.status_and_next'],
 ];
+
+/** Where ui.home reads besides its tools. */
+export interface HomeSources {
+  tools: Tools;
+  /** Runs one part behind a savepoint of its own, so a statement that fails costs that part. */
+  isolated<T>(read: () => Promise<T>): Promise<T>;
+  /** The gates Now reads: open work's, and ended work's a plugin still holds; absent, null. */
+  gates?(caller: Caller): Promise<unknown>;
+}
 
 /** A part whose tool is absent, or whose answer this caller may not read, is null. */
 const answer = async (fn: () => Promise<unknown>): Promise<Json> => {
@@ -37,34 +41,38 @@ export async function identityOf(tools: Tools, caller: Caller): Promise<Record<s
 }
 
 /**
- * Everything Now and the rail read, in one answer: the shell's parts, and the records of
- * every row that declares a home part, under the row's id. Read-only tools run in one
- * snapshot scope, so this is a single consistent read of the project rather than twenty
- * round trips at a browser's latency. A part whose answer this caller may not read is
- * null: the page draws what it has and never fails whole.
+ * Everything Now and the rail read, in one answer: the shell's parts, the open gates, and the
+ * records of every row that declares a home part, under the row's id. Read-only tools run in
+ * one snapshot scope, so this is a single consistent read of the project rather than twenty
+ * round trips at a browser's latency. The parts run one at a time on that snapshot's
+ * connection, each behind its own savepoint: a part that fails, or that this caller may not
+ * read, is null, and the page draws what it has and never fails whole.
  */
-export async function homeRead(tools: Tools, rows: UiRow[], caller: Caller): Promise<Json> {
-  const parts = [
-    ...PARTS,
+export async function homeRead(
+  { tools, isolated, gates }: HomeSources,
+  rows: UiRow[],
+  caller: Caller,
+): Promise<Json> {
+  const call = (tool: string) => async () => await tools.call(tool, caller, {});
+  const parts: (readonly [string, () => Promise<unknown>, (readonly string[])?])[] = [
+    ...PARTS.map(([key, tool, keep]) => [key, call(tool), keep] as const),
+    ['workflows', async () => (gates ? await gates(caller) : null)],
     ...rows.flatMap((row) =>
-      row.home ? [[row.id, row.home.tool, row.home.keep, row.home.list] as const] : [],
+      row.home
+        ? [
+            [
+              row.id,
+              row.home.list ? async () => await row.home!.list!(caller) : call(row.home.tool),
+              row.home.keep,
+            ] as const,
+          ]
+        : [],
     ),
   ];
-  // The parts are independent read-only tools. This tool runs in one snapshot scope, so
-  // they share its connection and their queries queue on it in turn; that costs tens of
-  // milliseconds, where a scope of their own each would queue on the writer lock.
-  return Object.fromEntries(
-    await Promise.all(
-      parts.map(async ([key, tool, keep, list]) => [
-        key,
-        trim(
-          key,
-          await answer(async () => await (list?.(caller) ?? tools.call(tool, caller, {}))),
-          keep,
-        ),
-      ]),
-    ),
-  ) as Json;
+  const home: Record<string, Json> = {};
+  for (const [key, read, keep] of parts)
+    home[key] = trim(await answer(async () => await isolated(read)), keep);
+  return home;
 }
 
 /**
@@ -76,27 +84,15 @@ const brief = (value: Json): Json =>
   typeof value === 'string' && value.length > 400
     ? `${clip(value, 399)}…`
     : Array.isArray(value)
-      ? value.map((item) =>
-          item && typeof item === 'object' && !Array.isArray(item) && 'text' in item
-            ? Object.fromEntries(Object.entries(item).filter(([key]) => key !== 'text'))
-            : item,
-        )
-      : value;
+      ? value.map(brief)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, brief(item)]))
+        : value;
 const pick = (record: Json, keys: readonly string[]): Json =>
   record && typeof record === 'object' && !Array.isArray(record)
     ? Object.fromEntries(
         keys.filter((key) => key in record).map((key) => [key, brief(record[key])]),
       )
     : record;
-function trim(key: string, value: Json, keep?: readonly string[]): Json {
-  if (keep && Array.isArray(value)) return value.map((item) => pick(item, keep));
-  if (key !== 'workflows' || !value || typeof value !== 'object' || Array.isArray(value))
-    return value;
-  // Of the overview, the gates Now reads: open work's, and ended work's a plugin still holds.
-  return {
-    workflows: ((value.workflows ?? []) as Gate[]).filter(
-      (gate) => !gate.terminal || gate.providerBlockers.length,
-    ),
-  };
-}
-type Gate = { terminal: boolean; providerBlockers: Json[] } & Record<string, Json>;
+const trim = (value: Json, keep?: readonly string[]): Json =>
+  keep && Array.isArray(value) ? value.map((item) => pick(item, keep)) : value;

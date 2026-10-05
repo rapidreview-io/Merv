@@ -1809,7 +1809,12 @@ export interface Workflows {
     input?: WorkflowEvaluationInput,
     tx?: Transaction,
   ): Promise<WorkflowDecision>;
-  overview(caller: Caller, tx?: Transaction): Promise<WorkflowOverview>;
+  /** With `open`, only unended work and ended work a provider still holds with a blocker. */
+  overview(
+    caller: Caller,
+    tx?: Transaction,
+    options?: { open?: boolean },
+  ): Promise<WorkflowOverview>;
   /** Only a project admin who is not a leased worker may allow a capped loop more rounds. */
   extendLimit(
     caller: Caller,
@@ -2058,7 +2063,8 @@ export interface Reviews {
     tx: Transaction,
   ): Promise<void>;
   get(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
-  list(caller: Caller): Promise<ReviewRequest[]>;
+  /** With `subjectId`, only the reviews of that record. */
+  list(caller: Caller, filter?: { subjectId?: string }): Promise<ReviewRequest[]>;
   /** How many of the project's reviews are requested or started. */
   open(caller: Caller): Promise<number>;
   /** `override` claims it as the project's owner: only that person, signed in, may. */

@@ -18,7 +18,7 @@ import {
 } from '../components';
 import { ArrowRightIcon } from '../icons';
 import type { RecordNames } from '../markdown';
-import { firstPersonMove } from './code-blockers';
+import { firstPersonMove } from '@merv/code-work/blockers';
 import { namesOf } from './people';
 // The record shapes the home pages read are declared once, beside the graph they feed.
 import { newest, useHome, type Flow, type HomeData } from './map-data';
@@ -30,7 +30,7 @@ import { newest, useHome, type Flow, type HomeData } from './map-data';
  * written for the agent holding the tool, so it is never the headline: it stays on the
  * card, folded, for whoever operates the agents. A blocker another plugin published whose
  * next move is this reader's speaks in the same voice, through the one vocabulary
- * `code-blockers.ts` holds, and is the one thing that puts ended work on this page at all —
+ * `@merv/code-work/blockers` holds, and is the one thing that puts ended work on this page at all —
  * a publication nobody has merged is a wait on a human and not a record that is running.
  * Whose hands everything else is in, and what it waits on, is the Work page's map. Every
  * card is gated on its owning ui.shell row, so it goes quiet with its plugin, and every

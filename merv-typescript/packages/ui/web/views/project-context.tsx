@@ -4,6 +4,7 @@ import { Area, EmptyState, Failure, LoadState, OpenedForm, Submit, cx } from '..
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { useSession } from '../session';
+import { useShell } from '../shell';
 
 /** A project nobody has introduced yet, and — for whoever may write it — the way to begin. */
 const Unwritten = ({ action }: { action?: ReactNode }) => (
@@ -119,6 +120,8 @@ function IntroductionEditor({ project, onSaved }: { project: Project; onSaved: (
 export function ProjectIntroduction() {
   const { actor } = useSession();
   const project = useTool<Project>('project.get', {}, { every: 8000 });
+  // While Paper is loaded it writes the introduction from the Problem and refuses an edit here.
+  const paperWrites = useShell().data?.rows.some((row) => row.view.kind === 'paper');
   return (
     <section className="stack" aria-label="Project introduction">
       <p className="muted">
@@ -129,7 +132,7 @@ export function ProjectIntroduction() {
       {project.data && (
         <>
           {project.data.summary && <Markdown source={project.data.summary} />}
-          {actor.role === 'operator' || actor.role === 'producer' ? (
+          {!paperWrites && (actor.role === 'operator' || actor.role === 'producer') ? (
             <IntroductionEditor
               key={project.data.id}
               project={project.data}

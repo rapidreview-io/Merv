@@ -19,7 +19,7 @@ export const experimentsUiPlugin = {
         view: { kind: 'experiments' },
         home: {
           tool: 'experiment.list',
-          keep: ['id', 'name', 'intent', 'ownerId', 'workflow'],
+          keep: ['id', 'name', 'intent', 'ownerId', 'conclusion', 'workflow'],
           list: async (caller) => await experiments.summaries(caller),
         },
         // One record, with the gate it stands at: the process graph is derived from the

@@ -1,5 +1,10 @@
-import type { WorkflowDecision, WorkflowDependency } from '@merv/contracts/workflow-guidance';
+import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
+import type { Experiment } from '@merv/experiments/models';
+import type { ResearchRecord } from '@merv/research/models';
 import { useTool, type Actor, type Project } from '../api';
+import type { Reflection } from './research-programs';
+import type { Review } from './reviews';
+import type { Task } from './tasks';
 
 /**
  * The data Now and the rail read: the shapes of the records, and the one read that serves
@@ -7,43 +12,40 @@ import { useTool, type Actor, type Project } from '../api';
  */
 
 export type Flow = { state: string; updatedAt: string; workflow?: string; version?: number };
-export type MapExperiment = {
-  id: string;
-  name: string;
-  intent: string;
-  ownerId: string;
-  workflow: Flow;
-};
-export type MapTask = {
-  id: string;
-  title: string;
-  goal: string;
-  producerId: string;
-  acceptanceChecks: unknown[];
-  deliveryIds: string[];
-  dependencies: WorkflowDependency[];
-  workflow: Flow;
-};
-export type MapCycle = { id: string; name: string; ownerId: string; workflow: Flow };
-export type MapReview = {
-  id: string;
-  subjectId: string;
-  status: string;
-  reviewerId: string | null;
-  claimable?: boolean;
-  verdict: string | null;
-  createdAt: string;
-};
-export type MapReflection = {
-  id: string;
-  title: string;
-  ownerId: string;
-  workflow: Flow;
-};
+/**
+ * Each record as the home read keeps it: the fields of its row's `home.keep`, each the record's
+ * own, long prose cut to a summary.
+ */
+export type MapExperiment = Pick<
+  Experiment,
+  'id' | 'name' | 'intent' | 'ownerId' | 'conclusion' | 'workflow'
+>;
+export type MapTask = Pick<
+  Task,
+  'id' | 'title' | 'goal' | 'producerId' | 'dependencies' | 'dependents' | 'failure' | 'workflow'
+>;
+export type MapCycle = Pick<
+  ResearchRecord,
+  'id' | 'name' | 'ownerId' | 'workflow' | 'researchDependencies' | 'reflectionId' | 'automation'
+>;
+export type MapReview = Pick<
+  Review,
+  | 'id'
+  | 'subjectId'
+  | 'subjectRevision'
+  | 'status'
+  | 'reviewerId'
+  | 'claimable'
+  | 'verdict'
+  | 'returnTo'
+  | 'findings'
+  | 'createdAt'
+>;
+export type MapReflection = Pick<Reflection, 'id' | 'title' | 'ownerId' | 'workflow' | 'lenses'>;
 /**
  * What Now and the rail read, as the server composes it (`ui.home`): the project's
- * records, under the id of the row that lists them, and the gate of every open workflow in it, and of ended work another plugin
- * still holds. A part the server could not answer for is null.
+ * records, under the id of the row that lists them, and the gate of every open workflow in it,
+ * and of ended work another plugin still holds. A part the server could not answer for is null.
  */
 export interface HomeData {
   project: Project | null;

@@ -8,6 +8,7 @@ import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { z } from 'zod';
 import { researchUiPlugin } from '@merv/research/ui';
 import { codeUiPlugin } from '@merv/code-work/ui';
 import { buildNavigation } from '../packages/ui/web/navigation.js';
@@ -265,6 +266,43 @@ test('human readers can read Settings membership without a People row or actor a
     (await fetch(`${app.ctx.api.url}/projects/${project.id}/members`, { headers })).status,
     403,
   );
+});
+
+test('a part of ui.home whose statement fails is null alone, and the rest of the snapshot reads on', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-ui-home-'));
+  const app = await createApp({
+    directory: join(directory, 'data'),
+    config: { plugins: plugins(join(directory, 'nowhere')) },
+  });
+  t.after(async () => {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  });
+  // A part read first whose query fails, as a statement timeout in one part would.
+  app.ctx.tools.register({
+    name: 'test.failing_part',
+    description: 'Fails its statement.',
+    inputSchema: z.object({}).strict(),
+    readOnly: true,
+    handler: async () => await app.ctx.state.read(async (sql) => await sql.get('SELECT 1/0')),
+  });
+  app.ctx.ui.register({
+    ...row('failing', -1),
+    home: { tool: 'test.failing_part', keep: ['id'] },
+  });
+  const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
+  const response = await fetch(`${app.ctx.api.url}/tools/ui.home`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${credentials.token}`, 'content-type': 'application/json' },
+    body: '{}',
+  });
+  // Before each part had its savepoint, the aborted snapshot failed the whole read.
+  assert.equal(response.status, 200);
+  const home = ((await response.json()) as any).result as Record<string, unknown>;
+  assert.equal(home.failing, null);
+  assert.deepEqual(home.tasks, []);
+  assert.deepEqual(home.workflows, { workflows: [] });
+  assert.equal((home.project as { id: string }).id, credentials.project.id);
 });
 
 test('the assembled application serves the bundle, lists rows per active plugin, and survives feed and UI removal', async (t) => {

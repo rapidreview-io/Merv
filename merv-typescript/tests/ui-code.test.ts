@@ -43,7 +43,7 @@ const MEASURED = 1440;
 };
 const { UnitCode } = await import('../packages/ui/web/views/code-section.js');
 const { firstPersonMove, personMove, publicationBlocker } =
-  await import('../packages/ui/web/views/code-blockers.js');
+  await import('@merv/code-work/blockers');
 
 const row = {
   id: 'code',

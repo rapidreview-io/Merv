@@ -25,11 +25,11 @@ export const reviewToolsPlugin = {
       {
         name: 'review.list',
         description:
-          'List immutable review requests, their claim/verdict status, whether you may claim them in the current project.',
-        inputSchema: z.object({}).strict(),
+          'List immutable review requests, their claim/verdict status, whether you may claim them in the current project. Pass subjectId to list only the reviews of that record.',
+        inputSchema: z.object({ subjectId: z.string().min(1).optional() }).strict(),
         readOnly: true,
-        handler: async (caller: Parameters<typeof ctx.reviews.list>[0]) =>
-          await ctx.reviews.list(caller),
+        handler: async (caller: Caller, input: { subjectId?: string }) =>
+          await ctx.reviews.list(caller, input),
       },
       {
         name: 'review.get',

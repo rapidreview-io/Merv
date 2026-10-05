@@ -201,6 +201,8 @@ function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
         max={1_000_000_000}
         step={1}
         value={value}
+        // While a save's result is unknown its retry sends that number again, so it stays put.
+        disabled={save.locked}
         onChange={(event) => setDraft(event.target.value)}
       />
       <span className="muted">{limit.usedToday.toLocaleString()} used today</span>
@@ -215,10 +217,12 @@ function DailyTokens({ limit, reload }: { limit: TokenLimit; reload(): void }) {
       <button
         className="btn"
         disabled={
-          save.busy || !Number.isSafeInteger(tokens) || tokens < 1 || value === String(limit.tokens)
+          save.busy ||
+          (!save.retry &&
+            (!Number.isSafeInteger(tokens) || tokens < 1 || value === String(limit.tokens)))
         }
       >
-        Save
+        {save.retry ? 'Retry' : 'Save'}
       </button>
       {save.error && <span role="alert">{save.error}</span>}
     </form>

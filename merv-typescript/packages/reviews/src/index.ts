@@ -802,7 +802,7 @@ export class ReviewService implements Reviews {
     return await this.state.read(read);
   }
 
-  async list(caller: Caller): Promise<ReviewRequest[]> {
+  async list(caller: Caller, { subjectId }: { subjectId?: string } = {}): Promise<ReviewRequest[]> {
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read');
     return await this.state.read(
@@ -811,8 +811,9 @@ export class ReviewService implements Reviews {
           caller,
           (
             await sql.all<ReviewRow>(
-              'SELECT * FROM reviews WHERE project_id = ? ORDER BY created_at, id',
+              `SELECT * FROM reviews WHERE project_id = ?${subjectId === undefined ? '' : ' AND subject_id = ?'} ORDER BY created_at, id`,
               caller.projectId,
+              ...(subjectId === undefined ? [] : [subjectId]),
             )
           ).map(hydrate),
         ),

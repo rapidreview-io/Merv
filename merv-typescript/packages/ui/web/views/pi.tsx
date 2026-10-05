@@ -700,7 +700,7 @@ function useConversation() {
     const previous = canonical.current;
     if (previous?.streamId === next.streamId && previous.sequence > next.sequence) return;
     canonical.current = next;
-    skew.current = Date.parse(next.now ?? '') - Date.now() || 0;
+    skew.current = Date.parse(next.now) - Date.now() || 0;
     setSnapshot(next);
     const tail = next.tail
       .filter((event) => event.type === 'text' || event.type === 'progress')
@@ -741,7 +741,7 @@ function useConversation() {
     const id = selection.current;
     const current = canonical.current;
     if (!id || warming.current || current?.conversation.id !== id || !current.available) return;
-    if (current.host?.state !== 'none') return;
+    if (current.host.state !== 'none') return;
     warming.current = true;
     void warm(id).then((next) => {
       warming.current = false;
@@ -1421,9 +1421,9 @@ function PiConversationPage() {
               </div>
             )}
           </div>
-          {!blocked && !unavailable && snapshot && (snapshot.models?.length ?? 0) > 1 && (
+          {!blocked && !unavailable && snapshot && snapshot.models.length > 1 && (
             <Model
-              models={snapshot.models!}
+              models={snapshot.models}
               model={snapshot.conversation.model}
               busy={busy}
               pick={pi.pickModel}

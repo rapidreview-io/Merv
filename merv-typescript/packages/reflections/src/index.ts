@@ -330,19 +330,6 @@ export class ReflectionService implements Reflections {
       plan: submission?.plan ?? null,
     };
   }
-  async summaries(caller: Caller) {
-    return await this.state.transaction(async (tx) => {
-      await this.read(caller, tx);
-      const flows = new Map(
-        (await this.workflows.list(caller, tx, 'reflection')).map((w) => [w.id, w]),
-      );
-      const sql =
-        'SELECT id,title,owner_id AS "ownerId" FROM reflections WHERE project_id=? ORDER BY _merv_rowid DESC';
-      return (
-        await tx.all<Pick<Reflection, 'id' | 'title' | 'ownerId'>>(sql, caller.projectId)
-      ).map((row) => ({ ...row, workflow: flows.get(row.id)! }));
-    });
-  }
   async list(caller: Caller, transaction?: Transaction): Promise<Reflection[]> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {

@@ -4,6 +4,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useTool } from '../api';
 import { LoadState, RecordPage } from '../components';
 import { recordRoutes } from '../list-filters';
+import { homeOf, pathOf } from '../navigation';
 import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
 import type { ViewProps } from './index';
@@ -12,12 +13,13 @@ import { CycleMove } from './work';
 function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   const { actor } = useSession();
+  const back = homeOf(shell.rows);
   const cycle = useTool<ResearchRecord>('research.get', { researchId: id }, { every: 10000 });
   const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 5000 });
   if (!cycle.data)
     return (
       <div className="page-stage">
-        <LoadState {...cycle} back={{ to: '/work', label: 'Work' }} />
+        <LoadState {...cycle} back={back} />
       </div>
     );
   const record = cycle.data;
@@ -26,13 +28,17 @@ function CycleDetail({ row, shell }: ViewProps) {
   const relations = process.data?.dependencies ?? [];
   const waitsOn = relations.filter((item) => item.direction === 'depends_on');
   const unblocks = relations.filter((item) => item.direction === 'required_by');
+  const reflections = pathOf(shell.rows, 'reflections');
+  const tasks = pathOf(shell.rows, 'tasks');
   const phases = [
-    ...(record.reflectionId ? [[`/reflections/${record.reflectionId}`, 'Reflection']] : []),
-    ...record.integrations.map((id) => [`/tasks/${id}`, 'Consolidation task']),
+    ...(record.reflectionId && reflections
+      ? [[`${reflections}/${record.reflectionId}`, 'Reflection']]
+      : []),
+    ...(tasks ? record.integrations.map((id) => [`${tasks}/${id}`, 'Consolidation task']) : []),
   ];
   return (
     <RecordPage
-      back={<Link to="/work">← Work</Link>}
+      back={<Link to={back.to}>← {back.label}</Link>}
       kind={row.view.kind}
       name={record.name}
       state={<StageMark graph={process.data} shapes={shell.workflows} workflow={record.workflow} />}
@@ -77,4 +83,4 @@ function CycleDetail({ row, shell }: ViewProps) {
 }
 
 /** The cycle is read from the Work page it frames; its own list is that page now. */
-export const ResearchView = recordRoutes(CycleDetail, '/work');
+export const ResearchView = recordRoutes(CycleDetail);

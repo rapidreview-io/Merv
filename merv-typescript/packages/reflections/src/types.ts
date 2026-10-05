@@ -142,8 +142,6 @@ export interface Reflections {
   create(caller: Caller, input: ReflectionCreate, tx?: Transaction): Promise<Reflection>;
   get(caller: Caller, id: string, tx?: Transaction): Promise<Reflection>;
   list(caller: Caller, tx?: Transaction): Promise<Reflection[]>;
-  /** Each wave's title, owner and workflow, in list order, read for all of them at once. */
-  summaries(caller: Caller): Promise<Pick<Reflection, 'id' | 'title' | 'ownerId' | 'workflow'>[]>;
   lens(caller: Caller, id: string, tx?: Transaction): Promise<ReflectionLens>;
   submitLens(
     caller: Caller,

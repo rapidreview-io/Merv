@@ -15,11 +15,7 @@ export const reflectionUiPlugin = {
         order: 35,
         path: '/reflections',
         view: { kind: 'reflections' },
-        home: {
-          tool: 'reflection.list',
-          keep: ['id', 'title', 'ownerId', 'workflow'],
-          list: async (caller) => await reflections.summaries(caller),
-        },
+        home: { tool: 'reflection.list', keep: ['id', 'title', 'ownerId', 'workflow', 'lenses'] },
         read: async (caller: Caller) =>
           JSON.parse(JSON.stringify(await reflections.list(caller))) as Json,
       }),

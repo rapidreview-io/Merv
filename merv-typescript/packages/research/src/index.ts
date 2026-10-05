@@ -390,20 +390,6 @@ export class ResearchService implements Research {
       );
     });
   }
-  async summaries(caller: Caller) {
-    this.open();
-    return await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const flows = new Map(
-        (await this.workflows.list(caller, tx, 'research')).map((w) => [w.id, w]),
-      );
-      const sql = 'SELECT id,record FROM research_cycles WHERE project_id=? ORDER BY _merv_rowid';
-      return (await tx.all<Row>(sql, caller.projectId)).map(({ id, record }) => {
-        const { name, ownerId } = JSON.parse(record) as StoredRecord;
-        return { id, name, ownerId, workflow: flows.get(id)! };
-      });
-    });
-  }
   /** How many cycles are still open, for the navigation badge, without reading each one. */
   async active(caller: Caller): Promise<number> {
     this.open();

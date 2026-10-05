@@ -503,9 +503,12 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         (await this.workflows.list(caller, tx, 'experiment')).map((w) => [w.id, w]),
       );
       const sql =
-        'SELECT id,name,intent,owner_id AS "ownerId" FROM experiments WHERE project_id=? ORDER BY created_at,id';
+        'SELECT id,name,intent,owner_id AS "ownerId",conclusion FROM experiments WHERE project_id=? ORDER BY created_at,id';
       return (
-        await tx.all<Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId'>>(sql, caller.projectId)
+        await tx.all<Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId' | 'conclusion'>>(
+          sql,
+          caller.projectId,
+        )
       ).map((row) => ({ ...row, workflow: flows.get(row.id)! }));
     });
   }

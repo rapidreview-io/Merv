@@ -222,20 +222,19 @@ test('the Work page is its title line and the map: nothing is listed, and Filter
     producerId: actor.id,
     workflow: { workflow: 'task', state, ...at },
   });
-  serve('/tools/task.list', {
+  // The wave is the home read's, each list under its row's id.
+  serve('/tools/ui.home', {
     body: {
-      result: [task('wf_sweep', 'Seed sweep', 'in_progress'), task('wf_pin', 'Pin seeds', 'done')],
-    },
-  });
-  serve('/tools/reflection.list', {
-    body: {
-      result: [
-        {
-          ...wave(),
-          ownerId: actor.id,
-          workflow: { workflow: 'reflection', state: 'reflecting', ...at },
-        },
-      ],
+      result: {
+        tasks: [task('wf_sweep', 'Seed sweep', 'in_progress'), task('wf_pin', 'Pin seeds', 'done')],
+        reflections: [
+          {
+            ...wave(),
+            ownerId: actor.id,
+            workflow: { workflow: 'reflection', state: 'reflecting', ...at },
+          },
+        ],
+      },
     },
   });
   const rows = [{ ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } }, row];
@@ -295,21 +294,23 @@ test('with no room to draw, the Work page lists the same work as rows, a reflect
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
   serve('/tools/actor.list', { body: { result: [] } });
   serve('/tools/ui.running', { body: { result: emptyBoard() } });
-  serve('/tools/task.list', { body: { result: [] } });
-  serve('/tools/reflection.list', {
+  serve('/tools/ui.home', {
     body: {
-      result: [
-        {
-          ...wave(),
-          ownerId: actor.id,
-          workflow: {
-            workflow: 'reflection',
-            state: 'reflecting',
-            revision: 1,
-            updatedAt: '2026-10-01T09:00:00Z',
+      result: {
+        tasks: [],
+        reflections: [
+          {
+            ...wave(),
+            ownerId: actor.id,
+            workflow: {
+              workflow: 'reflection',
+              state: 'reflecting',
+              revision: 1,
+              updatedAt: '2026-10-01T09:00:00Z',
+            },
           },
-        },
-      ],
+        ],
+      },
     },
   });
   const rows = [{ ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } }, row];
@@ -326,4 +327,46 @@ test('with no room to draw, the Work page lists the same work as rows, a reflect
   const link = document.querySelector<HTMLAnchorElement>('ul.rows a[href="/reflections/wf_wave"]');
   assert.equal(link?.textContent, 'Mid-point reflection');
   assert.ok(link!.closest('li')?.textContent?.includes('4 of 5 lenses written'));
+});
+
+test('a list of the wave that could not be read says so, rather than its records vanishing', async (t) => {
+  t.after(async () => await unmount());
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', {
+    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
+  });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  serve('/tools/actor.list', { body: { result: [] } });
+  serve('/tools/ui.running', { body: { result: emptyBoard() } });
+  const task = {
+    id: 'wf_sweep',
+    title: 'Seed sweep',
+    goal: 'Seed sweep',
+    producerId: actor.id,
+    workflow: {
+      workflow: 'task',
+      state: 'in_progress',
+      revision: 1,
+      updatedAt: '2026-10-01T09:00:00Z',
+    },
+  };
+  // The reflections are there, but their read failed.
+  serve('/tools/task.list', { body: { result: [task] } });
+  serve('/tools/reflection.list', {
+    status: 500,
+    body: { error: { code: 'internal', message: 'Boom' } },
+  });
+  serve('/tools/ui.home', { body: { result: { tasks: [task], reflections: null } } });
+  const rows = [{ ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } }, row];
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/work'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(SessionProvider, null, createElement(WorkView as any, { shell: { rows } })),
+    ),
+  );
+  await settle(20);
+  assert.ok(text().includes('Seed sweep'));
+  assert.ok(text().includes('Could not refresh'), text().slice(0, 400));
 });

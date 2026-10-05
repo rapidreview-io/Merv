@@ -4,7 +4,7 @@ import type { CodeUnit } from '@merv/contracts/code-work-models';
 import { Ago, CopyButton, KV, Short, StatusPill, Summary, cx, words } from '../components';
 import { ArrowRightIcon, ExternalIcon } from '../icons';
 import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
-import { firstPersonMove, publicationBlocker } from './code-blockers';
+import { firstPersonMove, publicationBlocker } from '@merv/code-work/blockers';
 
 /**
  * What Git holds for one record, on the record's own page: the branch a writer stands
@@ -14,7 +14,7 @@ import { firstPersonMove, publicationBlocker } from './code-blockers';
  *
  * A line with no fact behind it is not drawn. One blocker may be printed, and only
  * one whose next move is a person's: it leads the section as the sentence of
- * `code-blockers.ts`, with who ends the wait and the server's own instruction folded
+ * `@merv/code-work/blockers`, with who ends the wait and the server's own instruction folded
  * behind it. Every other code stays unprinted, because the state words here and the
  * Act ladder already say what a person can see.
  */

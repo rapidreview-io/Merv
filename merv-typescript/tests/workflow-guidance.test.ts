@@ -113,6 +113,27 @@ test('a new program registers guidance and guards without engine cases; reads, p
     });
     assert.equal((await evaluate()).currentGate, 'terminal');
     assert.equal((await evaluate()).nextAction, null);
+    // Now's overview reads open work alone, and ended work only while a provider still holds it.
+    const open = async () =>
+      (await app.ctx.workflows.overview(caller, undefined, { open: true })).workflows.map(
+        (item) => item.instanceId,
+      );
+    assert.deepEqual((await app.ctx.workflows.overview(caller)).terminal, [instance.id]);
+    assert.deepEqual(await open(), []);
+    const hold = async (
+      blockers: { key: string; code: string; message: string; status: number; next: string }[],
+    ) =>
+      await app.ctx.state.transaction(
+        async (tx) =>
+          await app.ctx.workflows.replaceBlockers(
+            { projectId: a.project.id, instanceId: instance.id, provider: 'code', blockers },
+            tx,
+          ),
+      );
+    await hold([{ key: 'k', code: 'held', message: 'Held.', status: 409, next: 'Wait.' }]);
+    assert.deepEqual(await open(), [instance.id]);
+    await hold([]);
+    assert.deepEqual(await open(), []);
     await assert.rejects(
       async () =>
         await app.ctx.workflows.evaluate(caller, instance.id, {

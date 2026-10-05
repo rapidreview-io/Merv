@@ -28,8 +28,15 @@ export const researchUiPlugin = {
         view: { kind: 'research' },
         home: {
           tool: 'research.list',
-          keep: ['id', 'name', 'ownerId', 'workflow'],
-          list: async (caller) => await research.summaries(caller),
+          keep: [
+            'id',
+            'name',
+            'ownerId',
+            'workflow',
+            'researchDependencies',
+            'reflectionId',
+            'automation',
+          ],
         },
         read: async (caller) => JSON.parse(JSON.stringify(await research.list(caller))) as Json,
         // Open work: a cycle that has not yet completed, been abandoned or failed.

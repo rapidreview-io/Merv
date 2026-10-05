@@ -120,6 +120,14 @@ test('selected review routes are immutable verdict evidence, included in replay 
     assert.equal(result.snapshotHash, review.snapshotHash);
     assert.deepEqual(await f.reviews.get(f.reader.caller, result.id), result);
     assert.equal((await f.reviews.list(f.reader.caller))[0].returnTo, input.returnTo);
+    // A record's page reads only its own reviews.
+    assert.deepEqual(
+      (await f.reviews.list(f.reader.caller, { subjectId: review.subjectId })).map(
+        (item) => item.id,
+      ),
+      [review.id],
+    );
+    assert.deepEqual(await f.reviews.list(f.reader.caller, { subjectId: 'wf_other' }), []);
     assert.equal(
       (await f.state.events(f.operator.projectId)).at(-1)?.data.returnTo,
       input.returnTo,

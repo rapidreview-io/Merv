@@ -19,6 +19,7 @@ import {
 } from 'react-router-dom';
 import type { ApiError } from './api';
 import { KindLabel, LoadState, SearchField, cx, useOpenedForm, words } from './components';
+import { homeOf } from './navigation';
 import { OPEN } from './states';
 import type { Row, ShellData } from './shell-types';
 
@@ -759,11 +760,9 @@ export function splitRoutes<P extends { row: Row; shell: ShellData }>(
  * record route stays exactly where it was, so every link and pasted URL still lands, the
  * record is the whole page, and its index and its Escape go to the page that draws it.
  */
-export function recordRoutes<P extends { row: Row; shell: ShellData }>(
-  Detail: ComponentType<P>,
-  home: string,
-) {
+export function recordRoutes<P extends { row: Row; shell: ShellData }>(Detail: ComponentType<P>) {
   return function Routed(props: P) {
+    const home = homeOf(props.shell.rows).to;
     return (
       <Routes>
         <Route index element={<Navigate to={home} replace />} />

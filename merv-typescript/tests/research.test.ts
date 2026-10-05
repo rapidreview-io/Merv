@@ -388,32 +388,17 @@ test('summaries give each list the home fields in its order without reading reco
     records.map((entry) =>
       Object.fromEntries(keys.map((key) => [key, entry[key as keyof typeof entry]])),
     );
-  const lists = {
-    research: pick(await f.research.list(f.owner), ['id', 'name', 'ownerId', 'workflow']),
-    experiments: pick(await f.app.ctx.experiments.list(f.owner), [
-      'id',
-      'name',
-      'intent',
-      'ownerId',
-      'workflow',
-    ]),
-    reflections: pick(await f.app.ctx.reflections.list(f.owner), [
-      'id',
-      'title',
-      'ownerId',
-      'workflow',
-    ]),
-  };
-  assert.ok(Object.values(lists).every((list) => list.length === 1));
+  const listed = pick(await f.app.ctx.experiments.list(f.owner), [
+    'id',
+    'name',
+    'intent',
+    'ownerId',
+    'conclusion',
+    'workflow',
+  ]);
+  assert.equal(listed.length, 1);
   const gets = t.mock.method(f.app.ctx.workflows, 'get');
-  assert.deepEqual(
-    {
-      research: await f.research.summaries(f.owner),
-      experiments: await f.app.ctx.experiments.summaries(f.owner),
-      reflections: await f.app.ctx.reflections.summaries(f.owner),
-    },
-    lists,
-  );
+  assert.deepEqual(await f.app.ctx.experiments.summaries(f.owner), listed);
   assert.equal(gets.mock.callCount(), 0);
 });
 

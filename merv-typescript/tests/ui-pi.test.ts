@@ -106,6 +106,7 @@ const snapshot = (
   conversation: item,
   commands,
   host: machine,
+  models: [] as { id: string; label: string }[],
   streamId: 'stream_1',
   sequence,
   tail,
@@ -2489,28 +2490,6 @@ test('the window closes itself when the machine is released for inactivity, and 
   await act(async () =>
     stream.push('snapshot', snapshot(conversation(), answered, 3, [], true, host('none'))),
   );
-  await settle(20);
-  assert.ok(!dock());
-});
-
-test('with a server that says nothing of the machine, the window closes ten minutes after the last turn, unless a question is being written in it', async (t) => {
-  t.after(cleanup);
-  setProject('p1');
-  const ended = new Date(Date.now() - 600_000 + 1000).toISOString();
-  const { host: _none, ...silent } = snapshot(conversation(), [
-    { ...answered[0], completedAt: ended },
-  ]);
-  boot(
-    () => silent as ReturnType<typeof snapshot>,
-    () => [conversation()],
-  );
-  await openApp('/agent');
-  await visit('/elsewhere');
-  await write('One more question');
-  await settle(1100);
-  assert.ok(dock());
-  // With nothing left unsent it closes.
-  await write('');
   await settle(20);
   assert.ok(!dock());
 });

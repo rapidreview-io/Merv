@@ -1,4 +1,4 @@
-import { check, mapAsync } from '@merv/contracts';
+import { check, filterAsync, mapAsync } from '@merv/contracts';
 import type {
   Caller,
   Transaction,
@@ -106,12 +106,32 @@ export class WorkflowGuidance extends WorkflowEngine {
     });
   }
 
-  async overview(caller: Caller, tx?: Transaction): Promise<WorkflowOverview> {
+  /**
+   * With `open`, only the work a person may still have to act on: every instance not yet at a
+   * terminal state, and an ended one that a provider still holds with a blocker.
+   */
+  async overview(
+    caller: Caller,
+    tx?: Transaction,
+    { open = false }: { open?: boolean } = {},
+  ): Promise<WorkflowOverview> {
     return await this.reading(caller, tx, async (tx, caller) => {
-      const rows = await tx.all<InstanceRow>(
+      let rows = await tx.all<InstanceRow>(
         'SELECT * FROM wf_instances WHERE project_id=? ORDER BY created_at,id',
         caller.projectId,
       );
+      if (open) {
+        const held = new Set((await readBlockers(tx, caller.projectId)).map((b) => b.instanceId));
+        rows = await filterAsync(
+          rows,
+          async (row) =>
+            held.has(row.id) ||
+            !(
+              this.registrations.get(`${row.workflow}@${row.version}`)?.definition ??
+              (await this.contracts.get(tx, row.workflow, row.version))?.definition
+            )?.terminal.includes(row.state),
+        );
+      }
       const workflows = (await this.guidance(caller, rows, {}, tx, true)).map(
         (item) => item.decision,
       );
