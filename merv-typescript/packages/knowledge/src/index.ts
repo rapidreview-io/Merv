@@ -17,7 +17,6 @@ import type { Experiments } from '@merv/experiments/types';
 import type { Code } from '@merv/code-work/types';
 import type {
   Knowledge,
-  KnowledgePublication,
   KnowledgeRecords,
   KnowledgeReference,
   KnowledgeReferenceKind,
@@ -27,11 +26,6 @@ import { migrateKnowledge } from './storage.js';
 
 export type * from './types.js';
 
-const publication = (): KnowledgePublication => ({
-  status: 'none',
-  reflection: null,
-  lenses: [],
-});
 const errorCode = (error: unknown) =>
   error && typeof error === 'object' && 'code' in error ? error.code : undefined;
 const missingCodes = new Set([
@@ -92,7 +86,6 @@ export class KnowledgeService implements Knowledge {
         project: await this.scope.project(caller, tx),
         tasks: await this.tasks.records(caller, tx),
         experiments: await this.experiments.list(caller, tx),
-        publication: publication(),
       };
       await this.scope.require(caller, 'read', tx);
       return structuredClone(result);

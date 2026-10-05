@@ -30,18 +30,17 @@ knowledge.records(caller, tx?);
 knowledge.resolve(caller, refs, tx?);
 ```
 
-Publication currently returns `status: "none"`, null reflection and an
-empty lens list. This is explicit absence: the provider implements neither a
-Reflection workflow nor a published baseline, coverage/debt rules or literature
-maintenance. It does not assess claims or grant central Git publication.
+The provider implements neither a Reflection workflow nor a published
+baseline, coverage/debt rules or literature maintenance. It does not assess
+claims or grant central Git publication.
 
 ## Retired corpus snapshots
 
 The corpus capture that the retired `reflection@1` used (`knowledge.capture`,
 `knowledge.get`, the selection behind them and `researchReferences`) is removed.
 The `knowledge@2` migration deleted every `knowledge_snapshots` and
-`knowledge_commands` row; nothing read them. The empty tables stay, because the
-migration that created them is pinned.
+`knowledge_commands` row; nothing read them. `knowledge@3` drops both tables and
+their guards. The migrations stay registered, because production pins them.
 
 ```text
 packages/knowledge/

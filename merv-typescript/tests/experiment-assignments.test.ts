@@ -1464,9 +1464,10 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
     dependsOn: [prerequisite.id],
     requestId: f.request(),
   };
-  await assert.rejects(f.experiments.create(f.source, { ...input, baseTaskId: prerequisite.id }), {
-    code: 'incompatible_workspace',
-    message: /dependsOn.*baseTaskId/,
+  // The retired baseTaskId is no longer part of the create input.
+  const legacy = { ...input, baseTaskId: prerequisite.id };
+  await assert.rejects(f.experiments.create(f.source, legacy), {
+    code: 'invalid_experiment_input',
   });
   const rows = await f.state.read((sql) =>
     sql.all('SELECT id FROM experiments WHERE project_id=?', f.source.projectId),
@@ -1474,7 +1475,7 @@ test('Hosted experiments reject explicit legacy bases before creating work', asy
   assert.equal(rows.length, 0);
   const created = await f.experiments.create(f.source, { ...input, requestId: f.request() });
   assert.equal(created.workflow.version, 36);
-  assert.equal(created.baseTaskId, undefined);
+  assert.equal(created.workflow.data.baseTaskId, undefined);
 });
 
 test('every experiment lease admits verified captures and leaves compute to Sandboxes', async (t) => {

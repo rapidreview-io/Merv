@@ -41,7 +41,6 @@ const revision = (kind: string, sections: unknown[], n = sections.length ? 1 : 0
   sections,
   updatedBy: n ? 'actor_1' : null,
   updatedAt: n ? '2026-09-19T10:00:00Z' : null,
-  updateId: null,
 });
 const workspace = (problem: unknown[], literature: unknown[] = []) => ({
   documents: {

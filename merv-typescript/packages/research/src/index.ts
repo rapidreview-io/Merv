@@ -958,7 +958,7 @@ export class ResearchService implements Research {
     return task.id;
   }
 
-  /** Workspace declarations survive provider unload; older experiments ask their owner. */
+  /** Every task and experiment works in Git, so selecting one, directly or not, selects code. */
   private async selectedCode(
     caller: Caller,
     ids: string[] | undefined,
@@ -972,16 +972,7 @@ export class ResearchService implements Research {
       ids === undefined
         ? await this.workflows.list(caller, tx)
         : await Promise.all([...selected].map((id) => this.workflows.get(caller, id, tx)));
-    for (const item of work) {
-      if (item.data.workspace === 'git') return true;
-      if (item.workflow === 'experiment' && item.data.workspace === undefined) {
-        const experiment = await this.use('experiments', [], (owner) =>
-          owner.get(caller, item.id, tx),
-        );
-        if (experiment.workspace === 'git') return true;
-      }
-    }
-    return false;
+    return work.some((item) => item.workflow === 'task' || item.workflow === 'experiment');
   }
 
   /** Integration considers the whole project; provider absence cannot erase earlier Git work. */
