@@ -3,6 +3,13 @@ import type {} from '@merv/api/types';
 import { ROLES, type Caller } from '@merv/contracts';
 import { z } from 'zod';
 import { projectContextUpdateSchema } from './project-context.js';
+
+const expiresAt = z
+  .string()
+  .datetime({ precision: 3 })
+  .describe('UTC with milliseconds, e.g. 2026-09-18T10:00:00.000Z')
+  .nullable()
+  .optional();
 export const scopeToolsPlugin = {
   name: 'merv-scope-tools',
   inject: ['scope', 'tools'],
@@ -52,12 +59,7 @@ export const scopeToolsPlugin = {
         .object({
           name: z.string().min(1).max(200),
           role: z.enum(ROLES),
-          expiresAt: z
-            .string()
-            .datetime({ precision: 3 })
-            .describe('UTC with milliseconds, e.g. 2026-09-18T10:00:00.000Z')
-            .nullable()
-            .optional(),
+          expiresAt,
         })
         .strict(),
       async (c, i) => await ctx.scope.issueActor(c, i),
@@ -78,12 +80,7 @@ export const scopeToolsPlugin = {
       z
         .object({
           actorId: z.string().min(1),
-          expiresAt: z
-            .string()
-            .datetime({ precision: 3 })
-            .describe('UTC with milliseconds, e.g. 2026-09-18T10:00:00.000Z')
-            .nullable()
-            .optional(),
+          expiresAt,
         })
         .strict(),
       async (c, i) => await ctx.scope.issueActorCredential(c, i),
@@ -96,12 +93,7 @@ export const scopeToolsPlugin = {
       z
         .object({
           credentialId: z.string().min(1),
-          expiresAt: z
-            .string()
-            .datetime({ precision: 3 })
-            .describe('UTC with milliseconds, e.g. 2026-09-18T10:00:00.000Z')
-            .nullable()
-            .optional(),
+          expiresAt,
         })
         .strict(),
       async (c, i) => await ctx.scope.rotateCredential(c, i),

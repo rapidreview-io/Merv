@@ -23,6 +23,18 @@ export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export { reviewHistory, REVIEW_HISTORY_LIMITS } from './review-history.js';
 export { boundedPaperContext } from './paper-context.js';
+export {
+  allowedOrigin,
+  fetchJson,
+  jsonBytes,
+  MAX_ANSWER_BYTES,
+  OutboundError,
+  outboundFailure,
+  record,
+  sized,
+  Slots,
+  type OutboundFailure,
+} from './outbound.js';
 export type { ReviewHistory, ReviewRound } from './review-history.js';
 export {
   sessionWorkspaceSchema,
@@ -1160,9 +1172,11 @@ export interface Scope {
     options?: { repairReason: string },
   ): Promise<ProjectMembership>;
   require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor>;
+  /** Whether this actor may act with `permission`; with `{ except }`, whether any actor but
+   * those, and no worker session's, may. */
   eligible(
     projectId: string,
-    actorId: string,
+    actor: string | { except: readonly string[] },
     permission: Permission,
     tx?: Transaction,
   ): Promise<boolean>;
@@ -2021,8 +2035,13 @@ export interface Reviews {
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void;
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;
-  /** The verdict rules of the one domain that owns this review, when it states any. */
-  guidance(caller: Caller, reviewId: string, tx?: Transaction): Promise<string | undefined>;
+  /** The verdict rules of the one domain that owns this review, when it states any. A review the
+   * caller has just read (get, start) is not read again. */
+  guidance(
+    caller: Caller,
+    review: string | ReviewRequest,
+    tx?: Transaction,
+  ): Promise<string | undefined>;
   request(caller: Caller, input: ReviewInput, tx?: Transaction): Promise<ReviewRequest>;
   reissue(
     caller: Caller,
@@ -2042,6 +2061,8 @@ export interface Reviews {
   ): Promise<void>;
   get(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
   list(caller: Caller): Promise<ReviewRequest[]>;
+  /** How many of the project's reviews are requested or started. */
+  open(caller: Caller): Promise<number>;
   /** `override` claims it as the project's owner: only that person, signed in, may. */
   start(
     caller: Caller,

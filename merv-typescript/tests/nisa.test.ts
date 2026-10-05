@@ -12,7 +12,7 @@ import { conversationUse } from '../packages/pi/src/conversation-rules.js';
 import { USER_AGENT } from '../packages/nisa/src/client.js';
 import { NisaService } from '../packages/nisa/src/index.js';
 import { nisaConfig } from '../packages/nisa/src/input.js';
-import { jsonBytes, MAX_ANSWER_BYTES } from '../packages/nisa/src/normalize.js';
+import { jsonBytes, MAX_ANSWER_BYTES } from '@merv/contracts';
 import { nisaTools } from '../packages/nisa/src/tools.js';
 import type {
   NisaExcerpts,

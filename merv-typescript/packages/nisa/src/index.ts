@@ -1,7 +1,16 @@
 import type { Context } from 'cordis';
 import type { z } from 'zod';
-import { check, MervError, type Caller } from '@merv/contracts';
-import { NisaHttpError, request, Slots } from './client.js';
+import {
+  check,
+  jsonBytes,
+  MAX_ANSWER_BYTES,
+  MervError,
+  outboundFailure,
+  sized,
+  Slots,
+  type Caller,
+} from '@merv/contracts';
+import { request } from './client.js';
 import {
   excerptsInput,
   nisaConfig,
@@ -16,15 +25,12 @@ import {
 } from './input.js';
 import {
   citation,
-  jsonBytes,
   LIST_ABSTRACT_CHARS,
   MAX_ABSTRACT_CHARS,
-  MAX_ANSWER_BYTES,
   MAX_EXCERPT_CHARS,
   MAX_SNIPPET_CHARS,
   paper,
   papers,
-  sized,
   text,
   type Kind,
 } from './normalize.js';
@@ -236,47 +242,30 @@ export class NisaService implements Nisa {
   private failure(error: unknown, missing?: () => MervError): MervError {
     if (this.stopping.signal.aborted) return new MervError('nisa_stopped', 'Nisa is stopping', 503);
     if (error instanceof MervError) return error;
-    if (error instanceof DOMException && error.name === 'TimeoutError')
-      return new MervError('nisa_timeout', 'Nisa did not answer in time', 504);
-    const failure = error instanceof NisaHttpError ? error.failure : { kind: 'network' as const };
-    if (failure.kind === 'too_large')
-      return new MervError(
-        'nisa_response_too_large',
-        'Nisa answered more than the configured byte limit',
-        502,
-      );
-    if (failure.kind === 'invalid')
-      return new MervError(
-        'nisa_invalid_response',
-        'Nisa answered something other than a result',
-        502,
-      );
-    if (failure.kind === 'network')
-      return new MervError('nisa_upstream_error', 'Nisa is unreachable', 502);
-    const { status } = failure;
-    if (status === 400)
-      return new MervError('nisa_request_refused', 'Nisa refused this request (HTTP 400)', 422);
-    if (status === 401 || status === 403)
-      return new MervError(
-        'nisa_key_refused',
-        `Nisa refused this deployment's key (HTTP ${status})`,
-        503,
-      );
-    if (status === 404 && missing) return missing();
-    if (status === 429)
-      return new MervError('nisa_rate_limited', 'Nisa is limiting requests (HTTP 429)', 429);
-    // Only the passages route says so: a search whose index or embeddings are down is a 500.
-    if (status === 503 || status === 504)
-      return new MervError(
-        'nisa_index_unavailable',
-        `Nisa's index is unavailable (HTTP ${status}); try again later`,
-        503,
-      );
-    return new MervError(
-      'nisa_upstream_error',
-      `Nisa failed (HTTP ${status})${status >= 500 ? '; try again later' : ''}`,
-      502,
-    );
+    return outboundFailure(error, 'nisa', 'Nisa', 'something other than a result', (status) => {
+      if (status === 401 || status === 403)
+        return new MervError(
+          'nisa_key_refused',
+          `Nisa refused this deployment's key (HTTP ${status})`,
+          503,
+        );
+      if (status === 404 && missing) return missing();
+      if (status === 429)
+        return new MervError('nisa_rate_limited', 'Nisa is limiting requests (HTTP 429)', 429);
+      // Only the passages route says so: a search whose index or embeddings are down is a 500.
+      if (status === 503 || status === 504)
+        return new MervError(
+          'nisa_index_unavailable',
+          `Nisa's index is unavailable (HTTP ${status}); try again later`,
+          503,
+        );
+      if (status >= 500)
+        return new MervError(
+          'nisa_upstream_error',
+          `Nisa failed (HTTP ${status}); try again later`,
+          502,
+        );
+    });
   }
 }
 

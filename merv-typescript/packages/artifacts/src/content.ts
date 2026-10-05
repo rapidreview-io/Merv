@@ -21,7 +21,7 @@ const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$
 /** The metadata columns of an artifact row. Every SELECT on artifacts names these, never `*`. */
 export const META =
   'id,project_id,created_by,title,media_type,hash,size,created_at,files_json,metadata_json';
-const json = (value: unknown) => (typeof value === 'string' ? JSON.parse(value) : value);
+export const json = (value: unknown) => (typeof value === 'string' ? JSON.parse(value) : value);
 export const fromRow = (row: any): Artifact => ({
   id: row.id,
   projectId: row.project_id,

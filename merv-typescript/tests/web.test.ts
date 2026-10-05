@@ -16,7 +16,7 @@ import { piModelToolName } from '../packages/pi/src/tool-names.js';
 import { WebService } from '../packages/web/src/index.js';
 import { webTools } from '../packages/web/src/tools.js';
 import { webConfig } from '../packages/web/src/input.js';
-import { jsonBytes, MAX_ANSWER_BYTES } from '../packages/web/src/normalize.js';
+import { jsonBytes, MAX_ANSWER_BYTES } from '@merv/contracts';
 import { USER_AGENT } from '../packages/web/src/providers.js';
 import type { WebCall, WebPage, WebSearch } from '../packages/web/src/types.js';
 import { loadConfiguration } from '../src/config.js';

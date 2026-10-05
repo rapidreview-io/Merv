@@ -1,12 +1,5 @@
-import { postgresMigrations } from './project-context.postgres.js';
 import { z } from 'zod';
-import {
-  visible,
-  parsed,
-  type Migration,
-  type Project,
-  type ProjectContextUpdate,
-} from '@merv/contracts';
+import { visible, parsed, type Project, type ProjectContextUpdate } from '@merv/contracts';
 
 export interface ProjectRow {
   id: string;
@@ -23,11 +16,6 @@ export const projectValue = (row: ProjectRow): Project => ({
   summary: row.summary,
   contextRevision: row.context_revision,
 });
-
-export const projectContextMigration: Migration = {
-  version: 6,
-  sql: postgresMigrations[6],
-};
 
 const summaryText = z
   .string()
