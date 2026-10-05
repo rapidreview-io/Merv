@@ -2,6 +2,7 @@ import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { Link } from 'react-router-dom';
 import { Ago, Evidence, StatusPill, useArtifacts, words } from './components';
 import { ArrowRightIcon } from './icons';
+import { pathOf, useRows } from './navigation';
 import { initials } from './views/people';
 import { notMet, type Review } from './views/reviews';
 
@@ -137,11 +138,15 @@ export function threadOf({
   return entries;
 }
 
-const OpenReview = ({ id }: { id: string }) => (
-  <Link className="cluster hit" to={`/reviews/${id}`}>
-    Open the review <ArrowRightIcon size={14} />
-  </Link>
-);
+/** The way to a review, where this composition has a page for one. */
+function OpenReview({ id }: { id: string }) {
+  const reviews = pathOf(useRows(), 'reviews');
+  return reviews ? (
+    <Link className="cluster hit" to={`${reviews}/${id}`}>
+      Open the review <ArrowRightIcon size={14} />
+    </Link>
+  ) : null;
+}
 
 /** A verdict posted: its word, how many checks it found short, its sentence, the way to it. */
 function Verdict({ review }: { review: Review }) {

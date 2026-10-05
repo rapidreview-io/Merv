@@ -15,8 +15,11 @@ import {
   words,
 } from '../components';
 import { ArrowRightIcon } from '../icons';
-import { RecordLink, RecordText, useRecordNames } from '../markdown';
+import { RecordLink, RecordText, recordNames, useRecordNames } from '../markdown';
+import { homeOf, pathOf, useRows } from '../navigation';
+import type { HomeData } from './map-data';
 import { useActorNames } from './people';
+import type { Task } from './tasks';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
 
 /** review.submit enumerates exactly these finding words and these verdicts. */
@@ -112,13 +115,16 @@ export function ReviewSummary({
   };
 }) {
   const said = review.synopsis ?? review.notes;
+  const reviews = pathOf(useRows(), 'reviews');
   return (
     <div className="stack">
       <div className="cluster">
         <StatusPill value={review.verdict ?? review.status} />
-        <Link className="cluster hit" to={`/reviews/${review.id}`}>
-          Open the review <ArrowRightIcon size={14} />
-        </Link>
+        {reviews && (
+          <Link className="cluster hit" to={`${reviews}/${review.id}`}>
+            Open the review <ArrowRightIcon size={14} />
+          </Link>
+        )}
       </div>
       {said && <p className="verdict-said">{said}</p>}
     </div>
@@ -260,30 +266,24 @@ export function CriterionRows({
   );
 }
 
-interface SubjectExperiment {
-  id: string;
-  name: string;
-  workflow: { state: string };
-}
-interface SubjectTask {
-  id: string;
-  title: string;
-  reviewId: string | null;
-  deliveryConfirmations: Confirmation[];
-}
-
 /** The record read straight down: what was asked, what was found, what was decided. */
 export function ReviewDetail() {
   const { id = '' } = useParams();
   const review = useTool<Review>('review.get', { reviewId: id }, { every: 8000 });
   const nameOf = useActorNames();
   const artifacts = useArtifacts();
-  const experiments = useTool<SubjectExperiment[]>('experiment.list');
-  const tasks = useTool<SubjectTask[]>('task.list');
   const [values, setValues] = useState<Record<number, Draft>>({});
   const subjectId = review.data?.subjectId;
-  const experiment = experiments.data?.find((item) => item.id === subjectId);
-  const task = tasks.data?.find((item) => item.id === subjectId);
+  // What it judges is named, and opened, as every list the home read holds names it: a task,
+  // an experiment, a cycle or a reflection alike.
+  const home = useTool<HomeData>('ui.home').data;
+  const rows = useRows();
+  const subject = subjectId ? recordNames(null, home, rows).get(subjectId) : undefined;
+  const experiment = home?.experiments?.find((item) => item.id === subjectId);
+  const task = useTool<Task>(
+    home?.tasks?.some((item) => item.id === subjectId) ? 'task.get' : null,
+    { taskId: subjectId ?? '' },
+  ).data;
   const stages = useTool<{ submissions: { stage: string; reviewId: string | null }[] }>(
     experiment ? 'experiment.get_state' : null,
     { experimentId: subjectId ?? '' },
@@ -296,7 +296,7 @@ export function ReviewDetail() {
   if (!review.data)
     return (
       <div className="page-stage">
-        <LoadState {...review} back={{ to: '/work', label: 'Work' }} />
+        <LoadState {...review} back={homeOf(rows)} />
       </div>
     );
   const r = review.data;
@@ -339,16 +339,13 @@ export function ReviewDetail() {
       ))}
     </ul>
   );
-  const subject = experiment
-    ? { name: experiment.name, to: `/experiments/${experiment.id}` }
-    : task && { name: task.title, to: `/tasks/${task.id}` };
   const reviewer = nameOf(r.reviewerId);
   return (
     <RecordPage
-      back={<Link to="/work">← Work</Link>}
+      back={<Link to={homeOf(rows).to}>← {homeOf(rows).label}</Link>}
       kind="reviews"
       // A review is named by what it judged, and the name is the way back to it.
-      name={subject ? <Link to={subject.to}>{subject.name}</Link> : 'Review'}
+      name={subject?.to ? <Link to={subject.to}>{subject.name}</Link> : (subject?.name ?? 'Review')}
       // Once it is in, the verdict is how the review stands; until then its own state is.
       state={<StatusPill value={r.status === 'submitted' && r.verdict ? r.verdict : r.status} />}
       standing={
@@ -503,7 +500,7 @@ function Controls({
     onSuccess: () => {
       onDone();
       guidance.reload();
-      refreshTools('review.list', 'task.list', 'experiment.list');
+      refreshTools('ui.home', 'review.list', 'task.list', 'experiment.list');
     },
   });
   if (!guidance.data) return <LoadState loading={guidance.loading} error={guidance.error} />;
@@ -601,7 +598,7 @@ function Desk({
     validate: (value) => !!value && typeof value.id === 'string',
     onSuccess: () => {
       onDone();
-      refreshTools('review.list', 'task.list', 'experiment.list');
+      refreshTools('ui.home', 'review.list', 'task.list', 'experiment.list');
     },
   });
   const drafts = review.criteria.map((_, index) => values[index + 1] ?? BLANK);
@@ -742,4 +739,4 @@ export function Unmet({ text, at }: { text: string; at?: number }) {
   );
 }
 
-export const ReviewsView = recordRoutes(ReviewDetail, '/work');
+export const ReviewsView = recordRoutes(ReviewDetail);

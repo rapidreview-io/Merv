@@ -7,7 +7,9 @@ import {
   dormantOwner,
   headed,
   holds,
+  homeOf,
   leadRows,
+  MOVED,
   topRows,
 } from '../packages/ui/web/navigation.js';
 import type { PluginState, Row } from '../packages/ui/web/shell-types.js';
@@ -238,4 +240,15 @@ test('a missing page speaks of a plugin only where the shell can show one that i
   );
   assert.equal(dormantOwner('/paper/methods/extra', kinds, rows, plugins), undefined);
   assert.equal(dormantOwner('/feed', kinds, rows, [plugin('feed-ui', 'active')]), undefined);
+});
+
+test('a retired address and a record’s way back lead to the lead row, and to Now without one', () => {
+  const work = row('work', 'work', 'lead', 14);
+  const tasks = row('tasks', 'tasks', 'work', 15);
+  assert.equal(MOVED.running([work, tasks]), '/work');
+  assert.deepEqual(homeOf([work, tasks]), { to: '/work', label: 'work' });
+  // Research off: no row answers /work, so a link there would land on a missing page.
+  assert.equal(MOVED.running([tasks]), '/now');
+  assert.deepEqual(homeOf([tasks]), { to: '/now', label: 'Now' });
+  assert.equal(MOVED.connections([tasks]), '/settings/connections');
 });

@@ -1,7 +1,8 @@
 import { Fragment, memo, useMemo, useRef, type ReactNode } from 'react';
 import { Link, useHref } from 'react-router-dom';
 import { useTool } from './api';
-import type { ShellData } from './shell-types';
+import { pathOf, useRows } from './navigation';
+import type { Row } from './shell-types';
 
 /**
  * Briefs, deliveries and reports are written in Markdown, and they are most of
@@ -47,14 +48,16 @@ export type Block =
 const ID = '[a-z][a-z_]{0,30}_[0-9a-f]{32}(?![0-9A-Za-z_])';
 const ID_AT = new RegExp(ID, 'y');
 const ID_ANYWHERE = new RegExp(`(?<![0-9A-Za-z_])(${ID})`, 'g');
-/** The prefixes whose id alone says which page opens it; a `wf_` may be any of five kinds. */
-const ROUTE_OF_PREFIX: Record<string, string> = { art: '/artifacts', review: '/reviews' };
-
 export const prefixOf = (id: string) => id.slice(0, id.lastIndexOf('_'));
-/** Where an id leads when nothing but its shape is known. */
-export const recordRoute = (id: string): string | undefined => {
-  const route = ROUTE_OF_PREFIX[prefixOf(id)];
-  return route && `${route}/${id}`;
+/**
+ * Where an id leads when nothing but its shape is known: a file to its page, a review to its
+ * row's where this composition has one. A `wf_` may be any of five kinds: its shape names no page.
+ */
+export const recordRoute = (id: string, rows: readonly NamedRow[]): string | undefined => {
+  const prefix = prefixOf(id);
+  const path =
+    prefix === 'art' ? '/artifacts' : prefix === 'review' ? pathOf(rows, 'reviews') : undefined;
+  return path && `${path}/${id}`;
 };
 /** What stands for an id nobody could name: its prefix and its last six. */
 export const shortId = (id: string) => `${prefixOf(id)}_…${id.slice(-6)}`;
@@ -81,7 +84,7 @@ type Listed = { id: string; name?: string; title?: string; subjectId?: string };
 /** `ui.home`: the people, and each row's records under the row's id. */
 export type NamedHome = object;
 type Parts = { actors?: { id: string; name: string }[] | null } & Record<string, Listed[] | null>;
-type NamedRow = Pick<ShellData['rows'][number], 'id' | 'path'>;
+type NamedRow = Pick<Row, 'id' | 'path' | 'view'>;
 
 /**
  * Names for the ids a text mentions, from lists the app already reads: a record opens at
@@ -129,12 +132,9 @@ export function useRecordNames(text: string): RecordNames {
   );
   const others = ids.some((id) => prefixOf(id) !== 'art');
   const home = useTool<NamedHome>(others ? 'ui.home' : null);
-  // The rows say where each list's records open; the shell already polls this read.
-  const shell = useTool<ShellData>(others ? 'ui.shell' : null, {}, { every: 30000 });
-  return useMemo(
-    () => recordNames(files.data, home.data, shell.data?.rows),
-    [files.data, home.data, shell.data],
-  );
+  // The rows say where each list's records open: the ones the shell already holds.
+  const rows = useRows();
+  return useMemo(() => recordNames(files.data, home.data, rows), [files.data, home.data, rows]);
 }
 
 /**
@@ -152,8 +152,9 @@ export function RecordLink({
   names?: RecordNames;
   plain?: boolean;
 }) {
+  const rows = useRows();
   const found = names?.get(id);
-  const to = found?.to ?? recordRoute(id);
+  const to = found?.to ?? recordRoute(id, rows);
   const said = found?.name ?? shortId(id);
   const className = found ? 'record-link' : 'record-link record-link--id';
   return to && !plain ? (

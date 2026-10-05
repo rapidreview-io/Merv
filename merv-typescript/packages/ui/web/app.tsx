@@ -4,8 +4,8 @@ import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
 import { EmptyState, LoadState, StatusPill } from './components';
 import { Icon } from './icons';
-import { dormantOwner, humanizeGroup, leadRows } from './navigation';
-import { MOVED, Moved, VIEW_KINDS, viewFor } from './views';
+import { MOVED, dormantOwner, humanizeGroup, leadRows } from './navigation';
+import { Moved, VIEW_KINDS, viewFor } from './views';
 import { OverviewView } from './views/overview';
 import { PiProvider } from './views/pi';
 import { PiDock } from './views/pi-dock';
@@ -99,7 +99,7 @@ function Workspace() {
               <Route path="/now" element={<OverviewView shell={shell.data} />} />
               {/* Before the rows: the first of two equal routes is the one that answers. */}
               {Object.entries(MOVED).map(([from, to]) => (
-                <Route key={from} path={`/${from}/*`} element={<Moved to={to} />} />
+                <Route key={from} path={`/${from}/*`} element={<Moved to={to(rows)} />} />
               ))}
               {rows.map((row) => {
                 const View = viewFor(row.view.kind);

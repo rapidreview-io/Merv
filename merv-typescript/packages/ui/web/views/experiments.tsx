@@ -5,6 +5,7 @@ import type { CodeUnit } from '@merv/contracts/code-work-models';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { recordRoutes } from '../list-filters';
+import { homeOf } from '../navigation';
 import {
   Evidence,
   KV,
@@ -83,7 +84,9 @@ function ExperimentRecord({
   exhibit,
   unit,
   nameOf,
+  back,
 }: {
+  back: { to: string; label: string };
   experiment: Experiment;
   process?: ProcessGraph;
   reviews?: Review[];
@@ -109,7 +112,7 @@ function ExperimentRecord({
   const names = useRecordNames(e.intent);
   return (
     <RecordPage
-      back={<Link to="/work">← Work</Link>}
+      back={<Link to={back.to}>← {back.label}</Link>}
       kind="experiments"
       name={e.name}
       state={<StageMark graph={process} workflow={e.workflow} />}
@@ -157,7 +160,7 @@ function ExperimentRecord({
 }
 
 /** The record and the gate it stands at arrive together, from the row that owns them. */
-function ExperimentDetail({ row }: ViewProps) {
+function ExperimentDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   // Whether the record can still change arrives with the record itself, so the
   // first read polls and every read stops once a settled state has come back.
@@ -170,7 +173,7 @@ function ExperimentDetail({ row }: ViewProps) {
   const state = record.data?.experiment.workflow.state;
   settled.current = !!state && ['complete', 'abandoned', 'failed'].includes(state);
   const live = settled.current ? undefined : 8000;
-  const reviews = useTool<Review[]>('review.list', {}, { every: live });
+  const reviews = useTool<Review[]>('review.list', { subjectId: id }, { every: live });
   const exhibit = useTool<ExperimentExhibit>(
     state === 'running' ? 'experiment.exhibit' : null,
     { experimentId: id },
@@ -183,12 +186,13 @@ function ExperimentDetail({ row }: ViewProps) {
         <LoadState
           loading={record.loading}
           error={record.error ?? reviews.error ?? exhibit.error}
-          back={{ to: '/work', label: 'Work' }}
+          back={homeOf(shell.rows)}
         />
       </div>
     );
   return (
     <ExperimentRecord
+      back={homeOf(shell.rows)}
       experiment={record.data.experiment}
       process={record.data.process}
       // A list that could not be read leaves the thread to the graph alone.
@@ -200,4 +204,4 @@ function ExperimentDetail({ row }: ViewProps) {
   );
 }
 
-export const ExperimentsView = recordRoutes(ExperimentDetail, '/work');
+export const ExperimentsView = recordRoutes(ExperimentDetail);

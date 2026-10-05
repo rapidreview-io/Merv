@@ -1,9 +1,8 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { Experiment } from '@merv/experiments/models';
 import type { ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
-import { refreshTools, useTool } from '../api';
+import { ApiError, refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
 import { Chips, ListPage, useListFilter } from '../list-filters';
@@ -13,11 +12,10 @@ import { OPEN, ThreeStates, firstSentence, newestReview, reviewClause } from '..
 import type { ShellData } from '../shell-types';
 import { Dependency, StageMark } from '../process';
 import { ArrowRightIcon } from '../icons';
-import { newest, type Flow } from './map-data';
+import { newest, useHome, type Flow, type MapCycle } from './map-data';
 import { ResearchCommand } from './paper';
 import { useActorNames } from './people';
-import { CreateReflection, type Reflection } from './research-programs';
-import type { Review } from './reviews';
+import { CreateReflection } from './research-programs';
 import type { Task } from './tasks';
 import { LiveLines, LiveUnder, WorkMap, WorkPlane, type Wave } from './work-map';
 
@@ -135,7 +133,7 @@ export function chained<T extends { id: string; at: string }>(
 }
 
 /** The cycle the project is on: the newest one still running, else the newest. */
-export const currentCycle = (cycles: ResearchRecord[] | undefined) => {
+export const currentCycle = <T extends MapCycle>(cycles: T[] | undefined) => {
   const all = newest(cycles ?? [], (cycle) => cycle.workflow.updatedAt);
   return all.find((cycle) => isOpen(cycle.workflow.state)) ?? all[0];
 };
@@ -227,29 +225,19 @@ function WaveList({ shell }: { shell: ShellData }) {
   const cyclesRow = rowOf('research');
   const wavesRow = rowOf('reflections');
   const reviewsPath = rowOf('reviews')?.path;
-  const tasks = useTool<Task[]>(tasksRow ? 'task.list' : null, {}, { every: 8000 });
-  const experiments = useTool<Experiment[]>(
-    experimentsRow ? 'experiment.list' : null,
-    {},
-    { every: 8000 },
-  );
-  // Review clauses move with the record beside the list: a claim or a verdict must show.
-  const reviews = useTool<Review[]>(rowOf('reviews') ? 'review.list' : null, {}, { every: 8000 });
-  const cycles = useTool<ResearchRecord[]>(
-    cyclesRow ? 'research.list' : null,
-    {},
-    { every: 10000 },
-  );
-  const all = newest(cycles.data ?? [], (item) => item.workflow.updatedAt);
-  const waves = useTool<Reflection[]>(wavesRow ? 'reflection.list' : null, {}, { every: 8000 });
+  // Every list the wave is made of is the one home read the rail polls, each part under its
+  // row's id; review clauses move with the record beside the list, so it is read as often.
+  const home = useHome(8000);
+  const { tasks, experiments, reviews, research: cycles, reflections: waves } = home.data ?? {};
+  const all = newest(cycles ?? [], (item) => item.workflow.updatedAt);
   const navigate = useNavigate();
   // The cycle the head shows is the one the narrowing means.
-  const cycle = cycles.data?.find((item) => item.id === chosen) ?? currentCycle(cycles.data);
+  const cycle = cycles?.find((item) => item.id === chosen) ?? currentCycle(cycles ?? undefined);
   // The work the cycle itself names: its own prerequisites, and nothing inferred.
   const inCycle = new Set(cycle?.researchDependencies);
   const items: Item[] = chained(
     [
-      ...(tasks.data ?? []).map((task): Item => ({
+      ...(tasks ?? []).map((task): Item => ({
         id: task.id,
         kind: 'tasks',
         name: task.title,
@@ -265,7 +253,7 @@ function WaveList({ shell }: { shell: ShellData }) {
         depth: 0,
         waits: [],
       })),
-      ...(experiments.data ?? []).map((item): Item => ({
+      ...(experiments ?? []).map((item): Item => ({
         id: item.id,
         kind: 'experiments',
         name: item.name,
@@ -282,7 +270,7 @@ function WaveList({ shell }: { shell: ShellData }) {
         waits: [],
       })),
       // A reflection is a unit of the wave like the work it reflects on.
-      ...(waves.data ?? []).map((wave): Item => ({
+      ...(waves ?? []).map((wave): Item => ({
         id: wave.id,
         kind: 'reflections',
         name: wave.title,
@@ -299,7 +287,7 @@ function WaveList({ shell }: { shell: ShellData }) {
         waits: [],
       })),
     ],
-    tasks.data ?? [],
+    tasks ?? [],
   );
   const under = (of: string) => (item: Item) =>
     of === ALL || (of === 'cycle' ? item.named : item.kind === of);
@@ -324,13 +312,21 @@ function WaveList({ shell }: { shell: ShellData }) {
       ['cycle', 'In this cycle'],
     ] as const
   ).filter(([value]) => items.some(under(value)) || kind === value);
-  // Two reads make one list: it is still loading while neither has arrived, and a
-  // failure that leaves rows on screen degrades to a line rather than blanking them.
+  // One read makes the list, and a failure that leaves rows on screen degrades to a line
+  // rather than blanking them. A list whose row is here but whose part did not answer is a
+  // failure too: its records would otherwise vanish without a word.
+  const unread = (['tasks', 'experiments', 'research', 'reflections'] as const).filter(
+    (kind) => rowOf(kind) && home.data?.[kind] === null,
+  );
   const load = {
-    loading: !items.length && (tasks.loading || experiments.loading),
-    error: tasks.error ?? experiments.error,
+    loading: !items.length && home.loading,
+    error:
+      home.error ??
+      (unread.length
+        ? new ApiError('unavailable', `Could not read ${unread.join(', ')}`, 503)
+        : undefined),
     data: items.length ? items : undefined,
-    loadedAt: tasks.loadedAt ?? experiments.loadedAt,
+    loadedAt: home.loadedAt,
   };
   // Where the map is drawn it is the page's one view of the work, and no row is listed under it.
   const [drawn, setDrawn] = useState(true);
@@ -352,7 +348,7 @@ function WaveList({ shell }: { shell: ShellData }) {
       at: item.at,
       held: only ? kept.has(item) : isOpen(item.state) || item.named,
     })),
-    edges: (tasks.data ?? []).flatMap((task) => [
+    edges: (tasks ?? []).flatMap((task) => [
       ...(task.dependencies ?? []).map((on) => ({
         from: on.id,
         to: task.id,
@@ -370,7 +366,7 @@ function WaveList({ shell }: { shell: ShellData }) {
       load={load}
       // The cycle stands where every other page's title line stands, its one move beside
       // it, and after that the one word that narrows the map and the one that starts work.
-      lede={(ends) => <CycleHead shell={shell} cycle={cycle} onSaved={cycles.reload} ends={ends} />}
+      lede={(ends) => <CycleHead shell={shell} cycle={cycle} onSaved={home.reload} ends={ends} />}
       reset={
         only || chosen
           ? () => {
@@ -444,14 +440,14 @@ function WaveList({ shell }: { shell: ShellData }) {
                 <CreateResearch
                   onSaved={() => {
                     close();
-                    cycles.reload();
+                    home.reload();
                   }}
                 />
               ),
             }
       }
       line={(item) => {
-        const review = newestReview(reviews.data, item.id);
+        const review = newestReview(reviews ?? undefined, item.id);
         const said = reviewClause(review, nameOf(review?.reviewerId));
         const who = nameOf(item.owner);
         return {
@@ -518,7 +514,7 @@ export function CycleMove({
   listed = false,
   onSaved,
 }: {
-  cycle: ResearchRecord;
+  cycle: MapCycle;
   shell: ShellData;
   listed?: boolean;
   onSaved(): void;
@@ -618,7 +614,7 @@ function CycleHead({
   ends,
 }: {
   shell: ShellData;
-  cycle?: ResearchRecord;
+  cycle?: MapCycle;
   onSaved(): void;
   /** What the page hangs at the end of its title line: its filter, and what it can start. */
   ends: ReactNode;

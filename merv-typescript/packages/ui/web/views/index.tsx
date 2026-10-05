@@ -24,17 +24,6 @@ export interface ViewProps {
 }
 
 /**
- * Places this app retired, and where their work is now. The shell answers each address itself,
- * so it goes there whether or not a plugin still registers the row.
- */
-export const MOVED: Record<string, string> = {
-  // What a project is connected to is a setting.
-  connections: '/settings/connections',
-  // What is running is drawn on the Work page.
-  running: '/work',
-};
-
-/**
  * A moved address goes where its work is now. The thing it named in hand (`?key=`) still
  * opens that thing's sidebar there, and the page a link carried goes with it.
  */

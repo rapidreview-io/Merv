@@ -107,6 +107,11 @@ export const uiPlugin = {
   inject: ['api', 'tools'],
   apply(ctx: Context, config: { assets?: string } = {}) {
     const ui = new UiRegistry();
+    // A savepoint of the tool's snapshot per part, as the tools registry finds its snapshot.
+    const isolated = async <T>(read: () => Promise<T>): Promise<T> => {
+      const state = ctx.get('state');
+      return state ? await state.isolated(read) : await read();
+    };
     const assets = config.assets ?? fileURLToPath(new URL('../dist/', import.meta.url));
     // The composition root's own report; composed without createApp, the table is empty.
     const plugins = () =>
@@ -135,21 +140,34 @@ export const uiPlugin = {
           'Read what the Now page and the rail draw in one answer: the project, the records of every row that declares them, the people who own them, and the gate every unfinished workflow stands at.',
         inputSchema: z.object({}).strict(),
         // One snapshot for every part: sequential reads on one connection cost tens of
-        // milliseconds; parallel parts each queued on the writer lock cost seconds.
+        // milliseconds; parallel parts each queued on the writer lock cost seconds. Each part
+        // reads behind its own savepoint, so one that fails, a timeout included, is null alone.
         // The page's own read: a person's agent reads the records themselves.
         conversation: 'never',
         readOnly: true,
-        handler: async (caller: Caller) => await homeRead(ctx.tools, ui.rows(), caller),
+        handler: async (caller: Caller) =>
+          await homeRead(
+            {
+              tools: ctx.tools,
+              isolated,
+              gates: async (caller) => {
+                const workflows = ctx.get('workflows');
+                if (!workflows) return null;
+                return {
+                  workflows: (await workflows.overview(caller, undefined, { open: true }))
+                    .workflows,
+                };
+              },
+            },
+            ui.rows(),
+            caller,
+          ),
       }),
     );
     const running: RunningSources = {
       contributions: () => ui.contributions(),
       tools: async () => (await ctx.tools.list()).map((tool) => tool.name),
-      // A savepoint of the tool's snapshot per part, as the tools registry finds its snapshot.
-      isolated: async (read) => {
-        const state = ctx.get('state');
-        return state ? await state.isolated(read) : await read();
-      },
+      isolated,
       // An owner's adapter, e.g. @merv/sessions/ui, that failed or waits on what it needs.
       absent: () =>
         plugins()

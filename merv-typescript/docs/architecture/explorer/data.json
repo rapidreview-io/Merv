@@ -1936,7 +1936,7 @@
         },
         {
           "name": "review.list",
-          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project.",
+          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project. Pass subjectId to list only the reviews of that record.",
           "readOnly": true
         },
         {
@@ -1999,7 +1999,7 @@
         },
         {
           "name": "review.list",
-          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project.",
+          "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project. Pass subjectId to list only the reviews of that record.",
           "readOnly": true
         },
         {

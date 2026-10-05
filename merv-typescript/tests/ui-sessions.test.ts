@@ -28,7 +28,16 @@ const row = {
   status: {},
   readable: true,
 };
-const shell = { rows: [row], plugins: [] };
+/** The lead row the page leads back to: without one, the way back is Now. */
+const work = {
+  ...row,
+  id: 'work',
+  label: 'Work',
+  group: 'lead',
+  path: '/work',
+  view: { kind: 'work' },
+};
+const shell = { rows: [work, row], plugins: [] };
 const page = () =>
   createElement(
     MemoryRouter,
@@ -139,7 +148,11 @@ test('the page states its subject without a click, in one liveness vocabulary', 
       MemoryRouter,
       { initialEntries: ['/sessions'] },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(AgentsPage as any, { row, shell: { ...shell, rows: [row, fleet] }, me: 'x' }),
+      createElement(AgentsPage as any, {
+        row,
+        shell: { ...shell, rows: [work, row, fleet] },
+        me: 'x',
+      }),
     ),
   );
   assert.deepEqual(links(), [

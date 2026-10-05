@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
 export class ApiError extends Error {
   constructor(
@@ -315,52 +315,116 @@ export interface Loaded<T> {
 }
 
 /**
- * The last good answer to each call, for the life of the page. A record opened beside its
- * list remounts the list, and without this the list would blank and read itself again for
- * data it already had; served from here it keeps its rows and refreshes underneath them.
- * Nothing is served that a live read is not already replacing, so this is invisible except
- * for the missing flash.
+ * One read per question, however many places on the page ask it: the rail and the page it
+ * frames read the same home, a record opens beside its list, and every one of them shares
+ * one answer and one timer. Each place says how often it wants the answer, and the read
+ * polls at the shortest of those. Its last good answer outlives the places that asked, for
+ * the life of the page, so a list remounted beside a record keeps its rows and refreshes
+ * underneath them instead of blanking.
  */
-const LAST = new Map<string, { data: unknown; loadedAt: string }>();
-/** Every mounted read of one key: a reload from any of them asks again for all of them. */
-const WATCHERS = new Map<string, Set<() => void>>();
+interface Read {
+  name: string;
+  input: Record<string, unknown>;
+  epoch: number;
+  shown: { data?: unknown; error?: ApiError; loadedAt?: string };
+  listeners: Set<() => void>;
+  /** Each mounted place's cadence in ms, or undefined for a place that does not poll. */
+  readers: Map<object, number | undefined>;
+  flight?: Promise<void>;
+  /** The newest request started, and the newest one whose answer is shown. */
+  asked: number;
+  answered: number;
+  timer?: ReturnType<typeof setTimeout>;
+  last: number;
+  /** A poll that fell due while the tab was hidden, asked once the tab is shown. */
+  waiting: boolean;
+}
+const READS = new Map<string, Read>();
+const keyOf = (epoch: number, name: string, input: Record<string, unknown>) =>
+  `${epoch}:${name}:${JSON.stringify(input)}`;
+function readOf(key: string, name: string, input: Record<string, unknown>, epoch: number): Read {
+  const known = READS.get(key);
+  if (known) return known;
+  if (READS.size > 64)
+    for (const [old, read] of READS)
+      if (!read.readers.size && !read.listeners.size) READS.delete(old);
+  const read: Read = {
+    name,
+    input,
+    epoch,
+    shown: {},
+    listeners: new Set(),
+    readers: new Map(),
+    asked: 0,
+    answered: 0,
+    last: 0,
+    waiting: false,
+  };
+  READS.set(key, read);
+  return read;
+}
 /** An answer the boot already holds, kept so the page that needs it does not ask again. */
-export const remember = (name: string, data: unknown) =>
-  LAST.set(`${scopeEpoch}:${name}:{}`, { data, loadedAt: new Date().toISOString() });
-
+export const remember = (name: string, data: unknown) => {
+  readOf(keyOf(scopeEpoch, name, {}), name, {}, scopeEpoch).shown = {
+    data,
+    loadedAt: new Date().toISOString(),
+  };
+};
+const hidden = () => document.visibilityState === 'hidden';
+let watchingVisibility = false;
 /**
- * One request per answer in flight. Two places on a page ask the same question —
- * the rail and the page it frames read the same home, a record opens beside its
- * list — and the second one joins the first request instead of making another.
- * A reload always asks again, so a command's own refresh never joins a read that
- * started before it.
+ * The next poll, counted from the last answer at the shortest cadence any place asks for. The
+ * cadence stops entirely while the tab is hidden and catches up once on return, so a
+ * backgrounded page costs nothing.
  */
-const FLIGHT = new Map<string, Promise<unknown>>();
-async function shared<T>(
-  key: string,
-  name: string,
-  input: Record<string, unknown>,
-  fresh: boolean,
-): Promise<T> {
-  const joined = fresh ? undefined : (FLIGHT.get(key) as Promise<T> | undefined);
-  if (joined) return await joined;
-  const pending = call<T>(name, input);
-  FLIGHT.set(key, pending);
-  void pending
-    .catch(() => undefined)
-    .finally(() => {
-      if (FLIGHT.get(key) === pending) FLIGHT.delete(key);
+function schedule(read: Read): void {
+  clearTimeout(read.timer);
+  read.waiting = false;
+  const every = Math.min(...[...read.readers.values()].map((ms) => ms || Infinity));
+  if (read.flight || every === Infinity) return;
+  if (!watchingVisibility) {
+    watchingVisibility = true;
+    document.addEventListener('visibilitychange', () => {
+      if (hidden()) return;
+      for (const each of READS.values()) if (each.waiting) void ask(each);
     });
-  return await pending;
+  }
+  if (hidden()) read.waiting = true;
+  else read.timer = setTimeout(() => void ask(read), Math.max(0, read.last + every - Date.now()));
+}
+/**
+ * Ask the server, joining a request already in flight unless `fresh`: a reload always asks
+ * again, so a command's own refresh never joins a read that started before it. A failed
+ * refresh keeps the last good data and its arrival time beside the error, so a view degrades
+ * to one stale line rather than blanking a list that is still correct.
+ */
+function ask(read: Read, fresh = false): Promise<void> {
+  if (read.epoch !== scopeEpoch) return Promise.resolve();
+  if (read.flight && !fresh) return read.flight;
+  clearTimeout(read.timer);
+  const asked = ++read.asked;
+  const show = (shown: Read['shown']) => {
+    if (asked < read.answered) return;
+    read.answered = asked;
+    read.shown = shown;
+    for (const listener of read.listeners) listener();
+  };
+  const flight = call(read.name, read.input)
+    .then(
+      (data) => show({ data, loadedAt: new Date().toISOString() }),
+      (error: unknown) => show({ ...read.shown, error: error as ApiError }),
+    )
+    .finally(() => {
+      // Wait for a response before polling again, including on slow remote storage.
+      if (read.flight !== flight) return;
+      read.flight = undefined;
+      read.last = Date.now();
+      schedule(read);
+    });
+  read.flight = flight;
+  return flight;
 }
 
-/**
- * Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on
- * screen. A failed refresh keeps that data and its arrival time beside the error, so a view
- * degrades to one stale line rather than blanking a list that is still correct. The cadence
- * stops entirely while the tab is hidden and catches up once on return, so a backgrounded
- * page costs nothing; both rules live here rather than in any view.
- */
 /**
  * Refresh every mounted read of these tools, whatever input each was given. A page that has
  * just changed a record says so, rather than leaving the lists beside it to notice on their
@@ -368,113 +432,67 @@ async function shared<T>(
  * itself said the task had failed.
  */
 export function refreshTools(...names: string[]): void {
-  for (const [key, watchers] of WATCHERS)
-    if (names.some((name) => key.includes(`:${name}:`))) for (const bump of watchers) bump();
+  for (const [key, read] of READS)
+    if (read.readers.size && names.some((name) => key.includes(`:${name}:`))) void ask(read, true);
 }
 
+const NOTHING: Read['shown'] = {};
+/**
+ * Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on
+ * screen. Every place asking the same question shares one read (see `Read`).
+ */
 export function useTool<T>(
   name: string | null,
   input: Record<string, unknown> = {},
   options: { every?: number } = {},
 ): Loaded<T> {
   const epoch = useScopeVersion();
-  const key = name ? `${epoch}:${name}:${JSON.stringify(input)}` : null;
-  const [state, setState] = useState<{
-    key: string | null;
-    data?: T;
-    loadedAt?: string;
-    error?: ApiError;
-  }>({ key: null });
-  const [tick, setTick] = useState(0);
-  const latest = useRef(key);
-  latest.current = key;
+  const key = name ? keyOf(epoch, name, input) : null;
+  // The serialized key captures the input object.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const read = useMemo(() => (key ? readOf(key, name!, input, epoch) : undefined), [key]);
+  const shown = useSyncExternalStore(
+    useCallback(
+      (listener: () => void) => {
+        read?.listeners.add(listener);
+        return () => void read?.listeners.delete(listener);
+      },
+      [read],
+    ),
+    () => read?.shown ?? NOTHING,
+    () => NOTHING,
+  );
+  const place = useRef({}).current;
+  useEffect(() => {
+    if (!read) return;
+    // A place that opens asks at once, joining a read already in flight, unless another
+    // place already keeps this answer fresh on its own cadence.
+    const kept = read.shown.data !== undefined && [...read.readers.values()].some(Boolean);
+    read.readers.set(place, options.every);
+    if (kept) schedule(read);
+    else void ask(read);
+    return () => {
+      read.readers.delete(place);
+      // What the next place to open sees is the last good answer, never an old failure.
+      if (!read.readers.size && read.shown.error)
+        read.shown = { data: read.shown.data, loadedAt: read.shown.loadedAt };
+      schedule(read);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [read]);
   // The cadence is read as each wait is set, so a page that changes it is not read again at
   // once: the wait is set again, counted from the last answer.
-  const every = useRef(options.every);
-  every.current = options.every;
-  const rearm = useRef<() => void>();
   useEffect(() => {
-    if (!key || !name) return;
-    let cancelled = false;
-    let asked = false;
-    let reading = false;
-    let last = 0;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let waiting = false;
-    const hidden = () => document.visibilityState === 'hidden';
-    const schedule = () => {
-      clearTimeout(timer);
-      waiting = false;
-      if (!every.current) return;
-      if (hidden()) waiting = true;
-      else timer = setTimeout(() => void refresh(), Math.max(0, last + every.current - Date.now()));
-    };
-    const resume = () => {
-      if (!waiting || hidden()) return;
-      waiting = false;
-      void refresh();
-    };
-    const refresh = async () => {
-      // A reload asks again; every other read joins one already in flight.
-      const fresh = tick > 0 && !asked;
-      asked = true;
-      reading = true;
-      try {
-        const data = await shared<T>(key, name, input, fresh);
-        const loadedAt = new Date().toISOString();
-        if (LAST.size > 64) LAST.clear();
-        LAST.set(key, { data, loadedAt });
-        if (!cancelled && latest.current === key) setState({ key, data, loadedAt });
-      } catch (error) {
-        if (!cancelled && latest.current === key)
-          setState((old) => ({
-            key,
-            ...((old.key === key ? old : LAST.get(key)) as { data?: T; loadedAt?: string }),
-            error: error as ApiError,
-          }));
-      } finally {
-        // Wait for a response before polling again, including on slow remote storage.
-        reading = false;
-        last = Date.now();
-        if (!cancelled) schedule();
-      }
-    };
-    rearm.current = () => {
-      if (!cancelled && !reading) schedule();
-    };
-    void refresh();
-    document.addEventListener('visibilitychange', resume);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', resume);
-    };
-    // The serialized key captures the input object.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, tick]);
-  useEffect(() => rearm.current?.(), [options.every]);
-  useEffect(() => {
-    if (!key) return;
-    const bump = () => setTick((n) => n + 1);
-    const watchers = WATCHERS.get(key) ?? new Set<() => void>();
-    watchers.add(bump);
-    WATCHERS.set(key, watchers);
-    return () => {
-      watchers.delete(bump);
-      if (!watchers.size) WATCHERS.delete(key);
-    };
-  }, [key]);
-  const reload = useCallback(() => {
-    for (const bump of WATCHERS.get(latest.current ?? '') ?? [() => setTick((n) => n + 1)]) bump();
-  }, []);
-  const current = state.key === key;
-  // Before this mount's own read lands, the page shows what the last one saw.
-  const kept = current || !key ? undefined : LAST.get(key);
+    if (!read?.readers.has(place)) return;
+    read.readers.set(place, options.every);
+    schedule(read);
+  }, [read, place, options.every]);
+  const reload = useCallback(() => void (read && ask(read, true)), [read]);
   return {
-    data: current ? state.data : (kept?.data as T | undefined),
-    error: current ? state.error : undefined,
-    loadedAt: current ? state.loadedAt : kept?.loadedAt,
-    loading: !!key && !current && !kept,
+    data: shown.data as T | undefined,
+    error: shown.error,
+    loadedAt: shown.loadedAt,
+    loading: !!key && !shown.data && !shown.error,
     reload,
   };
 }

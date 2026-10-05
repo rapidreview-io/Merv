@@ -13,6 +13,7 @@ import {
   words,
 } from '../components';
 import { Tabs, recordRoutes } from '../list-filters';
+import { homeOf } from '../navigation';
 import { useCommand } from '../mutations';
 import { Gate, StageMark } from '../process';
 import { ArtifactBody, type Artifact } from './artifacts';
@@ -108,7 +109,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   if (!wave)
     return (
       <div className="page-stage">
-        <LoadState {...data} back={{ to: '/work', label: 'Work' }} />
+        <LoadState {...data} back={homeOf(shell.rows)} />
       </div>
     );
   const tabs = [
@@ -127,7 +128,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   };
   return (
     <RecordPage
-      back={<Link to="/work">← Work</Link>}
+      back={<Link to={homeOf(shell.rows).to}>← {homeOf(shell.rows).label}</Link>}
       kind={row.view.kind}
       name={wave.title}
       state={<StageMark shapes={shell?.workflows} workflow={wave.workflow} />}
@@ -196,4 +197,4 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   );
 }
 
-export const ReflectionsView = recordRoutes(ReflectionDetail, '/work');
+export const ReflectionsView = recordRoutes(ReflectionDetail);

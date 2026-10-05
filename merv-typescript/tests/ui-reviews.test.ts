@@ -347,3 +347,38 @@ test('a verdict the owner gave as owner says so where it says who gave it', asyn
   await settle(10);
   assert.match(text(), /reviewed( by \S+)? as owner/);
 });
+
+test('a review is named by what it judges, a reflection too, and the name leads back to it', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/review.get', { body: { result: claimed } });
+  serve('/tools/workflow.status_and_next', { body: { result: desk('reflection', 'in_review') } });
+  const reflections = { id: 'reflections', path: '/reflections', view: { kind: 'reflections' } };
+  const element = page();
+  serve('/tools/ui.shell', {
+    body: {
+      result: {
+        actor,
+        project,
+        rows: [
+          {
+            ...reflections,
+            label: 'Reflections',
+            group: 'work',
+            order: 1,
+            status: {},
+            readable: true,
+          },
+        ],
+        plugins: [],
+      },
+    },
+  });
+  serve('/tools/ui.home', {
+    body: { result: { reflections: [{ id: 'wf_wave', title: 'Wave one', ownerId: 'actor_a' }] } },
+  });
+  await mount(element);
+  await settle(10);
+  const name = document.querySelector<HTMLAnchorElement>('h1 a, .record-name a');
+  assert.equal(name?.textContent, 'Wave one');
+  assert.equal(name?.getAttribute('href'), '/reflections/wf_wave');
+});

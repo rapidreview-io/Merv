@@ -16,8 +16,6 @@ import { Composer, Standing, Transcript, useAgent, type Conversation } from './p
 
 /** Where the window was last dragged to, for every page this browser opens after. */
 const PLACE = 'merv:agent-dock';
-/** A server that says nothing of the machine is taken to release it this long after a turn. */
-const QUIET_MS = 10 * 60_000;
 const ROOM = window.matchMedia('(min-width: 640px)');
 const useRoomy = () =>
   useSyncExternalStore(
@@ -33,11 +31,9 @@ const useRoomy = () =>
  * how far its clock runs ahead (`skew`). A machine already gone was released now; null where
  * nothing says when.
  */
-function releasedAt({ host, commands }: PiSnapshot, skew: number): number | null {
-  if (host?.state === 'none') return 0;
-  const at = host
-    ? Date.parse(host.idleEndsAt ?? '')
-    : Date.parse(commands.at(-1)?.completedAt ?? '') + QUIET_MS;
+function releasedAt({ host }: PiSnapshot, skew: number): number | null {
+  if (host.state === 'none') return 0;
+  const at = Date.parse(host.idleEndsAt ?? '');
   return Number.isNaN(at) ? null : at - skew;
 }
 

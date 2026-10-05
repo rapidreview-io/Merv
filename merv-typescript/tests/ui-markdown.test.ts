@@ -229,10 +229,14 @@ test('a record id is recognised in text and in a code span, and only as a whole 
     `exp_sub_${'0'.repeat(32)}`,
   ]);
   assert.equal(shortId(ART), 'art_…e959e2');
-  assert.equal(recordRoute(ART), `/artifacts/${ART}`);
-  assert.equal(recordRoute(`review_${'a'.repeat(32)}`), `/reviews/review_${'a'.repeat(32)}`);
+  const reviews = [{ id: 'verdicts', path: '/verdicts', view: { kind: 'reviews' } }];
+  assert.equal(recordRoute(ART, []), `/artifacts/${ART}`);
+  const review = `review_${'a'.repeat(32)}`;
+  assert.equal(recordRoute(review, reviews), `/verdicts/${review}`);
+  // Without a reviews row, a review has no page to open.
+  assert.equal(recordRoute(review, []), undefined);
   // A wf_ may be a task, an experiment, a cycle or a reflection: its shape names no page.
-  assert.equal(recordRoute(TASK), undefined);
+  assert.equal(recordRoute(TASK, reviews), undefined);
 });
 
 test('names come from the lists the app already reads, a review named by what it judges', () => {

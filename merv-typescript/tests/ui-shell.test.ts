@@ -310,6 +310,52 @@ test('a signed-in person reads and sets their own daily Fleet tokens in the sess
   );
 });
 
+test('a daily tokens save whose result is unknown keeps the number it sent, and retries that', async (t) => {
+  t.after(async () => {
+    await unmount();
+    setProject(null);
+  });
+  setProject(project.id);
+  const user = {
+    issuer: 'https://login.example',
+    subject: 'subject-1',
+    createdAt: project.createdAt,
+  };
+  boot('Operator');
+  serve('/account', { body: { kind: 'user', user, projects: [project] } });
+  const sent: unknown[] = [];
+  serve('/tools/fleet.daily_tokens', (_call, body) => {
+    sent.push(body);
+    if (typeof body.tokens !== 'number')
+      return { body: { result: { tokens: 20_000_000, usedToday: 0 } } };
+    // The first save's answer is lost; the retry is confirmed.
+    return sent.filter((item) => typeof (item as { tokens?: unknown }).tokens === 'number')
+      .length === 1
+      ? { status: 502, body: { error: { code: 'bad_gateway', message: 'Bad gateway' } } }
+      : { body: { result: { tokens: body.tokens, usedToday: 0 } } };
+  });
+  await open('/settings/session');
+  const field = () =>
+    document.querySelector<HTMLInputElement>('input[aria-label="Fleet tokens per day"]')!;
+  const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    set.call(field(), '5000000');
+    field().dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await click('Save');
+  await settle(10);
+  // What was sent is what a retry sends again, so the number cannot be changed under it.
+  assert.equal(field().disabled, true);
+  assert.equal(field().value, '5000000');
+  await click('Retry');
+  await settle(10);
+  assert.deepEqual(
+    sent.filter((item) => typeof (item as { tokens?: unknown }).tokens === 'number'),
+    [{ tokens: 5_000_000 }, { tokens: 5_000_000 }],
+  );
+  assert.equal(field().disabled, false);
+});
+
 test('without Fleet the session room draws no Fleet tokens row', async (t) => {
   t.after(async () => {
     await unmount();

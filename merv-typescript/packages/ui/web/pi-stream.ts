@@ -5,7 +5,7 @@ export interface PiConversation {
   title: string;
   activeCommandId: string | null;
   updatedAt: string;
-  /** The model its next answer uses; an older server leaves it out. */
+  /** The model its next answer uses; a conversation listed from before models were kept has none. */
   model?: string;
 }
 export interface PiCommand {
@@ -73,24 +73,24 @@ export interface PiEvent {
   type: 'text' | 'progress' | 'changed';
   text: string;
 }
-/** What the person is waiting on, and since when; an older server leaves it out. */
+/** What the person is waiting on, and since when. */
 export interface PiStage {
   name: string;
   since: string;
   detail?: string;
 }
 export interface PiSnapshot {
-  stage?: PiStage;
-  /** The server's clock when this was read; an older server leaves it out. */
-  now?: string;
+  stage: PiStage;
+  /** The server's clock when this was read, which the stage's `since` is counted against. */
+  now: string;
   /** False when this project cannot run the agent at all. */
   available: boolean;
   conversation: PiConversation;
   commands: PiCommand[];
-  /** The person's machine in this project; an older server leaves it out. */
-  host?: PiHostView;
-  /** The models the person may pick; an older server leaves them out. */
-  models?: PiModel[];
+  /** The person's machine in this project. */
+  host: PiHostView;
+  /** The models the person may pick; `conversation.model` is one of them. */
+  models: PiModel[];
   streamId: string;
   sequence: number;
   tail: PiEvent[];

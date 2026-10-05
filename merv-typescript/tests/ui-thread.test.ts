@@ -234,6 +234,10 @@ test('without a process graph the reviews alone are the thread', () => {
 
 test('a thread is read in words: the role alone for a stranger, files to open, no ids', async (t) => {
   t.after(async () => await unmount());
+  // A review opens at the reviews row's page, where the composition has one.
+  serve('/tools/ui.shell', {
+    body: { result: { rows: [{ id: 'reviews', path: '/reviews', view: { kind: 'reviews' } }] } },
+  });
   serve('/tools/artifact.list', {
     body: {
       result: [FIRST, SECOND].map((id, index) => ({

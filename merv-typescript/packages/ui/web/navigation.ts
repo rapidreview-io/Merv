@@ -1,4 +1,5 @@
-import type { PluginState, Row } from './shell-types';
+import { useTool } from './api';
+import type { PluginState, Row, ShellData } from './shell-types';
 
 /**
  * Sidebar navigation model. Sections express what a person is doing
@@ -40,6 +41,37 @@ const HIDDEN_ROWS = new Set(['fleet']);
  * page the rail does not show is reached from them.
  */
 export const leadRows = (rows: Row[]) => rows.filter((row) => row.group === 'lead');
+
+/**
+ * Where a page the rail does not show goes back to, and an address the app retired opens:
+ * the lead row (Work), or Now in a composition without one.
+ */
+export const homeOf = (rows: Row[]) => {
+  const lead = leadRows(rows)[0];
+  return lead ? { to: lead.path, label: lead.label } : { to: '/now', label: 'Now' };
+};
+/** Where the records of a view kind open in this composition, if any row lists them. */
+export const pathOf = (rows: readonly Pick<Row, 'path' | 'view'>[], kind: string) =>
+  rows.find((row) => row.view.kind === kind)?.path;
+
+/**
+ * Places this app retired, and where their work is now. The shell answers each address itself,
+ * so it goes there whether or not a plugin still registers the row.
+ */
+export const MOVED: Record<string, (rows: Row[]) => string> = {
+  // What a project is connected to is a setting.
+  connections: () => '/settings/connections',
+  // What is running is drawn on the Work page, and without one Now is where the reader goes.
+  running: (rows) => homeOf(rows).to,
+};
+
+const NO_ROWS: Row[] = [];
+/**
+ * The rows the shell polls, for whatever on the page links to a row's records: the shell's
+ * own read, shared, so asking for them costs no request of its own.
+ */
+export const useRows = (): Row[] =>
+  useTool<ShellData>('ui.shell', {}, { every: 30000 }).data?.rows ?? NO_ROWS;
 
 /**
  * The paper stands with Work and Now rather than inside a section: it is what the
