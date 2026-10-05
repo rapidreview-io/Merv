@@ -162,6 +162,11 @@ export const sessionsToolsPlugin = {
           await sessions.agentObservation(caller, input.agentId),
       }),
     );
+    ctx.effect(() =>
+      ctx.tools.contributeInstructions(
+        "To steer an assigned agent, use session.find with the work's instanceId to find its current session, then session.message with that sessionId. Messages address sessions, not the work itself. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
+      ),
+    );
   },
 };
 export default sessionsToolsPlugin;

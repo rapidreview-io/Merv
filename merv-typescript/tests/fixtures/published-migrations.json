@@ -379,6 +379,12 @@
       "published": true
     },
     {
+      "component": "research",
+      "version": 8,
+      "hash": "f6c1be53b2f8f378744a3d9c3fd743ec60d214e5b554a88b9e95b8fe652f0d02",
+      "published": false
+    },
+    {
       "component": "reviews",
       "version": 1,
       "hash": "1c3c4873d3b3a2a78f79fa5f20fd566b38f35a17650118154b45926c9b46ff5c",

@@ -316,13 +316,20 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
     const models = ['machine.switch', ...offered.map(({ name }) => name)].map(piModelToolName);
     assert.equal(new Set(models).size, models.length);
     assert.ok(models.length <= 128, `${models.length} tools`);
-    // The full composition gives every main agent the research guide, what Tasks and Paper add,
-    // then the registry's own, and every tool the agent's instructions and notes name is registered.
+    // The full composition gives every main agent what each plugin adds about its own tools (the
+    // research guide; Tasks, Paper, Sessions and Workflows), then the registry's own, which names
+    // no tool, and every tool the agent's instructions and notes name is registered.
+    assert.doesNotMatch(toolsGuide, /\b[a-z]+\.[a-z_]+\b/);
     for (const part of [
       researchGuide,
       toolsGuide,
       'leave production to a Fleet worker',
-      'paper.patch',
+      'task.get returns',
+      'paper.patch (kind problem)',
+      'do not write it yourself',
+      'session.find with',
+      'session.stuck says',
+      'workflow.status_and_next and workflow.assignment',
     ])
       assert.ok(app.ctx.tools.instructions().includes(part), part);
     const named = [

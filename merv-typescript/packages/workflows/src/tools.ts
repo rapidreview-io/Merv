@@ -111,6 +111,11 @@ export const workflowToolsPlugin = {
           await workflows.extendLimit(caller, input),
       }),
     );
+    ctx.effect(() =>
+      ctx.tools.contributeInstructions(
+        "workflow.status_and_next and workflow.assignment return Merv's own guidance for a piece of work: its next steps, instructions and blockers.",
+      ),
+    );
   },
 };
 export default workflowToolsPlugin;

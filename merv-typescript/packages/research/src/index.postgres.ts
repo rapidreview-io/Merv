@@ -102,4 +102,23 @@ BEGIN
   END IF;
 END $consolidation$;
 `,
+  // No cycle ever recorded a consolidation, Methods or Results update child: their columns go,
+  // and the guard every update runs stops checking them.
+  8: `
+DO $check$
+BEGIN
+  IF EXISTS (SELECT 1 FROM research_cycles WHERE consolidation_id IS NOT NULL OR methods_update_id IS NOT NULL OR results_update_id IS NOT NULL) THEN
+    RAISE EXCEPTION USING MESSAGE = 'A research cycle names a consolidation or paper update child', ERRCODE = '23514';
+  END IF;
+END $check$;
+CREATE OR REPLACE FUNCTION research_children_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF (OLD.problem IS NOT NULL AND NEW.problem IS DISTINCT FROM OLD.problem) OR (OLD.reflection_id IS NOT NULL AND NEW.reflection_id IS DISTINCT FROM OLD.reflection_id) THEN
+    RAISE EXCEPTION USING MESSAGE = 'Research children and accepted definition are immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+ALTER TABLE research_cycles DROP COLUMN consolidation_id, DROP COLUMN methods_update_id, DROP COLUMN results_update_id;
+`,
 };
