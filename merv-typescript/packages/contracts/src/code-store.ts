@@ -27,7 +27,7 @@ const bundle = z
   .strict();
 
 /** What admission found wrong in a transfer. It names the place and never the matched text. */
-export const codeFindingSchema = z
+const codeFindingSchema = z
   .object({
     rule: z.string().regex(/^[a-z][a-z0-9_@.]{0,59}$/),
     path: z.string().max(4096).nullable(),

@@ -14,7 +14,7 @@ import type { Role, StoredEvent } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, ownReviews } from './fixtures/review-verdict.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-permissions-'));
@@ -34,6 +34,7 @@ async function fixture() {
   );
   const proof = await artifacts.create(producer, { title: 'Proof', content: 'Execution passed.' });
   const reviews = await createService(new ReviewService(state, scope, artifacts));
+  ownReviews(reviews);
   let sequence = 0;
   const request = async () =>
     await reviews.request(producer, {
@@ -239,6 +240,7 @@ test('Reviews adds a separate durable permission consumer and catches up after u
       projectId: operator.projectId,
     };
     const proof = await app.ctx.artifacts.create(operator, { title: 'Proof', content: 'Passed.' });
+    ownReviews(app.ctx.reviews, (review) => review.subjectId === 'subject');
     const request = await app.ctx.reviews.request(operator, {
       subjectId: 'subject',
       subjectRevision: 1,
@@ -305,6 +307,9 @@ for (const loss of ['role-loss', 'remove-rejoin'] as const) {
         title: 'Proof',
         content: 'The result is reproducible.',
       });
+      ownReviews(reviews, (review) =>
+        ['membership-claim', 'another-subject'].includes(review.subjectId),
+      );
       const pending = await reviews.request(operator, {
         subjectId: 'membership-claim',
         subjectRevision: 0,

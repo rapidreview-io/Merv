@@ -8,7 +8,7 @@ import type { Caller, ReviewApplication, ReviewSubmitOwner, Transaction } from '
 import { createApp } from './fixtures/app.js';
 import type { ToolDefinition } from '../packages/api/src/types.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, claimUnowned } from './fixtures/review-verdict.js';
 
 async function fixture(t: TestContext, api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-routing-'));
@@ -68,20 +68,20 @@ async function fixture(t: TestContext, api = false) {
     content: 'The verified value is 42.',
   });
   let sequence = 0;
-  const request = async (subjectId = `unowned-${++sequence}`) =>
-    await app.ctx.reviews.start(
-      reviewer.caller,
-      (
-        await app.ctx.reviews.request(producer.caller, {
-          subjectId,
-          subjectRevision: 0,
-          producerId: producer.caller.actorId,
-          artifactIds: [proof.id],
-          criteria: ['The result is correct.'],
-          requestId: `request-${++sequence}`,
-        })
-      ).id,
-    );
+  // A review some registered domain owns is claimed as it is; any other through a stand-in.
+  const request = async (subjectId = `unowned-${++sequence}`, owned = false) => {
+    const { id } = await app.ctx.reviews.request(producer.caller, {
+      subjectId,
+      subjectRevision: 0,
+      producerId: producer.caller.actorId,
+      artifactIds: [proof.id],
+      criteria: ['The result is correct.'],
+      requestId: `request-${++sequence}`,
+    });
+    return owned
+      ? await app.ctx.reviews.start(reviewer.caller, id)
+      : await claimUnowned(app.ctx.reviews, reviewer.caller, id);
+  };
   const input = (review: Awaited<ReturnType<typeof request>>): ReviewApplication => ({
     reviewId: review.id,
     claimId: review.claimId!,
@@ -224,10 +224,10 @@ test('review owner registration is closed, copied, unique and safe against stale
       code: 'invalid_review_owner',
     });
   }
+  const input = f.input(await f.request());
   const drop = reviews.registerSubmitOwner(valid);
   assert.throws(() => reviews.registerSubmitOwner(valid), { code: 'review_owner_conflict' });
   valid.owns = async () => false;
-  const input = f.input(await f.request());
   assert.deepEqual(await reviews.apply(f.reviewer.caller, input), { accepted: true });
   drop();
   reviews.registerSubmitOwner({
@@ -370,7 +370,7 @@ test('two domain owners route independently in the existing writer and preserve 
       },
     });
   for (const id of ['alpha', 'beta']) {
-    const input = f.input(await f.request(id));
+    const input = f.input(await f.request(id, true));
     const result = await f.app.ctx.state.transaction(
       async (tx) => await reviews.apply(f.reviewer.caller, input, tx),
     );
@@ -568,7 +568,7 @@ test('the review owner withdraws before Tasks consumers finish draining on workf
 test('routing does not authorize fabricated task reviews, wrong projects, revoked reviewers or stale claims', async (t) => {
   const f = await fixture(t),
     { task, review, input } = await f.pendingTask();
-  const fabricated = f.input(await f.request(task.id));
+  const fabricated = f.input(await f.request(task.id, true));
   await assert.rejects(async () => await f.app.ctx.reviews.apply(f.reviewer.caller, fabricated), {
     code: 'stale_review',
   });
@@ -633,4 +633,36 @@ test('review routing keeps the selected subject while owner lookup is pending', 
   await pending;
   assert.equal((await reviews.get(f.reviewer.caller, original.id)).status, 'submitted');
   assert.equal((await reviews.get(f.reviewer.caller, other.id)).status, 'started');
+});
+
+test('a review is claimed only when exactly one active domain owns it', async (t) => {
+  const f = await fixture(t),
+    reviews = f.app.ctx.reviews;
+  const proof = await f.app.ctx.artifacts.create(f.producer.caller, {
+    title: 'Proof',
+    content: 'The verified value is 42.',
+  });
+  const { id } = await reviews.request(f.producer.caller, {
+    subjectId: 'orphan',
+    subjectRevision: 0,
+    producerId: f.producer.caller.actorId,
+    artifactIds: [proof.id],
+    criteria: ['The result is correct.'],
+    requestId: 'orphan',
+  });
+  // With its domain unloaded, a claim would only wait on a verdict nothing can apply.
+  await assert.rejects(reviews.start(f.reviewer.caller, id), {
+    code: 'review_owner_unavailable',
+  });
+  const owner = (name: string) =>
+    reviews.registerSubmitOwner({
+      id: name,
+      owns: async () => true,
+      submit: async () => name,
+    });
+  const drops = [owner('first'), owner('second')];
+  await assert.rejects(reviews.start(f.reviewer.caller, id), { code: 'review_owner_ambiguous' });
+  assert.equal((await reviews.get(f.operator, id)).status, 'requested');
+  drops.pop()!();
+  assert.equal((await reviews.start(f.reviewer.caller, id)).status, 'started');
 });

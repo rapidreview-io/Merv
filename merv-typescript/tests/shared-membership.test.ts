@@ -16,6 +16,7 @@ import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { openState, schemaFor } from './fixtures/state.js';
 import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
+import { ownReviews } from './fixtures/review-verdict.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
@@ -751,6 +752,7 @@ test('human task context and review claims integrate with role-loss and remove/r
       title: 'Proof',
       content: 'The result is reproducible.',
     });
+    ownReviews(app.ctx.reviews, (review) => review.subjectId === 'member-review');
     const pending = await app.ctx.reviews.request(producer, {
       subjectId: 'member-review',
       subjectRevision: 0,

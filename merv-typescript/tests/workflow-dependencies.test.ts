@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { createService, type Data } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -1068,5 +1068,35 @@ test('replanning removes declared edges in one bounded write, preserving ownersh
       drop: [...drop, 'one-too-many'],
     }),
     { code: 'invalid_dependencies' },
+  );
+});
+
+test('a dependency is named by its data title, else its name, else its workflow, read alone', async (t) => {
+  const { state, workflows, caller } = await setup();
+  t.after(async () => await state.close());
+  const prep = await workflows.register(graph(), policy());
+  const ids: string[] = [];
+  for (const [index, data] of [
+    { title: 'Titled', name: 'Named' },
+    { title: 7, name: 'Named \u0000 too', large: 'x'.repeat(200_000) },
+    { title: null, name: { nested: true } },
+    {},
+  ].entries() as Iterable<[number, Data]>)
+    ids.push(
+      (await prep.start(caller, { workflow: 'preparation', requestId: `n-${index}`, data })).id,
+    );
+  const downstream = await start(prep, caller, 'preparation', 'downstream', ids);
+  const [dependencies, upstream] = [
+    (await workflows.prerequisites(caller, [downstream.id])).get(downstream.id)!,
+    (await workflows.dependencies(caller, ids[1])).dependents,
+  ];
+  // Edges made together are in no particular order among themselves.
+  assert.deepEqual(
+    ids.map((id) => dependencies.find((item) => item.id === id)!.name),
+    ['Titled', 'Named \u0000 too', 'preparation', 'preparation'],
+  );
+  assert.deepEqual(
+    upstream.map((item) => item.name),
+    ['downstream'],
   );
 });

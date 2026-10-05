@@ -24,7 +24,7 @@ import { reviewToolsPlugin } from '@merv/reviews/tools';
 import { createApp } from './fixtures/app.js';
 import { fixture as piFixture } from './fixtures/pi.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, ownReviews } from './fixtures/review-verdict.js';
 import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
 
 const issuer = 'https://identity.example/auth/v1';
@@ -479,6 +479,7 @@ test('where no independent reviewer is left the owner may still decide, and a ch
     return { ...body, hash: digest(body) };
   };
   t.after(f.reviews.provenance('fixture').register(async () => certificate()));
+  t.after(ownReviews(f.reviews, (review) => review.subjectId === 'subject'));
   const requested = await f.reviews.request(producer, {
     subjectId: 'subject',
     subjectRevision: 0,
@@ -551,6 +552,7 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
     new ArtifactStore(f.state, f.scope, new DiskBlobs(mkdtempSync(join(tmpdir(), 'merv-owner-')))),
   );
   const reviews = await createService(new ReviewService(f.state, f.scope, artifacts));
+  ownReviews(reviews);
   t.after(() => reviews.close());
   reviewToolsPlugin.apply({
     tools: f.tools,

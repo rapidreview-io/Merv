@@ -383,6 +383,23 @@ test('PostgreSQL: a snapshot inside a plain read is a read-only transaction on i
     ),
     { code: 'read_only_scope' },
   );
+  // A write that returns rows goes through get/all; PostgreSQL refuses it the same way.
+  await assert.rejects(
+    state.read(() =>
+      state.snapshot(() =>
+        state.transaction(
+          async (tx) =>
+            await tx.get(
+              'INSERT INTO component_migrations(component,version,hash) VALUES(?,?,?) RETURNING version',
+              'snapshot',
+              1,
+              'hash',
+            ),
+        ),
+      ),
+    ),
+    { code: 'read_only_scope', status: 409 },
+  );
   assert.equal(await state.eventHead(), 1);
 
   // It is the read's one transaction: a second at the same time is refused.

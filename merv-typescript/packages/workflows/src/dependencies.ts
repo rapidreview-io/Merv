@@ -52,7 +52,13 @@ interface NodeRow {
   data_json: string;
 }
 
-const NODE = 'id,workflow,version,state,revision,data_json';
+const INSTANCE = 'id,workflow,version,state,revision,data_json';
+/**
+ * As INSTANCE, but an instance's data can be as large as the data it merged, and a dependency is
+ * named by two of its fields: only those are sent. PostgreSQL's JSON operators refuse a document
+ * holding an escaped NUL anywhere, which workflow data may, so that one is sent whole.
+ */
+const NODE = `id,workflow,version,state,revision,CASE WHEN strpos(data_json,'\\u0000')>0 THEN data_json ELSE json_build_object('title',data_json::json->'title','name',data_json::json->'name')::text END AS data_json`;
 const marks = (values: readonly unknown[]) => values.map(() => '?').join(',');
 
 /** What an instance is called: its title, else its name, else the workflow it runs. */
@@ -98,11 +104,16 @@ const edgesOf = async (
   );
 
 /** The instances named, by id; one the project does not hold is left out. */
-async function nodes(sql: Sql, projectId: string, ids: string[]): Promise<Map<string, NodeRow>> {
+async function nodes(
+  sql: Sql,
+  projectId: string,
+  ids: string[],
+  columns = NODE,
+): Promise<Map<string, NodeRow>> {
   const wanted = [...new Set(ids)];
   if (!wanted.length) return new Map();
   const rows = await sql.all<NodeRow>(
-    `SELECT ${NODE} FROM wf_instances WHERE project_id=? AND id IN (${marks(wanted)})`,
+    `SELECT ${columns} FROM wf_instances WHERE project_id=? AND id IN (${marks(wanted)})`,
     projectId,
     ...wanted,
   );
@@ -149,7 +160,7 @@ export const prerequisitesOf = async (sql: Sql, projectId: string, instanceId: s
 
 /**
  * What depends on each of several instances, in two reads however many there are, each source
- * read against its own pinned contract; one not yet kept is read once per version, not per edge.
+ * read against its own pinned contract, which PinnedContracts keeps once read.
  * A source the project no longer holds is left out.
  */
 export async function dependents(
@@ -166,14 +177,10 @@ export async function dependents(
     projectId,
     edges.map((edge) => edge.source_id),
   );
-  const read = new Map<string, WorkflowPinned | null>();
   for (const edge of edges) {
     const source = sources.get(edge.source_id);
     if (!source) continue;
-    const key = `${source.workflow}@${source.version}`;
-    if (!read.has(key))
-      read.set(key, await contracts.get(sql, source.workflow, Number(source.version)));
-    const pinned = read.get(key);
+    const pinned = await contracts.get(sql, source.workflow, Number(source.version));
     found.get(edge.target_id)!.push({
       ...classify(source, pinned?.successStates, pinned?.definition.terminal ?? []),
       ...(edge.kind === 'system' ? { kind: edge.kind, owner: edge.owner } : {}),
@@ -205,7 +212,7 @@ export async function instanceRelations(
   projectId: string,
   instanceId: string,
 ): Promise<WorkflowRelations | null> {
-  const node = (await nodes(sql, projectId, [instanceId])).get(instanceId);
+  const node = (await nodes(sql, projectId, [instanceId], INSTANCE)).get(instanceId);
   if (!node) return null;
   const pinned = await contracts.get(sql, node.workflow, Number(node.version));
   const instance = classify(node, pinned?.successStates, pinned?.definition.terminal ?? []);
@@ -304,6 +311,7 @@ export async function attachDependencies(
     tx,
     source.projectId,
     ids.filter((id) => !held.has(id)),
+    'id,workflow,version',
   );
   const added: { id: string; target: NodeRow; pinned: WorkflowPinned }[] = [];
   for (const targetId of ids) {

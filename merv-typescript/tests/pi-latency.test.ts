@@ -13,7 +13,7 @@ import { PiService } from '../packages/pi/src/index.js';
 import { PiHttp } from '../packages/pi/src/api.js';
 import type { PiBootstrap } from '../packages/pi/src/types.js';
 import { createApp } from './fixtures/app.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, ownReviews } from './fixtures/review-verdict.js';
 
 class LocalRuntimes implements SandboxRuntimes {
   profileId = 'latency-fixture';
@@ -226,6 +226,7 @@ test(
       title: 'Proof',
       content: 'The verified value is 42.',
     });
+    ownReviews(reviews, (review) => review.subjectId.startsWith('latency-subject-'));
     const reviewInput = async () => {
       const requested = await reviews.request(producer, {
         subjectId: `latency-subject-${++sequence}`,

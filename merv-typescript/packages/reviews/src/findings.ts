@@ -42,26 +42,32 @@ export function validateEvidence(value: unknown): Data {
   return evidence;
 }
 
-/** Read the optional evidence field without invoking a getter on the submission itself. */
-export function evidenceFrom(input: { evidence?: unknown }): Data {
+/**
+ * One field of an ordinary input object, read without invoking an accessor or a proxy trap: an
+ * input that is no plain object, or a field that is no enumerable data property, is refused.
+ */
+export function ownField(input: unknown, name: string, code: string, what: string): unknown {
   check(
-    input && typeof input === 'object' && !nodeTypes.isProxy(input),
-    'invalid_evidence',
-    'Review evidence must be an ordinary data field',
+    input &&
+      typeof input === 'object' &&
+      !nodeTypes.isProxy(input) &&
+      !Array.isArray(input) &&
+      [Object.prototype, null].includes(Object.getPrototypeOf(input)),
+    code,
+    `${what} must be an ordinary object`,
   );
-  const prototype = Object.getPrototypeOf(input);
-  check(
-    prototype === Object.prototype || prototype === null,
-    'invalid_evidence',
-    'Review evidence must be an ordinary data field',
-  );
-  const field = Object.getOwnPropertyDescriptor(input, 'evidence');
+  const field = Object.getOwnPropertyDescriptor(input, name);
   check(
     !field || (Object.hasOwn(field, 'value') && field.enumerable),
-    'invalid_evidence',
-    'Review evidence must be an ordinary data field',
+    code,
+    `${name} must be an ordinary data field`,
   );
-  return validateEvidence(field?.value);
+  return field?.value;
+}
+
+/** Read the optional evidence field without invoking a getter on the submission itself. */
+export function evidenceFrom(input: { evidence?: unknown }): Data {
+  return validateEvidence(ownField(input, 'evidence', 'invalid_evidence', 'Review evidence'));
 }
 
 /** A generated identifier: a short lowercase prefix, then a token carrying digits (exp_3f9a1c…). */

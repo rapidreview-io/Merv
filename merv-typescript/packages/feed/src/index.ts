@@ -230,9 +230,7 @@ export class FeedService implements Feed {
         )
         .map((event) => {
           const { source } = event.data as { source?: Data };
-          if (!source) return event;
-          const { credentialId: _c, keyId: _k, membershipId: _m, expiresAt: _e, ...who } = source;
-          return { ...event, data: { ...event.data, source: who as Data } };
+          return source ? { ...event, data: { ...event.data, source: who(source) } } : event;
         });
       // Pages hold at most 1000 events. Do not signal exhaustion merely because a
       // complete page consists of private actor administration.
@@ -247,6 +245,13 @@ export class FeedService implements Feed {
       cursor = next;
     }
   }
+}
+
+/** Who acted, at every level of a delegation source, a service's `vouchedBy` included. */
+function who(source: Data): Data {
+  const { credentialId: _c, keyId: _k, membershipId: _m, expiresAt: _e, ...kept } = source;
+  const vouchedBy = kept.vouchedBy as Data | undefined;
+  return vouchedBy && typeof vouchedBy === 'object' ? { ...kept, vouchedBy: who(vouchedBy) } : kept;
 }
 
 export const feedPlugin = {

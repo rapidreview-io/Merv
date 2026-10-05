@@ -147,6 +147,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   }
 
   async open(workflow: string, projectId: string | null, tx?: Transaction) {
+    this.assertOpen();
     // Each version's terminal states are read once, from its own pinned definition.
     return await this.read(tx, async (tx) =>
       (
@@ -164,6 +165,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   }
 
   async movedBy(instanceId: string, revision: number, tx?: Transaction) {
+    this.assertOpen();
     const sql = 'SELECT actor_id FROM wf_history WHERE instance_id=? AND revision=?';
     return await this.read(
       tx,
@@ -264,6 +266,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     tx: Transaction,
   ): Promise<void> {
     this.assertOpen();
+    this.state.assertTransaction(tx);
     await this.readSnapshot(tx, input.projectId, input.instanceId);
     await replaceBlockers(tx, input);
   }

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createService, digest, type Caller, type Transaction } from '@merv/contracts';
 import { ReviewService } from '@merv/reviews';
 import { resolutionFixture } from './fixtures/resolution.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, ownReviews } from './fixtures/review-verdict.js';
 
 test('provenance migration preserves populated reviews and freezes certificates', async (t) => {
   const f = await resolutionFixture(t, { reviews: 8 });
@@ -25,6 +25,7 @@ test('provenance migration preserves populated reviews and freezes certificates'
   };
   const before = await f.reviews.request(producer, input);
   const reviews = await createService(new ReviewService(f.state, f.scope, f.artifacts));
+  ownReviews(reviews);
   f.beforeClose.push(() => reviews.close());
   assert.deepEqual(await reviews.get(producer, before.id), before);
   assert.deepEqual(await reviews.request(producer, input), before);

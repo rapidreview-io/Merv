@@ -1,6 +1,6 @@
 /**
  * One bounded JSON POST to a search provider (see fetchJson): a deadline over every attempt and
- * at most two retries of what may pass (no answer, 408, 425, 429 or 5xx).
+ * at most two retries of what may pass (no answer, 408, 425, 429 or 5xx), or `retries`.
  */
 import { fetchJson, OutboundError } from '@merv/contracts';
 
@@ -22,13 +22,13 @@ const sleep = (ms: number, signal: AbortSignal) =>
     signal.addEventListener('abort', stop, { once: true });
   });
 
-/** POSTs `body` until an answer, a failure that will not pass, two retries, or the deadline. The
+/** POSTs `body` until an answer, a failure that will not pass, the retries, or the deadline. The
  * signal's own reason is thrown when it ends the call: a TimeoutError at the deadline. */
 export async function post(
   url: string,
   key: string,
   body: unknown,
-  options: { timeoutMs: number; maxBytes: number; signal: AbortSignal },
+  options: { timeoutMs: number; maxBytes: number; signal: AbortSignal; retries?: number },
 ): Promise<Record<string, unknown>> {
   const deadline = Date.now() + options.timeoutMs;
   const signal = AbortSignal.any([options.signal, AbortSignal.timeout(options.timeoutMs)]);
@@ -44,7 +44,8 @@ export async function post(
         250 * 2 ** attempt * (0.5 + Math.random()),
         error instanceof OutboundError ? (error.wait ?? 0) : 0,
       );
-      if (!passing || attempt >= RETRIES || Date.now() + wait >= deadline) throw error;
+      if (!passing || attempt >= (options.retries ?? RETRIES) || Date.now() + wait >= deadline)
+        throw error;
       await sleep(wait, signal);
     }
   }

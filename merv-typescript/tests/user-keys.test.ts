@@ -14,7 +14,7 @@ import { ReviewService } from '@merv/reviews';
 import type { Principal } from '@merv/contracts';
 import { openState, schemaFor } from './fixtures/state.js';
 import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, ownReviews } from './fixtures/review-verdict.js';
 
 const issuer = 'https://identity.example/auth/v1';
 const initialTime = Date.parse('2026-09-16T12:00:00.000Z');
@@ -555,6 +555,7 @@ test('key rotation and revocation are not actor death; owner permission-loss eve
     new ArtifactStore(f.state, f.scope, new DiskBlobs(join(directory, 'blobs'))),
   );
   const reviews = await createService(new ReviewService(f.state, f.scope, artifacts));
+  ownReviews(reviews);
   const producerKey = await f.scope.createKey(f.owner, { projectId: f.project.id });
   const producer = await f.scope.caller(await f.principal(producerKey.token));
   const proof = await artifacts.create(producer, { title: 'Proof', content: 'Passed.' });

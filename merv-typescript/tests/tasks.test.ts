@@ -19,6 +19,7 @@ import { TASK_TYPES } from '../packages/tasks/src/definitions.js';
 import type { Caller, Workflows } from '@merv/contracts';
 import type { ReviewHistory } from '@merv/reviews/rules';
 import { openState } from './fixtures/state.js';
+import { ownReviews } from './fixtures/review-verdict.js';
 import type { PostgresState } from '@merv/state';
 
 async function fixture(limits?: { reviewRounds: number }) {
@@ -370,6 +371,8 @@ test('generic reviews work without a workflow engine or task program and reject 
     new ArtifactStore(state, scope, new DiskBlobs(join(path, 'blobs'))),
   );
   const reviews = await createService(new ReviewService(state, scope, artifacts));
+  // No task program: the one domain that owns an opaque subject's reviews is the caller's own.
+  ownReviews(reviews);
   const f = {
     operator,
     reviewer,

@@ -91,6 +91,8 @@ function databaseError(error: unknown): MervError {
     return fail('state_constraint', 'Database constraint rejected the operation', 409);
   if (code === '40001' || code === '40P01')
     return fail('transaction_conflict', 'Database transaction conflicted; retry the request', 409);
+  // A write a READ ONLY snapshot refused, sent through get/all (INSERT ... RETURNING).
+  if (code === '25006') return fail('read_only_scope', 'A read scope cannot write', 409);
   if (code === '57014' || code === '55P03')
     return fail('state_timeout', 'Database operation timed out', 503);
   if (/timeout exceeded when trying to connect/.test((error as Error)?.message ?? ''))

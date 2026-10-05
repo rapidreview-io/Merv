@@ -282,14 +282,17 @@ test('Tavily falls back to OpenAI’s hosted web search exactly when Nisa does',
     assert.equal(openai.seen.length, grounding);
   }
   // Both failing say so, as Nisa does; the fallback's answer is capped as Nisa caps it.
+  // A paid fallback that failed may still have been billed, so it is sent once and charged once.
   tavilyReply = refusal(401);
   openaiReply = refusal(500);
+  const grounding = openai.seen.length;
   await assert.rejects(web.search(caller, input), {
     code: 'web_upstream_error',
     status: 502,
     message:
       "Web search failed through both Tavily and OpenAI: Tavily refused this deployment's key (HTTP 401); OpenAI web search failed (HTTP 500)",
   });
+  assert.equal(openai.seen.length - grounding, 1);
   openaiReply = { body: grounded('x'.repeat(30_000)) };
   const capped = await web.search(caller, input);
   assert.equal(capped.answer, 'x'.repeat(24_000) + '\n... [OpenAI web answer truncated]');

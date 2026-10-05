@@ -197,4 +197,6 @@ ${withoutTriggers(
   ['reviews_no_delete'],
   `DELETE FROM reviews WHERE subject_id IN (${retiredPlanTaskIds});`,
 )}`,
+  // The Running sidebar and the domains read a subject's reviews by its id.
+  13: `CREATE INDEX reviews_subject ON reviews(project_id, subject_id);`,
 };

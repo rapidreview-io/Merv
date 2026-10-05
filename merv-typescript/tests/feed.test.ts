@@ -497,6 +497,50 @@ test('Feed activity exposes actor administration metadata only to project operat
   );
 });
 
+test('Feed keeps only who acted of a nested delegation source from nonoperators', async (t) => {
+  const f = await fixture(t);
+  const vouchedBy = {
+    kind: 'key',
+    actorId: f.operator.actorId,
+    projectId: f.operator.projectId,
+    keyId: 'key-secret-id',
+    membershipId: 'membership-id',
+    expiresAt: null,
+  };
+  // A session offered for a project's service carries the person's full source within its own.
+  await f.state.transaction(
+    async (tx) =>
+      await f.state.appendEvent(tx, {
+        projectId: f.operator.projectId,
+        actorId: f.operator.actorId,
+        type: 'session.offered',
+        subjectId: 'session',
+        data: {
+          sessionId: 'session',
+          source: {
+            kind: 'service',
+            actorId: 'service-actor',
+            projectId: f.operator.projectId,
+            vouchedBy,
+          },
+        },
+      }),
+  );
+  const offered = (await f.feed.activity(f.reader)).find(
+    (event) => event.type === 'session.offered',
+  )!;
+  assert.deepEqual(offered.data.source, {
+    kind: 'service',
+    actorId: 'service-actor',
+    projectId: f.operator.projectId,
+    vouchedBy: { kind: 'key', actorId: f.operator.actorId, projectId: f.operator.projectId },
+  });
+  const full = (await f.feed.activity(f.operator)).find(
+    (event) => event.type === 'session.offered',
+  )!;
+  assert.deepEqual((full.data.source as { vouchedBy: unknown }).vouchedBy, vouchedBy);
+});
+
 test('Feed hides local membership repair reasons from nonoperator project participants', async (t) => {
   const f = await fixture(t);
   const principal = await f.scope.acceptVerifiedIdentity({

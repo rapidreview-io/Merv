@@ -27,7 +27,7 @@ export interface WorkflowHistoryEntry {
 }
 
 export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
-export type WorkflowWorkspaceBase = 'central' | `reference:${string}`;
+type WorkflowWorkspaceBase = 'central' | `reference:${string}`;
 /** Checkout intent only. References are resolved and Git facts verified by workspace preparation. */
 export type WorkflowWorkspacePolicy =
   | { mode: 'none' }

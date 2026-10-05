@@ -13,6 +13,7 @@ import { TaskService } from '@merv/tasks';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { openState } from './state.js';
+import { ownReviews } from './review-verdict.js';
 
 /** The owner services without a listener, so their transaction tests also run in a sandbox. */
 export async function resolutionFixture(
@@ -46,6 +47,11 @@ export async function resolutionFixture(
   const context = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
     new TaskService(state, scope, artifacts, workflows, reviews, context),
+  );
+  // Tasks owns its own reviews; the fixture owns every other one a test requests.
+  ownReviews(
+    reviews,
+    async (review, tx) => !(await tx.get('SELECT 1 FROM tasks WHERE id=?', review.subjectId)),
   );
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(

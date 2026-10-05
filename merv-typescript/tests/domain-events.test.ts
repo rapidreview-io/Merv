@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { DurableEvents } from '@merv/domain-events';
 import type { EventConsumer } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
+import { ownReviews } from './fixtures/review-verdict.js';
 import type { PostgresState } from '@merv/state';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -130,6 +131,7 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
       title: 'Brief',
       content: 'Goal. Check.',
     });
+    ownReviews(app.ctx.reviews, (review) => review.subjectId === 'recovery-subject');
     const pending = await app.ctx.reviews.request(producer, {
       subjectId: 'recovery-subject',
       subjectRevision: 0,
@@ -148,6 +150,8 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
     const recovered = await app.ctx.reviews.get(operator, claim.id);
     assert.equal(recovered.snapshotHash, claim.snapshotHash);
     assert.equal(recovered.recovery!.previousClaimId, claim.claimId);
+    // Reviews came back with Domain Events, without the stand-in owner.
+    ownReviews(app.ctx.reviews, (review) => review.subjectId === 'recovery-subject');
     const newClaim = await app.ctx.reviews.start(replacement, claim.id);
     assert.notEqual(newClaim.claimId, claim.claimId);
     assert.equal(newClaim.claimGeneration, 2);

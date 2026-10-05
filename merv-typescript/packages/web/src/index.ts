@@ -150,7 +150,8 @@ export class WebService implements Web {
       try {
         providers.push('openai_web_search');
         // A grounded model call, as Nisa's: it answers with a synthesis and its sources. One
-        // hosted search (two for an advanced one) per call, so a call costs what it says.
+        // hosted search (two for an advanced one) per call, so a call costs what it says. A
+        // failed one may still be billed, so it is never retried: one charge, one request.
         response = await post(
           `${fallback.origin}/v1/responses`,
           this.fallbackKey!,
@@ -164,7 +165,7 @@ export class WebService implements Web {
             max_output_tokens: search_depth === 'advanced' ? 4096 : 2048,
             store: false,
           },
-          this.bounds(fallback.timeoutMs),
+          { ...this.bounds(fallback.timeoutMs), retries: 0 },
         );
       } catch (error) {
         const failure = this.failure(error, 'OpenAI web search');

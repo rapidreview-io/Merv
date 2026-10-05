@@ -446,6 +446,9 @@ $merv$;
 CREATE TRIGGER reviews_contributors_claim BEFORE UPDATE OF reviewer_id ON reviews
 FOR EACH ROW EXECUTE FUNCTION reviews_contributors_claim_guard();
 DELETE FROM component_migrations WHERE component='reviews' AND version=11;`);
+    // And reviews@13 (an index on reviews by subject).
+    await client.query(`DROP INDEX reviews_subject;
+DELETE FROM component_migrations WHERE component='reviews' AND version=13;`);
     // And workflows@9 (pinned contracts are immutable; an index on instances by version).
     await client.query(`DROP TRIGGER wf_definitions_pinned ON wf_definitions;
 DROP TRIGGER wf_success_states_pinned ON wf_success_states;

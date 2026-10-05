@@ -229,12 +229,7 @@ export function throwStateFault(error: MervError): void {
       'Workflow callbacks must not write while the workflow is read',
       500,
     );
-  if (
-    error.code === 'invalid_transaction' ||
-    error.code === 'invalid_sql_parameters' ||
-    stateFault(error)
-  )
-    throw error;
+  if (stateFault(error)) throw error;
 }
 
 export async function evaluateAction(

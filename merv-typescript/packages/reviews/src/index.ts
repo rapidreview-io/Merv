@@ -3,7 +3,6 @@ import { canonical, visible, sourceCaller, getArtifacts } from '@merv/contracts'
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
-import { types as nodeTypes } from 'node:util';
 import {
   check,
   digest,
@@ -28,7 +27,7 @@ import {
   type Transaction,
   type StoredEvent,
 } from '@merv/contracts';
-import { validateAssessment, evidenceFrom } from './findings.js';
+import { validateAssessment, evidenceFrom, ownField } from './findings.js';
 import { EARLIER, reviewSections } from './running.js';
 
 function freeze<T>(value: T): T {
@@ -55,84 +54,48 @@ const submitFields: ReadonlySet<string> = new Set([
 
 /** Route shape is generic; allowed destinations and verdict rules belong to the owner. */
 function validateReturnTo(input: { returnTo?: unknown }): string | undefined {
-  check(
-    input && typeof input === 'object' && !nodeTypes.isProxy(input) && !Array.isArray(input),
-    'invalid_return_to',
-    'Review return input must be an ordinary object',
-  );
-  const prototype = Object.getPrototypeOf(input);
-  check(
-    prototype === Object.prototype || prototype === null,
-    'invalid_return_to',
-    'Review return input must be an ordinary object',
-  );
-  const descriptor = Object.getOwnPropertyDescriptor(input, 'returnTo');
-  check(
-    !('returnTo' in input) || (!!descriptor && 'value' in descriptor),
-    'invalid_return_to',
-    'returnTo must be an ordinary data property',
-  );
-  const value = descriptor?.value;
+  const value = ownField(input, 'returnTo', 'invalid_return_to', 'Review return input');
   if (value === undefined) return undefined;
   check(
-    descriptor?.enumerable &&
-      typeof value === 'string' &&
-      /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(value),
+    typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(value),
     'invalid_return_to',
     'returnTo must be an identifier of 1–128 characters, starting with a letter',
   );
   return value;
 }
 
+/**
+ * A bounded list field read without invoking accessors and copied as plain JSON: a proxy,
+ * getter or sparse array is refused with `code`, and so is any item `valid` refuses.
+ */
+function listField<T>(
+  input: ReviewInput,
+  name: 'excludedActorIds' | 'requiredCriteria',
+  code: string,
+  what: string,
+  valid: (item: unknown) => item is T,
+): T[] | undefined {
+  const value = ownField(input, name, code, 'Review input');
+  if (value === undefined) return undefined;
+  const items = plain(value, code, { nodes: 201 });
+  check(
+    Array.isArray(items) && items.length <= 200 && items.every(valid),
+    code,
+    `${what} must be a bounded list`,
+  );
+  return items as T[];
+}
+
 /** Contributor identity is set-like; normalize before hashing, without invoking accessors. */
 function contributorExclusions(input: ReviewInput): string[] | undefined {
-  check(
-    input && typeof input === 'object' && !Array.isArray(input) && !nodeTypes.isProxy(input),
+  const ids = listField(
+    input,
+    'excludedActorIds',
     'invalid_review_exclusions',
-    'Review input must be an ordinary object',
+    'Contributor exclusions',
+    (item): item is string => typeof item === 'string' && idPattern.test(item),
   );
-  const prototype = Object.getPrototypeOf(input);
-  check(
-    prototype === Object.prototype || prototype === null,
-    'invalid_review_exclusions',
-    'Review input must be a plain object',
-  );
-  const field = Object.getOwnPropertyDescriptor(input, 'excludedActorIds');
-  check(
-    !('excludedActorIds' in input) || (field && Object.hasOwn(field, 'value')),
-    'invalid_review_exclusions',
-    'Contributor exclusions must be an ordinary data field',
-  );
-  if (!field || field.value === undefined) return undefined;
-  const value: unknown = field.value;
-  check(
-    field.enumerable &&
-      Array.isArray(value) &&
-      !nodeTypes.isProxy(value) &&
-      Object.getPrototypeOf(value) === Array.prototype,
-    'invalid_review_exclusions',
-    'Contributor exclusions must be an ordinary array',
-  );
-  const length = Object.getOwnPropertyDescriptor(value, 'length')!.value as number;
-  check(
-    length <= 200 && Reflect.ownKeys(value).length === length + 1,
-    'invalid_review_exclusions',
-    'Contributor exclusions must be a bounded dense array',
-  );
-  const ids = Array.from({ length }, (_, index) => {
-    const item = Object.getOwnPropertyDescriptor(value, String(index));
-    check(
-      item &&
-        Object.hasOwn(item, 'value') &&
-        item.enumerable &&
-        typeof item.value === 'string' &&
-        idPattern.test(item.value),
-      'invalid_review_exclusions',
-      'Contributor exclusions must be actor identifiers',
-    );
-    return item.value as string;
-  });
-  return [...new Set(ids)].sort();
+  return ids && [...new Set(ids)].sort();
 }
 
 /**
@@ -141,45 +104,18 @@ function contributorExclusions(input: ReviewInput): string[] | undefined {
  * criteria is checked where the criteria themselves are.
  */
 function requiredCriteria(input: ReviewInput): number[] | undefined {
-  const field = Object.getOwnPropertyDescriptor(input, 'requiredCriteria');
-  check(
-    !('requiredCriteria' in input) || (field && Object.hasOwn(field, 'value')),
+  const numbers = listField(
+    input,
+    'requiredCriteria',
     'invalid_required_criteria',
-    'Required criteria must be an ordinary data field',
+    'Required criteria',
+    (item): item is number => Number.isSafeInteger(item) && (item as number) >= 1,
   );
-  if (!field || field.value === undefined) return undefined;
-  const value: unknown = field.value;
+  if (numbers === undefined) return undefined;
   check(
-    field.enumerable &&
-      Array.isArray(value) &&
-      !nodeTypes.isProxy(value) &&
-      Object.getPrototypeOf(value) === Array.prototype,
+    numbers.length >= 1 && new Set(numbers).size === numbers.length,
     'invalid_required_criteria',
-    'Required criteria must be an ordinary array',
-  );
-  const length = Object.getOwnPropertyDescriptor(value, 'length')!.value as number;
-  check(
-    length >= 1 && length <= 200 && Reflect.ownKeys(value).length === length + 1,
-    'invalid_required_criteria',
-    'Required criteria must be a nonempty bounded dense array',
-  );
-  const numbers = Array.from({ length }, (_, index) => {
-    const item = Object.getOwnPropertyDescriptor(value, String(index));
-    check(
-      item &&
-        Object.hasOwn(item, 'value') &&
-        item.enumerable &&
-        Number.isSafeInteger(item.value) &&
-        item.value >= 1,
-      'invalid_required_criteria',
-      'Required criteria must be criterion numbers',
-    );
-    return item.value as number;
-  });
-  check(
-    new Set(numbers).size === length,
-    'invalid_required_criteria',
-    'Required criteria must be distinct',
+    'Required criteria must be distinct and at least one',
   );
   return numbers.sort((a, b) => a - b);
 }
@@ -429,6 +365,40 @@ export class ReviewService implements Reviews {
     };
   }
 
+  /**
+   * The one active domain that owns this review, and a check that ownership has not changed
+   * since: a claim or verdict nothing could apply, or two domains could, is refused.
+   */
+  private async ownerOf(
+    review: Readonly<ReviewRequest>,
+    tx: Transaction,
+  ): Promise<{ owner: Readonly<ReviewSubmitOwner>; current: () => void }> {
+    check(!this.closed, 'review_owner_unavailable', 'Review routing is unavailable', 503);
+    const epoch = this.ownerEpoch;
+    const matches: Readonly<ReviewSubmitOwner>[] = [];
+    for (const owner of [...this.owners.values()]) {
+      const owns = await owner.owns(review, tx);
+      check(
+        typeof owns === 'boolean',
+        'invalid_review_owner',
+        'Review ownership must return a boolean',
+        500,
+      );
+      if (owns) matches.push(owner);
+    }
+    const current = () =>
+      check(
+        !this.closed && epoch === this.ownerEpoch,
+        'review_owner_changed',
+        'Review ownership changed during application',
+        409,
+      );
+    current();
+    check(matches.length > 0, 'review_owner_unavailable', 'No active domain owns this review', 503);
+    check(matches.length === 1, 'review_owner_ambiguous', 'Multiple domains own this review', 409);
+    return { owner: matches[0], current };
+  }
+
   async apply(
     caller: Caller,
     input: ReviewApplication,
@@ -442,45 +412,14 @@ export class ReviewService implements Reviews {
       check(!this.closed, 'review_owner_unavailable', 'Review routing is unavailable', 503);
       await this.scope.require(caller, 'review', tx);
       const review = await freeze(await this.get(caller, input.reviewId, tx));
-      const epoch = this.ownerEpoch;
-      const matches: Readonly<ReviewSubmitOwner>[] = [];
-      for (const owner of [...this.owners.values()]) {
-        const owns = await owner.owns(review, tx);
-        check(
-          typeof owns === 'boolean',
-          'invalid_review_owner',
-          'Review ownership must return a boolean',
-          500,
-        );
-        if (owns) matches.push(owner);
-      }
-      const current = () =>
-        check(
-          !this.closed && epoch === this.ownerEpoch,
-          'review_owner_changed',
-          'Review ownership changed during application',
-          409,
-        );
-      current();
-      check(
-        matches.length > 0,
-        'review_owner_unavailable',
-        'No active domain owns this review',
-        503,
-      );
-      check(
-        matches.length === 1,
-        'review_owner_ambiguous',
-        'Multiple domains own this review',
-        409,
-      );
+      const { owner, current } = await this.ownerOf(review, tx);
       const extra = Object.keys(input).find(
-        (key) => !submitFields.has(key) && !matches[0].fields?.includes(key),
+        (key) => !submitFields.has(key) && !owner.fields?.includes(key),
       );
       check(extra === undefined, 'invalid_review_input', `This review does not accept ${extra}`);
       // The domain's own command handles replay before current-claim checks. Checking
       // an open claim here would reject a retry after its first successful verdict.
-      const result = await matches[0].submit(caller, input, tx);
+      const result = await owner.submit(caller, input, tx);
       current();
       await this.scope.require(caller, 'review', tx);
       return result;
@@ -585,7 +524,7 @@ export class ReviewService implements Reviews {
         'Review administrative ownership must follow its authenticated source',
         403,
       );
-      return await this.saveRequest(caller, input, tx);
+      return await this.saveRequest(caller, input, tx, authority.id);
     });
   }
 
@@ -598,7 +537,7 @@ export class ReviewService implements Reviews {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       const row = await this.row(tx, caller, input.reviewId);
-      await this.requireAdministration(caller, row, tx);
+      const directing = await this.requireAdministration(caller, row, tx);
       check(
         row.status !== 'submitted',
         'review_closed',
@@ -628,16 +567,18 @@ export class ReviewService implements Reviews {
           requestId: input.requestId,
         },
         tx,
+        directing,
         row.excluded_actor_ids == null ? [] : (JSON.parse(row.excluded_actor_ids) as string[]),
       );
     });
   }
 
+  /** Refuses all but the review's owner or an operator; returns the caller's directing authority. */
   private async requireAdministration(
     caller: Caller,
     row: ReviewRow,
     tx: Transaction,
-  ): Promise<void> {
+  ): Promise<string> {
     const authority = await this.scope.authorityActor(caller, tx);
     check(
       row.producer_id === caller.actorId ||
@@ -647,12 +588,15 @@ export class ReviewService implements Reviews {
       'Only the review owner or an operator may administer this request',
       403,
     );
+    return authority.id;
   }
 
   private async saveRequest(
     caller: Caller,
     input: ReviewInput,
     tx: Transaction,
+    /** The authority that directs the caller, read once by the command. */
+    directing: string,
     /**
      * Exclusions a stored request already admitted. A reissue replays them exactly as they
      * were pinned, and the authority that directed the worker then is rarely the one asking
@@ -717,7 +661,6 @@ export class ReviewService implements Reviews {
       const manifest = await getArtifacts(this.artifacts, caller, input.artifactIds, tx);
       // Exclusions name contributors: authors of retained evidence, the record's owner, or
       // the authority that directed the submitting worker.
-      const directing = (await this.scope.authorityActor(caller, tx)).id;
       check(
         !excludedActorIds ||
           excludedActorIds.every(
@@ -907,9 +850,12 @@ export class ReviewService implements Reviews {
     const view = await this.reader(caller, transaction);
     const read = async (sql: Sql) => {
       // The newest at the highest revision it pinned speaks for its subject, so an open
-      // re-review outranks the verdict it will replace.
-      const rows = await sql.all<ReviewRow>(
-        `SELECT * FROM reviews
+      // re-review outranks the verdict it will replace. Earlier rounds show only their outcome,
+      // so only the newest is read whole, manifest and all.
+      const rows = await sql.all<
+        Pick<ReviewRow, 'id' | 'subject_id' | 'status' | 'verdict' | 'created_at'>
+      >(
+        `SELECT id, subject_id, status, verdict, created_at FROM reviews
          WHERE project_id = ? AND subject_id IN (${subjects.map(() => '?').join(',')})
          ORDER BY subject_revision DESC, created_at DESC, id DESC`,
         caller.projectId,
@@ -918,13 +864,24 @@ export class ReviewService implements Reviews {
       const rounds = subjects
         .map((subjectId) => rows.filter((row) => row.subject_id === subjectId))
         .filter((mine) => mine.length > 0);
+      const whole = new Map(
+        rounds.length
+          ? (
+              await sql.all<ReviewRow>(
+                `SELECT * FROM reviews WHERE project_id = ? AND id IN (${rounds.map(() => '?').join(',')})`,
+                caller.projectId,
+                ...rounds.map(([newest]) => newest!.id),
+              )
+            ).map((row) => [row.id, row])
+          : [],
+      );
       const gates = await this.gatesOf(
         rounds.flatMap((mine) => mine.slice(0, EARLIER + 1).map((row) => row.id)),
         sql,
       );
       const gated = (id: string) => (gates.has(id) ? { gate: gates.get(id)! } : {});
       const sections = await mapAsync(rounds, async ([newest, ...earlier]) => {
-        const current = await view(hydrate(newest!));
+        const current = await view(hydrate(whole.get(newest!.id)!));
         const claim = current.status === 'started' ? await this.claimOf(sql, current) : undefined;
         return reviewSections({
           current,
@@ -978,22 +935,15 @@ export class ReviewService implements Reviews {
     sql: Sql,
     review: ReviewRequest,
   ): Promise<{ at: string; agent: boolean } | undefined> {
-    const events = await sql.all<{ data_json: string; created_at: string }>(
-      "SELECT data_json, created_at FROM events WHERE project_id=? AND subject_id=? AND type='review.started' ORDER BY id DESC",
+    const event = await sql.get<{ created_at: string; kind: string | null }>(
+      `SELECT created_at, data_json::jsonb #>> '{source,kind}' AS kind FROM events
+       WHERE project_id=? AND subject_id=? AND type='review.started'
+         AND (data_json::jsonb #>> '{claimId}')=? ORDER BY id DESC LIMIT 1`,
       review.projectId,
       review.id,
+      review.claimId ?? null,
     );
-    for (const event of events) {
-      let data: { claimId?: unknown; source?: { kind?: unknown } } = {};
-      try {
-        data = JSON.parse(event.data_json) ?? {};
-      } catch {
-        continue;
-      }
-      if (data.claimId === review.claimId)
-        return { at: event.created_at, agent: data.source?.kind === 'session' };
-    }
-    return undefined;
+    return event && { at: event.created_at, agent: event.kind === 'session' };
   }
 
   async checkStart(
@@ -1039,10 +989,11 @@ export class ReviewService implements Reviews {
     return await inTransaction(this.state, transaction, async (tx) => {
       const current = await this.checkStart(caller, reviewId, tx, override);
       if (current.status === 'started') return current;
-      // The owning domain may refuse a claim that its rules could never let finish.
-      for (const owner of [...this.owners.values()])
-        if (owner.claim && (await owner.owns(freeze(current), tx)))
-          await owner.claim(caller, current, tx);
+      // Only a review one domain can apply a verdict to is claimed, and that domain may refuse
+      // a claim its rules could never let finish.
+      const { owner, current: unchanged } = await this.ownerOf(freeze(current), tx);
+      await owner.claim?.(caller, current, tx);
+      unchanged();
       const claimId = newId('claim');
       const changed = await tx.run(
         // Only an override names the column, so an ordinary claim writes what it always has.

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createApp } from './fixtures/app.js';
 import { Bindings } from '../packages/mounts/src/credentials.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
+import { ownReviews } from './fixtures/review-verdict.js';
 
 test('machine domain writes preserve key provenance, while key withdrawal preserves the owner and review claim', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-key-domain-'));
@@ -75,6 +76,7 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
     artifactIds: [delivery.id],
     requestId: 'feed',
   });
+  ownReviews(reviews, (review) => review.subjectId === 'key-provenance');
   const pending = await reviews.request(producerCaller, {
     subjectId: 'key-provenance',
     subjectRevision: 0,

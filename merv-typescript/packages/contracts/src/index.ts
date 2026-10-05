@@ -27,13 +27,8 @@ export {
   record,
   sized,
   Slots,
-  type OutboundFailure,
 } from './outbound.js';
-export {
-  sessionWorkspaceSchema,
-  codePendingMergeSchema,
-  type CodePendingMerge,
-} from './workspace.js';
+export { sessionWorkspaceSchema, type CodePendingMerge } from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
 export { codePublicationIdSchema, codePublicationMergeSchema } from './code-publications.js';
 export type {
@@ -45,8 +40,6 @@ export {
   CODE_BUNDLE_MAX_BYTES,
   CODE_PART_MAX_BYTES,
   codeAdmissionLimitsSchema,
-  codeAdmissionConfigureInputSchema,
-  codeFindingSchema,
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
   codeWorkspaceManifestInputSchema,
@@ -122,7 +115,6 @@ export {
   codeMergeInputSchema,
   codeCommandControlSchema,
   codeCommitCommandSchema,
-  codeCommitReceiptSchema,
   codeCommandCompletionSchema,
   codeCommandRecordSchema,
   codeLocalBindInputSchema,
@@ -157,7 +149,7 @@ export type {
 } from './code.js';
 import type { Data, Json } from './data.js';
 import type { Artifact, ArtifactFile } from './artifact-models.js';
-export type { Artifact, ArtifactFile } from './artifact-models.js';
+export type { Artifact } from './artifact-models.js';
 import { clip, visible } from './text.js';
 import type {
   Role,
@@ -173,12 +165,10 @@ export type {
   WorkflowExecutionTarget,
   WorkflowHistoryEntry,
   WorkflowSnapshot,
-  WorkflowWorkspaceBase,
   WorkflowWorkspacePolicy,
 } from './workflow-models.js';
 export type {
   WorkflowReference,
-  WorkflowBlocker,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
   WorkflowRelations,
@@ -188,10 +178,8 @@ export type {
   WorkflowOverview,
   WorkflowDependency,
   WorkflowWorkStart,
-  ProcessTraversal,
   ProcessNode,
   ProcessEdge,
-  ProcessDependencyEdge,
   ProcessGraph,
 } from './workflow-guidance.js';
 import type {
@@ -242,13 +230,18 @@ export function pathSegment(value: string): string {
 }
 /**
  * Whether State raised this error about its own scope, transaction or store, rather than an
- * operation refusing its input: a write under a read, a nested or closed transaction, a
- * conflict, timeout or outage. A caller that turns refusals into answers must not turn these.
+ * operation refusing its input: a write under a read, a nested, closed or foreign transaction,
+ * SQL whose bind markers do not match, a conflict, timeout or outage. A caller that turns
+ * refusals into answers must not turn these.
  */
 export const stateFault = (error: unknown): error is MervError =>
   error instanceof MervError &&
-  (error.code === 'read_only_scope' ||
-    error.code === 'nested_transaction' ||
+  ([
+    'read_only_scope',
+    'nested_transaction',
+    'invalid_transaction',
+    'invalid_sql_parameters',
+  ].includes(error.code) ||
     /^(transaction|state)_/.test(error.code));
 /** Every role a member, an actor or a lease may hold. */
 export const ROLES = [
@@ -939,7 +932,7 @@ export const leaseReleaseConsumer = (
   },
 });
 /** A plugin entry's lifecycle state as the composition root reports it. */
-export type PluginRunState =
+type PluginRunState =
   'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
 export interface PluginStatus {
   id: string;
@@ -2089,7 +2082,7 @@ export interface Reviews {
     tx?: Transaction,
   ): Promise<import('./running.js').RunningSection[]>;
 }
-export interface ContextRecipe {
+interface ContextRecipe {
   instructions: string;
   /** A required section needs at least one item. */
   sections: { key: string; title: string; required: boolean }[];
@@ -2159,7 +2152,7 @@ export interface ContextPackage {
 }
 export type ContextPreview = Omit<ContextPackage, 'id' | 'createdAt'>;
 /** The input of `build`: a preview to save under a request ID. */
-export interface ContextSave {
+interface ContextSave {
   requestId: string;
   preview: ContextPreview;
 }
@@ -2225,9 +2218,6 @@ export type {
   GitHubBranch,
   GitHubCommit,
   GitHubPullRequest,
-  GitHubChangedFile,
-  GitHubCheck,
-  GitHubReview,
   GitHubPullDetails,
   GitHubAutomationInput,
 } from './github-models.js';
@@ -2262,12 +2252,10 @@ export {
   CODE_CHECK_SOURCE_MAX_BYTES,
   CODE_CHECK_SLACK_SECONDS,
   codeCheckSpecSchema,
-  codeStoreLimitsSchema,
   codeRepositoryConfigureInputSchema,
 } from './code-work-store.js';
 export type {
   CodeCheckSpec,
   CodeStoreLimits,
   CodeRepositoryConfigureInput,
-  CodeWorkStoreStatus,
 } from './code-work-store.js';

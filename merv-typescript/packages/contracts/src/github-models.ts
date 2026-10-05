@@ -60,7 +60,7 @@ export interface GitHubPullRequest {
   mergeState: string;
   updatedAt: string;
 }
-export interface GitHubChangedFile {
+interface GitHubChangedFile {
   path: string;
   previousPath: string | null;
   status: string;
@@ -69,13 +69,13 @@ export interface GitHubChangedFile {
   /** GitHub omits patches for binary files and large diffs. Never interpret omission as no change. */
   patch: string | null;
 }
-export interface GitHubCheck {
+interface GitHubCheck {
   name: string;
   status: string;
   conclusion: string | null;
   url: string | null;
 }
-export interface GitHubReview {
+interface GitHubReview {
   id: number;
   user: string;
   state: string;

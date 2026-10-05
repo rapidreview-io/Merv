@@ -324,3 +324,23 @@ test('a provider reads an instance, its edges and the pinned manifests of their 
     null,
   );
 });
+
+test('blockers are replaced only in a live transaction, and a closed service reads nothing', async (t) => {
+  const f = await fixture(t);
+  const build = await f.workflows.register(definition, policy(false));
+  const work = await build.start(f.owner, { workflow: 'build', requestId: 'start' });
+  const input = { projectId: f.owner.projectId, instanceId: work.id, provider: 'probe' };
+  // A plain read's handle is no transaction: its statements would commit one at a time.
+  await assert.rejects(
+    f.state.read(
+      async (sql) =>
+        await f.workflows.replaceBlockers({ ...input, blockers: [merge] }, sql as never),
+    ),
+    refused('invalid_transaction', 400),
+  );
+  assert.deepEqual(await f.workflows.blockers(f.owner, work.id), []);
+
+  f.workflows.close();
+  await assert.rejects(f.workflows.open('build', null), refused('workflow_unavailable', 503));
+  await assert.rejects(f.workflows.movedBy(work.id, 1), refused('workflow_unavailable', 503));
+});

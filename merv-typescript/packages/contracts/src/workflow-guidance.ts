@@ -28,7 +28,7 @@ export interface WorkflowDependency {
   failed: boolean;
 }
 
-export interface WorkflowBlocker {
+interface WorkflowBlocker {
   code: string;
   message: string;
   status: number;
@@ -126,7 +126,7 @@ export interface WorkflowDecision {
 }
 
 /** One recorded crossing of a definition edge, from wf_history and nowhere else. */
-export interface ProcessTraversal {
+interface ProcessTraversal {
   revision: number;
   actorId: string;
   requestId: string;
@@ -157,7 +157,7 @@ export interface ProcessEdge {
   blockers: WorkflowBlocker[];
 }
 /** An edge between whole instances, recorded by the programs that composed them. */
-export interface ProcessDependencyEdge extends WorkflowDependency {
+interface ProcessDependencyEdge extends WorkflowDependency {
   direction: 'depends_on' | 'required_by';
 }
 /**

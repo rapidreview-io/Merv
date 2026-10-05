@@ -84,7 +84,7 @@ export const codeCommitCommandSchema = z
   })
   .strict()
   .refine((value) => value.expectedHead.length === value.workspace.baseOid.length);
-export const codeCommitReceiptSchema = z
+const codeCommitReceiptSchema = z
   .object({
     commandId: id,
     repositoryId: id,

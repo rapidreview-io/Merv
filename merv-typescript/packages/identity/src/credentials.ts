@@ -1,5 +1,13 @@
 import { randomBytes } from 'node:crypto';
-import { check, newId, sha256Hex, type Sql, type State, type Transaction } from '@merv/contracts';
+import {
+  check,
+  inTransaction,
+  newId,
+  sha256Hex,
+  type Sql,
+  type State,
+  type Transaction,
+} from '@merv/contracts';
 
 /** The one token digest. Owners store and compare only this. */
 export const tokenDigest = sha256Hex;
@@ -127,14 +135,6 @@ export class CredentialStore {
     return new Date(this.clock()).toISOString();
   }
 
-  private async write<T>(tx: Transaction | undefined, fn: (tx: Transaction) => Promise<T>) {
-    if (tx) {
-      this.state.assertTransaction(tx);
-      return await fn(tx);
-    }
-    return await this.state.transaction(fn);
-  }
-
   private input(input: Omit<CredentialInput, 'token' | 'prefix'>): void {
     check(
       identifier(input.owner) && identifier(input.subject) && identifier(input.kind),
@@ -179,7 +179,7 @@ export class CredentialStore {
       'Credential has already expired',
     );
     const tokenHash = tokenDigest(token);
-    const credential = await this.write(tx, async (sql) => {
+    const credential = await inTransaction(this.state, tx, async (sql) => {
       const id = newId('identity_credential');
       const createdAt = this.now();
       const inserted = await sql.run(
@@ -223,7 +223,7 @@ export class CredentialStore {
   ): Promise<Credential> {
     this.input(input);
     check(validHash(input.tokenHash), 'invalid_credential', 'Invalid credential history');
-    return await this.write(tx, async (sql) => {
+    return await inTransaction(this.state, tx, async (sql) => {
       const id = newId('identity_credential');
       const createdAt = this.now();
       await sql.run(
@@ -297,7 +297,7 @@ export class CredentialStore {
       'invalid_credential',
       'Invalid credential renewal',
     );
-    return await this.write(tx, async (sql) => {
+    return await inTransaction(this.state, tx, async (sql) => {
       const row = await find(sql, tokenHash);
       const now = this.now();
       check(row && row.owner === owner, 'credential_forbidden', 'Credential owner mismatch', 403);
@@ -341,7 +341,7 @@ export class CredentialStore {
       'invalid_credential',
       'Invalid credential revocation',
     );
-    return await this.write(tx, async (sql) => {
+    return await inTransaction(this.state, tx, async (sql) => {
       const row = await sql.get<Row>(
         'UPDATE identity_credentials SET revoked_at=COALESCE(revoked_at,?) WHERE token_hash=? AND owner=? RETURNING *',
         this.now(),
@@ -370,7 +370,7 @@ export class CredentialStore {
       'invalid_credential',
       'Invalid credential owner or subject',
     );
-    await this.write(tx, async (sql) => {
+    await inTransaction(this.state, tx, async (sql) => {
       await sql.run(
         'UPDATE identity_credentials SET revoked_at=? WHERE owner=? AND subject=? AND kind=? AND revoked_at IS NULL',
         this.now(),

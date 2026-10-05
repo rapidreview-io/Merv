@@ -23,7 +23,7 @@ import {
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, claimUnowned } from './fixtures/review-verdict.js';
 
 async function fixture(maximumMigration = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-return-'));
@@ -66,7 +66,7 @@ async function fixture(maximumMigration = Infinity) {
       criteria: ['The observation is reproducible.'],
       requestId: `request-${sequence}`,
     });
-  const claim = async () => await reviews.start(reviewer.caller, (await request()).id);
+  const claim = async () => await claimUnowned(reviews, reviewer.caller, (await request()).id);
   const input = (review: ReviewRequest): ReviewSubmit => ({
     reviewId: review.id,
     claimId: review.claimId!,
@@ -492,7 +492,7 @@ test('owners may require explicit destinations for both negative verdicts and fo
     for (const verdict of ['needs_changes', 'fail'] as const) {
       for (const returnTo of ['planned', 'running']) {
         const input: ReviewApplication = {
-          ...f.input(await f.claim()),
+          ...f.input(await f.reviews.start(f.reviewer.caller, (await f.request()).id)),
           expectedRevision: 0,
           verdict,
         };
@@ -514,7 +514,7 @@ test('owners may require explicit destinations for both negative verdicts and fo
       }
     }
     const passing: ReviewApplication = {
-      ...f.input(await f.claim()),
+      ...f.input(await f.reviews.start(f.reviewer.caller, (await f.request()).id)),
       verdict: 'pass',
       expectedRevision: 0,
     };

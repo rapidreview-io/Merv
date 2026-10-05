@@ -22,7 +22,7 @@ export function allowedOrigin(value: string): boolean {
   }
 }
 
-export type OutboundFailure =
+type OutboundFailure =
   | { kind: 'network' }
   | { kind: 'status'; status: number }
   | { kind: 'invalid' }

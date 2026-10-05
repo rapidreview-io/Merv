@@ -11,7 +11,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import type { Caller, ReviewInput, Role } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
-import { assessment } from './fixtures/review-verdict.js';
+import { assessment, ownReviews } from './fixtures/review-verdict.js';
 
 async function fixture(t: TestContext, version = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-exclusions-'));
@@ -52,6 +52,7 @@ async function fixture(t: TestContext, version = Infinity) {
       component === 'reviews' ? migrations.filter((m) => m.version <= version) : migrations,
     );
   let reviews = await createService(new ReviewService(state, scope, artifacts));
+  ownReviews(reviews);
   state.migrate = migrate;
   let seq = 0;
   const input = (): ReviewInput => ({
@@ -84,6 +85,7 @@ async function fixture(t: TestContext, version = Infinity) {
     async reload() {
       reviews.close();
       reviews = await createService(new ReviewService(state, scope, artifacts));
+      ownReviews(reviews);
     },
   };
 }

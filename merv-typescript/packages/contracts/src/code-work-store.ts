@@ -39,7 +39,7 @@ export const codeCheckSpecSchema = z
   .strict();
 export type CodeCheckSpec = z.infer<typeof codeCheckSpecSchema>;
 
-export const codeStoreLimitsSchema = z
+const codeStoreLimitsSchema = z
   .object({
     format: z.literal(1),
     /** Paths no admitted history may contain: literals, `*`, `?` and `**`. */

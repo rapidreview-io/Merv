@@ -11,6 +11,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import { digest, type ReviewInput, type ReviewRequest, type ReviewSubmit } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
+import { ownReviews } from './fixtures/review-verdict.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-findings-'));
@@ -40,6 +41,7 @@ async function fixture() {
     content: 'Not in the snapshot.',
   });
   const reviews = await createService(new ReviewService(state, scope, artifacts));
+  ownReviews(reviews);
   let sequence = 0;
   const input = (): ReviewInput => ({
     subjectId: `subject-${++sequence}`,
@@ -358,6 +360,7 @@ test('structured verdicts replay exact inputs, forbid later mutation, and surviv
           new ArtifactStore(state, scope, new DiskBlobs(join(f.directory, 'blobs'))),
         );
       const reviews = await createService(new ReviewService(state, scope, artifacts));
+      ownReviews(reviews);
       assert.deepEqual(await reviews.get(f.reader, result.id), result);
       assert.deepEqual(await reviews.submit(f.reviewer, input), result);
     } finally {
