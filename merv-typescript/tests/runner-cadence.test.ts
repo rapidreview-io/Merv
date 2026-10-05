@@ -154,3 +154,20 @@ test('a session heartbeat is sent only when the server would keep its slide', as
   assert.equal(heartbeats(), 3);
   assert.equal(session.expiresAt, session.hardDeadline);
 });
+
+test("one guardian's refusal is its launch's, never the tick's", async (t) => {
+  const fake = server(() => null);
+  const f = machine(t, [node('a')], fake.fetch);
+  const ledger = f.ledger();
+  ledger.reserve({ id: 'refused', sessionId: 'unknown', deadline: Date.now() + 60_000 });
+  ledger.close();
+  const runner = f.make();
+  // What a guardian answers when its own SQLite fails it: anything but unreachable.
+  (runner as any).host.inspect = async () => {
+    throw new Error('Supervisor refused: supervisor_failed');
+  };
+  await runner.start();
+  assert.ok(fake.calls.some((call) => call.path === '/sessions/runners/heartbeat'));
+  assert.equal(runner.snapshot().state, 'degraded');
+  assert.ok(runner.snapshot().lastError);
+});

@@ -398,44 +398,10 @@ export class SessionDispatch {
     private thresholds: StuckReport['thresholds'],
   ) {
     this.initialize = async () => {
-      await state.migrate('session_dispatch', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-        {
-          // The last decision, not a log: one row per runner, so storage is constant.
-          version: 2,
-          sql: postgresMigrations[2],
-        },
-        {
-          // Configuration an admin changes, like the dispatch switch, so nothing guards it;
-          // its history is the session.budget_changed events. The project's own id as the
-          // scope is the project budget; any other scope is a workflow instance.
-          version: 3,
-          sql: postgresMigrations[3],
-        },
-        {
-          // What keeps a candidate from running, kept where dispatch decides: one counter row
-          // per target, so storage is bounded by failed targets, never by attempts. The row is
-          // a mutable counter, not a record; its history is the session.dispatch_held and
-          // session.hold_released events.
-          version: 4,
-          sql: postgresMigrations[4],
-        },
-        {
-          // Where automatic work may run. Its source_json, the chooser's authority, is no longer
-          // read or written: Fleet acts as the project's owner (Sessions.servedSources).
-          version: 5,
-          sql: postgresMigrations[5],
-        },
-        {
-          // The founder's ruling (2026-09-25): every project runs its work, on Fleet's machines,
-          // until someone says not.
-          version: 6,
-          sql: postgresMigrations[6],
-        },
-      ]);
+      await state.migrate(
+        'session_dispatch',
+        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+      );
     };
   }
   private async ordinary(caller: Caller, permission: 'read' | 'admin', tx: Transaction) {

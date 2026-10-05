@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { hostname } from 'node:os';
-import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -517,7 +517,7 @@ export class MachineRunner implements Runner {
   }
   private async cycle(): Promise<void> {
     this.lastError = undefined;
-    await this.host.reconcile();
+    for (const error of await this.host.reconcile()) this.lastError = diagnostic(error);
     let leasing = true;
     try {
       await this.advertise();
@@ -771,7 +771,10 @@ export class MachineRunner implements Runner {
           ...(profile.harness === 'codex'
             ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
             : {}),
+          shellEnvFile: join(record.runDirectory, 'shell-env.sh'),
         });
+        if (command.shellEnv)
+          writeFileSync(command.env.CLAUDE_ENV_FILE!, command.shellEnv, { mode: 0o600 });
         await this.host.launch({
           launchId: record.id,
           command,

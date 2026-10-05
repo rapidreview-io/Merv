@@ -163,8 +163,13 @@ export class ProcessHost {
     if (!terminalLaunch(record)) this.ledger.markUncertain(id, 'stop_unconfirmed');
     return this.required(id);
   }
-  async reconcile(): Promise<void> {
-    for (const record of this.ledger.open()) await this.inspect(record.id);
+  /** Asks every open launch's guardian. One that fails to answer is that launch's failure, never
+   *  the others': what failed is returned, and its row is read as it stands. */
+  async reconcile(): Promise<unknown[]> {
+    const failures: unknown[] = [];
+    for (const record of this.ledger.open())
+      await this.inspect(record.id).catch((error: unknown) => failures.push(error));
+    return failures;
   }
 
   /**
