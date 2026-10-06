@@ -1,13 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type {
-  AgentSummary,
-  DispatchState,
-  RunnerPlatform,
-  RunnerPresence,
-  SessionSummary,
-  SessionsProjectStatus,
-} from '@merv/contracts/types';
+import type { RunnerPlatform } from '@merv/contracts/types';
 import { accountRequest, useTool } from '../api';
 import {
   Ago,
@@ -42,6 +35,13 @@ import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
 import { AgentDetail, activity } from './agent-sessions-panel';
 import { personName } from './people';
+import type {
+  AgentSummary,
+  DispatchState,
+  RunnerPresence,
+  SessionSummary,
+  SessionsProjectStatus,
+} from '@merv/sessions/models';
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 /** How much of a list this read holds: all of it, or the newest part of a larger total. */

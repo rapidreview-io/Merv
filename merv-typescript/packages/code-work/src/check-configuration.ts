@@ -8,8 +8,6 @@ import {
   now,
   recorded,
   type Caller,
-  type CodeCheckSpec,
-  type CodeStoreLimits,
   type Scope,
   type Sql,
   type State,
@@ -18,6 +16,7 @@ import { parseCodeInput } from '@merv/code/input';
 import { OperationJournal } from '@merv/code/operation-journal';
 import type { CodeStore } from '@merv/code/store/operations';
 import type { CodeRepositoryConfigureInput } from './types.js';
+import type { CodeCheckSpec, CodeStoreLimits } from './models.js';
 
 /** The largest merged tree a project check may ship, so one upload is one page of parts. */
 export const CODE_CHECK_SOURCE_MAX_BYTES = 128 * 1024 * 1024;

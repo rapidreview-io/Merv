@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type { CodeUnit } from '@merv/contracts/code-work-models';
 import { Ago, CopyButton, KV, Short, StatusPill, Summary, cx, words } from '../components';
 import { ArrowRightIcon, ExternalIcon } from '../icons';
 import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
 import { firstPersonMove, publicationBlocker } from '@merv/code-work/blockers';
+import type { CodeUnit } from '@merv/code-work/models';
 
 /**
  * What Git holds for one record, on the record's own page: the branch a writer stands

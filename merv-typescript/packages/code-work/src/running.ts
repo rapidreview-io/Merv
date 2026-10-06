@@ -9,7 +9,6 @@ import {
   type Actor,
   type Caller,
   type CodeCommandRecord,
-  type CodeUnit,
   type RunningAttention,
   type RunningFact,
   type RunningMark,
@@ -29,6 +28,7 @@ import {
 } from '@merv/contracts';
 import { personMove, type PersonMove } from './blockers.js';
 import type { CodeBaseService, CodeCheckStanding } from './bases.js';
+import type { CodeUnit } from './models.js';
 
 /**
  * Code's part of the Running page, read inside the page's snapshot and never written from.

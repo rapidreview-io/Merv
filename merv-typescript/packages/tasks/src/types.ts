@@ -1,6 +1,5 @@
 import type {
   Caller,
-  CodeUnit,
   ContextPackage,
   ContextRecipeDefinition,
   ProcessGraph,
@@ -12,6 +11,7 @@ import type {
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type { Task, TaskConfirmation, TaskRecord } from './models.js';
+import type { CodeUnit } from '@merv/code-work/models';
 export type * from './models.js';
 
 export interface TaskContext {

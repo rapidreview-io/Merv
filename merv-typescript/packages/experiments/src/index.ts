@@ -14,7 +14,6 @@ import {
   newId,
   now,
   type Artifact,
-  type CodeUnit,
   type Caller,
   type Data,
   type ProcessGraph,
@@ -93,6 +92,7 @@ import {
   type ExperimentRow,
   type SubmissionRow,
 } from './storage.js';
+import type { CodeUnit } from '@merv/code-work/models';
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);

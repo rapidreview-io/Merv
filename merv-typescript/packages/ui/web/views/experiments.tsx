@@ -1,7 +1,6 @@
 import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
-import type { CodeUnit } from '@merv/contracts/code-work-models';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { CodeBlock } from '../code-block';
@@ -26,6 +25,7 @@ import { Thread, threadOf } from '../thread';
 import { type Review } from './reviews';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
+import type { CodeUnit } from '@merv/code-work/models';
 
 /** The domain's own order; a role with nothing retained under it is left out. */
 const ROLES = ['plan', 'feasibility', 'result', 'report', 'exhibit'] as const;

@@ -1,19 +1,11 @@
 import type {
   Caller,
-  CodeAcceptedSince,
-  CodeBasePin,
-  CodeBaseStatus,
   CodeCommandRecord,
   CodeCommitCommand,
   CodeCommitInput,
   CodeLocalBindInput,
   CodeProjectBinding,
-  CodeProjectStatus,
   CodePublication,
-  CodeStoreLimits,
-  CodeUnit,
-  CodeUnitAcceptance,
-  CodeUnitAcceptInput,
   GitHubPullDetails,
   RunningMark,
   RunningNode,
@@ -26,6 +18,16 @@ import type {
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
 import type {} from 'cordis';
+import type {
+  CodeAcceptedSince,
+  CodeBasePin,
+  CodeBaseStatus,
+  CodeProjectStatus,
+  CodeStoreLimits,
+  CodeUnit,
+  CodeUnitAcceptance,
+  CodeUnitAcceptInput,
+} from './models.js';
 
 /** A project's check and admission lists, all restated on every call. */
 export type CodeRepositoryConfigureInput = Omit<CodeStoreLimits, 'format'> & { requestId: string };
@@ -185,11 +187,11 @@ export interface CodeRepositoryControls {
   acceptedSince(caller: Caller): Promise<CodeAcceptedSince>;
   controlBase(
     caller: Caller,
-    input: Omit<import('@merv/contracts').CodeBaseControlInput, 'action'> & {
+    input: Omit<import('./models.js').CodeBaseControlInput, 'action'> & {
       /** Contracts publishes the first five; release and repair are Code's own routes back. */
-      action: import('@merv/contracts').CodeBaseControlInput['action'] | 'release' | 'repair';
+      action: import('./models.js').CodeBaseControlInput['action'] | 'release' | 'repair';
     },
-  ): Promise<import('@merv/contracts').CodeBaseRecord>;
+  ): Promise<import('./models.js').CodeBaseRecord>;
   importRepository(
     caller: Caller,
     input: import('@merv/contracts').CodeRepositoryImportInput,

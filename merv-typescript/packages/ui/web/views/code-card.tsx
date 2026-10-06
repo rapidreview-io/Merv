@@ -1,12 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import type {
-  CodeBaseCheck,
-  CodeBaseControlInput,
-  CodeBaseRecord,
-  CodeUnit,
-} from '@merv/contracts/code-work-models';
-import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { CodePublication } from '@merv/contracts/types';
 import {
   Ago,
@@ -31,6 +24,13 @@ import { useCommand } from '../mutations';
 import { bytes } from './artifacts';
 import { MAIN, sameMerge, waitersOf, type GitModel } from './code-model';
 import { UnitCode } from './code-section';
+import type {
+  CodeBaseCheck,
+  CodeBaseControlInput,
+  CodeBaseRecord,
+  CodeUnit,
+  CodeProjectStatus,
+} from '@merv/code-work/models';
 
 /**
  * What one node on the canvas is, in its own fields: the trunk, a unit of work, the

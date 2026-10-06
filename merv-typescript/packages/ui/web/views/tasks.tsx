@@ -1,5 +1,4 @@
 import { Link, useParams } from 'react-router-dom';
-import type { CodeUnit } from '@merv/contracts/code-work-models';
 import { useTool, type Loaded } from '../api';
 import { recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
@@ -14,6 +13,7 @@ import { CriterionRows, type Review } from './reviews';
 import type { ViewProps } from './index';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import type { Task } from '@merv/tasks/models';
+import type { CodeUnit } from '@merv/code-work/models';
 
 /** How the server titles the brief it composes from a task's title, goal and checks. */
 const COMPOSED = 'Task brief: ';

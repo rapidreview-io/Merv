@@ -6,13 +6,8 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import {
-  check,
-  CODE_BUNDLE_MAX_BYTES,
-  MervError,
-  type CodeProjectStatus,
-  type CodeStoreOperation,
-} from '@merv/contracts';
+import { check, CODE_BUNDLE_MAX_BYTES, MervError, type CodeStoreOperation } from '@merv/contracts';
+import type { CodeProjectStatus } from './models.js';
 
 const run = promisify(execFile);
 

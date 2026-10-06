@@ -1,6 +1,7 @@
 import type { Tasks } from '@merv/tasks/types';
-import type { Artifacts, Caller, CodeUnit, CodeUnitPublication, State } from '@merv/contracts';
+import type { Artifacts, Caller, State } from '@merv/contracts';
 import type { ResearchService } from '@merv/research';
+import type { CodeUnit, CodeUnitPublication } from '@merv/code-work/models';
 
 /** What the test says main lacks and where a unit's publication stands; changed as it goes. */
 export interface Main {

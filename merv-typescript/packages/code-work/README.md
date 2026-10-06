@@ -56,6 +56,7 @@ flowchart LR
   codeWork -- "runs project checks" --> sandboxes
   codeWork -- "mounts /code, code.* tools" --> api
   codeWork -- "row, Running part" --> ui
+  ui -- "imports @merv/code-work/models" --> codeWork
   worker -- "calls code.* tools" --> api
   code -- "App auth, Git transport" --> github
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0

@@ -28,7 +28,6 @@ import {
   type Artifact,
   type Artifacts,
   type Caller,
-  type CodeUnit,
   type ContextBuild,
   type ContextBuilder,
   type ContextInput,
@@ -95,6 +94,7 @@ import type {
   TaskReview,
   Tasks,
 } from './types.js';
+import type { CodeUnit } from '@merv/code-work/models';
 
 export type {
   Task,

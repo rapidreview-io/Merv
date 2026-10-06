@@ -1,6 +1,5 @@
 import type {
   Caller,
-  CodeUnit,
   ProcessGraph,
   ReviewApplication,
   RunningNode,
@@ -20,6 +19,7 @@ import type {
   ExperimentOccupancy,
   ExperimentTransition,
 } from './models.js';
+import type { CodeUnit } from '@merv/code-work/models';
 export type * from './models.js';
 
 /** An experiment verdict, with the reviewer's own Methods/Results edits. */

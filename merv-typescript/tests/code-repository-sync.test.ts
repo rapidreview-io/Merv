@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { join } from 'node:path';
 import { createService } from '@merv/contracts';
-import type { CodeUnit } from '@merv/contracts';
 import type { CodeUnitService } from '../packages/code-work/src/units.js';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import { CodeService } from '@merv/code-work/service';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { gitSource } from './fixtures/code-store.js';
+import type { CodeUnit } from '@merv/code-work/models';
 
 async function fixture(t: TestContext) {
   const f = await resolutionFixture(t);

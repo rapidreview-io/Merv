@@ -446,7 +446,10 @@ function assertComponentReferences(
   const isAdapter = adapterKind(path) !== undefined;
   for (const reference of moduleReferences(source)) {
     const { specifier, typeOnly } = reference;
-    if (specifier.startsWith('@merv/') && !sharedContract(specifier)) {
+    // Contracts is no component: any of its modules may be named for types alone, which is how
+    // a portable /models module reaches the code and store shapes it is built from.
+    const contractTypes = typeOnly && specifier.startsWith('@merv/contracts/');
+    if (specifier.startsWith('@merv/') && !sharedContract(specifier) && !contractTypes) {
       const utility =
         owner === 'code-work' &&
         specifier.startsWith('@merv/code/') &&

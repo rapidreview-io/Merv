@@ -2,37 +2,20 @@ import type { AgentEvent, AgentStreamEvent, NativeMcpConnection } from '@merv/co
 export type { NativeMcpConnection } from '@merv/contracts';
 import type { HuggingFaceAccess } from '@merv/secrets/types';
 import type {
-  AgentObservation,
-  BudgetStatus,
   Caller,
   Data,
   DelegationSource,
-  DispatchHold,
-  DispatchState,
-  RunnerHeartbeat,
   RunnerPlatform,
-  RunnerPresence,
-  RunnerSettings,
   RunningMark,
   RunningNodes,
   RunningPanelPart,
   RunningSection,
   RunningSummary,
-  SessionDeferral,
-  SessionOutcome,
-  SessionReleaseOutcome,
-  SessionStatus,
   SessionUsageReport,
-  SessionsProjectStatus,
-  StuckReport,
-  UsageRollup,
   WorkflowAssignment,
   WorkflowExecution,
   WorkflowLease,
-  SessionPlatform,
-  SessionRole,
   SessionWorkspace,
-  SessionWorkspaceRecord,
   Transaction,
   WorkRoute,
 } from '@merv/contracts';
@@ -44,13 +27,25 @@ import type {
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from './managed-types.js';
-export type {
-  ManagedEnrollmentInput,
-  ManagedModelGrant,
-  ManagedRunnerBindingIdentity,
-  ManagedRunnerInspection,
-  ManagedRunnerValidator,
-} from './managed-types.js';
+import type {
+  AgentObservation,
+  BudgetStatus,
+  DispatchHold,
+  DispatchState,
+  RunnerHeartbeat,
+  RunnerPresence,
+  RunnerSettings,
+  SessionDeferral,
+  SessionOutcome,
+  SessionReleaseOutcome,
+  SessionStatus,
+  SessionsProjectStatus,
+  StuckReport,
+  UsageRollup,
+  SessionPlatform,
+  SessionRole,
+  SessionWorkspaceRecord,
+} from './models.js';
 export type {
   AgentObservation,
   AgentSummary,
@@ -60,7 +55,6 @@ export type {
   DispatchHold,
   DispatchState,
   RunnerHeartbeat,
-  RunnerPlatform,
   RunnerPresence,
   RunnerSettings,
   SessionDeferral,
@@ -70,8 +64,6 @@ export type {
   SessionRole,
   SessionStatus,
   SessionSummary,
-  SessionUsageReport,
-  SessionWorkspace,
   SessionWorkspaceRecord,
   SessionsProjectStatus,
   StuckItem,
@@ -79,7 +71,15 @@ export type {
   StuckReport,
   UsageRollup,
   UsageTotals,
-} from '@merv/contracts';
+} from './models.js';
+export type {
+  ManagedEnrollmentInput,
+  ManagedModelGrant,
+  ManagedRunnerBindingIdentity,
+  ManagedRunnerInspection,
+  ManagedRunnerValidator,
+} from './managed-types.js';
+export type { RunnerPlatform, SessionUsageReport, SessionWorkspace } from '@merv/contracts';
 
 /** A continuing agent instance and its authenticated session, independent of assignments. */
 export interface Agent {

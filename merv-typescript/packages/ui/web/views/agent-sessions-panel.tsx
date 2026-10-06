@@ -1,4 +1,3 @@
-import type { AgentSummary, AgentObservation as Observation } from '@merv/contracts/types';
 import { useEffect, useRef, useState } from 'react';
 import { useTool } from '../api';
 import {
@@ -17,6 +16,7 @@ import { CloseIcon } from '../icons';
 import { Segments } from '../list-filters';
 import { clock, holding, leaseLiveness, type Clock } from '../liveness';
 import { useRows } from '../navigation';
+import type { AgentSummary, AgentObservation as Observation } from '@merv/sessions/models';
 
 /** The same lease, as the agent's own observation sends it. */
 type Assignment = Observation['assignments'][number];

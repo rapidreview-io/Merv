@@ -1,10 +1,5 @@
 import { createHash } from 'node:crypto';
-import {
-  check,
-  type CodeBaseCheck,
-  type CodeBaseRecord,
-  type CodeCheckSpec,
-} from '@merv/contracts';
+import { check } from '@merv/contracts';
 import type {
   SandboxCheckHandle,
   SandboxCheckPlan,
@@ -13,6 +8,7 @@ import type {
 import type { ServerGit } from '@merv/code/git';
 import { CODE_CHECK_SLACK_SECONDS, CODE_CHECK_SOURCE_MAX_BYTES } from './check-configuration.js';
 import type { ResolutionWork } from './types.js';
+import type { CodeBaseCheck, CodeBaseRecord, CodeCheckSpec } from './models.js';
 
 /**
  * The project check of one base, on the Code side. A base that merged cleanly is not sealed
