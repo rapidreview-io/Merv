@@ -402,7 +402,8 @@ export interface PiRuntime extends Pi {
     subscribe(id: string, listener: () => void): () => void;
   };
   authorizeStream(caller: Caller, id: string): Promise<void>;
-  authenticateWorker(token: string): Promise<void>;
+  /** A `piw_` bearer's caller, once its slot is live. */
+  authenticateWorker(token: string): Promise<Caller>;
   /** Holds up to `holdMs` for work before answering `work: null`. */
   next(token: string, input: unknown, holdMs?: number): Promise<PiNextReply>;
   tool(token: string, input: unknown): Promise<unknown>;

@@ -182,10 +182,9 @@ test(
     const streamResponse = piHttp.stream.bind(piHttp);
     piHttp.stream = (...args) =>
       operations.run({ kind: 'progress' }, () => streamResponse(...args));
-    const unmount = app.ctx.api.mount(
-      '/pi-worker',
-      (req, res) => operations.run({ kind: 'progress' }, () => piHttp.worker(req, res)),
-      { public: true },
+    const withdraw = app.ctx.api.credential('piw_', piHttp.credential);
+    const unmount = app.ctx.api.mount('/pi-worker', (req, res, r) =>
+      operations.run({ kind: 'progress' }, () => piHttp.worker(req, res, r)),
     );
     const unregister = app.ctx.api.mount('/pi', piHttp.events);
     let stream: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -196,6 +195,7 @@ test(
       piHttp.close();
       unregister();
       unmount();
+      withdraw();
       await pi.close();
       await fleet.close();
       await app.stop();

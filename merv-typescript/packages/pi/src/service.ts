@@ -1211,9 +1211,14 @@ export class PiService implements Pi, FleetOwner {
     return owned;
   }
   /** The check before a worker's request is read. Every route reads its authority again in its
-   * own transaction but /progress, which trusts a read for a second too. */
-  async authenticateWorker(token: string): Promise<void> {
+   * own transaction but /progress, which trusts a read for a second too. A worker acts for no
+   * person: its caller names only the slot it holds, in the host project. */
+  async authenticateWorker(token: string): Promise<Caller> {
     await this.trust(token, () => this.read((tx) => this.worker(token, tx)));
+    return {
+      projectId: this.hostProject,
+      actorId: `pi-worker:${token.slice(4, token.indexOf('.'))}`,
+    };
   }
 
   /** The worker's turn on its own slot. Unless ending it, the person must still read here: losing

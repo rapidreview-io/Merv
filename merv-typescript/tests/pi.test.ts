@@ -16,6 +16,7 @@ import {
   type Role,
   type State,
 } from '@merv/contracts';
+import { ApiServer } from '../packages/api/src/http.js';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
@@ -2001,11 +2002,13 @@ test(
   { timeout: 20_000 },
   async (t) => {
     const { runPiWorker } = await import('../packages/pi/src/worker.js');
-    const server = createServer();
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const address = server.address();
+    // A free port, for the API server the worker reaches.
+    const probe = createServer();
+    probe.listen(0, '127.0.0.1');
+    await once(probe, 'listening');
+    const address = probe.address();
     assert.ok(address && typeof address === 'object');
+    await new Promise((resolve) => probe.close(resolve));
     const origin = `http://127.0.0.1:${address.port}`;
     const f = await fixture(t, { baseUrl: origin, startTime: Date.now() });
     let http = new PiHttp(f.pi);
@@ -2073,14 +2076,19 @@ test(
         });
       },
     });
-    server.on('request', (req, res) => {
-      void (req.url?.startsWith('/pi-model/') ? relay.handle(req, res) : http.worker(req, res));
+    // As Pi's API adapter mounts them, on the PiHttp of the running service.
+    const api = new ApiServer(f.scope, f.tools, { host: '127.0.0.1', port: address.port });
+    api.credential('piw_', {
+      ...http.credential,
+      authenticate: (token) => http.credential.authenticate!(token),
     });
-    t.after(() => {
+    api.mount('/pi-worker', (req, res, r) => http.worker(req, res, r));
+    api.mount('/pi-model', relay.handle, { public: true });
+    await api.start();
+    t.after(async () => {
       http.close();
       relay.close();
-      server.closeAllConnections();
-      server.close();
+      await api.stop();
     });
     const conversation = await f.create();
     async function runTurn(text: string) {

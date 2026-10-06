@@ -1,60 +1,14 @@
-import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { MervError, check, type Caller } from '@merv/contracts';
 import { serveEvents } from '@merv/api/event-stream';
-import type { MountHandler } from '@merv/api/types';
+import type { ApiCredential, MountHandler } from '@merv/api/types';
 import type { PiRuntime } from './types.js';
-
-function json(res: ServerResponse, status: number, value: unknown): void {
-  if (res.destroyed || res.headersSent) return;
-  res.writeHead(status, {
-    'content-type': 'application/json',
-    'cache-control': 'no-store',
-    'x-content-type-options': 'nosniff',
-  });
-  res.end(JSON.stringify(value));
-}
 
 /** A completion carries an answer of up to messageChars (at most six bytes each as JSON) and its
  * checkpoint (2 MB). */
 const bodyBytes = 16_000_000;
-
-async function body(req: IncomingMessage): Promise<unknown> {
-  check(
-    !req.destroyed && req.headers['content-type']?.split(';')[0].trim() === 'application/json',
-    'invalid_pi_input',
-    'Expected JSON',
-    415,
-  );
-  check(
-    Number(req.headers['content-length'] ?? 0) <= bodyBytes,
-    'pi_body_too_large',
-    'Request exceeds its limit',
-    413,
-  );
-  const chunks: Buffer[] = [];
-  let size = 0;
-  const timeout = setTimeout(() => req.destroy(), 10_000);
-  timeout.unref();
-  try {
-    for await (const chunk of req.iterator({ destroyOnReturn: false })) {
-      size += chunk.length;
-      check(size <= bodyBytes, 'pi_body_too_large', 'Request exceeds its limit', 413);
-      chunks.push(chunk);
-    }
-    const bytes = Buffer.concat(chunks);
-    check(isUtf8(bytes), 'invalid_pi_input', 'Expected UTF-8 JSON');
-    try {
-      return JSON.parse(bytes.toString('utf8'));
-    } catch {
-      throw new MervError('invalid_pi_input', 'Invalid JSON');
-    }
-  } finally {
-    clearTimeout(timeout);
-    req.resume();
-  }
-}
+const workerRoute = /^\/pi-worker\/(next|begin|tool|progress|complete|fail)$/;
 
 export class PiHttp {
   private readonly responses = new Set<ServerResponse>();
@@ -67,44 +21,46 @@ export class PiHttp {
     private readonly holdMs = 5_000,
   ) {}
 
-  readonly worker = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    try {
-      check(!this.closed, 'pi_unavailable', 'Agent conversations are unavailable', 503);
-      const url = new URL(req.url ?? '/', 'http://localhost');
-      const match = /^\/pi-worker\/(next|begin|tool|progress|complete|fail)$/.exec(url.pathname);
-      check(
-        req.method === 'POST' && match && !url.search,
-        'not_found',
-        'Unknown worker route',
-        404,
-      );
-      check(
-        !req.headers.origin,
-        'pi_forbidden',
-        'Worker routes do not accept browser requests',
-        403,
-      );
-      const token = req.headers.authorization?.match(/^Bearer (piw_[A-Za-z0-9_.-]+)$/)?.[1];
-      check(token, 'pi_unauthorized', 'A worker credential is required', 401);
-      await this.pi.authenticateWorker(token);
-      const input = await body(req);
-      check(!this.closed && !res.destroyed, 'pi_unavailable', 'Worker connection closed', 503);
-      const action = match[1];
-      if (action === 'next') json(res, 200, await this.pi.next(token, input, this.holdMs));
-      else if (action === 'tool') json(res, 200, { result: await this.pi.tool(token, input) });
-      else if (action === 'begin') json(res, 200, await this.pi.begin(token, input));
-      else if (action === 'progress') json(res, 200, await this.pi.progress(token, input));
-      else if (action === 'complete') json(res, 200, await this.pi.complete(token, input));
-      else json(res, 200, await this.pi.fail(token, input));
-    } catch (error) {
-      req.resume();
-      json(res, error instanceof MervError ? error.status : 500, {
-        error:
-          error instanceof MervError
-            ? { code: error.code, message: error.message }
-            : { code: 'pi_unavailable', message: 'Agent operation failed' },
-      });
-    }
+  /** `piw_` bearers: a worker's own credential, for the worker routes alone. Every path under
+   *  /pi-worker reaches the handler, which answers 404 off its exact routes. */
+  readonly credential: ApiCredential = {
+    kind: 'pi-worker',
+    forbidden: new MervError(
+      'pi_forbidden',
+      'Worker credentials only reach the worker routes',
+      403,
+    ),
+    routes: (_method, path) => path.startsWith('/pi-worker/'),
+    authenticate: (token) => this.pi.authenticateWorker(token),
+  };
+
+  /** `POST /pi-worker/<action>`: a worker's request, authenticated by its `piw_` credential. */
+  readonly worker: MountHandler = async (req, _res, r) => {
+    check(!this.closed, 'pi_unavailable', 'Agent conversations are unavailable', 503);
+    const match = workerRoute.exec(r.url.pathname);
+    check(
+      req.method === 'POST' && match && !r.url.search,
+      'not_found',
+      'Unknown worker route',
+      404,
+    );
+    check(!req.headers.origin, 'pi_forbidden', 'Worker routes do not accept browser requests', 403);
+    check(
+      r.principal?.kind === 'pi-worker',
+      'pi_unauthorized',
+      'A worker credential is required',
+      401,
+    );
+    const token = r.bearer();
+    const input = await r.json(undefined, bodyBytes);
+    check(!this.closed, 'pi_unavailable', 'Worker connection closed', 503);
+    const action = match[1];
+    if (action === 'next') return await this.pi.next(token, input, this.holdMs);
+    if (action === 'tool') return { result: await this.pi.tool(token, input) };
+    if (action === 'begin') return await this.pi.begin(token, input);
+    if (action === 'progress') return await this.pi.progress(token, input);
+    if (action === 'complete') return await this.pi.complete(token, input);
+    return await this.pi.fail(token, input);
   };
 
   /** `GET /pi/<id>/events`: a page's live view of one conversation, as its authenticated person. */
@@ -178,7 +134,8 @@ export const piApiPlugin = {
     const http = new PiHttp(ctx.pi);
     ctx.effect(() => () => http.close());
     ctx.effect(() => ctx.api.mount('/pi', http.events));
-    ctx.effect(() => ctx.api.mount('/pi-worker', http.worker, { public: true }));
+    ctx.effect(() => ctx.api.credential('piw_', http.credential));
+    ctx.effect(() => ctx.api.mount('/pi-worker', http.worker));
     ctx.effect(() => {
       const relay = ctx.pi.modelRelay();
       const unmount = ctx.api.mount('/pi-model', relay.handle, { public: true });
