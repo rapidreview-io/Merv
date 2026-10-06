@@ -196,19 +196,14 @@ async function retired(tx: Transaction, result: ContextPackage): Promise<boolean
 export class RecipeContextBuilder implements ContextBuilder {
   private registrations = new Map<string, symbol>();
   private closed = false;
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
     private artifacts: Artifacts,
-  ) {
-    this.initialize = async () => {
-      await state.migrate(
-        'context_builder',
-        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-      );
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate('context_builder', postgresMigrations);
   }
   /** Read-only work: in the caller's transaction, else the ambient one, else a read-only snapshot
    *  transaction, which never takes the writer lock. */

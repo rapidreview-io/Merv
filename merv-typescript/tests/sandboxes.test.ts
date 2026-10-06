@@ -729,7 +729,6 @@ test('a deployment composes the sandboxes plugins only when the service is named
   assert.deepEqual(fleetConfig.parse(config('@merv/fleet')).projectLimits, { project_host: 50 });
   const pi = piConfig.parse(config('@merv/pi'));
   assert.throws(() => piConfig.parse({ ...pi, host: undefined }), /host project/);
-  assert.equal(pi.runtimeKey, 'project');
   assert.deepEqual(pi.host, { projectId: 'project_host', credentialEnv: 'MERV_PI_HOST_KEY' });
   assert.deepEqual(
     pi.machines.map((machine) => [machine.key, machine.slots, machine.agent]),

@@ -2,6 +2,7 @@ import { currentTask } from './fixtures/current-work.js';
 import {
   createService,
   MervError,
+  migrationList,
   type Caller,
   type WorkflowPolicy,
   type WorkflowWorkspacePolicy,
@@ -160,7 +161,7 @@ async function fixture(
             await migrate(
               component,
               component === 'session_dispatch'
-                ? migrations.filter((m) => m.version <= dispatchSchema)
+                ? migrationList(migrations).filter((m) => m.version <= dispatchSchema)
                 : migrations,
             );
     try {

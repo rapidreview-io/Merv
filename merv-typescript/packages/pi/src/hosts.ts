@@ -8,7 +8,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
-import type { FleetAllocation } from '@merv/fleet/types';
+import type { FleetAllocation, FleetOwner } from '@merv/fleet/types';
 import { tokenDigest } from '@merv/identity/credentials';
 import type {
   PiBootstrap,
@@ -21,7 +21,7 @@ import type {
   PiMoveFailure,
   PiSlot,
 } from './types.js';
-import { active, decode, gone, lost, PiCore, readyMs, roleOf, roles } from './core.js';
+import { active, decode, gone, lost, type PiCore, readyMs, roleOf, roles } from './core.js';
 
 /** A current slot this close to its deadline is replaced by a fresh one of its machine (T10). */
 const rolloverMs = 15 * 60_000;
@@ -32,11 +32,20 @@ const moveRoom = 3;
 
 /** Each person's host: renting its machines, moving and ending it, and the reconciler that keeps
  * it in step with Fleet. Fleet's owner callbacks (payer, valid, bootstrap, observe) are here. */
-export abstract class PiHosts extends PiCore {
+export class PiHosts implements FleetOwner {
+  readonly sourcePermission = 'read' as const;
+  /** Owner ids Fleet is admitting now, with their person: valid() and payer() answer for a slot
+   * before its host records it. */
+  private readonly renting = new Map<string, string>();
+  /** The Pi host identity, which rents every slot; never the person. */
+  private renter?: Caller;
+  /** The reconciling pass under way, which close() waits for. */
+  pending?: Promise<void>;
+  constructor(private readonly core: PiCore) {}
   /** Each open page of the conversations sharing the host re-reads once the transaction commits
    * (announce). */
-  protected async saveHost(tx: Transaction, host: PiHostRecord): Promise<void> {
-    const previous = await this.host(tx, host.id);
+  async saveHost(tx: Transaction, host: PiHostRecord): Promise<void> {
+    const previous = await this.core.host(tx, host.id);
     const live = host.status === 'live' ? roles.flatMap((role) => host[role] ?? []) : [];
     for (const slot of live) {
       const old =
@@ -61,26 +70,26 @@ export abstract class PiHosts extends PiCore {
       host.createdAt,
       JSON.stringify(host),
     );
-    for (const { id } of await this.sharing(tx, host.userId, host.key)) this.sharers.add(id);
+    for (const { id } of await this.sharing(tx, host.userId, host.key)) this.core.sharers.add(id);
   }
   /** The person's conversations that share the host `key`. */
-  protected async sharing(sql: Sql, userId: string, key: string) {
+  private async sharing(sql: Sql, userId: string, key: string) {
     return (
       await sql.all<{ id: string; project_id: string }>(
         'SELECT id,project_id FROM pi_conversations WHERE user_id=?',
         userId,
       )
-    ).filter(({ project_id }) => this.key(userId, project_id) === key);
+    ).filter(({ project_id }) => this.core.key(userId, project_id) === key);
   }
   /** A move, stamped at its outcome, joins the person's last day of moves; an agent's cut-over
    * also makes its machine where a new host starts (`sticky`). */
-  protected async record(tx: Transaction, key: string, move: Omit<PiMove, 'at'>): Promise<void> {
-    const person = await this.person(tx, key);
-    person.moves.push({ at: this.time(), ...move });
+  private async record(tx: Transaction, key: string, move: Omit<PiMove, 'at'>): Promise<void> {
+    const person = await this.core.person(tx, key);
+    person.moves.push({ at: this.core.time(), ...move });
     if (move.by === 'agent' && move.outcome === 'moved') person.sticky = move.to;
-    await this.savePerson(tx, person);
+    await this.core.savePerson(tx, person);
   }
-  protected async syncWorkerCredential(
+  private async syncWorkerCredential(
     tx: Transaction,
     host: PiHostRecord,
     slot: PiSlot,
@@ -90,11 +99,11 @@ export abstract class PiHosts extends PiCore {
     // Fleet can reset its deadline once when a queued rental starts. Its two phases each
     // last at most 24 hours, so the same worker key has a fixed outer limit of 48 hours.
     const hardDeadline = new Date(Date.parse(allocation.createdAt) + 2 * 86_400_000).toISOString();
-    const tokenHash = tokenDigest(this.workerToken(host.id, slot));
-    const credential = await this.credentials.adopt(
+    const tokenHash = tokenDigest(this.core.workerToken(host.id, slot));
+    const credential = await this.core.credentials.adopt(
       {
         owner: 'pi',
-        subject: this.workerSubject(host, slot),
+        subject: this.core.workerSubject(host, slot),
         kind: 'pi-worker',
         tokenHash,
         expiresAt: slot.expiresAt,
@@ -105,37 +114,40 @@ export abstract class PiHosts extends PiCore {
     if (
       credential.expiresAt &&
       credential.expiresAt < slot.expiresAt &&
-      credential.expiresAt > this.time() &&
+      credential.expiresAt > this.core.time() &&
       !credential.revokedAt
     )
-      await this.credentials.renew(tokenHash, 'pi', slot.expiresAt, tx);
+      await this.core.credentials.renew(tokenHash, 'pi', slot.expiresAt, tx);
   }
-  protected revokeWorkerCredential(tx: Transaction, host: PiHostRecord, slot: PiSlot) {
-    return this.revokeCredential(tx, this.workerToken(host.id, slot));
+  private revokeWorkerCredential(tx: Transaction, host: PiHostRecord, slot: PiSlot) {
+    return this.core.revokeCredential(tx, this.core.workerToken(host.id, slot));
   }
   /** The conversation's live host and the allocation of the slot serving its new turns. */
-  protected async machineOf(tx: Transaction, conversation: PiConversationRecord) {
-    const host = await this.liveHost(tx, this.key(conversation.userId, conversation.projectId));
+  async machineOf(tx: Transaction, conversation: PiConversationRecord) {
+    const host = await this.core.liveHost(
+      tx,
+      this.core.key(conversation.userId, conversation.projectId),
+    );
     const allocation = host?.current && (await this.allocation(host.current.allocationId, tx));
     return { host, allocation: allocation || null };
   }
   /** T1: the person's live host here, with a current slot for new turns: one is rented when it
    * has none. A host that has idled out is ended, not raced; the next send starts a fresh one. */
-  protected async ensure(
+  async ensure(
     renter: Caller,
     { userId, projectId }: PiConversationRecord,
     source: DelegationSource,
     tx: Transaction,
     warm = false,
   ): Promise<{ host: PiHostRecord; queued: boolean }> {
-    const key = this.key(userId, projectId);
-    let host = await this.liveHost(tx, key);
+    const key = this.core.key(userId, projectId);
+    let host = await this.core.liveHost(tx, key);
     if (host) await this.settle(tx, host, renter);
     if (host?.status === 'live' && host.current) {
       const allocation = await this.allocation(host.current.allocationId, tx);
       return { host, queued: allocation?.phase === 'queued' };
     }
-    const machine = await this.starting(await this.person(tx, key), source, tx);
+    const machine = await this.core.starting(await this.core.person(tx, key), source, tx);
     if (host?.status !== 'live')
       host = {
         id: newId('pih'),
@@ -148,12 +160,12 @@ export abstract class PiHosts extends PiCore {
         next: null,
         draining: null,
         idleSince: null,
-        createdAt: this.time(),
+        createdAt: this.core.time(),
         ended: null,
       };
     host.current = await this.rent(renter, host, machine, tx);
     // Unused, a warmed host ends after the idle timeout like any other.
-    if (warm && !(await this.turns(tx, host.id)).length) host.idleSince = this.time();
+    if (warm && !(await this.core.turns(tx, host.id)).length) host.idleSince = this.core.time();
     await this.saveHost(tx, host);
     return { host, queued: true };
   }
@@ -161,17 +173,17 @@ export abstract class PiHosts extends PiCore {
    * person's project needs no Sandboxes of its own. It only rents: turns read as the person. With
    * the host project unconnected, Fleet refuses a rental as sandbox_not_connected. A key it does
    * not accept is the server's fault, never the person's 401, which would sign them out. */
-  protected async hostCaller(): Promise<Caller> {
+  async hostCaller(): Promise<Caller> {
     if (this.renter) return this.renter;
-    const token = process.env[this.config.host!.credentialEnv];
+    const token = process.env[this.core.config.host!.credentialEnv];
     check(token, 'pi_configuration', 'The Pi host credential is unavailable', 503);
-    const actor = await this.scope.authenticate(token).catch((error: unknown) => {
+    const actor = await this.core.scope.authenticate(token).catch((error: unknown) => {
       if (error instanceof MervError && error.status === 401) return null;
       throw error;
     });
     check(actor, 'pi_configuration', 'The Pi host credential is not accepted', 503);
     check(
-      actor.projectId === this.hostProject,
+      actor.projectId === this.core.hostProject,
       'pi_configuration',
       'The Pi host credential is outside its project',
       503,
@@ -183,7 +195,7 @@ export abstract class PiHosts extends PiCore {
     });
   }
   /** A new slot on `machine` for the host, requested by the host identity under a new epoch. */
-  protected async rent(
+  private async rent(
     renter: Caller,
     host: PiHostRecord,
     machine: string,
@@ -193,7 +205,7 @@ export abstract class PiHosts extends PiCore {
     const id = `${host.id}:${epoch}`;
     this.renting.set(id, host.userId);
     try {
-      const allocation = await this.fleet.request(
+      const allocation = await this.core.fleet.request(
         renter,
         { requestId: id, owner: { kind: 'pi-host', id }, profile: machine },
         tx,
@@ -214,31 +226,35 @@ export abstract class PiHosts extends PiCore {
   }
   /** The earliest of the slot's deadline, the source's expiry and `span` from now: none while
    * queued, turnTimeoutSeconds to reach the machine, and the ceiling once claimed. */
-  protected turnEnd(slot: PiSlot, source: DelegationSource, span: number): number {
-    return Math.min(this.clock() + span, Date.parse(slot.expiresAt), delegationEnd(source));
+  turnEnd(slot: PiSlot, source: DelegationSource, span: number): number {
+    return Math.min(this.core.clock() + span, Date.parse(slot.expiresAt), delegationEnd(source));
   }
   /** A turn's time to reach its machine; a queued one waits for capacity without a limit. */
-  protected startMs(queued: boolean): number {
-    return queued ? Infinity : this.config.turnTimeoutSeconds * 1000;
+  startMs(queued: boolean): number {
+    return queued ? Infinity : this.core.config.turnTimeoutSeconds * 1000;
   }
   /** A claimed turn that showed no progress for turnTimeoutSeconds. One claimed before this
    * process started counts from its first check here. */
-  protected stalled(turn: PiCommandRecord): boolean {
+  private stalled(turn: PiCommandRecord): boolean {
     if (!turn.workerId) return false;
     const key = `${turn.conversationId}:${turn.id}`;
-    if (!this.progressAt.has(key)) this.progressAt.set(key, this.clock());
-    return this.progressAt.get(key)! + this.config.turnTimeoutSeconds * 1000 <= this.clock();
+    if (!this.core.progressAt.has(key)) this.core.progressAt.set(key, this.core.clock());
+    return (
+      this.core.progressAt.get(key)! + this.core.config.turnTimeoutSeconds * 1000 <=
+      this.core.clock()
+    );
   }
   /** The host's idle clock starts when the last turn in any of its conversations has ended. */
-  protected async quiet(tx: Transaction, hostId: string | undefined): Promise<void> {
-    const host = hostId ? await this.host(tx, hostId) : null;
-    if (host?.status !== 'live' || host.idleSince || (await this.turns(tx, host.id)).length) return;
-    host.idleSince = this.time();
+  async quiet(tx: Transaction, hostId: string | undefined): Promise<void> {
+    const host = hostId ? await this.core.host(tx, hostId) : null;
+    if (host?.status !== 'live' || host.idleSince || (await this.core.turns(tx, host.id)).length)
+      return;
+    host.idleSince = this.core.time();
     await this.saveHost(tx, host);
   }
   /** An operator may delete a stuck allocation row; Pi then treats the machine as lost. */
-  protected allocation(id: string, tx?: Transaction): Promise<FleetAllocation | null> {
-    return this.fleet.inspectOwned(this, id, tx).catch((error: unknown) => {
+  allocation(id: string, tx?: Transaction): Promise<FleetAllocation | null> {
+    return this.core.fleet.inspectOwned(this, id, tx).catch((error: unknown) => {
       if (
         error instanceof MervError &&
         ['fleet_not_found', 'fleet_owner_denied'].includes(error.code)
@@ -249,10 +265,11 @@ export abstract class PiHosts extends PiCore {
   }
 
   /** The live host slot an allocation serves; only Pi records a slot's allocation on a host. */
-  protected async owning(allocation: FleetAllocation, tx: Transaction) {
-    if (this.closed || !this.config.enabled || allocation.owner.kind !== 'pi-host') return null;
+  async owning(allocation: FleetAllocation, tx: Transaction) {
+    if (this.core.closed || !this.core.config.enabled || allocation.owner.kind !== 'pi-host')
+      return null;
     const [hostId, epoch] = allocation.owner.id.split(':');
-    const host = await this.host(tx, hostId);
+    const host = await this.core.host(tx, hostId);
     const role = host?.status === 'live' ? roleOf(host, allocation.id) : undefined;
     const slot = role && host![role];
     return slot && slot.epoch === Number(epoch) ? { host: host!, role: role!, slot } : null;
@@ -260,7 +277,9 @@ export abstract class PiHosts extends PiCore {
   /** A host's machines are for its person, whose day's compute they count toward. */
   async payer(_source: DelegationSource, ownerId: string, tx: Transaction): Promise<string | null> {
     return (
-      this.renting.get(ownerId) ?? (await this.host(tx, ownerId.split(':')[0]!))?.userId ?? null
+      this.renting.get(ownerId) ??
+      (await this.core.host(tx, ownerId.split(':')[0]!))?.userId ??
+      null
     );
   }
   /** C runs until the host idles out, N until its time to prove ready, D while it has turns. */
@@ -268,16 +287,16 @@ export abstract class PiHosts extends PiCore {
     if (allocation.owner.kind === 'pi-host' && this.renting.has(allocation.owner.id)) return true;
     const owned = await this.owning(allocation, tx);
     if (!owned) return false;
-    if (owned.role === 'current') return !this.idleOver(owned.host);
-    if (owned.role === 'next') return owned.host.next!.readyBy > this.time();
-    return (await this.turns(tx, owned.host.id)).some(
+    if (owned.role === 'current') return !this.core.idleOver(owned.host);
+    if (owned.role === 'next') return owned.host.next!.readyBy > this.core.time();
+    return (await this.core.turns(tx, owned.host.id)).some(
       (turn) => turn.runtimeId === allocation.id && turn.workerId,
     );
   }
 
   async bootstrap(allocation: FleetAllocation): Promise<string> {
-    this.ready();
-    return this.read(async (tx) => {
+    this.core.ready();
+    return this.core.read(async (tx) => {
       const owned = await this.owning(allocation, tx);
       check(
         owned && (await this.valid(allocation, tx)),
@@ -289,13 +308,13 @@ export abstract class PiHosts extends PiCore {
       const bootstrap: PiBootstrap = {
         kind: 'pi',
         version: 2,
-        baseUrl: new URL(this.config.baseUrl!).origin,
+        baseUrl: new URL(this.core.config.baseUrl!).origin,
         hostId: host.id,
         runtimeId: allocation.id,
         epoch: slot.epoch,
         machine: slot.machine,
-        slots: this.slots(slot.machine),
-        workerToken: this.workerToken(host.id, slot),
+        slots: this.core.slots(slot.machine),
+        workerToken: this.core.workerToken(host.id, slot),
         expiresAt: allocation.deadlineAt,
       };
       return JSON.stringify(bootstrap);
@@ -304,36 +323,36 @@ export abstract class PiHosts extends PiCore {
 
   /** Running once a worker has enrolled, which acknowledges the launch; finished once invalid. */
   async observe(allocation: FleetAllocation): Promise<'starting' | 'running' | 'finished'> {
-    return this.read(async (tx) => {
+    return this.core.read(async (tx) => {
       const owned = await this.owning(allocation, tx);
       if (!owned || !(await this.valid(allocation, tx))) return 'finished';
       return owned.role === 'draining' || owned.slot.workerId ? 'running' : 'starting';
     });
   }
 
-  protected async interrupt(
+  async interrupt(
     tx: Transaction,
     command: PiCommandRecord,
     reason: PiInterruption,
   ): Promise<void> {
     if (!active.has(command.status)) return;
-    this.forget(command);
-    const conversation = await this.conversation(tx, command.conversationId);
+    this.core.forget(command);
+    const conversation = await this.core.conversation(tx, command.conversationId);
     // Words the person saw stream stay as the answer, unless the turn's own result is in.
-    const streamed = this.live.get(conversation.id)?.streamed;
+    const streamed = this.core.live.get(conversation.id)?.streamed;
     if (streamed?.commandId === command.id && streamed.text && !command.resultHash)
       command.messages.push({ role: 'assistant', text: streamed.text });
     command.status = 'interrupted';
     command.error = reason;
-    command.completedAt = this.time();
+    command.completedAt = this.core.time();
     if (conversation.activeCommandId === command.id) conversation.activeCommandId = null;
-    await this.saveCommand(tx, command);
-    await this.saveConversation(tx, conversation);
-    this.unsent.add(conversation.id);
+    await this.core.saveCommand(tx, command);
+    await this.core.saveConversation(tx, conversation);
+    this.core.unsent.add(conversation.id);
   }
   /** The host ends with any turn still on it, every slot is released, and a move it was starting
    * is recorded as cancelled. A host keeping a turn (`keep`) stays, with no machine, for settle. */
-  protected async end(
+  async end(
     tx: Transaction,
     host: PiHostRecord,
     reason: string,
@@ -341,88 +360,92 @@ export abstract class PiHosts extends PiCore {
     keep?: (turn: PiCommandRecord) => boolean,
   ): Promise<void> {
     let kept = false;
-    for (const turn of await this.turns(tx, host.id))
+    for (const turn of await this.core.turns(tx, host.id))
       if (keep?.(turn)) {
-        await this.saveCommand(tx, turn);
+        await this.core.saveCommand(tx, turn);
         kept = true;
       } else await this.interrupt(tx, turn, turnsEnd);
     if (host.next) await this.abandon(tx, host, 'cancelled');
     for (const role of roles) {
       const slot = host[role];
       if (slot && (await this.allocation(slot.allocationId, tx)))
-        await this.fleet.cancelOwned(this, slot.allocationId, tx);
+        await this.core.fleet.cancelOwned(this, slot.allocationId, tx);
       if (kept) host[role] = null;
     }
     if (!kept) {
       host.status = 'ended';
-      host.ended = { at: this.time(), reason };
+      host.ended = { at: this.core.time(), reason };
     }
     await this.saveHost(tx, host);
   }
 
   tick(): Promise<void> {
-    if (this.closed || !this.config.enabled) return Promise.resolve();
+    if (this.core.closed || !this.core.config.enabled) return Promise.resolve();
     return (this.pending ??= this.reconcile().finally(() => {
       this.pending = undefined;
     }));
   }
 
-  protected async reconcile(): Promise<void> {
+  private async reconcile(): Promise<void> {
     const renter = await this.hostCaller().catch(() => undefined);
     // Most passes find nothing to do: one read looks at every live host, and only a host with
     // something due takes the writer lock. One host's failure leaves the others' passes alone;
     // the next pass retries it.
-    const due = await this.read(async (tx) => {
-      const ids: string[] = [];
-      for (const row of await tx.all<{ data_json: string }>(
-        "SELECT data_json FROM pi_hosts WHERE status='live'",
-      )) {
-        const host = decode<PiHostRecord>(row);
-        if (await this.settle(tx, host, renter, true).catch(() => false)) ids.push(host.id);
-      }
-      return ids;
-    }).catch(() => []);
+    const due = await this.core
+      .read(async (tx) => {
+        const ids: string[] = [];
+        for (const row of await tx.all<{ data_json: string }>(
+          "SELECT data_json FROM pi_hosts WHERE status='live'",
+        )) {
+          const host = decode<PiHostRecord>(row);
+          if (await this.settle(tx, host, renter, true).catch(() => false)) ids.push(host.id);
+        }
+        return ids;
+      })
+      .catch(() => []);
     for (const id of due) {
       try {
-        await this.state.transaction(async (tx) => {
-          const host = await this.host(tx, id);
+        await this.core.state.transaction(async (tx) => {
+          const host = await this.core.host(tx, id);
           if (host?.status === 'live') await this.settle(tx, host, renter);
         });
-        this.streams.wake(id);
-        this.announce();
+        this.core.streams.wake(id);
+        this.core.announce();
       } catch {
         /* retried on the next pass */
       }
     }
     // Fleet's progress is what open pages are waiting on: one read sees every live conversation.
-    await this.read(async (tx) => {
-      for (const id of [...this.live.keys()]) {
-        const seen = await (async () => {
-          const conversation = await this.conversation(tx, id);
-          const command = conversation.activeCommandId
-            ? await this.command(tx, id, conversation.activeCommandId)
-            : null;
-          return { conversation, command, ...(await this.machineOf(tx, conversation)) };
-        })().catch(() => null);
-        if (seen) this.stage(seen.conversation, seen.command, seen.host, seen.allocation);
-      }
-    }).catch(() => {});
+    await this.core
+      .read(async (tx) => {
+        for (const id of [...this.core.live.keys()]) {
+          const seen = await (async () => {
+            const conversation = await this.core.conversation(tx, id);
+            const command = conversation.activeCommandId
+              ? await this.core.command(tx, id, conversation.activeCommandId)
+              : null;
+            return { conversation, command, ...(await this.machineOf(tx, conversation)) };
+          })().catch(() => null);
+          if (seen) this.core.stage(seen.conversation, seen.command, seen.host, seen.allocation);
+        }
+      })
+      .catch(() => {});
   }
   /** Applies Fleet's facts to a host: N not ready (T6), C lost (T7), D released once drained
    * (T5), turns expired or out of the queue, the idle end (T8) and a deadline's rollover (T10).
    * With `dry`, in a read, only whether any of that is due. */
-  protected async settle(
+  async settle(
     tx: Transaction,
     host: PiHostRecord,
     renter?: Caller,
     dry = false,
   ): Promise<boolean> {
-    const now = this.time();
-    if (this.idleOver(host)) {
+    const now = this.core.time();
+    if (this.core.idleOver(host)) {
       if (dry) return true;
-      const person = await this.person(tx, host.key);
+      const person = await this.core.person(tx, host.key);
       person.sticky = null;
-      await this.savePerson(tx, person);
+      await this.core.savePerson(tx, person);
       await this.end(tx, host, 'idle');
       return true;
     }
@@ -432,7 +455,7 @@ export abstract class PiHosts extends PiCore {
       if (slot) facts.set(slot.allocationId, await this.allocation(slot.allocationId, tx));
     }
     const fact = (slot: PiSlot | null) => (slot && facts.get(slot.allocationId)) || null;
-    let turns = await this.turns(tx, host.id);
+    let turns = await this.core.turns(tx, host.id);
     let changed = false;
     const { next } = host;
     if (next && (gone(fact(next), now) || next.readyBy <= now)) {
@@ -475,7 +498,7 @@ export abstract class PiHosts extends PiCore {
         changed = true;
       }
     }
-    if (changed) turns = await this.turns(tx, host.id);
+    if (changed) turns = await this.core.turns(tx, host.id);
     for (const turn of turns) {
       const role = roleOf(host, turn.runtimeId);
       if (turn.expiresAt <= now || this.stalled(turn)) {
@@ -498,8 +521,8 @@ export abstract class PiHosts extends PiCore {
       const fresh = !host.current;
       let reason: PiInterruption = 'runtime_lost';
       if (fresh && renter) {
-        const { source } = await this.conversation(tx, unplaced[0].conversationId);
-        const machine = await this.starting(await this.person(tx, host.key), source, tx);
+        const { source } = await this.core.conversation(tx, unplaced[0].conversationId);
+        const machine = await this.core.starting(await this.core.person(tx, host.key), source, tx);
         // Fleet refusing the rental, its daily cap among them, is no lost machine.
         host.current = await this.rent(renter, host, machine, tx).catch((error: unknown) => {
           reason =
@@ -521,20 +544,20 @@ export abstract class PiHosts extends PiCore {
       // Only a machine in use is renewed near its deadline: of its kind while the newest turn's
       // person may still choose it, else the default. One they may no longer choose (take holds
       // their turns) is left for the default at once, unannounced like a rollover.
-      const { source } = await this.conversation(tx, newest.conversationId);
-      const allowed = (await this.machineChoice(source, current.machine, tx)).allowed;
+      const { source } = await this.core.conversation(tx, newest.conversationId);
+      const allowed = (await this.core.machineChoice(source, current.machine, tx)).allowed;
       if (
-        (!allowed || Date.parse(current.expiresAt) - this.clock() < rolloverMs) &&
-        !(await this.person(tx, host.key)).moves.some(
+        (!allowed || Date.parse(current.expiresAt) - this.core.clock() < rolloverMs) &&
+        !(await this.core.person(tx, host.key)).moves.some(
           (move) =>
             move.by === 'deadline' &&
             move.outcome === 'failed' &&
-            Date.parse(move.at) + rolloverRetryMs > this.clock(),
+            Date.parse(move.at) + rolloverRetryMs > this.core.clock(),
         ) &&
-        (await this.fleet.free(this.hostProject, tx)) >= moveRoom
+        (await this.core.fleet.free(this.core.hostProject, tx)) >= moveRoom
       ) {
         if (dry) return true;
-        const to = allowed ? current.machine : this.config.machines[0].key;
+        const to = allowed ? current.machine : this.core.config.machines[0].key;
         const moved = await this.move(tx, renter, host, to, 'deadline');
         changed ||= moved;
       }
@@ -545,14 +568,14 @@ export abstract class PiHosts extends PiCore {
       return true;
     }
     if (!changed || dry) return false;
-    if (!(await this.turns(tx, host.id)).length) host.idleSince ??= now;
+    if (!(await this.core.turns(tx, host.id)).length) host.idleSince ??= now;
     await this.saveHost(tx, host);
     return true;
   }
   /** The turns on a slot Fleet no longer runs, its unclaimed ones only with `unclaimed`. One whose
    * machine was lost starts again if it may (again); every other ends, as a refused or stopped
    * machine's do. */
-  protected async lose(
+  private async lose(
     tx: Transaction,
     turns: PiCommandRecord[],
     slot: PiSlot,
@@ -563,17 +586,17 @@ export abstract class PiHosts extends PiCore {
     for (const turn of turns)
       if (turn.runtimeId !== slot.allocationId || !(unclaimed || turn.workerId)) continue;
       else if (reason === 'runtime_lost' && this.again(turn, true))
-        await this.saveCommand(tx, turn);
+        await this.core.saveCommand(tx, turn);
       else await this.interrupt(tx, turn, reason);
   }
   /** A turn that has shown nothing, no word and no tool call, starts again on a fresh machine:
    * once after its own machine is lost (`once`), and after every restart. Its claim is dropped,
    * so its old worker can do nothing more with it; settle places it, and the caller saves it. */
-  protected again(turn: PiCommandRecord, once: boolean): boolean {
+  again(turn: PiCommandRecord, once: boolean): boolean {
     const shown = turn.firstTextAt || turn.calledAt || turn.resultHash;
-    if (shown || turn.expiresAt <= this.time() || (once && turn.retried)) return false;
-    this.forget(turn);
-    const live = this.live.get(turn.conversationId);
+    if (shown || turn.expiresAt <= this.core.time() || (once && turn.retried)) return false;
+    this.core.forget(turn);
+    const live = this.core.live.get(turn.conversationId);
     if (live?.turn?.commandId === turn.id) delete live.turn;
     if (once) turn.retried = true;
     Object.assign(turn, { status: 'waiting', workerId: null });
@@ -583,7 +606,7 @@ export abstract class PiHosts extends PiCore {
   /** N becomes C: at cut-over once proven ready (T4), or first when C is lost (T7, its claimed
    * turns already lost). C's unclaimed turns follow N; at cut-over its claimed turns finish on D
    * while C drains, or C stops at once. */
-  protected async promote(
+  async promote(
     tx: Transaction,
     host: PiHostRecord,
     lostSlot = false,
@@ -591,16 +614,16 @@ export abstract class PiHosts extends PiCore {
   ): Promise<void> {
     const old = host.current!;
     const { by, conversationId, readyBy: _, ...slot } = host.next!;
-    host.current = lostSlot ? slot : { ...slot, readyAt: this.time() };
+    host.current = lostSlot ? slot : { ...slot, readyAt: this.core.time() };
     host.next = null;
-    const turns = (await this.turns(tx, host.id)).filter(
+    const turns = (await this.core.turns(tx, host.id)).filter(
       ({ runtimeId }) => runtimeId === old.allocationId,
     );
     for (const turn of turns)
       if (!turn.workerId) await this.reassign(tx, turn, host.current, queued);
     if (!lostSlot) {
       if (turns.some(({ workerId }) => workerId)) host.draining = old;
-      else await this.fleet.cancelOwned(this, old.allocationId, tx);
+      else await this.core.fleet.cancelOwned(this, old.allocationId, tx);
     }
     await this.record(tx, host.key, {
       by,
@@ -612,7 +635,7 @@ export abstract class PiHosts extends PiCore {
   }
   /** N's move ends without a cut-over: its machine is released, and the move is recorded, as the
    * agent's rules count every move whatever its outcome. */
-  protected async abandon(
+  async abandon(
     tx: Transaction,
     host: PiHostRecord,
     outcome: 'failed' | 'cancelled',
@@ -620,7 +643,7 @@ export abstract class PiHosts extends PiCore {
   ): Promise<void> {
     const next = host.next!;
     if (await this.allocation(next.allocationId, tx))
-      await this.fleet.cancelOwned(this, next.allocationId, tx);
+      await this.core.fleet.cancelOwned(this, next.allocationId, tx);
     await this.record(tx, host.key, {
       by: next.by,
       from: host.current?.machine ?? next.machine,
@@ -632,24 +655,24 @@ export abstract class PiHosts extends PiCore {
     host.next = null;
   }
   /** An unclaimed turn moves to another slot: a new model credential, and a turn's time there. */
-  protected async reassign(
+  private async reassign(
     tx: Transaction,
     turn: PiCommandRecord,
     slot: PiSlot,
     queued: boolean,
   ): Promise<void> {
-    const { source } = await this.conversation(tx, turn.conversationId);
+    const { source } = await this.core.conversation(tx, turn.conversationId);
     turn.runtimeId = slot.allocationId;
     turn.epoch = slot.epoch;
     turn.machine = slot.machine;
     turn.status = queued ? 'waiting' : 'starting';
     turn.expiresAt = new Date(this.turnEnd(slot, source, this.startMs(queued))).toISOString();
-    await this.saveCommand(tx, turn);
-    this.unsent.add(turn.conversationId);
+    await this.core.saveCommand(tx, turn);
+    this.core.unsent.add(turn.conversationId);
   }
   /** T2: starts `to` as the next slot while C keeps serving. False, recorded as a failed move,
    * when Fleet has no room for a second machine. */
-  protected async move(
+  async move(
     tx: Transaction,
     renter: Caller,
     host: PiHostRecord,
@@ -666,7 +689,7 @@ export abstract class PiHosts extends PiCore {
     const from = host.current.machine;
     // Fleet refusing the rental, its daily cap among them, fails the move; C keeps serving.
     const slot =
-      (await this.fleet.free(this.hostProject, tx)) >= moveRoom &&
+      (await this.core.fleet.free(this.core.hostProject, tx)) >= moveRoom &&
       (await this.rent(renter, host, to, tx).catch((error: unknown) => {
         if (error instanceof MervError && error.status < 500) return error;
         throw error;
@@ -686,7 +709,7 @@ export abstract class PiHosts extends PiCore {
       ...slot,
       by,
       conversationId: conversationId ?? null,
-      readyBy: new Date(this.clock() + readyMs).toISOString(),
+      readyBy: new Date(this.core.clock() + readyMs).toISOString(),
     };
     return true;
   }

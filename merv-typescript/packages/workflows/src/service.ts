@@ -36,11 +36,6 @@ import {
 import { batches, type InstanceRow, type Registration } from './engine.js';
 import { WorkflowCommands } from './commands.js';
 
-const migrations = Object.entries(postgresMigrations).map(([version, sql]) => ({
-  version: Number(version),
-  sql,
-}));
-
 /** The most instances one dependency closure is walked over. */
 const closureLimit = 5000;
 
@@ -48,7 +43,7 @@ const closureLimit = 5000;
 export class WorkflowsService extends WorkflowCommands implements Workflows {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate('workflows', migrations);
+    await this.state.migrate('workflows', postgresMigrations);
     await this.state.read(async (sql) => await this.contracts.preload(sql));
   }
 

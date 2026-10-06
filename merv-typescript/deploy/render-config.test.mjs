@@ -386,7 +386,6 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     baseUrl: 'https://merv.example',
     turnTimeoutSeconds: 300,
     idleTimeoutSeconds: 600,
-    runtimeKey: 'project',
     host: { projectId: 'project_host', credentialEnv: 'PI_HOST_KEY' },
     machines: [{ key: 'standard', label: 'Standard', slots: 3, agent: false }],
     agentMoves: false,
@@ -415,7 +414,6 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     ...pi,
     MERV_FLEET_RUNTIMES: JSON.stringify(catalog),
     MERV_FLEET_PROJECT_LIMITS: '{"project_host":50}',
-    MERV_PI_RUNTIME_KEY: 'person',
     MERV_PI_AGENT_MOVES: 'true',
   };
   assert.equal(run(machines).status, 0);
@@ -423,11 +421,8 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
   assert.equal(plugin('sandboxes').config.runtime, undefined);
   assert.deepEqual(plugin('fleet').config.projectLimits, { project_host: 50 });
   assert.deepEqual(
-    (({ runtimeKey, machines, agentMoves }) => ({ runtimeKey, machines, agentMoves }))(
-      plugin('pi').config,
-    ),
+    (({ machines, agentMoves }) => ({ machines, agentMoves }))(plugin('pi').config),
     {
-      runtimeKey: 'person',
       machines: [
         { key: 'standard', label: 'Standard', slots: 3, agent: false },
         { key: 'large', label: 'Large', slots: 4, agent: true },
@@ -460,7 +455,6 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
     { MERV_FLEET_PROJECT_LIMITS: '{"project_host":0}' },
     { MERV_FLEET_PROJECT_LIMITS: '{"project_host":65}' },
     { MERV_FLEET_PROJECT_LIMITS: '{"../host":5}' },
-    { MERV_PI_RUNTIME_KEY: 'user' },
     { MERV_PI_AGENT_MOVES: 'yes' },
     { MERV_PI_HOST_PROJECT_ID: undefined },
     { MERV_PI_HOST_PROJECT_ID: 'project.host' },

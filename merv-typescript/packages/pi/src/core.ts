@@ -100,21 +100,35 @@ export function parse<T extends z.ZodTypeAny>(schema: T, value: unknown): z.outp
   return parsed.data;
 }
 
-/** Pi's records, credentials and what a page is shown of them: the base the host lifecycle,
- * the worker protocol and the person's service build on. */
-export abstract class PiCore {
-  readonly sourcePermission = 'read' as const;
+export function conversationCaller(
+  conversation: PiConversationRecord,
+  command: PiCommandRecord,
+): Caller {
+  return {
+    actorId: conversation.source.actorId,
+    projectId: conversation.projectId,
+    conversation: {
+      id: conversation.id,
+      commandId: command.id,
+      runtimeId: command.runtimeId,
+      epoch: command.epoch,
+    },
+  };
+}
+
+/** Pi's records, credentials and what a page is shown of them: the context the host lifecycle,
+ * the worker protocol and the person's service share. */
+export class PiCore {
   readonly streams = new PiStreams();
   readonly config: z.output<typeof piConfig>;
-  protected readonly secret: string;
-  protected readonly credentials: CredentialStore;
+  readonly secret: string;
+  readonly credentials: CredentialStore;
   /** Each person's Agent tokens today, which every model call of theirs is charged to. */
   readonly tokens: ReturnType<typeof piTokens>;
-  protected readonly disposers: (() => void)[] = [];
   /** Memory only, never State: the stage each open conversation last showed, what its worker
    * last reported within a turn, and the answer it has streamed so far, which a turn ended early
    * keeps (interrupt). */
-  protected readonly live = new Map<
+  readonly live = new Map<
     string,
     {
       stage?: PiStage;
@@ -126,33 +140,26 @@ export abstract class PiCore {
    * `conversationId:commandId`, last showed progress (its claim, a streamed word, a tool call),
    * which turnTimeoutSeconds bounds; and authority reads trusted for a second, as the relay
    * trusts a grant's: worker credentials, and turns /progress found their worker holding. */
-  protected readonly progressAt = new Map<string, number>();
-  protected readonly trusted = new Map<string, number>();
+  readonly progressAt = new Map<string, number>();
+  readonly trusted = new Map<string, number>();
   /** Memory only, keyed like progressAt: each claimed turn's refused calls, by the digest of name
    * and input, with the code each was refused with. */
-  protected readonly refusals = new Map<string, Map<string, string>>();
-  /** Owner ids Fleet is admitting now, with their person: valid() and payer() answer for a slot
-   * before its host records it. */
-  protected readonly renting = new Map<string, string>();
+  readonly refusals = new Map<string, Map<string, string>>();
   /** Conversations whose turns a transaction ended or moved, announced after it commits; a spare
    * announcement only makes an open page read again. */
-  protected readonly unsent = new Set<string>();
+  readonly unsent = new Set<string>();
   /** Conversations sharing a host a transaction saved: they read it from their own snapshots. */
-  protected readonly sharers = new Set<string>();
-  /** The Pi host identity, which rents every slot; never the person. */
-  protected renter?: Caller;
-  protected timer?: ReturnType<typeof setInterval>;
-  protected pending?: Promise<void>;
-  protected closed = false;
+  readonly sharers = new Set<string>();
+  closed = false;
 
   constructor(
-    protected readonly state: State,
-    protected readonly scope: Scope,
-    protected readonly fleet: Fleet,
-    protected readonly tools: Tools,
-    protected readonly blobs: Blobs,
+    readonly state: State,
+    readonly scope: Scope,
+    readonly fleet: Fleet,
+    readonly tools: Tools,
+    readonly blobs: Blobs,
     config: PiConfig = {},
-    protected readonly clock: () => number = Date.now,
+    readonly clock: () => number = Date.now,
   ) {
     const parsed = piConfig.safeParse(config);
     if (!parsed.success)
@@ -187,7 +194,7 @@ export abstract class PiCore {
     }
   }
 
-  protected ready(): void {
+  ready(): void {
     check(
       this.config.enabled && !this.closed,
       'pi_unavailable',
@@ -195,27 +202,27 @@ export abstract class PiCore {
       503,
     );
   }
-  protected time(): string {
+  time(): string {
     return new Date(this.clock()).toISOString();
   }
-  protected read<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
+  read<T>(fn: (tx: Transaction) => Promise<T>): Promise<T> {
     return this.state.snapshot(() => this.state.transaction(fn));
   }
-  protected get hostProject(): string {
+  get hostProject(): string {
     return this.config.host!.projectId;
   }
-  /** One host per person per project (the ruling), or per person with runtimeKey 'person'. */
-  protected key(userId: string, projectId: string): string {
-    return this.config.runtimeKey === 'project' ? `${userId}:${projectId}` : userId;
+  /** One host per person per project (the ruling). */
+  key(userId: string, projectId: string): string {
+    return `${userId}:${projectId}`;
   }
   /** A catalog model; a missing or withdrawn id means the default, models[0]. */
-  protected model(id?: string) {
+  model(id?: string) {
     return this.config.models.find((model) => model.id === id) ?? this.config.models[0];
   }
-  protected slots(machine: string): number {
+  slots(machine: string): number {
     return this.config.machines.find(({ key }) => key === machine)?.slots ?? 1;
   }
-  protected async conversation(sql: Sql, id: string): Promise<PiConversationRecord> {
+  async conversation(sql: Sql, id: string): Promise<PiConversationRecord> {
     const row = await sql.get<{ data_json: string }>(
       'SELECT data_json FROM pi_conversations WHERE id=?',
       id,
@@ -223,7 +230,7 @@ export abstract class PiCore {
     check(row, 'pi_not_found', 'Conversation not found', 404);
     return decode(row);
   }
-  protected async command(sql: Sql, conversationId: string, id: string): Promise<PiCommandRecord> {
+  async command(sql: Sql, conversationId: string, id: string): Promise<PiCommandRecord> {
     const row = await sql.get<{ data_json: string }>(
       'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
       conversationId,
@@ -233,11 +240,7 @@ export abstract class PiCore {
     return decode(row);
   }
   /** Only a question, an answer or a name moves a conversation up the list (`touch`). */
-  protected async saveConversation(
-    tx: Transaction,
-    conversation: PiConversationRecord,
-    touch = true,
-  ) {
+  async saveConversation(tx: Transaction, conversation: PiConversationRecord, touch = true) {
     conversation.revision++;
     if (touch) conversation.updatedAt = this.time();
     await tx.run(
@@ -247,7 +250,7 @@ export abstract class PiCore {
     );
   }
   /** The relay hash follows the turn's slot, which a cut-over may change before it is claimed. */
-  protected async saveCommand(tx: Transaction, command: PiCommandRecord): Promise<void> {
+  async saveCommand(tx: Transaction, command: PiCommandRecord): Promise<void> {
     const previous = await tx.get<{ data_json: string }>(
       'SELECT data_json FROM pi_commands WHERE conversation_id=? AND id=?',
       command.conversationId,
@@ -278,14 +281,14 @@ export abstract class PiCore {
       command.id,
     );
   }
-  protected async host(sql: Sql, id: string): Promise<PiHostRecord | null> {
+  async host(sql: Sql, id: string): Promise<PiHostRecord | null> {
     const row = await sql.get<{ data_json: string }>(
       'SELECT data_json FROM pi_hosts WHERE id=?',
       id,
     );
     return row ? decode(row) : null;
   }
-  protected async liveHost(sql: Sql, key: string): Promise<PiHostRecord | null> {
+  async liveHost(sql: Sql, key: string): Promise<PiHostRecord | null> {
     const row = await sql.get<{ data_json: string }>(
       "SELECT data_json FROM pi_hosts WHERE key=? AND status='live'",
       key,
@@ -293,7 +296,7 @@ export abstract class PiCore {
     return row ? decode(row) : null;
   }
   /** The host's turns that have not ended, oldest first. */
-  protected async turns(sql: Sql, hostId: string): Promise<PiCommandRecord[]> {
+  async turns(sql: Sql, hostId: string): Promise<PiCommandRecord[]> {
     return (
       await sql.all<{ data_json: string }>(
         "SELECT data_json FROM pi_commands WHERE host_id=? AND status IN ('waiting','starting','working','saving') ORDER BY created_at,id",
@@ -301,7 +304,7 @@ export abstract class PiCore {
       )
     ).map(decode<PiCommandRecord>);
   }
-  protected async person(sql: Sql, key: string): Promise<PiPersonRecord> {
+  async person(sql: Sql, key: string): Promise<PiPersonRecord> {
     const row = await sql.get<{ data_json: string }>(
       'SELECT data_json FROM pi_people WHERE key=?',
       key,
@@ -310,7 +313,7 @@ export abstract class PiCore {
       ? decode(row)
       : { key, preferred: this.config.machines[0].key, sticky: null, choseAt: null, moves: [] };
   }
-  protected async savePerson(tx: Transaction, person: PiPersonRecord): Promise<void> {
+  async savePerson(tx: Transaction, person: PiPersonRecord): Promise<void> {
     const since = new Date(this.clock() - 86_400_000).toISOString();
     person.moves = person.moves.filter((move) => move.at > since);
     await tx.run(
@@ -319,27 +322,27 @@ export abstract class PiCore {
       JSON.stringify(person),
     );
   }
-  protected signature(kind: string, value: unknown): string {
+  signature(kind: string, value: unknown): string {
     return createHmac('sha256', this.secret)
       .update(JSON.stringify([kind, value]))
       .digest('base64url');
   }
-  protected workerToken(hostId: string, slot: PiSlot): string {
+  workerToken(hostId: string, slot: PiSlot): string {
     return `piw_${slot.allocationId}.${this.signature('worker', [hostId, slot.allocationId, slot.epoch])}`;
   }
-  protected probe(hostId: string, slot: PiSlot, workerId: string): string {
+  probe(hostId: string, slot: PiSlot, workerId: string): string {
     return this.signature('probe', [hostId, slot.allocationId, workerId]);
   }
-  protected modelToken(command: PiCommandRecord): string {
+  modelToken(command: PiCommandRecord): string {
     return `pir_${this.signature('model', [command.conversationId, command.id, command.epoch, command.runtimeId])}`;
   }
-  protected workerSubject(host: PiHostRecord, slot: PiSlot): string {
+  workerSubject(host: PiHostRecord, slot: PiSlot): string {
     return `${host.id}:${slot.allocationId}:${slot.epoch}`;
   }
-  protected modelSubject(command: PiCommandRecord): string {
+  modelSubject(command: PiCommandRecord): string {
     return `${command.conversationId}:${command.id}:${command.epoch}:${command.runtimeId}`;
   }
-  protected async syncModelCredential(tx: Transaction, command: PiCommandRecord): Promise<void> {
+  async syncModelCredential(tx: Transaction, command: PiCommandRecord): Promise<void> {
     const tokenHash = tokenDigest(this.modelToken(command));
     await this.credentials.adopt(
       {
@@ -353,19 +356,18 @@ export abstract class PiCore {
       tx,
     );
   }
-  protected async revokeCredential(tx: Transaction, token: string): Promise<void> {
+  async revokeCredential(tx: Transaction, token: string): Promise<void> {
     // An unknown hash is a no-op; revoking an already expired row is harmless.
     await this.credentials.revoke(tokenDigest(token), 'pi', tx);
   }
-  protected revokeModelCredential(tx: Transaction, command: PiCommandRecord) {
+  revokeModelCredential(tx: Transaction, command: PiCommandRecord) {
     return this.revokeCredential(tx, this.modelToken(command));
   }
   /** The agent assumes the person's permissions. The default machine is always allowed;
    * another requires write permission in this project. Otherwise the picker shows the reason,
    * a new host starts on the default, and switch_machine is not offered. Checked again at each claim: a
    * machine its person may no longer choose takes none of their turns and is left for the
-   * default (take, settle). With runtimeKey 'person' one host serves several projects, and a turn
-   * from one where the machine is not allowed waits for that move. */
+   * default (take, settle). */
   async machineChoice(
     source: DelegationSource,
     machine: string,
@@ -384,7 +386,7 @@ export abstract class PiCore {
     return { allowed: true };
   }
   /** A configured machine as Sandboxes describes its offer; null hides it. */
-  protected async machine(key: string): Promise<PiMachine | null> {
+  async machine(key: string): Promise<PiMachine | null> {
     const configured = this.config.machines.find((machine) => machine.key === key);
     const offer = configured && (await this.fleet.describe(this.hostProject, key));
     return offer
@@ -398,7 +400,7 @@ export abstract class PiCore {
         }
       : null;
   }
-  protected async catalog(source: DelegationSource, tx: Transaction): Promise<PiMachineOption[]> {
+  async catalog(source: DelegationSource, tx: Transaction): Promise<PiMachineOption[]> {
     const options: PiMachineOption[] = [];
     for (const { key } of this.config.machines) {
       const machine = await this.machine(key);
@@ -413,7 +415,7 @@ export abstract class PiCore {
     return options;
   }
   /** Where a new host starts: the agent's last move, else the person's pick, while allowed. */
-  protected async starting(
+  async starting(
     person: PiPersonRecord,
     source: DelegationSource,
     tx: Transaction,
@@ -423,11 +425,11 @@ export abstract class PiCore {
       ? wanted
       : this.config.machines[0].key;
   }
-  protected movingSince(next: PiNextSlot): string {
+  movingSince(next: PiNextSlot): string {
     return new Date(Date.parse(next.readyBy) - readyMs).toISOString();
   }
   /** What the person waits on now, from the turn, its machine and what the worker last reported. */
-  protected stage(
+  stage(
     conversation: PiConversationRecord,
     command: PiCommandRecord | null,
     host: PiHostRecord | null,
@@ -461,7 +463,7 @@ export abstract class PiCore {
     return this.show(id, { name: !slot.workerId ? 'agent' : command ? 'thinking' : 'ready' });
   }
   /** Keeps a stage's start while it lasts, and wakes open pages when it moves. */
-  protected show(id: string, next: Omit<PiStage, 'since'> & { since?: string }): PiStage {
+  show(id: string, next: Omit<PiStage, 'since'> & { since?: string }): PiStage {
     const live = this.live.get(id);
     const last = live?.stage ?? { name: 'idle', since: next.since ?? this.time() };
     if (last.name === next.name && last.detail === next.detail) return last;
@@ -473,7 +475,7 @@ export abstract class PiCore {
     return stage;
   }
   /** What the worker does within its turn: kept in memory and shown at once. */
-  protected report(id: string, commandId: string, name: PiStageName, detail?: string): void {
+  report(id: string, commandId: string, name: PiStageName, detail?: string): void {
     const turn = { name, since: this.time(), commandId, detail };
     this.live.set(id, { ...this.live.get(id), turn });
     this.show(id, turn);
@@ -481,7 +483,7 @@ export abstract class PiCore {
   /** Open pages re-read what a committed transaction changed: the turns it ended or moved, and
    * `ids`; and, keeping any text streaming there, every conversation of a host it saved. Fleet
    * reconciles now, not at its tick. */
-  protected announce(...ids: string[]): void {
+  announce(...ids: string[]): void {
     for (const id of [...this.unsent, ...ids]) this.streams.changed(id);
     for (const id of this.sharers) this.streams.nudge(id);
     this.unsent.clear();
@@ -489,13 +491,13 @@ export abstract class PiCore {
     this.fleet.kick();
   }
   /** A turn that ended: no progress is trusted or awaited any more. */
-  protected forget({ conversationId, id }: PiCommandRecord): void {
+  forget({ conversationId, id }: PiCommandRecord): void {
     const turn = `${conversationId}:${id}`;
     this.progressAt.delete(turn);
     this.refusals.delete(turn);
     for (const key of this.trusted.keys()) if (key.startsWith(`${turn} `)) this.trusted.delete(key);
   }
-  protected idleOver(host: PiHostRecord): boolean {
+  idleOver(host: PiHostRecord): boolean {
     return (
       !!host.idleSince &&
       Date.parse(host.idleSince) + this.config.idleTimeoutSeconds * 1000 <= this.clock()

@@ -32,7 +32,7 @@ import { changesSchema, citeSchema, kind, parse, patchSchema, reviewSchema } fro
 import { paperInput } from './context.js';
 import { introductionFrom } from './introduction.js';
 import { PROBLEM_SECTIONS } from './rules.js';
-import { migratePaper } from './storage.js';
+import { postgresMigrations } from './storage.postgres.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
 const unique = (values: string[]) => [...new Set(values)].sort();
@@ -56,16 +56,14 @@ const blank = (projectId: string, kind: PaperKind): PaperRevision => ({
 /** A document store. Scientific workflow owners stage and accept edits in their own review transaction. */
 export class PaperService implements Paper {
   private closed = false;
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
     private artifacts: Artifacts,
-  ) {
-    this.initialize = async () => {
-      await migratePaper(state);
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate('paper', postgresMigrations);
   }
   close(): void {
     this.closed = true;

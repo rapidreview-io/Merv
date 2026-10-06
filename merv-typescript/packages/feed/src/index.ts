@@ -39,21 +39,14 @@ const hydrate = (row: PostRow): FeedPost => ({
 
 /** Project-scoped communication and activity. No knowledge of tasks, reviews, or workflows. */
 export class FeedService implements Feed {
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
     private readonly artifacts: Artifacts,
-  ) {
-    this.initialize = async () => {
-      await state.migrate('feed', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-      ]);
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate('feed', postgresMigrations);
   }
 
   async post(caller: Caller, input: FeedInput, transaction?: Transaction): Promise<FeedPost> {

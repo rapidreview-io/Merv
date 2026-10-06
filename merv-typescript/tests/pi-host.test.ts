@@ -85,41 +85,6 @@ test('one machine per person per project: their conversations share it, another 
   );
 });
 
-test('keyed per person, two projects’ turns run at once on one machine, and losing one project fails only its turn', async (t) => {
-  const f = await fixture(t, { pi: { runtimeKey: 'person' } });
-  const alice = await login(f, 'alice');
-  const bob = await login(f, 'bob');
-  const one = await f.scope.members.createProject(alice, { name: 'One', requestId: 'one' });
-  const two = await f.scope.members.createProject(alice, { name: 'Two', requestId: 'two' });
-  for (const project of [one, two])
-    await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'reader' });
-  const inOne = await f.scope.caller(bob, one.id);
-  const inTwo = await f.scope.caller(bob, two.id);
-  const chatOne = await f.create(inOne);
-  const a = await f.send(chatOne, 'a', inOne);
-  const b = await f.send(await f.create(inTwo), 'b', inTwo);
-  assert.deepEqual([b.hostId, b.runtimeId], [a.hostId, a.runtimeId]);
-  const token = await f.token(a.runtimeId);
-  await f.fleet.tick();
-  await f.fleet.tick();
-  const turns: { conversationId: string; commandId: string; workerId: string }[] = [];
-  for (const sent of [a, b]) {
-    const { work } = await f.pi.next(token, { workerId: 'worker_1' });
-    assert.equal(work?.command.id, sent.id);
-    const input = { conversationId: sent.conversationId, commandId: sent.id, workerId: 'worker_1' };
-    await f.pi.begin(token, input);
-    turns.push(input);
-  }
-  await f.scope.members.removeMember(alice, one.id, 'bob');
-  const read = (input: (typeof turns)[number]) =>
-    f.pi.tool(token, { ...input, name: 'project.get', input: {} });
-  await assert.rejects(read(turns[0]), code('pi_authority_stale'));
-  assert.equal(((await read(turns[1])) as { id: string }).id, two.id);
-  await f.fleet.tick();
-  assert.equal((await f.allocation(a.runtimeId)).intent, 'run');
-  assert.deepEqual(await f.fleet.list(inTwo), []);
-});
-
 test('each change of the machine reaches every open page that shares it, and only those', async (t) => {
   const f = await fixture(t);
   const alice = await login(f, 'alice');

@@ -70,10 +70,7 @@ export class ArtifactStore implements Artifacts {
   }
   /** Complete storage migrations before publishing this service. */
   async initialize() {
-    await this.state.migrate(
-      'artifacts',
-      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-    );
+    await this.state.migrate('artifacts', postgresMigrations);
   }
   /**
    * Where a read runs: an explicit `tx`, else the ambient transaction, else a read-only snapshot

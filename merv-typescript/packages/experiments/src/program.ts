@@ -493,10 +493,7 @@ export abstract class ExperimentProgram {
 
   /** Migrates the lease table, then registers every recipe and current workflow version. */
   protected async register(): Promise<void> {
-    await this.state.migrate(
-      'experiment_program',
-      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-    );
+    await this.state.migrate('experiment_program', postgresMigrations);
     try {
       for (const recipe of EXPERIMENT_RECIPES)
         this.contexts.set(

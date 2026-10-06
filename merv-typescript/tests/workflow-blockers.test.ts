@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { createService, migrationList } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -84,7 +84,7 @@ async function fixture(t: TestContext, schemaVersion?: number) {
             await migrate(
               component,
               component === 'workflows'
-                ? migrations.filter((item) => item.version <= upTo)
+                ? migrationList(migrations).filter((item) => item.version <= upTo)
                 : migrations,
             );
     try {

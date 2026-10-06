@@ -127,12 +127,10 @@ export class ProjectScope implements Scope {
       changed: 'Managed runner authority changed during authorization',
     },
   );
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private readonly clock: () => number = Date.now,
-    grants: ToolGrant[] = [],
+    private readonly grants: ToolGrant[] = [],
   ) {
     this.ledger = new Ledger(new CredentialStore(state, clock));
     this.credentials = new ActorCredentials(
@@ -154,16 +152,18 @@ export class ProjectScope implements Scope {
       this.members,
       async (caller, permission, tx) => await this.require(caller, permission, tx),
     );
-    this.initialize = async () => {
-      await this.ledger.initialize();
-      this.toolPolicy = new ExactToolPolicy(this, grants);
-      // In version order: integer keys enumerate ascending. Production pins each text by its digest.
-      const texts = { ...postgresMigrations, ...memberships, ...userKeys, ...projectContext };
-      await state.migrate(
-        'scope',
-        Object.entries(texts).map(([version, sql]) => ({ version: +version, sql })),
-      );
-    };
+  }
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.ledger.initialize();
+    this.toolPolicy = new ExactToolPolicy(this, this.grants);
+    // Production pins each text by its digest.
+    await this.state.migrate('scope', {
+      ...postgresMigrations,
+      ...memberships,
+      ...userKeys,
+      ...projectContext,
+    });
   }
   async projectOwners(
     tx?: Transaction,

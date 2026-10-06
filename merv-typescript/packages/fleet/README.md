@@ -17,6 +17,7 @@ flowchart LR
     sandboxes["Sandboxes"]
     api["API"]
     scope["Scope"]
+    ui["UI"]
     state["State"]
     subgraph machine["Agent machine"]
       runner["Runner"]
@@ -33,6 +34,7 @@ flowchart LR
   fleet -- "injects" --> api
   fleet -- "injects" --> scope
   fleet -- "injects" --> state
+  fleet -- "ui adapter: Fleet requests page, Running part" --> ui
   sandboxes -- "HTTP /v1/sandboxes" --> sandboxesService
   fleet -- "bootstraps" --> runner
   runner -- "HTTP /sessions/runners/enroll" --> sessions

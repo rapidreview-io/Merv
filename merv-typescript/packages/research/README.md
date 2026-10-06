@@ -22,6 +22,7 @@ flowchart LR
     artifacts["Artifacts"]
     codeWork["Code Work<br/><small>managed Git</small>"]
     ui["UI"]
+    scope["Scope"]
     state["State"]
   end
   subgraph external["External"]
@@ -38,6 +39,7 @@ flowchart LR
   research -. "writes cycle digest" .-> artifacts
   research -. "publishes to main" .-> codeWork
   research -- "registers /work page" --> ui
+  research -- "injects" --> scope
   research -- "injects" --> state
   state -- "reads/writes" --> postgres
   class research self

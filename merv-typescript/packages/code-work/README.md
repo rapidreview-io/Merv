@@ -35,6 +35,7 @@ flowchart LR
     codeWork["Code work<br/><small>research to Git</small>"]
     code["Code<br/><small>Git utility</small>"]
     sessions[Sessions]
+    scope[Scope]
     workflows[Workflows]
     domainEvents[Domain Events]
     reviews[Reviews]
@@ -50,6 +51,7 @@ flowchart LR
   research -- "injects if present" --> codeWork
   codeWork -- "injects" --> code
   codeWork -- "injects" --> sessions
+  codeWork -- "injects" --> scope
   codeWork -- "injects" --> workflows
   codeWork -- "subscribes to events" --> domainEvents
   codeWork -- "reads review provenance" --> reviews

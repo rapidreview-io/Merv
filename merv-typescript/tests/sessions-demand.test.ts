@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import {
   createService,
   MervError,
+  migrationList,
   type Caller,
   type Data,
   type WorkflowWorkspacePolicy,
@@ -388,7 +389,7 @@ test('every project runs its work on Fleet’s machines after the upgrade, whate
   state.migrate = (component, migrations) =>
     migrate(
       component,
-      migrations.filter((m) => component !== 'session_dispatch' || m.version < 5),
+      migrationList(migrations).filter((m) => component !== 'session_dispatch' || m.version < 5),
     );
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),

@@ -691,7 +691,7 @@ test('a call that returns after its turn ended leaves nothing of the turn in mem
   await f.pi.stop(human, input.conversationId);
   release();
   await call;
-  const memory = f.pi as unknown as Record<'progressAt' | 'refusals', Map<string, unknown>>;
+  const memory = f.pi['core'];
   const turn = `${input.conversationId}:${input.commandId}`;
   assert.deepEqual([memory.progressAt.has(turn), memory.refusals.has(turn)], [false, false]);
 });
@@ -1900,7 +1900,7 @@ test('Pi’s own pass tells open pages each move of a warm-up, and a turn each t
   // Once the machine stops, the conversation's stage is forgotten.
   await f.pi.stopMachine(f.operator);
   await f.pi.tick();
-  assert.equal(f.pi['live'].has(id), false);
+  assert.equal(f.pi['core'].live.has(id), false);
 });
 
 test('each conversation keeps its model; a pick is the person’s default for new ones here', async (t) => {

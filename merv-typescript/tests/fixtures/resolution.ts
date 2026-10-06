@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { createService, migrationList } from '@merv/contracts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -35,7 +35,9 @@ export async function resolutionFixture(
             : undefined;
     return migrate(
       component,
-      version === undefined ? migrations : migrations.filter((item) => item.version <= version),
+      version === undefined
+        ? migrations
+        : migrationList(migrations).filter((item) => item.version <= version),
     );
   };
   const scope = await createService(new ProjectScope(state));

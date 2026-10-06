@@ -1,5 +1,5 @@
 import { currentTask, currentWork } from './fixtures/current-work.js';
-import { createService } from '@merv/contracts';
+import { createService, migrationList } from '@merv/contracts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -54,7 +54,7 @@ async function fixture(maximumMigration = Infinity) {
     await migrate(
       component,
       component === 'reviews'
-        ? migrations.filter((item) => item.version <= maximumMigration)
+        ? migrationList(migrations).filter((item) => item.version <= maximumMigration)
         : migrations,
     );
   const reviews = await createService(new ReviewService(state, scope, artifacts));

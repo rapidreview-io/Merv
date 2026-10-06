@@ -23,7 +23,7 @@ import type {
   KnowledgeReferenceKind,
 } from './types.js';
 import { knowledgeIdSchema, knowledgeReferencesSchema, parseKnowledgeInput } from './input.js';
-import { migrateKnowledge } from './storage.js';
+import { postgresMigrations } from './storage.postgres.js';
 
 export type * from './types.js';
 
@@ -44,8 +44,6 @@ const missingCodes = new Set([
 export class KnowledgeService implements Knowledge {
   private closed = false;
   private codeBinding?: symbol;
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
@@ -55,10 +53,10 @@ export class KnowledgeService implements Knowledge {
     private reviews: Reviews,
     private workflows: Pick<Workflows, 'get'>,
     private code: Code | undefined,
-  ) {
-    this.initialize = async () => {
-      await migrateKnowledge(state);
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate('knowledge', postgresMigrations);
   }
 
   private open(): void {
