@@ -1,17 +1,23 @@
-import { memo, useLayoutEffect, useRef, useState } from 'react';
-import type { AgentStreamSession } from '@merv/contracts/agent-stream';
-import { useAgentStream, type AgentBlock, type AgentStreamState } from '../agent-stream';
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { AgentStreamEvent } from '@merv/contracts/agent-stream';
+import {
+  NO_TIMELINE,
+  mergeEvents,
+  useAgentStream,
+  type AgentBlock,
+  type AgentStreamState,
+} from '../agent-stream';
 import { CodeBlock } from '../code-block';
-import { Ago, Summary, cx, words } from '../components';
+import { Summary, cx } from '../components';
 import { JsonView, readJson } from '../json-view';
 import { MarkdownPieces } from '../markdown';
 
 /**
- * What a unit's agent is doing, live, in its sidebar on the Work page (operators only; the
- * panel's `agent` section says which sessions there are). One session is read at a time: the
- * live one, or the newest, until another is chosen. Its stream is drawn as a person reads a
- * conversation: what it says, its thinking folded to one line, each tool it calls with what
- * the tool answered, and the session's own milestones as quiet dividers.
+ * What a thread's agent said, visit by visit, in its dialog on the Work page (operators only,
+ * as the stream itself is). It is drawn as a person reads a conversation: what it says, its
+ * thinking folded to one line, each tool it calls with what the tool answered, and each
+ * visit's start and the session's own milestones as quiet dividers. The visit that holds its
+ * lease is read live; the others are what Sessions kept of them.
  */
 
 /** How many blocks are drawn at a time; the rest are a press away. */
@@ -19,11 +25,6 @@ const WINDOW = 300;
 /** Output longer than this opens folded. */
 const LONG_LINES = 12;
 const LONG_CHARS = 1500;
-
-const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-/** A session as its chip names it: the responsibility it holds, in the workflow's words. */
-const sessionLabel = (session: Pick<AgentStreamSession, 'role' | 'state'>) =>
-  `${capital(words(session.role))} · ${words(session.state)}`;
 
 const Cut = ({ count }: { count: number }) =>
   count > 0 ? (
@@ -138,22 +139,57 @@ const SAID: Record<AgentStreamState, string> = {
   refused: 'This stream isn’t available.',
 };
 
+/** One visit as the conversation reads it: its divider, then what it said. */
+export interface ConversationVisit {
+  sessionId: string;
+  /** The visit's line, e.g. 'Visit 2 · resumed · 12:41'. */
+  divider: string;
+  /** What Sessions kept of a visit that has ended. */
+  events?: AgentStreamEvent[];
+  /** The live stream of the visit that holds its lease; at most one visit has one. */
+  stream?: string;
+}
+type Row = { key: string; divider?: string; block?: AgentBlock; live?: boolean };
+
 /**
- * One session's stream. It follows the newest block while the reader is at the foot of it;
- * scrolled up, it holds still and offers the way back down. The newest blocks are drawn, a
- * window of them, and earlier ones a press away.
+ * A thread's conversation across its visits, oldest first. It follows the newest block while
+ * the reader is at the foot of it; scrolled up, it holds still and offers the way back down.
+ * The newest blocks are drawn, a window of them, and earlier ones a press away. The caller
+ * remounts it when another visit goes live, so one stream's blocks never stand under another.
  */
-function Timeline({ session }: { session: AgentStreamSession }) {
-  const { timeline, state } = useAgentStream(session.events);
+export function AgentConversation({
+  label,
+  visits,
+}: {
+  label: string;
+  visits: ConversationVisit[];
+}) {
+  const streamed = visits.find((visit) => visit.stream);
+  const { timeline: live, state } = useAgentStream(streamed?.stream ?? null);
+  const kept = useMemo(
+    () => visits.map((visit) => mergeEvents(NO_TIMELINE, visit.events ?? []).blocks),
+    [visits],
+  );
+  const rows: Row[] = visits.flatMap((visit, at) => {
+    const blocks = visit === streamed ? live.blocks : kept[at]!;
+    return [
+      { key: visit.sessionId, divider: visit.divider },
+      ...blocks.map((block) => ({
+        key: `${visit.sessionId}:${block.key}`,
+        block,
+        live: visit === streamed,
+      })),
+    ];
+  });
+  const said = rows.some((row) => row.block);
   const [shown, setShown] = useState(WINDOW);
   const [bottom, setBottom] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
-  const { blocks } = timeline;
-  const from = Math.max(0, blocks.length - shown);
+  const from = Math.max(0, rows.length - shown);
   useLayoutEffect(() => {
     const element = scroller.current;
     if (bottom && element) element.scrollTop = element.scrollHeight;
-  }, [timeline, bottom]);
+  }, [live, kept, bottom]);
   const toFoot = () => {
     const element = scroller.current;
     if (element) element.scrollTop = element.scrollHeight;
@@ -165,7 +201,7 @@ function Timeline({ session }: { session: AgentStreamSession }) {
         className="agent-timeline"
         ref={scroller}
         role="log"
-        aria-label={`${sessionLabel(session)}, live`}
+        aria-label={label}
         tabIndex={0}
         onScroll={(event) => {
           const element = event.currentTarget;
@@ -181,16 +217,22 @@ function Timeline({ session }: { session: AgentStreamSession }) {
             Show earlier · {from.toLocaleString('en-US')} more
           </button>
         )}
-        {blocks.length ? (
+        {said ? (
           <ol className="agent-blocks">
-            {blocks.slice(from).map((block) => (
-              <li key={block.key}>
-                <Block block={block} live={session.live} />
+            {rows.slice(from).map((row) => (
+              <li key={row.key}>
+                {row.block ? (
+                  <Block block={row.block} live={!!row.live} />
+                ) : (
+                  <p className="agent-status agent-visit">{row.divider}</p>
+                )}
               </li>
             ))}
           </ol>
         ) : (
-          <p className="muted agent-quiet">{SAID[state]}</p>
+          <p className="muted agent-quiet">
+            {streamed ? SAID[state] : 'This thread said nothing.'}
+          </p>
         )}
       </div>
       {!bottom && (
@@ -198,59 +240,11 @@ function Timeline({ session }: { session: AgentStreamSession }) {
           Jump to latest
         </button>
       )}
-      {blocks.length > 0 && (state === 'retrying' || state === 'refused') && (
+      {said && streamed && (state === 'retrying' || state === 'refused') && (
         <p className="muted agent-quiet" role="status">
           {SAID[state]}
         </p>
       )}
-    </div>
-  );
-}
-
-/** The sessions of a unit, newest first, and the live stream of the one chosen. */
-export function AgentLive({ sessions }: { sessions: AgentStreamSession[] }) {
-  const [chosen, setChosen] = useState<string>();
-  const session =
-    sessions.find((item) => item.sessionId === chosen) ??
-    sessions.find((item) => item.live) ??
-    sessions[0]!;
-  const earlier = (id: string) => sessions.find((item) => item.sessionId === id);
-  const chip = (item: AgentStreamSession) => (
-    <>
-      {item.live && <span className="live-dot live-dot--live" aria-label="Live" role="img" />}
-      <span>{sessionLabel(item)}</span>
-      {item.continues && (
-        <span className="faint">
-          continues{' '}
-          {earlier(item.continues) ? sessionLabel(earlier(item.continues)!) : 'an earlier session'}
-        </span>
-      )}
-      <span className="faint">
-        {item.live || !item.endedAt ? 'started ' : 'ended '}
-        <Ago at={item.live ? item.startedAt : (item.endedAt ?? item.startedAt)} />
-      </span>
-    </>
-  );
-  return (
-    <div className="agent-live">
-      {sessions.length > 1 ? (
-        <div className="agent-chips" role="group" aria-label="Sessions">
-          {sessions.map((item) => (
-            <button
-              type="button"
-              key={item.sessionId}
-              className="agent-chip"
-              aria-pressed={item.sessionId === session.sessionId}
-              onClick={() => setChosen(item.sessionId)}
-            >
-              {chip(item)}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <p className="agent-chips agent-chip">{chip(session)}</p>
-      )}
-      <Timeline key={session.sessionId} session={session} />
     </div>
   );
 }

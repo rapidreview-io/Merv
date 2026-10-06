@@ -5968,54 +5968,79 @@ details.running-section > summary {
   }
 }
 
-/* A unit's agent, live (views/agent-live.tsx): its sessions as chips, then the chosen one's
-   stream, which scrolls on its own and follows the newest block while the reader is at its
-   foot. Thinking is folded and quiet, a tool call is its name over its arguments and what it
-   answered, and a milestone is a word on a hairline. */
-.running-plane[data-full] .running-sidebar > .running-section--agent {
-  column-span: all;
-}
-.agent-live {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.agent-chips {
-  display: flex;
+/* Who worked each stage (views/threads.tsx): a thread is a chip beside its stage's word, and a
+   retired one is quieter. Pressed, it opens the browser's own modal dialog, drawn as a guard is:
+   a box on the raised ground over the page's scrim. */
+/* Beside the word where they fit, under it where they do not. */
+.stage:has(> .stage-aside) {
   flex-wrap: wrap;
-  gap: var(--space-2);
-  max-width: none;
+  row-gap: var(--space-1);
+  padding-block: 3px;
+}
+.stage:has(> .stage-aside) > .stage-word {
+  white-space: nowrap;
+}
+.stage-aside {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  min-width: 0;
 }
 .agent-chip {
   display: inline-flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0 var(--space-2);
-  min-height: var(--hit);
-  padding: 3px 10px;
+  gap: 0 var(--space-1);
+  min-height: 24px;
+  padding: 1px 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
   background: none;
   font: inherit;
   font-size: var(--text-sm);
+  font-weight: 400;
   color: var(--muted);
   text-align: left;
-}
-button.agent-chip {
+  white-space: nowrap;
   cursor: pointer;
 }
-button.agent-chip:hover {
+.agent-chip:hover {
   border-color: var(--line-strong);
-}
-.agent-chip[aria-pressed='true'] {
-  border-color: var(--text);
   color: var(--text);
 }
-p.agent-chip {
-  padding: 0;
-  border: 0;
+.agent-chip--retired {
+  border-style: dashed;
+  color: var(--faint);
 }
+.thread-dialog {
+  width: min(960px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--bg-elev);
+  color: var(--text);
+  box-shadow: var(--shadow-md);
+}
+.thread-dialog::backdrop {
+  background: var(--scrim);
+}
+.thread-dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+.thread-dialog-body h2 {
+  font-size: var(--text-lg);
+}
+.thread-dialog .agent-timeline {
+  max-height: calc(100vh - 280px);
+}
+/* What an agent said (views/agent-live.tsx): it scrolls on its own and follows the newest
+   block while the reader is at its foot. Thinking is folded and quiet, a tool call is its name
+   over its arguments and what it answered, and a visit or a milestone is a word on a hairline. */
 .agent-frame {
   position: relative;
   min-width: 0;
@@ -6026,9 +6051,6 @@ p.agent-chip {
   overscroll-behavior: contain;
   padding-block: var(--space-3);
   border-block: 1px solid var(--line);
-}
-.running-plane[data-full] .agent-timeline {
-  max-height: calc(100vh - 240px);
 }
 .agent-blocks {
   display: flex;
@@ -6125,6 +6147,10 @@ p.agent-chip {
   content: '';
   flex: 1;
   border-top: 1px solid var(--line);
+}
+.agent-visit {
+  font-weight: 500;
+  color: var(--muted);
 }
 .agent-cut {
   font-size: var(--text-xs);

@@ -389,7 +389,12 @@ function ask(read: Read, fresh = false): Promise<void> {
     read.shown = shown;
     for (const listener of read.listeners) listener();
   };
-  const flight = call(read.name, read.input)
+  // A name that is a path is a plugin's own GET route, read in the selected project.
+  const flight = (
+    read.name.startsWith('/')
+      ? accountRequest<unknown>(read.name, { scoped: true })
+      : call(read.name, read.input)
+  )
     .then(
       (data) => show({ data, loadedAt: new Date().toISOString() }, JSON.stringify(data)),
       (error: unknown) => show({ ...read.shown, error: error as ApiError }),
@@ -418,8 +423,9 @@ export function refreshTools(...names: string[]): void {
 
 const NOTHING: Read['shown'] = {};
 /**
- * Load a tool result; `every` (ms) refreshes quietly while keeping the last good data on
- * screen. Every place asking the same question shares one read (see `Read`).
+ * Load a tool result, or a GET route's answer where the name is a same-origin path; `every`
+ * (ms) refreshes quietly while keeping the last good data on screen. Every place asking the
+ * same question shares one read (see `Read`).
  */
 export function useTool<T>(
   name: string | null,

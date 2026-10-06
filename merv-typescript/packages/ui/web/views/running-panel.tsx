@@ -17,9 +17,8 @@ import { ArrowRightIcon, CloseIcon, ExpandIcon, RestoreIcon } from '../icons';
 import { clock, elapsed } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
-import { StageList } from '../process';
-import { AgentLive } from './agent-live';
 import { Phrase, Reading, Target, silent, steadyText, valueText } from './running-phrase';
+import { ThreadStages } from './threads';
 
 /**
  * The sidebar of whatever is in hand on the Work page. Its owner wrote every word of it
@@ -309,12 +308,13 @@ function readable(
       return section;
     case 'stream':
       return section.items.length ? section : null;
+    // What agents said is read from the thread on each stage now, in its dialog.
     case 'agent':
-      return section.sessions.length ? section : null;
+      return null;
   }
 }
 
-function Body({ section }: { section: RunningSection }) {
+function Body({ section, title }: { section: RunningSection; title: string }) {
   switch (section.kind) {
     case 'facts':
       return <Facts rows={section.rows} />;
@@ -335,15 +335,14 @@ function Body({ section }: { section: RunningSection }) {
         </p>
       );
     case 'ladder':
-      return <StageList graph={section.graph} />;
+      return <ThreadStages graph={section.graph} title={title} />;
     case 'stream':
       return <Stream items={section.items} />;
-    case 'agent':
-      return <AgentLive sessions={section.sessions} />;
   }
 }
 
-function Section({ section: sent }: { section: RunningSection }) {
+/** One section; `title` is the thing's own, for what a section opens over the page. */
+function Section({ section: sent, title }: { section: RunningSection; title: string }) {
   const reading = useContext(Reading);
   const section = readable(sent, reading);
   if (!section) return null;
@@ -360,22 +359,18 @@ function Section({ section: sent }: { section: RunningSection }) {
   const heading = cx('running-section-head', section.attention && 'running-attn');
   // A workflow's stages are one card with one name, whichever plugin sends them: the owner's
   // title for it is not drawn.
-  if (section.kind === 'ladder') return <Body section={section} />;
+  if (section.kind === 'ladder') return <Body section={section} title={title} />;
   if (section.folded)
     return (
       <details className="running-section">
         <Summary className={heading}>{head}</Summary>
-        <Body section={section} />
+        <Body section={section} title={title} />
       </details>
     );
   return (
-    <section
-      // The live stream takes the sidebar's whole width, also maximized.
-      className={cx('running-section', section.kind === 'agent' && 'running-section--agent')}
-      aria-label={section.title}
-    >
+    <section className="running-section" aria-label={section.title}>
       <h3 className={heading}>{head}</h3>
-      <Body section={section} />
+      <Body section={section} title={title} />
     </section>
   );
 }
@@ -517,7 +512,11 @@ export function RunningSidebar({
         )}
         {panel.error && <LoadState {...panel} />}
         {data.sections.map((section, index) => (
-          <Section key={`${section.owner ?? ''}:${section.title}:${index}`} section={section} />
+          <Section
+            key={`${section.owner ?? ''}:${section.title}:${index}`}
+            section={section}
+            title={data.header.title}
+          />
         ))}
         {data.route && (
           <Link className="running-open hit" to={data.route}>
