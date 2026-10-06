@@ -1,7 +1,7 @@
 import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
 import { useEffect, useRef, useState } from 'react';
-import { accountRequest, scopeVersion, useScopeVersion } from '../api';
+import { accountRequest, useScopeVersion } from '../api';
 import {
   Ago,
   Area,
@@ -14,7 +14,7 @@ import {
   words,
 } from '../components';
 import { ExternalIcon } from '../icons';
-import { useCommand } from '../mutations';
+import { useCommand, useCurrent } from '../mutations';
 
 /**
  * A sealed proposal, published: one row per pull request, in the grammar GitHub
@@ -199,6 +199,7 @@ export function GitHubPublications({
   controls?: Controls;
 }) {
   const epoch = useScopeVersion();
+  const current = useCurrent();
   const [details, setDetails] = useState<Record<string, GitHubPullDetails | null>>({});
   const [failed, setFailed] = useState('');
   const [busy, setBusy] = useState(false);
@@ -210,7 +211,6 @@ export function GitHubPublications({
   }, [epoch]);
   // A pull request is read once, and again only when GitHub says it changed.
   useEffect(() => {
-    const current = () => epoch === scopeVersion();
     for (const p of rows) {
       const key = p.pull?.updatedAt;
       if (!key || seen.current.get(p.proposalId) === key) continue;
@@ -224,7 +224,7 @@ export function GitHubPublications({
             setFailed(e instanceof Error ? e.message : 'A pull request could not be read');
         });
     }
-  }, [rows, epoch]);
+  }, [rows, current]);
   const act = async (fn: () => Promise<void>) => {
     if (busy) return;
     setBusy(true);
@@ -232,10 +232,10 @@ export function GitHubPublications({
     try {
       await fn();
     } catch (e) {
-      if (epoch === scopeVersion())
+      if (current())
         setFailed(e instanceof Error ? e.message : 'GitHub did not confirm the operation');
     } finally {
-      if (epoch === scopeVersion()) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   const row = (p: CodePublication) => {

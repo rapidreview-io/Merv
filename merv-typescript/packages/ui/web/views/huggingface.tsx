@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
-import { accountRequest, scopeVersion, useScopeVersion } from '../api';
+import { useEffect, useState } from 'react';
+import { accountRequest } from '../api';
+import { useCurrent } from '../mutations';
 interface HuggingFaceStatus {
   available: boolean;
   configured: boolean;
@@ -8,31 +9,25 @@ interface HuggingFaceStatus {
 
 /** Account-only credential input. The token exists only in this form and its PUT request. */
 export function HuggingFaceSettings() {
-  const epoch = useScopeVersion();
+  const current = useCurrent();
   const [status, setStatus] = useState<HuggingFaceStatus>();
   const [token, setToken] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const mounted = useRef(false);
   useEffect(() => {
-    mounted.current = true;
     setStatus(undefined);
     setToken('');
     setError(undefined);
     setBusy(false);
     void accountRequest<HuggingFaceStatus>('/secrets/huggingface').then(
       (value) => {
-        if (mounted.current && scopeVersion() === epoch) setStatus(value);
+        if (current()) setStatus(value);
       },
       () => {
-        if (mounted.current && scopeVersion() === epoch)
-          setError('Hugging Face access could not be loaded.');
+        if (current()) setError('Hugging Face access could not be loaded.');
       },
     );
-    return () => {
-      mounted.current = false;
-    };
-  }, [epoch]);
+  }, [current]);
   const update = async (method: 'PUT' | 'DELETE') => {
     if (busy) return;
     setBusy(true);
@@ -45,16 +40,16 @@ export function HuggingFaceSettings() {
         method,
         body,
       });
-      if (mounted.current && scopeVersion() === epoch) setStatus(value);
+      if (current()) setStatus(value);
     } catch {
-      if (mounted.current && scopeVersion() === epoch)
+      if (current())
         setError(
           method === 'PUT'
             ? 'The token could not be saved. Enter it again to retry.'
             : 'The token could not be removed.',
         );
     } finally {
-      if (mounted.current && scopeVersion() === epoch) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   return (

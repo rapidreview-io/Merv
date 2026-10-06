@@ -24,6 +24,7 @@ import {
   Submit,
   cx,
 } from '../components';
+import { useCurrent } from '../mutations';
 import { ThreeStates } from '../states';
 
 const message = (error: unknown) =>
@@ -46,17 +47,13 @@ function FleetSourceCredential({ projectId }: { projectId: string }) {
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const mounted = useRef(true);
+  const current = useCurrent();
   useEffect(() => {
-    mounted.current = true;
     setSecret(undefined);
     setCopied(false);
     setCreating(false);
     setError(undefined);
     setBusy(false);
-    return () => {
-      mounted.current = false;
-    };
   }, [epoch, projectId]);
   const available =
     projectSelection() === projectId &&
@@ -86,25 +83,25 @@ function FleetSourceCredential({ projectId }: { projectId: string }) {
         role: 'operator',
         expiresAt: expiry,
       });
-      if (mounted.current && scopeVersion() === epoch && projectSelection() === projectId) {
+      if (current() && projectSelection() === projectId) {
         setSecret(issued.token);
         setCopied(false);
         setCreating(false);
         setExpiresAt('');
       }
     } catch (failure) {
-      if (mounted.current && scopeVersion() === epoch) setError(message(failure));
+      if (current()) setError(message(failure));
     } finally {
-      if (mounted.current && scopeVersion() === epoch) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   const copy = async () => {
     if (!secret) return;
     try {
       await navigator.clipboard.writeText(secret);
-      if (mounted.current && scopeVersion() === epoch) setCopied(true);
+      if (current()) setCopied(true);
     } catch {
-      if (mounted.current && scopeVersion() === epoch)
+      if (current())
         setError('Clipboard access failed. Select the credential and copy it manually.');
     }
   };
