@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { runningKey } from '@merv/contracts/running';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { Live, LoadState, Ruled, Stamp, col, cx, stamp, useNow, words } from '../components';
 import { CloseIcon } from '../icons';
-import { clock, elapsed } from '../liveness';
+import { clock, elapsed, type Clock } from '../liveness';
 import { StageList } from '../process';
 import { useReadsAgents } from '../session';
 import type { ThreadConversation, ThreadList, ThreadView, VisitView } from '../thread-view';
 import { AgentConversation, type ConversationVisit } from './agent-live';
 import { leaseLiveness } from './agent-sessions-panel';
+import { Target } from './running-phrase';
 
 /**
  * Who worked each stage of a record: Sessions' threads, each drawn on the stage whose state
@@ -29,16 +31,39 @@ const reason = (why: string | undefined) => {
   return exit ? `exit ${exit}` : why ? words(why) : undefined;
 };
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
-const visitName = (visit: VisitView, at: number) =>
-  [`Visit ${at + 1}`, visit.resumed && 'resumed'].filter(Boolean).join(' · ');
+/**
+ * Each visit's name: the visits that ran are numbered in order, so the chip's count and the
+ * table agree, and a launch that failed is named as one.
+ */
+function visitNames(thread: ThreadView): Map<string, string> {
+  let ran = 0;
+  return new Map(
+    thread.visits.map((visit) => [
+      visit.sessionId,
+      failed(visit)
+        ? 'Launch failed'
+        : [`Visit ${++ran}`, visit.resumed && 'resumed'].filter(Boolean).join(' · '),
+    ]),
+  );
+}
+/** The visit holding its lease, as Sessions words it, with the machine it runs on. */
+const liveLine = (thread: ThreadView, now: Clock) => {
+  const visit = thread.visits.find(active);
+  return visit?.liveness
+    ? [leaseLiveness({ liveness: visit.liveness }, now).phrase, visit.runnerId]
+        .filter(Boolean)
+        .join(' · ')
+    : undefined;
+};
 const threadName = (thread: ThreadView) =>
   `${capital(words(thread.role))} · ${words(thread.state)} · ${thread.status}`;
 
 /**
  * One thread as one chip: its role, a live dot while a visit holds its lease, how many visits
  * it made where more than one, and the launches that failed, counted here rather than drawn.
+ * Its tooltip says how the lease stands and on which machine.
  */
-function ThreadChip({ thread, onOpen }: { thread: ThreadView; onOpen(): void }) {
+function ThreadChip({ thread, now, onOpen }: { thread: ThreadView; now: Clock; onOpen(): void }) {
   const launches = thread.visits.filter(failed).length;
   const visits = thread.visits.length - launches;
   return (
@@ -46,7 +71,7 @@ function ThreadChip({ thread, onOpen }: { thread: ThreadView; onOpen(): void }) 
       type="button"
       className={cx('agent-chip', thread.status === 'retired' && 'agent-chip--retired')}
       aria-haspopup="dialog"
-      title={thread.status === 'retired' ? 'Retired thread' : undefined}
+      title={thread.status === 'retired' ? 'Retired thread' : liveLine(thread, now)}
       onClick={onOpen}
     >
       {thread.visits.some(active) && (
@@ -65,7 +90,8 @@ function ThreadChip({ thread, onOpen }: { thread: ThreadView; onOpen(): void }) 
 function Visits({ thread, loadedAt }: { thread: ThreadView; loadedAt?: string }) {
   const live = thread.visits.some(active);
   const now = clock(undefined, loadedAt, useNow(live ? 1000 : 0), 20_000);
-  const rows = thread.visits.map((visit, at) => ({ visit, at }));
+  const names = visitNames(thread);
+  const rows = thread.visits.map((visit) => ({ visit, name: names.get(visit.sessionId)! }));
   type Row = (typeof rows)[number];
   return (
     <Ruled<Row>
@@ -74,7 +100,7 @@ function Visits({ thread, loadedAt }: { thread: ThreadView; loadedAt?: string })
       keyOf={({ visit }) => visit.sessionId}
       rows={rows}
       columns={[
-        col<Row>('visit', 'Visit', ({ visit, at }) => visitName(visit, at)),
+        col<Row>('visit', 'Visit', ({ name }) => name),
         col<Row>('start', 'Started', ({ visit }) =>
           visit.startedAt ? <Stamp at={visit.startedAt} /> : '—',
         ),
@@ -100,7 +126,7 @@ function Visits({ thread, loadedAt }: { thread: ThreadView; loadedAt?: string })
         ),
         col<Row>('outcome', 'Outcome', ({ visit }) =>
           failed(visit)
-            ? ['Did not start', reason(visit.why)].filter(Boolean).join(' · ')
+            ? (reason(visit.why) ?? 'did not start')
             : [visit.outcome && words(visit.outcome), reason(visit.why)]
                 .filter(Boolean)
                 .join(' · ') || '—',
@@ -131,28 +157,27 @@ function Conversation({ thread, label }: { thread: ThreadView; label: string }) 
     read.current = liveId;
     reload();
   }, [liveId, reload]);
-  const visits = useMemo(
-    () =>
-      thread.visits.flatMap((visit, at): ConversationVisit[] =>
-        visit.launched
-          ? [
-              {
-                sessionId: visit.sessionId,
-                divider: [visitName(visit, at), stamp(visit.startedAt ?? visit.offeredAt)].join(
-                  ' · ',
-                ),
-                ...(active(visit)
-                  ? { stream: `/sessions/${encodeURIComponent(visit.sessionId)}/events` }
-                  : {
-                      events: kept.data?.visits.find((item) => item.sessionId === visit.sessionId)
-                        ?.events,
-                    }),
-              },
-            ]
-          : [],
-      ),
-    [thread, kept.data],
-  );
+  const visits = useMemo(() => {
+    const names = visitNames(thread);
+    return thread.visits.flatMap((visit): ConversationVisit[] =>
+      visit.launched
+        ? [
+            {
+              sessionId: visit.sessionId,
+              divider: [names.get(visit.sessionId), stamp(visit.startedAt ?? visit.offeredAt)].join(
+                ' · ',
+              ),
+              ...(active(visit)
+                ? { stream: `/sessions/${encodeURIComponent(visit.sessionId)}/events` }
+                : {
+                    events: kept.data?.visits.find((item) => item.sessionId === visit.sessionId)
+                      ?.events,
+                  }),
+            },
+          ]
+        : [],
+    );
+  }, [thread, kept.data]);
   if (!kept.data && !liveId) return <LoadState {...kept} />;
   return <AgentConversation key={liveId ?? ''} label={label} visits={visits} />;
 }
@@ -181,6 +206,8 @@ function ThreadDialog({
     if (!dialog.current?.open) dialog.current?.showModal();
   }, []);
   const name = threadName(thread);
+  const lease = thread.visits.find(active);
+  const now = clock(undefined, loadedAt, useNow(lease ? 1000 : 0), 20_000);
   return createPortal(
     <dialog
       ref={dialog}
@@ -195,6 +222,15 @@ function ThreadDialog({
           <div>
             <h2 id="thread-dialog-title">{name}</h2>
             <p className="muted">{title}</p>
+            {/* The visit holding its lease: how it stands, and the way to the lease's controls. */}
+            {lease && (
+              <p className="cluster agent-help">
+                {lease.liveness && <Live of={leaseLiveness({ liveness: lease.liveness }, now)} />}
+                <Target to={{ key: runningKey('session', lease.sessionId) }} className="hit">
+                  {lease.runnerId ? `Lease on ${lease.runnerId}` : 'Lease'}
+                </Target>
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -247,18 +283,35 @@ export function ThreadStages({ graph, title }: { graph: ProcessGraph; title: str
   useEffect(() => setEvery(live ? 4000 : 10_000), [live]);
   const [opened, setOpened] = useState<string>();
   const thread = threads.find((item) => item.id === opened);
+  const now = clock(undefined, list.loadedAt, Date.now(), 20_000);
+  // The stage's current threads first; one retired beside them is the quiet "+1 earlier",
+  // which opens the newest of them. Retired threads with nothing current are chips themselves.
+  const aside = (state: string) => {
+    const here = threads.filter((item) => item.state === state);
+    const current = here.filter((item) => item.status !== 'retired');
+    const earlier = here.filter((item) => item.status === 'retired');
+    const chip = (item: ThreadView) => (
+      <ThreadChip key={item.id} thread={item} now={now} onOpen={() => setOpened(item.id)} />
+    );
+    if (!current.length) return earlier.map(chip);
+    return [
+      ...current.map(chip),
+      earlier.length > 0 && (
+        <button
+          type="button"
+          key="earlier"
+          className="btn-text stage-earlier"
+          aria-haspopup="dialog"
+          onClick={() => setOpened(earlier.at(-1)!.id)}
+        >
+          +{earlier.length} earlier
+        </button>
+      ),
+    ];
+  };
   return (
     <>
-      <StageList
-        graph={graph}
-        aside={(state) =>
-          threads
-            .filter((item) => item.state === state)
-            .map((item) => (
-              <ThreadChip key={item.id} thread={item} onOpen={() => setOpened(item.id)} />
-            ))
-        }
-      />
+      <StageList graph={graph} aside={aside} />
       {thread && (
         <ThreadDialog
           thread={thread}

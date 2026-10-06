@@ -308,9 +308,6 @@ function readable(
       return section;
     case 'stream':
       return section.items.length ? section : null;
-    // What agents said is read from the thread on each stage now, in its dialog.
-    case 'agent':
-      return null;
   }
 }
 

@@ -5971,20 +5971,28 @@ details.running-section > summary {
 /* Who worked each stage (views/threads.tsx): a thread is a chip beside its stage's word, and a
    retired one is quieter. Pressed, it opens the browser's own modal dialog, drawn as a guard is:
    a box on the raised ground over the page's scrim. */
-/* Beside the word where they fit, under it where they do not. */
-.stage:has(> .stage-aside) {
+/* A stage's threads are one line under its word, indented to it; its time stays on the word's
+   line. A stage nobody worked keeps its one line. */
+.stage {
   flex-wrap: wrap;
-  row-gap: var(--space-1);
-  padding-block: 3px;
-}
-.stage:has(> .stage-aside) > .stage-word {
-  white-space: nowrap;
 }
 .stage-aside {
-  display: inline-flex;
+  order: 1;
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
   flex-wrap: wrap;
-  gap: var(--space-1);
   min-width: 0;
+  padding: 0 0 6px 28px;
+}
+.stage-aside:empty {
+  display: none;
+}
+.stage-earlier {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--faint);
 }
 .agent-chip {
   display: inline-flex;

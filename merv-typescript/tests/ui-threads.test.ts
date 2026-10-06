@@ -16,6 +16,7 @@ const { MemoryRouter } = await import('react-router-dom');
 await import('../packages/ui/web/components.js');
 const { ThreadStages } = await import('../packages/ui/web/views/threads.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
+const { Reading } = await import('../packages/ui/web/views/running-phrase.js');
 
 // jsdom has the element but not its modal methods: open sets the attribute, close clears it
 // and says so, as a browser's does.
@@ -93,6 +94,30 @@ const threads = [
     visits: [visit('ses_p1')],
   },
   {
+    id: 'thr_rev',
+    instanceId: 'wf_1',
+    state: 'design_review',
+    role: 'reviewer',
+    status: 'live',
+    visits: [
+      visit('ses_v1', {
+        status: 'active',
+        endedAt: undefined,
+        outcome: undefined,
+        runnerId: 'lab-1',
+        liveness: { verdict: 'active', tone: 'ok', rest: [{ since: at(30) }] },
+      }),
+    ],
+  },
+  {
+    id: 'thr_done',
+    instanceId: 'wf_1',
+    state: 'complete',
+    role: 'reviewer',
+    status: 'retired',
+    visits: [visit('ses_d1')],
+  },
+  {
     id: 'thr_old',
     instanceId: 'wf_1',
     state: 'running',
@@ -119,8 +144,11 @@ const said = (id: string, text: string) => ({
   events: [{ seq: 1, at: at(2), event: { kind: 'text', id: 'a', delta: text, done: true } }],
 });
 
+/** The sidebars the page was asked to open, by key. */
+const opened: string[] = [];
 /** The card as the Work page's sidebar draws it, for a reader of this role. */
 async function open(role: string) {
+  opened.length = 0;
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
   const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
   serve('/auth/config', { body: { enabled: false } });
@@ -137,9 +165,19 @@ async function open(role: string) {
       MemoryRouter,
       null,
       createElement(
-        SessionProvider,
-        null,
-        createElement(ThreadStages, { graph: graph as never, title: 'Grokking at scale' }),
+        Reading.Provider,
+        {
+          value: {
+            now: { at: Date.now(), since: 0, stale: false },
+            nameOf: () => undefined,
+            open: (key: string) => void opened.push(key),
+          },
+        },
+        createElement(
+          SessionProvider,
+          null,
+          createElement(ThreadStages, { graph: graph as never, title: 'Grokking at scale' }),
+        ),
       ),
     ),
   );
@@ -149,10 +187,12 @@ const rowOf = (state: string) =>
   [...document.querySelectorAll('.stages > li')].find(
     (row) => row.querySelector('.stage-word')!.textContent === state.replaceAll('_', ' '),
   )!;
+/** What stands under a stage: its chips, and the quiet way to the threads before them. */
 const chips = (state: string) =>
-  [...rowOf(state).querySelectorAll<HTMLButtonElement>('.agent-chip')].map(
+  [...rowOf(state).querySelectorAll<HTMLButtonElement>('.stage-aside > button')].map(
     (chip) => chip.textContent,
   );
+const chip = (state: string) => rowOf(state).querySelector('.agent-chip')!;
 const press = async (element: Element) => {
   await act(async () => void (element as HTMLElement).click());
   await settle(10);
@@ -161,27 +201,33 @@ const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>('button')].find(
     (item) => item.textContent === label || item.getAttribute('aria-label') === label,
   );
+const dialogText = () => document.querySelector('dialog')!.textContent!;
 
 test('each thread stands on the stage its state names, and failed launches are a count', async (t) => {
   t.after(unmount);
   await open('reader');
   assert.deepEqual(chips('planned'), ['Producer']);
-  assert.deepEqual(chips('design_review'), []);
-  assert.deepEqual(chips('complete'), []);
-  // Two launches failed: one chip says so, beside the two visits that ran.
-  assert.deepEqual(chips('running'), ['Producer', 'Producer· 2 visits· 2 failed launches']);
-  assert.equal(document.querySelectorAll('.agent-chip').length, 3);
-  // The retired thread is the quieter one.
-  const [retired, current] = rowOf('running').querySelectorAll('.agent-chip');
-  assert.ok(retired!.classList.contains('agent-chip--retired'));
-  assert.ok(!current!.classList.contains('agent-chip--retired'));
+  // The live visit's dot, and how it stands in the chip's tooltip.
+  assert.deepEqual(chips('design_review'), ['Reviewer']);
+  assert.ok(chip('design_review').querySelector('.live-dot--live'));
+  assert.match(chip('design_review').getAttribute('title')!, /^active · .* · lab-1$/);
+  // Two launches failed: the chip counts them beside the two visits that ran. The retired
+  // thread beside it is a quiet way back, not a second chip.
+  assert.deepEqual(chips('running'), ['Producer· 2 visits· 2 failed launches', '+1 earlier']);
+  assert.ok(!chip('running').classList.contains('agent-chip--retired'));
+  // A retired thread alone is a quieter chip.
+  assert.deepEqual(chips('complete'), ['Reviewer']);
+  assert.ok(chip('complete').classList.contains('agent-chip--retired'));
+  assert.equal(document.querySelectorAll('.agent-chip').length, 4);
+
+  await press(button('+1 earlier')!);
+  assert.equal(document.querySelector('dialog h2')!.textContent, 'Producer · running · retired');
 });
 
 test('a chip opens the thread’s dialog, which its close control and its backdrop close', async (t) => {
   t.after(unmount);
   await open('operator');
-  const chip = () => rowOf('running').querySelectorAll('.agent-chip')[1]!;
-  await press(chip());
+  await press(chip('running'));
   const dialog = document.querySelector('dialog')!;
   assert.ok(dialog.hasAttribute('open'));
   assert.equal(dialog.querySelector('h2')!.textContent, 'Producer · running · dormant');
@@ -189,42 +235,52 @@ test('a chip opens the thread’s dialog, which its close control and its backdr
   await press(button('Close')!);
   assert.equal(document.querySelector('dialog'), null);
 
-  await press(chip());
+  await press(chip('running'));
   await press(document.querySelector('dialog')!);
   assert.equal(document.querySelector('dialog'), null, 'a press on the backdrop closes it');
+});
+
+test('a live thread’s dialog says how its lease stands and is the way to it', async (t) => {
+  t.after(unmount);
+  await open('reader');
+  await press(chip('design_review'));
+  assert.match(dialogText(), /active/);
+  await press(button('Lease on lab-1')!);
+  assert.deepEqual(opened, ['session:ses_v1']);
 });
 
 test('an operator reads the conversation, each visit marked where it began', async (t) => {
   t.after(unmount);
   await open('operator');
-  await press(rowOf('running').querySelectorAll('.agent-chip')[1]!);
+  await press(chip('running'));
   assert.ok(button('Conversation')?.getAttribute('aria-pressed') === 'true');
   assert.ok(requests.includes('GET /sessions/threads/thr_run/conversation'));
   const dividers = [...document.querySelectorAll('.agent-visit')].map((item) => item.textContent);
   assert.equal(dividers.length, 2, 'the failed launches said nothing and have no divider');
   assert.match(dividers[0]!, /^Visit 1 · /);
-  assert.match(dividers[1]!, /^Visit 4 · resumed · /);
+  assert.match(dividers[1]!, /^Visit 2 · resumed · /);
   assert.deepEqual(
     [...document.querySelectorAll('.agent-text')].map((item) => item.textContent),
     ['First pass.', 'Picked it up again.'],
   );
 
+  // The table numbers the visits that ran as the chip counts them; a failed launch has none.
   await press(button('Visits')!);
-  const rows = [...document.querySelectorAll('.ruled-row')];
+  const rows = [...document.querySelectorAll('.ruled-row')].map((row) => row.textContent!);
   assert.equal(rows.length, 4);
-  assert.ok(rows[1]!.textContent!.includes('Did not start · exit 70'));
-  assert.ok(rows[3]!.textContent!.includes('Visit 4 · resumed'));
-  assert.ok(rows[3]!.textContent!.includes('submitted'));
-  assert.ok(rows[3]!.textContent!.includes('claude · mac-studio'));
+  assert.match(rows[0]!, /^Visit 1/);
+  assert.match(rows[1]!, /^Launch failed.*exit 70/);
+  assert.match(rows[2]!, /^Launch failed/);
+  assert.match(rows[3]!, /^Visit 2 · resumed.*submitted.*claude · mac-studio/);
 });
 
 test('anyone else reads the visits alone, and never asks for the conversation', async (t) => {
   t.after(unmount);
   await open('reviewer');
-  await press(rowOf('running').querySelectorAll('.agent-chip')[1]!);
+  await press(chip('running'));
   assert.equal(button('Conversation'), undefined);
   assert.equal(document.querySelector('.agent-timeline'), null);
   assert.equal(document.querySelectorAll('.ruled-row').length, 4);
   assert.ok(!requests.some((request) => request.includes('/conversation')));
-  assert.ok(document.querySelector('dialog')!.textContent!.includes('Did not start · exit 70'));
+  assert.ok(dialogText().includes('Launch failed'));
 });

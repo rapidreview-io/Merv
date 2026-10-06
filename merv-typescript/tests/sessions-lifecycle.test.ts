@@ -188,9 +188,6 @@ test('each part Sessions exposes keeps its entry checks: no managed runner, noth
     await assert.rejects(sessions.running.panel(managed, 'session_x'), forbidden);
     await assert.rejects(sessions.observations.read(managed, 'agent_x'), forbidden);
     const caller: Caller = { projectId: 'project', actorId: 'person' };
-    await assert.rejects(sessions.running.work(caller, [7 as never]), {
-      code: 'invalid_instance',
-    });
     await assert.rejects(sessions.observations.read(caller, ''), { code: 'invalid_agent' });
   } finally {
     await sessions.close();

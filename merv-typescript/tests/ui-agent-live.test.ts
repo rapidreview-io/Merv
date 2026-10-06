@@ -311,3 +311,47 @@ test('a transcript of many tool calls names their records in one request', async
   await settle(50);
   assert.equal(requests.filter((r) => r === 'POST /tools/project.references').length, 1);
 });
+
+test('a tool’s JSON answer is laid out two spaces deep, folded once it is long, and keeps its controls', async (t) => {
+  t.after(async () => await unmount());
+  // jsdom has no clipboard, and the copy control is drawn only where there is one.
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: async () => undefined },
+    configurable: true,
+  });
+  t.after(() => void delete (navigator as { clipboard?: unknown }).clipboard);
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  seq = 0;
+  const [stream] = streams('/sessions/ses_json/events', 1);
+  await mount(createElement(Panel, { sessions: [session('ses_json')] }));
+  const task = Object.fromEntries(Array.from({ length: 20 }, (_, at) => [`field_${at}`, at]));
+  stream!.send('snapshot', {
+    events: [
+      event({ kind: 'tool_call', id: 'short', name: 'task.status', input: '{}' }),
+      event({ kind: 'tool_result', id: 'short', output: '{"state":"done","ok":true}' }),
+      event({ kind: 'tool_call', id: 'long', name: 'task.get', input: '{}' }),
+      event({ kind: 'tool_result', id: 'long', output: JSON.stringify(task) }),
+    ],
+  });
+  await settle(10);
+  const [short, long] = [...document.querySelectorAll('.agent-output')];
+  // Short: open, one key a line, with the code block's wrap and copy controls.
+  assert.equal(short!.tagName, 'DIV');
+  assert.equal(
+    short!.querySelector('.code-body')!.textContent,
+    '{\n  "state": "done",\n  "ok": true\n}',
+  );
+  assert.ok(short!.querySelector('[aria-label="Wrap long lines"]'));
+  assert.ok(short!.querySelector('[aria-label="Copy"]'));
+  // Long: folded to its line count until it is opened, then laid out the same way.
+  const fold = long as HTMLDetailsElement;
+  assert.equal(fold.tagName, 'DETAILS');
+  assert.equal(fold.querySelector('summary')!.textContent, 'Output · 22 lines');
+  await act(async () => {
+    fold.open = true;
+    fold.dispatchEvent(new window.Event('toggle'));
+  });
+  assert.ok(fold.querySelector('.code-body')!.textContent!.includes('\n  "field_19": 19\n}'));
+  // What is not JSON stays the terminal's text it was.
+  assert.equal(document.querySelectorAll('.agent-tool').length, 2);
+});

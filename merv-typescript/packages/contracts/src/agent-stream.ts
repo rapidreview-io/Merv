@@ -28,18 +28,3 @@ export interface AgentStreamEvent {
   at: string;
   event: AgentEvent;
 }
-
-/** One session of a unit of work, as its panel lists them for the live view. */
-export interface AgentStreamSession {
-  sessionId: string;
-  /** The responsibility it holds, in the workflow's own words: the state and the role. */
-  state: string;
-  role: string;
-  live: boolean;
-  startedAt: string;
-  endedAt?: string;
-  /** The session whose conversation this one continues, where it resumed one. */
-  continues?: string;
-  /** A same-origin path, read with GET (server-sent events: `snapshot`, then `events`); Sessions serves /sessions/:id/events. */
-  events: string;
-}

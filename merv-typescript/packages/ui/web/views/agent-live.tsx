@@ -59,18 +59,28 @@ function Input({ input }: { input: string }) {
   return json ? <JsonView value={json.value} /> : <CodeBlock code={input} label="Input" />;
 }
 
-/** What the tool answered: a terminal's text, folded where it is long. */
+/**
+ * What the tool answered: a terminal's text, or JSON laid out two spaces deep where the
+ * answer is a JSON object or list, folded where it is long.
+ */
 function Output({
   result,
 }: {
   result: NonNullable<Extract<AgentBlock, { kind: 'tool' }>['result']>;
 }) {
   const [open, setOpen] = useState(false);
-  const lines = result.output.split('\n').length;
+  const json = useMemo(() => {
+    const read = readJson(result.output);
+    return read?.value && typeof read.value === 'object'
+      ? JSON.stringify(read.value, null, 2)
+      : undefined;
+  }, [result.output]);
+  const output = json ?? result.output;
+  const lines = output.split('\n').length;
   const label = result.error ? 'Error' : 'Output';
-  const block = <CodeBlock code={result.output} label={label} />;
-  if (!result.output) return null;
-  if (lines <= LONG_LINES && result.output.length <= LONG_CHARS)
+  const block = <CodeBlock code={output} label={label} />;
+  if (!output) return null;
+  if (lines <= LONG_LINES && output.length <= LONG_CHARS)
     return (
       <div className={cx('agent-output', result.error && 'agent-output--error')}>
         {block}
