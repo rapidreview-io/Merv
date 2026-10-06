@@ -82,9 +82,8 @@ needs a Sandboxes binding at runtime:
 
 The native service is still sent `work_kind` `task` or `experiment`: `experiment` for the
 `experiment` workflow, and `task` for every other workflow. Before giving other units their own
-kinds, check which values the native service accepts. Leases issued before this change carry the
-earlier `sandboxConnectionId`/`sandboxProfile` references, and they are honoured until they end
-(7 days at most).
+kinds, check which values the native service accepts. The `sandboxConnectionId`/`sandboxProfile`
+references that leases carried before this change are no longer read.
 
 ## Phase 1: the capability (implemented)
 
