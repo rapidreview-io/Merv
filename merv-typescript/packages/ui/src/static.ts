@@ -52,32 +52,41 @@ export function serveBundle(root: string): MountHandler {
       return problem(404, 'not_found', 'Unknown UI path');
     }
     const spa = extname(relative) === '';
-    const file = spa ? resolve(base, 'index.html') : resolve(base, relative);
-    if (!file.startsWith(`${base}${sep}`)) return problem(404, 'not_found', 'Unknown UI path');
-    try {
-      const bytes = await readFile(file);
-      const type = types[extname(file)] ?? 'application/octet-stream';
-      const hashed = relative.startsWith('assets/');
-      const headers = {
-        'content-type': type,
-        'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
-      };
-      if (!compressible.test(type)) return send(200, bytes, headers);
-      const zipped = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
-      // A HEAD is sent the headers alone: there is nothing to gzip.
-      const body =
-        !zipped || req.method === 'HEAD'
-          ? bytes
-          : await (hashed
-              ? (gzipped.get(file) ?? gzipped.set(file, packed(bytes)).get(file)!)
-              : packed(bytes));
-      return send(200, body, {
+    // A hashed asset is a file under assets/, however its path is spelled; a route without an
+    // extension there is a missing asset, never the page, which is not cached for a year.
+    const hashed = relative.startsWith('assets/');
+    const file = resolve(base, spa && !hashed ? 'index.html' : relative);
+    if (!file.startsWith(`${base}${sep}${hashed ? `assets${sep}` : ''}`))
+      return problem(404, 'not_found', 'Unknown UI path');
+    const type = types[extname(file)] ?? 'application/octet-stream';
+    const headers = {
+      'content-type': type,
+      'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
+    };
+    const zipped =
+      compressible.test(type) && /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
+    const sendText = (body: Uint8Array) =>
+      send(200, body, {
         ...headers,
         vary: 'accept-encoding',
         ...(zipped && { 'content-encoding': 'gzip' }),
       });
+    try {
+      // What was gzipped once is sent as it was, without reading the disk again.
+      const cached = hashed && zipped && req.method !== 'HEAD' ? gzipped.get(file) : undefined;
+      if (cached) return sendText(await cached);
+      const bytes = await readFile(file);
+      if (!compressible.test(type)) return send(200, bytes, headers);
+      // A HEAD is sent the headers alone: there is nothing to gzip.
+      return sendText(
+        !zipped || req.method === 'HEAD'
+          ? bytes
+          : await (hashed
+              ? (gzipped.get(file) ?? gzipped.set(file, packed(bytes)).get(file)!)
+              : packed(bytes)),
+      );
     } catch {
-      return spa
+      return spa && !hashed
         ? problem(503, 'ui_not_built', 'The UI bundle is not built; run npm run build:ui')
         : problem(404, 'not_found', 'Unknown UI path');
     }
