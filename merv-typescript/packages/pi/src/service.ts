@@ -45,6 +45,7 @@ import {
   actOf,
   conversationCaller,
   decode,
+  storedTurn,
   equal,
   hash,
   parse,
@@ -133,15 +134,16 @@ export class PiService implements Pi {
       this.core.tools.registerCallerRules('conversation', conversationRules),
     );
     await this.hosts.tick();
-    // Every call Run began before this process started is cut off.
-    const cut = await this.core.read((tx) =>
-      tx.all<{ conversation_id: string; id: string }>(
-        `SELECT conversation_id,id FROM pi_commands
-          WHERE jsonb_path_exists(data_json::jsonb, '$.proposals[*].ran ? (!exists(@.ok))')`,
+    // Every call Run began before this process started is cut off. Only turns with a call that ran
+    // are read, as text: jsonb refuses some JSON an older turn may hold.
+    const ran = await this.core.read((tx) =>
+      tx.all<{ conversation_id: string; id: string; data_json: string }>(
+        `SELECT conversation_id,id,data_json FROM pi_commands WHERE strpos(data_json,'"ran"') > 0`,
       ),
     );
-    for (const row of cut)
-      await this.keep(row.conversation_id, row.id, (proposal) => interrupted(proposal.name));
+    for (const row of ran)
+      if (decode<PiCommandRecord>(row).proposals?.some((p) => p.ran && p.ran.ok === undefined))
+        await this.keep(row.conversation_id, row.id, (proposal) => interrupted(proposal.name));
     this.timer = setInterval(() => {
       void this.tick().catch(() => undefined);
     }, this.core.config.pollIntervalMs);
@@ -442,7 +444,7 @@ export class PiService implements Pi {
         hash(this.core.modelToken(command)),
         command.createdAt,
         host.id,
-        JSON.stringify(command),
+        storedTurn(command),
       );
       if (host.idleSince) {
         host.idleSince = null;
