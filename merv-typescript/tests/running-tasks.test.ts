@@ -40,14 +40,17 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Running tasks', actorName: 'Op' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Running tasks',
+    actorName: 'Op',
+  });
   const operator: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
   const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
-    const issued = await app.ctx.scope.issueActor(operator, { name, role });
+    const issued = await app.ctx.scope.credentials.issueActor(operator, { name, role });
     const caller: Caller = {
       actorId: issued.actor.id,
       projectId: operator.projectId,

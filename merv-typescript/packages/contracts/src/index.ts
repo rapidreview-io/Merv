@@ -1,6 +1,5 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
 export { mapAsync, filterAsync, everyAsync } from './async.js';
-export { CheckedTransitions } from './checked-transitions.js';
 import type { ToolPolicy } from './tool-policy.js';
 export type {
   ToolPolicy,
@@ -558,6 +557,21 @@ export interface Migration {
    */
   sql: string;
 }
+/**
+ * `statements` between `ALTER TABLE <table> DISABLE TRIGGER <trigger>;` and the matching ENABLE,
+ * one line per trigger. DISABLE TRIGGER is transactional, so other sessions never see a guard off,
+ * and it names the one guard without copying its pinned DDL; it needs table ownership. The emitted
+ * text is embedded in published migrations and frozen like the retirement ledger in `@merv/workflows/retired-instances`.
+ */
+export function withoutTriggers(
+  table: string,
+  triggers: readonly string[],
+  statements: string,
+): string {
+  const alter = (action: 'DISABLE' | 'ENABLE') =>
+    triggers.map((trigger) => `ALTER TABLE ${table} ${action} TRIGGER ${trigger};`);
+  return [...alter('DISABLE'), statements, ...alter('ENABLE')].join('\n');
+}
 export interface StoredEvent {
   id: number;
   projectId: string;
@@ -625,6 +639,8 @@ export interface State {
   /** The oldest `limit` (at most 1000) events matching `filter`, in order. */
   findEvents(filter: EventFilter, limit: number, tx?: Transaction): Promise<StoredEvent[]>;
   eventBatch(after: number, limit: number, tx?: Transaction): Promise<StoredEvent[]>;
+  /** The id of the first event after `after` of one of `types`, in any project; undefined if none. */
+  nextEvent(after: number, types: readonly string[], tx?: Transaction): Promise<number | undefined>;
   eventHead(tx?: Transaction): Promise<number>;
   onEventsCommitted(listener: () => void): () => void;
 }
@@ -1060,7 +1076,81 @@ export interface ProjectMembership {
   createdAt: string;
   revokedAt: string | null;
 }
+/** Scope's people: verified identities, the projects they create and their memberships. */
+export interface ScopeMembers {
+  /** Trusted provider output only; accepting an invitation does not verify an identity. */
+  acceptVerifiedIdentity(identity: VerifiedIdentity): Promise<HumanPrincipal>;
+  createProject(principal: Principal, input: { name: string; requestId: string }): Promise<Project>;
+  memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]>;
+  /** Membership administration names subjects of the operator's own identity issuer only. */
+  addMember(
+    principal: Principal,
+    projectId: string,
+    input: { subject: string; role: Role },
+  ): Promise<ProjectMembership>;
+  /** A role change ends the membership and starts a new one. Every delegation source and resolved
+   * caller naming the old membership, a worker's lease source included, stops working with it. */
+  changeMemberRole(
+    principal: Principal,
+    projectId: string,
+    input: { subject: string; role: Role },
+  ): Promise<ProjectMembership>;
+  removeMember(principal: Principal, projectId: string, subject: string): Promise<void>;
+  /** Host-authority break-glass for the local CLI only, deliberately absent from HTTP/MCP. It
+   * makes a verified person the operator of a project with no membership history; with a
+   * `repairReason` it restores their operator membership whatever the project's members say,
+   * and records why. */
+  adoptProject(
+    principal: HumanPrincipal,
+    projectId: string,
+    options?: { repairReason: string },
+  ): Promise<ProjectMembership>;
+}
+/** Keys a person issues to their own machines, which act through the person's memberships. */
+export interface ScopeUserKeys {
+  authenticate(token: string): Promise<UserKey>;
+  /** Verified owners can inspect/revoke their own keys even after losing project membership. */
+  keys(principal: Principal, projectId?: string): Promise<UserKey[]>;
+  create(
+    principal: Principal,
+    input: {
+      projectId: string;
+      grantScope?: 'project' | 'account';
+      label?: string | null;
+      expiresAt?: string | null;
+    },
+  ): Promise<IssuedUserKey>;
+  /** Rotation preserves owner/grant/project; it requires a current membership within that grant. */
+  rotate(
+    principal: Principal,
+    input: { keyId: string; expiresAt?: string | null },
+  ): Promise<IssuedUserKey>;
+  /** Revoke the selected key and all of its rotation descendants atomically. */
+  revoke(principal: Principal, keyId: string): Promise<void>;
+}
+/** Independent machine actors and their credentials, and the bootstrap of a first project. */
+export interface ScopeActorCredentials {
+  bootstrap(input: { projectName: string; actorName: string }): Promise<Credentials>;
+  issueActor(
+    caller: Caller,
+    input: { name: string; role: Role; expiresAt?: string | null },
+  ): Promise<IssuedActorCredential>;
+  actorCredentials(caller: Caller, actorId?: string): Promise<ActorCredential[]>;
+  issueActorCredential(
+    caller: Caller,
+    input: { actorId: string; expiresAt?: string | null },
+  ): Promise<IssuedActorCredential>;
+  rotateCredential(
+    caller: Caller,
+    input: { credentialId: string; expiresAt?: string | null },
+  ): Promise<IssuedActorCredential>;
+  revokeCredential(caller: Caller, credentialId: string): Promise<void>;
+  revokeActor(caller: Caller, actorId: string): Promise<void>;
+}
 export interface Scope {
+  readonly members: ScopeMembers;
+  readonly userKeys: ScopeUserKeys;
+  readonly credentials: ScopeActorCredentials;
   /** Each project's owner: its longest-standing signed-in operator, as a person, who directs
    * and pays for its work on Fleet's machines. A project with none is left out. */
   projectOwners(tx?: Transaction): Promise<{ projectId: string; source: DelegationSource }[]>;
@@ -1117,58 +1207,11 @@ export interface Scope {
   ): Promise<boolean>;
   /** Verified delegation owner for scoped remote grants; does not change request attribution. */
   authorityActor(caller: Caller, tx?: Transaction): Promise<Actor>;
-  bootstrap(input: { projectName: string; actorName: string }): Promise<Credentials>;
   authenticate(token: string): Promise<AuthenticatedActor>;
-  authenticateKey(token: string): Promise<UserKey>;
   /** Recognize any issued local digest, including revoked/expired credentials. */
   recognizesCredential(token: string): Promise<boolean>;
-  /** Verified owners can inspect/revoke their own keys even after losing project membership. */
-  keys(principal: Principal, projectId?: string): Promise<UserKey[]>;
-  createKey(
-    principal: Principal,
-    input: {
-      projectId: string;
-      grantScope?: 'project' | 'account';
-      label?: string | null;
-      expiresAt?: string | null;
-    },
-  ): Promise<IssuedUserKey>;
-  /** Rotation preserves owner/grant/project; it requires a current membership within that grant. */
-  rotateKey(
-    principal: Principal,
-    input: { keyId: string; expiresAt?: string | null },
-  ): Promise<IssuedUserKey>;
-  /** Revoke the selected key and all of its rotation descendants atomically. */
-  revokeKey(principal: Principal, keyId: string): Promise<void>;
-  /** Trusted provider output only; accepting an invitation does not verify an identity. */
-  acceptVerifiedIdentity(identity: VerifiedIdentity): Promise<HumanPrincipal>;
   caller(principal: Principal, projectId?: string): Promise<Caller>;
   projects(principal: Principal): Promise<Project[]>;
-  createProject(principal: Principal, input: { name: string; requestId: string }): Promise<Project>;
-  memberships(principal: Principal, projectId: string): Promise<ProjectMembership[]>;
-  /** Membership administration names subjects of the operator's own identity issuer only. */
-  addMember(
-    principal: Principal,
-    projectId: string,
-    input: { subject: string; role: Role },
-  ): Promise<ProjectMembership>;
-  /** A role change ends the membership and starts a new one. Every delegation source and resolved
-   * caller naming the old membership, a worker's lease source included, stops working with it. */
-  changeMemberRole(
-    principal: Principal,
-    projectId: string,
-    input: { subject: string; role: Role },
-  ): Promise<ProjectMembership>;
-  removeMember(principal: Principal, projectId: string, subject: string): Promise<void>;
-  /** Host-authority break-glass for the local CLI only, deliberately absent from HTTP/MCP. It
-   * makes a verified person the operator of a project with no membership history; with a
-   * `repairReason` it restores their operator membership whatever the project's members say,
-   * and records why. */
-  adoptProject(
-    principal: HumanPrincipal,
-    projectId: string,
-    options?: { repairReason: string },
-  ): Promise<ProjectMembership>;
   require(caller: Caller, permission: Permission, tx?: Transaction): Promise<Actor>;
   /** Whether this actor may act with `permission`; with `{ except }`, whether any actor but
    * those, and no worker session's, may. */
@@ -1187,22 +1230,7 @@ export interface Scope {
     input: ProjectContextUpdate,
     tx?: Transaction,
   ): Promise<Project>;
-  issueActor(
-    caller: Caller,
-    input: { name: string; role: Role; expiresAt?: string | null },
-  ): Promise<IssuedActorCredential>;
-  actorCredentials(caller: Caller, actorId?: string): Promise<ActorCredential[]>;
-  issueActorCredential(
-    caller: Caller,
-    input: { actorId: string; expiresAt?: string | null },
-  ): Promise<IssuedActorCredential>;
-  rotateCredential(
-    caller: Caller,
-    input: { credentialId: string; expiresAt?: string | null },
-  ): Promise<IssuedActorCredential>;
-  revokeCredential(caller: Caller, credentialId: string): Promise<void>;
   actors(caller: Caller): Promise<Actor[]>;
-  revokeActor(caller: Caller, actorId: string): Promise<void>;
 }
 /** The most bytes an artifact holds inline: created whole, or read whole or in ranges. */
 export const MAX_ARTIFACT_BYTES = 2_000_000;
@@ -1500,20 +1528,6 @@ export type WorkflowExecutionBinding =
   | { kind: 'oneOf'; name: string }
   | { kind: 'subset'; name: string };
 export type WorkflowExecutionReferences = Record<string, string | string[]>;
-/** The argument bindings an execution policy grants a tool with. */
-export const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
-  kind: 'target',
-  field,
-});
-export const reference = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
-export const literal = (value: string): WorkflowExecutionBinding => ({ kind: 'literal', value });
-export const grant = (
-  name: string,
-  ...alternatives: Record<string, WorkflowExecutionBinding>[]
-) => ({
-  name,
-  alternatives,
-});
 /** JSON declarations, separate from guidance and deployed callback implementations. */
 export interface WorkflowExecutionPolicy {
   /** Describes the work environment; explicit protocol/checkpoint writes remain permitted. */
@@ -2077,29 +2091,3 @@ export type {
   GitHubPullDetails,
   GitHubAutomationInput,
 } from './github-models.js';
-
-/** The caller a delegation source acts as, for work done later on its behalf. */
-export function sourceCaller(source: DelegationSource): Caller {
-  const base = { actorId: source.actorId, projectId: source.projectId };
-  if (source.kind === 'actor') return { ...base, credentialId: source.credentialId };
-  if (source.kind === 'key')
-    return { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
-  if (source.kind === 'service') return { ...base, service: { vouchedBy: source.vouchedBy } };
-  // Delegation follows the captured membership epoch, not the original short-lived login JWT.
-  return {
-    ...base,
-    human: {
-      issuer: source.issuer,
-      subject: source.subject,
-      membershipId: source.membershipId,
-      expiresAt: '9999-12-31T23:59:59.999Z',
-    },
-  };
-}
-/** When a delegation lapses by itself: a person's never, a service's with its voucher's. */
-export const delegationEnd = (source: DelegationSource): number =>
-  source.kind === 'service'
-    ? delegationEnd(source.vouchedBy)
-    : source.kind !== 'human' && source.expiresAt
-      ? Date.parse(source.expiresAt)
-      : Infinity;

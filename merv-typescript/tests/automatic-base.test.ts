@@ -104,12 +104,12 @@ async function fixture(t: TestContext) {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const principal = await scope.acceptVerifiedIdentity({
+  const principal = await scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const project = await scope.createProject(principal, { name: 'Bases', requestId: 'one' });
+  const project = await scope.members.createProject(principal, { name: 'Bases', requestId: 'one' });
   const admin = await scope.caller(principal, project.id);
   const plain = await workflows.register(definition, policy(false));
   const coded = await workflows.register({ ...definition, name: 'coded' }, policy(true));

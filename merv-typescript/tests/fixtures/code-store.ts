@@ -221,7 +221,7 @@ export async function codeStoreFixture(
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await scope.bootstrap({ projectName: 'Code store', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Code store', actorName: 'Owner' });
   const admin: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -247,12 +247,12 @@ export async function codeStoreFixture(
     admin,
     /** A signed-in administrator of the same project, for what only a human may do. */
     async human(): Promise<Caller> {
-      const principal = await scope.acceptVerifiedIdentity({
+      const principal = await scope.members.acceptVerifiedIdentity({
         issuer: 'https://issuer.example.test',
         subject: 'operator',
         expiresAt: new Date(Date.now() + 3600_000).toISOString(),
       });
-      await scope.adoptProject(principal, admin.projectId);
+      await scope.members.adoptProject(principal, admin.projectId);
       return await scope.caller(principal, admin.projectId);
     },
     paths,

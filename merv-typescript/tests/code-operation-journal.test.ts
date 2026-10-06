@@ -47,7 +47,10 @@ test('Code receipts survive concurrent replay, isolate principals and roll back 
     { code: 'request_conflict' },
   );
 
-  const producer = await f.scope.issueActor(f.admin, { name: 'Producer', role: 'producer' });
+  const producer = await f.scope.credentials.issueActor(f.admin, {
+    name: 'Producer',
+    role: 'producer',
+  });
   await assert.rejects(
     f.code.configureRepository(
       {

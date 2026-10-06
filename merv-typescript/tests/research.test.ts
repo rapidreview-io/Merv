@@ -43,7 +43,7 @@ async function fixture(t: TestContext, store = false) {
   };
   let research = await service(),
     sequence = 0;
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Research cycle',
     actorName: 'Coordinator',
   });
@@ -55,7 +55,7 @@ async function fixture(t: TestContext, store = false) {
   await waitForManagedCode(app.ctx.codeWork, owner);
   const id = () => `research-test-${++sequence}`;
   const issue = async (role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
-    const record = await app.ctx.scope.issueActor(owner, { name: id(), role });
+    const record = await app.ctx.scope.credentials.issueActor(owner, { name: id(), role });
     return {
       projectId: owner.projectId,
       actorId: record.actor.id,
@@ -191,7 +191,10 @@ test('Research requests retain their admitted caller and reflection inputs', asy
   for (const method of ['get', 'list'] as const) {
     await t.test(method, async (t) => {
       const record = await f.create();
-      const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+      const other = await f.app.ctx.scope.credentials.bootstrap({
+        projectName: 'Other',
+        actorName: 'Other',
+      });
       const caller = { projectId: other.project.id, actorId: other.actor.id };
       const authorize = f.app.ctx.scope.require.bind(f.app.ctx.scope);
       t.mock.method(f.app.ctx.scope, 'require', async (...args: Parameters<typeof authorize>) => {
@@ -924,7 +927,10 @@ test('only a finished cycle of this project can be followed, and never by a leas
     reason: 'Stopped.',
     requestId: f.id(),
   });
-  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other',
+  });
   await assert.rejects(
     async () =>
       await follow(
@@ -1041,7 +1047,7 @@ test('research owner authorization, project scoping, selected prerequisite succe
       }),
     { code: 'forbidden' },
   );
-  const other = await f.app.ctx.scope.bootstrap({
+  const other = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Another project',
     actorName: 'Another owner',
   });

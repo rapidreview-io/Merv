@@ -6,8 +6,8 @@ export type LedgerKind = 'actor' | 'user-key';
 
 const denied = 'Invalid or expired credential';
 
-/** Scope's only door to Identity's credential ledger. Scope rows are provenance; the ledger
- * co-decides liveness, and only for rows it records as Scope's own. */
+/** Scope's only door to Identity's credential ledger. Scope rows are provenance; the ledger alone
+ * decides liveness, and only for rows it records as Scope's own. */
 export class Ledger {
   constructor(private readonly store: CredentialStore) {}
 
@@ -36,16 +36,30 @@ export class Ledger {
     return { token, tokenHash: credential.tokenHash };
   }
 
-  /** Liveness of one Scope row: kind, owner and subject must all agree (401 otherwise). */
-  async live(tokenHash: string, kind: LedgerKind, subject: string, sql: Sql): Promise<Credential> {
-    const credential = await this.store.authenticateHash(tokenHash, kind, sql);
+  /** Liveness of one Scope row, which the ledger alone decides. Kind, owner and subject must all
+   * agree (401 otherwise); a row of this credential that is no longer live is refused as
+   * `refusal` says, 401 by default. */
+  async live(
+    tokenHash: string,
+    kind: LedgerKind,
+    subject: string,
+    sql: Sql,
+    refusal = { code: 'unauthorized', message: denied, status: 401 },
+  ): Promise<Credential> {
+    const credential = await this.store.read(tokenHash, sql);
     check(
-      credential.owner === 'scope' && credential.subject === subject,
+      credential?.owner === 'scope' && credential.subject === subject && credential.kind === kind,
       'unauthorized',
       denied,
       401,
     );
+    check(this.store.isLive(credential), refusal.code, refusal.message, refusal.status);
     return credential;
+  }
+
+  /** A hash's ledger row, live or not, whoever owns it; undefined when the ledger never held it. */
+  async held(tokenHash: string, sql: Sql): Promise<Credential | undefined> {
+    return await this.store.read(tokenHash, sql);
   }
 
   /** A bearer token's ledger row; callers still match its subject against their row id. */

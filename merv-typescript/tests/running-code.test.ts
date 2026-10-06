@@ -128,7 +128,7 @@ async function fixture(t: TestContext) {
     role: 'operator' | 'producer' | 'reader',
   ): Promise<Caller> => ({
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name, role })).actor.id,
+    actorId: (await f.scope.credentials.issueActor(f.admin, { name, role })).actor.id,
   });
   const producer = await actor('Producer', 'operator');
   const captures = new Map<string, CodeCapture>();

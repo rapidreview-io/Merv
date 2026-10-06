@@ -78,7 +78,7 @@ async function fixture(t: TestContext) {
     currentTask(
       app.ctx,
       await app.ctx.scope.caller(
-        { kind: 'key', key: await app.ctx.scope.authenticateKey(key.token) },
+        { kind: 'key', key: await app.ctx.scope.userKeys.authenticate(key.token) },
         project.id,
       ),
       {

@@ -38,13 +38,19 @@ test('assembled Cordis application preserves current MCP task closure across two
   let app = await createApp({ directory, api: true, port: 0 });
   let producer: Client | undefined, reviewer: Client | undefined;
   try {
-    const credentials = await app.ctx.scope.bootstrap({
+    const credentials = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Integration',
       actorName: 'Operator',
     });
     const caller = { actorId: credentials.actor.id, projectId: credentials.project.id };
-    const p = await app.ctx.scope.issueActor(caller, { name: 'Producer', role: 'producer' }),
-      r = await app.ctx.scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
+    const p = await app.ctx.scope.credentials.issueActor(caller, {
+        name: 'Producer',
+        role: 'producer',
+      }),
+      r = await app.ctx.scope.credentials.issueActor(caller, {
+        name: 'Reviewer',
+        role: 'reviewer',
+      });
     producer = await client(app.ctx.api.url!, p.token);
     const catalog = (await producer.listTools()).tools;
     assert.equal(catalog.length, 85);
@@ -246,7 +252,10 @@ test('a paper too long to show the agent whole reads on section by section', asy
   const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
   const app = await createApp({ directory, api: true, port: 0 });
   try {
-    const boot = await app.ctx.scope.bootstrap({ projectName: 'Paper', actorName: 'Owner' });
+    const boot = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Paper',
+      actorName: 'Owner',
+    });
     const caller = { actorId: boot.actor.id, projectId: boot.project.id };
     const read = async (input: object) =>
       fit('paper.read', await app.ctx.tools.call('paper.read', caller, input)) as {
@@ -393,7 +402,10 @@ test('every tool reaches an agent conversation as the relay accepts it, under it
           `${name} ${verdict}`,
         );
     // MCP clients working with a person get the same guide.
-    const credentials = await app.ctx.scope.bootstrap({ projectName: 'Guide', actorName: 'Owner' });
+    const credentials = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Guide',
+      actorName: 'Owner',
+    });
     const mcp = await client(app.ctx.api.url!, credentials.token);
     assert.ok(mcp.getInstructions()?.startsWith(app.ctx.tools.instructions()));
     // The Sessions page's controls, as tools.

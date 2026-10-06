@@ -100,7 +100,7 @@ async function fixture(t: TestContext) {
     workflows.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   // Each test registers one graph, and moves its instances through that graph's handle.
   let handle: Awaited<ReturnType<typeof workflows.register>> | undefined;
@@ -336,13 +336,16 @@ test('only a project admin who is not a leased worker may extend a limit', async
     refused('forbidden', 403),
   );
   for (const role of ['producer', 'reviewer'] as const) {
-    const { actor } = await f.scope.issueActor(f.owner, { name: role, role });
+    const { actor } = await f.scope.credentials.issueActor(f.owner, { name: role, role });
     await assert.rejects(
       f.workflows.extendLimit({ projectId: f.owner.projectId, actorId: actor.id }, grant),
       (error: unknown) => error instanceof MervError && error.status === 403,
     );
   }
-  const other = await f.scope.bootstrap({ projectName: 'Elsewhere', actorName: 'Stranger' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Elsewhere',
+    actorName: 'Stranger',
+  });
   await assert.rejects(
     f.workflows.extendLimit({ projectId: other.project.id, actorId: other.actor.id }, grant),
     refused('not_found', 404),
@@ -463,7 +466,7 @@ test('a lower cap deployed on the same version escalates live work from its hist
   const state = await openState(path);
   const scope = await createService(new ProjectScope(state));
   const workflows = await createService(new WorkflowsService(state, scope));
-  const boot = await scope.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Limits', actorName: 'Owner' });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const draft = await workflows.register(definition, policy());
   const instance = await draft.start(owner, { workflow: 'draft', requestId: 'start' });

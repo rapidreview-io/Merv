@@ -39,7 +39,7 @@ async function fixture(t: test.TestContext) {
     { timeout: 5000 },
   );
   await catalog.replace(callable(remote, [...found.values()]));
-  const identity = await app.ctx.scope.bootstrap({
+  const identity = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Transport test',
     actorName: 'Operator',
   });

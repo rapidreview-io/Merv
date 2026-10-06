@@ -1,7 +1,8 @@
 import { requireDependencies } from '@merv/workflows/rules';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { delegationEnd, type Caller, type Sql } from '@merv/contracts';
+import { type Caller, type Sql } from '@merv/contracts';
+import { delegationEnd } from '@merv/scope/rules';
 import { resolutionFixture } from './fixtures/resolution.js';
 
 const indexes = (sql: Sql, table: string) =>
@@ -185,8 +186,14 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
 
 test('service actor guards upgrade populated scope v7 and retain ordinary credentials and indexes', async (t) => {
   const f = await resolutionFixture(t, { scope: 7 });
-  const writer = await f.scope.issueActor(f.admin, { name: 'Writer', role: 'producer' });
-  const reviewer = await f.scope.issueActor(f.admin, { name: 'Reviewer', role: 'reviewer' });
+  const writer = await f.scope.credentials.issueActor(f.admin, {
+    name: 'Writer',
+    role: 'producer',
+  });
+  const reviewer = await f.scope.credentials.issueActor(f.admin, {
+    name: 'Reviewer',
+    role: 'reviewer',
+  });
   const rows = () =>
     f.state.read(async (sql) => ({
       actors: await sql.all('SELECT * FROM actors ORDER BY id'),
@@ -216,7 +223,7 @@ test('service actor guards upgrade populated scope v7 and retain ordinary creden
   const caller = { projectId: f.admin.projectId, actorId: writer.actor.id };
   await f.scope.require(caller, 'write');
   await assert.rejects(f.scope.require(caller, 'admin'), { code: 'forbidden' });
-  await f.scope.revokeCredential(f.admin, writer.credential.id);
+  await f.scope.credentials.revokeCredential(f.admin, writer.credential.id);
   await assert.rejects(f.scope.authenticate(writer.token), { code: 'unauthorized' });
   await assert.rejects(
     f.state.transaction((tx) =>
@@ -242,9 +249,12 @@ test('service actor guards upgrade populated scope v7 and retain ordinary creden
       tx.run("UPDATE actors SET role='operator' WHERE id=?", service.actorId),
     ),
   );
-  await assert.rejects(f.scope.issueActorCredential(f.admin, { actorId: service.actorId }), {
-    code: 'member_actor',
-  });
+  await assert.rejects(
+    f.scope.credentials.issueActorCredential(f.admin, { actorId: service.actorId }),
+    {
+      code: 'member_actor',
+    },
+  );
 });
 
 test('scope@9 makes only Fleet’s review director a reviewing service, acting only as vouched for by someone who may write', async (t) => {
@@ -268,10 +278,13 @@ test('scope@9 makes only Fleet’s review director a reviewing service, acting o
     { code: 'state_constraint' },
   );
   const member = async (role: 'producer' | 'reader', expiresAt?: string) => {
-    const issued = await f.scope.issueActor(f.admin, { name: role, role, expiresAt });
+    const issued = await f.scope.credentials.issueActor(f.admin, { name: role, role, expiresAt });
     return { ...reviewer, actorId: issued.actor.id, credentialId: issued.credential.id };
   };
-  const elsewhere = await f.scope.bootstrap({ projectName: 'Elsewhere', actorName: 'Owner' });
+  const elsewhere = await f.scope.credentials.bootstrap({
+    projectName: 'Elsewhere',
+    actorName: 'Owner',
+  });
   const vouched = async (by: Caller, actorId = reviewer.actorId) => ({
     ...reviewer,
     actorId,
@@ -306,6 +319,6 @@ test('scope@9 makes only Fleet’s review director a reviewing service, acting o
   ])
     await assert.rejects(f.scope.require(caller, 'read'), { code: 'forbidden' });
   // It lapses with its voucher's authority.
-  await f.scope.revokeCredential(f.admin, writer.credentialId);
+  await f.scope.credentials.revokeCredential(f.admin, writer.credentialId);
   await assert.rejects(f.scope.requireDelegation(source, 'read'), { code: 'forbidden' });
 });

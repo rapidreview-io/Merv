@@ -55,7 +55,10 @@ async function assembled(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Op' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Running',
+    actorName: 'Op',
+  });
   const operator: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -70,7 +73,7 @@ async function assembled(t: TestContext) {
     capabilities: ['code.v2'],
   });
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const issued = await app.ctx.scope.issueActor(operator, { name: role, role });
+    const issued = await app.ctx.scope.credentials.issueActor(operator, { name: role, role });
     return {
       caller: { projectId: operator.projectId, actorId: issued.actor.id } as Caller,
       token: issued.token,

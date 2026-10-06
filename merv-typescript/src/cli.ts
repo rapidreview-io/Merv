@@ -335,8 +335,8 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
     });
     try {
       const identity = await app.ctx.identity.verify(bearer);
-      const principal = await app.ctx.scope.acceptVerifiedIdentity(identity);
-      const membership = await app.ctx.scope.adoptProject(
+      const principal = await app.ctx.scope.members.acceptVerifiedIdentity(identity);
+      const membership = await app.ctx.scope.members.adoptProject(
         principal,
         args.project,
         args['repair-reason'] === undefined ? undefined : { repairReason: args['repair-reason'] },
@@ -362,7 +362,7 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
         'already_initialized',
         'This directory already has operator credentials',
       );
-      const credentials = await app.ctx.scope.bootstrap({
+      const credentials = await app.ctx.scope.credentials.bootstrap({
         projectName: args.name ?? 'Merv project',
         actorName: 'Local operator',
       });
@@ -376,7 +376,7 @@ than one transfer (512 MiB) is imported oldest first, one ref at a time.`);
     } else {
       const operator = JSON.parse(readFileSync(credentialPath, 'utf8')) as Credentials;
       const identity = await app.ctx.scope.authenticate(operator.token);
-      const credential = await app.ctx.scope.issueActor(
+      const credential = await app.ctx.scope.credentials.issueActor(
         {
           actorId: identity.id,
           projectId: identity.projectId,

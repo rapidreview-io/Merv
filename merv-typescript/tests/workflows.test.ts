@@ -32,7 +32,7 @@ const graph = (version = 1): WorkflowDefinition => ({
 async function setup(path = ':memory:', given?: PostgresState) {
   const state = given ?? (await openState(path));
   const scope = await createService(new ProjectScope(state));
-  const credentials = await scope.bootstrap({
+  const credentials = await scope.credentials.bootstrap({
     projectName: 'Workflow tests',
     actorName: 'Operator',
   });
@@ -48,8 +48,9 @@ const code = (expected: string) => (error: unknown) =>
 test('durable graph transitions record exact command responses, history, and events once', async (t) => {
   const { state, scope, workflows, approval, caller } = await setup();
   t.after(async () => await state.close());
-  const replacement = (await scope.issueActor(caller, { name: 'Replacement', role: 'producer' }))
-    .actor;
+  const replacement = (
+    await scope.credentials.issueActor(caller, { name: 'Replacement', role: 'producer' })
+  ).actor;
   const pendingCaller = { ...caller };
   const start = { workflow: 'approval', requestId: 'start-1', data: { title: 'A', untouched: 1 } };
   const requestedStart = structuredClone(start);
@@ -225,7 +226,10 @@ test('all project reads and mutation replays check actor scope and permission', 
   const { state, scope, workflows, approval, caller } = await setup();
   t.after(async () => await state.close());
   const initial = await approval.start(caller, { workflow: 'approval', requestId: 'start' });
-  const foreign = await scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const foreign = await scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const other: Caller = { actorId: foreign.actor.id, projectId: foreign.project.id };
   for (const method of [
     'get',
@@ -258,10 +262,13 @@ test('all project reads and mutation replays check actor scope and permission', 
     async () => await workflows.get({ ...other, projectId: caller.projectId }, initial.id),
     code('forbidden'),
   );
-  const reader = (await scope.issueActor(caller, { name: 'Reader', role: 'reader' })).actor;
+  const reader = (await scope.credentials.issueActor(caller, { name: 'Reader', role: 'reader' }))
+    .actor;
   const readerCaller = { actorId: reader.id, projectId: caller.projectId };
   assert.equal((await workflows.get(readerCaller, initial.id)).id, initial.id);
-  const producer = (await scope.issueActor(caller, { name: 'Producer', role: 'producer' })).actor;
+  const producer = (
+    await scope.credentials.issueActor(caller, { name: 'Producer', role: 'producer' })
+  ).actor;
   await assert.rejects(
     async () =>
       await approval.start(
@@ -270,7 +277,7 @@ test('all project reads and mutation replays check actor scope and permission', 
       ),
     code('request_conflict'),
   );
-  await scope.revokeActor(caller, producer.id);
+  await scope.credentials.revokeActor(caller, producer.id);
   await assert.rejects(
     async () => await workflows.list({ actorId: producer.id, projectId: caller.projectId }),
     code('forbidden'),
@@ -343,7 +350,9 @@ test('a program handle changes only its own version and disposal preserves durab
     expectedRevision: 0,
     requestId: 'owned-submit',
   });
-  const reviewer = (await scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' })).actor;
+  const reviewer = (
+    await scope.credentials.issueActor(caller, { name: 'Reviewer', role: 'reviewer' })
+  ).actor;
   // A program authorizes its own actions: the engine asks only that the caller may read.
   const reviewerCaller = { actorId: reviewer.id, projectId: caller.projectId };
   await scope.require(reviewerCaller, 'review');
@@ -718,7 +727,10 @@ test('real Cordis dependency activation and disposal preserve database state', a
   await workflowFiber.await();
   assert.ok(ctx.workflows);
   const scope = ctx.scope;
-  const credential = await scope.bootstrap({ projectName: 'Cordis', actorName: 'Operator' });
+  const credential = await scope.credentials.bootstrap({
+    projectName: 'Cordis',
+    actorName: 'Operator',
+  });
   const caller = { actorId: credential.actor.id, projectId: credential.project.id };
   const service = ctx.workflows;
   const approval = await service.register(graph());

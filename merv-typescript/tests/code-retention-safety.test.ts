@@ -15,7 +15,10 @@ test('retention refuses impossible transport before persisting an obligation', a
     await code.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Retention safety', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Retention safety',
+    actorName: 'Owner',
+  });
   const caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -102,7 +105,10 @@ test('mirror replay preserves its destination while allowing work-tip coalescing
     await code.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Mirror destinations', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Mirror destinations',
+    actorName: 'Owner',
+  });
   const projectId = boot.project.id,
     tip = 'a'.repeat(40),
     ref = 'refs/merv/explicit/original';

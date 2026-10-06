@@ -135,7 +135,8 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
   const id = () => `request-${++sequence}`;
   const producer = {
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name: 'Producer', role: 'operator' })).actor.id,
+    actorId: (await f.scope.credentials.issueActor(f.admin, { name: 'Producer', role: 'operator' }))
+      .actor.id,
   };
   const captures = new Map<string, CodeCapture>();
   const original = code.capture.bind(code);

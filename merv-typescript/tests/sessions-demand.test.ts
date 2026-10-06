@@ -34,13 +34,13 @@ test('with dispatch on by default, Fleet serves each project nobody switched und
     await workflows.close();
     await state.close();
   });
-  const person = await scope.acceptVerifiedIdentity({
+  const person = await scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'founder',
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
   const project = async (name: string) => {
-    const created = await scope.createProject(person, { name, requestId: name });
+    const created = await scope.members.createProject(person, { name, requestId: name });
     return await scope.caller(person, created.id);
   };
   const untouched = await project('Untouched');
@@ -50,7 +50,7 @@ test('with dispatch on by default, Fleet serves each project nobody switched und
   await sessions.dispatch.setDispatch(own, { ownMachines: true });
   assert.equal((await sessions.dispatch.projectStatus(untouched)).dispatch.enabled, true);
   // A project made by bootstrap has no signed-in operator to direct it, so it is not served.
-  await scope.bootstrap({ projectName: 'Actors only', actorName: 'Owner' });
+  await scope.credentials.bootstrap({ projectName: 'Actors only', actorName: 'Owner' });
   assert.deepEqual(await sessions.dispatch.servedSources(), [
     { projectId: untouched.projectId, source: await scope.delegationSource(untouched) },
   ]);
@@ -72,13 +72,16 @@ async function fixture(t: TestContext, maxLaunchFailures = 3) {
       sweepIntervalMs: 60_000,
     }),
   );
-  const boot = await scope.bootstrap({ projectName: 'Demand', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Demand', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const producer = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const producer = await scope.credentials.issueActor(owner, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const source: Caller = {
     actorId: producer.actor.id,
     projectId: owner.projectId,
@@ -221,7 +224,7 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
       ],
     },
   );
-  const reader = await f.scope.issueActor(f.owner, { name: 'Reader', role: 'reader' });
+  const reader = await f.scope.credentials.issueActor(f.owner, { name: 'Reader', role: 'reader' });
   assert.deepEqual(
     await f.sessions.dispatch.dispatchDemand(
       { ...f.source, actorId: reader.actor.id, credentialId: reader.credential.id },
@@ -336,7 +339,7 @@ test('a project on its own machines shows Fleet no demand, and its own runner st
 test('Fleet serves each project turned on for it as its earliest operator, whoever switched it', async (t) => {
   const f = await fixture(t);
   const login = async (subject: string) =>
-    await f.scope.acceptVerifiedIdentity({
+    await f.scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example/auth/v1',
       subject,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -345,14 +348,17 @@ test('Fleet serves each project turned on for it as its earliest operator, whoev
   const project = async (name: string) =>
     await f.scope.caller(
       founder,
-      (await f.scope.createProject(founder, { name, requestId: name })).id,
+      (await f.scope.members.createProject(founder, { name, requestId: name })).id,
     );
   const main = await project('Main');
   const own = await project('Own machines');
   const halted = await project('Halted');
   await project('Never switched');
   f.advance(1000);
-  await f.scope.addMember(founder, main.projectId, { subject: 'colleague', role: 'operator' });
+  await f.scope.members.addMember(founder, main.projectId, {
+    subject: 'colleague',
+    role: 'operator',
+  });
   const colleague = await f.scope.caller(await login('colleague'), main.projectId);
   await f.sessions.dispatch.setDispatch(colleague, { enabled: true });
   await f.sessions.dispatch.setDispatch(own, { enabled: true, ownMachines: true });
@@ -393,7 +399,10 @@ test('every project runs its work on Fleet’s machines after the upgrade, whate
   });
   const projects = [];
   for (const enabled of [1, 0]) {
-    const boot = await scope.bootstrap({ projectName: `Before ${enabled}`, actorName: 'Owner' });
+    const boot = await scope.credentials.bootstrap({
+      projectName: `Before ${enabled}`,
+      actorName: 'Owner',
+    });
     await state.transaction((tx) =>
       tx.run(
         'INSERT INTO project_session_dispatch(project_id,enabled,updated_at,updated_by) VALUES(?,?,?,?)',

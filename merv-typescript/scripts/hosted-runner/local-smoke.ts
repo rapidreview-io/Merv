@@ -69,7 +69,7 @@ const app = await createApp({
 let allocated = false;
 let sourceToken = '';
 try {
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: run,
     actorName: 'Synthetic acceptance',
   });

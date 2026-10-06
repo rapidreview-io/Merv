@@ -922,10 +922,13 @@ test('the assembled application draws the machines from memory inside the read-o
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const credentials = await app.ctx.scope.bootstrap({ projectName: 'Machines', actorName: 'Op' });
+  const credentials = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Machines',
+    actorName: 'Op',
+  });
   const owner = { actorId: credentials.actor.id, projectId: credentials.project.id };
   const token = async (role: 'producer' | 'reader') =>
-    (await app.ctx.scope.issueActor(owner, { name: role, role })).token;
+    (await app.ctx.scope.credentials.issueActor(owner, { name: role, role })).token;
   const tokens = {
     operator: credentials.token,
     producer: await token('producer'),

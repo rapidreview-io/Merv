@@ -47,7 +47,10 @@ async function fixture() {
   const schema = schemaFor();
   const state = await openState(':memory:', { schema });
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Authority locks', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Authority locks',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -98,20 +101,24 @@ async function fixture() {
   };
   const service = await scope.serviceActor('fixture', owner.projectId);
   // Another actor of the owner's project, whose credentials the owner lists as an administrator.
-  const other = (await scope.issueActor(owner, { name: 'Other', role: 'producer' })).actor;
+  const other = (await scope.credentials.issueActor(owner, { name: 'Other', role: 'producer' }))
+    .actor;
   const serviceSource: DelegationSource = { ...service, kind: 'service', vouchedBy: source };
   (scope.toolPolicy as ExactToolPolicy).replace([
     { projectId: owner.projectId, actorId: owner.actorId, mountId: 'fixture', tools: ['look'] },
   ]);
-  const alice = await scope.acceptVerifiedIdentity({
+  const alice = await scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'alice',
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
-  const project = await scope.createProject(alice, { name: 'Listings', requestId: 'listings' });
+  const project = await scope.members.createProject(alice, {
+    name: 'Listings',
+    requestId: 'listings',
+  });
   const key: Principal = {
     kind: 'key',
-    key: (await scope.createKey(alice, { projectId: project.id })).key,
+    key: (await scope.userKeys.create(alice, { projectId: project.id })).key,
   };
   return {
     schema,
@@ -235,18 +242,19 @@ const listings: [string, Operation][] = [
         [f.project.id],
       ),
   ],
-  ['keys(human)', async (f) => assert.equal((await f.scope.keys(f.alice)).length, 1)],
+  ['keys(human)', async (f) => assert.equal((await f.scope.userKeys.keys(f.alice)).length, 1)],
   [
     'memberships(human)',
-    async (f) => assert.equal((await f.scope.memberships(f.alice, f.project.id)).length, 1),
+    async (f) => assert.equal((await f.scope.members.memberships(f.alice, f.project.id)).length, 1),
   ],
   [
     'actorCredentials(owner)',
-    async (f) => assert.equal((await f.scope.actorCredentials(f.owner)).length, 1),
+    async (f) => assert.equal((await f.scope.credentials.actorCredentials(f.owner)).length, 1),
   ],
   [
     'actorCredentials(owner, another actor)',
-    async (f) => assert.equal((await f.scope.actorCredentials(f.owner, f.other.id)).length, 1),
+    async (f) =>
+      assert.equal((await f.scope.credentials.actorCredentials(f.owner, f.other.id)).length, 1),
   ],
 ];
 
@@ -541,7 +549,7 @@ test('a provider cannot write on a read decision', async (t) => {
 test('a tool request makes one read decision per decision point', async (t) => {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Decisions', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Decisions', actorName: 'Owner' });
   // Twenty granted mounted tools, so a listing shows what its grant check costs.
   const mounted = Array.from({ length: 20 }, (_, n) => (n ? `look${n}` : 'look'));
   (scope.toolPolicy as ExactToolPolicy).replace([

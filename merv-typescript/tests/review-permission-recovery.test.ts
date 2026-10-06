@@ -20,10 +20,13 @@ async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-permissions-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Recovery', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Recovery',
+    actorName: 'Operator',
+  });
   const operator = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: Role) => ({
-    actorId: (await scope.issueActor(operator, { name: role, role })).actor.id,
+    actorId: (await scope.credentials.issueActor(operator, { name: role, role })).actor.id,
     projectId: operator.projectId,
   });
   const producer = await issue('producer'),
@@ -232,11 +235,15 @@ test('Reviews adds a separate durable permission consumer and catches up after u
   const directory = mkdtempSync(join(tmpdir(), 'merv-permission-consumer-'));
   const app = await createApp({ directory, api: false });
   try {
-    const boot = await app.ctx.scope.bootstrap({ projectName: 'Catch-up', actorName: 'Operator' });
+    const boot = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Catch-up',
+      actorName: 'Operator',
+    });
     const operator = { actorId: boot.actor.id, projectId: boot.project.id };
     const reviewer = {
-      actorId: (await app.ctx.scope.issueActor(operator, { name: 'Reviewer', role: 'reviewer' }))
-        .actor.id,
+      actorId: (
+        await app.ctx.scope.credentials.issueActor(operator, { name: 'Reviewer', role: 'reviewer' })
+      ).actor.id,
       projectId: operator.projectId,
     };
     const proof = await app.ctx.artifacts.create(operator, { title: 'Proof', content: 'Passed.' });
@@ -292,15 +299,18 @@ for (const loss of ['role-loss', 'remove-rejoin'] as const) {
     try {
       const { scope, state, reviews, tasks, artifacts, workflows, domainEvents } = app.ctx;
       const login = async (subject: string) =>
-        await scope.acceptVerifiedIdentity({
+        await scope.members.acceptVerifiedIdentity({
           issuer: 'https://identity.example/auth/v1',
           subject,
           expiresAt: new Date(Date.now() + 60_000).toISOString(),
         });
       const owner = await login('owner'),
         reviewerUser = await login('reviewer');
-      const project = await scope.createProject(owner, { name: 'Recovery', requestId: 'project' });
-      await scope.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
+      const project = await scope.members.createProject(owner, {
+        name: 'Recovery',
+        requestId: 'project',
+      });
+      await scope.members.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
       const operator = await scope.caller(owner, project.id);
       const reviewer = await scope.caller(reviewerUser, project.id);
       const proof = await artifacts.create(operator, {
@@ -330,11 +340,17 @@ for (const loss of ['role-loss', 'remove-rejoin'] as const) {
           ),
       );
       if (loss === 'role-loss') {
-        await scope.changeMemberRole(owner, project.id, { subject: 'reviewer', role: 'reader' });
-        await scope.changeMemberRole(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
+        await scope.members.changeMemberRole(owner, project.id, {
+          subject: 'reviewer',
+          role: 'reader',
+        });
+        await scope.members.changeMemberRole(owner, project.id, {
+          subject: 'reviewer',
+          role: 'reviewer',
+        });
       } else {
-        await scope.removeMember(owner, project.id, 'reviewer');
-        await scope.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
+        await scope.members.removeMember(owner, project.id, 'reviewer');
+        await scope.members.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
       }
       const restored = await scope.caller(reviewerUser, project.id);
       assert.equal(restored.actorId, reviewer.actorId);

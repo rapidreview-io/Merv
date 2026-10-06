@@ -57,7 +57,7 @@ async function fixture(t: test.TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const identity = await app.ctx.scope.bootstrap({
+  const identity = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Protocol test',
     actorName: 'Operator',
   });

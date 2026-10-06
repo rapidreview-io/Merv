@@ -153,13 +153,16 @@ async function fixture(t: TestContext, legacySchema = false) {
     edges: [{ from: 'working', action: 'finish', to: 'done' }],
   };
   let handle = await workflows.register(definition, policy());
-  const boot = await scope.bootstrap({ projectName: 'Sessions', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Sessions', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const producer = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const producer = await scope.credentials.issueActor(owner, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const source: Caller = {
     actorId: producer.actor.id,
     projectId: boot.project.id,
@@ -315,7 +318,8 @@ test('offers reserve one worker, store only the digest, bind receipts to source 
     { code: 'forbidden' },
   );
   await assert.rejects(
-    async () => await f.scope.issueActorCredential(f.owner, { actorId: session.actorId }),
+    async () =>
+      await f.scope.credentials.issueActorCredential(f.owner, { actorId: session.actorId }),
     {
       code: 'member_actor',
     },
@@ -634,8 +638,10 @@ test('a halt during a workflow outage still closes the session it answers for', 
 test('revocation before first authentication creates no work start and sibling credentials do not replace the pinned source', async (t) => {
   const f = await fixture(t),
     { token, session } = await f.offer();
-  const other = await f.scope.issueActorCredential(f.owner, { actorId: f.source.actorId });
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  const other = await f.scope.credentials.issueActorCredential(f.owner, {
+    actorId: f.source.actorId,
+  });
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
@@ -660,17 +666,17 @@ test('revocation before first authentication creates no work start and sibling c
 
 test('durable human authority outlives the initiating JWT but never a membership epoch', async (t) => {
   const f = await fixture(t);
-  const human = await f.scope.acceptVerifiedIdentity({
+  const human = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.test/auth/v1',
     subject: 'owner',
     expiresAt: new Date(f.time() + 1000).toISOString(),
   });
-  const project = await f.scope.createProject(human, {
+  const project = await f.scope.members.createProject(human, {
     name: 'Human leases',
     requestId: 'human-project',
   });
-  await f.scope.addMember(human, project.id, { subject: 'worker', role: 'producer' });
-  const user = await f.scope.acceptVerifiedIdentity({
+  await f.scope.members.addMember(human, project.id, { subject: 'worker', role: 'producer' });
+  const user = await f.scope.members.acceptVerifiedIdentity({
     issuer: human.user.issuer,
     subject: 'worker',
     expiresAt: human.expiresAt,
@@ -683,12 +689,12 @@ test('durable human authority outlives the initiating JWT but never a membership
     session.actorId,
     'The lease pins current membership, not the initiating JWT expiry',
   );
-  const refreshed = await f.scope.acceptVerifiedIdentity({
+  const refreshed = await f.scope.members.acceptVerifiedIdentity({
     ...human.user,
     expiresAt: new Date(f.time() + 100_000).toISOString(),
   });
-  await f.scope.removeMember(refreshed, project.id, 'worker');
-  await f.scope.addMember(refreshed, project.id, { subject: 'worker', role: 'producer' });
+  await f.scope.members.removeMember(refreshed, project.id, 'worker');
+  await f.scope.members.addMember(refreshed, project.id, { subject: 'worker', role: 'producer' });
   await f.sessions.sweep();
   await assert.rejects(async () => await f.sessions.authenticate(token), {
     code: 'unauthorized',
@@ -761,7 +767,7 @@ test('one invocation may finish its own handoff transaction, while later calls a
     second = await f.sessions.authenticate(next.token),
     invocation = await f.sessions.invocations.prepare(second, 'finish', {});
   let entered = false;
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
     f.sessions.invocations.run(invocation, () => {
       entered = true;
@@ -1049,22 +1055,22 @@ test('failed packet construction rolls back worker creation and domain reservati
 
 test('key revocation drains immediately and replacement keys never inherit leases', async (t) => {
   const f = await fixture(t);
-  const human = await f.scope.acceptVerifiedIdentity({
+  const human = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.test/auth/v1',
     subject: 'key-owner',
     expiresAt: new Date(f.time() + 100_000).toISOString(),
   });
-  const project = await f.scope.createProject(human, {
+  const project = await f.scope.members.createProject(human, {
     name: 'Key sessions',
     requestId: 'key-project',
   });
-  const first = await f.scope.createKey(human, { projectId: project.id });
+  const first = await f.scope.userKeys.create(human, { projectId: project.id });
   const keyCaller = await f.scope.caller(
-    { kind: 'key', key: await f.scope.authenticateKey(first.token) },
+    { kind: 'key', key: await f.scope.userKeys.authenticate(first.token) },
     project.id,
   );
   const offered = await f.offer(keyCaller);
-  const replacement = await f.scope.rotateKey(human, { keyId: first.key.id });
+  const replacement = await f.scope.userKeys.rotate(human, { keyId: first.key.id });
   await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
@@ -1080,12 +1086,12 @@ test('key revocation drains immediately and replacement keys never inherit lease
     code: 'unauthorized',
   });
   const replacementCaller = await f.scope.caller(
-    { kind: 'key', key: await f.scope.authenticateKey(replacement.token) },
+    { kind: 'key', key: await f.scope.userKeys.authenticate(replacement.token) },
     project.id,
   );
   assert.equal((await f.scope.require(replacementCaller, 'write')).id, keyCaller.actorId);
   const next = await f.offer(replacementCaller);
-  await f.scope.revokeKey(human, replacement.key.id);
+  await f.scope.userKeys.revoke(human, replacement.key.id);
   await f.sessions.sweep();
   assert.equal(
     (await f.state.read(
@@ -1350,7 +1356,7 @@ test('automatic leases need fresh source-bound presence, count offered capacity,
     'Runner label alone is not registration authority',
   );
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).runners[0].live, true);
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   assert.equal(
     (await f.sessions.dispatch.projectStatus(f.owner)).runners[0].live,
     false,
@@ -1817,7 +1823,7 @@ test('source revocation retires even an idle continuing agent; failed assignment
   );
   assert.equal((await f.sessions.agentSelf(token)).assignments.length, 0);
   assert.equal((await f.sessions.agentSelf(token)).agent.id, agent.id);
-  await f.scope.revokeActor(f.owner, f.source.actorId);
+  await f.scope.credentials.revokeActor(f.owner, f.source.actorId);
   await f.sessions.sweep();
   await assert.rejects(async () => await f.sessions.agentSelf(token), { code: 'unauthorized' });
   assert.equal(
@@ -2099,7 +2105,10 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
   const f = await fixture(t);
   const offered = await f.offer();
   const caller = await f.sessions.authenticate(offered.token);
-  const reader = await f.scope.issueActor(f.owner, { name: 'Observer', role: 'reader' });
+  const reader = await f.scope.credentials.issueActor(f.owner, {
+    name: 'Observer',
+    role: 'reader',
+  });
   const viewer: Caller = { actorId: reader.actor.id, projectId: f.owner.projectId };
   const invocation = await f.sessions.invocations.prepare(caller, 'artifact.read', {
     artifactId: 'frozen-artifact',
@@ -2125,7 +2134,10 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
     await f.state.read(async (sql) => await sql.get('SELECT COUNT(*) AS n FROM events')),
     before,
   );
-  const other = await f.scope.bootstrap({ projectName: 'Other project', actorName: 'Other owner' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other project',
+    actorName: 'Other owner',
+  });
   await assert.rejects(
     async () =>
       await f.sessions.observations.read(
@@ -2134,7 +2146,7 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
       ),
     { code: 'agent_not_found' },
   );
-  await f.scope.revokeActor(f.owner, reader.actor.id);
+  await f.scope.credentials.revokeActor(f.owner, reader.actor.id);
   await assert.rejects(
     async () => await f.sessions.observations.read(viewer, offered.session.agentId!),
   );
@@ -2219,7 +2231,7 @@ test('PostgreSQL preserves continuing agent identity, lease fencing and tool obs
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   assert.ok((await f.sessions.dispatch.lease(f.source, autoInput())).session);
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).liveSessionCount, 2);
-  await f.scope.revokeActor(f.owner, f.source.actorId);
+  await f.scope.credentials.revokeActor(f.owner, f.source.actorId);
   await f.sessions.sweep();
   await assert.rejects(f.sessions.agentSelf(token), { code: 'unauthorized' });
 });

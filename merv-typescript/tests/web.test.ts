@@ -748,7 +748,10 @@ test('a Pi turn is offered web search and runs it as its person, a reader includ
   const f = await piFixture(t);
   const web = new WebService({ keyEnv: keyEnv(t, 'tvly-fixture'), origin: tavily.origin });
   for (const tool of webTools(web)) f.tools.register(tool);
-  const issued = await f.scope.issueActor(f.operator, { name: 'Reader', role: 'reader' });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Reader',
+    role: 'reader',
+  });
   const reader: Caller = {
     projectId: f.operator.projectId,
     actorId: issued.actor.id,
@@ -872,9 +875,15 @@ test('the render composes web search into Main, where MCP clients list and call 
     if (previous === undefined) delete process.env.MERV_TAVILY_API_KEY;
     else process.env.MERV_TAVILY_API_KEY = previous;
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Web', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Web',
+    actorName: 'Owner',
+  });
   const owner = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issued = await app.ctx.scope.issueActor(owner, { name: 'Reader', role: 'reader' });
+  const issued = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
   mcp = new Client({ name: 'merv-web-test', version: '1.0.0' });
   await mcp.connect(
     new StreamableHTTPClientTransport(new URL(app.ctx.api.url! + '/mcp'), {

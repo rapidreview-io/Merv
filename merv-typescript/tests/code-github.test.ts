@@ -100,22 +100,25 @@ function fakeGitHub() {
 async function foundation(t: TestContext, storage?: State) {
   const state = storage ?? (await openState(':memory:'));
   const scope = await createService(new ProjectScope(state));
-  const principal = await scope.acceptVerifiedIdentity({
+  const principal = await scope.members.acceptVerifiedIdentity({
     issuer,
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const other = await scope.acceptVerifiedIdentity({
+  const other = await scope.members.acceptVerifiedIdentity({
     issuer,
     subject: 'other',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const project = await scope.createProject(principal, {
+  const project = await scope.members.createProject(principal, {
     name: 'GitHub project',
     requestId: 'one',
   });
-  const second = await scope.createProject(principal, { name: 'Second project', requestId: 'two' });
-  await scope.addMember(principal, project.id, { subject: 'other', role: 'operator' });
+  const second = await scope.members.createProject(principal, {
+    name: 'Second project',
+    requestId: 'two',
+  });
+  await scope.members.addMember(principal, project.id, { subject: 'other', role: 'operator' });
   const caller = await scope.caller(principal, project.id);
   const otherCaller = await scope.caller(other, project.id);
   const gh = fakeGitHub();
@@ -288,10 +291,10 @@ test('credentials cannot cross Merv user/project boundaries; machine and reader 
   const second = await f.scope.caller(f.principal, f.second.id);
   assert.equal((await f.service.status(second)).status, 'disconnected');
   await assert.rejects(f.service.repositories(second), { code: 'github_owner' });
-  const issued = await f.scope.createKey(f.principal, { projectId: f.project.id });
+  const issued = await f.scope.userKeys.create(f.principal, { projectId: f.project.id });
   const machine = await f.scope.caller({
     kind: 'key',
-    key: await f.scope.authenticateKey(issued.token),
+    key: await f.scope.userKeys.authenticate(issued.token),
   });
   for (const action of [
     () => f.service.begin(machine, { expectedRevision: 1 }),
@@ -299,7 +302,10 @@ test('credentials cannot cross Merv user/project boundaries; machine and reader 
     () => f.service.disconnect(machine, { expectedRevision: 1 }),
   ])
     await assert.rejects(action(), { code: 'github_human_required' });
-  await f.scope.changeMemberRole(f.principal, f.project.id, { subject: 'other', role: 'reader' });
+  await f.scope.members.changeMemberRole(f.principal, f.project.id, {
+    subject: 'other',
+    role: 'reader',
+  });
   const reader = await f.scope.caller(f.other, f.project.id);
   assert.equal((await f.service.status(reader)).canManage, false);
   await assert.rejects(f.service.disconnect(reader, { expectedRevision: 1 }), {
@@ -320,7 +326,7 @@ test('permission removal during GitHub I/O prevents returning repositories or sa
     ['membership_required', 'forbidden', 'unauthorized'].includes(error.code),
   );
   await f.gh.control.listEntered.promise;
-  await f.scope.removeMember(f.other, f.project.id, 'owner');
+  await f.scope.members.removeMember(f.other, f.project.id, 'owner');
   f.gh.control.pauseList.resolve();
   await rejected;
   assert.equal((await f.service.status(f.otherCaller)).repository, null);

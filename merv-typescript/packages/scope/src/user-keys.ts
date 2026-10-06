@@ -4,7 +4,6 @@ import {
   check,
   forRead,
   newId,
-  sha256Hex,
   type Actor,
   type Caller,
   type IssuedUserKey,
@@ -44,8 +43,6 @@ const hydrate = (row: KeyRow): UserKey => ({
   revokedAt: row.revoked_at,
   previousId: row.previous_id,
 });
-const validToken = (token: unknown): token is string =>
-  typeof token === 'string' && /^mk_[A-Za-z0-9_-]{43}$/.test(token);
 
 /** User-owned machine credentials delegate live memberships, never an independent actor role. */
 export class UserKeys {
@@ -69,26 +66,9 @@ export class UserKeys {
         verified.subject,
         verified.tokenHash,
       );
-      this.live(row, 401);
+      check(row, 'unauthorized', 'User key is invalid, expired or revoked', 401);
       return hydrate(row);
     });
-  }
-
-  async recognizes(token: string): Promise<boolean> {
-    if (!validToken(token)) return false;
-    return await this.state.read(
-      async (sql) =>
-        !!(await sql.get('SELECT id FROM user_keys WHERE token_hash=?', sha256Hex(token))),
-    );
-  }
-
-  private live(row: KeyRow | undefined, status: number): asserts row is KeyRow {
-    check(
-      row && row.revoked_at === null && (row.expires_at === null || row.expires_at > this.time()),
-      status === 401 ? 'unauthorized' : 'forbidden',
-      'User key is invalid, expired or revoked',
-      status,
-    );
   }
 
   private async current(sql: Sql, id: string): Promise<KeyRow> {
@@ -99,8 +79,9 @@ export class UserKeys {
       403,
     );
     const row = await sql.get<KeyRow>('SELECT * FROM user_keys WHERE id=?', id);
-    this.live(row, 403);
-    await this.ledger.live(row.token_hash, 'user-key', row.id, sql);
+    const refusal = { code: 'forbidden', message: 'User key is invalid, expired or revoked' };
+    check(row, refusal.code, refusal.message, 403);
+    await this.ledger.live(row.token_hash, 'user-key', row.id, sql, { ...refusal, status: 403 });
     return row;
   }
 

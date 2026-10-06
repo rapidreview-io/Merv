@@ -14,7 +14,10 @@ test('standalone Code stores writer inputs and retained commits without research
     await code.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Technical code', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Technical code',
+    actorName: 'Owner',
+  });
   const caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

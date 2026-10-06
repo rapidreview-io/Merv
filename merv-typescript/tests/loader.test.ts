@@ -129,7 +129,7 @@ test('the default configuration switches Feed off and leaves the API and task pr
   const directory = temporary(t);
   const app = await createApp({ directory, api: true, port: 0 });
   try {
-    const credentials = await app.ctx.scope.bootstrap({
+    const credentials = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Configured feed removal',
       actorName: 'Operator',
     });

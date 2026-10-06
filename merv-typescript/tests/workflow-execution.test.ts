@@ -178,7 +178,7 @@ async function fixture() {
   const state = await openState(':memory:'),
     scope = await createService(new ProjectScope(state)),
     workflows = await createService(new WorkflowsService(state, scope));
-  const boot = await scope.bootstrap({ projectName: 'Execution', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Execution', actorName: 'Owner' });
   const caller: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -380,7 +380,7 @@ test('fixed manifests including absence are durable and immutable across registr
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await scope.bootstrap({ projectName: 'Durable', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Durable', actorName: 'Owner' });
   const caller: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -631,7 +631,7 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     rmSync(directory, { recursive: true, force: true });
   });
   const { scope, tasks, artifacts, workflows, sessions } = app.ctx;
-  const boot = await scope.bootstrap({ projectName: 'Tasks', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Tasks', actorName: 'Operator' });
   const operator: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

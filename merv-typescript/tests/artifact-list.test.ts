@@ -21,9 +21,12 @@ async function fixture(t: TestContext) {
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
   );
-  const boot = await scope.bootstrap({ projectName: 'Pages', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Pages', actorName: 'Owner' });
   const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
-  const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
+  const other = await scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other owner',
+  });
   const outsider: Caller = { actorId: other.actor.id, projectId: other.project.id };
   return { state, scope, artifacts, caller, outsider };
 }
@@ -225,7 +228,10 @@ test('artifact.list pages through the tool', async (t) => {
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Tool', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Tool',
+    actorName: 'Owner',
+  });
   const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   for (const n of [1, 2, 3])
     await app.ctx.artifacts.create(caller, { title: `N${n}`, content: 'x' });

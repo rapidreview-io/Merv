@@ -137,14 +137,23 @@ test(
         return fn(tx);
       });
     }) as typeof state.transaction;
-    const boot = await scope.bootstrap({ projectName: 'Pi latency', actorName: 'Operator' });
+    const boot = await scope.credentials.bootstrap({
+      projectName: 'Pi latency',
+      actorName: 'Operator',
+    });
     const operator: Caller = {
       projectId: boot.project.id,
       actorId: boot.actor.id,
       credentialId: boot.credential.id,
     };
-    const producerActor = await scope.issueActor(operator, { name: 'Producer', role: 'producer' });
-    const reviewerActor = await scope.issueActor(operator, { name: 'Reviewer', role: 'reviewer' });
+    const producerActor = await scope.credentials.issueActor(operator, {
+      name: 'Producer',
+      role: 'producer',
+    });
+    const reviewerActor = await scope.credentials.issueActor(operator, {
+      name: 'Reviewer',
+      role: 'reviewer',
+    });
     const producer: Caller = {
       projectId: operator.projectId,
       actorId: producerActor.actor.id,
@@ -166,7 +175,10 @@ test(
     const secretEnv = `MERV_PI_LATENCY_${randomUUID().replaceAll('-', '')}`;
     process.env[secretEnv] = randomBytes(32).toString('base64url');
     // Machines are rented in the Pi host project, by its key.
-    const host = await scope.bootstrap({ projectName: 'Pi host', actorName: 'Pi host' });
+    const host = await scope.credentials.bootstrap({
+      projectName: 'Pi host',
+      actorName: 'Pi host',
+    });
     const credentialEnv = `${secretEnv}_HOST`;
     process.env[credentialEnv] = host.token;
     const pi = await createService(

@@ -118,13 +118,16 @@ async function fixture(t: TestContext) {
   const hosted = await register('hosted', 'code.v2');
   const scratch = await register('scratch');
   const local = await register('local', null);
-  const boot = await scope.bootstrap({ projectName: 'Capabilities', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Capabilities',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issued = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const issued = await scope.credentials.issueActor(owner, { name: 'Producer', role: 'producer' });
   const source: Caller = {
     actorId: issued.actor.id,
     projectId: boot.project.id,

@@ -25,7 +25,7 @@ async function fixture(t: TestContext, coreOnly = false) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Optional research',
     actorName: 'Owner',
   });
@@ -62,7 +62,10 @@ async function fixture(t: TestContext, coreOnly = false) {
   const approve = async (record: ResearchRecord) => {
     let wave = await app.ctx.reflections.get(owner, record.reflectionId!);
     for (const lens of wave.lenses) {
-      const issued = await app.ctx.scope.issueActor(owner, { name: id(), role: 'producer' });
+      const issued = await app.ctx.scope.credentials.issueActor(owner, {
+        name: id(),
+        role: 'producer',
+      });
       const worker = {
         projectId: owner.projectId,
         actorId: issued.actor.id,
@@ -83,7 +86,10 @@ async function fixture(t: TestContext, coreOnly = false) {
       expectedRevision: wave.workflow.revision,
       requestId: id(),
     });
-    const issued = await app.ctx.scope.issueActor(owner, { name: id(), role: 'reviewer' });
+    const issued = await app.ctx.scope.credentials.issueActor(owner, {
+      name: id(),
+      role: 'reviewer',
+    });
     const reviewer = {
       projectId: owner.projectId,
       actorId: issued.actor.id,

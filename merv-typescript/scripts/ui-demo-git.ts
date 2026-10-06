@@ -126,15 +126,15 @@ export async function seedGit(
     (await ctx.tools.call(tool, caller, input)) as any;
 
   // A signed-in human: binding a repository and controlling a base are a person's moves.
-  const principal = await ctx.scope.acceptVerifiedIdentity({
+  const principal = await ctx.scope.members.acceptVerifiedIdentity({
     issuer: 'https://demo.merv.test',
     subject: 'operator',
     expiresAt: new Date(Date.now() + 86_400_000).toISOString(),
   });
-  await ctx.scope.adoptProject(principal, operator.projectId);
+  await ctx.scope.members.adoptProject(principal, operator.projectId);
   const human: Caller = await ctx.scope.caller(principal, operator.projectId);
   // Independent review is somebody else: this authority never produces any of the work below.
-  const issued = await ctx.scope.issueActor(operator, {
+  const issued = await ctx.scope.credentials.issueActor(operator, {
     name: 'Demo · Git reviewer',
     role: 'operator',
   });

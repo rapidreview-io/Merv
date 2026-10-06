@@ -20,9 +20,12 @@ test('collection is one immutable, scoped artifact; retries and member links use
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
   );
-  const owner = await scope.bootstrap({ projectName: 'Collections', actorName: 'Owner' });
+  const owner = await scope.credentials.bootstrap({
+    projectName: 'Collections',
+    actorName: 'Owner',
+  });
   const caller: Caller = { projectId: owner.project.id, actorId: owner.actor.id };
-  const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Owner' });
+  const other = await scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Owner' });
   const outsider: Caller = { projectId: other.project.id, actorId: other.actor.id };
   const input = {
     title: 'Training capture',
@@ -118,7 +121,10 @@ test('collection rejects duplicate names and malformed file claims before writin
   const artifacts = await createService(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
   );
-  const owner = await scope.bootstrap({ projectName: 'Collections', actorName: 'Owner' });
+  const owner = await scope.credentials.bootstrap({
+    projectName: 'Collections',
+    actorName: 'Owner',
+  });
   const caller: Caller = { projectId: owner.project.id, actorId: owner.actor.id };
   const file = {
     name: 'model.pt',
@@ -231,7 +237,10 @@ test('a manifest above the inline blob limit is mirrored by signed upload and do
   });
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(new ArtifactStore(state, scope, blobs));
-  const owner = await scope.bootstrap({ projectName: 'Collections', actorName: 'Owner' });
+  const owner = await scope.credentials.bootstrap({
+    projectName: 'Collections',
+    actorName: 'Owner',
+  });
   const caller: Caller = { projectId: owner.project.id, actorId: owner.actor.id };
   const many = await artifacts.createCollection(caller, {
     title: 'Full capture',
@@ -270,7 +279,7 @@ test('artifact.read selects a collection member only in download mode', async (t
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Collection tool',
     actorName: 'Owner',
   });

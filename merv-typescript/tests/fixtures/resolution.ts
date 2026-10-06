@@ -70,18 +70,21 @@ export async function resolutionFixture(
   });
   const admin = await (async () => {
     if (versions.human) {
-      const principal = await scope.acceptVerifiedIdentity({
+      const principal = await scope.members.acceptVerifiedIdentity({
         issuer: 'https://identity.example/auth/v1',
         subject: 'owner',
         expiresAt: new Date(Date.now() + 3600_000).toISOString(),
       });
-      const project = await scope.createProject(principal, {
+      const project = await scope.members.createProject(principal, {
         name: 'Resolution',
         requestId: 'project',
       });
       return await scope.caller(principal, project.id);
     }
-    const boot = await scope.bootstrap({ projectName: 'Resolution', actorName: 'Owner' });
+    const boot = await scope.credentials.bootstrap({
+      projectName: 'Resolution',
+      actorName: 'Owner',
+    });
     return { projectId: boot.project.id, actorId: boot.actor.id, credentialId: boot.credential.id };
   })();
   return {

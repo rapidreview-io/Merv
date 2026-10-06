@@ -86,7 +86,7 @@ export async function exerciseRuntime(start) {
     assert.match(bundle.headers.get('content-type') ?? '', /javascript/);
     await bundle.arrayBuffer();
 
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Synthetic runtime acceptance',
       actorName: 'Smoke operator',
     });
@@ -238,7 +238,7 @@ export async function exerciseRuntime(start) {
     );
 
     checkpoint('independent-review');
-    const issued = await app.ctx.scope.issueActor(owner, {
+    const issued = await app.ctx.scope.credentials.issueActor(owner, {
       name: 'Smoke independent reviewer',
       role: 'operator',
     });

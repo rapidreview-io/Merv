@@ -1,26 +1,21 @@
-import { excludedFromReview, directsIndependently, REVIEW_VERDICTS } from './rules.js';
-import { permits } from '@merv/scope/rules';
-import { canonical, visible, sourceCaller, isDirectHuman } from '@merv/contracts';
-import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
+import { excludedFromReview, directsIndependently } from './rules.js';
+import { canonical, visible, isDirectHuman } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
+import { createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
   check,
   digest,
   inTransaction,
-  newId,
-  now,
   type Actor,
   type Artifacts,
   type Caller,
-  type ReviewInput,
-  type Role,
   type ReviewProvenance,
   type ReviewProvenanceResolver,
   type ReviewGuide,
   type ReviewRequest,
   type Reviews,
-  type ReviewSubmit,
   type ReviewApplication,
   type ReviewSubmitOwner,
   type RunningSection,
@@ -28,18 +23,22 @@ import {
   type Sql,
   type State,
   type Transaction,
-  type StoredEvent,
 } from '@merv/contracts';
-import { validateAssessment, evidenceFrom, ownField } from './findings.js';
 import { EARLIER, reviewSections } from './running.js';
-
-function freeze<T>(value: T): T {
-  if (value && typeof value === 'object') {
-    for (const child of Object.values(value)) freeze(child);
-    Object.freeze(value);
-  }
-  return value;
-}
+import { freeze, hydrate, type ReviewRow } from './rows.js';
+import { reissue, request, requireAdministration, saveRequest, supersede } from './requests.js';
+import {
+  actorPermissionsChanged,
+  actorRevoked,
+  checkStart,
+  checkSubmit,
+  releaseClaim,
+  releaseClaims,
+  requireLiveClaim,
+  start,
+  submit,
+  validateReturnTo,
+} from './claims.js';
 
 /** The verdict fields Reviews reads; an owner may name more for itself. */
 const submitFields: ReadonlySet<string> = new Set([
@@ -55,140 +54,6 @@ const submitFields: ReadonlySet<string> = new Set([
   'requestId',
 ]);
 
-/** Route shape is generic; allowed destinations and verdict rules belong to the owner. */
-function validateReturnTo(input: { returnTo?: unknown }): string | undefined {
-  const value = ownField(input, 'returnTo', 'invalid_return_to', 'Review return input');
-  if (value === undefined) return undefined;
-  check(
-    typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_.-]{0,127}$/.test(value),
-    'invalid_return_to',
-    'returnTo must be an identifier of 1–128 characters, starting with a letter',
-  );
-  return value;
-}
-
-/**
- * A bounded list field read without invoking accessors and copied as plain JSON: a proxy,
- * getter or sparse array is refused with `code`, and so is any item `valid` refuses.
- */
-function listField<T>(
-  input: ReviewInput,
-  name: 'excludedActorIds' | 'requiredCriteria',
-  code: string,
-  what: string,
-  valid: (item: unknown) => item is T,
-): T[] | undefined {
-  const value = ownField(input, name, code, 'Review input');
-  if (value === undefined) return undefined;
-  const items = plain(value, code, { nodes: 201 });
-  check(
-    Array.isArray(items) && items.length <= 200 && items.every(valid),
-    code,
-    `${what} must be a bounded list`,
-  );
-  return items as T[];
-}
-
-/** Contributor identity is set-like; normalize before hashing, without invoking accessors. */
-function contributorExclusions(input: ReviewInput): string[] | undefined {
-  const ids = listField(
-    input,
-    'excludedActorIds',
-    'invalid_review_exclusions',
-    'Contributor exclusions',
-    (item): item is string => typeof item === 'string' && idPattern.test(item),
-  );
-  return ids && [...new Set(ids)].sort();
-}
-
-/**
- * The criteria a pass can never waive, read without invoking accessors and sorted so that
- * [4,2] and [2,4] pin the same review. Whether each number names one of this review's
- * criteria is checked where the criteria themselves are.
- */
-function requiredCriteria(input: ReviewInput): number[] | undefined {
-  const numbers = listField(
-    input,
-    'requiredCriteria',
-    'invalid_required_criteria',
-    'Required criteria',
-    (item): item is number => Number.isSafeInteger(item) && (item as number) >= 1,
-  );
-  if (numbers === undefined) return undefined;
-  check(
-    numbers.length >= 1 && new Set(numbers).size === numbers.length,
-    'invalid_required_criteria',
-    'Required criteria must be distinct and at least one',
-  );
-  return numbers.sort((a, b) => a - b);
-}
-
-interface ReviewRow {
-  id: string;
-  project_id: string;
-  subject_id: string;
-  subject_revision: number;
-  producer_id: string;
-  administrative_actor_id: string;
-  pinned_input_ids: string;
-  excluded_actor_ids: string | null;
-  required_criteria: string | null;
-  provenance_json: string | null;
-  artifact_ids: string;
-  criteria: string;
-  format_version: 2;
-  manifest: string;
-  snapshot_hash: string;
-  status: ReviewRequest['status'];
-  reviewer_id: string | null;
-  claim_id: string | null;
-  claim_generation: number;
-  /** The open claim's review.started event, when it was taken, and whether a leased agent took it. */
-  claim_event_id: number | null;
-  claimed_at: string | null;
-  claimed_by_agent: boolean;
-  owner_override: boolean;
-  recovery_json: string | null;
-  verdict: ReviewRequest['verdict'];
-  return_to: string | null;
-  notes: string | null;
-  synopsis: string | null;
-  findings_json: string;
-  evidence_json: string;
-  created_at: string;
-}
-const hydrate = (row: ReviewRow): ReviewRequest => ({
-  ...(row.provenance_json == null ? {} : { provenance: JSON.parse(row.provenance_json) }),
-  id: row.id,
-  projectId: row.project_id,
-  subjectId: row.subject_id,
-  subjectRevision: row.subject_revision,
-  producerId: row.producer_id,
-  administrativeActorId: row.administrative_actor_id,
-  pinnedInputIds: JSON.parse(row.pinned_input_ids),
-  ...(row.excluded_actor_ids == null
-    ? {}
-    : { excludedActorIds: JSON.parse(row.excluded_actor_ids) }),
-  ...(row.required_criteria == null ? {} : { requiredCriteria: JSON.parse(row.required_criteria) }),
-  artifactIds: JSON.parse(row.artifact_ids),
-  criteria: JSON.parse(row.criteria),
-  formatVersion: row.format_version,
-  snapshotHash: row.snapshot_hash,
-  status: row.status,
-  reviewerId: row.reviewer_id,
-  claimId: row.claim_id,
-  claimGeneration: row.claim_generation,
-  ...(row.owner_override ? { override: true } : {}),
-  recovery: row.recovery_json ? JSON.parse(row.recovery_json) : null,
-  verdict: row.verdict,
-  ...(row.return_to == null ? {} : { returnTo: row.return_to }),
-  notes: row.notes,
-  synopsis: row.synopsis,
-  findings: JSON.parse(row.findings_json),
-  evidence: JSON.parse(row.evidence_json),
-  createdAt: row.created_at,
-});
-
 /**
  * The project's owner as the signed-in person: an operator's member actor with human authority.
  * Never a key, which agents and workers hold, a worker, a machine actor or a conversation.
@@ -198,6 +63,22 @@ const projectOwner = (caller: Caller, actor: Actor) =>
 
 /** Generic assessment of immutable evidence. Target state changes belong to the integrating program. */
 export class ReviewService implements Reviews {
+  // The producer's side (requests.ts) and the reviewer's (claims.ts). Only the Reviews contract
+  // is public; the rest are theirs.
+  readonly request = request;
+  readonly reissue = reissue;
+  readonly supersede = supersede;
+  readonly requireAdministration = requireAdministration;
+  readonly saveRequest = saveRequest;
+  readonly checkStart = checkStart;
+  readonly start = start;
+  readonly checkSubmit = checkSubmit;
+  readonly submit = submit;
+  readonly releaseClaim = releaseClaim;
+  readonly actorRevoked = actorRevoked;
+  readonly actorPermissionsChanged = actorPermissionsChanged;
+  readonly requireLiveClaim = requireLiveClaim;
+  readonly releaseClaims = releaseClaims;
   private readonly owners = new Map<string, Readonly<ReviewSubmitOwner>>();
   private readonly provenanceOwners = new Map<string, ReviewProvenanceResolver>();
   private ownerEpoch = 0;
@@ -205,9 +86,9 @@ export class ReviewService implements Reviews {
   /** Complete storage migrations before publishing this service. */
   initialize!: () => Promise<void>;
   constructor(
-    private state: State,
-    private scope: Scope,
-    private artifacts: Artifacts,
+    readonly state: State,
+    readonly scope: Scope,
+    readonly artifacts: Artifacts,
   ) {
     this.initialize = async () => {
       await state.migrate(
@@ -236,7 +117,7 @@ export class ReviewService implements Reviews {
     };
   }
 
-  private async certificate(
+  async certificate(
     provider: string,
     projectId: string,
     subjectId: string,
@@ -269,7 +150,7 @@ export class ReviewService implements Reviews {
     return certificate;
   }
 
-  private async independent(
+  async independent(
     caller: Caller,
     actor: Actor,
     review: ReviewRequest,
@@ -302,69 +183,20 @@ export class ReviewService implements Reviews {
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void {
     check(!this.closed, 'review_owner_unavailable', 'Review routing is unavailable', 503);
     check(
-      owner &&
-        typeof owner === 'object' &&
-        !Array.isArray(owner) &&
-        (Object.getPrototypeOf(owner) === Object.prototype ||
-          Object.getPrototypeOf(owner) === null),
+      typeof owner?.id === 'string' && idPattern.test(owner.id),
       'invalid_review_owner',
-      'Review owner must be a plain object',
+      'Review owner requires an identifier',
     );
-    const descriptors = Object.getOwnPropertyDescriptors(owner);
-    const optional = (['claim', 'gates', 'returns'] as const).filter((key) =>
-      Object.hasOwn(owner, key),
-    );
-    const metadata = (['guidance', 'fields'] as const).filter((key) => Object.hasOwn(owner, key));
-    const keys = ['id', 'owns', 'submit', ...optional, ...metadata];
-    check(
-      Reflect.ownKeys(owner).length === keys.length &&
-        keys.every(
-          (key) => descriptors[key] && 'value' in descriptors[key] && descriptors[key].enumerable,
-        ),
-      'invalid_review_owner',
-      'Review owner requires only id, owns and submit, and may add claim, gates, returns, guidance and fields',
-    );
-    check(
-      typeof owner.id === 'string' &&
-        idPattern.test(owner.id) &&
-        typeof owner.owns === 'function' &&
-        typeof owner.submit === 'function' &&
-        optional.every((key) => typeof owner[key] === 'function'),
-      'invalid_review_owner',
-      'Review owner requires an identifier and callbacks',
-    );
-    check(
-      (owner.guidance === undefined ||
-        (typeof owner.guidance === 'string' &&
-          visible(owner.guidance) &&
-          owner.guidance.length <= 8000)) &&
-        (owner.fields === undefined ||
-          (Array.isArray(owner.fields) &&
-            owner.fields.every(
-              (field) =>
-                typeof field === 'string' &&
-                /^[A-Za-z][A-Za-z0-9]{0,63}$/.test(field) &&
-                !submitFields.has(field),
-            ))),
-      'invalid_review_owner',
-      'Review owner guidance must be bounded text and its fields new identifiers',
-    );
-    const fields = owner.fields && Object.freeze([...owner.fields]);
     check(
       !this.owners.has(owner.id),
       'review_owner_conflict',
       'Review owner is already registered',
       409,
     );
+    // A copy: the callbacks and fields registered are the ones that stay.
     const registered = Object.freeze({
-      id: owner.id,
-      owns: owner.owns,
-      submit: owner.submit,
-      ...(owner.claim ? { claim: owner.claim } : {}),
-      ...(owner.gates ? { gates: owner.gates } : {}),
-      ...(owner.returns ? { returns: owner.returns } : {}),
-      ...(owner.guidance === undefined ? {} : { guidance: owner.guidance }),
-      ...(fields ? { fields } : {}),
+      ...owner,
+      ...(owner.fields ? { fields: Object.freeze([...owner.fields]) } : {}),
     });
     this.owners.set(registered.id, registered);
     this.ownerEpoch++;
@@ -379,7 +211,7 @@ export class ReviewService implements Reviews {
    * The one active domain that owns this review, and a check that ownership has not changed
    * since: a claim or verdict nothing could apply, or two domains could, is refused.
    */
-  private async ownerOf(
+  async ownerOf(
     review: Readonly<ReviewRequest>,
     tx: Transaction,
   ): Promise<{ owner: Readonly<ReviewSubmitOwner>; current: () => void }> {
@@ -475,7 +307,7 @@ export class ReviewService implements Reviews {
     this.ownerEpoch++;
   }
 
-  private async row(sql: Sql, caller: Caller, reviewId: string): Promise<ReviewRow> {
+  async row(sql: Sql, caller: Caller, reviewId: string): Promise<ReviewRow> {
     const row = await sql.get<ReviewRow>(
       'SELECT * FROM reviews WHERE id = ? AND project_id = ?',
       reviewId,
@@ -485,7 +317,7 @@ export class ReviewService implements Reviews {
     return row;
   }
 
-  private async command(
+  async command(
     tx: Transaction,
     caller: Caller,
     requestId: string,
@@ -501,243 +333,6 @@ export class ReviewService implements Reviews {
     return await receipted(tx, caller, requestId, digest(input), fn, {
       table: 'review_commands',
       operation,
-    });
-  }
-
-  async request(
-    caller: Caller,
-    input: ReviewInput,
-    transaction?: Transaction,
-  ): Promise<ReviewRequest> {
-    caller = structuredClone(caller);
-    // Check descriptor-sensitive exclusions before copying; later awaits must use
-    // the same evidence and ownership input that command hashing will retain.
-    contributorExclusions(input);
-    requiredCriteria(input);
-    input = plain<ReviewInput>(input);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      const authority = await this.scope.authorityActor(caller, tx);
-      check(
-        input.producerId === caller.actorId || authority.role === 'operator',
-        'forbidden',
-        'Only the producer or an operator can request review',
-        403,
-      );
-      const owner = input.administrativeActorId ?? input.producerId;
-      check(
-        owner === authority.id || owner === caller.actorId || authority.role === 'operator',
-        'forbidden',
-        'Review administrative ownership must follow its authenticated source',
-        403,
-      );
-      return await this.saveRequest(caller, input, tx, authority.id);
-    });
-  }
-
-  async reissue(
-    caller: Caller,
-    input: { reviewId: string; subjectRevision: number; requestId: string },
-    transaction?: Transaction,
-  ): Promise<ReviewRequest> {
-    ({ caller, input } = structuredClone({ caller, input }));
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      const row = await this.row(tx, caller, input.reviewId);
-      const directing = await this.requireAdministration(caller, row, tx);
-      check(
-        row.status !== 'submitted',
-        'review_closed',
-        'Submitted review evidence cannot be reissued',
-        409,
-      );
-      return await this.saveRequest(
-        caller,
-        {
-          ...(row.provenance_json
-            ? { provenanceOwner: (JSON.parse(row.provenance_json) as ReviewProvenance).provider }
-            : {}),
-          subjectId: row.subject_id,
-          subjectRevision: input.subjectRevision,
-          producerId: row.producer_id,
-          administrativeActorId: row.administrative_actor_id,
-          artifactIds: JSON.parse(row.artifact_ids),
-          pinnedInputIds: JSON.parse(row.pinned_input_ids),
-          ...(row.excluded_actor_ids == null
-            ? {}
-            : { excludedActorIds: JSON.parse(row.excluded_actor_ids) }),
-          ...(row.required_criteria == null
-            ? {}
-            : { requiredCriteria: JSON.parse(row.required_criteria) }),
-          criteria: JSON.parse(row.criteria),
-          formatVersion: row.format_version,
-          requestId: input.requestId,
-        },
-        tx,
-        directing,
-        row.excluded_actor_ids == null ? [] : (JSON.parse(row.excluded_actor_ids) as string[]),
-      );
-    });
-  }
-
-  /** Refuses all but the review's owner or an operator; returns the caller's directing authority. */
-  private async requireAdministration(
-    caller: Caller,
-    row: ReviewRow,
-    tx: Transaction,
-  ): Promise<string> {
-    const authority = await this.scope.authorityActor(caller, tx);
-    check(
-      row.producer_id === caller.actorId ||
-        row.administrative_actor_id === authority.id ||
-        authority.role === 'operator',
-      'forbidden',
-      'Only the review owner or an operator may administer this request',
-      403,
-    );
-    return authority.id;
-  }
-
-  private async saveRequest(
-    caller: Caller,
-    input: ReviewInput,
-    tx: Transaction,
-    /** The authority that directs the caller, read once by the command. */
-    directing: string,
-    /**
-     * Exclusions a stored request already admitted. A reissue replays them exactly as they
-     * were pinned, and the authority that directed the worker then is rarely the one asking
-     * for the new claim now, so they are not judged again against this caller.
-     */
-    admitted: string[] = [],
-  ): Promise<ReviewRequest> {
-    const excludedActorIds = contributorExclusions(input);
-    if (excludedActorIds !== undefined) input = { ...input, excludedActorIds };
-    const required = requiredCriteria(input);
-    if (required !== undefined) input = { ...input, requiredCriteria: required };
-    return await this.command(tx, caller, input.requestId, 'request', input, async () => {
-      check(
-        typeof input.subjectId === 'string' && visible(input.subjectId),
-        'invalid_subject',
-        'A subject identifier is required',
-      );
-      check(
-        Number.isSafeInteger(input.subjectRevision) && input.subjectRevision >= 0,
-        'invalid_revision',
-        'subjectRevision must be a nonnegative integer',
-      );
-      // Format 2 is the only verdict format. Callers may still name it, since stored request
-      // receipts hash it; null is refused.
-      check(
-        input.formatVersion === undefined || input.formatVersion === 2,
-        'invalid_review_format',
-        'Review formatVersion must be 2',
-      );
-      check(
-        Array.isArray(input.criteria) &&
-          input.criteria.length > 0 &&
-          input.criteria.every((item) => typeof item === 'string' && visible(item)),
-        'invalid_criteria',
-        'At least one nonempty assessment criterion is required',
-      );
-      check(
-        !required || required.every((number) => number <= input.criteria.length),
-        'invalid_required_criteria',
-        "Required criteria must be numbers of this review's criteria",
-      );
-      check(
-        Array.isArray(input.artifactIds) &&
-          input.artifactIds.length > 0 &&
-          new Set(input.artifactIds).size === input.artifactIds.length,
-        'invalid_artifacts',
-        'A review requires a nonempty list of distinct artifacts',
-      );
-      const pinnedInputIds = input.pinnedInputIds ?? [];
-      check(
-        Array.isArray(pinnedInputIds) &&
-          new Set(pinnedInputIds).size === pinnedInputIds.length &&
-          pinnedInputIds.every((id) => typeof id === 'string' && input.artifactIds.includes(id)),
-        'invalid_artifacts',
-        'Pinned inputs must be distinct entries in the review manifest',
-      );
-      check(
-        pinnedInputIds.length < input.artifactIds.length,
-        'invalid_artifacts',
-        'Review requires authored output as well as any pinned inputs',
-      );
-      const manifest = await this.artifacts.getAll(caller, input.artifactIds, tx);
-      // Exclusions name contributors: authors of retained evidence, the record's owner, or
-      // the authority that directed the submitting worker.
-      check(
-        !excludedActorIds ||
-          excludedActorIds.every(
-            (actorId) =>
-              actorId === (input.administrativeActorId ?? input.producerId) ||
-              actorId === directing ||
-              admitted.includes(actorId) ||
-              manifest.some((artifact) => artifact.createdBy === actorId),
-          ),
-        'invalid_review_exclusions',
-        'Excluded contributors must be authors of retained evidence, the record owner, or the directing authority',
-      );
-      check(
-        manifest.every(
-          (item) => pinnedInputIds.includes(item.id) || item.createdBy === input.producerId,
-        ),
-        'forbidden',
-        'Every output artifact must belong to the producer; other inputs must be explicitly pinned',
-        403,
-      );
-      const provenance = input.provenanceOwner
-        ? await this.certificate(input.provenanceOwner, caller.projectId, input.subjectId, tx)
-        : undefined;
-      const id = newId('review');
-      const createdAt = now();
-      const snapshotHash = digest({
-        ...(provenance ? { provenance } : {}),
-        subjectId: input.subjectId,
-        subjectRevision: input.subjectRevision,
-        producerId: input.producerId,
-        criteria: input.criteria,
-        manifest,
-        ...(pinnedInputIds.length
-          ? {
-              pinnedInputIds,
-              administrativeActorId: input.administrativeActorId ?? input.producerId,
-            }
-          : {}),
-        formatVersion: 2,
-        ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
-        ...(required === undefined ? {} : { requiredCriteria: required }),
-      });
-      await tx.run(
-        `INSERT INTO reviews (id, project_id, subject_id, subject_revision, producer_id, artifact_ids,
-          criteria, manifest, snapshot_hash, status, created_at, format_version, administrative_actor_id, pinned_input_ids${excludedActorIds === undefined ? '' : ', excluded_actor_ids'}${required === undefined ? '' : ', required_criteria'}${provenance ? ', provenance_json' : ''}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'requested', ?, ?, ?, ?${excludedActorIds === undefined ? '' : ', ?'}${required === undefined ? '' : ', ?'}${provenance ? ', ?' : ''})`,
-        id,
-        caller.projectId,
-        input.subjectId,
-        input.subjectRevision,
-        input.producerId,
-        JSON.stringify(input.artifactIds),
-        JSON.stringify(input.criteria),
-        JSON.stringify(manifest),
-        snapshotHash,
-        createdAt,
-        2,
-        input.administrativeActorId ?? input.producerId,
-        JSON.stringify(pinnedInputIds),
-        ...(excludedActorIds === undefined ? [] : [JSON.stringify(excludedActorIds)]),
-        ...(required === undefined ? [] : [JSON.stringify(required)]),
-        ...(provenance ? [canonical(provenance)] : []),
-      );
-      await recorded(this.state, tx, caller, 'review.requested', id, {
-        subjectId: input.subjectId,
-        subjectRevision: input.subjectRevision,
-        snapshotHash,
-        ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
-        ...(required === undefined ? {} : { requiredCriteria: required }),
-      });
-      return hydrate(await this.row(tx, caller, id));
     });
   }
 
@@ -937,297 +532,6 @@ export class ReviewService implements Reviews {
       }
     }
     return gates;
-  }
-
-  async checkStart(
-    caller: Caller,
-    reviewId: string,
-    transaction?: Transaction,
-    override = false,
-  ): Promise<ReviewRequest> {
-    caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      const actor = await this.scope.require(caller, 'review', tx);
-      const row = await this.row(tx, caller, reviewId);
-      const current = hydrate(row);
-      // The override is taken with the claim; a retried claim keeps the one it has.
-      if (override && row.status === 'requested') current.override = true;
-      check(
-        await this.independent(caller, actor, current, tx),
-        'review_independence',
-        override
-          ? 'Only the project owner, acting as themself, may decide a review as owner'
-          : 'A producer, contributor or directing authority cannot review their own work',
-        403,
-      );
-      check(
-        row.status === 'requested' ||
-          (row.status === 'started' && row.reviewer_id === caller.actorId),
-        'review_unavailable',
-        'Review is already claimed or closed',
-        409,
-      );
-      if (row.status === 'started') await this.requireLiveClaim(row, tx);
-      return current;
-    });
-  }
-
-  async start(
-    caller: Caller,
-    reviewId: string,
-    transaction?: Transaction,
-    override = false,
-  ): Promise<ReviewRequest> {
-    caller = structuredClone(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      const current = await this.checkStart(caller, reviewId, tx, override);
-      if (current.status === 'started') return current;
-      // Only a review one domain can apply a verdict to is claimed, and that domain may refuse
-      // a claim its rules could never let finish.
-      const { owner, current: unchanged } = await this.ownerOf(freeze(current), tx);
-      await owner.claim?.(caller, current, tx);
-      unchanged();
-      const claimId = newId('claim');
-      const changed = await tx.run(
-        // Only an override names the column, so an ordinary claim writes what it always has.
-        `UPDATE reviews SET status = 'started', reviewer_id = ?, claim_id=?, claim_generation=claim_generation+1${current.override ? ', owner_override=true' : ''} WHERE id = ? AND status = 'requested'`,
-        caller.actorId,
-        claimId,
-        reviewId,
-      );
-      check(
-        changed.changes === 1,
-        'review_unavailable',
-        'Another reviewer already claimed this review',
-        409,
-      );
-      const event = await recorded(this.state, tx, caller, 'review.started', reviewId, {
-        claimId,
-        claimGeneration: current.claimGeneration + 1,
-        ...(current.override && { override: true }),
-      });
-      await tx.run(
-        `UPDATE reviews SET claim_event_id=?, claimed_at=?, claimed_by_agent=${!!caller.session} WHERE id=?`,
-        event.id,
-        event.createdAt,
-        reviewId,
-      );
-      return hydrate(await this.row(tx, caller, reviewId));
-    });
-  }
-
-  async checkSubmit(
-    caller: Caller,
-    reviewId: string,
-    input?: Omit<ReviewSubmit, 'requestId'>,
-    transaction?: Transaction,
-  ): Promise<ReviewRequest> {
-    caller = structuredClone(caller);
-    if (input) {
-      validateReturnTo(input);
-      evidenceFrom(input);
-      input = plain(input);
-    }
-    return await inTransaction(this.state, transaction, async (tx) => {
-      const actor = await this.scope.require(caller, 'review', tx);
-      const row = await this.row(tx, caller, reviewId);
-      check(
-        row.status === 'started',
-        'review_closed',
-        'Review must be claimed and open before a verdict can be submitted',
-        409,
-      );
-      const current = hydrate(row);
-      check(
-        row.reviewer_id === caller.actorId && (await this.independent(caller, actor, current, tx)),
-        'review_independence',
-        'Only the independent reviewer who claimed this review may submit',
-        403,
-      );
-      await this.requireLiveClaim(row, tx);
-      if (input) {
-        check(
-          typeof input.claimId === 'string' && input.claimId === row.claim_id,
-          'stale_claim',
-          'Submission must identify the current review claim',
-          409,
-        );
-        check(
-          REVIEW_VERDICTS.includes(input.verdict),
-          'invalid_verdict',
-          'Verdict must be pass, needs_changes, or fail',
-        );
-        check(
-          typeof input.notes === 'string' && visible(input.notes),
-          'invalid_notes',
-          'A verdict must include assessment notes',
-        );
-        validateAssessment(hydrate(row), input);
-      }
-      return hydrate(row);
-    });
-  }
-
-  async submit(
-    caller: Caller,
-    input: ReviewSubmit,
-    transaction?: Transaction,
-  ): Promise<ReviewRequest> {
-    caller = structuredClone(caller);
-    const returnTo = validateReturnTo(input);
-    evidenceFrom(input);
-    input = plain<ReviewSubmit>(input);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'review', tx);
-      return await this.command(tx, caller, input.requestId, 'submit', input, async () => {
-        const current = await this.checkSubmit(caller, input.reviewId, input, tx);
-        const assessment = validateAssessment(current, input);
-        await tx.run(
-          "UPDATE reviews SET status = 'submitted', verdict = ?, return_to = ?, notes = ?, synopsis = ?, findings_json = ?, evidence_json = ? WHERE id = ?",
-          input.verdict,
-          returnTo ?? null,
-          input.notes,
-          assessment.synopsis,
-          JSON.stringify(assessment.findings),
-          JSON.stringify(assessment.evidence),
-          input.reviewId,
-        );
-        await recorded(this.state, tx, caller, 'review.submitted', input.reviewId, {
-          verdict: input.verdict,
-          ...(returnTo === undefined ? {} : { returnTo }),
-          subjectId: current.subjectId,
-          subjectRevision: current.subjectRevision,
-          ...(current.override && { override: true }),
-        });
-        return hydrate(await this.row(tx, caller, input.reviewId));
-      });
-    });
-  }
-
-  async supersede(caller: Caller, reviewId: string, transaction?: Transaction): Promise<void> {
-    caller = structuredClone(caller);
-    await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      const row = await this.row(tx, caller, reviewId);
-      await this.requireAdministration(caller, row, tx);
-      if (row.status === 'superseded') return;
-      check(row.status !== 'submitted', 'review_closed', 'A submitted verdict is immutable', 409);
-      await tx.run("UPDATE reviews SET status = 'superseded' WHERE id = ?", reviewId);
-      await recorded(this.state, tx, caller, 'review.superseded', reviewId, {});
-    });
-  }
-  /** Trusted event reactions; neither restored access nor an inactive initiator cancels cleanup. */
-  async releaseClaim(
-    input: {
-      projectId: string;
-      reviewId: string;
-      claimId: string;
-      actorId: string;
-      reason: string;
-    },
-    tx: Transaction,
-  ): Promise<void> {
-    this.state.assertTransaction(tx);
-    const row = await tx.get<ReviewRow>(
-      "SELECT * FROM reviews WHERE project_id=? AND id=? AND reviewer_id=? AND claim_id=? AND status='started'",
-      input.projectId,
-      input.reviewId,
-      input.actorId,
-      input.claimId,
-    );
-    if (!row) return;
-    const event = await this.state.appendEvent(tx, {
-      projectId: input.projectId,
-      actorId: input.actorId,
-      type: 'review.claim_released',
-      subjectId: row.id,
-      data: {
-        previousActorId: input.actorId,
-        previousClaimId: input.claimId,
-        reason: input.reason,
-        performedBy: 'system:reviews',
-        subjectId: row.subject_id,
-        subjectRevision: row.subject_revision,
-      },
-    });
-    await tx.run(
-      `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL,claim_event_id=NULL,claimed_at=NULL,claimed_by_agent=false${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=? AND claim_id=?`,
-      JSON.stringify({
-        eventId: event.id,
-        previousActorId: input.actorId,
-        previousClaimId: input.claimId,
-        reason: input.reason,
-      }),
-      row.id,
-      input.claimId,
-    );
-  }
-
-  async actorRevoked(event: StoredEvent, tx: Transaction): Promise<void> {
-    this.state.assertTransaction(tx);
-    if (event.type !== 'actor.revoked') return;
-    await this.releaseClaims(event, 'reviewer_revoked', tx);
-  }
-
-  async actorPermissionsChanged(event: StoredEvent, tx: Transaction): Promise<void> {
-    this.state.assertTransaction(tx);
-    if (event.type !== 'actor.permissions_changed') return;
-    const review = (role: unknown) => permits(role as Role, 'review');
-    if (!review(event.data.beforeRole) || review(event.data.role)) return;
-    await this.releaseClaims(event, 'review_permission_lost', tx);
-  }
-
-  private async requireLiveClaim(row: ReviewRow, tx: Transaction): Promise<void> {
-    // A restored membership authorizes new work, but cannot revive a claim whose
-    // permission was lost. Check the committed log before eventual recovery runs.
-    check(
-      !(await this.scope.permissionLost(
-        row.project_id,
-        row.reviewer_id!,
-        'review',
-        row.claim_event_id ?? 0,
-        tx,
-      )),
-      'stale_claim',
-      'Review permission was lost after this claim; claim again after recovery releases it',
-      409,
-    );
-  }
-
-  private async releaseClaims(event: StoredEvent, reason: string, tx: Transaction): Promise<void> {
-    const rows = await tx.all<ReviewRow>(
-      "SELECT * FROM reviews WHERE project_id=? AND reviewer_id=? AND status='started'",
-      event.projectId,
-      event.subjectId,
-    );
-    for (const row of rows) {
-      // Recovery may lag behind rejoining a project. Its historical event can invalidate
-      // an older claim, but must never release a fresh claim acquired after that event.
-      if ((row.claim_event_id ?? 0) >= event.id) continue;
-      const recovery = {
-        eventId: event.id,
-        previousActorId: event.subjectId,
-        previousClaimId: row.claim_id,
-        reason,
-      };
-      await tx.run(
-        `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL,claim_event_id=NULL,claimed_at=NULL,claimed_by_agent=false${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=?`,
-        JSON.stringify(recovery),
-        row.id,
-      );
-      await this.state.appendEvent(tx, {
-        projectId: event.projectId,
-        actorId: event.actorId,
-        type: 'review.claim_released',
-        subjectId: row.id,
-        data: {
-          ...recovery,
-          performedBy: 'system:reviews',
-          subjectId: row.subject_id,
-          subjectRevision: row.subject_revision,
-        },
-      });
-    }
   }
 }
 

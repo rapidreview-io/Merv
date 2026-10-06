@@ -4,7 +4,9 @@ import { resolutionFixture } from './fixtures/resolution.js';
 
 test('Sessions retains writing contributors by instance and revision', async (t) => {
   const f = await resolutionFixture(t);
-  const producer = (await f.scope.issueActor(f.admin, { name: 'Writer', role: 'producer' })).actor;
+  const producer = (
+    await f.scope.credentials.issueActor(f.admin, { name: 'Writer', role: 'producer' })
+  ).actor;
   await f.state.transaction(async (tx) => {
     for (const [id, instanceId, revision, readOnly] of [
       ['earlier', 'unit', 0, false],

@@ -45,7 +45,7 @@ async function fixture(
   const directory = mkdtempSync(join(tmpdir(), 'merv-session-workspace-'));
   const owned = !options.app;
   let app = options.app ?? (await createApp({ directory, api: options.http ?? false, port: 0 }));
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Git metadata',
     actorName: 'Controller owner',
   });
@@ -305,7 +305,7 @@ test('Git reporting fences source, runner, host, attachment identity and revoked
     { code: 'host_conflict' },
   );
   await f.app.ctx.sessions.attach(f.source, { ...f.control, workspace: workspace() });
-  const other = await f.app.ctx.scope.issueActor(f.source, {
+  const other = await f.app.ctx.scope.credentials.issueActor(f.source, {
     name: 'Other operator',
     role: 'operator',
   });
@@ -351,7 +351,7 @@ test('Git reporting fences source, runner, host, attachment identity and revoked
       { code: 'workspace_identity_conflict' },
     );
   assert.equal((await f.events('session.workspace_result')).length, 0);
-  await f.app.ctx.scope.revokeCredential(outsider, f.source.credentialId!);
+  await f.app.ctx.scope.credentials.revokeCredential(outsider, f.source.credentialId!);
   await assert.rejects(
     async () =>
       await f.app.ctx.sessions.workspaceResult(f.source, { ...f.control, workspace: workspace() }),

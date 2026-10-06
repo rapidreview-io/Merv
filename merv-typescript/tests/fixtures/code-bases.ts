@@ -69,7 +69,7 @@ export async function baseFixture(t: TestContext, enabled = true) {
       clock: () => time,
     }),
   );
-  const boot = await scope.bootstrap({ projectName: 'Bases', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Bases', actorName: 'Owner' });
   const PROJECT = boot.project.id;
   const admin = { projectId: PROJECT, actorId: boot.actor.id, credentialId: boot.credential.id };
   await sessions.dispatch.setDispatch(admin, { enabled: true });

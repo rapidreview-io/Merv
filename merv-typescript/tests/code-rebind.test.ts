@@ -42,12 +42,15 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
   if (fault) await f.open({ fault });
   // A project of its own: the fixture's is bound to another identity and never imported, which
   // is exactly what the unhosted refusal wants it for.
-  const principal = await f.scope.acceptVerifiedIdentity({
+  const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://issuer.example.test',
     subject: 'rebinder',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const project = await f.scope.createProject(principal, { name: 'Rebind', requestId: 'project' });
+  const project = await f.scope.members.createProject(principal, {
+    name: 'Rebind',
+    requestId: 'project',
+  });
   const human = await f.scope.caller(principal, project.id);
   // The identity behind that administrator, for the key that must still be refused.
   const build = await f.workflows.register(definition, policy);
@@ -216,7 +219,10 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
      * deliberately a value this administrator's credential could never digest to.
      */
     offered: async (sessionId: string, driver: string | null) => {
-      const issued = await f.scope.issueActor(human, { name: sessionId, role: 'producer' });
+      const issued = await f.scope.credentials.issueActor(human, {
+        name: sessionId,
+        role: 'producer',
+      });
       await write(
         'INSERT INTO worker_sessions (id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         sessionId,
@@ -372,10 +378,10 @@ test('a rebind refuses what it cannot prove, what it would not change and the ma
   await assert.rejects(h.rebind({ repositoryId: OLD }), { code: 'code_rebind_unchanged' });
   // An operator key has the project authority and is still refused; a leased session does
   // not even have the authority, so it is refused before that.
-  const issued = await h.f.scope.createKey(h.principal, { projectId: h.human.projectId });
+  const issued = await h.f.scope.userKeys.create(h.principal, { projectId: h.human.projectId });
   const key = await h.f.scope.caller({
     kind: 'key',
-    key: await h.f.scope.authenticateKey(issued.token),
+    key: await h.f.scope.userKeys.authenticate(issued.token),
   });
   const asked = (caller: Caller, requestId: string) =>
     h.f.code.rebindRepository(caller, {
@@ -707,8 +713,8 @@ test('the binding trigger admits only the write its own prepared operation names
       'verifying',
       'now',
     );
-  const other = await h.f.scope.createProject(
-    await h.f.scope.acceptVerifiedIdentity({
+  const other = await h.f.scope.members.createProject(
+    await h.f.scope.members.acceptVerifiedIdentity({
       issuer: 'https://issuer.example.test',
       subject: 'other',
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),

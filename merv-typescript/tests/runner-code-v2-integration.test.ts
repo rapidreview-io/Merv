@@ -219,7 +219,10 @@ test(
       await app.stop();
       rmSync(root, { recursive: true, force: true });
     });
-    const boot = await app.ctx.scope.bootstrap({ projectName: 'Hosted', actorName: 'Owner' });
+    const boot = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Hosted',
+      actorName: 'Owner',
+    });
     const owner: Caller = {
       projectId: boot.project.id,
       actorId: boot.actor.id,
@@ -250,7 +253,7 @@ test(
     let finalizes = 0;
     let dropped = false;
     const issue = async (name: string) =>
-      (await app.ctx.scope.issueActor(owner, { name, role: 'operator' })).token;
+      (await app.ctx.scope.credentials.issueActor(owner, { name, role: 'operator' })).token;
     const a = machine(t, app, root, 'a', await issue('Machine A'), owner, async (input, init) => {
       const response = await fetch(input, init);
       if (String(input).endsWith('/code/v2/finalize') && response.ok) {

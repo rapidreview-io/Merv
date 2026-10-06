@@ -22,7 +22,7 @@ async function fixture(t: TestContext) {
       rmSync(directory, { recursive: true, force: true });
     }
   });
-  const initial = await app.ctx.scope.bootstrap({
+  const initial = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Assignment API',
     actorName: 'Operator',
   });
@@ -32,7 +32,7 @@ async function fixture(t: TestContext) {
     credentialId: initial.credential.id,
   };
   const issue = async (role: Role) => {
-    const credential = await app.ctx.scope.issueActor(operator, { name: role, role });
+    const credential = await app.ctx.scope.credentials.issueActor(operator, { name: role, role });
     return {
       ...credential,
       caller: {
@@ -241,7 +241,7 @@ test(
     }
     // Credential issuance above is expected; every denied assignment itself is read-only.
     const beforeForeign = await f.durable();
-    const foreign = await f.app.ctx.scope.bootstrap({
+    const foreign = await f.app.ctx.scope.credentials.bootstrap({
       projectName: 'Foreign project',
       actorName: 'Foreign operator',
     });

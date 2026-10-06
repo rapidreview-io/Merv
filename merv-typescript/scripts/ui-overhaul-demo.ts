@@ -49,7 +49,7 @@ async function main() {
       .setAudience('authenticated')
       .setExpirationTime('12h')
       .sign(new TextEncoder().encode(process.env[secretEnv]!));
-    const principal = await app.ctx.scope.acceptVerifiedIdentity(
+    const principal = await app.ctx.scope.members.acceptVerifiedIdentity(
       await app.ctx.identity.verify(token),
     );
     return { token, principal };
@@ -64,20 +64,20 @@ async function main() {
     'Grokking replication',
     'Long-horizon optimization — open questions and negative results',
   ].entries()) {
-    const project = await app.ctx.scope.createProject(human.principal, {
+    const project = await app.ctx.scope.members.createProject(human.principal, {
       name,
       requestId: `preview-project-${index}`,
     });
     projects.push(project);
     if (index < 3)
-      await app.ctx.scope.addMember(human.principal, project.id, {
+      await app.ctx.scope.members.addMember(human.principal, project.id, {
         subject: 'synthetic-ui-reader',
         role: 'reader',
       });
   }
   const operator = await app.ctx.scope.caller(human.principal, projects[0]!.id);
   const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader') =>
-    await app.ctx.scope.issueActor(operator, { name, role });
+    await app.ctx.scope.credentials.issueActor(operator, { name, role });
   const producer = await issue('Codex producer', 'producer');
   const reviewer = await issue('Claude reviewer', 'reviewer');
   const reader = await issue('Observer', 'reader');

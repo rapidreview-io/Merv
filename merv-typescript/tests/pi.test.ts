@@ -233,20 +233,23 @@ test('a send after the idle timeout ends that host and starts a fresh one at onc
 test('each send carries the person’s current role; a removed member is refused', async (t) => {
   const f = await fixture(t);
   const login = (subject: string) =>
-    f.scope.acceptVerifiedIdentity({
+    f.scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example/auth/v1',
       subject,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
   const alice = await login('alice');
   const bob = await login('bob');
-  const project = await f.scope.createProject(alice, { name: 'Humans', requestId: 'humans' });
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
+  const project = await f.scope.members.createProject(alice, {
+    name: 'Humans',
+    requestId: 'humans',
+  });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
   const producer = await f.scope.caller(bob, project.id);
   const conversation = await f.create(producer);
   const bound = await f.claimed(await f.send(conversation, 'hello', producer));
   await f.finish(bound);
-  await f.scope.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
+  await f.scope.members.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
   const reader = await f.scope.caller(bob, project.id);
   const command = await f.pi.send(reader, conversation.id, { commandId: 'after', text: 'here' });
   // The machine is the host's, so it stays; the turn reads as the reader now.
@@ -258,7 +261,7 @@ test('each send carries the person’s current role; a removed member is refused
     ),
   );
   assert.deepEqual(JSON.parse(record!.data_json).source, await f.scope.delegationSource(reader));
-  await f.scope.removeMember(alice, project.id, 'bob');
+  await f.scope.members.removeMember(alice, project.id, 'bob');
   await assert.rejects(
     f.pi.send(reader, conversation.id, { commandId: 'removed', text: 'hello' }),
     code('membership_required'),
@@ -415,7 +418,7 @@ test('concurrent sends to separate conversations share one host and one machine'
  * and represented by an actor credential: every kind of source a conversation can have. */
 async function sources(f: PiFixture) {
   const login = (subject: string) =>
-    f.scope.acceptVerifiedIdentity({
+    f.scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example/auth/v1',
       subject,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -426,13 +429,13 @@ async function sources(f: PiFixture) {
     reviewer: await login('rae'),
     reader: await login('reid'),
   };
-  const project = await f.scope.createProject(principals.operator, {
+  const project = await f.scope.members.createProject(principals.operator, {
     name: 'Sources',
     requestId: 'sources',
   });
   for (const [role, principal] of Object.entries(principals))
     if (role !== 'operator')
-      await f.scope.addMember(principals.operator, project.id, {
+      await f.scope.members.addMember(principals.operator, project.id, {
         subject: principal.user.subject,
         role: role as Role,
       });
@@ -440,10 +443,13 @@ async function sources(f: PiFixture) {
   const all: { kind: string; role: Role; caller: Caller }[] = [];
   for (const [role, principal] of Object.entries(principals) as [Role, HumanPrincipal][]) {
     all.push({ kind: 'human', role, caller: await f.scope.caller(principal, project.id) });
-    const { token } = await f.scope.createKey(principal, { projectId: project.id });
-    const key = await f.scope.caller({ kind: 'key', key: await f.scope.authenticateKey(token) });
+    const { token } = await f.scope.userKeys.create(principal, { projectId: project.id });
+    const key = await f.scope.caller({
+      kind: 'key',
+      key: await f.scope.userKeys.authenticate(token),
+    });
     all.push({ kind: 'key', role, caller: { ...key, projectId: project.id } });
-    const issued = await f.scope.issueActor(admin, { name: `${role} robot`, role });
+    const issued = await f.scope.credentials.issueActor(admin, { name: `${role} robot`, role });
     all.push({
       kind: 'actor',
       role,
@@ -508,11 +514,11 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
       readOnly: true,
       inputSchema: z.object({ actorId: z.string().min(1).optional() }).strict(),
       handler: (caller: Caller, input: { actorId?: string }) =>
-        f.scope.actorCredentials(caller, input.actorId),
+        f.scope.credentials.actorCredentials(caller, input.actorId),
     }),
   );
   const { all, admin } = await sources(f);
-  const someone = await f.scope.issueActor(admin, { name: 'Someone', role: 'reader' });
+  const someone = await f.scope.credentials.issueActor(admin, { name: 'Someone', role: 'reader' });
   const reads = ['actor.credentials', 'probe.leaky', 'probe.read', 'project.get', 'shell.run'];
   const writes = ['probe.admin', 'probe.propose', 'probe.review', 'probe.secret', 'probe.write'];
   for (const { kind, role, caller } of all) {
@@ -636,7 +642,7 @@ test('a role change ends the running turn, the next offers the new role’s tool
   const { all, principals, project } = await sources(f);
   const producer = all.find(({ kind, role }) => kind === 'human' && role === 'producer')!.caller;
   const { token, input } = await f.begun(producer);
-  await f.scope.changeMemberRole(principals.operator, project.id, {
+  await f.scope.members.changeMemberRole(principals.operator, project.id, {
     subject: principals.producer.user.subject,
     role: 'reader',
   });
@@ -1566,7 +1572,10 @@ test('a turn ended early keeps the words it streamed, bounded like any message, 
 
 test('revoking the person’s credential fails their turn, not the machine', async (t) => {
   const f = await fixture(t);
-  const issued = await f.scope.issueActor(f.operator, { name: 'Revocable reader', role: 'reader' });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Revocable reader',
+    role: 'reader',
+  });
   const reader: Caller = {
     projectId: f.operator.projectId,
     actorId: issued.actor.id,
@@ -1575,7 +1584,7 @@ test('revoking the person’s credential fails their turn, not the machine', asy
   const conversation = await f.create(reader);
   const bound = await f.claimed(await f.send(conversation, 'Read this', reader));
   await f.pi.begin(bound.token, bound.input);
-  await f.scope.revokeCredential(f.operator, issued.credential.id);
+  await f.scope.credentials.revokeCredential(f.operator, issued.credential.id);
   await assert.rejects(
     f.pi.tool(bound.token, { ...bound.input, name: 'project.get', input: {} }),
     code('pi_authority_stale'),
@@ -1977,7 +1986,7 @@ test('only the person picks a conversation’s model', async (t) => {
       f.pi.setModel(caller, { id: chat.id, model: 'gpt-6-sol' }),
       code('pi_forbidden'),
     );
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   await assert.rejects(
     f.pi.setModel(
       {

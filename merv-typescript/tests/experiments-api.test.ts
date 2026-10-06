@@ -28,7 +28,7 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Experiment transport acceptance',
     actorName: 'Operator',
   });
@@ -40,15 +40,18 @@ async function fixture(t: TestContext) {
   await waitForManagedCode(app.ctx.codeWork, source);
   const work = currentWork(app.ctx, { directory, source });
   t.after(() => work.close());
-  const producer = await app.ctx.scope.issueActor(source, {
+  const producer = await app.ctx.scope.credentials.issueActor(source, {
     name: 'Experiment producer',
     role: 'producer',
   });
-  const reviewer = await app.ctx.scope.issueActor(source, {
+  const reviewer = await app.ctx.scope.credentials.issueActor(source, {
     name: 'Independent reviewer',
     role: 'reviewer',
   });
-  const reader = await app.ctx.scope.issueActor(source, { name: 'Project reader', role: 'reader' });
+  const reader = await app.ctx.scope.credentials.issueActor(source, {
+    name: 'Project reader',
+    role: 'reader',
+  });
   const http = async (tool: string, input: unknown = {}, token: string | null = producer.token) => {
     const response = await fetch(`${app.ctx.api.url}/tools/${tool}`, {
       method: 'POST',
@@ -145,7 +148,7 @@ test('Experiments strict transport keeps scoped records, replay, attempts and cu
     ],
   ] as const)
     assert.equal((await f.http(tool, args)).status, 400, tool);
-  const other = await f.app.ctx.scope.bootstrap({
+  const other = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Another project',
     actorName: 'Operator',
   });
@@ -178,7 +181,7 @@ test('Experiments strict transport keeps scoped records, replay, attempts and cu
     false,
     'get_state does not smuggle artifact content',
   );
-  await f.app.ctx.scope.revokeCredential(f.source, f.producer.credential.id);
+  await f.app.ctx.scope.credentials.revokeCredential(f.source, f.producer.credential.id);
   assert.equal(
     (await f.http('experiment.create', input)).status,
     401,

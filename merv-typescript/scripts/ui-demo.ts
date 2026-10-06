@@ -55,13 +55,13 @@ async function main() {
     port: Number(process.env.PORT ?? 3081),
   });
   const url = app.ctx.api.url!;
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Grokking replication',
     actorName: 'Operator',
   });
   const operator = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader' | 'operator') =>
-    await app.ctx.scope.issueActor(operator, { name, role });
+    await app.ctx.scope.credentials.issueActor(operator, { name, role });
   const producer = await issue('Codex producer', 'producer');
   const reviewer = await issue('Claude reviewer', 'operator');
   const reader = await issue('Observer', 'reader');

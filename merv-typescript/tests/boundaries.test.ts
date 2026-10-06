@@ -216,22 +216,16 @@ const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
 const capabilityOf = (owner: string) =>
   owner.replace(/-(\w)/g, (_, letter) => letter.toUpperCase());
 
-/**
- * Contracts belongs to no component. Besides its index, a component may run only these shared
- * modules: the retirement ledger text that every retirement migration embeds.
- */
-const contractsRuntimeExports = new Set(['retired-instances']);
-const sharedContract = (specifier: string) =>
-  specifier === '@merv/contracts' ||
-  (specifier.startsWith('@merv/contracts/') &&
-    contractsRuntimeExports.has(specifier.slice('@merv/contracts/'.length)));
+/** Contracts belongs to no component. A component may run only its index. */
+const sharedContract = (specifier: string) => specifier === '@merv/contracts';
 
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
- * limits, review independence and history, the prerequisite guard, the paper's Problem, and
- * an artifact as a context item. */
+ * limits, review independence and history, the prerequisite guard, the paper's Problem, an
+ * artifact as a context item, and the retirement ledger text every retirement migration embeds. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
   '@merv/workflows/rules',
+  '@merv/workflows/retired-instances',
   '@merv/experiments/rules',
   '@merv/reviews/rules',
   '@merv/scope/rules',
@@ -508,6 +502,24 @@ function assertComponentReferences(
 
 test('implementation imports remain inside their component and away from transport adapters', () => {
   for (const path of sourceFiles) assertComponentReferences(path, parse(path));
+});
+
+/** Research logic. Every other package is a foundation, which must not know it. */
+const research = new Set(['tasks', 'experiments', 'knowledge', 'reflections', 'research', 'paper']);
+test('foundations import no research package, not even for types, and list none', () => {
+  for (const path of sourceFiles.filter((path) => !research.has(ownerOf(path))))
+    for (const { specifier } of moduleReferences(parse(path)))
+      assert.ok(
+        !/^@merv\//.test(specifier) || !research.has(specifier.split('/')[1]!),
+        `${relative(root, path)}: a foundation imports research logic: ${specifier}`,
+      );
+  for (const name of packageNames.filter((name) => !research.has(name))) {
+    const manifest = JSON.parse(readFileSync(join(packagesRoot, name, 'package.json'), 'utf8'));
+    const listed = Object.keys(manifest.dependencies ?? {}).filter((dependency) =>
+      research.has(dependency.replace(/^@merv\//, '')),
+    );
+    assert.deepEqual(listed, [], `${name}: a foundation depends on research logic`);
+  }
 });
 
 test('pure rule modules that other units run import nothing but contracts and zod', () => {
@@ -1080,7 +1092,7 @@ test('each service boots with only its declared dependency closure and without A
           assert.equal((await ctx.blobs.get('isolated', stored.hash)).toString(), 'durable bytes');
         }
         if (required.has('scope')) {
-          const credentials = await ctx.scope.bootstrap({
+          const credentials = await ctx.scope.credentials.bootstrap({
             projectName: 'Independent component',
             actorName: 'Operator',
           });

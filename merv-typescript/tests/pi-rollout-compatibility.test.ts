@@ -33,7 +33,7 @@ test('sessions v8 keeps v7 data; exact migration-only rollback boots while the v
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
   await createService(new WorkflowsService(state, scope));
-  const boot = await scope.bootstrap({ projectName: 'Rollback', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Rollback', actorName: 'Owner' });
   const source = await scope.delegationSource({
     projectId: boot.project.id,
     actorId: boot.actor.id,

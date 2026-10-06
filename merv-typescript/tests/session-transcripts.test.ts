@@ -166,7 +166,7 @@ async function fixture(t: TestContext, store: 's3' | 'disk' | 'none' = 's3') {
 
   /** A project whose owner's credential is its source runner's. */
   async function project(name: string) {
-    const boot = await scope.bootstrap({ projectName: name, actorName: 'Owner' });
+    const boot = await scope.credentials.bootstrap({ projectName: name, actorName: 'Owner' });
     const owner: Caller = {
       actorId: boot.actor.id,
       projectId: boot.project.id,
@@ -428,7 +428,10 @@ test('the runner that held a session declares after it closed; every other calle
   // Refusals leave no row.
   const live = await a.leased();
   const unattached = await a.offered();
-  const issued = await f.app.ctx.scope.issueActor(a.owner, { name: 'Other', role: 'producer' });
+  const issued = await f.app.ctx.scope.credentials.issueActor(a.owner, {
+    name: 'Other',
+    role: 'producer',
+  });
   const body = { ...live.control, ...facts };
   const refusals: [string, string, unknown, number, string][] = [
     ['another runner', a.token, { ...body, runnerId: 'other' }, 403, 'session_forbidden'],

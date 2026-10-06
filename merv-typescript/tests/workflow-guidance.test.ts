@@ -19,7 +19,10 @@ test('a new program registers guidance and guards without engine cases; reads, p
   const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-program-'));
   const app = await createApp({ directory });
   try {
-    const a = await app.ctx.scope.bootstrap({ projectName: 'Calibration', actorName: 'Operator' });
+    const a = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Calibration',
+      actorName: 'Operator',
+    });
     const caller = { actorId: a.actor.id, projectId: a.project.id };
     const graph: WorkflowDefinition = {
       name: 'calibration',
@@ -90,7 +93,10 @@ test('a new program registers guidance and guards without engine cases; reads, p
     registration.dispose(); // An old disposer cannot remove the new registration.
     instrumentReady = true;
     assert.equal((await evaluate()).available, true);
-    const other = await app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+    const other = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Other',
+      actorName: 'Other',
+    });
     await assert.rejects(
       async () =>
         await app.ctx.workflows.evaluate(
@@ -286,7 +292,10 @@ test('a guard, begin check or lease role that writes under a read fails the read
   const directory = mkdtempSync(join(tmpdir(), 'merv-guidance-fault-'));
   const app = await createApp({ directory });
   try {
-    const a = await app.ctx.scope.bootstrap({ projectName: 'Faults', actorName: 'Operator' });
+    const a = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Faults',
+      actorName: 'Operator',
+    });
     const caller = { actorId: a.actor.id, projectId: a.project.id };
     const graph: WorkflowDefinition = {
       name: 'scribbling',
@@ -376,7 +385,7 @@ test('current task guidance follows leased delivery, independent review, revisio
   let app = await createApp({ directory });
   let work: ReturnType<typeof currentWork> | undefined;
   try {
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Task guidance',
       actorName: 'Operator',
     });

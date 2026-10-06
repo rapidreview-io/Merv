@@ -25,7 +25,10 @@ async function fixture(t: any) {
   const scope = await createService(new ProjectScope(state)),
     blobs = new DiskBlobs(join(dir, 'blobs')),
     artifacts = await createService(new ArtifactStore(state, scope, blobs));
-  const admin = await scope.bootstrap({ projectName: 'First project', actorName: 'Operator' });
+  const admin = await scope.credentials.bootstrap({
+    projectName: 'First project',
+    actorName: 'Operator',
+  });
   const caller = { actorId: admin.actor.id, projectId: admin.project.id };
   return { dir, state, scope, blobs, artifacts, admin, caller };
 }
@@ -97,20 +100,26 @@ test('component migrations are independent, immutable, atomic and persistent', a
 test('credentials enforce roles, project boundaries and revocation', async (t) => {
   const { scope, caller, admin } = await fixture(t);
   assert.equal((await scope.authenticate(admin.token)).id, caller.actorId);
-  const reviewer = await scope.issueActor(caller, { name: 'Reviewer', role: 'reviewer' });
+  const reviewer = await scope.credentials.issueActor(caller, {
+    name: 'Reviewer',
+    role: 'reviewer',
+  });
   const rc = { actorId: reviewer.actor.id, projectId: caller.projectId };
   await scope.require(rc, 'review');
   await assert.rejects(async () => await scope.require(rc, 'write'), /lacks write/);
-  const other = await scope.bootstrap({ projectName: 'Second project', actorName: 'Other' });
+  const other = await scope.credentials.bootstrap({
+    projectName: 'Second project',
+    actorName: 'Other',
+  });
   await assert.rejects(
     async () => await scope.require({ ...caller, projectId: other.project.id }, 'read'),
     /cannot access/,
   );
   await assert.rejects(
-    async () => await scope.issueActor(rc, { name: 'Escalated', role: 'operator' }),
+    async () => await scope.credentials.issueActor(rc, { name: 'Escalated', role: 'operator' }),
     /lacks admin/,
   );
-  await scope.revokeActor(caller, reviewer.actor.id);
+  await scope.credentials.revokeActor(caller, reviewer.actor.id);
   await assert.rejects(async () => await scope.authenticate(reviewer.token), /revoked/);
   await assert.rejects(async () => await scope.require(rc, 'read'), /cannot access/);
 });
@@ -142,7 +151,7 @@ test('artifacts retain exact bytes, reject mutation and scope reads', async (t) 
     { code: 'state_constraint' },
   );
   assert.equal((await artifacts.get(caller, value.id)).title, 'Evidence');
-  const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   await assert.rejects(
     async () =>
       await artifacts.get({ actorId: other.actor.id, projectId: other.project.id }, value.id),
@@ -180,7 +189,7 @@ test('artifacts retain exact bytes, reject mutation and scope reads', async (t) 
 test('artifact queries retain the project checked during authorization', async (t) => {
   const { artifacts, caller, scope } = await fixture(t);
   const own = await artifacts.create(caller, { title: 'Own', content: 'Own evidence' });
-  const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const secret = await artifacts.create(
     { actorId: other.actor.id, projectId: other.project.id },
     { title: 'Private', content: 'Other project evidence' },
@@ -198,7 +207,7 @@ test('artifact queries retain the project checked during authorization', async (
 });
 test('a revocation while an artifact link is signed is enforced by the tool registry', async (t) => {
   const { blobs, caller, state, scope } = await fixture(t);
-  const reader = await scope.issueActor(caller, { name: 'Reader', role: 'reader' });
+  const reader = await scope.credentials.issueActor(caller, { name: 'Reader', role: 'reader' });
   const entered = deferred();
   const release = deferred();
   const store = await createService(
@@ -229,7 +238,7 @@ test('a revocation while an artifact link is signed is enforced by the tool regi
   );
   const rejected = assert.rejects(pending, { code: 'forbidden' });
   await entered.promise;
-  await scope.revokeActor(caller, reader.actor.id);
+  await scope.credentials.revokeActor(caller, reader.actor.id);
   release.resolve();
   await rejected;
 });
@@ -270,7 +279,10 @@ test('Cordis activates independent components from declared dependencies and unw
   const provider = await ctx.plugin(statePlugin, stateConfig(dir));
   await scope.await();
   await art.await();
-  const credentials = await ctx.scope.bootstrap({ projectName: 'Independent', actorName: 'User' });
+  const credentials = await ctx.scope.credentials.bootstrap({
+    projectName: 'Independent',
+    actorName: 'User',
+  });
   const caller = { actorId: credentials.actor.id, projectId: credentials.project.id };
   const saved = await ctx.artifacts.create(caller, { title: 'One', content: 'survives unload' });
   await provider.dispose();

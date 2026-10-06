@@ -206,7 +206,7 @@ try {
   });
   const source = async () =>
     await app!.ctx.scope.caller(
-      { kind: 'key', key: await app!.ctx.scope.authenticateKey(key.token) },
+      { kind: 'key', key: await app!.ctx.scope.userKeys.authenticate(key.token) },
       project.id,
     );
   const task = await currentTask(app.ctx, await source(), {

@@ -22,14 +22,17 @@ async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-records-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Corpus inputs', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Corpus inputs',
+    actorName: 'Operator',
+  });
   const operator: Caller = {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
     projectId: boot.project.id,
   };
   const issue = async (role: 'producer' | 'reader') => {
-    const issued = await scope.issueActor(operator, { name: role, role });
+    const issued = await scope.credentials.issueActor(operator, { name: role, role });
     return {
       actorId: issued.actor.id,
       credentialId: issued.credential.id,
@@ -137,7 +140,7 @@ test('Task and project records share the caller transaction and do not commit or
 test('Record reads authenticate within borrowed transactions and never cross projects', async (t) => {
   const f = await fixture(t);
   const task = await f.create('Private input');
-  const other = await f.scope.bootstrap({
+  const other = await f.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other operator',
   });
@@ -160,7 +163,7 @@ test('Record reads authenticate within borrowed transactions and never cross pro
     );
     assert.equal((await f.tasks.record(f.reader, task.id, tx)).id, task.id);
   });
-  await f.scope.revokeActor(f.operator, f.reader.actorId);
+  await f.scope.credentials.revokeActor(f.operator, f.reader.actorId);
   await f.state.transaction(async (tx) => {
     await assert.rejects(async () => await f.tasks.record(f.reader, task.id, tx), {
       code: 'forbidden',

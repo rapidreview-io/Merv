@@ -140,7 +140,7 @@ test('only the administrator who began an import continues it, and a worker neve
     requestId: 'one',
   };
   const issue = async (role: 'operator' | 'producer') => {
-    const issued = await f.scope.issueActor(f.admin, { name: role, role });
+    const issued = await f.scope.credentials.issueActor(f.admin, { name: role, role });
     return {
       projectId: f.admin.projectId,
       actorId: issued.actor.id,
@@ -184,7 +184,10 @@ test('only the administrator who began an import continues it, and a worker neve
   });
 
   // A project that names no repository has nothing to import into.
-  const elsewhere = await f.scope.bootstrap({ projectName: 'Unbound', actorName: 'Owner' });
+  const elsewhere = await f.scope.credentials.bootstrap({
+    projectName: 'Unbound',
+    actorName: 'Owner',
+  });
   await assert.rejects(
     f.code.importRepository(
       {
@@ -224,8 +227,11 @@ test('a part authorizes its sender itself: one whose credential was revoked is r
     bundle: { sha256: bundle.sha256, bytes: bundle.bytes },
     requestId: 'revoked',
   });
-  const other = await f.scope.issueActor(f.admin, { name: 'Operator', role: 'operator' });
-  await f.scope.revokeCredential(
+  const other = await f.scope.credentials.issueActor(f.admin, {
+    name: 'Operator',
+    role: 'operator',
+  });
+  await f.scope.credentials.revokeCredential(
     { projectId: f.admin.projectId, actorId: other.actor.id, credentialId: other.credential.id },
     f.admin.credentialId!,
   );
@@ -387,12 +393,12 @@ test('naming a main records whether the repository holds it, so nothing has to a
   const two = source.commit({ 'a.txt': 'two\n' });
   const f = await codeStoreFixture(t);
   // Main moves only for a signed-in administrator, so this project belongs to one.
-  const principal = await f.scope.acceptVerifiedIdentity({
+  const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const project = await f.scope.createProject(principal, { name: 'Human', requestId: 'p' });
+  const project = await f.scope.members.createProject(principal, { name: 'Human', requestId: 'p' });
   const human = await f.scope.caller(principal, project.id);
   const bind = async (mainOid: string, expectedMainOid?: string) =>
     await f.code.bindLocal(human, {

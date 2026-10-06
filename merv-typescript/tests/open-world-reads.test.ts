@@ -23,13 +23,16 @@ test('an open-world read waits on its service holding no snapshot or reader conn
     await state.close();
   });
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Open-world reads', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Open-world reads',
+    actorName: 'Owner',
+  });
   const operator = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const issued = await scope.issueActor(operator, { name: 'Reader', role: 'reader' });
+  const issued = await scope.credentials.issueActor(operator, { name: 'Reader', role: 'reader' });
   const reader = {
     projectId: boot.project.id,
     actorId: issued.actor.id,
@@ -99,7 +102,7 @@ test('an open-world read waits on its service holding no snapshot or reader conn
   const revoked = assert.rejects(tools.call('remote.search', reader, {}), { code: 'forbidden' });
   await entered.promise;
   try {
-    await scope.revokeActor(operator, reader.actorId);
+    await scope.credentials.revokeActor(operator, reader.actorId);
   } finally {
     answer.resolve();
   }

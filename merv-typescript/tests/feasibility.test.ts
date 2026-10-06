@@ -128,14 +128,20 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Feasibility', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Feasibility',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
   await waitForManagedCode(app.ctx.codeWork, owner);
-  const issued = await app.ctx.scope.issueActor(owner, { name: 'Reviewer', role: 'reviewer' });
+  const issued = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Reviewer',
+    role: 'reviewer',
+  });
   const reviewer: Caller = {
     projectId: owner.projectId,
     actorId: issued.actor.id,

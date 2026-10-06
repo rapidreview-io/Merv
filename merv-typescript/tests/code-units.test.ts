@@ -86,8 +86,8 @@ async function fixture(t: TestContext, withUnits = true) {
     subject,
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const principal = await scope.acceptVerifiedIdentity(identity('owner'));
-  const project = await scope.createProject(principal, { name: 'Units', requestId: 'one' });
+  const principal = await scope.members.acceptVerifiedIdentity(identity('owner'));
+  const project = await scope.members.createProject(principal, { name: 'Units', requestId: 'one' });
   const admin = await scope.caller(principal, project.id);
   const build = await workflows.register(definition, policy);
   let sequence = 0;
@@ -246,14 +246,14 @@ test('only a signed-in administrator binds the repository, and main moves by com
   });
   const first = { repositoryId: 'runner-repository', mainOid: oid('a'), requestId: 'bind' };
 
-  const issued = await f.scope.createKey(f.principal, { projectId: f.project.id });
+  const issued = await f.scope.userKeys.create(f.principal, { projectId: f.project.id });
   const machine = await f.scope.caller({
     kind: 'key',
-    key: await f.scope.authenticateKey(issued.token),
+    key: await f.scope.userKeys.authenticate(issued.token),
   });
   await assert.rejects(f.code.bindLocal(machine, first), { code: 'code_human_required' });
-  const reader = await f.scope.acceptVerifiedIdentity(f.identity('reader'));
-  await f.scope.addMember(f.principal, f.project.id, { subject: 'reader', role: 'reader' });
+  const reader = await f.scope.members.acceptVerifiedIdentity(f.identity('reader'));
+  await f.scope.members.addMember(f.principal, f.project.id, { subject: 'reader', role: 'reader' });
   await assert.rejects(
     f.code.bindLocal(await f.scope.caller(reader, f.project.id), first),
     (error: { status?: number }) => error.status === 403,
@@ -322,7 +322,7 @@ test('only a signed-in administrator binds the repository, and main moves by com
   // Reads are the project's own.
   const work = await f.build.start(f.admin, { workflow: 'build', requestId: 'start' });
   await f.state.transaction(async (tx) => await f.code.declareUnit(f.admin, work.id, tx));
-  const elsewhere = await f.scope.createProject(f.principal, {
+  const elsewhere = await f.scope.members.createProject(f.principal, {
     name: 'Elsewhere',
     requestId: 'two',
   });

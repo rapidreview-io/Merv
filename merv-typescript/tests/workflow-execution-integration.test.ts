@@ -11,7 +11,10 @@ test('a real Cordis program reload and application restart keep the pinned polic
   const directory = mkdtempSync(join(tmpdir(), 'merv-execution-lifecycle-'));
   let app = await createApp({ directory });
   try {
-    const boot = await app.ctx.scope.bootstrap({ projectName: 'Execution', actorName: 'Operator' });
+    const boot = await app.ctx.scope.credentials.bootstrap({
+      projectName: 'Execution',
+      actorName: 'Operator',
+    });
     const caller: Caller = {
       projectId: boot.project.id,
       actorId: boot.actor.id,
@@ -54,7 +57,7 @@ test('the pinned policy is stable across begin and checkpoint evidence', async (
   const directory = mkdtempSync(join(tmpdir(), 'merv-execution-checkpoints-'));
   const app = await createApp({ directory });
   try {
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Pinned authority',
       actorName: 'Operator',
     });

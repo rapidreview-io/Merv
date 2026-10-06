@@ -27,6 +27,7 @@ import {
   type ProjectContextUpdate,
   type Transaction,
   type Sql,
+  type StoredEvent,
   type ActorCredential,
   type AuthenticatedActor,
   type IssuedActorCredential,
@@ -98,10 +99,10 @@ class AuthoritySlot<T> {
 export class ProjectScope implements Scope {
   toolPolicy!: ToolPolicy;
   introductionWriter?: string;
-  private members!: Memberships;
-  private userKeys!: UserKeys;
+  readonly members: Memberships;
+  readonly userKeys: UserKeys;
+  readonly credentials: ActorCredentials;
   private ledger: Ledger;
-  private credentials: ActorCredentials;
   private sessions = new AuthoritySlot<SessionAuthority>(
     { registered: 'session_authority_registered', unavailable: 'session_unavailable' },
     {
@@ -141,6 +142,18 @@ export class ProjectScope implements Scope {
       async (caller, permission, tx) => await this.authorize(caller, permission, tx),
       async (caller, permission, tx) => await this.require(caller, permission, tx),
     );
+    this.members = new Memberships(
+      state,
+      () => this.time(),
+      async (caller, permission, tx) => await this.require(caller, permission, tx),
+    );
+    this.userKeys = new UserKeys(
+      state,
+      this.ledger,
+      () => this.time(),
+      this.members,
+      async (caller, permission, tx) => await this.require(caller, permission, tx),
+    );
     this.initialize = async () => {
       await this.ledger.initialize();
       this.toolPolicy = new ExactToolPolicy(this, grants);
@@ -149,18 +162,6 @@ export class ProjectScope implements Scope {
       await state.migrate(
         'scope',
         Object.entries(texts).map(([version, sql]) => ({ version: +version, sql })),
-      );
-      this.members = new Memberships(
-        state,
-        () => this.time(),
-        async (caller, permission, tx) => await this.require(caller, permission, tx),
-      );
-      this.userKeys = new UserKeys(
-        state,
-        this.ledger,
-        () => this.time(),
-        this.members,
-        async (caller, permission, tx) => await this.require(caller, permission, tx),
       );
     };
   }
@@ -246,9 +247,6 @@ export class ProjectScope implements Scope {
     });
   }
 
-  async acceptVerifiedIdentity(identity: VerifiedIdentity) {
-    return await this.members.acceptVerifiedIdentity(identity);
-  }
   async caller(principal: Principal, projectId?: string) {
     return principal?.kind === 'key'
       ? await this.userKeys.caller(principal, projectId)
@@ -258,55 +256,6 @@ export class ProjectScope implements Scope {
     return principal?.kind === 'key'
       ? await this.userKeys.projects(principal)
       : await this.members.projects(principal);
-  }
-  async authenticateKey(token: string): Promise<UserKey> {
-    return await this.userKeys.authenticate(token);
-  }
-  async keys(principal: Principal, projectId?: string) {
-    return await this.userKeys.keys(principal, projectId);
-  }
-  async createKey(
-    principal: Principal,
-    input: {
-      projectId: string;
-      grantScope?: 'project' | 'account';
-      label?: string | null;
-      expiresAt?: string | null;
-    },
-  ) {
-    return await this.userKeys.create(principal, input);
-  }
-  async rotateKey(principal: Principal, input: { keyId: string; expiresAt?: string | null }) {
-    return await this.userKeys.rotate(principal, input);
-  }
-  async revokeKey(principal: Principal, keyId: string) {
-    await this.userKeys.revoke(principal, keyId);
-  }
-  async createProject(principal: Principal, input: { name: string; requestId: string }) {
-    return await this.members.createProject(principal, input);
-  }
-  async memberships(principal: Principal, projectId: string) {
-    return await this.members.memberships(principal, projectId);
-  }
-  async addMember(principal: Principal, projectId: string, input: { subject: string; role: Role }) {
-    return await this.members.addMember(principal, projectId, input);
-  }
-  async changeMemberRole(
-    principal: Principal,
-    projectId: string,
-    input: { subject: string; role: Role },
-  ) {
-    return await this.members.changeMemberRole(principal, projectId, input);
-  }
-  async removeMember(principal: Principal, projectId: string, subject: string) {
-    return await this.members.removeMember(principal, projectId, subject);
-  }
-  async adoptProject(
-    principal: HumanPrincipal,
-    projectId: string,
-    options?: { repairReason: string },
-  ) {
-    return await this.members.adoptProject(principal, projectId, options);
   }
   registerSessionAuthority(authority: SessionAuthority): () => void {
     return this.sessions.install(authority);
@@ -503,19 +452,22 @@ export class ProjectScope implements Scope {
     tx: Transaction,
   ): Promise<boolean> {
     this.state.assertTransaction(tx);
-    const holders = JSON.stringify(ROLES.filter((role) => permits(role, permission)));
-    return !!(await tx.get(
-      `SELECT 1 FROM events WHERE project_id=? AND subject_id=? AND id>? AND (
-         type='actor.revoked' OR (type='actor.permissions_changed'
-           AND (data_json::jsonb #>> '{beforeRole}') IN (SELECT jsonb_array_elements_text(?::jsonb))
-           AND COALESCE((data_json::jsonb #>> '{role}'),'') NOT IN (SELECT jsonb_array_elements_text(?::jsonb)))
-       ) LIMIT 1`,
-      projectId,
-      actorId,
-      after,
-      holders,
-      holders,
-    ));
+    const held = (role: unknown) =>
+      ROLES.includes(role as Role) && permits(role as Role, permission);
+    const lost = (event: StoredEvent) =>
+      event.type === 'actor.revoked' || (held(event.data.beforeRole) && !held(event.data.role));
+    for (const type of ['actor.revoked', 'actor.permissions_changed'])
+      for (let cursor = after; ;) {
+        const page = await this.state.findEvents(
+          { projectId, subjectId: actorId, type, after: cursor },
+          1000,
+          tx,
+        );
+        if (page.some(lost)) return true;
+        if (page.length < 1000) break;
+        cursor = page.at(-1)!.id;
+      }
+    return false;
   }
   async authorityActor(caller: Caller, tx?: Transaction): Promise<Actor> {
     caller = structuredClone(caller);
@@ -537,9 +489,6 @@ export class ProjectScope implements Scope {
   private time(): string {
     return new Date(this.clock()).toISOString();
   }
-  async bootstrap(input: { projectName: string; actorName: string }) {
-    return await this.credentials.bootstrap(input);
-  }
   async authenticate(token: string): Promise<AuthenticatedActor> {
     const verified = await this.ledger.authenticate(token, 'actor');
     const row = await this.state.read(
@@ -547,13 +496,10 @@ export class ProjectScope implements Scope {
         await sql.get<CredentialRow & { name: string; role: Role; active: number }>(
           `SELECT c.*,a.name,a.role,a.active FROM actor_credentials c
          JOIN actors a ON a.id=c.actor_id AND a.project_id=c.project_id
-         WHERE c.id=? AND c.token_hash=? AND a.active=1 AND c.revoked_at IS NULL
-           AND a.session_id IS NULL
-           AND NOT EXISTS(SELECT 1 FROM member_actors m WHERE m.actor_id=a.id)
-           AND (c.expires_at IS NULL OR c.expires_at>?)`,
+         WHERE c.id=? AND c.token_hash=? AND a.active=1 AND a.session_id IS NULL
+           AND NOT EXISTS(SELECT 1 FROM member_actors m WHERE m.actor_id=a.id)`,
           verified.subject,
           verified.tokenHash,
-          this.time(),
         ),
     );
     check(row, 'unauthorized', 'Invalid, expired or revoked bearer credential', 401);
@@ -563,11 +509,9 @@ export class ProjectScope implements Scope {
     if (typeof token !== 'string' || token.length < 32 || token.length > 200) return false;
     // Sessions' bearers (session, managed runner, enrollment), which Scope does not store.
     if (/^m[ers]_/.test(token)) return true;
-    if (await this.userKeys.recognizes(token)) return true;
-    return await this.state.read(
-      async (sql) =>
-        !!(await sql.get('SELECT id FROM actor_credentials WHERE token_hash=?', sha256Hex(token))),
-    );
+    // Any credential or key Scope issued, live or not: the ledger holds every one.
+    const held = await this.state.read((sql) => this.ledger.held(sha256Hex(token), sql));
+    return held?.owner === 'scope';
   }
   /** Shared membership predicate for verified JWT callers and durable human delegations. */
   private async requireHumanMembership(
@@ -783,15 +727,18 @@ export class ProjectScope implements Scope {
           403,
         );
         const bound = await sql.get<CredentialRow>(
-          `SELECT * FROM actor_credentials WHERE id=? AND actor_id=? AND project_id=?
-           AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>?)`,
+          'SELECT * FROM actor_credentials WHERE id=? AND actor_id=? AND project_id=?',
           caller.credentialId,
           caller.actorId,
           caller.projectId,
-          this.time(),
         );
-        check(bound, 'forbidden', 'Credential cannot authorize this actor in this project', 403);
-        await this.ledger.live(bound.token_hash, 'actor', bound.id, sql);
+        const refusal = {
+          code: 'forbidden',
+          message: 'Credential cannot authorize this actor in this project',
+          status: 403,
+        };
+        check(bound, refusal.code, refusal.message, refusal.status);
+        await this.ledger.live(bound.token_hash, 'actor', bound.id, sql, refusal);
         lifetime = bound.expires_at;
       }
       return { actor: actor(row), source, lifetime };
@@ -940,27 +887,6 @@ export class ProjectScope implements Scope {
       );
     });
   }
-  async issueActor(caller: Caller, input: { name: string; role: Role; expiresAt?: string | null }) {
-    return await this.credentials.issueActor(caller, input);
-  }
-  async actorCredentials(caller: Caller, actorId?: string): Promise<ActorCredential[]> {
-    return await this.credentials.actorCredentials(caller, actorId);
-  }
-  async issueActorCredential(
-    caller: Caller,
-    input: { actorId: string; expiresAt?: string | null },
-  ): Promise<IssuedActorCredential> {
-    return await this.credentials.issueActorCredential(caller, input);
-  }
-  async rotateCredential(
-    caller: Caller,
-    input: { credentialId: string; expiresAt?: string | null },
-  ): Promise<IssuedActorCredential> {
-    return await this.credentials.rotateCredential(caller, input);
-  }
-  async revokeCredential(caller: Caller, credentialId: string): Promise<void> {
-    await this.credentials.revokeCredential(caller, credentialId);
-  }
   async actors(caller: Caller) {
     caller = structuredClone(caller);
     await this.require(caller, 'admin');
@@ -972,9 +898,6 @@ export class ProjectScope implements Scope {
         )
       ).map(actor),
     );
-  }
-  async revokeActor(caller: Caller, actorId: string): Promise<void> {
-    await this.credentials.revokeActor(caller, actorId);
   }
 }
 export const scopePlugin = {

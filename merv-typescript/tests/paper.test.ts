@@ -25,14 +25,14 @@ async function fixture(t: TestContext) {
     );
   let paper = await createService(new PaperService(state, scope, artifacts)),
     count = 0;
-  const boot = await scope.bootstrap({ projectName: 'Paper', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Paper', actorName: 'Owner' });
   const operator: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
   const actor = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const a = await scope.issueActor(operator, { name: role, role });
+    const a = await scope.credentials.issueActor(operator, { name: role, role });
     return { projectId: operator.projectId, actorId: a.actor.id, credentialId: a.credential.id };
   };
   const producer = await actor('producer'),
@@ -198,7 +198,7 @@ test('paper keeps ordered section history, structured scope and scoped citation 
   await f.reload();
   assert.deepEqual((await f.paper.read(f.reader)).documents.literature.current, updated);
   assert.equal((await f.paper.read(f.reader)).citations[0].id, citation.id);
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const outsider = {
     projectId: other.project.id,
     actorId: other.actor.id,
@@ -315,7 +315,10 @@ test('reviewer edits retain provenance, roll back together, and enforce revision
   const duplicate = structuredClone(input);
   duplicate.documents[1].kind = 'methods';
   await assert.rejects(apply(f.reviewer, duplicate), hasCode('invalid_paper_input'));
-  const foreign = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
+  const foreign = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other owner',
+  });
   await assert.rejects(
     apply({ actorId: foreign.actor.id, projectId: foreign.project.id }),
     hasCode('not_found'),

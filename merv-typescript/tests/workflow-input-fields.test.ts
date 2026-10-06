@@ -17,14 +17,18 @@ type RequiredInput = NonNullable<WorkflowActionRule['requiredInput']>;
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-workflow-input-fields-'));
   const app = await createApp({ directory });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Workflow inputs',
     actorName: 'Operator',
   });
   const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const other: Caller = {
-    actorId: (await app.ctx.scope.issueActor(caller, { name: 'Other producer', role: 'producer' }))
-      .actor.id,
+    actorId: (
+      await app.ctx.scope.credentials.issueActor(caller, {
+        name: 'Other producer',
+        role: 'producer',
+      })
+    ).actor.id,
     projectId: caller.projectId,
   };
   return {

@@ -21,7 +21,7 @@ import {
   planRetirementPreconditionsSql,
   retirementLedgerSql,
   retirementPreconditionsSql,
-} from '@merv/contracts/retired-instances';
+} from '@merv/workflows/retired-instances';
 import { PostgresState } from '@merv/state';
 import { createApp } from './fixtures/app.js';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';
@@ -226,7 +226,10 @@ async function prepare(
   let dependentTaskId: string | undefined;
   try {
     const bootstrap = async (projectName: string) => {
-      const credentials = await app.ctx.scope.bootstrap({ projectName, actorName: 'Operator' });
+      const credentials = await app.ctx.scope.credentials.bootstrap({
+        projectName,
+        actorName: 'Operator',
+      });
       const caller = { projectId: credentials.project.id, actorId: credentials.actor.id };
       await waitForManagedCode(app.ctx.codeWork, caller);
       return caller;

@@ -1,5 +1,6 @@
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { nativeMcpConnectionsSchema, oidPattern } from '@merv/contracts';
+import { delegationEnd } from '@merv/scope/rules';
 import { visible, createService } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
@@ -14,7 +15,6 @@ import type { ManagedBindingRow } from './managed-types.js';
 import {
   canonical,
   check,
-  delegationEnd,
   digest,
   effectiveWorkspace,
   MAX_TRANSCRIPT_BYTES,

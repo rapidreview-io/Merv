@@ -43,7 +43,7 @@ test(
     );
     const initial = git('rev-parse', 'HEAD');
     const app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Capture recovery',
       actorName: 'Owner',
     });
@@ -286,7 +286,7 @@ test(
     );
     const initial = git('rev-parse', 'HEAD');
     const app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Attachment recovery',
       actorName: 'Owner',
     });

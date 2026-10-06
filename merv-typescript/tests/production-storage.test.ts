@@ -113,16 +113,16 @@ test(
         .filter((p) => p.required)
         .every((p) => p.state === 'active'),
     );
-    const identity = await app.ctx.scope.bootstrap({
+    const identity = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Production storage',
       actorName: 'Operator',
     });
     const operator: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
-    const producerIdentity = await app.ctx.scope.issueActor(operator, {
+    const producerIdentity = await app.ctx.scope.credentials.issueActor(operator, {
       name: 'Producer',
       role: 'producer',
     });
-    const reviewerIdentity = await app.ctx.scope.issueActor(operator, {
+    const reviewerIdentity = await app.ctx.scope.credentials.issueActor(operator, {
       name: 'Reviewer',
       role: 'reviewer',
     });

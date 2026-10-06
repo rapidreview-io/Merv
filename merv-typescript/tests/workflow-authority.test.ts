@@ -35,7 +35,7 @@ async function fixture(t: TestContext) {
     workflows.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Authority', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Authority', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

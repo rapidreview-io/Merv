@@ -727,7 +727,10 @@ test('a Pi turn is offered Nisa and runs it as its person, a reader included', a
   const f = await piFixture(t);
   const service = new NisaService({ keyEnv: keyEnv(t, key), origin: fake.origin });
   for (const tool of nisaTools(service)) f.tools.register(tool);
-  const issued = await f.scope.issueActor(f.operator, { name: 'Reader', role: 'reader' });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Reader',
+    role: 'reader',
+  });
   const reader: Caller = {
     projectId: f.operator.projectId,
     actorId: issued.actor.id,
@@ -832,9 +835,15 @@ test('the render composes Nisa into Main, where MCP clients list and call it', a
     if (previous === undefined) delete process.env.MERV_NISA_API_KEY;
     else process.env.MERV_NISA_API_KEY = previous;
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Nisa', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Nisa',
+    actorName: 'Owner',
+  });
   const owner = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issued = await app.ctx.scope.issueActor(owner, { name: 'Reader', role: 'reader' });
+  const issued = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
   mcp = new Client({ name: 'merv-nisa-test', version: '1.0.0' });
   await mcp.connect(
     new StreamableHTTPClientTransport(new URL(app.ctx.api.url! + '/mcp'), {

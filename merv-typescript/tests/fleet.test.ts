@@ -184,7 +184,7 @@ class FakeRuntimes implements SandboxRuntimes {
 async function fixture(t: TestContext, limits: FleetConfig = { globalLimit: 2, projectLimit: 1 }) {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
-  const admin = await scope.bootstrap({ projectName: 'Fleet', actorName: 'Operator' });
+  const admin = await scope.credentials.bootstrap({ projectName: 'Fleet', actorName: 'Operator' });
   const caller: Caller = {
     projectId: admin.project.id,
     actorId: admin.actor.id,
@@ -281,7 +281,10 @@ test('concurrent controllers reserve within global and project caps; requests ar
 test('concurrent controllers enforce the global cap across projects', async (t) => {
   const f = await fixture(t, { globalLimit: 1, projectLimit: 2 });
   f.runtimes.initialState = 'provisioning';
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const otherCaller: Caller = {
     projectId: other.project.id,
     actorId: other.actor.id,
@@ -328,7 +331,10 @@ test('a project without a sandbox connection never holds the only slot', async (
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, stranded.id)).phase, 'released');
   assert.deepEqual(f.runtimes.createKeys, []);
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const otherCaller: Caller = {
     projectId: other.project.id,
     actorId: other.actor.id,
@@ -752,7 +758,10 @@ test('cancellation during create retains capacity until provider reports stopped
 
 test('source revocation and missing owner stop a live allocation', async (t) => {
   const f = await fixture(t);
-  const producer = await f.scope.issueActor(f.caller, { name: 'Producer', role: 'producer' });
+  const producer = await f.scope.credentials.issueActor(f.caller, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const caller: Caller = {
     projectId: f.caller.projectId,
     actorId: producer.actor.id,
@@ -761,7 +770,7 @@ test('source revocation and missing owner stop a live allocation', async (t) => 
   const revoked = await f.fleet.request(caller, input('revoked'));
   await f.fleet.tick();
   await f.fleet.tick();
-  await f.scope.revokeCredential(f.caller, producer.credential.id);
+  await f.scope.credentials.revokeCredential(f.caller, producer.credential.id);
   await f.fleet.tick();
   assert.equal((await f.fleet.inspect(f.caller, revoked.id)).intent, 'stop');
   assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
@@ -866,7 +875,10 @@ test('dropping a profile from configuration stops only its machines', async (t) 
 test('a project named in projectLimits has its own cap, and free() counts what waits', async (t) => {
   const f = await fixture(t);
   f.runtimes.initialState = 'provisioning';
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const host = await createService(
     new FleetService(f.state, f.scope, f.runtimes, {
       enabled: true,
@@ -1116,7 +1128,10 @@ test('a capped request whose place loses its connection is refused at once, not 
 test('prices are read once per place and profile each pass, outside any transaction, and never by a request', async (t) => {
   const f = await capped(t);
   f.runtimes.large = { key: 'large', id: 'large-profile', leaseSeconds: 600 };
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const otherCaller: Caller = {
     projectId: other.project.id,
     actorId: other.actor.id,

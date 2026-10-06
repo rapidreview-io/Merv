@@ -161,10 +161,15 @@ test('HTTP accepts transport humans only, exposes metadata, rejects invalid bodi
     400,
   );
   assert.equal((await request('human.one.jwt', 'PUT', { token: 'x'.repeat(9000) })).status, 413);
-  const principal = await scope.acceptVerifiedIdentity(await identity.verify('human.one.jwt'));
-  const project = await scope.createProject(principal, { name: 'Account', requestId: 'account' });
-  const issued = await scope.createKey(principal, { projectId: project.id });
-  const actor = await scope.issueActor(await scope.caller(principal, project.id), {
+  const principal = await scope.members.acceptVerifiedIdentity(
+    await identity.verify('human.one.jwt'),
+  );
+  const project = await scope.members.createProject(principal, {
+    name: 'Account',
+    requestId: 'account',
+  });
+  const issued = await scope.userKeys.create(principal, { projectId: project.id });
+  const actor = await scope.credentials.issueActor(await scope.caller(principal, project.id), {
     name: 'Machine',
     role: 'reader',
   });

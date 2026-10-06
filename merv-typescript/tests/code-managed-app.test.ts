@@ -13,7 +13,7 @@ test('the default application creates Git without GitHub and offers new work fro
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Disconnected research',
     actorName: 'Owner',
   });

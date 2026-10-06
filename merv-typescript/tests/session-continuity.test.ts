@@ -117,7 +117,7 @@ async function fixture(t: TestContext) {
     assert.equal(result.status, 200, result.text);
     return result.body;
   };
-  const boot = await scope.bootstrap({ projectName: 'Continuity', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Continuity', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

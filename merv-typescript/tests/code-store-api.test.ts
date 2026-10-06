@@ -25,7 +25,10 @@ const PART = 4 * 1024 * 1024;
 async function fixture(t: TestContext) {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Code transfers', actorName: 'Controller' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Code transfers',
+    actorName: 'Controller',
+  });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
   const tools = new ToolRegistry(scope);
   const api = new ApiServer(scope, tools, { port: 0 });
@@ -231,7 +234,10 @@ test(
         },
       },
     });
-    const admin = await f.scope.issueActor(f.caller, { name: 'Second operator', role: 'operator' });
+    const admin = await f.scope.credentials.issueActor(f.caller, {
+      name: 'Second operator',
+      role: 'operator',
+    });
     const adminCaller = await f.scope.caller({
       kind: 'actor',
       actor: await f.scope.authenticate(admin.token),
@@ -269,7 +275,7 @@ test(
         request.on('error', reject);
         request.write(Buffer.alloc(10));
         void started.then(async () => {
-          await f.scope.revokeCredential(adminCaller, f.caller.credentialId!);
+          await f.scope.credentials.revokeCredential(adminCaller, f.caller.credentialId!);
           request.end(Buffer.alloc(10));
         });
       },
@@ -297,7 +303,10 @@ test('code-import brings a local branch into a served project, in steps, as its 
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Imported', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Imported',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -319,7 +328,10 @@ test('code-import brings a local branch into a served project, in steps, as its 
   const code = app.ctx.codeWork as unknown as { store: { maintain(): Promise<void> } };
   await code.store.maintain();
   const root = (await app.ctx.codeWork.status(owner)).project!.main.oid;
-  const producer = await app.ctx.scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const producer = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Producer',
+    role: 'producer',
+  });
   await assert.rejects(
     importRepository({ url, repository: source.repository, ref: 'v1', token: producer.token }),
     { code: 'code_import_refused' },
@@ -389,7 +401,10 @@ test('a server configured with no repository root keeps none, and everything els
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Rootless', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Rootless',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,

@@ -21,7 +21,10 @@ test('managed Code transfers are fenced to one session even for the same source 
   const source = gitSource(t);
   const head = source.commit({ 'README.md': 'baseline\n' });
   const tree = source.git('rev-parse', 'HEAD^{tree}');
-  const boot = await scope.bootstrap({ projectName: 'Managed Code', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Managed Code',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

@@ -32,7 +32,7 @@ test('workflow guidance preserves supported published tool names, including moun
   const directory = mkdtempSync(join(tmpdir(), 'merv-mounted-guidance-'));
   const app = await createApp({ directory });
   try {
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Mounted guidance',
       actorName: 'Operator',
     });

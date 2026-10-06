@@ -181,13 +181,19 @@ test(
     const state = await openState();
     t.after(() => state.close());
     const scope = await createService(new ProjectScope(state));
-    const boot = await scope.bootstrap({ projectName: 'Pi authority', actorName: 'Owner' });
+    const boot = await scope.credentials.bootstrap({
+      projectName: 'Pi authority',
+      actorName: 'Owner',
+    });
     const original: Caller = {
       actorId: boot.actor.id,
       projectId: boot.project.id,
       credentialId: boot.credential.id,
     };
-    const issued = await scope.issueActor(original, { name: 'Pi user', role: 'reader' });
+    const issued = await scope.credentials.issueActor(original, {
+      name: 'Pi user',
+      role: 'reader',
+    });
     const user: Caller = {
       actorId: issued.actor.id,
       projectId: issued.actor.projectId,
@@ -228,7 +234,7 @@ test(
     await assert.rejects(scope.require(agent, 'read'), { code: 'conversation_forbidden' });
     wrong();
     scope.registerConversationAuthority(authority);
-    await scope.revokeCredential(original, issued.credential.id);
+    await scope.credentials.revokeCredential(original, issued.credential.id);
     await assert.rejects(scope.require(agent, 'read'), { code: 'forbidden' });
   },
 );
@@ -241,7 +247,10 @@ test(
     const state = await openState();
     t.after(() => state.close());
     const scope = await createService(new ProjectScope(state));
-    const boot = await scope.bootstrap({ projectName: 'Mixed authority', actorName: 'Owner' });
+    const boot = await scope.credentials.bootstrap({
+      projectName: 'Mixed authority',
+      actorName: 'Owner',
+    });
     const original: Caller = {
       actorId: boot.actor.id,
       projectId: boot.project.id,
@@ -296,7 +305,10 @@ test(
     const state = await openState();
     t.after(() => state.close());
     const scope = await createService(new ProjectScope(state));
-    const boot = await scope.bootstrap({ projectName: 'Pi generation', actorName: 'Owner' });
+    const boot = await scope.credentials.bootstrap({
+      projectName: 'Pi generation',
+      actorName: 'Owner',
+    });
     const original = {
       actorId: boot.actor.id,
       projectId: boot.project.id,
@@ -352,19 +364,22 @@ test(
     const state = await openState();
     t.after(() => state.close());
     const scope = await createService(new ProjectScope(state));
-    const alice = await scope.acceptVerifiedIdentity({
+    const alice = await scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example/auth/v1',
       subject: 'alice',
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
-    const project = await scope.createProject(alice, { name: 'Sources', requestId: 'sources' });
+    const project = await scope.members.createProject(alice, {
+      name: 'Sources',
+      requestId: 'sources',
+    });
     const human = await scope.caller(alice, project.id);
-    const { token } = await scope.createKey(alice, { projectId: project.id });
+    const { token } = await scope.userKeys.create(alice, { projectId: project.id });
     const key = await scope.caller(
-      { kind: 'key', key: await scope.authenticateKey(token) },
+      { kind: 'key', key: await scope.userKeys.authenticate(token) },
       project.id,
     );
-    const robot = await scope.issueActor(human, { name: 'Robot', role: 'operator' });
+    const robot = await scope.credentials.issueActor(human, { name: 'Robot', role: 'operator' });
     const actor: Caller = {
       actorId: robot.actor.id,
       projectId: project.id,
@@ -377,7 +392,10 @@ test(
       return { actorId: direct.actorId, projectId: direct.projectId, conversation };
     };
     // A signed-in person's agent administers, and the event names the conversation.
-    const made = await scope.issueActor(await agent(human), { name: 'Made', role: 'reader' });
+    const made = await scope.credentials.issueActor(await agent(human), {
+      name: 'Made',
+      role: 'reader',
+    });
     const created = (await state.events(project.id)).find(
       (event) => event.type === 'actor.created' && event.subjectId === made.actor.id,
     );
@@ -387,27 +405,36 @@ test(
       commandId: conversation.commandId,
     });
     // A key refuses administration directly, and so does the agent of a key's conversation.
-    await assert.rejects(scope.issueActor(key, { name: 'No', role: 'reader' }), {
+    await assert.rejects(scope.credentials.issueActor(key, { name: 'No', role: 'reader' }), {
       code: 'forbidden',
-    });
-    await assert.rejects(scope.issueActor(await agent(key), { name: 'No', role: 'reader' }), {
-      code: 'forbidden',
-    });
-    await assert.rejects(scope.actorCredentials(await agent(key), made.actor.id), {
-      code: 'forbidden',
-    });
-    assert.equal((await scope.actorCredentials(await agent(human), made.actor.id)).length, 1);
-    // An actor credential's agent cannot revoke or rotate the credential its source rests on.
-    const spare = await scope.issueActorCredential(actor, { actorId: robot.actor.id });
-    await assert.rejects(scope.revokeCredential(await agent(actor), robot.credential.id), {
-      code: 'self_revoke',
     });
     await assert.rejects(
-      scope.rotateCredential(await agent(actor), { credentialId: robot.credential.id }),
+      scope.credentials.issueActor(await agent(key), { name: 'No', role: 'reader' }),
+      {
+        code: 'forbidden',
+      },
+    );
+    await assert.rejects(scope.credentials.actorCredentials(await agent(key), made.actor.id), {
+      code: 'forbidden',
+    });
+    assert.equal(
+      (await scope.credentials.actorCredentials(await agent(human), made.actor.id)).length,
+      1,
+    );
+    // An actor credential's agent cannot revoke or rotate the credential its source rests on.
+    const spare = await scope.credentials.issueActorCredential(actor, { actorId: robot.actor.id });
+    await assert.rejects(
+      scope.credentials.revokeCredential(await agent(actor), robot.credential.id),
+      {
+        code: 'self_revoke',
+      },
+    );
+    await assert.rejects(
+      scope.credentials.rotateCredential(await agent(actor), { credentialId: robot.credential.id }),
       { code: 'self_rotation' },
     );
-    await scope.revokeCredential(await agent(actor), spare.credential.id);
-    await assert.rejects(scope.revokeActor(await agent(actor), robot.actor.id), {
+    await scope.credentials.revokeCredential(await agent(actor), spare.credential.id);
+    await assert.rejects(scope.credentials.revokeActor(await agent(actor), robot.actor.id), {
       code: 'self_revoke',
     });
   },

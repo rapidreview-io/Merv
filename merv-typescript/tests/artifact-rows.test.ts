@@ -59,7 +59,7 @@ async function fixture(t: TestContext) {
   };
   const scope = await createService(new ProjectScope(state));
   const artifacts = await createService(new ArtifactStore(state, scope, counted));
-  const boot = await scope.bootstrap({ projectName: 'Rows', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Rows', actorName: 'Owner' });
   const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const content = async (id: string) =>
     (
@@ -240,7 +240,8 @@ async function sessionStore(f: Awaited<ReturnType<typeof fixture>>) {
 test('execution outputs are what this session created as this actor, oldest first', async (t) => {
   const f = await fixture(t);
   const store = await sessionStore(f);
-  const peer = (await f.scope.issueActor(f.caller, { name: 'Peer', role: 'producer' })).actor.id;
+  const peer = (await f.scope.credentials.issueActor(f.caller, { name: 'Peer', role: 'producer' }))
+    .actor.id;
   // One agent's two sessions, and another actor working under the first session's id.
   const first: Caller = { ...f.caller, session: { id: 'ses_first' } };
   const second: Caller = {
@@ -283,7 +284,8 @@ test('execution outputs are what this session created as this actor, oldest firs
 test('execution outputs page through every output with the caller they started with', async (t) => {
   const f = await fixture(t);
   const store = await sessionStore(f);
-  const peer = (await f.scope.issueActor(f.caller, { name: 'Peer', role: 'producer' })).actor.id;
+  const peer = (await f.scope.credentials.issueActor(f.caller, { name: 'Peer', role: 'producer' }))
+    .actor.id;
   // 1,205 rows of this session, ten to a second so pages cross ties on created_at; every fifth
   // was created by another actor.
   await f.state.transaction((tx) =>

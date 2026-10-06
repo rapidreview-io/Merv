@@ -12,7 +12,7 @@ import { confirmedDelivery, reviewedFindings } from './task-evidence.js';
 export async function currentTaskSuite(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-current-task-git-'));
   const app = await createApp({ directory, port: 0 });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Current Git tasks',
     actorName: 'Owner',
   });
@@ -21,7 +21,7 @@ export async function currentTaskSuite(t: TestContext) {
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const issued = await app.ctx.scope.issueActor(owner, {
+  const issued = await app.ctx.scope.credentials.issueActor(owner, {
     name: 'Independent review runner',
     role: 'operator',
   });

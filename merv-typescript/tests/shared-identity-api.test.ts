@@ -234,7 +234,9 @@ test('HTTP and MCP select membership for both catalogs and calls without rewriti
   const f = await fixture(t);
   const a = await f.create('Catalog A');
   const b = await f.create('Catalog B');
-  const principal = await f.scope.acceptVerifiedIdentity(await f.identity.verify(f.aliceToken));
+  const principal = await f.scope.members.acceptVerifiedIdentity(
+    await f.identity.verify(f.aliceToken),
+  );
   const callerA = await f.scope.caller(principal, a.id);
   f.access.replace([
     { projectId: a.id, actorId: callerA.actorId, mountId: 'nisa', tools: ['search'] },
@@ -349,7 +351,7 @@ test('HTTP and MCP select membership for both catalogs and calls without rewriti
 test('actor credentials keep one project and cannot manage human membership or fall back to JWT verification', async (t) => {
   const f = await fixture(t);
   const humanProject = await f.create('Human project');
-  const machine = await f.scope.bootstrap({
+  const machine = await f.scope.credentials.bootstrap({
     projectName: 'Machine project',
     actorName: 'Operator',
   });
@@ -406,12 +408,14 @@ test('actor credentials keep one project and cannot manage human membership or f
     kind: 'actor',
     actor: await f.scope.authenticate(machine.token),
   });
-  const replacement = await f.scope.issueActorCredential(operator, { actorId: machine.actor.id });
+  const replacement = await f.scope.credentials.issueActorCredential(operator, {
+    actorId: machine.actor.id,
+  });
   const newOperator = await f.scope.caller({
     kind: 'actor',
     actor: await f.scope.authenticate(replacement.token),
   });
-  await f.scope.revokeCredential(newOperator, machine.credential.id);
+  await f.scope.credentials.revokeCredential(newOperator, machine.credential.id);
   const revoked = await fetch(`${actorUrl}/account`, {
     headers: { authorization: `Bearer ${machine.token}` },
   });
@@ -462,7 +466,7 @@ test('membership removal after admission blocks queued dispatch and expires capt
   const f = await fixture(t);
   const project = await f.create('Queued work');
   await f.request(`/projects/${project.id}/members`, { body: { subject: bob, role: 'producer' } });
-  const owner = await f.scope.acceptVerifiedIdentity(await f.identity.verify(f.aliceToken));
+  const owner = await f.scope.members.acceptVerifiedIdentity(await f.identity.verify(f.aliceToken));
   let ran = false;
   f.tools.register({
     name: 'queued',
@@ -471,7 +475,7 @@ test('membership removal after admission blocks queued dispatch and expires capt
       .object({})
       .strict()
       .transform(async (value) => {
-        await f.scope.removeMember(owner, project.id, bob);
+        await f.scope.members.removeMember(owner, project.id, bob);
         return value;
       }),
     handler: () => {

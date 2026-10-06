@@ -17,13 +17,13 @@ type App = Awaited<ReturnType<typeof createApp>>;
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-failure-'));
   const app = await createApp({ directory, api, port: 0 });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Failure tests',
     actorName: 'Operator',
   });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const issued = await app.ctx.scope.issueActor(operator, { role, name: role });
+    const issued = await app.ctx.scope.credentials.issueActor(operator, { role, name: role });
     return {
       caller: {
         actorId: issued.actor.id,
@@ -82,7 +82,7 @@ async function fixture(api = false) {
     }
   };
   const claim = async (task: Task) => {
-    const runner = await app.ctx.scope.issueActor(operator, {
+    const runner = await app.ctx.scope.credentials.issueActor(operator, {
       name: 'Independent review runner',
       role: 'operator',
     });
@@ -185,7 +185,7 @@ test('task withdrawal shares guidance guards, checks identity and reason, and re
         { code: 'invalid_revision' },
       );
     }
-    const other = await f.app.ctx.scope.bootstrap({
+    const other = await f.app.ctx.scope.credentials.bootstrap({
       projectName: 'Other project',
       actorName: 'Other operator',
     });
@@ -194,7 +194,7 @@ test('task withdrawal shares guidance guards, checks identity and reason, and re
       code: 'not_found',
     });
     assert.equal((await f.app.ctx.tasks.get(f.operator, task.id)).workflow.revision, 0);
-    await f.app.ctx.scope.revokeActor(f.operator, f.producer.caller.actorId);
+    await f.app.ctx.scope.credentials.revokeActor(f.operator, f.producer.caller.actorId);
     await assert.rejects(async () => await f.app.ctx.tasks.markFailed(f.producer.caller, input), {
       code: 'forbidden',
     });
@@ -388,7 +388,7 @@ test('producer and operator withdrawal close requested or claimed reviews and fe
             }),
           { code: 'invalid_transition' },
         );
-        await f.app.ctx.scope.revokeActor(f.operator, f.reviewer.caller.actorId);
+        await f.app.ctx.scope.credentials.revokeActor(f.operator, f.reviewer.caller.actorId);
         await f.app.ctx.domainEvents.drain();
         assert.equal((await f.app.ctx.reviews.get(f.operator, review.id)).status, 'superseded');
         // Each iteration uses a fresh active reviewer, after checking recovery cannot reopen the withdrawn review.

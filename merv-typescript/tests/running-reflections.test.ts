@@ -58,7 +58,10 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Running',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -68,7 +71,7 @@ async function fixture(t: TestContext) {
     name: string,
     role: 'producer' | 'reviewer' | 'operator' | 'reader' = 'producer',
   ) => {
-    const issued = await app.ctx.scope.issueActor(owner, { name, role });
+    const issued = await app.ctx.scope.credentials.issueActor(owner, { name, role });
     return {
       projectId: owner.projectId,
       actorId: issued.actor.id,

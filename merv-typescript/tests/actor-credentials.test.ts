@@ -25,7 +25,10 @@ async function fixture(path = ':memory:') {
   const state = await openState(path);
   let time = start;
   const scope = await createService(new ProjectScope(state, () => time));
-  const admin = await scope.bootstrap({ projectName: 'Actor credentials', actorName: 'Operator' });
+  const admin = await scope.credentials.bootstrap({
+    projectName: 'Actor credentials',
+    actorName: 'Operator',
+  });
   return {
     state,
     scope,
@@ -116,7 +119,7 @@ test('v1 migration separates digests without changing actor identities or projec
     });
   const operator = { actorId: old[0].id, projectId: old[0].projectId };
   for (const value of old.filter((value) => value.projectId === operator.projectId)) {
-    const [credential] = await scope.actorCredentials(operator, value.id);
+    const [credential] = await scope.credentials.actorCredentials(operator, value.id);
     assert.equal(credential.actorId, value.id);
     assert.equal(credential.projectId, value.projectId);
     assert.equal(credential.expiresAt, null);
@@ -124,7 +127,10 @@ test('v1 migration separates digests without changing actor identities or projec
   const actors = await scope.actors(operator);
   for (const value of old.filter((value) => value.projectId === operator.projectId))
     assert.equal(actors.find((actor) => actor.id === value.id)?.role, value.role);
-  assert.equal((await scope.actorCredentials(operator, old[1].id))[0].createdAt, event.createdAt);
+  assert.equal(
+    (await scope.credentials.actorCredentials(operator, old[1].id))[0].createdAt,
+    event.createdAt,
+  );
   assert.equal(
     (await scope.actors(operator)).find((value) => value.id === old[2].id)?.active,
     false,
@@ -155,10 +161,10 @@ test('v1 migration separates digests without changing actor identities or projec
     new Set(migrated.map((row) => row.token_hash)),
     new Set(old.map((value) => hash(value.token))),
   );
-  const ids = await scope.actorCredentials(operator, old[1].id);
+  const ids = await scope.credentials.actorCredentials(operator, old[1].id);
   await createService(new ProjectScope(state));
   assert.deepEqual(
-    await scope.actorCredentials(operator, old[1].id),
+    await scope.credentials.actorCredentials(operator, old[1].id),
     ids,
     'Reload does not reissue migrated credentials',
   );
@@ -172,7 +178,10 @@ test('issuance returns secret once while storage, metadata and events retain onl
     await f.state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const issued = await f.scope.issueActor(f.operator, { name: 'Researcher', role: 'producer' });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Researcher',
+    role: 'producer',
+  });
   assert.equal(issued.token.length, 43);
   assert.equal(issued.credential.kind, 'actor');
   assert.equal(issued.credential.createdAt, new Date(start).toISOString());
@@ -190,7 +199,7 @@ test('issuance returns secret once while storage, metadata and events retain onl
       ),
   );
   assert.equal(stored?.token_hash, hash(issued.token));
-  const metadata = await f.scope.actorCredentials(asCaller(issued));
+  const metadata = await f.scope.credentials.actorCredentials(asCaller(issued));
   assert.equal(JSON.stringify(metadata).includes('token_hash'), false);
   assert.equal(JSON.stringify(metadata).includes(issued.token), false);
   const events = JSON.stringify(await f.state.events(f.operator.projectId));
@@ -209,7 +218,10 @@ test('issuance returns secret once while storage, metadata and events retain onl
   assert.equal(everything.includes(issued.token), false);
   metadata[0].actorId = 'changed';
   issued.credential.expiresAt = 'changed';
-  assert.notEqual((await f.scope.actorCredentials(asCaller(issued)))[0].actorId, 'changed');
+  assert.notEqual(
+    (await f.scope.credentials.actorCredentials(asCaller(issued)))[0].actorId,
+    'changed',
+  );
   assert.equal((await f.scope.authenticate(issued.token)).credential.expiresAt, null);
 });
 
@@ -217,7 +229,7 @@ test('expiry is canonical, rejects invalid issuance atomically and fences previo
   const f = await fixture();
   t.after(async () => await f.state.close());
   const deadline = new Date(start + 1000).toISOString();
-  const issued = await f.scope.issueActor(f.operator, {
+  const issued = await f.scope.credentials.issueActor(f.operator, {
     name: 'Expiring',
     role: 'reviewer',
     expiresAt: deadline,
@@ -238,7 +250,7 @@ test('expiry is canonical, rejects invalid issuance atomically and fences previo
   ])
     await assert.rejects(
       async () =>
-        await f.scope.issueActor(f.operator, {
+        await f.scope.credentials.issueActor(f.operator, {
           name: 'Invalid deadline',
           role: 'producer',
           expiresAt: expiresAt as string,
@@ -277,22 +289,28 @@ test('credential identity cannot be paired with another actor/project and metada
   const f = await fixture();
   t.after(async () => await f.state.close());
   const actorInput = { name: 'Reader', role: 'reader' as 'reader' | 'operator' };
-  const issuing = f.scope.issueActor(f.operator, actorInput);
+  const issuing = f.scope.credentials.issueActor(f.operator, actorInput);
   actorInput.role = 'operator';
   const reader = await issuing;
   assert.equal(reader.actor.role, 'reader');
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const readerCaller = asCaller(reader);
-  assert.deepEqual(await f.scope.actorCredentials(readerCaller), [reader.credential]);
+  assert.deepEqual(await f.scope.credentials.actorCredentials(readerCaller), [reader.credential]);
   await assert.rejects(
-    async () => await f.scope.actorCredentials(readerCaller, f.operator.actorId),
+    async () => await f.scope.credentials.actorCredentials(readerCaller, f.operator.actorId),
     {
       code: 'forbidden',
     },
   );
-  await assert.rejects(async () => await f.scope.actorCredentials(f.operator, other.actor.id), {
-    code: 'not_found',
-  });
+  await assert.rejects(
+    async () => await f.scope.credentials.actorCredentials(f.operator, other.actor.id),
+    {
+      code: 'not_found',
+    },
+  );
   for (const caller of [
     { ...f.operator, credentialId: reader.credential.id },
     { ...readerCaller, credentialId: f.admin.credential.id },
@@ -333,8 +351,10 @@ test('credential identity cannot be paired with another actor/project and metada
   assert.equal((await authorized).id, f.operator.actorId);
   for (const action of [
     async () =>
-      await f.scope.rotateCredential(readerCaller, { credentialId: reader.credential.id }),
-    async () => await f.scope.revokeCredential(readerCaller, f.admin.credential.id),
+      await f.scope.credentials.rotateCredential(readerCaller, {
+        credentialId: reader.credential.id,
+      }),
+    async () => await f.scope.credentials.revokeCredential(readerCaller, f.admin.credential.id),
   ])
     await assert.rejects(action, { code: 'forbidden' });
   const changingCaller = { ...f.operator };
@@ -350,11 +370,12 @@ test('credential identity cannot be paired with another actor/project and metada
   );
   try {
     for (const action of [
-      () => f.scope.issueActorCredential(changingCaller, { actorId: other.actor.id }),
-      () => f.scope.actorCredentials(changingCaller, other.actor.id),
-      () => f.scope.rotateCredential(changingCaller, { credentialId: other.credential.id }),
-      () => f.scope.revokeCredential(changingCaller, other.credential.id),
-      () => f.scope.revokeActor(changingCaller, other.actor.id),
+      () => f.scope.credentials.issueActorCredential(changingCaller, { actorId: other.actor.id }),
+      () => f.scope.credentials.actorCredentials(changingCaller, other.actor.id),
+      () =>
+        f.scope.credentials.rotateCredential(changingCaller, { credentialId: other.credential.id }),
+      () => f.scope.credentials.revokeCredential(changingCaller, other.credential.id),
+      () => f.scope.credentials.revokeActor(changingCaller, other.actor.id),
     ]) {
       changingCaller.projectId = f.operator.projectId;
       await assert.rejects(action, { code: 'not_found' });
@@ -375,9 +396,15 @@ test('credential identity cannot be paired with another actor/project and metada
 test('session actor creation and role updates retain the authorized delegation and role', async (t) => {
   const f = await fixture();
   t.after(() => f.state.close());
-  const reader = await f.scope.issueActor(f.operator, { name: 'Reader', role: 'reader' });
+  const reader = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Reader',
+    role: 'reader',
+  });
   const readerSource = await f.scope.delegationSource(asCaller(reader));
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other owner',
+  });
   await assert.rejects(() => f.scope.requireDelegation(readerSource, 'write'), {
     code: 'forbidden',
   });
@@ -542,14 +569,16 @@ test('rotation preserves identity and expiry, retains history and immediately fe
   const f = await fixture();
   t.after(async () => await f.state.close());
   const deadline = new Date(start + 2000).toISOString();
-  const first = await f.scope.issueActor(f.operator, {
+  const first = await f.scope.credentials.issueActor(f.operator, {
     name: 'Producer',
     role: 'producer',
     expiresAt: deadline,
   });
   const before = await f.state.eventHead();
   f.advance(100);
-  const next = await f.scope.rotateCredential(f.operator, { credentialId: first.credential.id });
+  const next = await f.scope.credentials.rotateCredential(f.operator, {
+    credentialId: first.credential.id,
+  });
   assert.deepEqual(next.actor, first.actor);
   assert.equal(next.credential.expiresAt, deadline);
   assert.equal(next.credential.previousId, first.credential.id);
@@ -562,13 +591,14 @@ test('rotation preserves identity and expiry, retains history and immediately fe
   });
   assert.deepEqual((await f.scope.authenticate(next.token)).credential, next.credential);
   await assert.rejects(
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: first.credential.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(f.operator, { credentialId: first.credential.id }),
     {
       code: 'credential_revoked',
       status: 409,
     },
   );
-  const history = await f.scope.actorCredentials(f.operator, first.actor.id);
+  const history = await f.scope.credentials.actorCredentials(f.operator, first.actor.id);
   assert.equal(history.length, 2);
   assert.equal(
     history.find((value) => value.id === first.credential.id)?.revokedAt,
@@ -584,19 +614,23 @@ test('rotation preserves identity and expiry, retains history and immediately fe
   );
   f.advance(1900);
   await assert.rejects(
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: next.credential.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(f.operator, { credentialId: next.credential.id }),
     {
       code: 'invalid_expiry',
     },
   );
-  const renewed = await f.scope.rotateCredential(f.operator, {
+  const renewed = await f.scope.credentials.rotateCredential(f.operator, {
     credentialId: next.credential.id,
     expiresAt: null,
   });
   assert.equal(renewed.credential.expiresAt, null);
   assert.equal((await f.scope.authenticate(renewed.token)).id, first.actor.id);
   await assert.rejects(
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: f.admin.credential.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(f.operator, {
+        credentialId: f.admin.credential.id,
+      }),
     { code: 'self_rotation', status: 409 },
   );
   assert.equal((await f.scope.require(f.operator, 'admin')).id, f.admin.actor.id);
@@ -606,15 +640,18 @@ test('credential revocation preserves actor authority and provenance; actor revo
   const f = await fixture();
   t.after(async () => await f.state.close());
   await assert.rejects(
-    async () => await f.scope.revokeCredential(f.operator, f.admin.credential.id),
+    async () => await f.scope.credentials.revokeCredential(f.operator, f.admin.credential.id),
     {
       code: 'self_revoke',
     },
   );
-  const issued = await f.scope.issueActor(f.operator, { name: 'Reviewer', role: 'reviewer' });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Reviewer',
+    role: 'reviewer',
+  });
   const head = await f.state.eventHead();
-  await f.scope.revokeCredential(f.operator, issued.credential.id);
-  await f.scope.revokeCredential(f.operator, issued.credential.id);
+  await f.scope.credentials.revokeCredential(f.operator, issued.credential.id);
+  await f.scope.credentials.revokeCredential(f.operator, issued.credential.id);
   await assert.rejects(async () => await f.scope.authenticate(issued.token), {
     code: 'unauthorized',
   });
@@ -630,25 +667,29 @@ test('credential revocation preserves actor authority and provenance; actor revo
     (await f.scope.actors(f.operator)).find((value) => value.id === issued.actor.id)?.active,
     true,
   );
-  const active = await f.scope.issueActor(f.operator, {
+  const active = await f.scope.credentials.issueActor(f.operator, {
     name: 'Another reviewer',
     role: 'reviewer',
   });
-  const extraToken = (await f.scope.issueActorCredential(f.operator, { actorId: active.actor.id }))
-    .token;
+  const extraToken = (
+    await f.scope.credentials.issueActorCredential(f.operator, { actorId: active.actor.id })
+  ).token;
   assert.equal((await f.scope.authenticate(extraToken)).id, active.actor.id);
-  await f.scope.revokeActor(f.operator, active.actor.id);
+  await f.scope.credentials.revokeActor(f.operator, active.actor.id);
   for (const token of [active.token, extraToken])
     await assert.rejects(async () => await f.scope.authenticate(token), { code: 'unauthorized' });
   assert.equal(await f.scope.eligible(active.actor.projectId, active.actor.id, 'review'), false);
-  const history = await f.scope.actorCredentials(f.operator, active.actor.id);
+  const history = await f.scope.credentials.actorCredentials(f.operator, active.actor.id);
   assert.equal(history.length, 2);
   assert.ok(
     history.every((value) => value.revokedAt === null),
     'Identity revocation is separate from credential revocation',
   );
   await assert.rejects(
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: active.credential.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(f.operator, {
+        credentialId: active.credential.id,
+      }),
     { code: 'actor_revoked' },
   );
   await assert.rejects(
@@ -695,7 +736,10 @@ test('credential revocation preserves actor authority and provenance; actor revo
 test('failed credential event writes roll back issuance, replacement and revocation with their metadata', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const issued = await f.scope.issueActor(f.operator, { name: 'Producer', role: 'producer' });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const head = await f.state.eventHead();
   const identities = await f.scope.actors(f.operator);
   const original = f.state.appendEvent.bind(f.state);
@@ -704,22 +748,28 @@ test('failed credential event writes roll back issuance, replacement and revocat
     throw new Error('Injected event failure');
   };
   for (const action of [
-    async () => await f.scope.issueActor(f.operator, { name: 'Rolled back', role: 'reader' }),
-    async () => await f.scope.issueActorCredential(f.operator, { actorId: issued.actor.id }),
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: issued.credential.id }),
-    async () => await f.scope.revokeCredential(f.operator, issued.credential.id),
+    async () =>
+      await f.scope.credentials.issueActor(f.operator, { name: 'Rolled back', role: 'reader' }),
+    async () =>
+      await f.scope.credentials.issueActorCredential(f.operator, { actorId: issued.actor.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(f.operator, {
+        credentialId: issued.credential.id,
+      }),
+    async () => await f.scope.credentials.revokeCredential(f.operator, issued.credential.id),
   ]) {
     await assert.rejects(action, /Injected event failure/);
     assert.equal(await f.state.eventHead(), head);
     assert.deepEqual(await f.scope.actors(f.operator), identities);
-    assert.deepEqual(await f.scope.actorCredentials(f.operator, issued.actor.id), [
+    assert.deepEqual(await f.scope.credentials.actorCredentials(f.operator, issued.actor.id), [
       issued.credential,
     ]);
     assert.equal((await f.scope.authenticate(issued.token)).id, issued.actor.id);
   }
   f.state.appendEvent = original;
   assert.equal(
-    (await f.scope.rotateCredential(f.operator, { credentialId: issued.credential.id })).actor.id,
+    (await f.scope.credentials.rotateCredential(f.operator, { credentialId: issued.credential.id }))
+      .actor.id,
     issued.actor.id,
   );
 });
@@ -727,22 +777,28 @@ test('failed credential event writes roll back issuance, replacement and revocat
 test('recognition retains local credential provenance after rotation, expiry, revocation and actor deactivation', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const expired = await f.scope.issueActor(f.operator, {
+  const expired = await f.scope.credentials.issueActor(f.operator, {
     name: 'Expiring',
     role: 'producer',
     expiresAt: new Date(start + 1).toISOString(),
   });
-  const revoked = await f.scope.issueActor(f.operator, { name: 'Revoked', role: 'producer' });
-  const deactivated = await f.scope.issueActor(f.operator, {
+  const revoked = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Revoked',
+    role: 'producer',
+  });
+  const deactivated = await f.scope.credentials.issueActor(f.operator, {
     name: 'Deactivated',
     role: 'reviewer',
   });
-  const initial = await f.scope.issueActor(f.operator, { name: 'Rotated', role: 'producer' });
-  const rotated = await f.scope.rotateCredential(f.operator, {
+  const initial = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Rotated',
+    role: 'producer',
+  });
+  const rotated = await f.scope.credentials.rotateCredential(f.operator, {
     credentialId: initial.credential.id,
   });
-  await f.scope.revokeCredential(f.operator, revoked.credential.id);
-  await f.scope.revokeActor(f.operator, deactivated.actor.id);
+  await f.scope.credentials.revokeCredential(f.operator, revoked.credential.id);
+  await f.scope.credentials.revokeActor(f.operator, deactivated.actor.id);
   f.advance(1);
   const head = await f.state.eventHead();
   for (const token of [expired.token, revoked.token, deactivated.token, initial.token]) {
@@ -763,33 +819,41 @@ test('staged self-rotation tolerates a lost issue response, verifies replacement
   t.after(async () => await f.state.close());
   const head = await f.state.eventHead();
   await assert.rejects(
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: f.admin.credential.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(f.operator, {
+        credentialId: f.admin.credential.id,
+      }),
     { code: 'self_rotation', status: 409 },
   );
   assert.equal(await f.state.eventHead(), head);
   // The first issue response can be lost; the old authentication credential stays usable.
-  await f.scope.issueActorCredential(f.operator, { actorId: f.operator.actorId });
+  await f.scope.credentials.issueActorCredential(f.operator, { actorId: f.operator.actorId });
   assert.equal((await f.scope.authenticate(f.admin.token)).id, f.operator.actorId);
-  const lost = (await f.scope.actorCredentials(f.operator)).find(
+  const lost = (await f.scope.credentials.actorCredentials(f.operator)).find(
     (value) => value.id !== f.admin.credential.id,
   )!;
   assert.equal(lost.previousId, null);
-  const fresh = await f.scope.issueActorCredential(f.operator, { actorId: f.operator.actorId });
+  const fresh = await f.scope.credentials.issueActorCredential(f.operator, {
+    actorId: f.operator.actorId,
+  });
   assert.equal((await f.scope.authenticate(fresh.token)).id, f.operator.actorId);
   const next = asCaller(fresh);
   assert.equal((await f.scope.require(next, 'admin')).id, f.operator.actorId);
-  await f.scope.revokeCredential(next, f.admin.credential.id);
-  await f.scope.revokeCredential(next, lost.id);
+  await f.scope.credentials.revokeCredential(next, f.admin.credential.id);
+  await f.scope.credentials.revokeCredential(next, lost.id);
   await assert.rejects(async () => await f.scope.authenticate(f.admin.token), {
     code: 'unauthorized',
   });
   assert.equal((await f.scope.authenticate(fresh.token)).id, f.operator.actorId);
-  await assert.rejects(async () => await f.scope.revokeCredential(next, fresh.credential.id), {
-    code: 'self_revoke',
-  });
+  await assert.rejects(
+    async () => await f.scope.credentials.revokeCredential(next, fresh.credential.id),
+    {
+      code: 'self_revoke',
+    },
+  );
   await assert.rejects(
     async () =>
-      await f.scope.revokeCredential(
+      await f.scope.credentials.revokeCredential(
         { actorId: next.actorId, projectId: next.projectId },
         fresh.credential.id,
       ),
@@ -797,7 +861,8 @@ test('staged self-rotation tolerates a lost issue response, verifies replacement
   );
   assert.equal((await f.scope.actors(next)).length, 1);
   assert.equal(
-    (await f.scope.actorCredentials(next)).filter((value) => value.revokedAt === null).length,
+    (await f.scope.credentials.actorCredentials(next)).filter((value) => value.revokedAt === null)
+      .length,
     1,
   );
   assert.deepEqual(
@@ -815,18 +880,18 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
   const f = await fixture();
   t.after(async () => await f.state.close());
   const deadline = new Date(start + 2000).toISOString();
-  const limited = await f.scope.issueActor(f.operator, {
+  const limited = await f.scope.credentials.issueActor(f.operator, {
     name: 'Limited operator',
     role: 'operator',
     expiresAt: deadline,
   });
   const caller = asCaller(limited);
   const issueInput = { actorId: caller.actorId };
-  const pendingIssue = f.scope.issueActorCredential(caller, issueInput);
+  const pendingIssue = f.scope.credentials.issueActorCredential(caller, issueInput);
   issueInput.actorId = f.operator.actorId;
   const inherited = await pendingIssue;
   assert.equal(inherited.credential.expiresAt, deadline);
-  const before = await f.scope.actorCredentials(caller);
+  const before = await f.scope.credentials.actorCredentials(caller);
   const head = await f.state.eventHead();
   for (const operation of ['issue', 'rotate']) {
     const pendingCaller = { ...caller };
@@ -845,11 +910,11 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
       await assert.rejects(
         () =>
           operation === 'issue'
-            ? f.scope.issueActorCredential(pendingCaller, {
+            ? f.scope.credentials.issueActorCredential(pendingCaller, {
                 actorId: caller.actorId,
                 expiresAt: null,
               })
-            : f.scope.rotateCredential(pendingCaller, {
+            : f.scope.credentials.rotateCredential(pendingCaller, {
                 credentialId: inherited.credential.id,
                 expiresAt: null,
               }),
@@ -863,34 +928,41 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
   for (const expiresAt of [null, new Date(start + 2001).toISOString()])
     await assert.rejects(
       async () =>
-        await f.scope.issueActorCredential(caller, { actorId: caller.actorId, expiresAt }),
+        await f.scope.credentials.issueActorCredential(caller, {
+          actorId: caller.actorId,
+          expiresAt,
+        }),
       { code: 'self_expiry_extension', status: 403 },
     );
-  assert.deepEqual(await f.scope.actorCredentials(caller), before);
+  assert.deepEqual(await f.scope.credentials.actorCredentials(caller), before);
   assert.equal(await f.state.eventHead(), head);
   const shortDeadline = new Date(start + 1000).toISOString();
-  const short = await f.scope.issueActorCredential(caller, {
+  const short = await f.scope.credentials.issueActorCredential(caller, {
     actorId: caller.actorId,
     expiresAt: shortDeadline,
   });
   for (const expiresAt of [null, new Date(start + 1500).toISOString()])
     await assert.rejects(
       async () =>
-        await f.scope.rotateCredential(caller, { credentialId: short.credential.id, expiresAt }),
+        await f.scope.credentials.rotateCredential(caller, {
+          credentialId: short.credential.id,
+          expiresAt,
+        }),
       { code: 'self_expiry_extension', status: 403 },
     );
   const rotationInput = { credentialId: short.credential.id };
-  const pendingRotation = f.scope.rotateCredential(caller, rotationInput);
+  const pendingRotation = f.scope.credentials.rotateCredential(caller, rotationInput);
   rotationInput.credentialId = caller.credentialId!;
   const rotated = await pendingRotation;
   assert.equal(rotated.credential.expiresAt, shortDeadline);
   // Nor can a short-lived caller rotate a longer credential of its own into a permanent one.
-  const lasting = await f.scope.issueActorCredential(f.operator, {
+  const lasting = await f.scope.credentials.issueActorCredential(f.operator, {
     actorId: caller.actorId,
     expiresAt: null,
   });
   await assert.rejects(
-    async () => await f.scope.rotateCredential(caller, { credentialId: lasting.credential.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(caller, { credentialId: lasting.credential.id }),
     { code: 'self_expiry_extension', status: 403 },
   );
   assert.equal(
@@ -898,12 +970,12 @@ test('self issuance inherits the authenticating expiry and self rotation cannot 
     limited.actor.id,
     'Rotating another own credential does not revoke the caller',
   );
-  const earlier = await f.scope.rotateCredential(caller, {
+  const earlier = await f.scope.credentials.rotateCredential(caller, {
     credentialId: inherited.credential.id,
     expiresAt: new Date(start + 500).toISOString(),
   });
   assert.equal(earlier.credential.expiresAt, new Date(start + 500).toISOString());
-  const authorized = await f.scope.rotateCredential(f.operator, {
+  const authorized = await f.scope.credentials.rotateCredential(f.operator, {
     credentialId: limited.credential.id,
     expiresAt: null,
   });
@@ -918,12 +990,15 @@ test('nothing minted through an expiring operator credential outlives it, direct
   const f = await fixture();
   t.after(async () => await f.state.close());
   const deadline = new Date(start + 2000).toISOString();
-  const limited = await f.scope.issueActor(f.operator, {
+  const limited = await f.scope.credentials.issueActor(f.operator, {
     name: 'Limited operator',
     role: 'operator',
     expiresAt: deadline,
   });
-  const lasting = await f.scope.issueActor(f.operator, { name: 'Lasting', role: 'producer' });
+  const lasting = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Lasting',
+    role: 'producer',
+  });
   const conversation: Caller = {
     actorId: limited.actor.id,
     projectId: limited.actor.projectId,
@@ -942,43 +1017,48 @@ test('nothing minted through an expiring operator credential outlives it, direct
     ['conversation', conversation],
   ] as const) {
     const actors = await f.scope.actors(f.operator);
-    const credentials = await f.scope.actorCredentials(f.operator, lasting.actor.id);
+    const credentials = await f.scope.credentials.actorCredentials(f.operator, lasting.actor.id);
     const head = await f.state.eventHead();
     for (const expiresAt of [null, new Date(start + 2001).toISOString()]) {
       await assert.rejects(
-        f.scope.issueActor(caller, { name: 'Unbounded', role: 'producer', expiresAt }),
+        f.scope.credentials.issueActor(caller, { name: 'Unbounded', role: 'producer', expiresAt }),
         { code: 'self_expiry_extension', status: 403 },
         name,
       );
       await assert.rejects(
-        f.scope.issueActorCredential(caller, { actorId: lasting.actor.id, expiresAt }),
+        f.scope.credentials.issueActorCredential(caller, { actorId: lasting.actor.id, expiresAt }),
         { code: 'self_expiry_extension', status: 403 },
         name,
       );
     }
     // The default keeps the old credential's null deadline, which the caller cannot grant.
     await assert.rejects(
-      f.scope.rotateCredential(caller, { credentialId: lasting.credential.id }),
+      f.scope.credentials.rotateCredential(caller, { credentialId: lasting.credential.id }),
       { code: 'self_expiry_extension', status: 403 },
       name,
     );
     assert.deepEqual(await f.scope.actors(f.operator), actors, name);
     assert.deepEqual(
-      await f.scope.actorCredentials(f.operator, lasting.actor.id),
+      await f.scope.credentials.actorCredentials(f.operator, lasting.actor.id),
       credentials,
       name,
     );
     assert.equal(await f.state.eventHead(), head, name);
     assert.equal((await f.scope.authenticate(lasting.token)).id, lasting.actor.id, name);
     // An omitted expiry inherits the caller's deadline; an explicit one may reach it.
-    const created = await f.scope.issueActor(caller, { name: `${name} actor`, role: 'reader' });
+    const created = await f.scope.credentials.issueActor(caller, {
+      name: `${name} actor`,
+      role: 'reader',
+    });
     assert.equal(created.credential.expiresAt, deadline, name);
-    const issued = await f.scope.issueActorCredential(caller, { actorId: lasting.actor.id });
+    const issued = await f.scope.credentials.issueActorCredential(caller, {
+      actorId: lasting.actor.id,
+    });
     assert.equal(issued.credential.expiresAt, deadline, name);
     const earlier = new Date(start + 1000).toISOString();
     assert.equal(
       (
-        await f.scope.issueActor(caller, {
+        await f.scope.credentials.issueActor(caller, {
           name: `${name} earlier`,
           role: 'reader',
           expiresAt: earlier,
@@ -987,15 +1067,17 @@ test('nothing minted through an expiring operator credential outlives it, direct
       earlier,
       name,
     );
-    const rotated = await f.scope.rotateCredential(caller, {
+    const rotated = await f.scope.credentials.rotateCredential(caller, {
       credentialId: issued.credential.id,
       expiresAt: deadline,
     });
     assert.equal(rotated.credential.expiresAt, deadline, name);
     // A lasting credential of another actor may be tightened to the caller's deadline.
-    const unbounded = await f.scope.issueActorCredential(f.operator, { actorId: lasting.actor.id });
+    const unbounded = await f.scope.credentials.issueActorCredential(f.operator, {
+      actorId: lasting.actor.id,
+    });
     assert.equal(unbounded.credential.expiresAt, null, name);
-    const tightened = await f.scope.rotateCredential(caller, {
+    const tightened = await f.scope.credentials.rotateCredential(caller, {
       credentialId: unbounded.credential.id,
       expiresAt: deadline,
     });
@@ -1008,13 +1090,13 @@ test('nothing minted through an expiring operator credential outlives it, direct
     { actorId: f.operator.actorId, projectId: f.operator.projectId },
   ])
     assert.equal(
-      (await f.scope.issueActor(caller, { name: 'Unbounded', role: 'reader' })).credential
-        .expiresAt,
+      (await f.scope.credentials.issueActor(caller, { name: 'Unbounded', role: 'reader' }))
+        .credential.expiresAt,
       null,
     );
   assert.equal(
     (
-      await f.scope.rotateCredential(f.operator, {
+      await f.scope.credentials.rotateCredential(f.operator, {
         credentialId: lasting.credential.id,
         expiresAt: null,
       })
@@ -1026,24 +1108,31 @@ test('nothing minted through an expiring operator credential outlives it, direct
 test('a human operator mints unbounded credentials: a login lifetime is not a credential lifetime', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const alice = await f.scope.acceptVerifiedIdentity({
+  const alice = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'alice',
     expiresAt: new Date(start + 60_000).toISOString(),
   });
-  const project = await f.scope.createProject(alice, { name: 'Human', requestId: 'human' });
+  const project = await f.scope.members.createProject(alice, { name: 'Human', requestId: 'human' });
   const caller = await f.scope.caller(alice, project.id);
-  const created = await f.scope.issueActor(caller, { name: 'Machine', role: 'producer' });
+  const created = await f.scope.credentials.issueActor(caller, {
+    name: 'Machine',
+    role: 'producer',
+  });
   assert.equal(created.credential.expiresAt, null);
   const later = new Date(start + 3_600_000).toISOString();
   assert.equal(
-    (await f.scope.issueActorCredential(caller, { actorId: created.actor.id, expiresAt: later }))
-      .credential.expiresAt,
+    (
+      await f.scope.credentials.issueActorCredential(caller, {
+        actorId: created.actor.id,
+        expiresAt: later,
+      })
+    ).credential.expiresAt,
     later,
   );
   assert.equal(
-    (await f.scope.rotateCredential(caller, { credentialId: created.credential.id })).credential
-      .expiresAt,
+    (await f.scope.credentials.rotateCredential(caller, { credentialId: created.credential.id }))
+      .credential.expiresAt,
     null,
   );
 });
@@ -1051,14 +1140,17 @@ test('a human operator mints unbounded credentials: a login lifetime is not a cr
 test('the expiry rule reads no more rows: revocation costs the same and self issuance one read less', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const limited = await f.scope.issueActor(f.operator, {
+  const limited = await f.scope.credentials.issueActor(f.operator, {
     name: 'Limited operator',
     role: 'operator',
     expiresAt: new Date(start + 2000).toISOString(),
   });
   const caller = asCaller(limited);
-  const own = await f.scope.issueActorCredential(caller, { actorId: caller.actorId });
-  const other = await f.scope.issueActor(f.operator, { name: 'Other', role: 'producer' });
+  const own = await f.scope.credentials.issueActorCredential(caller, { actorId: caller.actorId });
+  const other = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Other',
+    role: 'producer',
+  });
   const query = pg.Client.prototype.query;
   let statements = 0;
   t.mock.method(pg.Client.prototype, 'query', function (this: pg.Client, ...args: unknown[]) {
@@ -1071,23 +1163,27 @@ test('the expiry rule reads no more rows: revocation costs the same and self iss
     return [statements, value] as const;
   };
   const [issueSelf, fresh] = await count(() =>
-    f.scope.issueActorCredential(caller, { actorId: caller.actorId }),
+    f.scope.credentials.issueActorCredential(caller, { actorId: caller.actorId }),
   );
   const [rotateSelf] = await count(() =>
-    f.scope.rotateCredential(caller, { credentialId: own.credential.id }),
+    f.scope.credentials.rotateCredential(caller, { credentialId: own.credential.id }),
   );
   const [issueOther] = await count(() =>
-    f.scope.issueActorCredential(caller, { actorId: other.actor.id }),
+    f.scope.credentials.issueActorCredential(caller, { actorId: other.actor.id }),
   );
   const [rotateOther] = await count(() =>
-    f.scope.rotateCredential(caller, {
+    f.scope.credentials.rotateCredential(caller, {
       credentialId: other.credential.id,
       expiresAt: new Date(start + 1000).toISOString(),
     }),
   );
-  const [create] = await count(() => f.scope.issueActor(caller, { name: 'New', role: 'reader' }));
-  const [revoke] = await count(() => f.scope.revokeCredential(caller, fresh.credential.id));
-  const [revokeActor] = await count(() => f.scope.revokeActor(caller, other.actor.id));
+  const [create] = await count(() =>
+    f.scope.credentials.issueActor(caller, { name: 'New', role: 'reader' }),
+  );
+  const [revoke] = await count(() =>
+    f.scope.credentials.revokeCredential(caller, fresh.credential.id),
+  );
+  const [revokeActor] = await count(() => f.scope.credentials.revokeActor(caller, other.actor.id));
   // The bound row authorize already read gives the limit. Before this rule the same calls made
   // 10 and 15 statements for self issuance and self rotation, and as many as now for the rest.
   // The totals count every statement, BEGIN and COMMIT included, so a change to how State runs a
@@ -1110,11 +1206,16 @@ test('the expiry rule reads no more rows: revocation costs the same and self iss
 test('additional credential issuance restores access to an active identity without creating or reviving an actor', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const issued = await f.scope.issueActor(f.operator, { name: 'Reviewer', role: 'reviewer' });
-  await f.scope.revokeCredential(f.operator, issued.credential.id);
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Reviewer',
+    role: 'reviewer',
+  });
+  await f.scope.credentials.revokeCredential(f.operator, issued.credential.id);
   const actors = await f.scope.actors(f.operator);
   const head = await f.state.eventHead();
-  const replacement = await f.scope.issueActorCredential(f.operator, { actorId: issued.actor.id });
+  const replacement = await f.scope.credentials.issueActorCredential(f.operator, {
+    actorId: issued.actor.id,
+  });
   assert.deepEqual(replacement.actor, issued.actor);
   assert.equal(replacement.credential.previousId, null);
   assert.equal((await f.scope.authenticate(replacement.token)).id, issued.actor.id);
@@ -1127,57 +1228,76 @@ test('additional credential issuance restores access to an active identity witho
   assert.equal(JSON.stringify(event).includes(hash(replacement.token)), false);
   await assert.rejects(
     async () =>
-      await f.scope.issueActorCredential(asCaller(replacement), { actorId: issued.actor.id }),
+      await f.scope.credentials.issueActorCredential(asCaller(replacement), {
+        actorId: issued.actor.id,
+      }),
     { code: 'forbidden' },
   );
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   await assert.rejects(
-    async () => await f.scope.issueActorCredential(f.operator, { actorId: other.actor.id }),
+    async () =>
+      await f.scope.credentials.issueActorCredential(f.operator, { actorId: other.actor.id }),
     {
       code: 'not_found',
     },
   );
-  await f.scope.revokeActor(f.operator, issued.actor.id);
+  await f.scope.credentials.revokeActor(f.operator, issued.actor.id);
   await assert.rejects(
-    async () => await f.scope.issueActorCredential(f.operator, { actorId: issued.actor.id }),
+    async () =>
+      await f.scope.credentials.issueActorCredential(f.operator, { actorId: issued.actor.id }),
     {
       code: 'actor_revoked',
     },
   );
-  assert.equal((await f.scope.actorCredentials(f.operator, issued.actor.id)).length, 2);
+  assert.equal((await f.scope.credentials.actorCredentials(f.operator, issued.actor.id)).length, 2);
 });
 
 test('a lost other-actor rotation response is discoverable through predecessor metadata and recoverable', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const issued = await f.scope.issueActor(f.operator, { name: 'Researcher', role: 'producer' });
-  await f.scope.rotateCredential(f.operator, { credentialId: issued.credential.id });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Researcher',
+    role: 'producer',
+  });
+  await f.scope.credentials.rotateCredential(f.operator, { credentialId: issued.credential.id });
   await assert.rejects(
-    async () => await f.scope.rotateCredential(f.operator, { credentialId: issued.credential.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(f.operator, {
+        credentialId: issued.credential.id,
+      }),
     { code: 'credential_revoked', status: 409 },
   );
-  const successor = (await f.scope.actorCredentials(f.operator, issued.actor.id)).find(
+  const successor = (await f.scope.credentials.actorCredentials(f.operator, issued.actor.id)).find(
     (value) => value.previousId === issued.credential.id,
   )!;
   assert.ok(successor);
   assert.equal(successor.revokedAt, null);
-  const recovered = await f.scope.rotateCredential(f.operator, { credentialId: successor.id });
+  const recovered = await f.scope.credentials.rotateCredential(f.operator, {
+    credentialId: successor.id,
+  });
   assert.equal((await f.scope.authenticate(recovered.token)).id, issued.actor.id);
   assert.equal(recovered.credential.previousId, successor.id);
-  assert.equal((await f.scope.actorCredentials(f.operator, issued.actor.id)).length, 3);
+  assert.equal((await f.scope.credentials.actorCredentials(f.operator, issued.actor.id)).length, 3);
   assert.deepEqual(recovered.actor, issued.actor);
 });
 
 test('concurrent credential rotations serialize and issue exactly one successor', async (t) => {
   const f = await fixture('actor-credential-race');
   t.after(async () => await f.state.close());
-  const operator2 = await f.scope.issueActor(f.operator, {
+  const operator2 = await f.scope.credentials.issueActor(f.operator, {
     name: 'Other operator',
     role: 'operator',
   });
-  const target = await f.scope.issueActor(f.operator, { name: 'Worker', role: 'producer' });
+  const target = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Worker',
+    role: 'producer',
+  });
   const rotate = (caller: Caller) => async (scope: ProjectScope) =>
-    (await scope.rotateCredential(caller, { credentialId: target.credential.id })).credential;
+    (await scope.credentials.rotateCredential(caller, { credentialId: target.credential.id }))
+      .credential;
   const race = await raceWriters({
     schema: schemaFor('actor-credential-race'),
     service: scopeWriter(() => start, 'actor.credential_rotated'),
@@ -1188,7 +1308,7 @@ test('concurrent credential rotations serialize and issue exactly one successor'
   assert.ok(race.first.ok);
   assert.equal(race.first.value.previousId, target.credential.id);
   assert.deepEqual(race.second, { ok: false, code: 'credential_revoked', status: 409 });
-  const history = await f.scope.actorCredentials(f.operator, target.actor.id);
+  const history = await f.scope.credentials.actorCredentials(f.operator, target.actor.id);
   assert.equal(history.length, 2);
   assert.equal(history.filter((value) => value.previousId === target.credential.id).length, 1);
   assert.equal(

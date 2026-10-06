@@ -44,7 +44,10 @@ const receipt: CodeCommitReceipt = {
 async function fixture(t: TestContext, maxBodyBytes?: number) {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Code controls', actorName: 'Controller' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Code controls',
+    actorName: 'Controller',
+  });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
   const tools = new ToolRegistry(scope);
   const ctx = new Context();
@@ -186,15 +189,21 @@ test('Code controls pass the authenticated source and exact command envelope, in
 test('Code source selection uses real machine-key membership and rejects body/project/auth substitutions', async (t) => {
   const f = await fixture(t);
   f.register(f.provider);
-  const owner = await f.scope.acceptVerifiedIdentity({
+  const owner = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'code-owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const first = await f.scope.createProject(owner, { name: 'First', requestId: 'first' });
-  const second = await f.scope.createProject(owner, { name: 'Second', requestId: 'second' });
-  const issued = await f.scope.createKey(owner, { projectId: first.id, grantScope: 'account' });
-  const key = await f.scope.authenticateKey(issued.token);
+  const first = await f.scope.members.createProject(owner, { name: 'First', requestId: 'first' });
+  const second = await f.scope.members.createProject(owner, {
+    name: 'Second',
+    requestId: 'second',
+  });
+  const issued = await f.scope.userKeys.create(owner, {
+    projectId: first.id,
+    grantScope: 'account',
+  });
+  const key = await f.scope.userKeys.authenticate(issued.token);
   assert.equal((await f.request('next', control, { token: issued.token })).status, 400);
   for (const project of [first, second]) {
     assert.equal(
@@ -222,7 +231,7 @@ test('Code source selection uses real machine-key membership and rejects body/pr
   ] as const)
     assert.ok((await f.request('next', body, options)).status >= 400);
   assert.equal(f.calls.length, before);
-  await f.scope.revokeKey(owner, key.id);
+  await f.scope.userKeys.revoke(owner, key.id);
   assert.equal(
     (await f.request('next', control, { token: issued.token, projectId: first.id })).status,
     401,
@@ -398,13 +407,16 @@ test(
         return await f.provider.nextCommand(caller, input);
       },
     });
-    const admin = await f.scope.issueActor(f.caller, { name: 'Second operator', role: 'operator' });
+    const admin = await f.scope.credentials.issueActor(f.caller, {
+      name: 'Second operator',
+      role: 'operator',
+    });
     const adminCaller = await f.scope.caller({
       kind: 'actor',
       actor: await f.scope.authenticate(admin.token),
     });
     const waiting = await bodyWait(f);
-    await f.scope.revokeCredential(adminCaller, f.caller.credentialId!);
+    await f.scope.credentials.revokeCredential(adminCaller, f.caller.credentialId!);
     waiting.finish();
     const result = await waiting.response;
     assert.equal(result.status, 403);

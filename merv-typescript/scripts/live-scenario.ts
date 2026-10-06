@@ -646,7 +646,7 @@ async function main(options: Options) {
     if (options.local) {
       const { createApp } = await import('../src/app.js');
       app = await createApp({ directory: join(options.out, 'server'), api: true, port: 0 });
-      const boot = await app!.ctx.scope.bootstrap({
+      const boot = await app!.ctx.scope.credentials.bootstrap({
         projectName: brief.project.name,
         actorName: 'Scenario operator',
       });

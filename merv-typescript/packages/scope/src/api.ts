@@ -70,25 +70,27 @@ export function scopeRoutes(scope: Scope): MountHandler {
       };
     if (path === '/account/keys') {
       const projectId = keyQuery(r.url.searchParams, req.method === 'GET');
-      if (req.method === 'GET') return { keys: await scope.keys(principal, projectId) };
+      if (req.method === 'GET') return { keys: await scope.userKeys.keys(principal, projectId) };
       if (req.method === 'POST')
-        return await scope.createKey(principal, await r.json(createKeyInput));
+        return await scope.userKeys.create(principal, await r.json(createKeyInput));
     }
     const keyRoute = /^\/account\/keys\/([^/]+)(\/rotate)?$/.exec(path);
     if (keyRoute) {
       keyQuery(r.url.searchParams);
       const keyId = pathSegment(keyRoute[1]!);
       if (keyRoute[2] && req.method === 'POST')
-        return await scope.rotateKey(principal, { keyId, ...(await r.json(rotateKeyInput)) });
+        return await scope.userKeys.rotate(principal, { keyId, ...(await r.json(rotateKeyInput)) });
       if (!keyRoute[2] && req.method === 'DELETE') {
-        await scope.revokeKey(principal, keyId);
+        await scope.userKeys.revoke(principal, keyId);
         return { revoked: true };
       }
     }
     if (path === '/projects' && req.method === 'GET')
       return { projects: await scope.projects(principal) };
     if (path === '/projects' && req.method === 'POST')
-      return { project: await scope.createProject(principal, await r.json(createProjectInput)) };
+      return {
+        project: await scope.members.createProject(principal, await r.json(createProjectInput)),
+      };
     const memberRoute = /^\/projects\/([^/]+)\/members(?:\/([^/]+))?$/.exec(path);
     if (memberRoute) {
       const projectId = pathSegment(memberRoute[1]!);
@@ -99,20 +101,24 @@ export function scopeRoutes(scope: Scope): MountHandler {
       if (selected !== undefined && selected !== projectId)
         throw new MervError('invalid_input', 'Conflicting Merv project selections');
       if (subject === undefined && req.method === 'GET')
-        return { memberships: await scope.memberships(principal, projectId) };
+        return { memberships: await scope.members.memberships(principal, projectId) };
       if (subject === undefined && req.method === 'POST')
         return {
-          membership: await scope.addMember(principal, projectId, await r.json(addMemberInput)),
+          membership: await scope.members.addMember(
+            principal,
+            projectId,
+            await r.json(addMemberInput),
+          ),
         };
       if (subject !== undefined && req.method === 'PATCH')
         return {
-          membership: await scope.changeMemberRole(principal, projectId, {
+          membership: await scope.members.changeMemberRole(principal, projectId, {
             subject,
             ...(await r.json(changeMemberInput)),
           }),
         };
       if (subject !== undefined && req.method === 'DELETE') {
-        await scope.removeMember(principal, projectId, subject);
+        await scope.members.removeMember(principal, projectId, subject);
         return { removed: true };
       }
     }

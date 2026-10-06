@@ -141,12 +141,12 @@ test('a failed initialization stays blocked and retries the same deterministic r
       store: { repositories: import('@merv/code/store/repository').CodeRepositories };
     }
   ).store.repositories;
-  const principal = await f.scope.acceptVerifiedIdentity({
+  const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://test.example',
     subject: 'second',
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   });
-  const project = await f.scope.createProject(principal, {
+  const project = await f.scope.members.createProject(principal, {
     name: 'Second project',
     requestId: 'second',
   });
@@ -182,12 +182,15 @@ test('recovery after Git succeeded but SQL rolled back keeps exactly one root', 
       store: { repositories: import('@merv/code/store/repository').CodeRepositories };
     }
   ).store.repositories;
-  const principal = await f.scope.acceptVerifiedIdentity({
+  const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://test.example',
     subject: 'crash',
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   });
-  const project = await f.scope.createProject(principal, { name: 'Recover', requestId: 'recover' });
+  const project = await f.scope.members.createProject(principal, {
+    name: 'Recover',
+    requestId: 'recover',
+  });
   // Declare directly to keep the timer out of this controlled crash boundary.
   await f.state.transaction((tx) => declareManagedProject(tx, project.id));
   await initializeManagedProjects(f.state, repositories, async () => {

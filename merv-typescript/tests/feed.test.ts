@@ -24,7 +24,7 @@ async function fixture(t: TestContext) {
     blobs = new DiskBlobs(join(directory, 'blobs'));
   const artifacts = await createService(new ArtifactStore(state, scope, blobs)),
     feed = await createService(new FeedService(state, scope, artifacts));
-  const credentials = await scope.bootstrap({
+  const credentials = await scope.credentials.bootstrap({
     projectName: 'Independent feed',
     actorName: 'Operator',
   });
@@ -33,7 +33,7 @@ async function fixture(t: TestContext) {
     name: string,
     role: 'producer' | 'reviewer' | 'reader',
   ): Promise<Caller> => ({
-    actorId: (await scope.issueActor(operator, { name, role })).actor.id,
+    actorId: (await scope.credentials.issueActor(operator, { name, role })).actor.id,
     projectId: operator.projectId,
   });
   const producer = await issue('Producer', 'producer'),
@@ -145,7 +145,7 @@ test('standalone Feed admits reviewers, scopes communication, and validates arti
       }),
     code('forbidden'),
   );
-  const other = await f.scope.bootstrap({
+  const other = await f.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other operator',
   });
@@ -228,7 +228,7 @@ test('Feed preserves exact content, deduplicates per actor, and rechecks permiss
   const reviewerPost = await f.feed.post(f.reviewer, input);
   assert.notEqual(reviewerPost.id, post.id);
   assert.ok(reviewerPost.sequence > post.sequence);
-  await f.scope.revokeActor(f.operator, f.producer.actorId);
+  await f.scope.credentials.revokeActor(f.operator, f.producer.actorId);
   await assert.rejects(async () => await f.feed.post(f.producer, input), code('forbidden'));
   await assert.rejects(async () => await f.feed.get(f.producer, post.id), code('forbidden'));
 });
@@ -384,7 +384,7 @@ test('Feed cursor pages and activity preserve project boundaries and survive reo
       ),
     )
   ).sort((a, b) => a.sequence - b.sequence);
-  const other = await f.scope.bootstrap({
+  const other = await f.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other operator',
   });
@@ -484,8 +484,11 @@ test('Feed activity exposes actor administration metadata only to project operat
       operatorEvents.filter((event) => !event.type.startsWith('actor.')),
     );
   }
-  const revoked = await f.scope.issueActor(f.operator, { name: 'Temporary actor', role: 'reader' });
-  await f.scope.revokeActor(f.operator, revoked.actor.id);
+  const revoked = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Temporary actor',
+    role: 'reader',
+  });
+  await f.scope.credentials.revokeActor(f.operator, revoked.actor.id);
   assert.equal(
     (await f.feed.activity(f.reader)).some((event) => event.subjectId === revoked.actor.id),
     false,
@@ -543,13 +546,13 @@ test('Feed keeps only who acted of a nested delegation source from nonoperators'
 
 test('Feed hides local membership repair reasons from nonoperator project participants', async (t) => {
   const f = await fixture(t);
-  const principal = await f.scope.acceptVerifiedIdentity({
+  const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example.test/auth/v1',
     subject: 'project-owner',
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   });
-  await f.scope.adoptProject(principal, f.operator.projectId);
-  await f.scope.adoptProject(principal, f.operator.projectId, {
+  await f.scope.members.adoptProject(principal, f.operator.projectId);
+  await f.scope.members.adoptProject(principal, f.operator.projectId, {
     repairReason: 'Private account recovery details',
   });
   assert.equal(

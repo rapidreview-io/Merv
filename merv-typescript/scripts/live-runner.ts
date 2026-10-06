@@ -11,7 +11,7 @@ const directory = resolve(process.argv[2] ?? `live-runs/runner-${Date.now()}`);
 const schema = useRunSchema(directory);
 mkdirSync(directory, { recursive: false, mode: 0o700 });
 const app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
-const boot = await app.ctx.scope.bootstrap({
+const boot = await app.ctx.scope.credentials.bootstrap({
   projectName: 'Synthetic native runner acceptance',
   actorName: 'Owner',
 });

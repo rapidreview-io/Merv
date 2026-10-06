@@ -34,12 +34,12 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
     rmSync(directory, { recursive: true, force: true });
   });
   const { ctx } = app;
-  const principal = await ctx.scope.acceptVerifiedIdentity({
+  const principal = await ctx.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const project = await ctx.scope.createProject(principal, {
+  const project = await ctx.scope.members.createProject(principal, {
     name: 'Observed Code',
     requestId: 'project',
   });

@@ -2,8 +2,8 @@ import {
   retiredInstancesSql,
   retiredPlanTaskIds,
   retiredPlanTasksSql,
-  withoutTriggers,
-} from '@merv/contracts/retired-instances';
+} from '@merv/workflows/retired-instances';
+import { withoutTriggers } from '@merv/contracts';
 
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {

@@ -42,7 +42,10 @@ async function setup(t: TestContext) {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const identity = await scope.bootstrap({ projectName: 'Metadata', actorName: 'Operator' });
+  const identity = await scope.credentials.bootstrap({
+    projectName: 'Metadata',
+    actorName: 'Operator',
+  });
   const operator: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
   return { artifacts, builder, operator };
 }

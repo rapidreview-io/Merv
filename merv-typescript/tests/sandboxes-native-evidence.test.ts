@@ -57,7 +57,7 @@ async function fixture(t: TestContext) {
     await state.close();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await scope.bootstrap({ projectName: 'Evidence', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Evidence', actorName: 'Owner' });
   const caller: Caller = { projectId: boot.project.id, actorId: boot.actor.id };
   const objects = new Map<string, ReturnType<typeof file>>();
   const captures: {

@@ -42,8 +42,8 @@ test('recipes enforce required context, reserve its budget, pin sources, isolate
     ),
     builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   try {
-    const a = await scope.bootstrap({ projectName: 'A', actorName: 'A' }),
-      b = await scope.bootstrap({ projectName: 'B', actorName: 'B' });
+    const a = await scope.credentials.bootstrap({ projectName: 'A', actorName: 'A' }),
+      b = await scope.credentials.bootstrap({ projectName: 'B', actorName: 'B' });
     const caller = { actorId: a.actor.id, projectId: a.project.id },
       other = { actorId: b.actor.id, projectId: b.project.id };
     const artifact = await artifacts.create(caller, {
@@ -172,7 +172,7 @@ test('additional task types register recipes directly and retire without retaini
   const directory = mkdtempSync(join(tmpdir(), 'merv-custom-context-'));
   const app = await createApp({ directory, api: false });
   try {
-    const identity = await app.ctx.scope.bootstrap({
+    const identity = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Custom',
       actorName: 'Operator',
     });

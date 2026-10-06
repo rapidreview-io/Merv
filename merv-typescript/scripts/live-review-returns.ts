@@ -34,14 +34,14 @@ let report: Record<string, unknown> | undefined;
 const sha = (value: string | Buffer) => createHash('sha256').update(value).digest('hex');
 const secretValues: string[] = [];
 try {
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Synthetic native review return routes',
     actorName: 'Fixture controller',
   });
   source = { projectId: boot.project.id, actorId: boot.actor.id, credentialId: boot.credential.id };
   process.env[credentialEnv] = boot.token;
   secretValues.push(boot.token);
-  const producer = await app.ctx.scope.issueActor(source, {
+  const producer = await app.ctx.scope.credentials.issueActor(source, {
     name: 'Fixture evidence author',
     role: 'producer',
   });

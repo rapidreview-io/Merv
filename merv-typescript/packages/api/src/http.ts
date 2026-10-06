@@ -426,12 +426,12 @@ export class ApiServer {
     // Legacy actor tokens are 43 random base64url characters and may happen to
     // start with mk_. User keys add that prefix to a full 43-character secret.
     if (token.startsWith('mk_') && !/^[A-Za-z0-9_-]{43}$/.test(token))
-      return { kind: 'key', key: await this.scope.authenticateKey(token) };
+      return { kind: 'key', key: await this.scope.userKeys.authenticate(token) };
     if (!token.includes('.')) return { kind: 'actor', actor: await this.scope.authenticate(token) };
     if (!this.identity)
       throw new MervError('unauthorized', 'Human authentication is unavailable', 401);
     const verified = await this.identity.verify(token);
-    return await this.scope.acceptVerifiedIdentity(verified);
+    return await this.scope.members.acceptVerifiedIdentity(verified);
   }
 
   /** One tool call. A native tool's `projectId` argument selects its project; a mounted tool's

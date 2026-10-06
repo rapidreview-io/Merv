@@ -18,6 +18,7 @@ flowchart LR
     contextBuilder["Context Builder<br/><small>recipes to prompts</small>"]
     artifacts["Artifacts"]
     scope["Scope"]
+    workflows["Workflows"]
     state["State"]
     blobs["Blobs"]
   end
@@ -32,6 +33,7 @@ flowchart LR
   contextBuilder -- "injects" --> artifacts
   contextBuilder -- "injects" --> scope
   contextBuilder -- "injects" --> state
+  contextBuilder -- "imports retirement ledger" --> workflows
   artifacts -- "injects" --> blobs
   state -- "reads/writes" --> postgres
   blobs -- "reads/writes" --> blobStore

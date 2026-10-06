@@ -28,21 +28,21 @@ async function fixture(t: TestContext) {
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const first = await app.ctx.scope.bootstrap({
+  const first = await app.ctx.scope.credentials.bootstrap({
     projectName: 'History A',
     actorName: 'Bootstrap A',
   });
-  const second = await app.ctx.scope.bootstrap({
+  const second = await app.ctx.scope.credentials.bootstrap({
     projectName: 'History B',
     actorName: 'Bootstrap B',
   });
-  const principal = await app.ctx.scope.acceptVerifiedIdentity({
+  const principal = await app.ctx.scope.members.acceptVerifiedIdentity({
     issuer: 'https://history.example/auth/v1',
     subject: 'member',
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   });
-  await app.ctx.scope.adoptProject(principal, first.project.id);
-  await app.ctx.scope.adoptProject(principal, second.project.id);
+  await app.ctx.scope.members.adoptProject(principal, first.project.id);
+  await app.ctx.scope.members.adoptProject(principal, second.project.id);
   const caller = await app.ctx.scope.caller(principal, first.project.id);
   const other = await app.ctx.scope.caller(principal, second.project.id);
   const records: ArchivedFixtureRecord[] = [

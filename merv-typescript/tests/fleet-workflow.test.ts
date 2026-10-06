@@ -12,12 +12,12 @@ import {
   createService,
   digest,
   MervError,
-  sourceCaller,
   type Caller,
   type DelegationSource,
   type Transaction,
   type WorkflowPolicy,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
@@ -75,7 +75,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
   const login = async (subject: string) =>
-    await scope.acceptVerifiedIdentity({
+    await scope.members.acceptVerifiedIdentity({
       issuer,
       subject,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
@@ -84,7 +84,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   /** What Sessions serves: each project, as its owner. */
   const served: { projectId: string; source: DelegationSource }[] = [];
   const project = async (person = founder, name = 'Fleet workflow') => {
-    const { id } = await scope.createProject(person, { name, requestId: randomUUID() });
+    const { id } = await scope.members.createProject(person, { name, requestId: randomUUID() });
     const caller = await scope.caller(person, id);
     const source = await scope.delegationSource(caller);
     served.push({ projectId: id, source });
@@ -327,7 +327,10 @@ test('a step’s payer is its person, read without a lookup; a voucher that cann
   );
   assert.equal(lookups, 0);
   // A review director vouched for by an issued actor counts toward that actor, while it lasts.
-  const issued = await f.scope.issueActor(f.caller, { name: 'Voucher', role: 'operator' });
+  const issued = await f.scope.credentials.issueActor(f.caller, {
+    name: 'Voucher',
+    role: 'operator',
+  });
   const voucher = await f.scope.delegationSource({
     actorId: issued.actor.id,
     projectId: f.source.projectId,
@@ -343,7 +346,7 @@ test('a step’s payer is its person, read without a lookup; a voucher that cann
     await payer(reviewer),
     digest({ projectId: f.source.projectId, actorId: issued.actor.id }),
   );
-  await f.scope.revokeActor(f.caller, issued.actor.id);
+  await f.scope.credentials.revokeActor(f.caller, issued.actor.id);
   await assert.rejects(payer(reviewer), MervError);
 });
 
@@ -543,7 +546,7 @@ test(
       (await f.adapter.retryStatus(f.caller, [target]))[0]?.state,
       'exhausted_unclaimed',
     );
-    const former = await f.scope.issueActor(f.caller, {
+    const former = await f.scope.credentials.issueActor(f.caller, {
       name: 'Former director',
       role: 'producer',
     });
@@ -554,13 +557,13 @@ test(
     };
     const formerSource = await f.scope.delegationSource(formerCaller);
     for (const allocation of f.allocations) allocation.source = formerSource;
-    await f.scope.revokeActor(f.caller, former.actor.id);
+    await f.scope.credentials.revokeActor(f.caller, former.actor.id);
     assert.equal(
       (await f.adapter.retryStatus(f.caller, [target]))[0]?.state,
       'exhausted_unclaimed',
       'the current director keeps the blocker visible after the old director is revoked',
     );
-    const producer = await f.scope.issueActor(f.caller, {
+    const producer = await f.scope.credentials.issueActor(f.caller, {
       name: 'Retry producer',
       role: 'producer',
     });
@@ -1036,7 +1039,7 @@ test('a new director lets in-flight work finish under its own source, and direct
     expiresAt: allocation.deadlineAt,
   };
   // Sessions now serves the project as the colleague, who directs what follows.
-  await f.scope.addMember(f.founder, f.caller.projectId, {
+  await f.scope.members.addMember(f.founder, f.caller.projectId, {
     subject: 'colleague',
     role: 'operator',
   });
@@ -1120,7 +1123,7 @@ test('a director who can no longer write directs nothing, and a failing project 
     people: [`${issuer} founder`, `${issuer} colleague`],
     maxAgents: 5,
   });
-  await f.scope.addMember(f.founder, f.caller.projectId, {
+  await f.scope.members.addMember(f.founder, f.caller.projectId, {
     subject: 'colleague',
     role: 'operator',
   });
@@ -1146,7 +1149,7 @@ test('a director who can no longer write directs nothing, and a failing project 
     true,
   ]);
   assert.equal(f.requests.filter((id) => id === unconnected.id).length, 1, 'refused once');
-  await f.scope.changeMemberRole(f.founder, f.caller.projectId, {
+  await f.scope.members.changeMemberRole(f.founder, f.caller.projectId, {
     subject: 'colleague',
     role: 'reader',
   });
@@ -1292,14 +1295,17 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     codeWork,
   } = app.ctx;
   const login = async (subject: string) =>
-    await scope.acceptVerifiedIdentity({
+    await scope.members.acceptVerifiedIdentity({
       issuer,
       subject,
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
   const founder = await login('founder');
   const project = async (name: string) =>
-    await scope.caller(founder, (await scope.createProject(founder, { name, requestId: name })).id);
+    await scope.caller(
+      founder,
+      (await scope.members.createProject(founder, { name, requestId: name })).id,
+    );
   const policy: WorkflowPolicy = {
     successStates: ['done'],
     actions: [
@@ -1570,7 +1576,10 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
   const { sessions, fleet, adapter } = h;
   const first = await h.project('Real workflow bridge');
   const second = await h.project('Second bridge');
-  const issued = await h.scope.issueActor(first, { name: 'External', role: 'producer' });
+  const issued = await h.scope.credentials.issueActor(first, {
+    name: 'External',
+    role: 'producer',
+  });
   const caller: Caller = {
     actorId: issued.actor.id,
     projectId: first.projectId,
@@ -1683,7 +1692,10 @@ for (const workerCount of [1, 3]) {
 test('real Fleet acts as and bills the project owner, whoever switched it on, and stops them once they may not write', async (t) => {
   const h = await hosted(t, 1);
   const founder = await h.project('Owned');
-  await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
+  await h.scope.members.addMember(h.founder, founder.projectId, {
+    subject: 'colleague',
+    role: 'operator',
+  });
   const signedIn = await h.login('colleague');
   await h.sessions.dispatch.setDispatch(await h.scope.caller(signedIn, founder.projectId), {
     enabled: true,
@@ -1702,7 +1714,7 @@ test('real Fleet acts as and bills the project owner, whoever switched it on, an
     (await h.sessions.dispatch.stuck(founder)).items.map((item) => item.kind);
   assert.deepEqual(await kinds(), [], 'Fleet serves the work, so no runner is missing');
   // Demoted, the founder directs nothing: their machine stops, and the colleague owns what follows.
-  await h.scope.changeMemberRole(signedIn, founder.projectId, {
+  await h.scope.members.changeMemberRole(signedIn, founder.projectId, {
     subject: 'founder',
     role: 'reader',
   });
@@ -1932,7 +1944,7 @@ test('Fleet produces Pi-directed work and leases an independent current Git revi
   assert.deepEqual([claimed.status, claimed.reviewerId], ['started', machine.session.actorId]);
   assert.notEqual(claimed.reviewerId, claimed.producerId);
   // Nor does Fleet rent the workflow's machines to anyone who may not direct its work.
-  const reader = await h.scope.issueActor(caller, { name: 'Reader', role: 'reader' });
+  const reader = await h.scope.credentials.issueActor(caller, { name: 'Reader', role: 'reader' });
   await assert.rejects(
     h.fleet.request(
       { projectId: caller.projectId, actorId: reader.actor.id, credentialId: reader.credential.id },
@@ -1945,7 +1957,10 @@ test('Fleet produces Pi-directed work and leases an independent current Git revi
 test('Fleet’s current review worker and its machine stop when its owner may no longer write', async (t) => {
   const h = await hosted(t, 1);
   const founder = await h.project('Vouched');
-  await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
+  await h.scope.members.addMember(h.founder, founder.projectId, {
+    subject: 'colleague',
+    role: 'operator',
+  });
   await h.sessions.dispatch.setDispatch(founder, { enabled: true });
   await delivered(h, founder, 'founder');
   await h.adapter.start();
@@ -1955,7 +1970,7 @@ test('Fleet’s current review worker and its machine stop when its owner may no
   await h.fleet.tick(); // Launch.
   const machine = await boot(h, allocation);
   await h.sessions.authenticate(machine.secret);
-  await h.scope.changeMemberRole(await h.login('colleague'), founder.projectId, {
+  await h.scope.members.changeMemberRole(await h.login('colleague'), founder.projectId, {
     subject: 'founder',
     role: 'reader',
   });

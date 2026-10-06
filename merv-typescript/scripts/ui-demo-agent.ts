@@ -215,7 +215,7 @@ class Machines extends FakeRuntimes {
 
 /** Composes Fleet on the machines above and the Agent's plugins on it, as production composes them. */
 export async function seedAgent(app: Awaited<ReturnType<typeof createApp>>, url: string) {
-  const host = await app.ctx.scope.bootstrap({
+  const host = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Agent host',
     actorName: 'Agent host',
   });

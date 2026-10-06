@@ -143,13 +143,16 @@ async function sourced(t: TestContext) {
   let clock = Date.parse('2026-01-01T00:00:00.000Z');
   const f = await counted(t, () => clock);
   const handle = await f.workflows.register(definition('budget'), policy(f.scope));
-  const boot = await f.scope.bootstrap({ projectName: 'Budget', actorName: 'Owner' });
+  const boot = await f.scope.credentials.bootstrap({ projectName: 'Budget', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issued = await f.scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const issued = await f.scope.credentials.issueActor(owner, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const source: Caller = {
     actorId: issued.actor.id,
     projectId: boot.project.id,
@@ -296,14 +299,14 @@ async function rented(t: TestContext) {
   process.env[secretEnv] = randomBytes(48).toString('hex');
   process.env[modelEnv] = 'test-model-key';
   const issuer = 'https://identity.example/auth/v1';
-  const founder = await f.scope.acceptVerifiedIdentity({
+  const founder = await f.scope.members.acceptVerifiedIdentity({
     issuer,
     subject: 'founder',
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
   const caller = await f.scope.caller(
     founder,
-    (await f.scope.createProject(founder, { name: 'Rented', requestId: 'rented' })).id,
+    (await f.scope.members.createProject(founder, { name: 'Rented', requestId: 'rented' })).id,
   );
   const handle = await f.workflows.register(definition('hosted'), policy(f.scope));
   const sessions = await createService(

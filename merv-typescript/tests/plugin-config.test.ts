@@ -117,7 +117,7 @@ test('Tools Config defaults to an empty object and rejects accidental resource o
     assert.equal(fiber.state, FiberState.ACTIVE);
     assert.deepEqual(fiber.config, {});
     assert.deepEqual(await ctx.tools.list(), []);
-    const credential = await ctx.scope.bootstrap({
+    const credential = await ctx.scope.credentials.bootstrap({
       projectName: 'Registry defaults',
       actorName: 'Operator',
     });
@@ -202,7 +202,7 @@ test('API no-config defaults remain loopback and ephemeral with a working regist
     const url = new URL(ctx.api.url!);
     assert.equal(url.hostname, '127.0.0.1');
     assert.ok(Number(url.port) > 0);
-    const credentials = await ctx.scope.bootstrap({
+    const credentials = await ctx.scope.credentials.bootstrap({
       projectName: 'API defaults',
       actorName: 'Operator',
     });

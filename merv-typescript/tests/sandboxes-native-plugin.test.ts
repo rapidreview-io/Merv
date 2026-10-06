@@ -52,12 +52,15 @@ async function foundation(t: TestContext) {
     },
   };
   const issuer = 'https://identity.example/auth/v1';
-  const principal = await scope.acceptVerifiedIdentity({
+  const principal = await scope.members.acceptVerifiedIdentity({
     issuer,
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   });
-  const project = await scope.createProject(principal, { name: 'Native plugin', requestId: 'one' });
+  const project = await scope.members.createProject(principal, {
+    name: 'Native plugin',
+    requestId: 'one',
+  });
   const tools = new ToolRegistry(scope);
   const api = new ApiServer(
     scope,

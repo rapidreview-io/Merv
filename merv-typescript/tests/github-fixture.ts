@@ -39,13 +39,13 @@ export async function githubFixture(t: TestContext, storage?: State, existingCal
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   };
-  const principal = await scope.acceptVerifiedIdentity(identity);
-  const project = await scope.createProject(principal, {
+  const principal = await scope.members.acceptVerifiedIdentity(identity);
+  const project = await scope.members.createProject(principal, {
     name: 'GitHub fixture',
     requestId: 'project',
   });
-  const other = await scope.acceptVerifiedIdentity({ ...identity, subject: 'reviewer' });
-  await scope.addMember(principal, project.id, { subject: 'reviewer', role: 'operator' });
+  const other = await scope.members.acceptVerifiedIdentity({ ...identity, subject: 'reviewer' });
+  await scope.members.addMember(principal, project.id, { subject: 'reviewer', role: 'operator' });
   const caller = existingCaller ?? (await scope.caller(principal, project.id)),
     reviewer = await scope.caller(other, project.id);
   const branches = new Map([['main', baseOid]]);

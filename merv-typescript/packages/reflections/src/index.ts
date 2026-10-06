@@ -7,10 +7,10 @@ import {
   sha256Hex,
 } from '@merv/contracts';
 import { artifactItem } from '@merv/context-builder/artifact-item';
-import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
+import { mapAsync, checkReceipt } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { keyId, keyKind } from '@merv/contracts';
-import { CheckedTransitions } from '@merv/contracts';
+import { grant, reference, target, CheckedTransitions } from '@merv/workflows/rules';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';

@@ -66,7 +66,10 @@ function policy(success = 'done', authorize = true): WorkflowPolicy {
 async function setup(path = ':memory:') {
   const state = await openState(path),
     scope = await createService(new ProjectScope(state));
-  const identity = await scope.bootstrap({ projectName: 'Dependencies', actorName: 'Operator' });
+  const identity = await scope.credentials.bootstrap({
+    projectName: 'Dependencies',
+    actorName: 'Operator',
+  });
   const caller = { actorId: identity.actor.id, projectId: identity.project.id };
   return {
     state,
@@ -256,7 +259,10 @@ test('dependency creation normalizes inputs, rejects unsupported or out-of-scope
   assert.deepEqual(await start(handle, caller, 'preparation', 'second', []), second);
   const none = await start(handle, caller, 'preparation', 'none', []);
   assert.deepEqual(await start(handle, caller, 'preparation', 'none'), none);
-  const otherIdentity = await scope.bootstrap({ projectName: 'Private', actorName: 'Other' });
+  const otherIdentity = await scope.credentials.bootstrap({
+    projectName: 'Private',
+    actorName: 'Other',
+  });
   const other = { actorId: otherIdentity.actor.id, projectId: otherIdentity.project.id };
   const foreign = await start(handle, other, 'preparation', 'foreign');
   const bare = await workflows.register(graph('undeclared'), {
@@ -321,8 +327,9 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
     c = await start(handle, caller, 'preparation', 'c');
   const command = { instanceId: a.id, dependsOn: [b.id], expectedRevision: 0, requestId: 'attach' };
   const requested = structuredClone(command);
-  const replacement = (await scope.issueActor(caller, { name: 'Replacement', role: 'producer' }))
-    .actor;
+  const replacement = (
+    await scope.credentials.issueActor(caller, { name: 'Replacement', role: 'producer' })
+  ).actor;
   const pendingCaller = { ...caller };
   const pending = handle.addDependencies(pendingCaller, command);
   pendingCaller.actorId = replacement.id;
@@ -385,7 +392,8 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
   );
   assert.deepEqual((await workflows.prerequisites(caller, [b.id])).get(b.id)!, []);
   const reader = {
-    actorId: (await scope.issueActor(caller, { name: 'Reader', role: 'reader' })).actor.id,
+    actorId: (await scope.credentials.issueActor(caller, { name: 'Reader', role: 'reader' })).actor
+      .id,
     projectId: caller.projectId,
   };
   // A managed program authorizes its own commands, as for start and transition, so the
@@ -593,7 +601,7 @@ test('missing or foreign targets cannot open a gate or reveal another project; u
       code: 'dependencies_pending',
     },
   );
-  const identity = await scope.bootstrap({ projectName: 'Secret', actorName: 'Other' });
+  const identity = await scope.credentials.bootstrap({ projectName: 'Secret', actorName: 'Other' });
   const other = { actorId: identity.actor.id, projectId: identity.project.id };
   const foreign = await start(targetProgram, other, 'preparation', 'PRIVATE TITLE');
   await targetProgram.transition(other, {
@@ -1044,7 +1052,7 @@ test('replanning removes declared edges in one bounded write, preserving ownersh
         tx,
       ),
   );
-  const identity = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const identity = await scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const other = { actorId: identity.actor.id, projectId: identity.project.id };
   const foreignTarget = await start(handle, other, 'preparation', 'foreign-target');
   const foreignSource = await start(handle, other, 'preparation', 'foreign-source', [

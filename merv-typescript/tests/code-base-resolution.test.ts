@@ -9,11 +9,11 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
   createService,
-  sourceCaller,
   type Caller,
   type WorkflowSnapshot,
   type Transaction,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeCapture } from '@merv/code-work/types';
@@ -68,8 +68,9 @@ async function fixture(t: TestContext, human = false) {
   f.beforeClose.push(unbindReviews);
   const inputAuthor = {
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name: 'Input author', role: 'operator' })).actor
-      .id,
+    actorId: (
+      await f.scope.credentials.issueActor(f.admin, { name: 'Input author', role: 'operator' })
+    ).actor.id,
   };
   const producingSession = async (
     unitId: string,
@@ -452,7 +453,7 @@ test('frozen-plan provenance excludes indirect authors, authorities and every ea
   const f = await fixture(t);
   const issue = async (name: string) => ({
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name, role: 'operator' })).actor.id,
+    actorId: (await f.scope.credentials.issueActor(f.admin, { name, role: 'operator' })).actor.id,
   });
   const indirect = await issue('Indirect input writer');
   const authority = await issue('Directing authority');
@@ -536,8 +537,9 @@ test('every reviewer excluded is visible on the resolution task and pinned revie
   );
   const independent = {
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name: 'Independent', role: 'reviewer' })).actor
-      .id,
+    actorId: (
+      await f.scope.credentials.issueActor(f.admin, { name: 'Independent', role: 'reviewer' })
+    ).actor.id,
   };
   const certifiedClaim = await f.reviews.start(independent, request.id);
   assert.equal(
@@ -936,7 +938,10 @@ const consolidation = (f: Fixture, dependsOn: string[]) =>
 
 /** A runner leases the task, and its worker delivers the base the task was given. */
 async function deliver(f: Fixture, taskId: string) {
-  const identity = await f.scope.issueActor(f.admin, { name: 'Runner', role: 'operator' });
+  const identity = await f.scope.credentials.issueActor(f.admin, {
+    name: 'Runner',
+    role: 'operator',
+  });
   const runner = {
     projectId: f.admin.projectId,
     actorId: identity.actor.id,
@@ -1033,7 +1038,10 @@ test('a research consolidation is delivered, and no contributor or directing aut
       secret: `ms_${randomBytes(32).toString('base64url')}`,
     });
   await assert.rejects(offerReview(runner, 'runner'), { code: 'review_independence' });
-  const other = await f.scope.issueActor(f.admin, { name: 'Other runner', role: 'operator' });
+  const other = await f.scope.credentials.issueActor(f.admin, {
+    name: 'Other runner',
+    role: 'operator',
+  });
   const independent = {
     projectId: f.admin.projectId,
     actorId: other.actor.id,
@@ -1267,7 +1275,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
   await f.bases.work(f.admin.projectId);
   const taskId = (await f.record())!.resolutionTaskId!;
   const commit = await f.resolveCommit();
-  const identity = await f.scope.issueActor(f.admin, {
+  const identity = await f.scope.credentials.issueActor(f.admin, {
     name: 'Resolution worker machine',
     role: 'producer',
   });
@@ -1284,7 +1292,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     capabilities: ['code.v2'],
   });
   // Each round's review is leased: only a leased worker may claim a Git task's review.
-  const reviewerIdentity = await f.scope.issueActor(f.admin, {
+  const reviewerIdentity = await f.scope.credentials.issueActor(f.admin, {
     name: 'Independent review runner',
     role: 'operator',
   });
@@ -1464,7 +1472,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     requestId: 'extend',
   };
   await assert.rejects(f.workflows.extendLimit(runner, grant), { code: 'forbidden' });
-  const machineAdmin = await f.scope.issueActor(f.admin, {
+  const machineAdmin = await f.scope.credentials.issueActor(f.admin, {
     name: 'Operator machine',
     role: 'operator',
   });
@@ -1609,7 +1617,7 @@ for (const verdict of ['pass', 'fail'] as const)
     const id = (await f.record())!.resolutionTaskId!;
     const task = await f.tasks.get(f.admin, id);
     const commit = await f.resolveCommit();
-    const issued = await f.scope.issueActor(f.admin, {
+    const issued = await f.scope.credentials.issueActor(f.admin, {
       name: 'Producer runner',
       role: 'producer',
     });
@@ -1686,7 +1694,7 @@ for (const verdict of ['pass', 'fail'] as const)
     assert.ok(review.excludedActorIds?.includes(runner.actorId));
     await assert.rejects(f.reviews.start(runner, review.id));
     await f.sessions.release(runner, { sessionId: session.id, runnerId: 'runner' });
-    const reviewerIdentity = await f.scope.issueActor(f.admin, {
+    const reviewerIdentity = await f.scope.credentials.issueActor(f.admin, {
       name: 'Independent review runner',
       role: 'operator',
     });
@@ -1795,10 +1803,16 @@ test('project writers lease a service task as producers and mark_failed suspends
     f.state.transaction((tx) => tx.run('DELETE FROM actors WHERE id=?', owner.actorId)),
   );
 
-  await assert.rejects(f.scope.issueActorCredential(f.admin, { actorId: owner.actorId }), {
-    code: 'member_actor',
+  await assert.rejects(
+    f.scope.credentials.issueActorCredential(f.admin, { actorId: owner.actorId }),
+    {
+      code: 'member_actor',
+    },
+  );
+  const producer = await f.scope.credentials.issueActor(f.admin, {
+    name: 'Runner',
+    role: 'producer',
   });
-  const producer = await f.scope.issueActor(f.admin, { name: 'Runner', role: 'producer' });
   const runner = {
     projectId: f.admin.projectId,
     actorId: producer.actor.id,

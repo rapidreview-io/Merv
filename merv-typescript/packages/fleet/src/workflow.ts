@@ -8,7 +8,6 @@ import {
   hostedCodexPlatform,
   MervError,
   recorded,
-  sourceCaller,
   type Caller,
   type DelegationSource,
   type Scope,
@@ -16,6 +15,7 @@ import {
   type Transaction,
   requireHuman,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 import type {
   ManagedModelGrant,
   ManagedRunnerBindingIdentity,

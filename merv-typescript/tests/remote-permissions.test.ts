@@ -19,11 +19,20 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const a = await app.ctx.scope.bootstrap({ projectName: 'A', actorName: 'A operator' });
-  const b = await app.ctx.scope.bootstrap({ projectName: 'B', actorName: 'B operator' });
+  const a = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'A',
+    actorName: 'A operator',
+  });
+  const b = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'B',
+    actorName: 'B operator',
+  });
   const callerA = { actorId: a.actor.id, projectId: a.project.id };
-  const reader = await app.ctx.scope.issueActor(callerA, { name: 'A reader', role: 'reader' });
-  const producer = await app.ctx.scope.issueActor(callerA, {
+  const reader = await app.ctx.scope.credentials.issueActor(callerA, {
+    name: 'A reader',
+    role: 'reader',
+  });
+  const producer = await app.ctx.scope.credentials.issueActor(callerA, {
     name: 'A producer',
     role: 'producer',
   });
@@ -135,7 +144,7 @@ test('remote discovery and direct calls enforce exact current grants over HTTP a
   assert.equal(admitted.length, count);
   app.ctx.scope.toolPolicy.replace([grant]);
   assert.equal((await readerMcp.listTools()).tools.length, 36);
-  await app.ctx.scope.revokeActor(callerA, reader.actor.id);
+  await app.ctx.scope.credentials.revokeActor(callerA, reader.actor.id);
   assert.equal((await httpList(reader.token)).status, 401);
   await assert.rejects(readerMcp.listTools());
   assert.equal((await httpCall(a.token, 'task.list')).status, 200);

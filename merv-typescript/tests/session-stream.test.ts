@@ -115,7 +115,7 @@ async function fixture(t: TestContext) {
     assert.equal(result.status, 200, JSON.stringify(result.body));
     return result.body;
   };
-  const boot = await scope.bootstrap({ projectName: 'Streams', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Streams', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -310,7 +310,10 @@ test('an operator’s page reads a snapshot, then live events, and from `after` 
   again.close();
 
   // Only an operator reads it; a worker's own bearer may only use /mcp; a stray query is refused.
-  const reader = await f.app.ctx.scope.issueActor(f.owner, { name: 'Reader', role: 'reader' });
+  const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
   assert.equal(await f.events(`/sessions/${session.id}/events`, reader.token).status(), 403);
   assert.equal(
     await f
@@ -369,7 +372,10 @@ test('a unit’s sidebar lists its sessions for an operator alone, and a lease�
   const f = await fixture(t);
   const { session, instance, control, secret: worker } = await f.leased();
   await f.app.ctx.sessions.authenticate(worker); // the worker takes it up
-  const reader = await f.app.ctx.scope.issueActor(f.owner, { name: 'Reader', role: 'reader' });
+  const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
   const readerCaller: Caller = {
     actorId: reader.actor.id,
     projectId: f.owner.projectId,

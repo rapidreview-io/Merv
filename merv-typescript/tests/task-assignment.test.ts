@@ -15,10 +15,13 @@ import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-assignment-'));
   const app = await createApp({ directory, api, port: 0 });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Assignments', actorName: 'Operator' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Assignments',
+    actorName: 'Operator',
+  });
   const operator: Caller = { projectId: boot.project.id, actorId: boot.actor.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const identity = await app.ctx.scope.issueActor(operator, { role, name: role });
+    const identity = await app.ctx.scope.credentials.issueActor(operator, { role, name: role });
     return {
       caller: {
         projectId: operator.projectId,
@@ -68,7 +71,7 @@ async function fixture(api = false) {
   };
   let reviewLease: Awaited<ReturnType<typeof work.lease>> | undefined;
   const claim = async (task: { id: string; workflow: { revision: number } }, actor = reviewer) => {
-    const runner = await app.ctx.scope.issueActor(operator, {
+    const runner = await app.ctx.scope.credentials.issueActor(operator, {
       name: 'Independent review runner',
       role: 'operator',
     });
@@ -210,7 +213,10 @@ test('work assignment preserves operator access and fences other actors, stale r
     await assert.rejects(async () => await f.begin(f.producer.caller, task.id, 1), {
       code: 'revision_conflict',
     });
-    const foreign = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+    const foreign = await f.app.ctx.scope.credentials.bootstrap({
+      projectName: 'Other',
+      actorName: 'Other',
+    });
     await assert.rejects(
       async () =>
         await f.app.ctx.workflows.assignment(
@@ -236,7 +242,7 @@ test('work assignment preserves operator access and fences other actors, stale r
     });
     assert.equal(await f.writes(), before);
     assert.deepEqual(await f.app.ctx.workflows.workStarts(f.operator, dependent.id), []);
-    await f.app.ctx.scope.revokeActor(f.operator, f.producer.caller.actorId);
+    await f.app.ctx.scope.credentials.revokeActor(f.operator, f.producer.caller.actorId);
     await assert.rejects(async () => await f.begin(f.producer.caller, task.id), { status: 403 });
   } finally {
     await f.close();

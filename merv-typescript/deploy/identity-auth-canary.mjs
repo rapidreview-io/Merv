@@ -34,7 +34,7 @@ export async function runCanary({ state, scope, origin }) {
   };
   try {
     const label = nonce();
-    boot = await scope.bootstrap({
+    boot = await scope.credentials.bootstrap({
       projectName: `Identity canary ${label}`,
       actorName: 'Canary source',
     });
@@ -46,7 +46,7 @@ export async function runCanary({ state, scope, origin }) {
     // One deadline for everything the canary mints: nothing minted through an expiring actor
     // credential may outlive it.
     const deadline = new Date(Date.now() + 15 * 60_000).toISOString();
-    const issued = await scope.issueActorCredential(first, {
+    const issued = await scope.credentials.issueActorCredential(first, {
       actorId: first.actorId,
       expiresAt: deadline,
     });
@@ -56,8 +56,8 @@ export async function runCanary({ state, scope, origin }) {
       actorId: first.actorId,
       credentialId: issued.credential.id,
     };
-    await scope.revokeCredential(source, boot.credential.id);
-    helper = await scope.issueActor(source, {
+    await scope.credentials.revokeCredential(source, boot.credential.id);
+    helper = await scope.credentials.issueActor(source, {
       name: 'Canary cleanup',
       role: 'operator',
       expiresAt: deadline,
@@ -134,10 +134,10 @@ export async function runCanary({ state, scope, origin }) {
     }
     try {
       if (helper && source) {
-        await scope.revokeCredential(source, helper.credential.id);
+        await scope.credentials.revokeCredential(source, helper.credential.id);
         const trusted = { actorId: helper.actor.id, projectId: source.projectId };
-        await scope.revokeCredential(trusted, source.credentialId);
-        await scope.revokeActor(trusted, source.actorId);
+        await scope.credentials.revokeCredential(trusted, source.credentialId);
+        await scope.credentials.revokeActor(trusted, source.actorId);
       }
     } catch {
       cleanupError ??= new Error('Canary Scope cleanup failed');

@@ -11,7 +11,10 @@ for (const operation of ['require', 'authority', 'delegation'] as const) {
       const state = await openState(':memory:');
       t.after(() => state.close());
       const scope = await createService(new ProjectScope(state));
-      const boot = await scope.bootstrap({ projectName: 'Authority lifetime', actorName: 'Owner' });
+      const boot = await scope.credentials.bootstrap({
+        projectName: 'Authority lifetime',
+        actorName: 'Owner',
+      });
       const owner = {
         actorId: boot.actor.id,
         projectId: boot.project.id,

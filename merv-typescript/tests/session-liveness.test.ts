@@ -139,13 +139,13 @@ async function fixture(
     ],
   };
   const handle = await workflows.register(definition, policy);
-  const boot = await scope.bootstrap({ projectName: 'Liveness', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Liveness', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issued = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const issued = await scope.credentials.issueActor(owner, { name: 'Producer', role: 'producer' });
   const source: Caller = {
     actorId: issued.actor.id,
     projectId: boot.project.id,
@@ -1051,7 +1051,10 @@ test('the assembled application offers the stuck report as a read tool and the g
     delete process.env[env];
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Stuck', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Stuck',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

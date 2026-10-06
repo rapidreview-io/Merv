@@ -20,7 +20,7 @@ async function fixture(t: TestContext) {
   let time = Date.parse('2026-09-15T12:00:00.000Z');
   let state = await openState(path);
   let scope = await createService(new ProjectScope(state, () => time));
-  const boot = await scope.bootstrap({
+  const boot = await scope.credentials.bootstrap({
     projectName: 'Project Introduction',
     actorName: 'Operator',
   });
@@ -30,7 +30,7 @@ async function fixture(t: TestContext) {
     credentialId: boot.credential.id,
   };
   const issue = async (role: 'producer' | 'reviewer' | 'reader', expiresAt?: string) => {
-    const value = await scope.issueActor(operator, { name: role, role, expiresAt });
+    const value = await scope.credentials.issueActor(operator, { name: role, role, expiresAt });
     return {
       actorId: value.actor.id,
       projectId: value.actor.projectId,
@@ -41,7 +41,7 @@ async function fixture(t: TestContext) {
     reader = await issue('reader'),
     reviewer = await issue('reviewer');
   const login = async (subject: string) =>
-    await scope.acceptVerifiedIdentity({
+    await scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example/auth/v1',
       subject,
       expiresAt: new Date(time + 60_000).toISOString(),
@@ -235,7 +235,10 @@ test('Current ordinary write authority is required before both new edits and rec
       code: 'forbidden',
     });
   const result = await f.scope.updateProjectContext(f.producer, update());
-  const foreign = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const foreign = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   await assert.rejects(
     async () =>
       await f.scope.updateProjectContext(
@@ -244,7 +247,7 @@ test('Current ordinary write authority is required before both new edits and rec
       ),
     { code: 'forbidden' },
   );
-  await f.scope.revokeCredential(f.operator, f.producer.credentialId);
+  await f.scope.credentials.revokeCredential(f.operator, f.producer.credentialId);
   await assert.rejects(async () => await f.scope.updateProjectContext(f.producer, update()), {
     code: 'forbidden',
   });
@@ -289,18 +292,21 @@ test('Human and user-key projects expose current Introduction, while membership/
   const f = await fixture(t),
     alice = await f.login('alice'),
     bob = await f.login('bob');
-  const project = await f.scope.createProject(alice, {
+  const project = await f.scope.members.createProject(alice, {
     name: 'Human project',
     requestId: 'project',
   });
   assert.equal(project.summary, '');
   assert.equal(project.contextRevision, 0);
   const owner = await f.scope.caller(alice, project.id);
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
   const human = await f.scope.caller(bob, project.id);
   const first = await f.scope.updateProjectContext(human, update('Human intent'));
-  const issued = await f.scope.createKey(bob, { projectId: project.id });
-  const principal: Principal = { kind: 'key', key: await f.scope.authenticateKey(issued.token) };
+  const issued = await f.scope.userKeys.create(bob, { projectId: project.id });
+  const principal: Principal = {
+    kind: 'key',
+    key: await f.scope.userKeys.authenticate(issued.token),
+  };
   const keyCaller = await f.scope.caller(principal, project.id);
   const second = await f.scope.updateProjectContext(
     keyCaller,
@@ -309,7 +315,7 @@ test('Human and user-key projects expose current Introduction, while membership/
   assert.deepEqual(await f.scope.projects(alice), [second]);
   assert.deepEqual(await f.scope.projects(principal), [second]);
   assert.deepEqual(
-    await f.scope.createProject(alice, { name: 'Human project', requestId: 'project' }),
+    await f.scope.members.createProject(alice, { name: 'Human project', requestId: 'project' }),
     second,
     'Existing create-project replay keeps its live-project behavior',
   );
@@ -327,13 +333,13 @@ test('Human and user-key projects expose current Introduction, while membership/
     keyId: issued.key.id,
     membershipId: keyCaller.key!.membershipId,
   });
-  await f.scope.revokeKey(bob, issued.key.id);
+  await f.scope.userKeys.revoke(bob, issued.key.id);
   await assert.rejects(
     async () =>
       await f.scope.updateProjectContext(keyCaller, update('Key intent', first.summary!, 'key')),
     { code: 'forbidden' },
   );
-  await f.scope.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
+  await f.scope.members.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
   await assert.rejects(
     async () => await f.scope.updateProjectContext(human, update('Human intent')),
     {
@@ -401,7 +407,7 @@ test('Borrowed transactions compose and authority loss after event publication r
     const saved = await append(tx, event);
     if (event.type === 'project.context.updated')
       await tx.run(
-        'UPDATE actor_credentials SET revoked_at=? WHERE id=?',
+        'UPDATE identity_credentials SET revoked_at=? WHERE token_hash=(SELECT token_hash FROM actor_credentials WHERE id=?)',
         '2026-09-15T12:00:00.000Z',
         f.producer.credentialId,
       );
@@ -481,7 +487,10 @@ test('Existing project rows gain empty Introduction defaults through migration w
       component === 'scope' ? migrations.filter((migration) => migration.version < 6) : migrations,
     );
   const legacy = await createService(new ProjectScope(state));
-  const boot = await legacy.bootstrap({ projectName: 'Legacy project', actorName: 'Operator' });
+  const boot = await legacy.credentials.bootstrap({
+    projectName: 'Legacy project',
+    actorName: 'Operator',
+  });
   const columns = async () =>
     (
       await state.read(
@@ -512,7 +521,10 @@ test('Task contexts freeze the Problem at lease offer, carry it once, and retain
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Frozen context', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Frozen context',
+    actorName: 'Owner',
+  });
   const source = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

@@ -93,7 +93,7 @@ FOR EACH ROW EXECUTE FUNCTION identity_credentials_no_delete();
 const find = async (sql: Sql, tokenHash: string) =>
   await sql.get<Row>('SELECT * FROM identity_credentials WHERE token_hash=?', tokenHash);
 /** The one validity rule: not revoked, and neither the expiry nor the hard deadline reached. */
-const live = (row: Row, now: string) =>
+const live = (row: Pick<Row, 'revoked_at' | 'expires_at' | 'hard_deadline'>, now: string) =>
   row.revoked_at === null &&
   (row.expires_at === null || row.expires_at > now) &&
   (row.hard_deadline === null || row.hard_deadline > now);
@@ -328,6 +328,12 @@ export class CredentialStore {
       check(renewed, 'credential_conflict', 'Credential changed during renewal', 409);
       return record(renewed);
     });
+  }
+
+  /** Whether a ledger row is live now, by the one validity rule. */
+  isLive({ revokedAt, expiresAt, hardDeadline }: Credential): boolean {
+    const row = { revoked_at: revokedAt, expires_at: expiresAt, hard_deadline: hardDeadline };
+    return live(row, this.now());
   }
 
   /** A hash's ledger row, live or not; undefined when the ledger never held it. */

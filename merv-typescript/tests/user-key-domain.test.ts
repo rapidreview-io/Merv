@@ -19,7 +19,7 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
   });
   const { scope, state, tasks, artifacts, reviews, workflows, feed } = app.ctx;
   const login = async (subject: string) =>
-    await scope.acceptVerifiedIdentity({
+    await scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example/auth/v1',
       subject,
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -27,21 +27,21 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
   const operator = await login('operator'),
     producer = await login('producer'),
     reviewer = await login('reviewer');
-  const project = await scope.createProject(operator, {
+  const project = await scope.members.createProject(operator, {
     name: 'Key attribution',
     requestId: 'project',
   });
-  await scope.addMember(operator, project.id, { subject: 'producer', role: 'producer' });
-  await scope.addMember(operator, project.id, { subject: 'reviewer', role: 'reviewer' });
-  const p = await scope.createKey(producer, { projectId: project.id });
-  const r = await scope.createKey(reviewer, { projectId: project.id });
+  await scope.members.addMember(operator, project.id, { subject: 'producer', role: 'producer' });
+  await scope.members.addMember(operator, project.id, { subject: 'reviewer', role: 'reviewer' });
+  const p = await scope.userKeys.create(producer, { projectId: project.id });
+  const r = await scope.userKeys.create(reviewer, { projectId: project.id });
   const producerCaller = await scope.caller({
     kind: 'key',
-    key: await scope.authenticateKey(p.token),
+    key: await scope.userKeys.authenticate(p.token),
   });
   const reviewerCaller = await scope.caller({
     kind: 'key',
-    key: await scope.authenticateKey(r.token),
+    key: await scope.userKeys.authenticate(r.token),
   });
   const head = await state.eventHead();
   const task = await currentTask(app.ctx, producerCaller, {
@@ -121,7 +121,7 @@ test('machine domain writes preserve key provenance, while key withdrawal preser
     );
   }
   const before = await state.eventHead();
-  await scope.revokeKey(reviewer, r.key.id);
+  await scope.userKeys.revoke(reviewer, r.key.id);
   await assert.rejects(async () => await reviews.checkSubmit(reviewerCaller, claim.id), {
     code: 'forbidden',
   });
@@ -171,16 +171,19 @@ test('known user keys remain excluded from upstream credentials while active and
     rmSync(directory, { recursive: true, force: true });
   });
   const { scope } = app.ctx;
-  const owner = await scope.acceptVerifiedIdentity({
+  const owner = await scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'owner',
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
   });
-  const project = await scope.createProject(owner, { name: 'Local key', requestId: 'project' });
+  const project = await scope.members.createProject(owner, {
+    name: 'Local key',
+    requestId: 'project',
+  });
   const caller = await scope.caller(owner, project.id);
-  const root = await scope.createKey(owner, { projectId: project.id });
-  const successor = await scope.rotateKey(owner, { keyId: root.key.id });
-  await scope.revokeKey(owner, root.key.id);
+  const root = await scope.userKeys.create(owner, { projectId: project.id });
+  const successor = await scope.userKeys.rotate(owner, { keyId: root.key.id });
+  await scope.userKeys.revoke(owner, root.key.id);
   const bindings = new Bindings(scope, [
     {
       id: 'local-user-key',
@@ -198,7 +201,7 @@ test('known user keys remain excluded from upstream credentials while active and
     });
     assert.equal(await scope.recognizesCredential(token), true);
   }
-  const active = await scope.createKey(owner, { projectId: project.id });
+  const active = await scope.userKeys.create(owner, { projectId: project.id });
   process.env[envName] = active.token;
   await assert.rejects(async () => await bindings.headers(binding), {
     code: 'credential_unavailable',

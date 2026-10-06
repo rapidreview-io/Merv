@@ -236,7 +236,7 @@ test(
       await app.stop();
       rmSync(directory, { recursive: true, force: true });
     });
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'CLI runner',
       actorName: 'Operator',
     });
