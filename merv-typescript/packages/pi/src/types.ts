@@ -182,7 +182,8 @@ export interface PiMachineOption extends PiMachine {
 export type PiMachineChoice = { allowed: true } | { allowed: false; reason: string };
 /** Why a move failed, in the service's own words: it reaches later turns' system prompts and the
  * person's page, so it is never text a model or a person wrote. */
-export type PiMoveFailure = 'no free machine' | 'not ready in time' | 'the machine stopped';
+export type PiMoveFailure =
+  'no free machine' | 'spending limit' | 'not ready in time' | 'the machine stopped';
 /** One move, kept in PiPersonRecord.moves for 24 hours, stamped at its outcome. The agent's own
  * reason stays in its turn's switch_machine outcome. */
 export interface PiMove {

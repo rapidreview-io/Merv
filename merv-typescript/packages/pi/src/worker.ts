@@ -38,6 +38,7 @@ const NEXT_TIMEOUT_MS = 30_000;
 // Streamed words reach Main this soon after the first one not yet sent, one request at a time: a
 // streaming turn makes at most about ten a second, however fast its words come.
 const FLUSH_MS = 100;
+const MOVING_MS = 1_000;
 // What a turn's tools return, at most: every result counts, and only reads are cut once it is
 // spent (a write's receipt always arrives whole).
 const TOOL_OUTPUT_BYTES = 128_000;
@@ -605,9 +606,21 @@ async function executeTurn(
       transport: 'sse',
     });
   const previousMessageCount = session.messages.length;
+  // A tool call's arguments and reasoning show no words, yet the turn is moving: Main hears so
+  // about once a second, or it would judge a long write stalled.
+  let moving = 0;
   const unsubscribe = session.subscribe((event) => {
-    if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta')
-      enqueue('text', event.assistantMessageEvent.delta);
+    if (event.type !== 'message_update') return;
+    const update = event.assistantMessageEvent;
+    if (update.type === 'text_delta') enqueue('text', update.delta);
+    else if (
+      (update.type === 'toolcall_delta' || update.type === 'thinking_delta') &&
+      Date.now() - moving >= MOVING_MS &&
+      events.at(-1)?.type !== 'progress'
+    ) {
+      moving = Date.now();
+      enqueue('progress', update.type === 'toolcall_delta' ? 'Writing a tool call' : 'Thinking');
+    }
   });
   const pulse = setInterval(
     () => {

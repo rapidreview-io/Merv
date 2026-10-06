@@ -95,6 +95,8 @@ const queuedMs = 3000;
 const readyMs = 180_000;
 /** A current slot this close to its deadline is replaced by a fresh one of its machine (T10). */
 const rolloverMs = 15 * 60_000;
+/** A rollover Fleet refused is tried again this long after: three times in its window. */
+const rolloverRetryMs = 5 * 60_000;
 /** A move holds two machines, so it starts only with room left for someone else's first. */
 const moveRoom = 3;
 /** The host's slots: C serves new turns, N starts to replace it, D finishes C's claimed turns. */
@@ -1069,6 +1071,10 @@ export class PiService implements Pi, FleetOwner {
     this.refusals.delete(turn);
     for (const key of this.trusted.keys()) if (key.startsWith(`${turn} `)) this.trusted.delete(key);
   }
+  /** Progress on a turn still tracked: one that ended meanwhile (forget) is not added back. */
+  private touch(turn: string): void {
+    if (this.progressAt.has(turn)) this.progressAt.set(turn, this.clock());
+  }
   /** The earliest of the slot's deadline, the source's expiry and `span` from now: none while
    * queued, turnTimeoutSeconds to reach the machine, and the ceiling once claimed. */
   private turnEnd(slot: PiSlot, source: DelegationSource, span: number): number {
@@ -1637,7 +1643,7 @@ export class PiService implements Pi, FleetOwner {
       const found = conversationUse(definition, parsed.data);
       if (found === 'propose' || found === 'secret') [use, value.input] = [found, parsed.data];
     }
-    this.progressAt.set(key, this.clock());
+    this.touch(key);
     // What the call is, for the person's page while it runs: never the tool's name.
     this.report(
       conversation.id,
@@ -1677,7 +1683,7 @@ export class PiService implements Pi, FleetOwner {
           : { error: { code: 'tool_failed', message: 'The tool failed unexpectedly' } };
       })
       .finally(() => {
-        this.progressAt.set(key, this.clock());
+        this.touch(key);
         this.report(conversation.id, command.id, 'thinking');
       });
     return fit(value.name, result);
@@ -1818,7 +1824,7 @@ export class PiService implements Pi, FleetOwner {
         409,
       );
     });
-    if (value.events.length) this.progressAt.set(turn, this.clock());
+    if (value.events.length) this.touch(turn);
     const text = value.events.some((event) => event.type === 'text');
     // When the answer began to show: one write per turn, never one per token.
     if (text && this.live.get(id)?.streamed?.commandId !== value.commandId)
@@ -2454,6 +2460,12 @@ export class PiService implements Pi, FleetOwner {
       const allowed = (await this.machineChoice(source, current.machine, tx)).allowed;
       if (
         (!allowed || Date.parse(current.expiresAt) - this.clock() < rolloverMs) &&
+        !(await this.person(tx, host.key)).moves.some(
+          (move) =>
+            move.by === 'deadline' &&
+            move.outcome === 'failed' &&
+            Date.parse(move.at) + rolloverRetryMs > this.clock(),
+        ) &&
         (await this.fleet.free(this.hostProject, tx)) >= moveRoom
       ) {
         if (dry) return true;
@@ -2586,19 +2598,27 @@ export class PiService implements Pi, FleetOwner {
       'A move is already under way; try again shortly',
       409,
     );
-    if ((await this.fleet.free(this.hostProject, tx)) < moveRoom) {
+    const from = host.current.machine;
+    // Fleet refusing the rental, its daily cap among them, fails the move; C keeps serving.
+    const slot =
+      (await this.fleet.free(this.hostProject, tx)) >= moveRoom &&
+      (await this.rent(renter, host, to, tx).catch((error: unknown) => {
+        if (error instanceof MervError && error.status < 500) return error;
+        throw error;
+      }));
+    if (!slot || slot instanceof MervError) {
       await this.record(tx, host.key, {
         by,
-        from: host.current.machine,
+        from,
         to,
         outcome: 'failed',
-        reason: 'no free machine',
+        reason: slot && slot.code === 'fleet_compute_cap' ? 'spending limit' : 'no free machine',
         ...(conversationId && { conversationId }),
       });
       return false;
     }
     host.next = {
-      ...(await this.rent(renter, host, to, tx)),
+      ...slot,
       by,
       conversationId: conversationId ?? null,
       readyBy: new Date(this.clock() + readyMs).toISOString(),
