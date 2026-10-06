@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { check, dailyTokens, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
+import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
+import { dailyTokens } from './model-ledger.js';
 import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
 import type { ModelRelayConfig } from './types.js';
 

@@ -27,7 +27,7 @@ flowchart LR
   person -- "pi.send, /pi stream" --> api
   pi -- "registers Agent row" --> ui
   pi -- "registers pi.*, calls tools" --> api
-  pi -- "injects" --> fleet
+  pi -- "injects; imports model-ledger" --> fleet
   fleet -- "launches" --> piWorker
   piWorker -- "HTTP /pi-worker, /pi-model" --> pi
   pi -- "relays model calls" --> model

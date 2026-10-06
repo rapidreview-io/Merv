@@ -7,7 +7,6 @@ import {
   hostedCodexCapabilities,
   hostedCodexPlatform,
   MervError,
-  personKey,
   recorded,
   sourceCaller,
   type Caller,
@@ -23,6 +22,7 @@ import type {
   SessionsProjectStatus,
 } from '@merv/sessions/types';
 import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
+import { personKey } from './model-ledger.js';
 import {
   codexModelRelay,
   modelBudgetStatus,
