@@ -97,6 +97,7 @@ export class SessionStreams implements SessionStreamReads {
    * One batch from the runner that holds the session, while it is live and for a while after it
    * closed. A batch starting before what is already held was taken before: it is answered, not
    * added, so a retry never doubles a line. The answer says how far into the log Sessions holds.
+   * Authority and what is held are read on a snapshot; only a batch to add takes the writer.
    */
   async append(caller: Caller, input: unknown): Promise<{ until: number; seq: number }> {
     const parsed = batchSchema.safeParse(input);
@@ -106,7 +107,14 @@ export class SessionStreams implements SessionStreamReads {
       'A stream batch names its host, the log bytes it read and their events',
     );
     const batch = parsed.data;
-    const held = await this.state.transaction(async (tx) => {
+    const head = async (tx: Transaction) => {
+      const row = await tx.get<{ seq: number | string; until: number | string }>(
+        'SELECT seq,until FROM session_events WHERE session_id=? ORDER BY seq DESC LIMIT 1',
+        batch.sessionId,
+      );
+      return { seq: Number(row?.seq ?? 0), until: Number(row?.until ?? 0) };
+    };
+    const held = await readFirst(this.state, async (tx) => {
       const session = await this.controlled(caller, batch.sessionId, batch.runnerId, tx);
       check(
         session.hostRef !== null && session.hostRef === batch.hostRef,
@@ -120,26 +128,26 @@ export class SessionStreams implements SessionStreamReads {
         'The session has ended; its stream is closed',
         409,
       );
-      const head = await tx.get<{ seq: number | string; until: number | string }>(
-        'SELECT seq,until FROM session_events WHERE session_id=? ORDER BY seq DESC LIMIT 1',
-        session.id,
-      );
-      const seq = Number(head?.seq ?? 0),
-        until = Number(head?.until ?? 0);
-      if (batch.from < until || !batch.events.length) return { until, seq, added: false };
+      return await head(tx);
+    });
+    if (batch.from < held.until || !batch.events.length) return held;
+    const taken = await this.state.transaction(async (tx) => {
+      // Read again under the writer lock: a retry that raced this one was added once.
+      const { seq, until } = await head(tx);
+      if (batch.from < until) return { until, seq };
       await tx.run(
         `INSERT INTO session_events(session_id,seq,at,until,event)
           SELECT ?,CAST(? AS BIGINT)+e.n,?,?,e.value FROM jsonb_array_elements(CAST(? AS JSONB)) WITH ORDINALITY AS e(value,n)`,
-        session.id,
+        batch.sessionId,
         seq,
         isoNow(this.clock),
         batch.to,
         JSON.stringify(batch.events),
       );
-      return { until: batch.to, seq: seq + batch.events.length, added: true };
+      return { until: batch.to, seq: seq + batch.events.length };
     });
-    if (held.added) for (const wake of this.readers.get(batch.sessionId) ?? []) wake();
-    return { until: held.until, seq: held.seq };
+    for (const wake of this.readers.get(batch.sessionId) ?? []) wake();
+    return taken;
   }
 
   /**
@@ -154,25 +162,28 @@ export class SessionStreams implements SessionStreamReads {
       'Only a person reads an agent’s stream',
       403,
     );
-    return await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        check(
-          (await this.scope.require(caller, 'read', tx)).role === 'operator',
-          'forbidden',
-          'Only an operator reads an agent’s stream',
-          403,
-        );
-        const row = await tx.get<{ status: Session['status']; closed_at: string | null }>(
-          `SELECT status,session_json::jsonb #>> '{closedAt}' AS closed_at FROM worker_sessions WHERE id=? AND project_id=?`,
-          sessionId,
-          caller.projectId,
-        );
-        check(row, 'session_not_found', 'Session not found', 404);
-        return {
-          growing: live(row) || Date.parse(row.closed_at ?? '') + STREAM_GRACE_MS > this.clock(),
-        };
-      }),
+    const actor = await this.state.snapshot(() =>
+      this.state.transaction((tx) => this.scope.require(caller, 'read', tx)),
     );
+    check(actor.role === 'operator', 'forbidden', 'Only an operator reads an agent’s stream', 403);
+    return { growing: await this.growing(sessionId, caller.projectId) };
+  }
+
+  /**
+   * Whether an authorized session's stream may still grow. A session's close is recorded once,
+   * with its usage, so its time is read there rather than from the session's JSON.
+   */
+  async growing(sessionId: string, projectId: string): Promise<boolean> {
+    const row = await this.state.read((sql) =>
+      sql.get<{ status: Session['status']; closed_at: string | null }>(
+        `SELECT s.status,u.closed_at FROM worker_sessions s LEFT JOIN session_usage u ON u.session_id=s.id
+          WHERE s.id=? AND s.project_id=?`,
+        sessionId,
+        projectId,
+      ),
+    );
+    check(row, 'session_not_found', 'Session not found', 404);
+    return live(row) || Date.parse(row.closed_at ?? '') + STREAM_GRACE_MS > this.clock();
   }
 
   /** The events after `after`, at most `limit`, oldest first. */
@@ -190,15 +201,16 @@ export class SessionStreams implements SessionStreamReads {
 
   /** The newest events, oldest first, within SNAPSHOT_EVENTS and SNAPSHOT_BYTES. */
   async snapshot(sessionId: string): Promise<AgentStreamEvent[]> {
-    const rows = await this.state.read((sql) =>
-      sql.all<Row>(
-        `SELECT seq,at,event::text AS event FROM session_events WHERE session_id=? ORDER BY seq DESC LIMIT ${SNAPSHOT_EVENTS}`,
-        sessionId,
-      ),
-    );
-    let bytes = 0;
-    const kept = rows.filter((row) => (bytes += row.event.length + 64) <= SNAPSHOT_BYTES);
-    return kept.reverse().map(view);
+    return (
+      await this.state.read((sql) =>
+        sql.all<Row>(
+          `SELECT seq,at,event FROM (SELECT seq,at,event,SUM(length(event)+64) OVER (ORDER BY seq DESC) AS bytes
+            FROM (SELECT seq,at,event::text AS event FROM session_events WHERE session_id=? ORDER BY seq DESC LIMIT ${SNAPSHOT_EVENTS}) t) b
+            WHERE bytes<=${SNAPSHOT_BYTES} ORDER BY seq`,
+          sessionId,
+        ),
+      )
+    ).map(view);
   }
 
   /** `wake` runs on each batch this process takes for the session; a reader slot is taken. */

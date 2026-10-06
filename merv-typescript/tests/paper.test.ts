@@ -371,7 +371,9 @@ test('historical producer proposals remain readable without changing the current
     ),
   );
   await f.reload();
-  assert.deepEqual((await f.paper.read(f.reader)).proposals, [legacy]);
+  // Read without the stored copy of each document before its edit.
+  const shown = { ...legacy, documents: legacy.documents.map(({ edit }) => ({ edit })) };
+  assert.deepEqual((await f.paper.read(f.reader)).proposals, [shown]);
   await f.paper.patch(f.producer, {
     kind: 'results',
     expectedRevision: 0,
@@ -379,7 +381,7 @@ test('historical producer proposals remain readable without changing the current
     changes: [{ id: 'current', title: 'Current finding', content: 'Main agent text' }],
   });
   const read = await f.paper.read(f.reader);
-  assert.deepEqual(read.proposals, [legacy]);
+  assert.deepEqual(read.proposals, [shown]);
   assert.equal(read.documents.results.current.sections.length, 1);
   assert.equal(read.documents.results.current.sections[0].id, 'current');
 });

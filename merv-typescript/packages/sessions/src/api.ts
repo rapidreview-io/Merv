@@ -249,7 +249,8 @@ const SNAPSHOT = 500;
  * `GET /sessions/<id>/events[?after=<seq>]`: one worker agent's live stream for an operator's
  * page, as server-sent events. `snapshot` carries the newest events (the page starts over),
  * `events` what followed, `rotate` asks the page to reconnect with `after` set to the last seq it
- * holds, and `end` says the stream will not grow. Authority is read again at most once a second.
+ * holds, and `end` says the stream will not grow. Authority is read once per connection, which
+ * rotates every 20 seconds; whether the stream still grows, at most once a second.
  */
 async function agentEvents(
   req: IncomingMessage,
@@ -269,14 +270,14 @@ async function agentEvents(
   let seq = after === null ? -1 : Number(after);
   const caller = await r.caller();
   let { growing } = await streams.authorize(caller, sessionId);
-  let authorized = Date.now();
+  let read = Date.now();
   await serveEvents(req, res, {
     rotateMs: 20_000,
     subscribe: (wake) => streams.subscribe(sessionId, wake),
     step: async (send) => {
-      if (Date.now() - authorized >= 1000) {
-        ({ growing } = await streams.authorize(caller, sessionId));
-        authorized = Date.now();
+      if (Date.now() - read >= 1000) {
+        growing = await streams.growing(sessionId, caller.projectId);
+        read = Date.now();
       }
       const events = seq < 0 ? [] : await streams.after(sessionId, seq, SNAPSHOT + 1);
       if (seq < 0 || events.length > SNAPSHOT) {

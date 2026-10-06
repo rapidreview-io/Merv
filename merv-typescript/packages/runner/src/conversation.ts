@@ -20,7 +20,7 @@ import { join, relative, sep } from 'node:path';
 import { MAX_TRANSCRIPT_BYTES, MervError } from '@merv/contracts';
 import type { SessionConversationDeclaration } from '@merv/sessions/types';
 import { assignmentCodexHome, conversationIdPattern, type RunnerProfile } from './profiles.js';
-import { bearer } from './transcript.js';
+import { blankPattern } from './transcript.js';
 import { assignmentUser } from './workspaces.js';
 
 /** What Sessions is told of a kept conversation. */
@@ -118,21 +118,18 @@ function locate(harness: 'claude' | 'codex', root: string, id: string): string |
 }
 
 /**
- * The conversation as kept: each JSON line parsed, every string in it blanked of bearers and of
- * each exact secret (≥ 16 characters), as a transcript is, and written back as JSON, so a
- * redaction never breaks a record. A line with nothing to blank keeps its own bytes; a line that
- * is not JSON is dropped.
+ * The conversation as kept: each JSON line that holds a bearer or an exact secret (≥ 16
+ * characters) parsed, every string in it blanked of them, as a transcript is, and written back as
+ * JSON, so a redaction never breaks a record; such a line that is not JSON is dropped. Every other
+ * line keeps its own bytes.
  */
 export function redactConversation(bytes: Buffer, secrets: string[]): Buffer {
-  const blank = new RegExp(
-    [
-      bearer.source,
-      ...secrets
-        .filter((secret) => secret.length >= 16)
-        .map((secret) => secret.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-    ].join('|'),
-    'g',
-  );
+  const blank = blankPattern(secrets);
+  // A secret that JSON escapes (a quote, a backslash) is written escaped in the line.
+  const held = blankPattern([
+    ...secrets,
+    ...secrets.map((secret) => JSON.stringify(secret).slice(1, -1)),
+  ]);
   const scrub = (value: unknown): unknown =>
     typeof value === 'string'
       ? value.replace(blank, '[REDACTED]')
@@ -143,11 +140,11 @@ export function redactConversation(bytes: Buffer, secrets: string[]): Buffer {
           : value;
   const lines: string[] = [];
   for (const line of bytes.toString('utf8').split('\n'))
-    if (line.trim())
+    if (line.search(held) < 0) {
+      if (line.trim()) lines.push(line);
+    } else
       try {
-        const record: unknown = JSON.parse(line);
-        const kept = JSON.stringify(scrub(record));
-        lines.push(kept === JSON.stringify(record) ? line : kept);
+        lines.push(JSON.stringify(scrub(JSON.parse(line))));
       } catch {
         // Not a record.
       }
