@@ -1066,7 +1066,7 @@ test('a final capture clears an index lock the stopped session left, and repeate
   }
 });
 
-test('the bound on failing captures restarts after the machine stopped trying, and a failed import never counts', async (t) => {
+test('the bound on failing captures restarts after the machine stopped trying, and a failed import counts too', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_1');
   const m = machine(t, f, undefined, true);
@@ -1084,8 +1084,9 @@ test('the bound on failing captures restarts after the machine stopped trying, a
     db
       .prepare('UPDATE code_v2_capture_attempts SET since=since-?,last=last-?')
       .run(since * 60_000, last * 60_000);
-  // Moving this checkout's commit into the machine's cache fails: that is the machine, not the
-  // checkout, and however long it lasts the session's work is never given up for it.
+  // Moving this checkout's commit into the machine's cache fails. It is retried, but under the
+  // same bound as any other failing capture: a machine that can never import is not waited
+  // on forever.
   const imported = t.mock.method(
     driver as unknown as { importAssignmentCommit(): Promise<void> },
     'importAssignmentCommit',
@@ -1096,7 +1097,7 @@ test('the bound on failing captures restarts after the machine stopped trying, a
   await assert.rejects(driver.capture(launch), failed('workspace_transfer_lost'));
   assert.equal(
     (db.prepare('SELECT COUNT(*) AS n FROM code_v2_capture_attempts').get() as { n: number }).n,
-    0,
+    1,
   );
   imported.mock.restore();
   // The checkout itself cannot be captured, and was failing ten minutes ago; but the machine
@@ -1104,6 +1105,7 @@ test('the bound on failing captures restarts after the machine stopped trying, a
   const gitDir = join(path, '.git');
   chmodSync(gitDir, 0o500);
   try {
+    age(10, 5);
     await assert.rejects(driver.capture(launch), failed('workspace_git_failed'));
     age(10, 5);
     await assert.rejects(driver.capture(launch), failed('workspace_git_failed'));
@@ -1113,6 +1115,45 @@ test('the bound on failing captures restarts after the machine stopped trying, a
   } finally {
     chmodSync(gitDir, 0o700);
   }
+});
+
+test('slow failing captures, each longer than the pause that restarts the bound, still end in a handover', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  const m = machine(t, f, undefined, true);
+  const driver = m.start();
+  const launch = m.launch('ses_1');
+  const { path } = await driver.prepare(launch, m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'a.txt'), 'one\n');
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  m.terminal.add(launch.id);
+  const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
+  t.after(() => db.close());
+  // Each attempt takes three minutes to fail (Git's own timeout is two), and the next starts
+  // at once. The machine never stopped trying, so the bound must not restart.
+  let skew = 0;
+  const now = Date.now.bind(Date);
+  t.mock.method(Date, 'now', () => now() + skew);
+  t.mock.method(driver as unknown as { checkFiles(): Promise<void> }, 'checkFiles', async () => {
+    skew = 3 * 60_000;
+    throw new WorkspaceError('workspace_git_failed');
+  });
+  const attempt = async () => {
+    try {
+      return await driver.capture(launch);
+    } finally {
+      // The three minutes have passed: the recorded failure is as old as it would be.
+      skew = 0;
+      db.prepare('UPDATE code_v2_capture_attempts SET since=since-?,last=last-?').run(
+        3 * 60_000,
+        3 * 60_000,
+      );
+    }
+  };
+  for (let n = 1; n <= 4; n++) await assert.rejects(attempt(), failed('workspace_git_failed'));
+  assert.equal((await attempt())?.headOid, f.root);
 });
 
 test('an export Code no longer holds defers the launch rather than failing it', async (t) => {

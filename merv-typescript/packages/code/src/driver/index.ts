@@ -167,7 +167,10 @@ const terminal = [
 const uncapturable = ['workspace_file_too_large', 'workspace_foreign_path'];
 /** How long a final capture may keep failing locally before the generation is handed over. */
 const CAPTURE_FAILING_MS = 10 * 60_000;
-/** A pause this long between two failed captures means nothing was trying: the bound restarts. */
+/**
+ * A pause this long between a failed capture and the next attempt's start means nothing was
+ * trying: the bound restarts. How long an attempt itself takes to fail never counts as a pause.
+ */
 const CAPTURE_GAP_MS = 2 * 60_000;
 /** The lock files under a directory, descending only into real directories, never links. */
 function lockFiles(directory: string): string[] {
@@ -1467,8 +1470,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       row = this.row(row.launch_id)!;
       let target: string,
         tree: string,
-        refused: string | null = null,
-        importing = false;
+        refused: string | null = null;
+      const started = Date.now();
       try {
         // The session's processes are confirmed stopped: the locks their Git left are stale. A
         // hosted checkout's own .git is the assignment's, refs and all: never follow a link out
@@ -1513,21 +1516,19 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
           await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
         );
         tree = oid(await this.git.ok(['rev-parse', '--verify', 'HEAD^{tree}'], { cwd: row.path }));
-        importing = true;
         await this.importAssignmentCommit(row, target);
       } catch (error) {
-        // Moving a built commit into this machine's cache is the machine's trouble, never the
-        // checkout's, so it is retried without counting against the checkout.
-        if (importing) throw error;
+        // Moving a built commit into this machine's cache fails under the same bound: a machine
+        // that can never import hands over as surely as a checkout that can never be captured.
         const code = (error as { code?: unknown }).code;
         const lasting = typeof code === 'string' && uncapturable.includes(code);
         if (!lasting) {
           const at = Date.now();
           const { since } = this.db
             .prepare(
-              'INSERT INTO code_v2_capture_attempts (launch_id,since,last) VALUES (?,?,?) ON CONFLICT(launch_id) DO UPDATE SET since=CASE WHEN excluded.last-last>? THEN excluded.since ELSE since END,last=excluded.last RETURNING since',
+              'INSERT INTO code_v2_capture_attempts (launch_id,since,last) VALUES (?,?,?) ON CONFLICT(launch_id) DO UPDATE SET since=CASE WHEN ?-last>? THEN excluded.since ELSE since END,last=excluded.last RETURNING since',
             )
-            .get(row.launch_id, at, at, CAPTURE_GAP_MS) as { since: number };
+            .get(row.launch_id, at, at, started, CAPTURE_GAP_MS) as { since: number };
           if (at - since < CAPTURE_FAILING_MS) throw error;
         }
         // The checkout holds something no capture may carry, and no later attempt finds it
