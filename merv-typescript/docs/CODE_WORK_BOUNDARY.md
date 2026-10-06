@@ -45,7 +45,6 @@ both atomically and keeps one replayable request receipt with its original input
 
 ## Upgrade behavior
 
-Published legacy migration text and migration identities are retained in Code Work.
 The Code storage migration created the technical tables alongside existing research records
 and, on an older installation, held its repositories until the research adapter had copied
 writer ownership, starting commits, retained results and review rounds into them. Every
@@ -54,10 +53,11 @@ removed. The migration text, which still places that hold where `code_units` exi
 Code's storage, is published and unchanged; Code initializes its storage before Code Work
 creates `code_units`, so a fresh installation never reaches it.
 
-Old binaries that still treat writer columns in `code_units` as current are not a safe
-rollback target. A production rollout needs a recovery snapshot and a tested forward recovery
-or full snapshot restoration procedure. The source change alone does not authorize or confirm
-a production rollout.
+The pre-boundary `code_units` component (v1–v4) is retired: nothing registers it any more,
+and its `component_migrations` rows stay so that an older image can still start. Code Work's
+`code_research_records@2` drops the writer columns and the generation guard that installation
+left on `code_units`, so an existing database ends with the same unit table as a fresh one. A
+binary that still reads those columns from `code_units` is not a rollback target.
 
 ## Enforcement
 

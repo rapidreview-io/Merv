@@ -1,5 +1,4 @@
 import type { State } from '@merv/contracts';
-import { postgresMigrations } from './legacy-units.postgres.js';
 import { migrateBases } from './base-schema.js';
 import { migratePublications } from './publications-schema.js';
 
@@ -114,17 +113,35 @@ CREATE TRIGGER code_units_publish BEFORE UPDATE ON code_units FOR EACH ROW EXECU
 END IF;
 END $research_records$;`;
 
+/**
+ * Databases from before the boundary still carry the retired `code_units` component's writer
+ * columns and generation guard, which Code's own workspaces replaced. Drop them; a fresh
+ * database never had them, so this changes nothing there.
+ */
+const retireLegacyWriters = `DO $legacy_writers$
+BEGIN
+IF to_regclass('code_units') IS NOT NULL THEN
+  DROP TRIGGER IF EXISTS code_units_generation ON code_units;
+  DROP FUNCTION IF EXISTS code_units_generation_guard();
+  ALTER TABLE code_units
+    DROP COLUMN IF EXISTS generation,
+    DROP COLUMN IF EXISTS writer_state,
+    DROP COLUMN IF EXISTS writer_session_id,
+    DROP COLUMN IF EXISTS writer_lease_id,
+    DROP COLUMN IF EXISTS writer_changed_at,
+    DROP COLUMN IF EXISTS head_oid,
+    DROP COLUMN IF EXISTS head_operation_id,
+    DROP COLUMN IF EXISTS mirrored_oid,
+    DROP COLUMN IF EXISTS mirrored_at,
+    DROP COLUMN IF EXISTS quarantine_operation_id;
+END IF;
+END $legacy_writers$;`;
+
 export async function initializeWorkRecords(state: State): Promise<void> {
-  const legacy = await state.read((sql) =>
-    sql.get("SELECT 1 FROM component_migrations WHERE component='code_units' LIMIT 1"),
-  );
-  if (legacy) await initializeLegacyCodeRecords(state);
-  await state.migrate('code_research_records', [{ version: 1, sql: schema }]);
+  await state.migrate('code_research_records', [
+    { version: 1, sql: schema },
+    { version: 2, sql: retireLegacyWriters },
+  ]);
   await migrateBases(state);
   await migratePublications(state);
-}
-
-/** Preserve the exact published migration path for existing installations and release census. */
-export async function initializeLegacyCodeRecords(state: State): Promise<void> {
-  await state.migrate('code_units', postgresMigrations);
 }

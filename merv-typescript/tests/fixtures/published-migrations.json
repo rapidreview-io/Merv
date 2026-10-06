@@ -170,25 +170,29 @@
       "component": "code_units",
       "version": 1,
       "hash": "9340fc8e25656f51e25e4c0762a9b256548e61b610d3bde8d4faeec43e489362",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "code_units",
       "version": 2,
       "hash": "abd4261c2fc22dacc56ca4c3fb89506f2aee0ce3e1f22483fe649464922ebf52",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "code_units",
       "version": 3,
       "hash": "2969d8eca28e3dd161859c8871e9ca00b8fdce249e02aa1347ec494954881b94",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "code_units",
       "version": 4,
       "hash": "49fc880e9b7ae9f95b6b4f455e14784424c2c5cceea9a906cadbcf0c0ff71707",
-      "published": true
+      "published": true,
+      "retired": true
     },
     {
       "component": "consolidation",
@@ -892,6 +896,12 @@
       "component": "code_research_records",
       "version": 1,
       "hash": "1afb0d4594929e00f61ac220ba98f78cae6da9125806b2454444f1a4de1bb2c7",
+      "published": true
+    },
+    {
+      "component": "code_research_records",
+      "version": 2,
+      "hash": "17b3a32d387739ceba2bd01ace18cc644f7b8d7142584deec7b19e7f42f6f76b",
       "published": false
     },
     {
