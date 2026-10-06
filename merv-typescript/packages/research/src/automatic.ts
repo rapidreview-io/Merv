@@ -7,12 +7,11 @@ import {
   type DelegationSource,
   type DomainEvents,
   type Scope,
-  type State,
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
-import type { ResearchAutomation } from './models.js';
 
+/** A row of research_automation. Its blocker_json column is no longer written. */
 export interface AutomaticRow {
   research_id: string;
   project_id: string;
@@ -20,14 +19,31 @@ export interface AutomaticRow {
   root_id: string;
   cycle_index: number;
   max_cycles: number;
-  blocker_json: string | null;
 }
-export const automaticStatus = (row: AutomaticRow): ResearchAutomation => ({
-  rootId: row.root_id,
-  cycle: row.cycle_index,
-  maxCycles: row.max_cycles,
-  blocker: row.blocker_json ? JSON.parse(row.blocker_json) : null,
-});
+/** Why automatic progress waits, as Research publishes it to Workflows; null when it does not. */
+export type AutomaticBlocker = { code: string; message: string; status: number } | null;
+/** The provider Research's automation blockers are published as. */
+export const AUTOMATIC_PROVIDER = 'research';
+const NEXT =
+  'Automatic research tries again when this project next changes; research.advance moves the cycle by hand, and research.end stops it.';
+
+/** Research's whole opinion of a cycle, written over whatever it said before. */
+export async function publishBlocker(
+  workflows: Pick<Workflows, 'replaceBlockers'>,
+  row: Pick<AutomaticRow, 'project_id' | 'research_id'>,
+  blocker: AutomaticBlocker,
+  tx: Transaction,
+): Promise<void> {
+  await workflows.replaceBlockers(
+    {
+      projectId: row.project_id,
+      instanceId: row.research_id,
+      provider: AUTOMATIC_PROVIDER,
+      blockers: blocker ? [{ key: 'automatic', ...blocker, next: NEXT, related: [] }] : [],
+    },
+    tx,
+  );
+}
 
 const CONSUMER = 'research.automatic.v3';
 /** Retries of one event while the database answers 503: about 25 seconds of backoff in all. */
@@ -36,15 +52,12 @@ const TRANSIENT = ['state_timeout', 'state_busy', 'state_unavailable'];
 
 /** Existing durable events drive Research. This neither schedules nor launches workers. */
 export async function automaticResearch(
-  state: State,
   scope: Scope,
-  workflows: Pick<Workflows, 'open'>,
+  workflows: Pick<Workflows, 'open' | 'replaceBlockers'>,
   events: DomainEvents,
-  reconcile: (
-    caller: Caller,
-    row: AutomaticRow,
-    tx: Transaction,
-  ) => Promise<ResearchAutomation['blocker']>,
+  reconcile: (caller: Caller, row: AutomaticRow, tx: Transaction) => Promise<AutomaticBlocker>,
+  /** Asked to try a cycle that an outage refused again later; it reads what was committed. */
+  unavailable: (row: AutomaticRow) => void,
 ): Promise<() => void | Promise<void>> {
   return await events.subscribe({
     id: CONSUMER,
@@ -75,7 +88,7 @@ export async function automaticResearch(
         JSON.stringify(cycles.map((cycle) => cycle.id)),
       );
       for (const row of rows) {
-        let blocker: ResearchAutomation['blocker'];
+        let blocker: AutomaticBlocker;
         // Isolate an expected refusal to this cycle, including any child mutations already made.
         // The effects and the event cursor still share the outer transaction. Unexpected errors
         // retry the event; a permanent domain blocker must not strand every other cycle.
@@ -92,60 +105,27 @@ export async function automaticResearch(
             throw error;
           // A database that is briefly unavailable is retried with the event, a bounded number
           // of times the consumer's own durable attempt count keeps, before it shows as a blocker.
-          // Any other refusal, such as an unbound provider whose bind wakes the cycle again, shows
-          // at once: the consumer is shared by every project and must not wait on it.
+          // Any other refusal shows at once: the consumer is shared by every project and must
+          // not wait on it. An unbound provider's bind wakes the cycle again, and any other
+          // outage is tried again later, as nothing else may happen in this project.
           if (TRANSIENT.includes(error.code)) {
             const consumer = (await events.status()).find((item) => item.id === CONSUMER);
             if ((consumer?.attempts ?? UNAVAILABLE_RETRIES) < UNAVAILABLE_RETRIES) throw error;
           }
           blocker = automaticBlocker(error);
+          if (error.status === 503) unavailable(row);
         }
-        await recordBlocker(state, tx, row, blocker, { causeEventId: event.id });
+        await publishBlocker(workflows, row, blocker, tx);
       }
     },
   });
 }
 
-export const automaticBlocker = (error: MervError): ResearchAutomation['blocker'] => ({
+export const automaticBlocker = (error: MervError): AutomaticBlocker => ({
   code: error.code,
   message: clip(error.message, 2000),
+  status: error.status,
 });
-
-/**
- * Replaces the blocker a cycle shows. The consumer writes over whatever it found, as the
- * advance it made may already have cleared one; a deferred advance writes only over the marker
- * it was left, so a reconcile since is never overwritten. The change is an event, so a reader
- * learns of it the way it learns of every other.
- */
-export async function recordBlocker(
-  state: State,
-  tx: Transaction,
-  row: Pick<AutomaticRow, 'research_id' | 'project_id' | 'source_json' | 'blocker_json'>,
-  blocker: ResearchAutomation['blocker'],
-  options: { causeEventId?: number; onlyOver?: string } = {},
-): Promise<void> {
-  const encoded = blocker ? JSON.stringify(blocker) : null;
-  if (encoded === row.blocker_json) return;
-  const { onlyOver } = options;
-  const written = await tx.run(
-    `UPDATE research_automation SET blocker_json=? WHERE research_id=?${onlyOver === undefined ? '' : ' AND blocker_json=?'}`,
-    encoded,
-    row.research_id,
-    ...(onlyOver === undefined ? [] : [onlyOver]),
-  );
-  if (!written.changes) return;
-  await state.appendEvent(tx, {
-    projectId: row.project_id,
-    actorId: JSON.parse(row.source_json).actorId,
-    type: 'research.automatic_status',
-    subjectId: row.research_id,
-    data: {
-      performedBy: 'system:research',
-      ...(options.causeEventId ? { causeEventId: options.causeEventId } : {}),
-      blocker,
-    },
-  });
-}
 
 export const automaticRequest = (cycle: string, revision: number, action: string) =>
   `research-auto:${digest({ cycle, revision, action })}`;
