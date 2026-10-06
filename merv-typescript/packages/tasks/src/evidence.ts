@@ -34,6 +34,9 @@ export function renderBrief(
   ].join('\n');
 }
 
+/** The evidence one confirmation may cite, so a confirmation sheet stays readable. */
+const CONFIRMATION_EVIDENCE = 50;
+
 /** Validates producer declarations, never the truth of a completion claim. */
 export function validateConfirmations(
   value: unknown,
@@ -78,10 +81,11 @@ export function validateConfirmations(
     );
     check(
       Array.isArray(item.evidenceIds) &&
+        item.evidenceIds.length <= CONFIRMATION_EVIDENCE &&
         new Set(item.evidenceIds).size === item.evidenceIds.length &&
         item.evidenceIds.every((id: unknown) => typeof id === 'string' && artifactIds.includes(id)),
       'invalid_confirmations',
-      `Check ${item.checkNumber} must refer only to distinct submitted artifact IDs`,
+      `Check ${item.checkNumber} must refer only to distinct submitted artifact IDs, at most ${CONFIRMATION_EVIDENCE}`,
     );
   }
   check(

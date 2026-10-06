@@ -56,6 +56,7 @@ import {
   buildMetricsExhibit,
   decodeEvidence,
   exhibitBytes,
+  RESULT_FILES,
   markdownImageTargets,
   feasibilityShortfalls,
   parseFeasibility,
@@ -678,7 +679,16 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           403,
         );
         const text = await this.text(caller, artifact.id, tx);
-        if (input.role === 'result') parseResult(text, input.resultFormat ?? 'json');
+        if (input.role === 'result') {
+          parseResult(text, input.resultFormat ?? 'json');
+          // The exhibit pins every current result, so one past its limit could never be submitted.
+          check(
+            currentEvidence(experiment, ['result']).filter((e) => e.path !== input.path).length <
+              RESULT_FILES,
+            'invalid_experiment_evidence',
+            `An attempt keeps at most ${RESULT_FILES} result files; attach this one at the path of one it replaces`,
+          );
+        }
         if (input.role === 'feasibility') parseFeasibility(text);
         const figureIds = ['plan', 'report'].includes(input.role)
           ? await this.figures(caller, text, experiment, tx)
@@ -973,6 +983,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       );
       check(
         (await this.authoredInExecution(caller, metadata, tx)) ||
+          experiment.captureArtifactIds?.includes(item.artifactId) ||
           inherited.some(
             (pin) =>
               pin.experimentId === item.experimentId &&
@@ -994,10 +1005,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
   private async finalCaptureRef(
     caller: Caller,
     experiment: Experiment,
-    stage: 'design' | 'results',
     tx: Transaction,
-  ): Promise<CodeCaptureRef | undefined> {
-    if (stage !== 'results') return undefined;
+  ): Promise<CodeCaptureRef> {
     check(
       caller.session,
       'session_required',
@@ -1030,12 +1039,10 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     caller: Caller,
     experiment: Experiment,
     input: ExperimentTransition,
-    { evidence, figureIds, exhibit, codeCaptureRef: checkedRef }: Submission,
+    { evidence, figureIds, exhibit, codeCaptureRef }: Submission,
     tx: Transaction,
   ): Promise<Experiment> {
     const stage = input.transition === 'submit_design' ? 'design' : 'results';
-    const codeCaptureRef =
-      checkedRef ?? (await this.finalCaptureRef(caller, experiment, stage, tx));
     if (exhibit?.willPin) {
       const artifact = await this.artifacts.create(
         caller,
@@ -1373,8 +1380,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           'At least one result is required',
           409,
         );
-        if (caller.session)
-          codeCaptureRef = await this.finalCaptureRef(caller, experiment, 'results', tx);
+        // Only the worker that ran the attempt submits it, so guidance never offers it a person.
+        codeCaptureRef = await this.finalCaptureRef(caller, experiment, tx);
       }
       return {
         ...(await this.prepareSubmission(caller, experiment, selection, tx)),

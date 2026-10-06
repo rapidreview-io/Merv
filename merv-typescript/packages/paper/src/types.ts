@@ -4,6 +4,7 @@ import type {
   PaperWorkspace,
   PaperKind,
   PaperRevision,
+  PaperRevisionSummary,
   PaperPatch,
   PaperChanges,
   PaperCite,
@@ -38,7 +39,8 @@ export interface Paper {
   read(caller: Caller, tx?: Transaction): Promise<PaperWorkspace>;
   /** Only `read`'s documents, in one query: what a context reads of the paper. */
   documents(caller: Caller, tx?: Transaction): Promise<PaperWorkspace['documents']>;
-  history(caller: Caller, kind: PaperKind, tx?: Transaction): Promise<PaperRevision[]>;
+  /** Every retained revision of a document, without its section bodies; `revision` has them. */
+  history(caller: Caller, kind: PaperKind, tx?: Transaction): Promise<PaperRevisionSummary[]>;
   /** One retained revision of a document, or null where it has none of that number. */
   revision(
     caller: Caller,

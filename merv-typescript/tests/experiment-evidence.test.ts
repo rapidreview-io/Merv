@@ -340,6 +340,18 @@ test('metrics exhibit preserves source data/provenance and canonicalizes without
   assert.deepEqual(exhibit.resultFiles[0].data, { z: [2, 1], a: false });
 });
 
+test('an exhibit prints arrays of scalars on one line, so many score lists still fit', () => {
+  const scores = parseResult(
+    JSON.stringify({ runs: [{ per_example: Array.from({ length: 7900 }, (_, i) => i % 10) }] }),
+    'json',
+  );
+  const sources = Array.from({ length: 30 }, (_, index) => source(`r${index}.json`, scores));
+  const bytes = exhibitBytes(buildMetricsExhibit({ ...metrics, sources }));
+  assert.ok(bytes.byteLength < 600_000);
+  assert.ok(bytes.toString().includes('"per_example": [0,1,2,3,'));
+  assert.deepEqual(JSON.parse(bytes.toString()).resultFiles[0].data, scores);
+});
+
 test('metrics refuse qualitative data and more than 100 result files', () => {
   invalidEvidence(() =>
     buildMetricsExhibit({ ...metrics, sources: [source('a.json', { value: 1 }, 'qualitative')] }),

@@ -99,6 +99,8 @@ export interface Tasks {
   checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint>;
   create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task>;
   get(caller: Caller, taskId: string): Promise<Task>;
+  /** One saved checkpoint of the task, as a context names it. */
+  savedCheckpoint(caller: Caller, taskId: string, checkpointId: string): Promise<TaskCheckpoint>;
   list(caller: Caller): Promise<TaskRecord[]>;
   /** How many tasks are still open, for the navigation badge, without reading each one. */
   active(caller: Caller): Promise<number>;

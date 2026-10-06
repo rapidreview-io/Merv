@@ -1529,3 +1529,88 @@ test('every experiment lease admits verified captures and leaves compute to Sand
   assert.ok((next.session.execution.references.artifacts as string[]).includes(capture.id));
   await f.release(next.session.id);
 });
+
+test('a context embeds only the newest interruptions, each clipped, and counts the earlier ones', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.running();
+  for (let index = 0; index < 11; index++)
+    experiment = await f.experiments.transition(f.source, {
+      experimentId: experiment.id,
+      expectedRevision: experiment.workflow.revision,
+      transition: 'retry_running',
+      requestId: `interruption-${index}`,
+      evidence: { reason: `Interruption ${index}`, detail: 'd'.repeat(16000) },
+    });
+  assert.equal(experiment.attempt.feedback.length, 11);
+  const prompt = (await f.workflows.assignment(f.source, experiment.id)).context!.prompt;
+  const feedback = JSON.parse(
+    prompt.slice(prompt.indexOf('{"interruptions":')).split('\n')[0]!,
+  ) as { interruptions: string[]; earlierInterruptions: number };
+  assert.equal(feedback.earlierInterruptions, 6);
+  assert.deepEqual(
+    feedback.interruptions.map((note) => note.slice(0, 38)),
+    [6, 7, 8, 9, 10].map((index) => `Infrastructure recovery: Interruption ${index}`.slice(0, 38)),
+  );
+  assert.ok(feedback.interruptions.every((note) => note.length <= 2000));
+  assert.ok(!prompt.includes('Interruption 5.'), 'older notes stay with experiment.get_state');
+});
+
+test('a results review whose final capture never landed takes the last admitted commit once its writer is fenced', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const lease = await f.work.lease(experiment);
+  await f.work.commit(lease, { 'result.txt': 'retained\n' });
+  for (const [role, content] of [
+    ['result', 'The retained observations show no difference.'],
+    ['report', report],
+  ] as const) {
+    const artifact = await f.work.run(
+      lease,
+      'artifact.create',
+      { title: role, content, mediaType: 'text/markdown' },
+      (caller, input) => f.artifacts.create(caller, input as never),
+    );
+    await f.work.run(
+      lease,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path: `${role}.md`,
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+        ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+      },
+      (caller, input) => f.experiments.attach(caller, input as never),
+    );
+  }
+  const pending = await f.work.run(
+    lease,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  // The machine dies after the submission: it never hands over its final capture.
+  t.mock.method(lease.driver, 'capture', async () => null);
+  t.mock.method(lease.driver, 'close', async () => {});
+  await f.work.release(lease);
+  await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
+    code: 'experiment_capture_pending',
+  });
+  const principal = await f.scope.acceptVerifiedIdentity({
+    issuer: 'https://issuer.example.test',
+    subject: 'operator',
+    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+  });
+  await f.scope.adoptProject(principal, f.source.projectId);
+  const human = await f.scope.caller(principal, f.source.projectId);
+  await f.code.fenceUnit(human, { unitId: pending.id, requestId: f.request() });
+  const unit = await f.code.unit(f.source, pending.id);
+  assert.equal(unit.writerState, 'closed');
+  assert.ok(unit.canonicalHead);
+  const offered = await f.offer(pending, await f.issue('operator'));
+  assert.equal(offered.session.execution.references.code, unit.canonicalHead);
+  assert.ok(
+    offered.session.assignment.context!.prompt.includes(`"retainedCommit":"${unit.canonicalHead}"`),
+  );
+});

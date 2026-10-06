@@ -97,13 +97,14 @@ function need(task: TaskStanding): RunningAttention | undefined {
       says: [short(failed.name), ' failed'],
       who: 'The producer ends this task, or its cycle replans it',
     };
-  // A producer can never review its own work, so the hand review is an independent one. Once
-  // a reviewer has claimed it by hand the move is made, and the card says who has it.
+  // A producer can never review its own work, so the hand review is an independent one, and it
+  // can only fail the task. Once a reviewer has claimed it by hand the move is made, and the card
+  // says who has it.
   const byHand = task.review?.status === 'started' && task.lease === null;
   if (task.roundsUsed && !byHand)
     return {
       says: ['Every review round is used'],
-      who: 'An independent reviewer reviews it by hand, or an operator allows another round',
+      who: 'An operator allows another round, or an independent reviewer fails it by hand',
       ...(review ? { to: review } : {}),
     };
   if (task.state === 'suspended')

@@ -1,4 +1,4 @@
-import type { TaskCreate } from '@merv/tasks/types';
+import type { TaskCheckpoint, TaskCreate } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import { waitForManagedCode } from './fixtures/managed-code.js';
 import { test } from 'node:test';
@@ -345,26 +345,40 @@ test('a brief at its size limit and a returned review at its limits still leave 
     const first = await f.begin(f.producer.caller, task.id);
     assert.equal(first.context!.prompt.split(checks[19]).length, 2, 'each check is embedded once');
     const held = await f.work.lease(await f.app.ctx.tasks.get(f.producer.caller, task.id));
-    const proof = await f.app.ctx.artifacts.create(held.worker, { title: 'Proof', content: 'x' });
+    // Every check cites the most evidence a confirmation may, with the longest notes.
+    const proofs = [];
+    for (let i = 0; i < 50; i++)
+      proofs.push(await f.app.ctx.artifacts.create(held.worker, { title: `P${i}`, content: 'x' }));
     const commandId = await f.work.commit(held);
-    await f.work.run(
-      held,
-      'task.submit_delivery',
-      confirmedDelivery(
-        {
-          taskId: task.id,
-          expectedRevision: 0,
-          artifactIds: [proof.id],
-          commandId,
-          requestId: 's',
-        },
-        checks.length,
-      ),
-      (caller, input) => f.app.ctx.tasks.submitDelivery(caller, input as never),
+    const delivery = confirmedDelivery(
+      {
+        taskId: task.id,
+        expectedRevision: 0,
+        artifactIds: proofs.map((proof) => proof.id),
+        commandId,
+        requestId: 's',
+      },
+      checks.length,
+    );
+    delivery.confirmations = delivery.confirmations.map((c) => ({ ...c, notes: 'c'.repeat(2000) }));
+    await f.work.run(held, 'task.submit_delivery', delivery, (caller, input) =>
+      f.app.ctx.tasks.submitDelivery(caller, input as never),
     );
     await f.work.release(held);
     const claim = await f.claim(await f.app.ctx.tasks.get(f.producer.caller, task.id));
-    const reviewed = reviewedFindings(claim) as { findings: { notes: string }[] };
+    // The confirmations are the pinned sheet's, which the review lists as evidence.
+    const review = await f.app.ctx.tasks.context(f.reviewer.caller, {
+      taskId: task.id,
+      purpose: 'review',
+      expectedRevision: 1,
+      claimId: claim.claimId!,
+      requestId: 'review-context',
+    });
+    assert.ok(!review.prompt.includes('"deliveryConfirmations"'));
+    assert.ok(!review.prompt.includes('"deliveryIds"'));
+    const reviewed = reviewedFindings(claim) as {
+      findings: { notes: string; evidenceIds: string[] }[];
+    };
     await f.work.run(
       f.reviewLease!,
       'review.submit',
@@ -378,6 +392,8 @@ test('a brief at its size limit and a returned review at its limits still leave 
         findings: reviewed.findings.map((finding) => ({
           ...finding,
           status: 'not_met',
+          // The verdict stays within the workflow data limit beside its longest notes.
+          evidenceIds: finding.evidenceIds.slice(0, 1),
           notes: 'f'.repeat(8000),
         })),
         evidence: { log: 'l'.repeat(60000) },
@@ -389,10 +405,53 @@ test('a brief at its size limit and a returned review at its limits still leave 
     const rework = await f.begin(f.producer.caller, task.id, 2);
     const prompt = rework.context!.prompt;
     assert.equal(prompt.split('Start of the notes.').length, 2, 'the notes are embedded once');
+    assert.ok(!prompt.includes('"deliveryConfirmations"'));
     assert.match(prompt, new RegExp(`read review\\.get ${claim.id} for the whole assessment`));
     assert.equal(
       (await f.app.ctx.reviews.get(f.producer.caller, claim.id)).findings[0].notes.length,
       8000,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('each saved checkpoint is its own context item, newest embedded first, and reads back by its ID', async () => {
+  const f = await fixture(true);
+  try {
+    const task = await f.create({});
+    await f.begin(f.producer.caller, task.id);
+    const saved: TaskCheckpoint[] = [];
+    for (let i = 0; i < 7; i++)
+      saved.push(
+        await f.app.ctx.tasks.checkpoint(f.producer.caller, {
+          taskId: task.id,
+          purpose: 'work',
+          expectedRevision: 0,
+          notes: `MARK${i} ${'p'.repeat(15900)}`,
+          requestId: `checkpoint-${i}`,
+        }),
+      );
+    const context = await f.app.ctx.tasks.context(f.producer.caller, {
+      taskId: task.id,
+      purpose: 'work',
+      expectedRevision: 0,
+      requestId: 'checkpoint-context',
+    });
+    assert.ok(context.prompt.includes('MARK6 '), 'the newest checkpoint is embedded');
+    assert.ok(!context.prompt.includes('MARK0 '), 'the oldest gives way first');
+    assert.ok(context.omitted.includes(`checkpoints:${saved[0]!.id}`));
+    const line = context.prompt.split('\n').find((l) => l.includes(`checkpoints:${saved[0]!.id}`))!;
+    const ref = JSON.parse(line.slice(line.indexOf('task.get ') + 'task.get '.length));
+    assert.deepEqual(ref, { taskId: task.id, checkpointId: saved[0]!.id });
+    assert.deepEqual(await f.app.ctx.tools.call('task.get', f.producer.caller, ref), saved[0]);
+    await assert.rejects(
+      async () =>
+        await f.app.ctx.tools.call('task.get', f.producer.caller, {
+          taskId: task.id,
+          checkpointId: 'checkpoint_missing',
+        }),
+      { code: 'not_found' },
     );
   } finally {
     await f.close();

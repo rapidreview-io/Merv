@@ -178,7 +178,16 @@ test('paper keeps ordered section history, structured scope and scoped citation 
     changes: [{ id: 'scaling', content: 'Updated evidence only.' }],
   });
   assert.equal(updated.sections[1].content, 'Existing reference systems.');
-  assert.equal((await f.paper.history(f.reader, 'literature')).length, 2);
+  // History lists the revisions without their bodies, which each revision's own read returns.
+  const listed = await f.paper.history(f.reader, 'literature');
+  assert.deepEqual(
+    listed.map(({ revision, sections }) => ({ revision, sections })),
+    [1, 2].map((revision) => ({
+      revision,
+      sections: updated.sections.map(({ id, title }) => ({ id, title })),
+    })),
+  );
+  assert.ok(!JSON.stringify(listed).includes('Updated evidence only.'));
   // One retained revision reads by its number alone; a number never written reads as none.
   assert.deepEqual(await f.paper.revision(f.reader, 'literature', 2), updated);
   assert.equal((await f.paper.revision(f.reader, 'literature', 1))?.revision, 1);
@@ -441,8 +450,7 @@ test('context sections list every written current and published section whole, i
   assert.equal(goals.text, 'Match the baseline.\n## Expected output\nNot a heading.');
   assert.equal(goals.title, 'problem current: Goals');
   assert.deepEqual(goals.refs, [
-    { tool: 'paper.read', input: { kind: 'problem', section: 'goals' } },
-    { tool: 'paper.read', input: { kind: 'problem', history: true } },
+    { tool: 'paper.read', input: { kind: 'problem', revision: 1, section: 'goals' } },
   ]);
   assert.match(goals.note, /^problem\/current revision 1; section goals; updated \d{4}-/);
   const published = sections[2]!;

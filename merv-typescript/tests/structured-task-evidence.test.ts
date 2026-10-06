@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { Caller } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
+import { validateConfirmations } from '@merv/tasks/evidence';
 
 type App = Awaited<ReturnType<typeof createApp>>;
 
@@ -187,6 +188,18 @@ test('new tasks render one immutable brief, expose numbered checks and replay wi
       2,
       'New tasks use structured delivery even with a supplied brief',
     );
+    // A producer's own brief need not number the checks, so the work context does.
+    const own = await f.app.ctx.tasks.context(f.producer.caller, {
+      taskId: compatible.id,
+      purpose: 'work',
+      expectedRevision: 0,
+      requestId: 'own-brief-context',
+    });
+    assert.ok(
+      own.prompt.includes(
+        '"acceptanceChecks":[{"number":1,"text":"Adds two numbers."},{"number":2',
+      ),
+    );
     const invalid = await f.app.ctx.artifacts.create(f.producer.caller, {
       title: 'Incomplete',
       content: 'Build an adder.',
@@ -333,4 +346,15 @@ test('generated assessment, review snapshot and transition roll back after a lat
   } finally {
     await f.close();
   }
+});
+
+test('a confirmation cites at most 50 evidence artifacts', () => {
+  const ids = Array.from({ length: 51 }, (_, index) => `art_${index}`);
+  const confirmations = (evidenceIds: string[]) => [
+    { checkNumber: 1, status: 'met', evidenceIds, notes: 'Checked each cited artifact.' },
+  ];
+  assert.equal(validateConfirmations(confirmations(ids.slice(1)), ['One.'], ids).length, 1);
+  assert.throws(() => validateConfirmations(confirmations(ids), ['One.'], ids), {
+    code: 'invalid_confirmations',
+  });
 });

@@ -30,7 +30,7 @@ export const paperToolsPlugin = {
       ctx.tools.register({
         name: 'paper.read',
         description:
-          'Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total. revision reads that retained revision instead of the current one, whole or by section, offset and length.',
+          'Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history lists its retained revisions without their section bodies, which revision reads; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total. revision reads that retained revision instead of the current one, whole or by section, offset and length.',
         inputSchema: readSchema,
         readOnly: true,
         handler: async (caller, input: z.infer<typeof readSchema>) => {

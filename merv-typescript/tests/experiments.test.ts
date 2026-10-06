@@ -1055,3 +1055,75 @@ test('native experiments fence compute by attempt and state and retain service c
   });
   assert.equal(experiment.workflow.data.computeEpoch, '2:abandoned');
 });
+
+test('a result submission may select a verified sandbox capture its worker attached', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  t.after(f.experiments.bindSandboxes(native.service));
+  let experiment = await f.create('Captured');
+  await f.attach(experiment, 'plan', plan);
+  experiment = await f.submitReview(await f.transition(experiment, 'submit_design'));
+  const service = await f.scope.serviceActor('sandboxes', f.producer.projectId);
+  const capture = await f.artifacts.createCollection(service, {
+    title: 'Retained output',
+    sourceKey: 'captured-result',
+    files: [
+      {
+        name: 'results.txt',
+        hash: 'c'.repeat(64),
+        size: 10,
+        provider: 'sandboxes',
+        reference: 'verified-object',
+      },
+    ],
+  });
+  native.verified.set(experiment.id, [capture.id]);
+  // The running worker attaches the capture its sandbox retained; nobody authored it.
+  await f.execute(experiment);
+  await f.experiments.attach(f.worker(experiment), {
+    experimentId: experiment.id,
+    attemptIndex: experiment.attempt.index,
+    expectedRevision: experiment.workflow.revision,
+    artifactId: capture.id,
+    role: 'result',
+    resultFormat: 'qualitative',
+    path: 'result.txt',
+    requestId: f.id(),
+  });
+  await f.attach(experiment, 'report', report);
+  experiment = await f.transition(experiment, 'submit_results');
+  assert.equal(experiment.workflow.state, 'experiment_review');
+  const review = await f.reviews.get(f.producer, experiment.reviewId!);
+  assert.ok(review.artifactIds.includes(capture.id));
+});
+
+test('an attempt refuses its 101st result file when it is attached', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  for (let index = 0; index < 100; index++)
+    await f.attach(experiment, 'result', `{"index":${index}}`, { path: `results/${index}.json` });
+  await assert.rejects(
+    f.attach(experiment, 'result', '{"index":100}', { path: 'results/100.json' }),
+    code('invalid_experiment_evidence'),
+  );
+  // A newer version at a path the attempt already holds replaces it.
+  await f.attach(experiment, 'result', '{"index":0,"rerun":true}', { path: 'results/0.json' });
+  const current = await f.experiments.get(f.producer, experiment.id);
+  assert.equal(current.evidence.filter((e) => e.current && e.role === 'result').length, 100);
+});
+
+test('guidance never offers a person the results submission only the attempt’s worker can make', async (t) => {
+  const f = await fixture(t);
+  let experiment = await f.create();
+  await f.attach(experiment, 'plan', plan);
+  experiment = await f.submitReview(await f.transition(experiment, 'submit_design'));
+  await f.attach(experiment, 'result', '{"accuracy":0.5}');
+  await f.attach(experiment, 'report', report);
+  const decision = await f.workflows.evaluate(f.producer, experiment.id, {
+    action: 'submit_results',
+    input: { expectedRevision: experiment.workflow.revision },
+  });
+  const action = decision.actions.find((item) => item.action === 'submit_results')!;
+  assert.equal(action.status, 'blocked');
+  assert.ok(action.blockers.some((blocker) => blocker.code === 'session_required'));
+});
