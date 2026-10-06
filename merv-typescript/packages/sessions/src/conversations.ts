@@ -86,22 +86,29 @@ export class SessionConversations {
     );
     return key;
   }
-  /** The delivered conversation of the key's latest closed session, and its agent. */
+  /**
+   * The conversation the key's latest session declared, and its agent. Its upload may still be
+   * on its way: a runner that cannot fetch it yet launches the same agent fresh.
+   */
   async latest(projectId: string, key: string, tx: Transaction) {
     const row = await tx.get<Row>(
-      'SELECT * FROM session_conversations WHERE project_id=? AND continuity_key=? AND uploaded_at IS NOT NULL',
+      'SELECT * FROM session_conversations WHERE project_id=? AND continuity_key=? AND sha256 IS NOT NULL',
       projectId,
       key,
     );
     return row && { agentId: row.agent_id, resume: resumeOf(row) };
   }
-  /** A session holding a key closed: it is now the key's latest, with what it declared. */
+  /**
+   * A session holding a key closed: it is now the key's latest, with what it declared. One of the
+   * row's own agent that declared nothing yet (a lapsed offer, a failed launch, a lost machine)
+   * leaves the row's conversation in place, stamped with its close so it may still declare.
+   */
   async closed(session: Session, tx: Transaction): Promise<void> {
     const row = await this.row(session, tx);
-    if (row?.session_id === session.id)
+    if (row && (row.session_id === session.id || row.agent_id === session.agentId))
       await tx.run(
         'UPDATE session_conversations SET updated_at=? WHERE project_id=? AND continuity_key=?',
-        isoNow(this.clock),
+        session.closedAt ?? isoNow(this.clock),
         row.project_id,
         row.continuity_key,
       );
@@ -166,8 +173,13 @@ export class SessionConversations {
       const found = await this.row(session, tx);
       if (found?.session_id === session.id && found.sha256 !== null) return found;
       // A closed session's row passed to a later one: what it kept is no longer the latest.
+      // The row's agent's session that closed last, with nothing declared, still may.
       check(
-        found?.session_id === session.id || live(session),
+        found?.session_id === session.id ||
+          live(session) ||
+          (found !== undefined &&
+            found.agent_id === session.agentId &&
+            session.closedAt! >= found.updated_at),
         'conversation_superseded',
         'A later session of this work holds its conversation',
         409,

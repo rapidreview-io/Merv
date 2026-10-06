@@ -12,6 +12,7 @@ import {
   readSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -28,18 +29,35 @@ export type ConversationFacts = Omit<SessionConversationDeclaration, 'hostRef' |
 export const conversationFile = (runDirectory: string) => join(runDirectory, 'conversation.jsonl');
 
 /**
- * Where a launch's harness keeps its conversations: the home profiles.ts gives it, which holds its
- * login too, so it is the machine's own and never a per-launch one. The runner takes each
- * conversation out of it when the launch ends, and puts one back only to resume it.
+ * Where a launch's harness keeps its conversations. Claude's is the machine's own home, which holds
+ * its login. A local Codex launch has one of its own in its run directory, its login linked in:
+ * Codex also keeps each thread in its databases, and resumes a thread only where it was recorded.
+ * The isolated assignment's is wiped before each launch. The runner takes each conversation out
+ * when the launch ends, and puts one back only to resume it.
  */
-function home(profile: RunnerProfile, environment: NodeJS.ProcessEnv) {
-  const user = environment.HOME ?? homedir();
-  if (profile.harness === 'claude') return environment.CLAUDE_CONFIG_DIR ?? join(user, '.claude');
+function home(profile: RunnerProfile, runDirectory: string, environment: NodeJS.ProcessEnv) {
+  if (profile.harness === 'claude')
+    return environment.CLAUDE_CONFIG_DIR ?? join(environment.HOME ?? homedir(), '.claude');
   if (profile.harness === 'codex')
-    return profile.isolatedLauncher
-      ? assignmentCodexHome
-      : (environment.CODEX_HOME ?? join(user, '.codex'));
+    return profile.isolatedLauncher ? assignmentCodexHome : join(runDirectory, 'codex-home');
   return undefined;
+}
+/** Before a local Codex launch: its own `CODEX_HOME`, holding a link to the machine's login. */
+export function launchCodexHome(
+  profile: RunnerProfile,
+  runDirectory: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (profile.harness !== 'codex' || profile.isolatedLauncher) return undefined;
+  const path = home(profile, runDirectory, environment)!;
+  mkdirSync(path, { recursive: true, mode: 0o700 });
+  const login = join(path, 'auth.json');
+  if (!lstatSync(login, { throwIfNoEntry: false }))
+    symlinkSync(
+      join(environment.CODEX_HOME ?? join(environment.HOME ?? homedir(), '.codex'), 'auth.json'),
+      login,
+    );
+  return path;
 }
 /** The isolated assignment owns its home; everywhere else the runner does. */
 const owner = (profile: RunnerProfile) =>
@@ -164,24 +182,12 @@ export function keepConversation(
   secrets: string[],
   environment: NodeJS.ProcessEnv = process.env,
 ): ConversationFacts | undefined {
-  const root = home(profile, environment);
+  const root = home(profile, runDirectory, environment);
   if (!root || profile.harness === 'command') return undefined;
-  let output: Buffer;
-  try {
-    output = readOwned(join(runDirectory, 'stdout.log'), undefined, 1 << 20, true);
-  } catch {
-    return undefined;
-  }
-  const id = conversationId(profile.harness, output.toString('utf8'));
+  const id = printed(profile.harness, runDirectory);
   const path = id && locate(profile.harness, root, id);
   if (!id || !path) return undefined;
-  let raw: Buffer;
-  try {
-    raw = readOwned(path, owner(profile)?.uid ?? process.getuid?.(), MAX_TRANSCRIPT_BYTES);
-  } finally {
-    // The isolated home is wiped before anything else runs there; the runner's own is shared.
-    if (!owner(profile)) rmSync(path, { force: true });
-  }
+  const raw = readOwned(path, owner(profile)?.uid ?? process.getuid?.(), MAX_TRANSCRIPT_BYTES);
   const bytes = redactConversation(raw, secrets);
   if (bytes.length === 0 || bytes.length > MAX_TRANSCRIPT_BYTES) return undefined;
   const fd = openSync(
@@ -202,20 +208,59 @@ export function keepConversation(
   };
 }
 
+const printed = (harness: 'claude' | 'codex', runDirectory: string) => {
+  try {
+    const output = readOwned(join(runDirectory, 'stdout.log'), undefined, 1 << 20, true);
+    return conversationId(harness, output.toString('utf8'));
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * After a launch ends, kept or not: nothing of its conversations is left in a home the runner
+ * shares. A local Codex launch's own home goes whole; from Claude's, the files of the conversation
+ * it printed and of the one restored for it (which a launch that failed early never took up).
+ */
+export function forgetConversations(
+  runDirectory: string,
+  profile: RunnerProfile,
+  restored: string | undefined,
+  environment: NodeJS.ProcessEnv = process.env,
+): void {
+  const root = home(profile, runDirectory, environment);
+  if (!root || owner(profile)) return;
+  if (profile.harness === 'codex') return rmSync(root, { recursive: true, force: true });
+  if (profile.harness !== 'claude') return;
+  for (const id of new Set([printed('claude', runDirectory), restored]))
+    if (id && conversationIdPattern.test(id))
+      for (const path of [
+        ...entries(join(root, 'projects')).flatMap((project) =>
+          project.isDirectory()
+            ? [`${id}.jsonl`, id].map((name) => join(root, 'projects', project.name, name))
+            : [],
+        ),
+        join(root, 'file-history', id),
+        join(root, 'session-env', id),
+      ])
+        rmSync(path, { recursive: true, force: true });
+}
+
 /**
  * Before a resumed launch: the kept conversation, put where its harness looks it up by id. Claude
  * finds `<id>.jsonl` in any project directory, so it goes under the new cwd's; Codex finds a dated
- * rollout. In the isolated home, which was just wiped, every directory made and the file are the
- * assignment's.
+ * rollout in its home, which is new for this launch. In the isolated home, which was just wiped,
+ * every directory made and the file are the assignment's.
  */
 export function restoreConversation(
   profile: RunnerProfile,
+  runDirectory: string,
   cwd: string,
   id: string,
   bytes: Uint8Array,
   environment: NodeJS.ProcessEnv = process.env,
 ): string {
-  const root = home(profile, environment);
+  const root = home(profile, runDirectory, environment);
   if (!root || profile.harness === 'command' || !conversationIdPattern.test(id))
     throw new MervError('resume_unsupported', 'This launch cannot resume a conversation');
   const now = new Date().toISOString();

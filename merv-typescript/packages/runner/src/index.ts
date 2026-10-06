@@ -42,7 +42,9 @@ import { readTranscript, type TranscriptFacts } from './transcript.js';
 import { AgentStream } from './agent-stream.js';
 import {
   conversationFile,
+  forgetConversations,
   keepConversation,
+  launchCodexHome,
   restoreConversation,
   type ConversationFacts,
 } from './conversation.js';
@@ -790,22 +792,27 @@ export class MachineRunner implements Runner {
             ? await this.client.launchConnections(session.id, this.ledger.runnerId, record.id)
             : [];
         if (this.stopping) return false;
-        const resume = await this.restore(record.id, profile, session, workspace.path);
-        const command = buildLaunch(profile, {
-          prompt,
-          connections,
-          hfToken: hfAccess?.token,
-          hfEndpoint: hfAccess?.endpoint,
-          session,
-          secret,
-          mcpUrl: `${this.client.baseUrl}/mcp`,
-          cwd: workspace.path,
-          ...(profile.harness === 'codex'
-            ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
-            : {}),
-          shellEnvFile: join(record.runDirectory, 'shell-env.sh'),
-          ...(resume && { resume }),
-        });
+        const codexHome = launchCodexHome(profile, record.runDirectory);
+        const resume = await this.restore(record, profile, session, workspace.path);
+        const command = buildLaunch(
+          profile,
+          {
+            prompt,
+            connections,
+            hfToken: hfAccess?.token,
+            hfEndpoint: hfAccess?.endpoint,
+            session,
+            secret,
+            mcpUrl: `${this.client.baseUrl}/mcp`,
+            cwd: workspace.path,
+            ...(profile.harness === 'codex'
+              ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
+              : {}),
+            shellEnvFile: join(record.runDirectory, 'shell-env.sh'),
+            ...(resume && { resume }),
+          },
+          codexHome ? { ...process.env, CODEX_HOME: codexHome } : process.env,
+        );
         if (command.shellEnv)
           writeFileSync(command.env.CLAUDE_ENV_FILE!, command.shellEnv, { mode: 0o600 });
         await this.host.launch({
@@ -1055,17 +1062,26 @@ export class MachineRunner implements Runner {
    * directory, then owed like its transcript. Read once, before anything resets its home.
    */
   private keep(record: LaunchRecord): Owed<ConversationFacts> {
-    if (!(record.metadata.session as unknown as SessionView | undefined)?.continuity)
-      return { state: 'none' };
+    const profile = record.metadata.profile as RunnerProfile | undefined;
     try {
-      const facts = keepConversation(
-        record.runDirectory,
-        record.metadata.profile as RunnerProfile,
-        [this.sourceBearer],
-      );
+      if (!profile || !(record.metadata.session as unknown as SessionView | undefined)?.continuity)
+        return { state: 'none' };
+      const facts = keepConversation(record.runDirectory, profile, [this.sourceBearer]);
       return facts ? { state: 'owed', ...facts } : { state: 'none' };
     } catch {
       return { state: 'refused', code: 'conversation_unreadable' };
+    } finally {
+      try {
+        const { resumed } = record.metadata;
+        if (profile)
+          forgetConversations(
+            record.runDirectory,
+            profile,
+            typeof resumed === 'string' ? resumed : undefined,
+          );
+      } catch (error) {
+        this.lastError = diagnostic(error);
+      }
     }
   }
   /**
@@ -1074,7 +1090,7 @@ export class MachineRunner implements Runner {
    * launches it fresh, as every launch was before, and says why.
    */
   private async restore(
-    id: string,
+    { id, runDirectory }: LaunchRecord,
     profile: RunnerProfile,
     session: Session,
     cwd: string,
@@ -1083,13 +1099,19 @@ export class MachineRunner implements Runner {
     if (!resume) return undefined;
     try {
       check(profile.harness === resume.harness, 'resume_other_harness', 'Kept by another harness');
+      // A harness here once refused it after it was restored: this time it starts afresh.
+      check(
+        !this.ledger.list().some((r) => r.metadata.resumeFailed === resume.conversationId),
+        'resume_failed_before',
+        'This runner could not resume it before',
+      );
       const bytes = await this.client.resume(session.id, this.ledger.runnerId, id, resume.size);
       check(
         createHash('sha256').update(bytes).digest('hex') === resume.sha256,
         'resume_hash_mismatch',
         'Not the conversation Sessions recorded',
       );
-      restoreConversation(profile, cwd, resume.conversationId, bytes);
+      restoreConversation(profile, runDirectory, cwd, resume.conversationId, bytes);
       this.save(id, { resumed: resume.conversationId });
       return resume.conversationId;
     } catch (error) {
@@ -1102,6 +1124,22 @@ export class MachineRunner implements Runner {
   }
   /** The one release: its outcome, or only its usage once closed. The reply says if attached. */
   private async release(record: LaunchRecord): Promise<LaunchRecord> {
+    // A harness that ended without taking up the conversation restored for it (Codex's "no
+    // rollout found", say) failed to resume, not to work: put off uncounted, then run fresh.
+    const { resumed } = record.metadata;
+    if (
+      typeof resumed === 'string' &&
+      (record.metadata.conversation as Owed<ConversationFacts> | undefined)?.state === 'none' &&
+      record.metadata.releaseOutcome === undefined &&
+      record.metadata.remoteClosed !== true &&
+      !this.stopping &&
+      record.metadata.runnerStopped !== true
+    )
+      record = this.save(record.id, {
+        releaseOutcome: 'preparation_deferred',
+        deferral: { cause: 'resume_failed', code: 'resume_failed' },
+        resumeFailed: resumed,
+      });
     const { metadata } = record,
       remote = metadata.remoteClosed === true,
       usage = this.readUsage(record);
