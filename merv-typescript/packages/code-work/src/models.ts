@@ -229,7 +229,11 @@ export interface CodeBaseRecord {
   blocker: string | null;
   operatorReason: string | null;
   updatedAt: string;
+  /** What an operator may still do to this base, by the server's own rule. */
+  actions: CodeBaseAction[];
 }
+/** An operator's verb on a base: each is the tool `code.base.<verb>`. */
+export type CodeBaseAction = CodeBaseControlInput['action'] | 'release';
 
 /** Operator disposition of one retained base; every request retains its reason. */
 export interface CodeBaseControlInput {
@@ -282,4 +286,6 @@ export interface CodeUnitPublication {
   pull?: { number: number; url: string };
   /** The verified merge commit on main; present only once `published`. */
   mergeCommit?: string;
+  /** What this state holds the unit's work for and who ends the wait; none once published. */
+  blockers: WorkflowProvidedBlockerInput[];
 }

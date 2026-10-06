@@ -11,6 +11,7 @@ import {
   type Caller,
   type CodeLocalBindInput,
   type CodeProjectBinding,
+  type CodeStoreWarning,
   type Scope,
   type Sql,
   type State,
@@ -421,5 +422,50 @@ export class CodeUnitStore {
       // blocks work, it never sends new work back to a runner's own repository.
       durability: row.store_json === null && !binding.managed ? 'legacy-local' : 'code',
     };
+  }
+
+  /**
+   * What a base is derived against: main with the operation that named it, as stored, and
+   * every repository identity the project was ever bound to, newest last. An acceptance made
+   * under any of them is this project's own: one from before a verified rebind is safe to read
+   * as such only because a rebind proves Code's repository holds every commit the project
+   * retained as authoritative before it writes the new binding.
+   */
+  async binding(
+    sql: Sql,
+    projectId: string,
+  ): Promise<{
+    repositoryId: string;
+    repositoryIds: string[];
+    main: { oid: string; operationId: string; stored?: boolean };
+  } | null> {
+    const row = await sql.get<Pick<ProjectRow, 'repository_id' | 'binding_json' | 'main_json'>>(
+      'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
+      projectId,
+    );
+    if (!row) return null;
+    const { previous } = JSON.parse(row.binding_json) as { previous?: { repositoryId: string }[] };
+    return {
+      repositoryId: row.repository_id,
+      repositoryIds: [...(previous ?? []).map((entry) => entry.repositoryId), row.repository_id],
+      main: JSON.parse(row.main_json) as { oid: string; operationId: string; stored?: boolean },
+    };
+  }
+
+  /** What Code warned the project's administrators of, newest last. */
+  async warnings(sql: Sql, projectId: string): Promise<CodeStoreWarning[]> {
+    const row = await sql.get<{ warnings_json: string }>(
+      'SELECT warnings_json FROM code_projects WHERE project_id=?',
+      projectId,
+    );
+    return JSON.parse(row?.warnings_json ?? '[]') as CodeStoreWarning[];
+  }
+
+  /** Whether Code is still creating the project's own repository. */
+  async initializing(sql: Sql, projectId: string): Promise<boolean> {
+    return !!(await sql.get(
+      "SELECT id FROM code_operations WHERE project_id=? AND kind='initialize' AND status='prepared'",
+      projectId,
+    ));
   }
 }

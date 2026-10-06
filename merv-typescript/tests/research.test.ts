@@ -486,12 +486,12 @@ test('an accepted consolidation task whose publication waits on an operator hold
   const moved = await advance();
   await f.finish(moved.integrations[0]);
   const pull = { number: 7, url: 'https://github.com/org/repo/pull/7' };
-  main.publication = { state: 'pending', pull };
+  main.publication = { blockers: [], state: 'pending', pull };
   await assert.rejects(advance(), {
     code: 'publication_pending',
     message: new RegExp(`merges its pull request ${pull.url}`),
   });
-  main.publication = { state: 'setup_required', pull };
+  main.publication = { blockers: [], state: 'setup_required', pull };
   await assert.rejects(advance(), {
     code: 'publication_pending',
     message: /operator completes publication setup before its pull request can be merged/,
@@ -500,7 +500,7 @@ test('an accepted consolidation task whose publication waits on an operator hold
     JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
     /publication_pending/,
   );
-  main.publication = { state: 'incident' };
+  main.publication = { blockers: [], state: 'incident' };
   await assert.rejects(advance(), { code: 'publication_pending', message: /investigates/ });
   assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'consolidating');
 });
@@ -512,7 +512,7 @@ test('a consolidation pull request closed unmerged is a rejection the cycle move
   const { record, published, advance } = await hosted(f, main);
   const [taskId] = (await advance()).integrations;
   await f.finish(taskId);
-  main.publication = { state: 'closed' };
+  main.publication = { blockers: [], state: 'closed' };
   const done = await advance();
   assert.equal(done.workflow.state, 'complete');
   assert.deepEqual(done.integrations, [taskId], 'no successor task is injected');
@@ -531,7 +531,7 @@ test('a publication main overtook injects a successor task on what main lacks no
   const { record, published, advance } = await hosted(f, main);
   const [first] = (await advance()).integrations;
   await f.finish(first);
-  main.publication = { state: 'stale' };
+  main.publication = { blockers: [], state: 'stale' };
   main.unitIds = [accepted.id, first];
   const again = await advance();
   assert.equal(again.workflow.state, 'consolidating');
@@ -567,7 +567,7 @@ test('a published integration completes without the legacy Consolidation plugin 
   assert.ok(!f.app.status().some(({ id }) => id.startsWith('consolidation')));
   const [taskId] = (await advance()).integrations;
   await f.finish(taskId);
-  main.publication = { state: 'published', mergeCommit: 'c'.repeat(40) };
+  main.publication = { blockers: [], state: 'published', mergeCommit: 'c'.repeat(40) };
   const done = await advance();
   assert.equal(done.workflow.state, 'complete');
   assert.deepEqual((await digestOf(f, done)).digest.integration, {

@@ -25,6 +25,7 @@ import {
 } from './base-check.js';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import type {
+  CodeBaseAction,
   CodeBaseCheck,
   CodeBaseCheckState,
   CodeBaseRecord,
@@ -191,6 +192,27 @@ export const baseControlSchema = z
 export type CodeBaseControl = z.infer<typeof baseControlSchema>;
 /** Written by propagation, never by an operator, so a released quarantine knows what to retract. */
 export const INHERITED_QUARANTINE = 'Input inherits quarantine from ';
+/**
+ * What an operator may still do to a base: only infrastructure work is retried, only a
+ * suspended base resumes, and a base that resolved or was cancelled has reached its end. A
+ * quarantined base takes one verb, its release, once someone has verified the alarm was false;
+ * an inherited quarantine takes none, because releasing its source lifts it.
+ */
+export function actionsOf(
+  state: CodeBaseState,
+  quarantined: boolean,
+  reason: string | null,
+): CodeBaseAction[] {
+  if (quarantined) return reason?.startsWith(INHERITED_QUARANTINE) ? [] : ['release'];
+  const open = !['resolved', 'cancelled'].includes(state);
+  const actions: CodeBaseAction[] = [];
+  if (open && ['blocked_infra', 'retry_wait'].includes(state)) actions.push('retry');
+  if (open && state !== 'suspended') actions.push('suspend');
+  if (open && state === 'suspended') actions.push('resume');
+  if (open) actions.push('cancel');
+  actions.push('quarantine');
+  return actions;
+}
 
 interface Execution {
   base: CodeBaseRecord;
@@ -248,13 +270,14 @@ export class CodeBaseService {
   }
 
   private record(row: BaseRow): CodeBaseRecord {
+    const quarantined = row.health === 'quarantined';
     return {
       key: row.base_key,
       members: JSON.parse(row.members_json) as string[],
       left: row.left_key,
       right: row.right_key,
       state: row.state,
-      quarantined: row.health === 'quarantined',
+      quarantined,
       result: row.result_json ? (JSON.parse(row.result_json) as CodeBaseRecord['result']) : null,
       conflict: row.conflict_json
         ? (JSON.parse(row.conflict_json) as CodeBaseRecord['conflict'])
@@ -270,6 +293,7 @@ export class CodeBaseService {
       blocker: [row.blocker, cleanupWarning(cleanups(row))].filter(Boolean).join('; ') || null,
       operatorReason: row.operator_reason,
       updatedAt: row.updated_at,
+      actions: actionsOf(row.state, quarantined, row.operator_reason),
     };
   }
 
@@ -1308,12 +1332,14 @@ export class CodeBaseService {
         'A leased worker cannot control server work',
         403,
       );
-      return await tx.get<{ id: string }>(
-        'SELECT id FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+      const { requestId, ...body } = input;
+      return await new OperationJournal(
+        tx,
         caller.projectId,
         principal,
-        input.requestId,
-      );
+        requestId,
+        digest(body),
+      ).previous();
     });
     if (replay) return null;
     const row = await this.state.read((sql) => this.row(sql, caller.projectId, input.key));

@@ -28,6 +28,7 @@ import {
   isDirectHuman,
 } from '@merv/contracts';
 import { personMove, type PersonMove } from './blockers.js';
+import { PUBLICATION_CODES } from './unit-store.js';
 import type { CodeBaseService, CodeCheckStanding } from './bases.js';
 import type { CodeUnit } from './models.js';
 
@@ -45,19 +46,6 @@ import type { CodeUnit } from './models.js';
 const PROVIDER = 'code';
 /** How much done work Code holds on the board. The rest is counted, and drawn on Code. */
 export const HELD = 20;
-/**
- * The codes of a publication. A publication wait is the one opinion Code keeps about work
- * that has ended (units.ts reconcileUnit), so these, and only these, hold done work.
- */
-const PUBLICATION = new Set([
-  'code_publication_pending',
-  'code_publication_stale',
-  'code_publication_setup_required',
-  'code_publication_disabled',
-  'code_publication_closed',
-  'code_publish_unverifiable',
-  'code_publication_incident',
-]);
 
 /** One blocker and the move it asks of a person. */
 export interface HeldMove {
@@ -482,7 +470,7 @@ export class CodeRunningReader {
           ]),
       );
       const open = await filterAsync(
-        moves.filter(({ blocker }) => !PUBLICATION.has(blocker.code)),
+        moves.filter(({ blocker }) => !PUBLICATION_CODES.has(blocker.code)),
         async ({ blocker }) => {
           const work = await this.workflows.get(caller, blocker.instanceId, tx).catch(absent);
           return !!work && !terminal.get(`${work.workflow}@${work.version}`)?.has(work.state);
@@ -490,7 +478,7 @@ export class CodeRunningReader {
       );
       return holdsOf(
         open,
-        moves.filter(({ blocker }) => PUBLICATION.has(blocker.code)),
+        moves.filter(({ blocker }) => PUBLICATION_CODES.has(blocker.code)),
         signedIn(caller, actor),
       );
     });

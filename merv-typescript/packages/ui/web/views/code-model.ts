@@ -1,7 +1,6 @@
 import type { CodeCommandRecord } from '@merv/contracts/code';
 import type { CodePublication } from '@merv/contracts/types';
 import type { RecordNames } from '../markdown';
-import { status as publicationWord } from './github-publications';
 import type { CodeProjectStatus, CodeBaseRecord, CodeUnit } from '@merv/code-work/models';
 
 /**
@@ -354,7 +353,7 @@ export function gitModel(
       // Every ring sits just off the trunk; only one that merged is joined to it.
       row: 0.4,
     });
-    word.set(published.proposalId, publicationWord(published));
+    word.set(published.proposalId, published.state);
     inputs.set(published.proposalId, [from]);
     edges.push({ from, to: published.proposalId, verb: 'published from' });
     // An open GitHub PR can already have a preview mergeCommitSha.

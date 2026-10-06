@@ -1,6 +1,20 @@
-import { createService, type Scope, type State } from '@merv/contracts';
+import { createService, type Scope, type State, type Transaction } from '@merv/contracts';
 import { CodeGitHubService } from './github.js';
 import type { GitHubConfig } from './github-client.js';
+import { declareManagedProject } from './store/managed.js';
+import {
+  CodeMirrorService,
+  GitMirrorTransport,
+  type CodeMirrorConfig,
+  type MirrorTransport,
+} from './store/mirror.js';
+import {
+  CodeStore,
+  type CodeImportRemote,
+  type CodeStoreConfig,
+  type CodeStoreHooks,
+  type FaultPoint,
+} from './store/operations.js';
 import { CodeRepositories, type CodeRepositoryConfig } from './store/repository.js';
 import { CodeUnitStore } from './units.js';
 import { CodeWriterService } from './writers.js';
@@ -11,6 +25,31 @@ export interface CodeConfiguration {
   repositories?: CodeRepositoryConfig;
 }
 
+/**
+ * What the owner of work units lends the repository store: how history arriving changes its
+ * units, which of its sessions hold a workspace, and the lane every GitHub call it waits for at
+ * unload runs in.
+ */
+export interface CodeStorePort extends Pick<CodeStoreHooks, 'imported' | 'workspaces'> {
+  network<T>(operation: () => Promise<T>): Promise<T>;
+}
+/** The deployment's settings of the store and the mirror, and what a test replaces in them. */
+export interface CodeStoreOptions {
+  config?: Partial<Omit<CodeStoreConfig, 'root'>>;
+  /** Replaces the linked GitHub repository as the place an import reads from. */
+  remote?: CodeImportRemote;
+  fault?: (point: FaultPoint) => void;
+  /** Replaces the linked GitHub repository as the place work is published to. */
+  mirror?: MirrorTransport;
+  mirrorConfig?: Partial<CodeMirrorConfig>;
+}
+/** A started store, its mirror, and the transport both publish with; their opener closes them. */
+export interface CodeStoreHandle {
+  store: CodeStore;
+  mirror: CodeMirrorService;
+  transport: MirrorTransport;
+}
+
 /** Durable Git facts and operations. Work-unit policy is supplied by its callers. */
 export class CodeService {
   readonly changes: CodeChanges;
@@ -19,7 +58,12 @@ export class CodeService {
   readonly github: CodeGitHubService;
   readonly repositories?: CodeRepositories;
 
-  constructor(state: State, scope: Scope, config: CodeConfiguration, github?: GitHubConfig) {
+  constructor(
+    private readonly state: State,
+    private readonly scope: Scope,
+    config: CodeConfiguration,
+    github?: GitHubConfig,
+  ) {
     this.changes = new CodeChanges(state);
     this.writers = new CodeWriterService(
       state,
@@ -41,6 +85,64 @@ export class CodeService {
       await this.close();
       throw error;
     }
+  }
+
+  /**
+   * Build and start the repository store and its mirror, once the owner of work units can answer
+   * their callbacks: a start first finishes what a crash left, which may derive units again.
+   * Nothing is started on a server that keeps no repositories.
+   */
+  async openStore(
+    port: CodeStorePort,
+    options: CodeStoreOptions = {},
+  ): Promise<CodeStoreHandle | undefined> {
+    const repositories = this.repositories;
+    if (!repositories) return undefined;
+    const { github, writers } = this;
+    // Published only once it holds the writer lock and has finished what a crash left.
+    const store = new CodeStore(
+      this.state,
+      this.scope,
+      { ...repositories.config, ...options.config },
+      {
+        imported: (tx, projectId) => port.imported(tx, projectId),
+        workspaces: (projectId, tx) => port.workspaces(projectId, tx),
+        fenced: (tx, fence, kind) => writers.fenced(tx, fence, kind),
+        advanced: (tx, fence, input) => writers.advanced(tx, fence, input),
+        quarantined: (tx, fence, id) => writers.quarantined(tx, fence, id),
+        maintained: () => writers.expire(),
+      },
+      repositories,
+      // An import reads GitHub as the administrator who asked, with a token that ends with the call.
+      options.remote ?? {
+        read: (caller, use, expected) =>
+          port.network(() => github.importRemote.read(caller, use, expected)),
+      },
+      options.fault,
+    );
+    await store.initialize();
+    // The server publishes a project's work with no caller: the owner's link and the write
+    // automation they turned on are the authorisation, and unlinking is the off switch.
+    const transport =
+      options.mirror ??
+      new GitMirrorTransport(repositories, {
+        target: (projectId) => github.mirrorTarget(projectId),
+        token: (projectId, use) => port.network(() => github.mirrorToken(projectId, use)),
+      });
+    const mirror = new CodeMirrorService(
+      this.state,
+      this.scope,
+      repositories,
+      transport,
+      options.mirrorConfig,
+    );
+    mirror.initialize();
+    return { store, mirror, transport };
+  }
+
+  /** A project Code initializes its own repository for; the caller authorized it. */
+  declareManaged(tx: Transaction, projectId: string): Promise<void> {
+    return declareManagedProject(tx, projectId);
   }
 
   async close(): Promise<void> {

@@ -37,12 +37,12 @@ import type {
 } from './types.js';
 
 import {
-  bindsRepository,
   WorkUnitRecords,
+  publicationBlockers,
+  type PublicationStanding,
   unitColumns,
   type AcceptanceBody,
   type BaseBody,
-  type ProjectRow,
   type UnitRow,
 } from './unit-store.js';
 import type {
@@ -55,70 +55,7 @@ import type {
   CodeUnitAcceptInput,
   CodeUnitPublication,
 } from './models.js';
-export { bindsRepository } from './unit-store.js';
-export { CODE_DRIVER } from '@merv/code/store/refs';
 
-/**
- * What an open publication means for the unit that is waiting on it. A done unit carrying one
- * of these is not failing and is not work anybody can take: it is a fact about where its
- * accepted code stands, and every one of them names who ends the wait.
- */
-function publicationBlockers(publication: CodeUnitPublication): WorkflowProvidedBlockerInput[] {
-  if (publication.state === 'published') return [];
-  const pull = publication.pull;
-  const named = pull ? ` (pull request #${pull.number})` : '';
-  const related = pull ? [{ kind: 'pull-request', id: pull.url, label: `#${pull.number}` }] : [];
-  const said = {
-    pending: {
-      code:
-        publication.destination === 'local'
-          ? 'code_publication_local_pending'
-          : 'code_publication_pending',
-      message:
-        publication.destination === 'local'
-          ? 'waiting for the reviewed commit to be integrated into Merv main'
-          : 'waiting on publication: a signed-in operator merges the pull request',
-      next:
-        publication.destination === 'local'
-          ? 'Nothing: Code integrates the reviewed commit by itself within a minute, as the project owner; a project with no owner needs code.publication.sync. No GitHub connection is required.'
-          : pull
-            ? `A signed-in project operator merges pull request #${pull.number} with code.publication.merge; nothing here is owed by an agent.`
-            : 'Nothing: Code opens the pull request by itself within a minute, as the project owner (a project with no owner needs code.publication.sync), and a signed-in operator merges it.',
-    },
-    stale: {
-      code: 'code_publication_stale',
-      message: `main moved; a successor task integrates it${named}`,
-      next: 'Create the successor work that takes this accepted commit and the newer main; this unit stays as it is.',
-    },
-    setup_required: {
-      code: 'code_publication_setup_required',
-      message: `publication setup is incomplete${named}`,
-      next: "An operator fixes what code.status names (the publication's lastError, its required merge-safety check or rules visibility); Code then continues and a signed-in operator merges the reviewed pull request.",
-    },
-    disabled: {
-      code: 'code_publication_disabled',
-      message: `publication was disabled after failed enforcement${named}`,
-      next: 'An administrator repairs enforcement, records a passing canary for this App and its rules, and clears any disablement with code.publication.control.',
-    },
-    closed: {
-      code: 'code_publication_closed',
-      message: `the pull request was closed without merging${named}`,
-      next: 'An operator creates the successor work that carries this accepted commit to main.',
-    },
-    unsealed: {
-      code: 'code_publish_unverifiable',
-      message:
-        'this unit was declared to publish to main, but its acceptance could not open a publication',
-      next: 'An administrator reads code.status for this unit and creates the successor work that carries its accepted code to main; this unit stays as it is.',
-    },
-    incident: {
-      code: 'code_publication_incident',
-      message: `a publication incident is retained for this unit${named}`,
-      next: 'An administrator investigates the observed merge commit in code.status.publication; a retry never clears it.',
-    },
-  }[publication.state];
-  return [{ key: 'publication', status: 409, related, ...said }];
-}
 /** What a derivation finds; only `ready` carries a body a lease may pin. */
 type Derived =
   | { status: 'waiting' }
@@ -362,7 +299,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         ? null
         : await this.reviewedCode(caller, input.unitId, input.codeRef, input.reviewSessionId, tx);
     // Reviewed code is accepted only as a commit Code admitted from the unit's own writer.
-    let receipt: string | null = null;
+    let admitted: Awaited<ReturnType<CodeWriterService['receipt']>> = null;
     if (code) {
       const writer = await this.writers.row(tx, caller.projectId, input.unitId);
       check(
@@ -377,9 +314,15 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         'A capture of this unit is quarantined; it cannot be accepted before an operator fences it',
         409,
       );
-      receipt = await this.writers.receipt(tx, caller.projectId, input.unitId, code.commit);
+      admitted = await this.writers.receipt(tx, caller.projectId, input.unitId, code.commit);
+      // A writer fenced before its branch ever moved kept the base it was pinned to.
+      const kept =
+        writer.writer_state === 'closed' &&
+        writer.head_oid === null &&
+        writer.base_json !== null &&
+        code.commit === this.writers.base(writer);
       check(
-        receipt,
+        admitted || kept,
         'code_acceptance_unverifiable',
         'Code never admitted the commit that was reviewed',
         409,
@@ -393,13 +336,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         'Resolution acceptance requires a passing review with the current retained contributor provenance.',
         409,
       );
-      const proof = receipt
-        ? await tx.get<{ result_json: string }>(
-            "SELECT result_json FROM code_operations WHERE id=? AND status='completed'",
-            receipt,
-          )
-        : null;
-      const verified = proof ? JSON.parse(proof.result_json).merge : null;
+      const verified = admitted?.merge;
       check(
         code &&
           verified?.firstMerge &&
@@ -423,7 +360,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       acceptedBy: caller.actorId,
       code,
       storage: code === null ? 'none' : 'code',
-      ...(receipt ? { receipt } : {}),
+      ...(admitted ? { receipt: admitted.id } : {}),
     };
     const existing = await this.row(tx, caller.projectId, input.unitId);
     const stored = await this.retainUnitAcceptance(caller, body, tx);
@@ -676,21 +613,11 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     });
     // Only hosted workflow versions declare units; the binding and imported store are retained.
     const bound = (await this.state.remember(`code-work:binding:${projectId}`, () =>
-      tx.get<Pick<ProjectRow, 'repository_id' | 'binding_json' | 'main_json'>>(
-        'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
-        projectId,
-      ),
+      this.code.binding(tx, projectId),
     ))!;
-    const main = JSON.parse(bound.main_json) as {
-      oid: string;
-      operationId: string;
-      stored?: boolean;
-    };
+    const { main } = bound;
     const missingMain = async () => {
-      const initializing = await tx.get(
-        "SELECT id FROM code_operations WHERE project_id=? AND kind='initialize' AND status='prepared'",
-        projectId,
-      );
+      const initializing = await this.code.initializing(tx, projectId);
       return pending(
         initializing ? 'initialization' : 'main',
         initializing
@@ -714,7 +641,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
           formatVersion: 1,
           kind: 'accepted',
           reference: fixed.reference,
-          repositoryId: bound.repository_id,
+          repositoryId: bound.repositoryId,
           dependencies: [],
           sources: [],
           main: null,
@@ -751,7 +678,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
             );
         continue;
       }
-      if (!intact || !accepted?.code || !bindsRepository(bound, accepted.code.repositoryId)) {
+      if (!intact || !accepted?.code || !bound.repositoryIds.includes(accepted.code.repositoryId)) {
         blockers.push(
           pending(
             `acceptance:${node.id}`,
@@ -843,7 +770,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
             formatVersion: 1,
             kind: 'merged',
             reference: base.result.commit,
-            repositoryId: bound.repository_id,
+            repositoryId: bound.repositoryId,
             dependencies: relations.dependencies.map((item) => item.id).sort(),
             sources: [...commits.values()]
               .flatMap((entry) => entry.sources)
@@ -938,7 +865,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         formatVersion: 1,
         kind: accepted ? 'accepted' : 'main',
         reference: accepted ? accepted[0] : main.oid,
-        repositoryId: bound.repository_id,
+        repositoryId: bound.repositoryId,
         dependencies: relations.dependencies.map((item) => item.id).sort(),
         sources: (accepted?.[1].sources ?? []).sort((left, right) =>
           left.unitId.localeCompare(right.unitId),
@@ -1346,7 +1273,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     sql: Sql,
     projectId: string,
     row: UnitRow,
-  ): Promise<CodeUnitPublication | null> {
+  ): Promise<PublicationStanding | null> {
     const publication = await super.publicationOf(sql, projectId, row);
     if (publication?.state !== 'pending') return publication;
     if (publication.destination === 'local') return publication;

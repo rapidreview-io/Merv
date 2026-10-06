@@ -55,7 +55,7 @@ async function fixture(t: TestContext) {
       f.scope,
       f.sessions,
       f.workflows,
-      { ...core, github: remote.github },
+      Object.assign(Object.create(core), { github: remote.github }),
       {
         config: { settleMs: 60_000 },
         mirror: {

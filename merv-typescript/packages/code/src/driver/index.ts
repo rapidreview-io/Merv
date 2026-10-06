@@ -167,6 +167,8 @@ const terminal = [
 const uncapturable = ['workspace_file_too_large', 'workspace_foreign_path'];
 /** How long a final capture may keep failing locally before the generation is handed over. */
 const CAPTURE_FAILING_MS = 10 * 60_000;
+/** A pause this long between two failed captures means nothing was trying: the bound restarts. */
+const CAPTURE_GAP_MS = 2 * 60_000;
 /** The lock files under a directory, descending only into real directories, never links. */
 function lockFiles(directory: string): string[] {
   if (!lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return [];
@@ -271,8 +273,9 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         bundle_path TEXT, bundle_hash TEXT, bundle_bytes INTEGER, operation_id TEXT,
         receipt_json TEXT, error TEXT, acknowledged INTEGER NOT NULL DEFAULT 0
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS code_v2_capture_failing (
-        launch_id TEXT PRIMARY KEY, since INTEGER NOT NULL
+      DROP TABLE IF EXISTS code_v2_capture_failing;
+      CREATE TABLE IF NOT EXISTS code_v2_capture_attempts (
+        launch_id TEXT PRIMARY KEY, since INTEGER NOT NULL, last INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS code_v2_review_restores (
         launch_id TEXT PRIMARY KEY, device INTEGER NOT NULL, inode INTEGER NOT NULL
@@ -1464,11 +1467,13 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       row = this.row(row.launch_id)!;
       let target: string,
         tree: string,
-        refused: string | null = null;
+        refused: string | null = null,
+        importing = false;
       try {
         // The session's processes are confirmed stopped: the locks their Git left are stale. A
         // hosted checkout's own .git is the assignment's, refs and all: never follow a link out
-        // of it. Another checkout shares its refs, so only its own index and HEAD are cleared.
+        // of it. Another checkout shares its refs, so only its own index, HEAD and branch, which
+        // no other checkout writes, are cleared.
         const dot = join(row.path, '.git');
         const locks = this.assignmentRoot
           ? lstatSync(dot).isDirectory()
@@ -1477,7 +1482,11 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
                 .concat(lockFiles(join(dot, 'refs')))
             : []
           : await Promise.all(
-              ['index.lock', 'HEAD.lock'].map(async (name) =>
+              [
+                'index.lock',
+                'HEAD.lock',
+                ...(row.branch ? [`refs/heads/${row.branch}.lock`] : []),
+              ].map(async (name) =>
                 (
                   await this.git.ok(['rev-parse', '--path-format=absolute', '--git-path', name], {
                     cwd: row.path,
@@ -1504,17 +1513,22 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
           await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
         );
         tree = oid(await this.git.ok(['rev-parse', '--verify', 'HEAD^{tree}'], { cwd: row.path }));
+        importing = true;
         await this.importAssignmentCommit(row, target);
       } catch (error) {
+        // Moving a built commit into this machine's cache is the machine's trouble, never the
+        // checkout's, so it is retried without counting against the checkout.
+        if (importing) throw error;
         const code = (error as { code?: unknown }).code;
         const lasting = typeof code === 'string' && uncapturable.includes(code);
         if (!lasting) {
+          const at = Date.now();
           const { since } = this.db
             .prepare(
-              'INSERT INTO code_v2_capture_failing (launch_id,since) VALUES (?,?) ON CONFLICT(launch_id) DO UPDATE SET since=since RETURNING since',
+              'INSERT INTO code_v2_capture_attempts (launch_id,since,last) VALUES (?,?,?) ON CONFLICT(launch_id) DO UPDATE SET since=CASE WHEN excluded.last-last>? THEN excluded.since ELSE since END,last=excluded.last RETURNING since',
             )
-            .get(row.launch_id, Date.now()) as { since: number };
-          if (Date.now() - since < CAPTURE_FAILING_MS) throw error;
+            .get(row.launch_id, at, at, CAPTURE_GAP_MS) as { since: number };
+          if (at - since < CAPTURE_FAILING_MS) throw error;
         }
         // The checkout holds something no capture may carry, and no later attempt finds it
         // different, exactly as such a refusal ends a checkpoint command; so does a checkout

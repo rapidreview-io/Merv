@@ -691,6 +691,10 @@ test('units waiting on the same two accepted commits get one merged base, and a 
     (await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!.result!.commit,
     pins[0]!.reference,
   );
+  // The record says what an operator may still do: a quarantined base takes its release only.
+  assert.deepEqual((await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!.actions, [
+    'release',
+  ]);
 
   // A quarantine given by mistake is not a one-way door. Releasing the base an operator
   // named retracts everything that inherited from it, so the work it reached is usable

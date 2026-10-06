@@ -30,7 +30,7 @@ export {
 } from './outbound.js';
 export { sessionWorkspaceSchema, type CodePendingMerge } from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
-export type { CodePublication } from './code-publication-models.js';
+export type { CodePublication, CodePublicationState } from './code-publication-models.js';
 export {
   CODE_BUNDLE_MAX_BYTES,
   CODE_PART_MAX_BYTES,

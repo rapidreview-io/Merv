@@ -5,7 +5,23 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    "./service": "./src/service.ts",
+    "./base-merge": "./src/base-merge.ts",
+    "./configuration": "./src/configuration.ts",
+    "./git": "./src/git.ts",
+    "./github": "./src/github.ts",
+    "./github-client": "./src/github-client.ts",
+    "./input": "./src/input.ts",
+    "./operation-journal": "./src/operation-journal.ts",
+    "./pending-merge": "./src/pending-merge.ts",
+    "./units": "./src/units.ts",
+    "./writers": "./src/writers.ts",
+    "./store/mirror": "./src/store/mirror.ts",
+    "./store/operations": "./src/store/operations.ts",
+    "./store/refs": "./src/store/refs.ts",
+    "./store/repository": "./src/store/repository.ts",
+    "./driver/index": "./src/driver/index.ts",
+    "./driver/local": "./src/driver/local.ts"
   },
   "dependencies": {
     "cordis": "4.0.0-rc.10",

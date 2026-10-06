@@ -584,6 +584,11 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
       this.withToken(caller, (token) => this.client().repositories(token)),
     );
   }
+  /** The repository this project is linked to, or null; read on the caller's transaction. */
+  async linked(projectId: string, sql: Sql): Promise<GitHubRepository | null> {
+    const row = await this.row(sql, projectId);
+    return row.repository_json ? (JSON.parse(row.repository_json) as GitHubRepository) : null;
+  }
   private repository(row: Connection): GitHubRepository {
     check(row.repository_json, 'github_repository_required', 'Link a GitHub repository first', 409);
     return JSON.parse(row.repository_json) as GitHubRepository;

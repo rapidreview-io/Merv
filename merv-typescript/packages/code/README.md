@@ -67,6 +67,8 @@ research state.
 
 `repositories.root`, `quotaBytes` and `reservedFreeBytes` belong to the core configuration.
 `finalizeGraceSeconds` also belongs to Code, so every writer uses the same timeout.
+Code builds the repository journal and its mirror, and the integration opens them with
+`openStore`, lending the callbacks only it can answer, and closes them when it unloads.
 Import maintenance, drain timing, automatic base merging and mirroring belong to the
 integration's `repositories` configuration. Disaster backup and restoration belong to
 [deployment operations](../../docs/RECOVERY_SNAPSHOTS.md), outside both plugins. Historical migration text and retained workflow evidence remain unchanged. A separate generic

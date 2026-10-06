@@ -1,22 +1,16 @@
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
 import type { CodeGitHubService, GitHubBinding } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
-import { declareManagedProject } from '@merv/code/store/managed';
-import type { CodeService as CodeUtility } from '@merv/code/service';
+import type {
+  CodeService as CodeUtility,
+  CodeStoreOptions as CodeStorageOptions,
+} from '@merv/code/service';
 import {
-  CodeMirrorService,
   enqueueMirror,
-  GitMirrorTransport,
-  type CodeMirrorConfig,
-  type MirrorAuthority,
+  type CodeMirrorService,
   type MirrorTransport,
 } from '@merv/code/store/mirror';
-import {
-  CodeStore,
-  type CodeImportRemote,
-  type CodeStoreConfig,
-  type FaultPoint,
-} from '@merv/code/store/operations';
+import type { CodeStore } from '@merv/code/store/operations';
 import type {
   Caller,
   CodeRepositoryPrepareInput,
@@ -52,7 +46,8 @@ import type {
   CodeCaptureRef,
   ResolutionWorkCreator,
 } from './types.js';
-import { CODE_DRIVER, CodeUnitService } from './units.js';
+import { CodeUnitService } from './units.js';
+import { CODE_DRIVER } from './workspace.js';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeAcceptedSince } from './models.js';
 
@@ -60,14 +55,7 @@ import type { CodeAcceptedSince } from './models.js';
 const PUBLICATION_IMPORT_ATTEMPTS = 3;
 
 /** Work-unit operations over the repositories owned by the core Code service. */
-export interface CodeStoreOptions {
-  config?: Partial<Omit<CodeStoreConfig, 'root'>>;
-  /** Replaces the linked GitHub repository as the place an import reads from. */
-  remote?: CodeImportRemote;
-  fault?: (point: FaultPoint) => void;
-  /** Replaces the linked GitHub repository as the place work is published to. */
-  mirror?: MirrorTransport;
-  mirrorConfig?: Partial<CodeMirrorConfig>;
+export interface CodeStoreOptions extends CodeStorageOptions {
   /** Merge several accepted commits into one base on the server. On unless disabled. */
   autoMerge?: boolean;
 }
@@ -102,6 +90,7 @@ export class CodeService extends CodeCommandService implements Code {
   private readonly writerStore: CodeWriterService;
   private store?: CodeStore;
   private mirrorStore?: CodeMirrorService;
+  private transport?: MirrorTransport;
   private baseStore?: CodeBaseService;
   private protocol?: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
@@ -127,7 +116,10 @@ export class CodeService extends CodeCommandService implements Code {
     scope: Scope,
     sessions: Sessions,
     private readonly workflows: Workflows,
-    private readonly utility: Pick<CodeUtility, 'github' | 'writers' | 'repositories' | 'units'>,
+    private readonly utility: Pick<
+      CodeUtility,
+      'github' | 'writers' | 'units' | 'openStore' | 'declareManaged'
+    >,
     private readonly repositories: CodeStoreOptions = {},
   ) {
     super(state, scope, sessions);
@@ -137,9 +129,7 @@ export class CodeService extends CodeCommandService implements Code {
       state,
       scope,
       () => this.requireStore().repositories,
-      () =>
-        repositories.mirror ??
-        new GitMirrorTransport(this.requireStore().repositories, this.published()),
+      () => (this.requireStore(), this.transport!),
       async (caller, ref, oid) => {
         const store = this.requireStore();
         if (await store.contains(caller.projectId, oid)) return;
@@ -177,6 +167,7 @@ export class CodeService extends CodeCommandService implements Code {
       state,
       scope,
       this.github,
+      utility.units,
       this.publicationHost,
     );
     this.board = new CodeRunningReader(state, scope, workflows, {
@@ -202,34 +193,20 @@ export class CodeService extends CodeCommandService implements Code {
         ),
       );
       this.unitStore.publications = this.publicationStore;
-      if (utility.repositories) {
-        // Published only once it holds the writer lock and has finished what a crash left.
-        const store = new CodeStore(
-          state,
-          scope,
-          { ...utility.repositories.config, ...repositories.config },
-          {
-            imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
-            workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
-            fenced: (tx, fence, kind) => this.writerStore.fenced(tx, fence, kind),
-            advanced: (tx, fence, input) => this.writerStore.advanced(tx, fence, input),
-            quarantined: (tx, fence, id) => this.writerStore.quarantined(tx, fence, id),
-            maintained: () => this.writerStore.expire(),
-          },
-          utility.repositories,
-          repositories.remote ?? this.linkedRepository(),
-          repositories.fault,
-        );
-        await store.initialize();
+      const opened = await utility.openStore(
+        {
+          imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
+          workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
+          network: (operation) => this.network(operation),
+        },
+        repositories,
+      );
+      if (opened) {
+        const { store } = opened;
         this.store = store;
+        this.mirrorStore = opened.mirror;
+        this.transport = opened.transport;
         this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, store);
-        this.mirrorStore = new CodeMirrorService(
-          state,
-          scope,
-          store.repositories,
-          repositories.mirror ?? new GitMirrorTransport(store.repositories, this.published()),
-          repositories.mirrorConfig,
-        );
         const bases = new CodeBaseService(
           state,
           store.repositories,
@@ -250,9 +227,6 @@ export class CodeService extends CodeCommandService implements Code {
         this.baseStore = bases;
         bases.start();
       }
-      // The mirror reads the project's GitHub link, so it only starts looking for refs to
-      // publish once that store exists.
-      this.mirrorStore?.initialize();
       await this.publicationStore.initialize();
       await migrateRepositorySync(state);
       // The first pass waits a period, so Reviews, which every publication checks, is bound;
@@ -496,12 +470,12 @@ export class CodeService extends CodeCommandService implements Code {
     await this.scope.require(caller, 'write', tx);
     if (await this.unitStore.hosted(caller, tx)) return;
     const store = this.requireStore();
-    await declareManagedProject(tx, caller.projectId);
+    await this.utility.declareManaged(tx, caller.projectId);
     store.wake();
   }
   async projectCreated(projectId: string, tx: Transaction): Promise<void> {
     if (!this.store) return;
-    await declareManagedProject(tx, projectId);
+    await this.utility.declareManaged(tx, projectId);
     this.store.wake();
   }
   unit: Code['unit'] = (...args) => this.unitStore.unit(...args);
@@ -573,23 +547,6 @@ export class CodeService extends CodeCommandService implements Code {
    */
   get v2() {
     return this.publicationClosed ? undefined : this.protocol;
-  }
-  /**
-   * What the server publishes a project's work to, with no caller: the owner's link and the
-   * write automation they turned on are the authorisation, and unlinking is the off switch.
-   */
-  private published(): MirrorAuthority {
-    return {
-      target: (projectId) => this.github.mirrorTarget(projectId),
-      token: (projectId, use) => this.network(() => this.github.mirrorToken(projectId, use)),
-    };
-  }
-  /** An import reads GitHub as the administrator who asked, with a token that ends with the call. */
-  private linkedRepository(): CodeImportRemote {
-    return {
-      read: (caller, use, expected) =>
-        this.network(() => this.github.importRemote.read(caller, use, expected)),
-    };
   }
   override async close(): Promise<void> {
     this.publicationClosed = true;

@@ -31,24 +31,6 @@ const request = <T,>(path = '', body?: unknown) =>
     ...(body === undefined ? {} : { method: 'POST', body }),
   });
 
-/** Merv's own word for where a publication stands; it also says where its verdict stands. */
-export const status = (p: CodePublication) =>
-  p.destination === 'local' && p.verified
-    ? 'integrated'
-    : p.lastError
-      ? 'blocked'
-      : p.pull?.merged
-        ? 'merged'
-        : p.review && p.review.verdict !== 'pass'
-          ? 'returned'
-          : p.pull?.state === 'closed'
-            ? 'closed'
-            : p.review?.verdict === 'pass' && p.pull && !p.pull.draft
-              ? 'ready'
-              : p.pull
-                ? 'draft'
-                : 'pending';
-
 type Controls = NonNullable<CodeProjectStatus['publication']>['controls'];
 
 /**
@@ -261,7 +243,7 @@ export function GitHubPublications({
             Proposal
           </span>
           <strong>{p.title}</strong>
-          <StatusPill value={status(p)} />
+          <StatusPill value={p.state} />
         </div>
         <div className="pr-line">
           <span>

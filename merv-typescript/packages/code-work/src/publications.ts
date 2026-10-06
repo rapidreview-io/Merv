@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CodeGitHubService } from '@merv/code/github';
+import type { CodeUnitStore } from '@merv/code/units';
 import { parseCodeInput } from '@merv/code/input';
 import { migratePublications } from './publications-schema.js';
 import {
@@ -14,8 +15,10 @@ import {
   sourceCaller,
   type Caller,
   type CodePublication,
+  type CodePublicationState,
   type GitHubPullRequest,
   type Scope,
+  type Sql,
   type State,
   type Transaction,
   requireHuman,
@@ -82,19 +85,38 @@ const IDLE = 600_000;
 const reading = (pull: GitHubPullRequest | null) =>
   pull ? `${pull.number} ${pull.url} ${pull.state === 'closed' && !pull.merged}` : '';
 
+/** Merv's one word for where a publication stands; it also says where its verdict stands. */
+export const publicationState = (p: Omit<CodePublication, 'state'>): CodePublicationState =>
+  p.destination === 'local' && p.verified
+    ? 'integrated'
+    : p.lastError
+      ? 'blocked'
+      : p.pull?.merged
+        ? 'merged'
+        : p.review && p.review.verdict !== 'pass'
+          ? 'returned'
+          : p.pull?.state === 'closed'
+            ? 'closed'
+            : p.review?.verdict === 'pass' && p.pull && !p.pull.draft
+              ? 'ready'
+              : p.pull
+                ? 'draft'
+                : 'pending';
+
 /** A durable external publication of immutable code facts. The domain alone supplies the review verdict. */
 export class CodePublicationService implements CodePublicationApi {
   constructor(
     private state: State,
     private scope: Scope,
     private github: CodeGitHubService,
+    private units: Pick<CodeUnitStore, 'binding'>,
     private host: PublicationHost,
   ) {}
   async initialize() {
     await migratePublications(this.state);
   }
   private decode(row: Row): CodePublication {
-    return {
+    const record: Omit<CodePublication, 'state'> = {
       ...JSON.parse(row.record_json),
       ...(row.binding_json !== 'null'
         ? ((b) => ({
@@ -112,6 +134,7 @@ export class CodePublicationService implements CodePublicationApi {
       merge: row.merge_json ? JSON.parse(row.merge_json) : null,
       lastError: row.error,
     };
+    return { ...record, state: publicationState(record) };
   }
   private async row(caller: Caller, id: string, tx: Transaction) {
     await this.scope.require(caller, 'read', tx);
@@ -129,14 +152,9 @@ export class CodePublicationService implements CodePublicationApi {
   async openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction) {
     ({ caller, input } = structuredClone({ caller, input }));
     this.state.assertTransaction(tx);
-    const connection = await tx.get<{ repository_json: string | null }>(
-      'SELECT repository_json FROM code_github WHERE project_id=?',
-      caller.projectId,
-    );
-    const destination =
-      connection?.repository_json && connection.repository_json !== 'null' ? 'github' : 'local';
+    const destination = (await this.github.linked(caller.projectId, tx)) ? 'github' : 'local';
     const at = now();
-    const record: CodePublication = {
+    const record: Omit<CodePublication, 'state'> = {
       destination,
       proposalId: input.publicationId,
       instanceId: input.unitId,
@@ -260,12 +278,8 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return row;
   }
-  private async mainOf(sql: Pick<Transaction, 'get'>, projectId: string) {
-    const project = await sql.get<{ main_json: string }>(
-      'SELECT main_json FROM code_projects WHERE project_id=?',
-      projectId,
-    );
-    return project ? (JSON.parse(project.main_json).oid as string) : null;
+  private async mainOf(sql: Sql, projectId: string) {
+    return (await this.units.binding(sql, projectId))?.main.oid ?? null;
   }
   /**
    * An accepted unit publishes once: a row that can no longer merge as reviewed settles stale,

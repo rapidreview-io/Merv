@@ -5,12 +5,12 @@ import {
   type WorkflowExecutionBinding,
   type WorkflowExecutionPolicy,
 } from '@merv/contracts';
+import { codeWorkspace } from '@merv/code-work/workspace';
 
 type Bindings = Record<string, WorkflowExecutionBinding>;
 
 /** Current tasks all use Code-managed Git; resolution work additionally grants merge tools. */
 export type TaskWorkspace = 'code' | 'resolution';
-const CODE_DRIVER = 'code.v2';
 
 /** Fixed work protocols. Completion readiness and context rendering never mint grants. */
 export function taskExecutionPolicy(
@@ -29,24 +29,7 @@ export function taskExecutionPolicy(
   };
   return {
     readOnly: purpose === 'review',
-    workspace:
-      purpose === 'work'
-        ? {
-            mode: 'persistent',
-            namespace: 'tasks',
-            base: 'reference:base',
-            perBase: false,
-            retain: true,
-            advancesCentral: false,
-            driver: CODE_DRIVER,
-          }
-        : {
-            mode: 'ephemeral',
-            namespace: 'task-reviews',
-            base: 'reference:code',
-            retain: false,
-            driver: CODE_DRIVER,
-          },
+    workspace: codeWorkspace(purpose, purpose === 'work' ? 'tasks' : 'task-reviews'),
     tools: [
       grant('workflow.status_and_next', instance, {
         instanceId: { kind: 'oneOf', name: 'dependencies' },

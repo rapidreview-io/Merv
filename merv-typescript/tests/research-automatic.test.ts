@@ -725,7 +725,11 @@ test('an automatic cycle waits on its consolidation task and its publication as 
     (await f.research.get(f.owner, cycle.id)).automation!.blocker!.code,
     'dependencies_pending',
   );
-  main.publication = { state: 'pending', pull: { number: 3, url: 'https://example.test/pull/3' } };
+  main.publication = {
+    blockers: [],
+    state: 'pending',
+    pull: { number: 3, url: 'https://example.test/pull/3' },
+  };
   await f.finishTask(taskId);
   await f.pump();
   record = await f.research.get(f.owner, cycle.id);
@@ -734,7 +738,7 @@ test('an automatic cycle waits on its consolidation task and its publication as 
   assert.match(record.automation!.blocker!.message, /https:\/\/example\.test\/pull\/3/);
   assert.equal(record.automation!.cycle, 1);
   const commitSha = 'd'.repeat(40);
-  main.publication = { state: 'published', mergeCommit: commitSha };
+  main.publication = { blockers: [], state: 'published', mergeCommit: commitSha };
   // Publication must wake the cycle itself, without a restart or a manual advance.
   await f.app.ctx.state.transaction((tx) =>
     recorded(f.app.ctx.state, tx, f.owner, 'code.publication_verified', 'codeprop_test', {
@@ -767,7 +771,11 @@ test('a publication main overtook wakes an automatic cycle to inject its success
   await new Promise((resolve) => setTimeout(resolve, 100));
   await f.pump();
   const [taskId] = (await f.research.get(f.owner, cycle.id)).integrations;
-  main.publication = { state: 'pending', pull: { number: 3, url: 'https://example.test/pull/3' } };
+  main.publication = {
+    blockers: [],
+    state: 'pending',
+    pull: { number: 3, url: 'https://example.test/pull/3' },
+  };
   await f.finishTask(taskId);
   await f.pump();
   assert.equal(
@@ -775,7 +783,7 @@ test('a publication main overtook wakes an automatic cycle to inject its success
     'publication_pending',
   );
   // Main moved first: Code marks the publication stale, and says so.
-  main.publication = { state: 'stale' };
+  main.publication = { blockers: [], state: 'stale' };
   main.unitIds = [work.id, taskId];
   await f.app.ctx.state.transaction((tx) =>
     recorded(f.app.ctx.state, tx, f.owner, 'code.publication_stale', 'codeprop_test', {

@@ -19,7 +19,7 @@ import {
   nameFinding,
   symlinkEscapes,
   type AdmissionLimits,
-} from '@merv/code/store/admission';
+} from '../packages/code/src/store/admission.js';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { described, git, gitSource, type Bundle } from './fixtures/code-store.js';
 
