@@ -231,10 +231,7 @@ export class TaskService implements Tasks {
 
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate(
-      'tasks',
-      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-    );
+    await this.state.migrate('tasks', postgresMigrations);
     try {
       for (const version of Object.keys(taskVersions).map(Number)) {
         this.registrations.set(

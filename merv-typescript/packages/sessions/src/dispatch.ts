@@ -196,10 +196,7 @@ export class SessionDispatch {
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate(
-      'session_dispatch',
-      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-    );
+    await this.state.migrate('session_dispatch', postgresMigrations);
   }
   /** An entry point's first checks: Sessions is open, and the caller is no managed runner. */
   enter(caller?: Caller): void {

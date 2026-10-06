@@ -363,12 +363,7 @@ export class LeasedSessions implements Sessions {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     const { state, scope, workflows, config } = this;
-    await state.migrate(
-      'sessions',
-      Object.entries({ ...postgresMigrations, 8: managedNoncePostgresMigration }).map(
-        ([version, sql]) => ({ version: +version, sql }),
-      ),
-    );
+    await state.migrate('sessions', { ...postgresMigrations, 8: managedNoncePostgresMigration });
     // What each part Sessions hands a call to checks first: that Sessions is still open.
     const available = () => this.ensureOpen();
     this.credentials = new CredentialStore(state, this.clock);

@@ -82,10 +82,7 @@ export class ReflectionService implements Reflections {
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate(
-      'reflections',
-      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-    );
+    await this.state.migrate('reflections', postgresMigrations);
     try {
       // Every assignment renders with these, a leased one too, so earlier versions render
       // nothing and are not registered; their rows stay in context_recipes.

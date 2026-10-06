@@ -158,10 +158,7 @@ export class ResearchService implements Research {
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate(
-      'research',
-      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-    );
+    await this.state.migrate('research', postgresMigrations);
     // Providers bind later, each as it arrives; see researchPlugin.
     this.handle = await this.workflows.register(definition, this.policy());
   }
