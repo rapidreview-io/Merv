@@ -100,30 +100,10 @@ export class AgentDirectory {
     check(row, 'agent_not_found', 'Agent not found', 404);
     return JSON.parse(row.agent_json);
   }
-  async controlled(caller: Caller, id: string, tx: Transaction): Promise<Agent> {
-    const owner = await ownerOf(this.scope, caller, tx),
-      agent = await this.get(id, tx);
-    check(agent.projectId === caller.projectId, 'agent_not_found', 'Agent not found', 404);
-    check(
-      owner.hash === digest(agent.source),
-      'agent_forbidden',
-      'Agent belongs to another source authority',
-      403,
-    );
-    return agent;
-  }
   /** The agent's own call answers 401; a controller naming a retired agent gets a conflict. */
   async require(agent: Agent, tx: Transaction, status = 401): Promise<void> {
     check(agent.status === 'active', 'agent_retired', 'Agent has been retired', status);
     await this.scope.requireDelegation(agent.source, 'read', tx);
-  }
-  async list(caller: Caller, tx: Transaction): Promise<Agent[]> {
-    return (
-      await tx.all<AgentRow>(
-        'SELECT * FROM agents WHERE owner_hash=? ORDER BY _merv_rowid',
-        (await ownerOf(this.scope, caller, tx)).hash,
-      )
-    ).map((row) => JSON.parse(row.agent_json));
   }
   async retire({ id }: Agent, reason: string, tx: Transaction): Promise<Agent> {
     const agent = await this.get(id, tx);

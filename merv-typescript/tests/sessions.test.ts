@@ -1580,21 +1580,6 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
   }
 });
 
-test('agent reads and retirement retain the original controlling source', async (t) => {
-  const f = await fixture(t);
-  const agentId = (await f.offer()).session.agentId!;
-  for (const method of ['agents', 'agent', 'retireAgent'] as const) {
-    await t.test(method, async () => {
-      const caller = { ...f.owner };
-      const pending =
-        method === 'agents' ? f.sessions.agents(caller) : f.sessions[method](caller, agentId);
-      Object.assign(caller, f.source);
-      if (method === 'agents') assert.deepEqual(await pending, []);
-      else await assert.rejects(pending, { code: 'agent_forbidden' });
-    });
-  }
-  assert.equal((await f.sessions.agent(f.source, agentId)).agent.status, 'active');
-});
 test('session reads and controls retain the original controlling source', async (t) => {
   for (const method of ['list', 'get', 'attach', 'heartbeat', 'release'] as const) {
     await t.test(method, async (t) => {
@@ -1940,10 +1925,13 @@ test('agent table includes retired instances in join order and is not truncated 
   const ids: string[] = [];
   for (let index = 0; index < 202; index++) {
     f.advance(1000);
-    const agentId = (await f.offer()).session.agentId!;
-    ids.unshift(agentId);
-    if (index === 201) await f.sessions.retireAgent(f.source, agentId);
+    const { session } = await f.offer();
+    ids.unshift(session.agentId!);
+    // The newest is halted; its agent, left dormant for its work, retires at the sweep after 14 days.
+    if (index === 201) await f.sessions.dispatch.halt(f.owner, { sessionId: session.id });
   }
+  f.advance(15 * 86_400_000);
+  await f.sessions.sweep();
   const agents = (await f.sessions.dispatch.projectStatus(f.owner)).agents!;
   assert.deepEqual(
     agents.map((agent) => agent.id),

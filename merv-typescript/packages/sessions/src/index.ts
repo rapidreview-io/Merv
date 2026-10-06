@@ -57,7 +57,7 @@ import { SessionConversations } from './conversations.js';
 import { SessionMessages } from './messages.js';
 import { SessionInvocations } from './invocations.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
-import type { Agent, AgentStatus } from './types.js';
+import type { Agent } from './types.js';
 import type {
   Session,
   SessionContinuity,
@@ -418,8 +418,7 @@ export class LeasedSessions implements Sessions {
         (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
         async (agentId, reason, tx) => {
           const agent = await this.directory.get(agentId, tx);
-          if (!(await this.currentAgentExecution(agent, tx)))
-            await this.directory.retire(agent, reason, tx);
+          if (!(await this.executing(agent, tx))) await this.directory.retire(agent, reason, tx);
         },
         available,
       ),
@@ -963,7 +962,7 @@ export class LeasedSessions implements Sessions {
       prior &&
       prior.status === 'active' &&
       digest(prior.source) === owner.hash &&
-      !(await this.currentAgentExecution(prior, tx))
+      !(await this.executing(prior, tx))
     )
       resumed = prior;
     if (key !== null) continuity = { key, ...(resumed && { resume: latest!.resume }) };
@@ -1097,53 +1096,12 @@ export class LeasedSessions implements Sessions {
     });
     return clone(session);
   }
-  private async currentAgentExecution(agent: Agent, tx: Transaction): Promise<Session | null> {
-    const row = await tx.get<Row>(
-      `${SESSION} WHERE actor_id=? AND status IN ('offered','active')`,
+  /** Whether the agent holds an offered or active execution. */
+  private async executing(agent: Agent, tx: Transaction): Promise<boolean> {
+    return !!(await tx.get(
+      "SELECT 1 FROM worker_sessions WHERE actor_id=? AND status IN ('offered','active')",
       agent.actorId,
-    );
-    return row ? this.decode(row) : null;
-  }
-  /** Every agent's assignments, read in one query. */
-  private async agentStatuses(agents: Agent[], tx: Transaction): Promise<AgentStatus[]> {
-    const sessions = agents.length
-      ? (
-          await tx.all<Row>(
-            `${SESSION} WHERE actor_id IN (${agents.map(() => '?').join()}) ORDER BY _merv_rowid`,
-            ...agents.map((agent) => agent.actorId),
-          )
-        ).map((row) => this.decode(row))
-      : [];
-    return agents.map((agent) => {
-      const assignments = sessions.filter((session) => session.actorId === agent.actorId);
-      return { agent, current: assignments.find(live) ?? null, assignments };
-    });
-  }
-  async agents(caller: Caller): Promise<AgentStatus[]> {
-    ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.transaction(
-      async (tx) => await this.agentStatuses(await this.directory.list(caller, tx), tx),
-    );
-  }
-  async agent(caller: Caller, agentId: string): Promise<AgentStatus> {
-    ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.transaction(
-      async (tx) =>
-        (await this.agentStatuses([await this.directory.controlled(caller, agentId, tx)], tx))[0]!,
-    );
-  }
-  async retireAgent(caller: Caller, agentId: string): Promise<Agent> {
-    ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.transaction(async (tx) => {
-      const agent = await this.directory.controlled(caller, agentId, tx);
-      const current = await this.currentAgentExecution(agent, tx);
-      if (current)
-        await this.closeReleased(current, { reason: 'agent_retired', outcome: 'halted' }, tx);
-      return await this.directory.retire(agent, 'agent_retired', tx);
-    });
+    ));
   }
   /**
    * Every live session of the project that holds a workspace on `driver`, whoever offered it.

@@ -99,11 +99,6 @@ export interface Agent {
   createdAt: string;
   retiredAt: string | null;
 }
-export interface AgentStatus {
-  agent: Agent;
-  current: Session | null;
-  assignments: Session[];
-}
 
 /** Assignment execution. Its id remains fixed for evidence and late-call fencing. */
 export interface Session {
@@ -341,10 +336,6 @@ export interface Sessions {
     beforeRevision: number | null,
     tx: Transaction,
   ): Promise<{ ref: string; actorId: string; authorityId: string }[]>;
-
-  agents(caller: Caller): Promise<AgentStatus[]>;
-  agent(caller: Caller, agentId: string): Promise<AgentStatus>;
-  retireAgent(caller: Caller, agentId: string): Promise<Agent>;
 
   /** Project-scoped historical metadata only; never activates, reconciles or impersonates its source. */
   workspaceObservation(

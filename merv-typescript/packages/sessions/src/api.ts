@@ -15,10 +15,7 @@ export type SessionRoutes = Pick<
   Sessions,
   | 'authenticate'
   | 'managed'
-  | 'agents'
-  | 'agent'
   | 'observations'
-  | 'retireAgent'
   | 'dispatch'
   | 'offer'
   | 'list'
@@ -88,17 +85,9 @@ function bound<T = never>(body: unknown, key: string, value: string): T {
 async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRoutes) {
   const path = r.url.pathname;
   const caller = await r.caller();
-  if (path === '/sessions/agents' && req.method === 'GET')
-    return { agents: await sessions.agents(caller) };
   const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
   if (observationRoute && req.method === 'GET')
     return await sessions.observations.read(caller, pathSegment(observationRoute[1]!));
-  const agentRoute = /^\/sessions\/agents\/([^/]+)$/.exec(path);
-  if (agentRoute) {
-    const agentId = pathSegment(agentRoute[1]!);
-    if (req.method === 'GET') return await sessions.agent(caller, agentId);
-    if (req.method === 'DELETE') return { agent: await sessions.retireAgent(caller, agentId) };
-  }
   if (path === '/sessions/status' && req.method === 'GET')
     return await sessions.dispatch.projectStatus(caller);
   if (path === '/sessions/dispatch' && req.method === 'PUT')

@@ -32,7 +32,7 @@ Already prepared invocations, claims, workspace observations, command receipts a
 
 An offer creates a fresh agent per execution, or continues the dormant agent that last held the same work ([Sessions README](../packages/sessions/README.md#continuity)). An agent retires when its execution closes unless that execution may be continued; then it stays dormant until its work comes back, a later agent supersedes it, or 14 days pass. Runner recovery and workspace capture stay keyed by execution ID; snapshots also include agent and agent-session IDs. There is no automatic process handoff.
 
-The authorizing source can use `GET /sessions/agents`, `GET /sessions/agents/:agentId`, and `DELETE /sessions/agents/:agentId` to inspect or retire its agents. Retirement closes live work and revokes the security actor.
+Agents have no administration routes; `GET /sessions/agents[/:agentId]` and `DELETE /sessions/agents/:agentId` were removed on 2026-10-06. Halting a session (`POST /sessions/:sessionId/halt`) closes its live work, and its agent retires with it, which revokes the security actor; an agent left dormant for continuity retires as described above.
 
 ## Storage
 
@@ -42,7 +42,7 @@ Agents live in the Sessions-owned `agents` table. Live assignment uniqueness is 
 
 `/ui/sessions` lists every registered agent in the selected project, newest joined first (including retired instances). Its **Live assignments only** switch selects agents with an offered or active execution. Selecting a row opens the right-hand inspector with current assignment, workflow gate, role, permitted tools, assignment history, and tool-call activity. Both views refresh every four seconds. An active identity or lease does not prove that an external process is connected.
 
-The inspector uses `GET /sessions/agents/:agentId/observation`. Ordinary project readers may inspect this sanitized metadata; worker credentials cannot browse it, and other projects receive a not-found response. This observation route does not activate, reconcile, impersonate, or acquire work. The source-owned agent controls keep their existing ownership checks.
+The inspector uses `GET /sessions/agents/:agentId/observation`. Ordinary project readers may inspect this sanitized metadata; worker credentials cannot browse it, and other projects receive a not-found response. This observation route does not activate, reconcile, impersonate, or acquire work.
 
 Sessions retains executed Merv calls in `session_tool_calls`, attributed to the original assignment execution and stable agent. Calls appear while running, then record success or failure and elapsed time. MCP `isError` responses and rejected remote output envelopes count as failures. Authorization probes, rejected inputs and tool-list requests do not count as executed calls. A shutdown marks that process's unfinished observations as interrupted, and a restart those started more than three minutes earlier, with no invented completion time. Already completed facts are immutable. No argument values, result contents, error messages, or credentials are retained in this log.
 
