@@ -5,6 +5,7 @@ import {
   NativeCredentials,
   NativeSandboxClient,
   nativeOrigin,
+  pages,
 } from '../packages/sandboxes/src/native-client.js';
 const secret = `sbxt_${'s'.repeat(43)}`;
 test('native credentials bind encrypted payloads to their row and reject ciphertext tampering', () => {
@@ -37,7 +38,7 @@ test('native client restricts destination and refuses redirects without reading 
   let calls = 0;
   const client = new NativeSandboxClient('https://sandbox.example', (async (url, options) => {
     calls++;
-    assert.equal(options?.redirect, 'manual');
+    assert.equal(options?.redirect, 'error');
     assert.equal(new URL(String(url)).origin, 'https://sandbox.example');
     return new Response(secret, { status: 302, headers: { location: 'https://attacker.example' } });
   }) as typeof fetch);
@@ -92,4 +93,37 @@ test('native JSON streams are bounded and transport/parser errors are sanitized'
     assert.ok(!String(error).includes(secret));
     return true;
   });
+});
+test('a paged list reads each cursor once, and one named twice is stuck', async () => {
+  const lists: Record<string, string | null>[] = [
+    { '': 'a', a: 'b', b: null },
+    { '': 'a', a: 'b', b: 'a' },
+  ];
+  const [whole, looping] = lists.map((next) => async () => {
+    const read: (string | undefined)[] = [];
+    for await (const page of pages(
+      async (after) => (read.push(after), { next: next[after ?? '']! }),
+      () => {
+        throw new Error('stuck');
+      },
+    ))
+      void page;
+    return read;
+  });
+  assert.deepEqual(await whole!(), [undefined, 'a', 'b']);
+  await assert.rejects(looping!(), /stuck/);
+});
+test('a DELETE answered 204 is empty, and any other 204 is no answer', async () => {
+  for (const [method, code] of [
+    ['DELETE', undefined],
+    ['GET', 'sandbox_unavailable'],
+  ] as const) {
+    const client = new NativeSandboxClient(
+      'https://sandbox.example',
+      (async () => new Response(null, { status: 204 })) as typeof fetch,
+    );
+    const answer = client.request('/v1/delegations/connection', secret, { method });
+    if (code) await assert.rejects(answer, { code, status: 502 });
+    else assert.deepEqual(await answer, {});
+  }
 });
