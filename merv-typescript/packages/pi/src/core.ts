@@ -59,7 +59,7 @@ export const gone = (a: FleetAllocation | null | undefined, now: string) =>
 export const lost = (a: FleetAllocation | null | undefined): PiInterruption =>
   a?.error === 'wallet_refused' || a?.error === 'person_capped'
     ? 'wallet_refused'
-    : a?.error === 'runtime_refused'
+    : a?.error === 'runtime_refused' || a?.error === 'runtime_not_ready'
       ? 'runtime_refused'
       : a && a.intent !== 'run' && a.runtime?.state !== 'failed'
         ? 'runtime_stopped'

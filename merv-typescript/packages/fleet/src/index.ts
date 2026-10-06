@@ -100,6 +100,14 @@ const report = (event: string, a: FleetAllocation, error: unknown) => {
 const unpricedMs = 600_000;
 /** How long after a restart owners have to register before their kinds' machines are judged. */
 const ownerGraceMs = 300_000;
+/** A machine whose agent has not connected this long after its create is stuck (a good one is
+ * ready in seconds): it is stopped and another rented, up to `readyAttempts` machines in all. */
+const readyMs = 60_000;
+const readyAttempts = 3;
+/** Each machine's own create key, so the provider places a replacement afresh. */
+const createKey = (a: FleetAllocation) =>
+  a.replaced ? `${a.id}:create:${a.replaced + 1}` : `${a.id}:create`;
+const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** Math.min(failures, 6));
 
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
@@ -668,6 +676,7 @@ export class FleetService implements Fleet {
             runtime.launch?.deliveryState !== 'launched'))
       )
         return;
+      if (!current.runtime) current.adoptedAt = this.time();
       current.runtime = runtime;
       current.phase = runtime.deleted
         ? 'released'
@@ -723,10 +732,9 @@ export class FleetService implements Fleet {
               )
                 current.phase = 'uncertain';
               if (!booting) current.failures++;
-              current.error = 'runtime_unavailable';
+              if (current.error !== 'runtime_not_ready') current.error = 'runtime_unavailable';
               current.retryAt = new Date(
-                this.clock() +
-                  (booting ? 1000 : Math.min(60_000, 1000 * 2 ** Math.min(current.failures, 6))),
+                this.clock() + (booting ? 1000 : backoff(current.failures)),
               ).toISOString();
             });
           }
@@ -803,14 +811,12 @@ export class FleetService implements Fleet {
         this.waitOutLease(current);
       });
       if (!create) return;
-      const handle = await runtime
-        .provision(place, `${a.id}:create`, a.profileId)
-        .catch((error) => {
-          // Refusing the first attempt proves no machine exists: free the slot, do not retry.
-          if (!first || !refused(error)) throw error;
-          if (walletRefused(error)) refusal = 'wallet_refused';
-          report('fleet.refused', a, error);
-        });
+      const handle = await runtime.provision(place, createKey(a), a.profileId).catch((error) => {
+        // Refusing the first attempt proves no machine exists: free the slot, do not retry.
+        if (!first || !refused(error)) throw error;
+        if (walletRefused(error)) refusal = 'wallet_refused';
+        report('fleet.refused', a, error);
+      });
       if (handle) await this.observed(a, handle, 'provisioning');
       else
         await this.update(a.id, (current) => {
@@ -833,6 +839,33 @@ export class FleetService implements Fleet {
         current.intent = 'stop';
       });
     if (a.intent === 'stop') return await stop(a, handle);
+    // A machine whose agent never connected is stuck: stop it and rent another under a new key.
+    if (
+      a.intent === 'run' &&
+      !handle.ready &&
+      !handle.launch &&
+      Date.parse(a.adoptedAt ?? a.updatedAt) + readyMs <= this.clock()
+    ) {
+      report('fleet.not_ready', a, new MervError('runtime_not_ready', 'Machine never ready'));
+      if ((a.replaced ?? 0) + 1 >= readyAttempts) {
+        a = await this.update(a.id, (current) => {
+          current.intent = 'stop';
+          current.error = 'runtime_not_ready';
+        });
+        return await stop(a, handle);
+      }
+      await runtime.stop(place, handle);
+      await this.update(a.id, (current) => {
+        if (current.intent !== 'run' || current.runtime?.sandboxId !== handle.sandboxId) return;
+        current.runtime = null;
+        current.createAttempted = false;
+        current.replaced = (current.replaced ?? 0) + 1;
+        current.failures++;
+        current.error = 'runtime_unavailable';
+        current.retryAt = new Date(this.clock() + backoff(current.failures)).toISOString();
+      });
+      return;
+    }
     if (!owner || !handle.ready) return;
     if (handle.launch?.deliveryState !== 'launched') {
       if (a.intent === 'drain') {

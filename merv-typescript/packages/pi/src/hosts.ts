@@ -468,7 +468,7 @@ export class PiHosts implements FleetOwner {
           ? 'spending limit'
           : fact(next)?.error === 'runtime_refused'
             ? 'no free machine'
-            : next.readyBy <= now
+            : next.readyBy <= now || fact(next)?.error === 'runtime_not_ready'
               ? 'not ready in time'
               : 'the machine stopped',
       );

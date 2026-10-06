@@ -1624,3 +1624,69 @@ test('successful inspections do not reset repeated launch failures or reopen the
   assert.equal(f.runtimes.createKeys.length, 1);
   assert.deepEqual([...new Set(f.runtimes.launchKeys)], [`${id}:launch`]);
 });
+
+test('a machine not ready a minute after its create is stopped and rented again under a new key', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.initialState = 'provisioning';
+  const { id, epoch } = await f.fleet.request(f.caller, input('stuck-once'));
+  await f.fleet.tick();
+  f.advance(59_000);
+  await f.fleet.tick();
+  assert.deepEqual([f.runtimes.createKeys, f.runtimes.stopped], [[`${id}:create`], []]);
+  // Its agent never connected; the provider places the next machine afresh.
+  f.runtimes.initialState = 'ready';
+  f.advance(1000);
+  await f.fleet.tick();
+  const replaced = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual(
+    [replaced.phase, replaced.intent, replaced.runtime, replaced.failures, replaced.error],
+    ['provisioning', 'run', null, 1, 'runtime_unavailable'],
+  );
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  await f.fleet.tick();
+  assert.equal(f.runtimes.createKeys.length, 1, 'waits for its retry');
+  f.advance(2000);
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const launched = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create:2`]);
+  assert.deepEqual(
+    [launched.phase, launched.runtime?.sandboxId, launched.failures, launched.error],
+    ['running', 'sbx_2', 0, null],
+  );
+  assert.equal(launched.epoch, epoch);
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(id, epoch, tx)), true);
+});
+
+test('an allocation whose machines never become ready fails after three, with runtime_not_ready', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.initialState = 'provisioning';
+  const { id, epoch } = await f.fleet.request(f.caller, input('never-ready'));
+  await f.fleet.tick();
+  for (const _ of [1, 2]) {
+    f.advance(60_000);
+    await f.fleet.tick();
+    f.advance(60_000);
+    await f.fleet.tick();
+  }
+  f.advance(60_000);
+  await f.fleet.tick();
+  const failed = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create:2`, `${id}:create:3`]);
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1', 'sbx_2', 'sbx_3']);
+  assert.deepEqual(
+    [failed.intent, failed.phase, failed.error, failed.runtime?.sandboxId],
+    ['stop', 'releasing', 'runtime_not_ready', 'sbx_3'],
+  );
+  assert.equal(await f.state.transaction((tx) => f.fleet.admits(id, epoch, tx)), false);
+  // A stop that fails afterwards does not hide why it stopped.
+  f.runtimes.inspectError = new Error('service down');
+  f.advance(1000);
+  await f.fleet.tick();
+  f.runtimes.inspectError = undefined;
+  assert.equal((await f.fleet.inspect(f.caller, id)).error, 'runtime_not_ready');
+  f.runtimes.confirmStopped('sbx_3');
+  f.advance(60_000);
+  await f.fleet.tick();
+  const released = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([released.phase, released.error], ['released', 'runtime_not_ready']);
+});

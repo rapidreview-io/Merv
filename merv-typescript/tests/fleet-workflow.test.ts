@@ -1397,6 +1397,8 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
   );
   let now = Date.now();
   let lostReply = false;
+  /** How many of the next machines made never become ready. */
+  let stuck = 0;
   const stopped = new Set<string>();
   const bootstraps = new Map<string, string>();
   const runtimeHandles = new Map<string, SandboxRuntimeHandle>();
@@ -1409,10 +1411,11 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     async provision(_projectId, operationKey) {
       let handle = creates.get(operationKey);
       if (!handle) {
+        const ready = !stuck || !stuck--;
         handle = {
           sandboxId: `sbx_workflow_${creates.size + 1}`,
-          state: 'ready',
-          ready: true,
+          state: ready ? 'ready' : 'provisioning',
+          ready,
           deleted: false,
           leaseExpiresAt: new Date(now + 3_600_000).toISOString(),
           revision: 1,
@@ -1526,6 +1529,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     creates,
     launches,
     lostReply: () => lostReply,
+    stick: (machines: number) => (stuck = machines),
     advance: (ms: number) => (now += ms),
   };
 }
@@ -1719,6 +1723,33 @@ for (const workerCount of [1, 3]) {
   test(`real Fleet runs ${workerCount} managed assignments in two projects alongside an external runner`, (t) =>
     managedFleetScenario(t, workerCount));
 }
+
+test('a work host whose first machine never becomes ready gets another, where its runner enrolls', async (t) => {
+  const h = await hosted(t, 1);
+  const caller = await h.project('Stuck machine');
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
+  await h.start(caller);
+  h.stick(1);
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  await h.fleet.tick(); // Reserve and provision a machine whose agent never connects.
+  h.advance(60_000);
+  await h.fleet.tick(); // Stop it a minute on.
+  h.advance(2000);
+  await h.fleet.tick(); // Provision another under a new key.
+  await h.fleet.tick(); // Launch on it.
+  assert.deepEqual([...h.stopped], ['sbx_workflow_1']);
+  const current = await h.fleet.inspectOwned(h.adapter, allocation!.id);
+  assert.deepEqual(
+    [current.runtime?.sandboxId, current.epoch, [...h.launches.keys()]],
+    ['sbx_workflow_2', allocation!.epoch, ['sbx_workflow_2']],
+  );
+  const bootstrap = JSON.parse(h.bootstraps.get('sbx_workflow_2')!);
+  const enrolled = await h.sessions.managed.enroll(bootstrap.enrollmentToken, {
+    workerNonce: randomBytes(32).toString('hex'),
+  });
+  assert.ok(enrolled.controlToken);
+});
 
 test('real Fleet acts as and bills the project owner, whoever switched it on, and stops them once they may not write', async (t) => {
   const h = await hosted(t, 1);

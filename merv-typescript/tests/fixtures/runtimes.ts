@@ -21,6 +21,8 @@ export class FakeRuntimes implements SandboxRuntimes {
   readonly handles = new Map<string, SandboxRuntimeHandle>();
   readonly launched: string[] = [];
   readonly stopped: string[] = [];
+  /** How many of the next machines made never become ready: their agent never connects. */
+  stuck = 0;
 
   private find(sandboxId: string): SandboxRuntimeHandle {
     const handle = [...this.handles.values()].find((item) => item.sandboxId === sandboxId);
@@ -30,10 +32,11 @@ export class FakeRuntimes implements SandboxRuntimes {
   async provision(_projectId: string, key: string): Promise<SandboxRuntimeHandle> {
     let handle = this.handles.get(key);
     if (!handle) {
+      const ready = !this.stuck || !this.stuck--;
       handle = {
         sandboxId: `sbx_${this.handles.size + 1}`,
-        state: 'ready',
-        ready: true,
+        state: ready ? 'ready' : 'provisioning',
+        ready,
         deleted: false,
         leaseExpiresAt: '2099-01-01T00:00:00Z',
         revision: 1,

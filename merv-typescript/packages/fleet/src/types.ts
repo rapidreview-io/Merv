@@ -27,6 +27,10 @@ export interface FleetAllocation {
   runtime: SandboxRuntimeHandle | null;
   /** Durable intent written before create; false proves no provider call has begun. */
   createAttempted: boolean;
+  /** When Fleet adopted its current machine, which must be ready within a minute. */
+  adoptedAt?: string;
+  /** Machines that never became ready, stopped and rented again each under a new create key. */
+  replaced?: number;
   createdAt: string;
   /** While queued, when the request gives up; once reserved, when the machine must stop. */
   deadlineAt: string;
@@ -39,13 +43,19 @@ export interface FleetAllocation {
   failures: number;
   error: FleetError | null;
 }
-/** runtime_unavailable: an ambiguous failure being retried with the same keys.
+/** runtime_unavailable: an ambiguous failure being retried with the same keys, or a machine that
+ * never became ready, being rented again under a new key.
  * runtime_refused: the service refused before any machine could exist, so the slot was freed, or
  * a capped request's offer listed no price for ten minutes.
  * wallet_refused: the provider's spending limit refused it.
- * person_capped: its person spent today's compute while it queued; nobody else is held back. */
+ * person_capped: its person spent today's compute while it queued; nobody else is held back.
+ * runtime_not_ready: none of its machines became ready, so it stopped. */
 export type FleetError =
-  'runtime_unavailable' | 'runtime_refused' | 'wallet_refused' | 'person_capped';
+  | 'runtime_unavailable'
+  | 'runtime_refused'
+  | 'wallet_refused'
+  | 'person_capped'
+  | 'runtime_not_ready';
 export interface FleetRequest {
   requestId: string;
   /** The registered owner's kind, and its own id for the work. */

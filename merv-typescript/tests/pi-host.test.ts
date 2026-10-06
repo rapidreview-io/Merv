@@ -906,3 +906,38 @@ test('pi@2 ends turns begun on a conversation’s machine, and the pi@1 image re
   assert.equal(column, undefined);
   await assert.rejects(state.migrate('pi', [migration]), code('migration_ahead'));
 });
+
+test('a machine whose agent never connects is replaced and the turn runs on the next; when none does, the turn ends as no machine', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.stuck = 1;
+  const sent = await f.send(await f.create());
+  await f.fleet.tick();
+  f.advance(59_000);
+  await f.fleet.tick();
+  await f.pi.tick();
+  assert.equal((await f.allocation(sent.runtimeId)).phase, 'provisioning');
+  f.advance(1000);
+  await f.fleet.tick();
+  f.advance(2000);
+  await f.fleet.tick();
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  await f.finish(await f.claimed(sent));
+  assert.equal((await command(f, sent)).status, 'completed');
+  assert.equal((await f.allocation(sent.runtimeId)).runtime?.sandboxId, 'sbx_2');
+
+  const g = await fixture(t);
+  g.runtimes.stuck = 3;
+  const doomed = await g.send(await g.create());
+  await g.fleet.tick();
+  for (const retry of [2000, 4000, 0]) {
+    g.advance(60_000);
+    await g.fleet.tick();
+    g.advance(retry);
+    await g.fleet.tick();
+    await g.pi.tick();
+  }
+  assert.deepEqual(g.runtimes.stopped, ['sbx_1', 'sbx_2', 'sbx_3']);
+  assert.equal((await g.allocation(doomed.runtimeId)).error, 'runtime_not_ready');
+  const ended = await command(g, doomed);
+  assert.deepEqual([ended.status, ended.error], ['interrupted', 'runtime_refused']);
+});

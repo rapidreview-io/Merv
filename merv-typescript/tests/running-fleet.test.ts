@@ -7,6 +7,7 @@ import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
 import { UiRegistry, type RunningRead } from '@merv/ui';
 import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import { FleetService, type FleetOwner } from '../packages/fleet/src/index.js';
+import { fleetPanel } from '../packages/fleet/src/running.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { openState } from './fixtures/state.js';
 
@@ -706,4 +707,22 @@ test('the adapter takes its part of the Running page with it when it unloads', a
     false,
   );
   assert.deepEqual((await f.board()).lanes.sessions.nodes, []);
+});
+
+test('an allocation none of whose machines became ready says so once released, not as a refusal', () => {
+  const a = {
+    id: 'flt_stuck',
+    owner: { kind: 'pi-host', id: 'host_1' },
+    phase: 'released',
+    intent: 'stop',
+    error: 'runtime_not_ready',
+    failures: 0,
+    runtime: { sandboxId: 'sbx_3', state: 'stopped' },
+    createdAt: '2026-10-06T00:00:00.000Z',
+    updatedAt: '2026-10-06T00:03:10.000Z',
+  } as unknown as Parameters<typeof fleetPanel>[0];
+  assert.deepEqual(fleetPanel(a).header.says, [
+    'Stopped · no machine became ready · ',
+    { ago: a.updatedAt },
+  ]);
 });
