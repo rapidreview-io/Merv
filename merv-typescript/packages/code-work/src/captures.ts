@@ -9,6 +9,7 @@ import {
   type Sql,
   idSchema,
   mapAsync,
+  MervError,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { SessionWorkspace } from '@merv/contracts';
@@ -48,6 +49,8 @@ export function checkedCapture(
     ? { status: 'ready', capture: { ...capture, workspace } }
     : { status: capture.status === 'ready' ? 'failed' : capture.status, capture };
 }
+/** The codes capture() answers when a record it was asked for no longer exists. */
+const missingCodes = new Set(['session_not_found', 'code_capture_not_found', 'not_found']);
 /** A reader over records owned by Code and Sessions, not another mutable head ledger. */
 export class CodeCaptureReader {
   private closed = false;
@@ -95,11 +98,15 @@ export class CodeCaptureReader {
         ? (await (tx ? read(tx) : this.state.read(read))).map(({ id }) => id)
         : [],
     );
-    return await mapAsync(refs, async (ref) =>
-      ('sessionId' in ref ? finals.has(ref.sessionId) : commits.has(ref.commandId))
-        ? await this.capture(caller, ref, tx)
-        : null,
-    );
+    return await mapAsync(refs, async (ref) => {
+      if (!('sessionId' in ref ? finals.has(ref.sessionId) : commits.has(ref.commandId)))
+        return null;
+      // A record whose session or capture is gone reads as missing, not as a failed request.
+      return await this.capture(caller, ref, tx).catch((error: unknown) => {
+        if (error instanceof MervError && missingCodes.has(error.code)) return null;
+        throw error;
+      });
+    });
   }
   async capture(caller: Caller, value: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture> {
     check(!this.closed, 'code_unavailable', 'Code capture reader is unavailable', 503);

@@ -523,3 +523,22 @@ test('a request reads each owner once, however many ids it names, and answers as
   for (const ref of refs) alone.push(...(await f.knowledge.resolve(f.reader, [ref])));
   assert.equal(JSON.stringify(await f.knowledge.resolve(f.reader, refs)), JSON.stringify(alone));
 });
+
+test('a code commit whose session is gone reads as missing, not as a failed request', async (t) => {
+  const f = await fixture(t);
+  await f.completeTask();
+  const [command] = await f.state.read((sql) =>
+    sql.all<{ id: string; session_id: string }>('SELECT id,session_id FROM code_commands'),
+  );
+  // A retired instance's session rows are deleted with its guards off.
+  await f.state.transaction(async (tx) => {
+    await tx.run('SET LOCAL session_replication_role = replica');
+    await tx.run('DELETE FROM worker_sessions WHERE id=?', command!.session_id);
+  });
+  assert.deepEqual(
+    (await f.knowledge.resolve(f.reader, [`code-commit:${command!.id}`, command!.id])).map(
+      ({ status }) => status,
+    ),
+    ['missing', 'missing'],
+  );
+});
