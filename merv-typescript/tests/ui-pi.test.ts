@@ -2146,6 +2146,13 @@ test('what Run told the agent is a receipt only where it is exactly what Pi kept
   assert.equal(after('Ran task.create: {"id":"wf_1"}'), create);
   assert.equal(after('session.halt was refused: Actor lacks admin permission'), halt);
   assert.equal(after('Ran artifact.read; its result is shown only to me.'), read);
+  // A result cut at a space keeps a trailing space in told; pi.send keeps the words trimmed.
+  const cut = { ...create, id: 'pip_cut', ran: ran('Ran task.create: {"text":"x ') };
+  const trimmed = { ...proposed, proposals: [cut] } as unknown as PiCommand;
+  assert.equal(
+    receiptOf([trimmed, said('Thanks', 'assistant'), said('Ran task.create: {"text":"x')], 2),
+    cut,
+  );
   for (const [text, role] of [
     // A message that merely begins alike.
     ['Ran the numbers again: anything new?'],

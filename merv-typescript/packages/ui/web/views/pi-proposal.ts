@@ -135,9 +135,10 @@ export function receiptOf(commands: PiCommand[], at: number): PiProposal | null 
     const earlier = commands.slice(from + 1, at).filter(same);
     return ran[Math.min(earlier.length, ran.length - 1)];
   };
+  // pi.send keeps the words trimmed, and a cut result can end in a space.
   const kept = answered(
-    (call) => call.ran?.told === text,
-    (turn) => told(turn) === text,
+    (call) => call.ran?.told?.trim() === text.trim(),
+    (turn) => told(turn)?.trim() === text.trim(),
   );
   if (kept) return kept;
   const old = before(text);
