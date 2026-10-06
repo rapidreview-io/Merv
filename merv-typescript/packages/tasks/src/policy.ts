@@ -374,7 +374,7 @@ export async function reviewCommit(
     'This Git task’s review does not pin a delivered commit',
     409,
   );
-  const checked = await this.requireCode().checkCapture(
+  const checked = await this.code.checkCapture(
     caller,
     delivered.ref,
     {
@@ -420,7 +420,7 @@ export async function checkoutReviewer(
     'This worker does not hold the lease of the current review',
     409,
   );
-  const own = await this.requireCode().capture(
+  const own = await this.code.capture(
     caller,
     { kind: 'session-final', sessionId: caller.session.id },
     tx,

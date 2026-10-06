@@ -8,7 +8,7 @@ import {
   type MirrorTransport,
 } from '@merv/code/store/mirror';
 import type { CodeStore } from '@merv/code/store/operations';
-import type { Caller, Scope, State, StoredEvent, Transaction, Workflows } from '@merv/contracts';
+import type { Caller, Scope, State, Transaction, Workflows } from '@merv/contracts';
 import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositoryPrepareInput } from './models.js';
 import {
@@ -369,7 +369,12 @@ export class CodeService implements Code {
     };
   }
   baseStatus: Code['baseStatus'] = (...args) => this.unitStore.baseStatus(...args);
-  pinBase: Code['pinBase'] = (...args) => this.unitStore.pinBase(...args).catch(refuse);
+  async pinBase(...[caller, input, tx]: Parameters<Code['pinBase']>) {
+    const pin = await this.unitStore.pinBase(caller, input, tx).catch(refuse);
+    // A writable checkout's lease becomes the unit's next writer generation in Code.
+    if (input.writer) await this.writerStore.reserveWriter(caller, input, tx).catch(refuse);
+    return pin;
+  }
   basePin: Code['basePin'] = (...args) => this.unitStore.records.basePin(...args);
   /** Plugin wiring, not part of the Code contract: no other plugin reconciles Code's view. */
   reconcileAll = () => this.unitStore.reconcileAll();
@@ -390,24 +395,6 @@ export class CodeService implements Code {
     this.requireStore();
     return await this.mirrorStore!.retry(caller, input);
   }
-  async sessionChanged(event: StoredEvent, tx: Transaction) {
-    check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
-    if (event.type === 'session.workspace_attached' || event.type === 'session.closed')
-      await this.writerStore.sessionChanged(
-        event.projectId,
-        event.subjectId,
-        event.type === 'session.workspace_attached' ? 'attached' : 'closed',
-        tx,
-      );
-  }
-  async reserveWriter(...args: Parameters<CodeWriterService['reserveWriter']>) {
-    check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
-    return await this.writerStore.reserveWriter(...args).catch(refuse);
-  }
-  async writerStatus(...args: Parameters<CodeWriterService['writerStatus']>) {
-    check(!this.publicationClosed, 'code_unavailable', 'Code is unavailable', 503);
-    return await this.writerStore.writerStatus(...args);
-  }
   async requireLeasable(
     caller: Caller,
     input: { unitId: string; writer: boolean },
@@ -420,7 +407,9 @@ export class CodeService implements Code {
       async () => {
         const base = await this.baseStatus(caller, input.unitId, tx);
         if (base.status === 'blocked') return base.blockers[0]!;
-        return input.writer ? (await this.writerStatus(caller, input.unitId, tx)).blocked : null;
+        return input.writer
+          ? (await this.writerStore.writerStatus(caller, input.unitId, tx)).blocked
+          : null;
       },
     );
     if (blocked) refuse(new MervError(blocked.code, blocked.message, 409));

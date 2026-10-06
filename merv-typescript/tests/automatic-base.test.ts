@@ -20,7 +20,6 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
-import type { CodeWriterService } from '@merv/code/writers';
 import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-work/src/bases.js';
 import { openState } from './fixtures/state.js';
 
@@ -226,7 +225,7 @@ async function fixture(t: TestContext) {
   };
   const pin = async (work: WorkflowSnapshot, leaseId = `lease-${work.id}`) =>
     await state.transaction(
-      async (tx) => await code.pinBase(admin, { unitId: work.id, leaseId }, tx),
+      async (tx) => await code.pinBase(admin, { unitId: work.id, leaseId, writer: false }, tx),
     );
   const published = async (work: WorkflowSnapshot) =>
     (await workflows.blockers(admin, work.id)).map((item) => [item.provider, item.code, item.key]);
@@ -248,6 +247,7 @@ async function fixture(t: TestContext) {
     workflows,
     handles,
     code,
+    core,
     admin,
     project,
     plain,
@@ -343,7 +343,7 @@ test('a unit with no accepted code beneath it starts from the project’s pinned
   // A refused offer rolls its transaction back, and the pin with it.
   await assert.rejects(
     f.state.transaction(async (tx) => {
-      await f.code.pinBase(f.admin, { unitId: work.id, leaseId: 'refused' }, tx);
+      await f.code.pinBase(f.admin, { unitId: work.id, leaseId: 'refused', writer: false }, tx);
       throw new Error('the offer was refused after acquisition');
     }),
     /refused after acquisition/,
@@ -632,7 +632,11 @@ test('units waiting on the same two accepted commits get one merged base, and a 
   await assert.rejects(f.pin(clash), { code: 'code_merge_conflict', status: 409 });
 
   await f.state.transaction((tx) =>
-    f.code.reserveWriter(f.admin, { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' }, tx),
+    f.core.writers.reserveWriter(
+      f.admin,
+      { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' },
+      tx,
+    ),
   );
   const merged = (await f.state.read((sql) => bases.find(sql, f.project.id, [a, b])))!;
   // Release tells an inherited quarantine from an operator's own by the reason it was
@@ -654,13 +658,17 @@ test('units waiting on the same two accepted commits get one merged base, and a 
     requestId: 'quarantine',
   });
   const writer = await f.state.transaction((tx) =>
-    f.code.writerStatus(f.admin, waiters[0]!.id, tx),
+    f.core.writers.writerStatus(f.admin, waiters[0]!.id, tx),
   );
   assert.equal(writer.state, 'recovery_required');
   assert.equal(writer.blocked?.code, 'code_quarantined');
   await assert.rejects(
     f.state.transaction((tx) =>
-      f.code.reserveWriter(f.admin, { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' }, tx),
+      f.core.writers.reserveWriter(
+        f.admin,
+        { unitId: waiters[0]!.id, leaseId: 'quarantine-lease' },
+        tx,
+      ),
     ),
     { code: 'code_quarantined' },
   );
@@ -698,20 +706,23 @@ test('units waiting on the same two accepted commits get one merged base, and a 
     assert.notEqual((await f.code.unit(f.admin, waiter.id)).baseStatus?.status, 'blocked');
   }
   const released = await f.state.transaction((tx) =>
-    f.code.writerStatus(f.admin, waiters[0]!.id, tx),
+    f.core.writers.writerStatus(f.admin, waiters[0]!.id, tx),
   );
   assert.equal(released.state, 'recovery_required');
   assert.equal(released.blocked?.code, 'code_recovery_required');
   const nextWriter = () =>
     f.state.transaction((tx) =>
-      f.code.reserveWriter(f.admin, { unitId: waiters[0]!.id, leaseId: 'after-release' }, tx),
+      f.core.writers.reserveWriter(
+        f.admin,
+        { unitId: waiters[0]!.id, leaseId: 'after-release' },
+        tx,
+      ),
     );
   await assert.rejects(nextWriter(), { code: 'code_recovery_required' });
-  // This fixture composes bases without a hosted transfer service; use its same durable
-  // writer capability for the operator fence, including the transaction's observer.
-  const writers = (f.code as unknown as { writerStore: CodeWriterService }).writerStore;
+  // This fixture composes bases without a hosted transfer service; use Code's own writer
+  // fence for the operator, including the transaction's observer.
   const fenced = await f.state.transaction((tx) =>
-    writers.fence(f.admin, { unitId: waiters[0]!.id, requestId: 'release-fence' }, tx),
+    f.core.writers.fence(f.admin, { unitId: waiters[0]!.id, requestId: 'release-fence' }, tx),
   );
   assert.equal(fenced.state, 'closed');
   assert.deepEqual(await f.workflows.blockers(f.admin, waiters[0]!.id), []);

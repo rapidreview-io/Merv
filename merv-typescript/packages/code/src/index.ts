@@ -23,13 +23,27 @@ const configuration = z
 export const codePlugin = {
   name: 'merv-code',
   Config: configuration,
-  inject: ['state', 'scope'],
+  inject: ['state', 'scope', 'domainEvents'],
   async apply(ctx: Context, config: z.infer<typeof configuration> = {}) {
     await ctx.effect(async function* () {
       const service = await createService(
         new CodeService(ctx.state, ctx.scope, config, githubConfig()),
       );
       yield () => service.close();
+      // A session's attach and end open and end its writer generation. The cursor is durable,
+      // so what happened while Code was unloaded is caught up on in order.
+      yield await ctx.domainEvents.subscribe({
+        id: 'code.writers.v1',
+        types: ['session.workspace_attached', 'session.closed'],
+        from: 'now',
+        handle: async (event, tx) =>
+          await service.writers.sessionChanged(
+            event.projectId,
+            event.subjectId,
+            event.type === 'session.workspace_attached' ? 'attached' : 'closed',
+            tx,
+          ),
+      });
       yield ctx.provide('code', service);
     });
   },

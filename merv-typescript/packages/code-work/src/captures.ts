@@ -249,10 +249,8 @@ export class CodeCaptureReader {
     return tx ? await read(tx) : await this.state.read(read);
   }
   /**
-   * Where a closed writer left this session, read from Code's own records. The session's newest
-   * commit that Code admitted at the head stands for its capture; else the final upload that
-   * moved the head there, with its tree; else the head alone, which is the base if nothing moved
-   * it. An operator's fence and a final admission both close the writer.
+   * Where a closed writer left this session, as Code's writers record it. The session's newest
+   * commit that Code admitted at that head stands for its capture; else Code's head itself.
    */
   private async fencedHead(
     projectId: string,
@@ -260,31 +258,15 @@ export class CodeCaptureReader {
     tx?: Transaction,
   ): Promise<{ commandId: string } | { headOid: string; treeOid?: string } | null> {
     const read = async (sql: Sql) => {
-      const writer = await this.writers.row(sql, projectId, instanceId);
-      if (writer?.writer_state !== 'closed' || writer.writer_session_id !== sessionId) return null;
+      const head = await this.writers.closedHead(projectId, instanceId, sessionId, sql);
+      if (!head) return null;
       const row = await sql.get<{ id: string }>(
         "SELECT id FROM code_commands WHERE project_id=? AND session_id=? AND status='succeeded' AND (receipt_json::jsonb ->> 'headOid')=? ORDER BY _merv_rowid DESC LIMIT 1",
         projectId,
         sessionId,
-        writer.head_oid,
+        head.headOid,
       );
-      if (row) return { commandId: row.id };
-      const final = writer.head_operation_id
-        ? await sql.get<{ payload_json: string }>(
-            "SELECT payload_json FROM code_operations WHERE id=? AND project_id=? AND kind='upload'",
-            writer.head_operation_id,
-            projectId,
-          )
-        : undefined;
-      const upload = final && (JSON.parse(final.payload_json) as Record<string, unknown>);
-      return upload &&
-        upload.kind === 'final' &&
-        upload.sessionId === sessionId &&
-        typeof upload.tip === 'string' &&
-        upload.tip === writer.head_oid &&
-        typeof upload.treeOid === 'string'
-        ? { headOid: upload.tip, treeOid: upload.treeOid }
-        : { headOid: writer.head_oid ?? this.writers.base(writer) };
+      return row ? { commandId: row.id } : head;
     };
     return tx ? await read(tx) : await this.state.read(read);
   }

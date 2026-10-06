@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { StoredEvent } from '@merv/contracts';
 import type { CodeService } from '@merv/code-work/service';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
@@ -110,65 +109,50 @@ test('direct core binding changes update research and detached adapters reconcil
   assert.equal((await f.blockers())[0]?.key, 'main');
 });
 
-test('research unload retains the core writer and replays session changes after reload', async (t) => {
+test('Code takes its writer lifecycle from session events itself and catches up after its reload', async (t) => {
   const f = await fixture(t);
-  const core = f.ctx.code;
-  const previous = f.ctx.codeWork as CodeService;
-  const event = {
-    projectId: f.caller.projectId,
-    actorId: f.caller.actorId,
-    subjectId: 'writer',
-    type: 'session.closed',
-    data: {},
+  const append = async (type: string) => {
+    await f.ctx.state.transaction((tx) =>
+      f.ctx.state.appendEvent(tx, {
+        projectId: f.caller.projectId,
+        actorId: f.caller.actorId,
+        subjectId: 'writer',
+        type,
+        data: {},
+      }),
+    );
+    await f.ctx.domainEvents.drain();
   };
-  await f.ctx.state.transaction(async (tx) => {
-    await previous.pinBase(f.caller, { unitId: f.unitId, leaseId: 'writer' }, tx);
-    await previous.reserveWriter(f.caller, { unitId: f.unitId, leaseId: 'writer' }, tx);
-  });
-  await f.app.setEnabled('code-work', false);
-  for (const call of [
-    () => f.ctx.state.transaction((tx) => previous.writerStatus(f.caller, f.unitId, tx)),
-    () =>
-      f.ctx.state.transaction((tx) =>
-        previous.reserveWriter(f.caller, { unitId: f.unitId, leaseId: 'stale' }, tx),
-      ),
-    () => f.ctx.state.transaction((tx) => previous.sessionChanged(event as StoredEvent, tx)),
-  ])
-    await assert.rejects(call(), { code: 'code_unavailable' });
-
-  // Core can still account for a session while the research projection is detached.
   await f.ctx.state.transaction((tx) =>
-    core.writers.sessionChanged(f.caller.projectId, 'writer', 'attached', tx),
+    f.ctx.codeWork.pinBase(f.caller, { unitId: f.unitId, leaseId: 'writer', writer: true }, tx),
   );
-  const status = () =>
-    f.ctx.state.transaction((tx) => core.writers.writerStatus(f.caller, f.unitId, tx));
-  assert.equal((await status()).state, 'active');
-  await f.ctx.state.transaction((tx) => f.ctx.state.appendEvent(tx, event));
-  await f.ctx.domainEvents.drain();
-  assert.equal((await status()).state, 'active', 'detached research consumes no session event');
+  const row = () =>
+    f.ctx.state.read((sql) => f.ctx.code.writers.row(sql, f.caller.projectId, f.unitId));
+  await f.app.setEnabled('code-work', false);
+  await append('session.workspace_attached');
+  assert.equal((await row())?.writer_state, 'active', 'Code Work is not needed for the attach');
 
-  await f.app.setEnabled('code-work', true);
+  // What happened while Code was unloaded is caught up on in order, under the same cursor.
+  await f.app.setEnabled('code', false);
+  await append('session.closed');
+  await f.app.setEnabled('code', true);
   await f.ctx.domainEvents.drain();
-  assert.equal(f.ctx.code, core);
-  assert.deepEqual(await status(), {
-    generation: 1,
-    state: 'closing',
-    blocked: {
-      code: 'code_writer_busy',
-      message: 'The last writer of this unit has not handed over its final capture yet',
+  assert.deepEqual(
+    await f.ctx.state.transaction((tx) => f.ctx.code.writers.writerStatus(f.caller, f.unitId, tx)),
+    {
+      generation: 1,
+      state: 'closing',
+      blocked: {
+        code: 'code_writer_busy',
+        message: 'The last writer of this unit has not handed over its final capture yet',
+      },
     },
-  });
+  );
   // Replayed attachment or close observations cannot reopen it or reset final-capture grace.
-  const before = await f.ctx.state.read((sql) =>
-    core.writers.row(sql, f.caller.projectId, f.unitId),
-  );
-  await f.ctx.state.transaction(async (tx) => {
-    await core.writers.sessionChanged(f.caller.projectId, 'writer', 'attached', tx);
-    await (f.ctx.codeWork as CodeService).sessionChanged(event as StoredEvent, tx);
-  });
-  const after = await f.ctx.state.read((sql) =>
-    core.writers.row(sql, f.caller.projectId, f.unitId),
-  );
+  const before = await row();
+  await append('session.workspace_attached');
+  await append('session.closed');
+  const after = await row();
   assert.equal(after?.writer_state, 'closing');
   assert.equal(after?.writer_changed_at, before?.writer_changed_at);
 });
@@ -176,13 +160,13 @@ test('research unload retains the core writer and replays session changes after 
 test('direct core writer changes and research blockers commit or roll back together', async (t) => {
   const f = await fixture(t);
   await f.ctx.state.transaction(async (tx) => {
-    await f.ctx.codeWork.pinBase(f.caller, { unitId: f.unitId, leaseId: 'writer' }, tx);
-    await f.ctx.code.writers.reserveWriter(f.caller, { unitId: f.unitId, leaseId: 'writer' }, tx);
-    for (const type of ['session.workspace_attached', 'session.closed'])
-      await (f.ctx.codeWork as CodeService).sessionChanged(
-        { type, projectId: f.caller.projectId, subjectId: 'writer' } as StoredEvent,
-        tx,
-      );
+    await f.ctx.codeWork.pinBase(
+      f.caller,
+      { unitId: f.unitId, leaseId: 'writer', writer: true },
+      tx,
+    );
+    for (const change of ['attached', 'closed'] as const)
+      await f.ctx.code.writers.sessionChanged(f.caller.projectId, 'writer', change, tx);
     await tx.run(
       'UPDATE code_workspaces SET writer_changed_at=? WHERE unit_id=?',
       '2000-01-01T00:00:00.000Z',

@@ -39,7 +39,7 @@ async function fixture(t: TestContext) {
   );
   await f.state.transaction((tx) => code.ensureRepository(f.admin, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();
-  const release = f.tasks.bindCode(code);
+  const release = f.bindCode(code);
   f.beforeClose.push(async () => {
     release();
     await code.close();

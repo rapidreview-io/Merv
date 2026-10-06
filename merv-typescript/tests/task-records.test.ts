@@ -47,15 +47,14 @@ async function fixture(t: TestContext) {
   const workflows = await createService(new WorkflowsService(state, scope));
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
-  const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder, blankPaper),
-  );
   const managed = await managedServices(
     { state, scope, artifacts, workflows },
     directory,
     operator,
   );
-  tasks.bindCode(managed.code);
+  const tasks = await createService(
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, managed.code, blankPaper),
+  );
   t.after(async () => {
     await managed.close();
     tasks.dispose();

@@ -6,21 +6,14 @@ Accepted Git units marked for publication use an independently reviewed pull req
 
 ## Plugin boundaries
 
-Code/Git is optional for the research stack. Experiments, Tasks, Knowledge and Research
-bind Code through the `code-work` service. Unloading it preserves their non-Git
-work and stored records. Git work that needs captures, repository admission, or
-publication reports `code_unavailable` until Code returns. The dedicated
+Experiments, Tasks, Knowledge and Research require Code through the `code-work` service,
+so every composition that loads them loads Code and Code work. The dedicated
 Consolidation plugin has been retired; current Research uses an ordinary Git task
 for code integration after reflection approval. Historical consolidation records
 remain readable but have no execution or publication owner. Artifact-only tasks
 never ask for Code.
-Knowledge reports unavailable Code references as `unavailable`, distinct from
-`missing`, and resolves them normally once Code returns.
-
-Set the default configuration's `code` entry to `"disabled": true` to run without
-Code. Its adapters are optional for startup and remain pending until Code returns.
-No workflow is silently converted from Git to non-Git, and no agent is restarted
-merely because this optional service changes.
+Knowledge reports Code references it cannot read now as `unavailable`, distinct from
+`missing`. No workflow is silently converted from Git to non-Git.
 
 | Plugin        | Direct Cordis dependencies     | Responsibility                                                                             |
 | ------------- | ------------------------------ | ------------------------------------------------------------------------------------------ |
@@ -92,7 +85,7 @@ Final WIP capture still runs after confirmed process-group stop. It can preserve
 
 Under [the Git model](GIT_MODEL.md), Code keeps one row per unit of work (a task or an experiment, named by its workflow instance id) with two write-once sections: the base the unit was pinned to, and its acceptance.
 
-**Acceptance.** When a task passes review or an experiment's results are accepted, the owner plugin calls `acceptUnit` inside that review transaction, for every workflow version, whenever Code is loaded. A Git unit's acceptance names the exact reviewed commit, resolved by Code from the capture reference the owner already stored (a task's delivered `code-commit`, an experiment's submitted `session-final`), together with the submission and review it belongs to and whether the reviewer's checkout was attached at exactly that commit. A unit without a workspace records an explicit code-less acceptance, which is what lets a later base look past it. An acceptance is hashed and immutable: the same acceptance replays, a different one is refused with `code_acceptance_conflict`. Code refuses only what the owner's own guard already required (a ready capture of that unit's own writable session); whether accepted code can serve as a base is judged where a base is derived, so a repository the project is not bound to never fails a review. Accepted code must be a commit Code admitted from the unit's own writer: `storage` is `code` with that admitted receipt, and `none` for a code-less acceptance; reviewed code Code never admitted is refused with `code_acceptance_unverifiable`. Importing a project never changes an existing unit's capture contract. With Code unloaded nothing is recorded and scratch work is unaffected.
+**Acceptance.** When a task passes review or an experiment's results are accepted, the owner plugin calls `acceptUnit` inside that review transaction, for every workflow version. A Git unit's acceptance names the exact reviewed commit, resolved by Code from the capture reference the owner already stored (a task's delivered `code-commit`, an experiment's submitted `session-final`), together with the submission and review it belongs to and whether the reviewer's checkout was attached at exactly that commit. A unit without a workspace records an explicit code-less acceptance, which is what lets a later base look past it. An acceptance is hashed and immutable: the same acceptance replays, a different one is refused with `code_acceptance_conflict`. Code refuses only what the owner's own guard already required (a ready capture of that unit's own writable session); whether accepted code can serve as a base is judged where a base is derived, so a repository the project is not bound to never fails a review. Accepted code must be a commit Code admitted from the unit's own writer: `storage` is `code` with that admitted receipt, and `none` for a code-less acceptance; reviewed code Code never admitted is refused with `code_acceptance_unverifiable`. Importing a project never changes an existing unit's capture contract.
 
 **Binding.** `code.local.bind` names the project's repository identity (`repositoryId`) and main (`mainOid`) before history is imported. Use the legacy runner's repository identity when importing its accepted work. Only a signed-in project administrator may call it; an API key, an actor credential or a leased worker is refused with `code_human_required`, because main is consolidated research and no agent moves it. A hosted base can use main only when Code holds that commit. The first call binds. A later call with the same `repositoryId` moves main and must carry `expectedMainOid`, the main last read from `code.status`; anything else is refused with `code_main_changed`, so a replayed or racing call cannot move main backwards. Another `repositoryId` is refused with `code_rebind_required`: `code.repository.rebind` is the one route that changes it. Every bind is journaled in `code_operations`: the same `requestId` and input replays its result, a changed input is refused with `request_conflict`. A base that is already pinned keeps the commit it copied.
 

@@ -201,10 +201,9 @@ export class TaskService implements Tasks {
   readonly reissueReview = reissueReview;
   readonly submitReview = submitReview;
   closed = false;
-  code?: Code;
   sandboxes?: Pick<Sandboxes, 'captures'>;
-  codeBinding?: symbol;
   releaseReviewOwner?: () => void;
+  releaseServiceTasks?: () => void;
   readonly registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   /** Guards a command has run itself, by the transition it is making in that transaction. */
   readonly checked = new CheckedTransitions();
@@ -219,6 +218,7 @@ export class TaskService implements Tasks {
     readonly workflows: Workflows,
     readonly reviews: Reviews,
     readonly contextBuilder: ContextBuilder,
+    readonly code: Code,
     readonly paper: Paper,
     readonly limits = TASK_LIMITS,
   ) {}
@@ -265,31 +265,13 @@ export class TaskService implements Tasks {
                 .deliveryConfirmations as unknown as TaskConfirmation[] | undefined) ?? [])
             : [],
       });
+      this.releaseServiceTasks = this.code.bindServiceTasks(
+        resolutionTasks(this.serviceTasks('code')),
+      );
     } catch (error) {
       this.dispose();
       throw error;
     }
-  }
-
-  /** The optional Cordis child owns this binding, not the task lifecycle. */
-  bindCode(code: Code): () => void {
-    check(!this.closed, 'tasks_closed', 'Tasks is closed', 503);
-    const binding = Symbol('code');
-    this.codeBinding = binding;
-    this.code = code;
-    const release = code.bindServiceTasks(resolutionTasks(this.serviceTasks('code')));
-    return () => {
-      release();
-      if (this.codeBinding !== binding) return;
-      this.codeBinding = undefined;
-      this.code = undefined;
-    };
-  }
-
-  /** Current tasks require Code-managed Git. */
-  requireCode(): Code {
-    check(this.code, 'code_unavailable', 'Git tasks require Code captures', 503);
-    return this.code;
   }
 
   withdrawReviewOwner(): void {
@@ -300,6 +282,8 @@ export class TaskService implements Tasks {
   dispose(): void {
     this.closed = true;
     this.withdrawReviewOwner();
+    this.releaseServiceTasks?.();
+    this.releaseServiceTasks = undefined;
     for (const registration of this.registrations.values()) registration.dispose();
     this.registrations.clear();
     for (const type of this.types.values()) type.context.dispose();
@@ -493,13 +477,13 @@ export class TaskService implements Tasks {
 
   /**
    * What Code holds for a task: its pinned base, where a base stands, its acceptance. Null
-   * while Code is unloaded or knows no such unit. It is kept off the task record, which work
+   * while Code is unavailable or knows no such unit. It is kept off the task record, which work
    * contexts embed and hash.
    */
   async codeUnit(caller: Caller, taskId: string): Promise<CodeUnit | null> {
     caller = structuredClone(caller);
     try {
-      return (await this.code?.unit(caller, taskId)) ?? null;
+      return await this.code.unit(caller, taskId);
     } catch (error) {
       if (error instanceof MervError && [404, 503].includes(error.status)) return null;
       throw error;
@@ -600,7 +584,16 @@ export class TaskService implements Tasks {
 
 export const tasksPlugin = {
   name: 'merv-tasks',
-  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
+  inject: [
+    'state',
+    'scope',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'codeWork',
+    'paper',
+  ],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const tasks = await createService(
@@ -611,13 +604,11 @@ export const tasksPlugin = {
         ctx.workflows,
         ctx.reviews,
         ctx.contextBuilder,
+        ctx.codeWork,
         ctx.paper,
         config.limits,
       ),
     );
-    ctx.inject(['codeWork'], (ctx) => {
-      ctx.effect(() => tasks.bindCode(ctx.codeWork));
-    });
     ctx.inject(['sandboxes'], (ctx) => {
       ctx.effect(() => tasks.bindSandboxes(ctx.sandboxes));
     });

@@ -159,7 +159,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
     f.state.transaction((tx) => code.publishOnAcceptance(f.admin, { unitId: work.id }, tx));
   const pin = (work: WorkflowSnapshot) =>
     f.state.transaction((tx) =>
-      code.pinBase(f.admin, { unitId: work.id, leaseId: `lease-${work.id}` }, tx),
+      code.pinBase(f.admin, { unitId: work.id, leaseId: `lease-${work.id}`, writer: false }, tx),
     );
   const move = (work: WorkflowSnapshot) =>
     handle.transition(f.admin, {
@@ -266,7 +266,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
       reason: 'The release matrix passed with this App and its rules.',
       requestId: 'canary',
     });
-  const unbind = f.tasks.bindCode(code);
+  const unbind = f.bindCode(code);
   const unbindReviews = code.bindReviews(f.reviews);
   f.beforeClose.push(async () => {
     unbind();

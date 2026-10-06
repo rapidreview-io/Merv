@@ -232,17 +232,8 @@ test('the engine names no program in what it says', () => {
     assert.doesNotMatch(readFileSync(new URL(file, source), 'utf8'), /\bresearch\./, file);
 });
 
-test('historical tasks remain read-only without Code, new tasks require it, and current published hashes remain', async (t) => {
+test('historical tasks remain read-only and current published hashes remain', async (t) => {
   const f = await resolutionFixture(t);
-  await assert.rejects(
-    f.tasks.create(f.admin, {
-      title: 'New',
-      goal: 'Use Git',
-      checks: ['Git retained'],
-      requestId: 'new',
-    }),
-    { code: 'code_unavailable' },
-  );
   const task = await historicalTask(f, f.admin, {
     title: 'Note',
     goal: 'Write a note.',

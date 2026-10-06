@@ -493,7 +493,8 @@
       ],
       "requires": [
         "state",
-        "scope"
+        "scope",
+        "domainEvents"
       ],
       "optional": [],
       "kind": "service",
@@ -798,10 +799,10 @@
         "workflows",
         "reviews",
         "contextBuilder",
+        "codeWork",
         "paper"
       ],
       "optional": [
-        "codeWork",
         "sandboxes"
       ],
       "kind": "service",
@@ -1175,11 +1176,10 @@
         "experiments",
         "artifacts",
         "reviews",
-        "workflows"
-      ],
-      "optional": [
+        "workflows",
         "codeWork"
       ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -2635,10 +2635,10 @@
         "workflows",
         "reviews",
         "contextBuilder",
+        "codeWork",
         "paper"
       ],
       "optional": [
-        "codeWork",
         "sandboxes"
       ],
       "kind": "service",
@@ -2983,6 +2983,11 @@
       "optional": false
     },
     {
+      "from": "code",
+      "to": "domainEvents",
+      "optional": false
+    },
+    {
       "from": "merv-code-tools",
       "to": "codeWork",
       "optional": false
@@ -3104,13 +3109,13 @@
     },
     {
       "from": "experiments",
-      "to": "paper",
+      "to": "codeWork",
       "optional": false
     },
     {
       "from": "experiments",
-      "to": "codeWork",
-      "optional": true
+      "to": "paper",
+      "optional": false
     },
     {
       "from": "experiments",
@@ -3280,7 +3285,7 @@
     {
       "from": "knowledge",
       "to": "codeWork",
-      "optional": true
+      "optional": false
     },
     {
       "from": "merv-knowledge-tools",
@@ -3829,13 +3834,13 @@
     },
     {
       "from": "tasks",
-      "to": "paper",
+      "to": "codeWork",
       "optional": false
     },
     {
       "from": "tasks",
-      "to": "codeWork",
-      "optional": true
+      "to": "paper",
+      "optional": false
     },
     {
       "from": "tasks",
@@ -3892,7 +3897,7 @@
     "plugins": 70,
     "providers": 32,
     "adapters": 38,
-    "dependencies": 193
+    "dependencies": 194
   },
   "network": [
     {

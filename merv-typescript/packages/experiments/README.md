@@ -37,7 +37,7 @@ flowchart LR
   experiments -- "registers four recipes" --> contextBuilder
   experiments -- "applies paper changes" --> paper
   experiments -- "pins evidence" --> artifacts
-  experiments -. "binds managed Git" .-> codeWork
+  experiments -- "injects managed Git" --> codeWork
   experiments -. "binds compute" .-> sandboxes
   experiments -- "injects" --> scope
   experiments -- "injects" --> state

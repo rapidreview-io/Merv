@@ -64,7 +64,7 @@ async function fixture(t: TestContext, human = false) {
   });
   await bases.initialize();
   units.bases = bases;
-  const unbind = f.tasks.bindCode(code);
+  const unbind = f.bindCode(code);
   const unbindReviews = code.bindReviews(f.reviews);
   f.beforeClose.push(unbindReviews);
   const inputAuthor = {
@@ -789,7 +789,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
     1,
   );
   const pin = await f.state.transaction((tx) =>
-    f.code.pinBase(f.admin, { unitId: task.id, leaseId: 'resolution-pin' }, tx),
+    f.code.pinBase(f.admin, { unitId: task.id, leaseId: 'resolution-pin', writer: false }, tx),
   );
   assert.equal(pin.reference, left);
   const resolved = await f.resolveCommit();
@@ -800,7 +800,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
   for (const waiter of [...waiters, future]) {
     requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!);
     const pinned = await f.state.transaction((tx) =>
-      f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: waiter.id }, tx),
+      f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: waiter.id, writer: false }, tx),
     );
     assert.equal(pinned.reference, resolved);
     assert.equal(pinned.kind, 'merged');
@@ -816,7 +816,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
     );
   }
   const combined = await f.state.transaction((tx) =>
-    f.code.pinBase(f.admin, { unitId: superset.id, leaseId: superset.id }, tx),
+    f.code.pinBase(f.admin, { unitId: superset.id, leaseId: superset.id, writer: false }, tx),
   );
   for (const input of [resolved, f.d])
     assert.equal(
@@ -1265,7 +1265,9 @@ test('an accepted resolution missing an input never seals or replaces its task',
     ),
   );
   await assert.rejects(
-    f.state.transaction((tx) => f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: 'bad' }, tx)),
+    f.state.transaction((tx) =>
+      f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: 'bad', writer: false }, tx),
+    ),
     { code: 'code_merge_conflict' },
   );
 });

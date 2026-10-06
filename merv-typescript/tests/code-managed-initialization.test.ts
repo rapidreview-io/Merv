@@ -30,7 +30,7 @@ async function fixture(t: Parameters<typeof resolutionFixture>[0]) {
   );
   await f.state.transaction((tx) => code.ensureRepository(f.admin, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();
-  const unbind = f.tasks.bindCode(code);
+  const unbind = f.bindCode(code);
   f.beforeClose.push(async () => {
     unbind();
     await code.close();
@@ -81,19 +81,6 @@ test('ordinary new tasks have managed Git and reject scratch and legacy base sel
   await assert.rejects(
     f.tasks.create(f.admin, { ...input, baseTaskId: task.id, requestId: 'legacy' }),
     { code: 'invalid_workspace' },
-  );
-});
-
-test('missing Code prevents creation instead of silently selecting scratch', async (t) => {
-  const f = await resolutionFixture(t);
-  await assert.rejects(
-    f.tasks.create(f.admin, {
-      title: 'Write a report',
-      goal: 'Retain a report',
-      checks: ['Report is readable'],
-      requestId: 'task',
-    }),
-    { code: 'code_unavailable' },
   );
 });
 

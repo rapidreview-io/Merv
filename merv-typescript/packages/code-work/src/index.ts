@@ -39,14 +39,6 @@ export const codePlugin = {
         from: 'now',
         handle: async (event, tx) => await service.transitioned(event, tx),
       });
-      // A session's attach and end open and end its writer generation. The cursor is durable,
-      // so what happened while Code was unloaded is caught up on in order.
-      yield await ctx.domainEvents.subscribe({
-        id: 'code.writers.v1',
-        types: ['session.workspace_attached', 'session.closed'],
-        from: 'now',
-        handle: async (event, tx) => await service.sessionChanged(event, tx),
-      });
       await service.reconcileAll();
       yield ctx.provide('codeWork', service);
     });

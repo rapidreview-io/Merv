@@ -475,7 +475,7 @@ export abstract class ExperimentProgram {
     protected readonly workflows: Workflows,
     protected readonly reviews: Reviews,
     private readonly contextBuilder: ContextBuilder,
-    protected code: Code | undefined,
+    protected readonly code: Code,
     protected readonly paper: Paper,
     private readonly limits = EXPERIMENT_LIMITS,
   ) {}
@@ -775,7 +775,6 @@ export abstract class ExperimentProgram {
       'The result submission must pin its producing session capture',
       409,
     );
-    check(this.code, 'code_unavailable', 'Code capture reader is unavailable', 503);
     const checked = await this.code.checkCapture(
       caller,
       submission.codeCaptureRef,
@@ -875,7 +874,6 @@ export abstract class ExperimentProgram {
     context: WorkflowCheckContext,
   ): Promise<{ experiment: Experiment; review: ReviewRequest | null }> {
     const experiment = await this.facts(context);
-    check(this.code, 'code_unavailable', 'Git assignments require Code', 503);
     if (producing(context.snapshot.state)) {
       await this.assertProducer(context.caller, experiment, context.tx);
       await this.requireBase(context);
@@ -906,7 +904,6 @@ export abstract class ExperimentProgram {
    * launched and never held; Code publishes the reason where status and the stuck report look.
    */
   private async requireBase({ caller, snapshot, tx }: WorkflowCheckContext): Promise<void> {
-    check(this.code, 'code_unavailable', 'Git assignments require Code', 503);
     await this.code.requireLeasable(
       caller,
       { unitId: snapshot.id, writer: snapshot.state === 'running' },
@@ -1118,7 +1115,7 @@ export abstract class ExperimentProgram {
     snapshot,
     tx,
   }: WorkflowCheckContext): Promise<{ base?: string }> {
-    const pin = await this.code?.basePin(caller, snapshot.id, tx);
+    const pin = await this.code.basePin(caller, snapshot.id, tx);
     return pin ? { base: pin.reference } : {};
   }
 
@@ -1410,19 +1407,16 @@ export abstract class ExperimentProgram {
         // one reads the same pin back, so execution inherits what the plan was written against.
         // A refused offer takes the pin back with its transaction.
         if (producing(context.snapshot.state)) {
-          check(this.code, 'code_unavailable', 'Git assignments require Code', 503);
+          // Only execution has a checkout, so only its lease is a writer generation.
           await this.code.pinBase(
             context.source,
-            { unitId: experiment.id, leaseId: context.leaseId },
+            {
+              unitId: experiment.id,
+              leaseId: context.leaseId,
+              writer: context.snapshot.state === 'running',
+            },
             context.tx,
           );
-          // Only execution has a checkout, so only its lease is a writer generation.
-          if (context.snapshot.state === 'running')
-            await this.code.reserveWriter(
-              context.source,
-              { unitId: experiment.id, leaseId: context.leaseId },
-              context.tx,
-            );
         }
         let review: ReviewRequest | null = null;
         if (reviewing(context.snapshot.state)) {

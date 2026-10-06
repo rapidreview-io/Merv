@@ -48,7 +48,6 @@ const ORDER = Object.keys(SOURCES) as Source[];
 /** Reads project records and resolves references; domain services own every source record. */
 export class KnowledgeService implements Knowledge {
   private closed = false;
-  private codeBinding?: symbol;
   constructor(
     private state: State,
     private scope: Scope,
@@ -57,7 +56,7 @@ export class KnowledgeService implements Knowledge {
     private artifacts: Artifacts,
     private reviews: Reviews,
     private workflows: Pick<Workflows, 'find'>,
-    private code: Code | undefined,
+    private code: Code,
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
@@ -67,21 +66,8 @@ export class KnowledgeService implements Knowledge {
   private open(): void {
     check(!this.closed, 'knowledge_unavailable', 'Knowledge is unavailable', 503);
   }
-  bindCode(code: Code): () => void {
-    this.open();
-    const binding = Symbol('code');
-    this.codeBinding = binding;
-    this.code = code;
-    return () => {
-      if (this.codeBinding !== binding) return;
-      this.codeBinding = undefined;
-      this.code = undefined;
-    };
-  }
   close(): void {
     this.closed = true;
-    this.codeBinding = undefined;
-    this.code = undefined;
   }
 
   async records(caller: Caller, transaction?: Transaction): Promise<KnowledgeRecords> {
@@ -215,19 +201,16 @@ export class KnowledgeService implements Knowledge {
       }));
     const finals = ids('session-final'),
       commits = ids('code-commit');
-    const code = this.code;
-    const captures = code
-      ? await read(['session-final', 'code-commit'], () =>
-          code.captures(
-            caller,
-            [
-              ...finals.map((sessionId) => ({ kind: 'session-final' as const, sessionId })),
-              ...commits.map((commandId) => ({ kind: 'code-commit' as const, commandId })),
-            ],
-            tx,
-          ),
-        )
-      : null;
+    const captures = await read(['session-final', 'code-commit'], () =>
+      this.code.captures(
+        caller,
+        [
+          ...finals.map((sessionId) => ({ kind: 'session-final' as const, sessionId })),
+          ...commits.map((commandId) => ({ kind: 'code-commit' as const, commandId })),
+        ],
+        tx,
+      ),
+    );
     const captured = (ids: string[], offset: number) =>
       captures &&
       new Map(
@@ -279,7 +262,16 @@ const map = <T>(records: Map<string, T>, fn: (record: T) => Found) =>
 
 export const knowledgePlugin = {
   name: 'merv-knowledge',
-  inject: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
+  inject: [
+    'state',
+    'scope',
+    'tasks',
+    'experiments',
+    'artifacts',
+    'reviews',
+    'workflows',
+    'codeWork',
+  ],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
@@ -291,13 +283,10 @@ export const knowledgePlugin = {
           ctx.artifacts,
           ctx.reviews,
           ctx.workflows,
-          undefined,
+          ctx.codeWork,
         ),
       );
       yield () => service.close();
-      ctx.inject(['codeWork'], (ctx) => {
-        ctx.effect(() => service.bindCode(ctx.codeWork));
-      });
       yield ctx.provide('knowledge', service);
     });
   },

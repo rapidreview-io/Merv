@@ -1,13 +1,13 @@
 # Code work integration
 
-This optional adapter connects research decisions to the [Code utility](../code/README.md).
+This adapter connects research decisions to the [Code utility](../code/README.md).
 Research owners decide dependencies, accepted outcomes, review requirements and publication
 obligations. The adapter translates those decisions into exact code pins, isolated writers,
 retained evidence, dependency blockers, conflict-resolution work and publication operations.
 It never makes Code itself depend on a research service.
 
-It provides `ctx.codeWork`; Tasks, Experiments, Research, Consolidation and Knowledge
-bind to that capability only when present. Reviews and Sandboxes are optional collaborators.
+It provides `ctx.codeWork`; Tasks, Experiments, Research and Knowledge require it. Sandboxes is
+an optional collaborator.
 A review-dependent action remains unavailable while its provider is absent; a missing plugin
 never grants acceptance or erases an existing Git obligation.
 
@@ -46,9 +46,9 @@ flowchart LR
   subgraph external["External"]
     github[GitHub]
   end
-  tasks -- "injects if present" --> codeWork
-  experiments -- "injects if present" --> codeWork
-  research -- "injects if present" --> codeWork
+  tasks -- "injects" --> codeWork
+  experiments -- "injects" --> codeWork
+  research -- "injects" --> codeWork
   codeWork -- "injects" --> code
   codeWork -- "injects" --> sessions
   codeWork -- "injects" --> scope
@@ -69,12 +69,10 @@ Code work is the one bridge between research decisions and Git: Tasks, Experimen
 
 ## Composition
 
-The default composition enables the integration, with both Code and CodeWork optional.
-Disable Code to suspend all its adapters. Code builds its repository journal and mirror;
+Every composition loads Code and CodeWork: Tasks, Experiments, Knowledge and Research require
+CodeWork, and CodeWork requires Code and Reviews. Code builds its repository journal and mirror;
 CodeWork opens them with its callbacks (what imported history changes, which sessions hold a
-workspace) and runs imports and the `/code/v2` workspace protocol on them, so disabling it keeps Code's records, repository files and GitHub connection but stops that
-work and withdraws every `code.*` tool and `/code` route until it is enabled again. Use [the no-Code configuration](../../config/no-code.example.json) to start without any Code
-entries; it leaves out Research, which requires Code. Existing Git work waits for restoration.
+workspace) and runs imports and the `/code/v2` workspace protocol on them.
 
 GitHub's default branch and the branch selected for Merv are different settings. The selected
 branch is the project's base, whatever its name. Each running unit keeps its exact starting
