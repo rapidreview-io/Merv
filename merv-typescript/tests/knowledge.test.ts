@@ -205,9 +205,12 @@ for (const name of ['knowledge', 'experiments'] as const) {
     const current = service.bindCode(f.code);
     const available = async () => {
       if (name === 'knowledge') {
-        assert.equal(
-          (await f.knowledge.resolve(f.reader, ['code-commit:missing']))[0].status,
-          'missing',
+        // A bare id Code might hold is as available as Code is.
+        assert.deepEqual(
+          (await f.knowledge.resolve(f.reader, ['code-commit:missing', 'missing'])).map(
+            ({ status }) => status,
+          ),
+          ['missing', 'missing'],
         );
       } else {
         await f.experiments.create(f.producer, {
@@ -220,9 +223,12 @@ for (const name of ['knowledge', 'experiments'] as const) {
     };
     const unavailable = async () => {
       if (name === 'knowledge') {
-        assert.equal(
-          (await f.knowledge.resolve(f.reader, ['code-commit:missing']))[0].status,
-          'unavailable',
+        // A bare id Code might hold is as available as Code is.
+        assert.deepEqual(
+          (await f.knowledge.resolve(f.reader, ['code-commit:missing', 'missing'])).map(
+            ({ status }) => status,
+          ),
+          ['unavailable', 'unavailable'],
         );
       } else {
         await assert.rejects(

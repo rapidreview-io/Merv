@@ -218,12 +218,15 @@ export class KnowledgeService implements Knowledge {
     if (!id || !knowledgeIdSchema.safeParse(id).success)
       return { ref, status: 'unsupported', kind: null, id: null };
     if (colon < 0) {
-      // A bare id is whichever record holds it.
+      // A bare id is whichever record holds it; one a source that is not loaded might hold is
+      // unavailable rather than missing.
+      let skipped: Found | undefined;
       for (const source of Object.values(this.sources)) {
         const found = await source.read(caller, id, tx);
-        if (found && found.status !== 'unavailable') return { ref, id, ...found };
+        if (found?.status === 'unavailable') skipped ??= found;
+        else if (found) return { ref, id, ...found };
       }
-      return { ref, status: 'missing', kind: null, id };
+      return { ref, id, ...(skipped ?? { status: 'missing', kind: null }) };
     }
     const kind = ref.slice(0, colon);
     // A task, experiment, wave or cycle is a work item running the program it names.
