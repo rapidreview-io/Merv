@@ -65,14 +65,33 @@ export class CodeCaptureReader {
       const observation = await this.sessions.workspaceObservation(caller, ref.sessionId, tx);
       const fenced =
         !observation.workspace?.result &&
-        (await this.fencedCommit(caller.projectId, observation.provenance, tx));
-      if (fenced) {
+        (await this.fencedHead(caller.projectId, observation.provenance, tx));
+      if (fenced && 'commandId' in fenced) {
         const { parentOid: _parent, ...settled } = await this.capture(
           caller,
-          { kind: 'code-commit', commandId: fenced },
+          { kind: 'code-commit', commandId: fenced.commandId },
           tx,
         );
         return { ...settled, ref };
+      }
+      if (fenced && observation.workspace) {
+        // No commit of this session holds the head the fence kept, so the session left the
+        // checkout where it found it: its capture is that head, on the checkout it attached.
+        const { attachment } = observation.workspace;
+        const { treeOid, ...checkout } = attachment;
+        return {
+          ref,
+          status: 'ready',
+          provenance: observation.provenance,
+          workspace: {
+            ...checkout,
+            headOid: fenced.head,
+            ...(fenced.head === attachment.headOid && treeOid ? { treeOid } : {}),
+          },
+          attachedBaseOid: attachment.baseOid,
+          observedAt: observation.observedAt,
+          eventId: observation.eventId,
+        };
       }
       return {
         ref,
@@ -170,13 +189,14 @@ export class CodeCaptureReader {
   }
   /**
    * A writer an operator fenced never hands over its final capture. The session's newest commit
-   * that Code admitted, which is the head the fence kept, then stands for that capture.
+   * that Code admitted, which is the head the fence kept, then stands for that capture; with no
+   * such commit, the head the fence kept stands for it, which is the base if nothing moved it.
    */
-  private async fencedCommit(
+  private async fencedHead(
     projectId: string,
     { instanceId, sessionId }: CodeCapture['provenance'],
     tx?: Transaction,
-  ): Promise<string | null> {
+  ): Promise<{ commandId: string } | { head: string } | null> {
     const read = async (sql: Sql) => {
       const writer = await this.writers.row(sql, projectId, instanceId);
       if (writer?.writer_state !== 'closed' || writer.writer_session_id !== sessionId) return null;
@@ -186,7 +206,7 @@ export class CodeCaptureReader {
         sessionId,
         writer.head_oid,
       );
-      return row?.id ?? null;
+      return row ? { commandId: row.id } : { head: writer.head_oid ?? this.writers.base(writer) };
     };
     return tx ? await read(tx) : await this.state.read(read);
   }

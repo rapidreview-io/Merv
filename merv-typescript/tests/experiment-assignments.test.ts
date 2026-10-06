@@ -1631,3 +1631,78 @@ test('a results review whose final capture never landed takes the last admitted 
   assert.equal(done.workflow.state, 'complete');
   assert.equal((await f.code.unit(f.source, pending.id)).acceptance?.reference, unit.canonicalHead);
 });
+
+test('a fenced results review whose session admitted no commit reviews the head the fence kept', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const lease = await f.work.lease(experiment);
+  for (const [role, content] of [
+    ['result', 'The retained observations show no difference.'],
+    ['report', report],
+  ] as const) {
+    const artifact = await f.work.run(
+      lease,
+      'artifact.create',
+      { title: role, content, mediaType: 'text/markdown' },
+      (caller, input) => f.artifacts.create(caller, input as never),
+    );
+    await f.work.run(
+      lease,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path: `${role}.md`,
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+        ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+      },
+      (caller, input) => f.experiments.attach(caller, input as never),
+    );
+  }
+  const pending = await f.work.run(
+    lease,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  // The machine dies after the submission: it never hands over its final capture.
+  t.mock.method(lease.driver, 'capture', async () => null);
+  t.mock.method(lease.driver, 'close', async () => {});
+  await f.work.release(lease);
+  await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
+    code: 'experiment_capture_pending',
+  });
+  const principal = await f.scope.acceptVerifiedIdentity({
+    issuer: 'https://issuer.example.test',
+    subject: 'operator',
+    expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+  });
+  await f.scope.adoptProject(principal, f.source.projectId);
+  const human = await f.scope.caller(principal, f.source.projectId);
+  await f.code.fenceUnit(human, { unitId: pending.id, requestId: f.request() });
+  const unit = await f.code.unit(f.source, pending.id);
+  assert.equal(unit.writerState, 'closed');
+  // Nothing was admitted, so the fence kept the base the unit's branch started from.
+  assert.equal(unit.canonicalHead, null);
+  const head = unit.base!.reference;
+  const offered = await f.offer(pending, await f.issue('operator'));
+  assert.equal(offered.session.execution.references.code, head);
+  assert.ok(offered.session.assignment.context!.prompt.includes(`"headOid":"${head}"`));
+  // The pass accepts exactly that base.
+  const worker = await f.sessions.authenticate(offered.secret);
+  const review = await f.reviews.get(worker, pending.reviewId!);
+  const done = await f.run(
+    worker,
+    'review.submit',
+    {
+      ...reviewedFindings(review),
+      verdict: 'pass',
+      notes: 'Verified the unchanged base.',
+      requestId: f.request(),
+    } as Data,
+    (caller, input) => f.experiments.submitReview(caller, input as unknown as ReviewApplication),
+  );
+  assert.equal(done.workflow.state, 'complete');
+  assert.equal((await f.code.unit(f.source, pending.id)).acceptance?.reference, head);
+});

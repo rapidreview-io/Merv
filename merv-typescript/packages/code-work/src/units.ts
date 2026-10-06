@@ -375,8 +375,14 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         409,
       );
       receipt = await this.writers.receipt(tx, caller.projectId, input.unitId, code.commit);
+      // A writer fenced before its branch ever moved kept the base it was pinned to.
+      const kept =
+        writer.writer_state === 'closed' &&
+        writer.head_oid === null &&
+        writer.base_json !== null &&
+        code.commit === this.writers.base(writer);
       check(
-        receipt,
+        receipt || kept,
         'code_acceptance_unverifiable',
         'Code never admitted the commit that was reviewed',
         409,

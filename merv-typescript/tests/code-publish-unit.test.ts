@@ -586,6 +586,32 @@ test('an acceptance that cannot be sealed is still recorded, and says so', async
   });
   assert.equal((await f.code.unit(f.admin, unadmitted.id)).acceptance, null);
   assert.deepEqual(await f.code.publications(f.admin), []);
+
+  // A writer fenced before its branch moved kept only its base, so that, and nothing else, is
+  // accepted without an admitted upload; a writer still open has kept nothing yet.
+  const unmoved = async (title: string, state: 'active' | 'closed') => {
+    const work = await f.declare(title);
+    await f.pin(work);
+    await f.state.transaction((tx) =>
+      tx.run(
+        'UPDATE code_workspaces SET generation=1,writer_state=?,head_oid=NULL WHERE project_id=? AND unit_id=?',
+        state,
+        f.admin.projectId,
+        work.id,
+      ),
+    );
+    return { work, base: (await f.code.unit(f.admin, work.id)).base!.reference };
+  };
+  const open = await unmoved('Open', 'active');
+  await assert.rejects(f.accept(open.work, open.base, false), {
+    code: 'code_acceptance_unverifiable',
+  });
+  const elsewhere = await unmoved('Elsewhere', 'closed');
+  await assert.rejects(f.accept(elsewhere.work, f.clashing, false), {
+    code: 'code_acceptance_unverifiable',
+  });
+  const fenced = await unmoved('Fenced', 'closed');
+  assert.equal((await f.accept(fenced.work, fenced.base, false)).reference, fenced.base);
 });
 
 test('an accepted publishing unit waits on one pull request and then carries main', async (t) => {
