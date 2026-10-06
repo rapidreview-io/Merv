@@ -70,25 +70,45 @@ export async function insertLease(
   );
 }
 
+/** A lease without its receipt and details, which can carry a frozen paper context. */
+export type LeaseSummary = Omit<LeaseRow, 'receipt' | 'details'>;
+const SUMMARY =
+  'id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,released_at';
+/** Which of a project's leases a read takes; an empty list matches none. */
+export interface LeaseWhere {
+  projectId: string;
+  id?: string;
+  instanceIds?: readonly string[];
+  revision?: number;
+  actorId?: string;
+  workflows?: readonly string[];
+  active?: boolean;
+}
+
 /**
  * A project's leases, newest last, narrowed by whichever of these are given. `active` keeps
- * only those not yet released; an empty `instanceIds` matches none.
+ * only those not yet released. A read takes the shared columns only, unless it asks for one
+ * top-level `detail` by name or for the `full` row with its receipt and details.
  */
+export async function leaseRows(tx: Transaction, where: LeaseWhere): Promise<LeaseSummary[]>;
+export async function leaseRows(
+  tx: Transaction,
+  where: LeaseWhere,
+  read: { detail: string },
+): Promise<(LeaseSummary & { detail: string | null })[]>;
 export async function leaseRows<D = Data>(
   tx: Transaction,
-  where: {
-    projectId: string;
-    id?: string;
-    instanceIds?: readonly string[];
-    revision?: number;
-    actorId?: string;
-    workflows?: readonly string[];
-    active?: boolean;
-  },
-): Promise<LeaseRow<D>[]> {
+  where: LeaseWhere,
+  read: 'full',
+): Promise<LeaseRow<D>[]>;
+export async function leaseRows(
+  tx: Transaction,
+  where: LeaseWhere,
+  read?: 'full' | { detail: string },
+): Promise<(LeaseSummary | LeaseRow)[]> {
   if (where.instanceIds?.length === 0 || where.workflows?.length === 0) return [];
   const clauses = ['project_id=?'];
-  const values: SqlValue[] = [where.projectId];
+  const values: SqlValue[] = [];
   const equal = (column: string, value: SqlValue | undefined) => {
     if (value === undefined) return;
     clauses.push(`${column}=?`);
@@ -105,11 +125,30 @@ export async function leaseRows<D = Data>(
   equal('actor_id', where.actorId);
   among('workflow', where.workflows);
   if (where.active) clauses.push('released_at IS NULL');
-  const rows = await tx.all<Omit<LeaseRow<D>, 'details'> & { details: string }>(
-    `SELECT * FROM wf_leases WHERE ${clauses.join(' AND ')} ORDER BY _merv_rowid`,
+  const columns =
+    read === 'full' ? '*' : read ? `${SUMMARY},(details::jsonb ->> ?) AS detail` : SUMMARY;
+  const rows = await tx.all<LeaseSummary & { details?: string }>(
+    `SELECT ${columns} FROM wf_leases WHERE ${clauses.join(' AND ')} ORDER BY _merv_rowid`,
+    ...(read && read !== 'full' ? [read.detail] : []),
+    where.projectId,
     ...values,
   );
-  return rows.map((row) => ({ ...row, details: JSON.parse(row.details) as D }));
+  return read === 'full'
+    ? rows.map((row) => ({ ...row, details: JSON.parse(row.details!) as Data }) as LeaseRow)
+    : rows;
+}
+
+/** When each instance's leases last ended, at each revision any was released: one aggregate. */
+export async function latestReleases(
+  tx: Transaction,
+  where: { projectId: string; instanceIds: readonly string[] },
+): Promise<{ instance_id: string; revision: number; released_at: string }[]> {
+  if (!where.instanceIds.length) return [];
+  return await tx.all(
+    `SELECT instance_id,revision,MAX(released_at) AS released_at FROM wf_leases WHERE project_id=? AND released_at IS NOT NULL AND instance_id IN (${where.instanceIds.map(() => '?').join(',')}) GROUP BY instance_id,revision ORDER BY instance_id,revision`,
+    where.projectId,
+    ...where.instanceIds,
+  );
 }
 
 /** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
@@ -137,13 +176,17 @@ export async function releasedLease(
   reason: string,
 ): Promise<void> {
   const row = (
-    await leaseRows(tx, {
-      projectId: lease.projectId,
-      id: lease.leaseId,
-      instanceIds: [lease.instanceId],
-      revision: lease.expectedRevision,
-      actorId: lease.actorId,
-    })
+    await leaseRows(
+      tx,
+      {
+        projectId: lease.projectId,
+        id: lease.leaseId,
+        instanceIds: [lease.instanceId],
+        revision: lease.expectedRevision,
+        actorId: lease.actorId,
+      },
+      'full',
+    )
   ).find((row) => row.state === lease.state);
   checkReceipt(row, lease.receipt, 'Release must name the exact ownership receipt');
   await releaseLeaseRow(tx, reviews, row, reason);

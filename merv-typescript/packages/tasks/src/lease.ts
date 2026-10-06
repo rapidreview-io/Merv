@@ -110,14 +110,18 @@ export async function currentLease(
   tx: Transaction,
 ): Promise<TaskLeaseRow> {
   check(caller.session, 'stale_lease', 'This task operation requires its lease worker', 403);
-  const [lease] = await leaseRows<TaskLeaseRow['details']>(tx, {
-    projectId: caller.projectId,
-    id: caller.session.id,
-    instanceIds: [taskId],
-    revision,
-    actorId: caller.actorId,
-    active: true,
-  });
+  const [lease] = await leaseRows<TaskLeaseRow['details']>(
+    tx,
+    {
+      projectId: caller.projectId,
+      id: caller.session.id,
+      instanceIds: [taskId],
+      revision,
+      actorId: caller.actorId,
+      active: true,
+    },
+    'full',
+  );
   check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
   return lease;
 }
@@ -225,13 +229,13 @@ export async function prepareTasks(
   if (caller.session) return;
   const held = new Set(
     (
-      await leaseRows<TaskLeaseRow['details']>(tx, {
-        projectId: caller.projectId,
-        instanceIds: ids,
-        active: true,
-      })
+      await leaseRows(
+        tx,
+        { projectId: caller.projectId, instanceIds: ids, active: true },
+        { detail: 'purpose' },
+      )
     )
-      .filter((lease) => lease.details.purpose === 'work')
+      .filter((lease) => lease.detail === 'work')
       .map((lease) => `${lease.instance_id}:${lease.revision}`),
   );
   for (const { id, revision } of snapshots)
@@ -253,13 +257,12 @@ export async function unleased(
   check(
     !(await this.state.remember(key, async () =>
       (
-        await leaseRows<TaskLeaseRow['details']>(tx, {
-          projectId: caller.projectId,
-          instanceIds: [taskId],
-          revision,
-          active: true,
-        })
-      ).some((lease) => lease.details.purpose === 'work'),
+        await leaseRows(
+          tx,
+          { projectId: caller.projectId, instanceIds: [taskId], revision, active: true },
+          { detail: 'purpose' },
+        )
+      ).some((lease) => lease.detail === 'work'),
     )),
     'task_leased',
     'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',

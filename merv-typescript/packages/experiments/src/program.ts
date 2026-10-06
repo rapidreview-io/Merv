@@ -620,12 +620,11 @@ export abstract class ExperimentProgram {
       `experiments:lease:${projectId}:${id}:${workflow.revision}`,
       async () =>
         (
-          await leaseRows<LeaseRow['details']>(tx, {
-            projectId,
-            instanceIds: [id],
-            revision: workflow.revision,
-            active: true,
-          })
+          await leaseRows<LeaseRow['details']>(
+            tx,
+            { projectId, instanceIds: [id], revision: workflow.revision, active: true },
+            'full',
+          )
         )[0],
     );
     // A copy: what the lease froze is the caller's to read, not the cached row's.

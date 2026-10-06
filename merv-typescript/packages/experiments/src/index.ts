@@ -3,7 +3,7 @@ import { childRequest, createService, plain, recorded, replayed, sha256Hex } fro
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
 import { requireDependencies } from '@merv/workflows/rules';
-import { leaseRows } from '@merv/workflows/lease-rows';
+import { latestReleases, leaseRows } from '@merv/workflows/lease-rows';
 import { z } from 'zod';
 import {
   check,
@@ -354,16 +354,12 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     if (!unheld.length) return new Map();
     const at = new Map(unheld.map((row) => [row.id, row.revision]));
     const ended = new Map<string, string>();
-    for (const lease of await leaseRows(tx, {
+    for (const release of await latestReleases(tx, {
       projectId: caller.projectId,
       instanceIds: unheld.map((row) => row.id),
     }))
-      if (
-        lease.released_at &&
-        at.get(lease.instance_id) === lease.revision &&
-        lease.released_at > (ended.get(lease.instance_id) ?? '')
-      )
-        ended.set(lease.instance_id, lease.released_at);
+      if (at.get(release.instance_id) === release.revision)
+        ended.set(release.instance_id, release.released_at);
     return ended;
   }
   /**

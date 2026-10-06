@@ -146,12 +146,16 @@ export async function activeLease(
     `lease:${caller.projectId}:${snapshot.id}:${snapshot.revision}`,
     async () =>
       (
-        await leaseRows<LeaseRow['details']>(tx, {
-          projectId: caller.projectId,
-          instanceIds: [snapshot.id],
-          revision: snapshot.revision,
-          active: true,
-        })
+        await leaseRows<LeaseRow['details']>(
+          tx,
+          {
+            projectId: caller.projectId,
+            instanceIds: [snapshot.id],
+            revision: snapshot.revision,
+            active: true,
+          },
+          'full',
+        )
       )[0],
   );
 }
