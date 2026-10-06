@@ -603,16 +603,23 @@ export abstract class ExperimentProgram {
     return experiment;
   }
 
+  /** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
   private async activeLease(
     experiment: LeaseTarget,
     tx: Transaction,
   ): Promise<LeaseRow | undefined> {
-    return await tx.get<LeaseRow>(
-      'SELECT * FROM experiment_leases WHERE project_id=? AND experiment_id=? AND revision=? AND released_at IS NULL',
-      experiment.projectId,
-      experiment.id,
-      experiment.workflow.revision,
+    const { projectId, id, workflow } = experiment;
+    const lease = await this.state.remember(
+      `experiments:lease:${projectId}:${id}:${workflow.revision}`,
+      () =>
+        tx.get<LeaseRow>(
+          'SELECT * FROM experiment_leases WHERE project_id=? AND experiment_id=? AND revision=? AND released_at IS NULL',
+          projectId,
+          id,
+          workflow.revision,
+        ),
     );
+    return lease && { ...lease };
   }
 
   /** The caller's live lease on this revision; without `attempt`, at whichever attempt it holds. */

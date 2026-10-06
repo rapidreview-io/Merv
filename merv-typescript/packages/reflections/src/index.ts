@@ -590,10 +590,12 @@ export class ReflectionService implements Reflections {
       if (!delegated) {
         const lenses = await this.lensRows(wave, tx);
         this.distinctAuthor(lens, lenses, caller.actorId);
-        const parallel = await tx.all<{ instance_id: string }>(
-          'SELECT instance_id FROM reflection_leases WHERE project_id=? AND actor_id=? AND released_at IS NULL',
-          caller.projectId,
-          caller.actorId,
+        const parallel = await this.once(`leases:${caller.projectId}:${caller.actorId}`, () =>
+          tx.all<{ instance_id: string }>(
+            'SELECT instance_id FROM reflection_leases WHERE project_id=? AND actor_id=? AND released_at IS NULL',
+            caller.projectId,
+            caller.actorId,
+          ),
         );
         check(
           !parallel.some(
