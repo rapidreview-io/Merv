@@ -1,7 +1,18 @@
+import type { Context } from 'cordis';
 import type { Tasks } from '@merv/tasks/types';
 import type { Artifacts, Caller, State } from '@merv/contracts';
-import type { ResearchService } from '@merv/research';
+import type { Providers, ResearchService } from '@merv/research';
 import type { CodeUnit, CodeUnitPublication } from '@merv/code-work/models';
+
+/** The providers the research plugin hands its service, from a running app's context. */
+export const providersOf = (ctx: Context): Providers => ({
+  paper: ctx.paper,
+  reflections: ctx.reflections,
+  tasks: ctx.tasks,
+  experiments: ctx.experiments,
+  artifacts: ctx.artifacts,
+  code: ctx.codeWork,
+});
 
 /** What the test says main lacks and where a unit's publication stands; changed as it goes. */
 export interface Main {
@@ -22,7 +33,7 @@ export function hostedCode(
   main: Main,
 ): string[] {
   const published: string[] = [];
-  research.bindCode({
+  research.providers.code = {
     hosted: async () => true,
     acceptedSince: async () => ({
       unitIds: main.unitIds,
@@ -37,7 +48,7 @@ export function hostedCode(
     },
     unit: async (_caller, unitId) =>
       ({ unitId, publication: main.publication ?? null }) as CodeUnit,
-  });
+  };
   const serviceTasks = (): ReturnType<Tasks['serviceTasks']> => ({
     create: async (input, tx) =>
       await ctx.tasks.create(
@@ -53,10 +64,8 @@ export function hostedCode(
       ),
   });
   // Everything else stays the real service's, prototype methods included.
-  research.bindTasks(
-    new Proxy(ctx.tasks, {
-      get: (tasks, key) => (key === 'serviceTasks' ? serviceTasks : Reflect.get(tasks, key)),
-    }),
-  );
+  research.providers.tasks = new Proxy(ctx.tasks, {
+    get: (tasks, key) => (key === 'serviceTasks' ? serviceTasks : Reflect.get(tasks, key)),
+  });
   return published;
 }

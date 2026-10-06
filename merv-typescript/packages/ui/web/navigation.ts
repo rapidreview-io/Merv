@@ -32,6 +32,12 @@ export const homeOf = (rows: Row[]) => {
 export const pathOf = (rows: readonly Pick<Row, 'path' | 'view'>[], kind: string) =>
   rows.find((row) => row.view.kind === kind)?.path;
 
+/** The row whose page opens a record of this workflow: the row listing it, or one holding it. */
+export const rowOf = <R extends Pick<Row, 'workflow' | 'holds'>>(
+  rows: readonly R[],
+  workflow: string,
+) => rows.find((row) => row.workflow === workflow || row.holds?.includes(workflow));
+
 /**
  * Places this app retired, and where their work is now. The shell answers each address itself,
  * so it goes there whether or not a plugin still registers the row.

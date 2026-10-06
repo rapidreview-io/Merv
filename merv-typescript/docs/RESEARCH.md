@@ -27,31 +27,11 @@ From `consolidating` the advance reads the newest consolidation task and its `Co
 
 Every injected task is appended to `integrations`, newest last, so a cycle's consolidation history is on its record; `research.end` still ends the cycle from `consolidating`.
 
-Research requires only State, Scope and Workflows. Paper, Reflections, Knowledge, Tasks, Experiments, Artifacts and Code are optional bindings. Removing one leaves Research, its records, tools and UI active. Each action requires only the providers it actually uses:
+Research requires State, Scope, Workflows, Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work: every composition that loads it loads them, and it is restarted with any of them. The [no-Code configuration](../config/no-code.example.json) therefore leaves Research out. Research does not depend on Knowledge. Project-wide record/reference reads remain independently available through Knowledge.
 
-| Operation                                                             | Optional capability needed                                                                                               |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| Create, list or read a cycle; replay a committed Research command     | None                                                                                                                     |
-| Accept the project definition and begin researching                   | Paper                                                                                                                    |
-| Create a reflection wave                                              | Reflections                                                                                                              |
-| Leave reflection after its approval                                   | Reflections and Code; also Tasks when a consolidation task is injected                                                   |
-| Complete or reinject from consolidating                               | Code; also Reflections when the cycle has a reflection, unless the advance carries `nextWave: "skip"`; Tasks to reinject |
-| Create an approved plan's work (`nextWave: "create"`)                 | Reflections and Tasks; also Experiments when the plan holds experiments                                                  |
-| Digest a cycle as it completes or is ended                            | None required: composed only when Artifacts and the providers used by the selected work and child records are bound      |
-| Create a cycle with `previousCycleId` whose predecessor has no digest | Artifacts; Tasks/Experiments for selected work, and Reflections/Code for child records                                   |
-
-Research does not depend on Knowledge. Project-wide record/reference reads remain independently available through Knowledge.
-
-A missing provider produces a named action blocker. Code-free cycles complete without Code;
-cycles with retained Git obligations wait for it to return. Git answers which accepted units
-are missing outside the committing transaction. The retired Consolidation plugin is never
-required or loaded.
+Git answers which accepted units are missing outside the committing transaction. The retired Consolidation plugin is never required or loaded.
 
 Child creation, dependency links, outer transition and replay receipt share one transaction. Request IDs reject different-input reuse. Owner/operator authorization and project scope apply throughout.
-
-Every optional provider used by an operation is pinned to its binding. Those bindings are checked before another provider call, after each awaited provider call and before the command returns. Replacement or removal during the operation rolls back its child, transition and receipt. An unrelated optional provider is not part of this check. Recorded Research commands replay before provider access, so a missing provider cannot invalidate a completed command.
-
-The [Fable design consultation](reviews/research-optional-design-fable-20260916.md) addresses this resilience requirement; source review and runtime tests are separately attributed in [verification](../VERIFICATION.md).
 
 ## Next wave
 
@@ -62,7 +42,7 @@ Synthesis may submit its change specification as a structured plan (see [Reflect
 **Manual advances require an explicit choice.** When the approved plan's decision is `continue`, that advance requires `nextWave`. For a cycle created with `automatic: true`, Research supplies this choice under the captured owner authorization: create within the cycle limit, skip at the limit. `workflow.status_and_next` reports the action as `needs_input` naming `nextWave`, and a `research.advance` without it is refused with `next_wave_choice_required` (400). A client written before plans existed therefore never creates agent-planned work unknowingly.
 
 - `nextWave: "create"` creates every task and experiment of the plan in dependency order, then opens one successor research cycle, named by the plan, that waits on the created work and the plan's carried-over work. The successor starts in `defining` on the current research version; the owner advances it as usual in manual mode; automatic successors inherit the original authority and remaining cycle allowance and advance on durable events. Created tasks are dispatched like hand-created ones as soon as the advance commits.
-- `nextWave: "skip"` completes the cycle and creates nothing. It reads no plan, so it also completes a cycle whose plan can no longer be created or whose Reflections is unloaded.
+- `nextWave: "skip"` completes the cycle and creates nothing. It reads no plan, so it also completes a cycle whose plan can no longer be created.
 - With a `stop` plan, a text change specification or no reflection, there is nothing to choose: `nextWave` is accepted and ignored, and the advance behaves as it always did. Follow-on work after a text change specification is the owner's to create.
 
 **Authority.** The creating caller is the advancing caller, and `research.advance` rejects leased sessions and requires the cycle's owner or a project admin. No tool grant changed: a leased synthesis agent still holds only `artifact.create` and `reflection.submit`, and never creates work. The created tasks' producer and brief author is that owner or admin, exactly as when they create a task by hand. Tool policy is enforced per tool name at the transport, so an owner or admin whose policy denies `task.create` or `experiment.create` but allows `research.advance` creates this work through the advance; the explicit `nextWave: "create"` is the consent that covers it.
@@ -71,19 +51,18 @@ Because the text of a created task or experiment was written by an agent and is 
 
 **Workspaces.** A specification declares each item's workspace explicitly. Research passes `provider: "code"` as `workspace: "git"` without `baseTaskId`; Tasks and Experiments choose their existing hosted or legacy versions. An unhosted project still creates legacy Git work. Code absence refuses the whole advance with the owning service's `code_unavailable`; the approved reflection remains intact and retryable. Automatic waves expose that refusal in their existing automation blocker. `provider: "none"` items create workspace-free work.
 
-**One transaction.** The outer transition, every created record, the successor cycle, the `research.advanced` event and the replay receipt commit together, inside the caller's transaction when one is passed. A refusal anywhere — an unavailable workspace provider, a capability replaced mid-operation — leaves the cycle where it was with nothing created. Every child request ID derives from the actor and the advance's `requestId` (`item:<key>` for work, `successor` for the cycle), so a replay returns the same records; a different `requestId` after success finds `research_complete`.
+**One transaction.** The outer transition, every created record, the successor cycle, the `research.advanced` event and the replay receipt commit together, inside the caller's transaction when one is passed. A refusal anywhere — an unavailable workspace provider, a refused item — leaves the cycle where it was with nothing created. Every child request ID derives from the actor and the advance's `requestId` (`item:<key>` for work, `successor` for the cycle), so a replay returns the same records; a different `requestId` after success finds `research_complete`.
 
 **Blockers.** Research checks the project state it can inspect in the `workflow.status_and_next` preflight (pass `nextWave: "create"` as input) and again inside the committing transition. Workspace admission is checked by Tasks and Experiments when creating each item in that same transaction:
 
-| Code                                                                      | Meaning                                                                          |
-| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| `tasks_unavailable`, `experiments_unavailable`, `reflections_unavailable` | A provider the creation needs is not loaded                                      |
-| `reflection_open`                                                         | Another reflection wave pauses task and experiment starts                        |
-| `experiment_name_conflict`                                                | A planned experiment name is already used in the project (compared without case) |
-| `experiment_limit`                                                        | Active experiments plus the plan's would exceed seven                            |
-| `next_wave_inapplicable`                                                  | Carried-over work is not a task or experiment                                    |
+| Code                       | Meaning                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------- |
+| `reflection_open`          | Another reflection wave pauses task and experiment starts                        |
+| `experiment_name_conflict` | A planned experiment name is already used in the project (compared without case) |
+| `experiment_limit`         | Active experiments plus the plan's would exceed seven                            |
+| `next_wave_inapplicable`   | Carried-over work is not a task or experiment                                    |
 
-Every message but the general `reflections_unavailable` names `nextWave: "skip"` as the way on.
+Every message names `nextWave: "skip"` as the way on.
 
 **Records.** A successor's `origin` pins where it came from: the predecessor `researchId`, `reflectionId`, `reviewId`, the change-specification `{id, hash}`, each plan item as the record it became (`{key, kind, id}`) and the carried-over IDs. `origin` is null for a hand-created cycle and cannot be supplied to `research.create`. The predecessor reads its `successorId`, and `workflow.status_and_next` lists it as a reference. Storage holds the link in `research_cycles.predecessor_id`: immutable, and unique among non-null values on both backends, so a cycle has at most one successor whatever the code does. The `research.advanced` event carries `successorId` when a wave was created and `nextWave: "skipped"` when the owner skipped.
 
@@ -108,11 +87,11 @@ What a cycle decided is carried into the next one as a record, not as chat.
 
 Reports and change specifications are named by ID and hash, never inlined; of a structured plan only the decision and the rejected alternatives are copied, because the items that became work are records the successor's `origin` names. Free text is clipped to 300 characters and each list to 100 entries; then entries are removed from the longest list until the digest is at most 12,000 characters, so it always fits a 24,000-character reflection context beside the assignment. The digest contains no actor ID and is never pinned review evidence, so it changes nothing about reviewer independence. Work dropped by `research.replan` is not recorded.
 
-**Never a guard.** Ending exists so a cycle that cannot continue can always be ended, so a digest never blocks `research.end` or the completing advance. It needs Artifacts, Tasks when it selected tasks, Experiments when it selected experiments, Reflections when it has a reflection, and Code when it injected a consolidation task; when any of these is unbound the column stays null, no `research.digested` is recorded, and the digest is composed late. Digests written before version 6 carry a `consolidation` reference and per-experiment consolidation decisions; they are retained artifacts and are never re-parsed. Older digests may also carry `claims`, `openQuestions` and per-experiment `testedClaimIds` from before research claims were retired.
+**Never a guard.** A digest checks nothing: `research.end` and the completing advance compose it in their own transaction from the records as they are. Digests written before version 6 carry a `consolidation` reference and per-experiment consolidation decisions; they are retained artifacts and are never re-parsed. Older digests may also carry `claims`, `openQuestions` and per-experiment `testedClaimIds` from before research claims were retired.
 
 **Following a cycle.** `research.create` accepts `previousCycleId`. The predecessor must be in this project (`research_not_found`, 404), must be `complete`, `abandoned` or `failed` (`previous_cycle_open`, 409) and must not already have a successor (`previous_cycle_followed`, 409; storage allows one successor per cycle). The link is kept in the immutable `predecessor_id` column, the same one a plan-opened successor uses, and is returned as `previousCycleId` for both; `origin` stays null for a hand-created cycle. Leased sessions remain refused. `research.created` carries `previousCycleId`.
 
-**Late composition.** If the predecessor has no digest — it ended before digests existed, or while a capability was unbound — it is composed in the creating transaction and marked `cycle.late: true`. Here a missing capability is refused with its `<name>_unavailable` code, because the caller asked for carry-forward. A late digest reads work as it is when composed, not as it was when the cycle ended. Any project writer may cause this, not only the predecessor's owner or an admin: the digest is composed by the server from records the caller can already read, nothing the caller supplies reaches it, and it can be written only once. A cycle ended before this change kept its `reason` only as check input and in the `research.ended` event, so its late digest has `reason: null`; cycles ended since keep the reason, clipped to 2000 characters, in workflow data. Advancing a plan-opened successor into reflection also composes a missing predecessor digest when the capabilities are bound, and otherwise starts the wave without one.
+**Late composition.** If the predecessor has no digest because it ended before digests existed, it is composed in the creating transaction and marked `cycle.late: true`. A late digest reads work as it is when composed, not as it was when the cycle ended. Any project writer may cause this, not only the predecessor's owner or an admin: the digest is composed by the server from records the caller can already read, nothing the caller supplies reaches it, and it can be written only once. A cycle ended before this change kept its `reason` only as check input and in the `research.ended` event, so its late digest has `reason: null`; cycles ended since keep the reason, clipped to 2000 characters, in workflow data. Advancing a plan-opened successor into reflection also composes a missing predecessor digest.
 
 **Reaching the next wave.** When a cycle that follows another advances from `researching`, its reflection wave receives the predecessor digest in the `previousCycle` context section (see [Reflections](REFLECTIONS.md#context-and-reads)). That is the only place the digest is pushed. Successor task and experiment workers do not receive it automatically: tasks and experiments carry no link to a cycle, and a new section would mean new versions of every task type and experiment recipe. They reach it through `research.lineage` and `artifact.read`, which any project reader, leased sessions included, may call; an owner can also hand the digest to a task through an existing custom `contextInputs` section.
 

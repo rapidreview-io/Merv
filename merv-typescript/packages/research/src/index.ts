@@ -1,5 +1,5 @@
 import { AsyncResource } from 'node:async_hooks';
-import type { ServiceTaskCreator, Tasks } from '@merv/tasks/types';
+import type { Tasks } from '@merv/tasks/types';
 import type { Code } from '@merv/code-work/types';
 import {
   check,
@@ -50,8 +50,6 @@ import {
   materialise,
   move,
   ready,
-  retainedCode,
-  selectedCode,
   unpublished,
   type Choice,
 } from './integration.js';
@@ -69,30 +67,17 @@ import type {
 } from './types.js';
 export { definition } from './policy.js';
 export type * from './types.js';
-/** What Research asks of Code; a test may bind exactly this much. */
+/** What Research asks of Code; a test may hand it exactly this much. */
 type ResearchCode = Pick<Code, 'acceptedSince' | 'hosted' | 'publishOnAcceptance' | 'unit'>;
-export interface Capabilities {
+/** The plugins whose work a cycle coordinates; every one is required. */
+export interface Providers {
   paper: Paper;
   reflections: Reflections;
   tasks: Tasks;
-  integrations: ServiceTaskCreator;
   experiments: Experiments;
   artifacts: Artifacts;
   code: ResearchCode;
 }
-type Binding<T> = { value: T };
-export type BindingChecks = (() => void)[];
-const unavailable = {
-  paper: 'This stage needs Paper; enable it to continue',
-  reflections: 'This stage needs Reflections; enable it to continue',
-  tasks:
-    'Creating the approved plan\'s work needs Tasks; enable it, or complete this cycle with nextWave: "skip"',
-  integrations: 'Injecting the consolidation task needs Tasks; enable it to continue',
-  experiments:
-    'Creating the approved plan\'s experiments needs Experiments; enable it, or complete this cycle with nextWave: "skip"',
-  artifacts: "Artifacts are unavailable, so the predecessor cycle's digest cannot be retained",
-  code: 'This stage needs Code; enable it to continue',
-};
 const ENDING_REASON_CHARS = 2000;
 /** How far research.lineage walks back before it says the chain goes on. */
 const LINEAGE_LIMIT = 20;
@@ -104,7 +89,6 @@ interface Row {
   predecessor_id: string | null;
   digest: string | null;
   integrations: string | null;
-  code_required: number | null;
 }
 /** The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. */
 export type StoredRecord = Pick<
@@ -127,8 +111,6 @@ export class ResearchService implements Research {
   readonly checkAutomaticContinuation = checkAutomaticContinuation;
   readonly materialise = materialise;
   readonly inject = inject;
-  readonly selectedCode = selectedCode;
-  readonly retainedCode = retainedCode;
   readonly unpublished = unpublished;
   readonly digested = digested;
   readonly compose = compose;
@@ -139,7 +121,6 @@ export class ResearchService implements Research {
   readonly soon = soon;
   readonly closeBlockedWork = closeBlockedWork;
   closed = false;
-  automaticBound = false;
   /** How long a cycle an outage refused waits before it is tried again. */
   retryAfterMs = 30_000;
   /** How long an outage keeps a cycle being tried again before only an event or a bind wakes it. */
@@ -148,18 +129,17 @@ export class ResearchService implements Research {
   readonly retrying = new Set<string>();
   /** Runs a callback in the context this service was made in, outside every transaction. */
   readonly detached = AsyncResource.bind((fn: () => void) => fn());
-  bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
   handle?: Awaited<ReturnType<Workflows['register']>>;
   readonly checked = new CheckedTransitions();
   constructor(
     readonly state: State,
     readonly scope: Scope,
     readonly workflows: Workflows,
+    readonly providers: Providers,
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('research', postgresMigrations);
-    // Providers bind later, each as it arrives; see researchPlugin.
     this.handle = await this.workflows.register(definition, this.policy());
   }
 
@@ -196,8 +176,8 @@ export class ResearchService implements Research {
           workflow.state === 'complete' &&
           !successorId &&
           row.cycle_index >= row.max_cycles &&
-          // Without Reflections to ask, the limit is what it may have been.
-          !!(await this.continuing(caller, record as ResearchRecord, tx, [], 'complete').catch(
+          // A reflection that cannot be read leaves the limit as what it may have been.
+          !!(await this.continuing(caller, record as ResearchRecord, tx, 'complete').catch(
             () => true,
           ))
             ? {
@@ -205,14 +185,6 @@ export class ResearchService implements Research {
                 message: `Finished the authorized ${row.max_cycles} research cycles; no further wave was created`,
               }
             : null,
-      };
-    if (!this.automaticBound)
-      return {
-        ...status,
-        blocker: {
-          code: 'research_automatic_unavailable',
-          message: 'Automatic research is waiting for its durable event consumer to be available',
-        },
       };
     const published = (await this.workflows.blockers(caller, row.research_id, tx)).find(
       (item) => item.provider === AUTOMATIC_PROVIDER,
@@ -309,13 +281,10 @@ export class ResearchService implements Research {
     const input = parse(createSchema, value);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
-      const checks: BindingChecks = [];
-      const result = await this.command(caller, 'create', input, tx, async () => {
-        if (input.previousCycleId) await this.follow(caller, input.previousCycleId, tx, checks);
+      return await this.command(caller, 'create', input, tx, async () => {
+        if (input.previousCycleId) await this.follow(caller, input.previousCycleId, tx);
         return await this.begin(caller, input, 'create', null, tx);
       });
-      checks.forEach((check) => check());
-      return result;
     });
   }
   async authorize(caller: Caller, record: ResearchRecord, tx: Transaction) {
@@ -328,9 +297,8 @@ export class ResearchService implements Research {
     );
     if (caller.actorId !== record.ownerId) await this.scope.require(caller, 'admin', tx);
   }
-  async definition(caller: Caller, tx: Transaction, checks: BindingChecks): Promise<PaperRevision> {
-    const problem = (await this.use('paper', checks, (service) => service.documents(caller, tx)))
-      .problem.current;
+  async definition(caller: Caller, tx: Transaction): Promise<PaperRevision> {
+    const problem = (await this.providers.paper.documents(caller, tx)).problem.current;
     check(
       problemDefined(problem),
       'research_definition_required',
@@ -403,8 +371,6 @@ export class ResearchService implements Research {
           },
           tx,
         );
-        if (await this.selectedCode(caller, input.dependsOn, tx))
-          await tx.run('UPDATE research_cycles SET code_required=1 WHERE id=?', record.id);
         return await this.get(caller, record.id, tx);
       });
     });
@@ -425,8 +391,7 @@ export class ResearchService implements Research {
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
-      const checks: BindingChecks = [];
-      const result = await this.command(caller, 'end', input, tx, async () => {
+      return await this.command(caller, 'end', input, tx, async () => {
         const action = input.outcome === 'failed' ? 'mark_failed' : 'abandon';
         const moved = await this.checked.take(
           tx,
@@ -454,14 +419,9 @@ export class ResearchService implements Research {
           tx,
         );
         const ended = await this.get(caller, record.id, tx);
-        ended.digest = await this.digested(caller, ended, tx, checks, {
-          late: false,
-          required: false,
-        });
+        ended.digest = await this.digested(caller, ended, tx, false);
         return ended;
       });
-      checks.forEach((check) => check());
-      return result;
     });
   }
 
@@ -478,8 +438,7 @@ export class ResearchService implements Research {
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
-      const checks: BindingChecks = [];
-      const result = await this.command(caller, 'advance', input, tx, async () => {
+      return await this.command(caller, 'advance', input, tx, async () => {
         check(
           record.workflow.revision === input.expectedRevision,
           'revision_conflict',
@@ -487,14 +446,7 @@ export class ResearchService implements Research {
           409,
         );
         const handle = this.handle!;
-        const { move, continuing, abandoned } = await this.ready(
-          caller,
-          record,
-          tx,
-          checks,
-          input,
-          since,
-        );
+        const { move, continuing, abandoned } = await this.ready(caller, record, tx, input, since);
         const injecting = move === 'inject' || move === 'reinject';
         check(
           !continuing || input.nextWave,
@@ -504,10 +456,10 @@ export class ResearchService implements Research {
         );
         const childIds: string[] = [];
         if (injecting)
-          childIds.push(await this.inject(caller, record, since!, input.requestId, tx, checks));
+          childIds.push(await this.inject(caller, record, since!, input.requestId, tx));
         switch (record.workflow.state as Stage) {
           case 'defining': {
-            const problem = await this.definition(caller, tx, checks);
+            const problem = await this.definition(caller, tx);
             await tx.run(
               'UPDATE research_cycles SET problem=? WHERE id=?',
               JSON.stringify(problem),
@@ -516,29 +468,26 @@ export class ResearchService implements Research {
             break;
           }
           case 'researching': {
-            // A predecessor a plan opened this cycle from may have no digest yet; without the
-            // capabilities to compose one the wave simply starts without it.
+            // A predecessor a plan opened this cycle from may have no digest yet; it is
+            // composed now, late.
             const carried = record.previousCycleId
               ? await this.digested(
                   caller,
                   await this.get(caller, record.previousCycleId, tx),
                   tx,
-                  checks,
-                  { late: true, required: false },
+                  true,
                 )
               : null;
-            const wave = await this.use('reflections', checks, (service) =>
-              service.create(
-                caller,
-                {
-                  title: `${clip(record.name, 288)}: reflection`,
-                  ...(record.automation ? { requirePlan: true } : {}),
-                  // Absent rather than null, so a cycle that follows nothing replays as before.
-                  ...(carried ? { previousCycleDigestId: carried.id } : {}),
-                  requestId: childRequest(caller, 'research', 'reflection', input.requestId),
-                },
-                tx,
-              ),
+            const wave = await this.providers.reflections.create(
+              caller,
+              {
+                title: `${clip(record.name, 288)}: reflection`,
+                ...(record.automation ? { requirePlan: true } : {}),
+                // Absent rather than null, so a cycle that follows nothing replays as before.
+                ...(carried ? { previousCycleDigestId: carried.id } : {}),
+                requestId: childRequest(caller, 'research', 'reflection', input.requestId),
+              },
+              tx,
             );
             await tx.run(
               'UPDATE research_cycles SET reflection_id=? WHERE id=?',
@@ -576,7 +525,7 @@ export class ResearchService implements Research {
         // After the move, so every guard judged the project as it was before the plan's work
         // existed: seven planned experiments would otherwise refuse themselves.
         const successor = continuing
-          ? await this.materialise(caller, record, continuing, input.requestId, tx, checks)
+          ? await this.materialise(caller, record, continuing, input.requestId, tx)
           : undefined;
         if (injecting)
           await tx.run(
@@ -623,66 +572,10 @@ export class ResearchService implements Research {
         );
         const advanced = await this.get(caller, record.id, tx);
         if (moved.state === 'complete')
-          advanced.digest = await this.digested(caller, advanced, tx, checks, {
-            late: false,
-            required: false,
-          });
+          advanced.digest = await this.digested(caller, advanced, tx, false);
         return advanced;
       });
-      checks.forEach((check) => check());
-      return result;
     });
-  }
-  private bind<K extends keyof Capabilities>(name: K, value: Capabilities[K]): () => void {
-    this.open();
-    const binding = { value };
-    this.bindings = { ...this.bindings, [name]: binding };
-    return () => {
-      if (this.bindings[name] === binding) delete this.bindings[name];
-    };
-  }
-  bindPaper(paper: Paper): () => void {
-    return this.bind('paper', paper);
-  }
-  bindReflections(reflections: Reflections): () => void {
-    return this.bind('reflections', reflections);
-  }
-  bindTasks(tasks: Tasks): () => void {
-    const releases = [
-      this.bind('tasks', tasks),
-      this.bind('integrations', tasks.serviceTasks('research')),
-    ];
-    return () => releases.forEach((release) => release());
-  }
-  bindCode(code: ResearchCode): () => void {
-    return this.bind('code', code);
-  }
-  bindExperiments(experiments: Experiments): () => void {
-    return this.bind('experiments', experiments);
-  }
-  bindArtifacts(artifacts: Artifacts): () => void {
-    return this.bind('artifacts', artifacts);
-  }
-  requireCapability<K extends keyof Capabilities>(name: K, checks: BindingChecks) {
-    this.open();
-    checks.forEach((check) => check());
-    const binding = this.bindings[name];
-    check(binding, `${name}_unavailable`, unavailable[name], 409);
-    checks.push(() => {
-      this.open();
-      check(this.bindings[name] === binding, `${name}_unavailable`, unavailable[name], 409);
-    });
-    return binding.value;
-  }
-  async use<K extends keyof Capabilities, T>(
-    name: K,
-    checks: BindingChecks,
-    action: (service: Capabilities[K]) => Promise<T>,
-  ): Promise<T> {
-    const service = this.requireCapability(name, checks);
-    const result = await action(service);
-    checks.forEach((check) => check());
-    return result;
   }
   children(record: ResearchRecord): string[] {
     return [record.reflectionId, ...record.integrations].filter((id): id is string => !!id);
@@ -702,57 +595,37 @@ export class ResearchService implements Research {
   close() {
     if (this.closed) return;
     this.closed = true;
-    this.bindings = {};
     this.handle?.dispose();
   }
 }
 export const researchPlugin = {
   name: 'merv-research',
-  inject: ['state', 'scope', 'workflows'],
+  inject: [
+    'state',
+    'scope',
+    'workflows',
+    'domainEvents',
+    'paper',
+    'reflections',
+    'tasks',
+    'experiments',
+    'artifacts',
+    'codeWork',
+  ],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
-      const service = await createService(new ResearchService(ctx.state, ctx.scope, ctx.workflows));
+      const service = await createService(
+        new ResearchService(ctx.state, ctx.scope, ctx.workflows, {
+          paper: ctx.paper,
+          reflections: ctx.reflections,
+          tasks: ctx.tasks,
+          experiments: ctx.experiments,
+          artifacts: ctx.artifacts,
+          code: ctx.codeWork,
+        }),
+      );
       yield () => service.close();
-      ctx.inject(['domainEvents'], (ctx) => {
-        ctx.effect(async () => await service.bindAutomatic(ctx.domainEvents));
-      });
-      // Each provider is optional: bound while it is loaded, and a bound one may unblock a cycle.
-      ctx.inject(['paper'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindPaper(ctx.paper);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['reflections'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindReflections(ctx.reflections);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['tasks'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindTasks(ctx.tasks);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['experiments'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindExperiments(ctx.experiments);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['artifacts'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindArtifacts(ctx.artifacts);
-          await service.wakeAutomatic();
-        });
-      });
-      ctx.inject(['codeWork'], (ctx) => {
-        ctx.effect(async function* () {
-          yield service.bindCode(ctx.codeWork);
-          await service.wakeAutomatic();
-        });
-      });
+      yield await service.bindAutomatic(ctx.domainEvents);
       yield ctx.provide('research', service);
     });
   },

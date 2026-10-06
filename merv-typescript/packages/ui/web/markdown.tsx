@@ -13,7 +13,7 @@ import { call, scopeVersion, useTool } from './api';
 import { CodeBlock, NUMBERED_FROM } from './code-block';
 import { TeX } from './math';
 import { Mermaid } from './mermaid';
-import { pathOf, useRows } from './navigation';
+import { pathOf, rowOf, useRows } from './navigation';
 import type { Row } from './shell-types';
 
 /**
@@ -91,7 +91,7 @@ type Listed = { id: string; name?: string; title?: string };
 /** `ui.home`: the people, and each row's records under the row's id. */
 export type NamedHome = object;
 type Parts = { actors?: { id: string; name: string }[] | null } & Record<string, Listed[] | null>;
-type NamedRow = Pick<Row, 'id' | 'path' | 'view' | 'workflow'>;
+type NamedRow = Pick<Row, 'id' | 'path' | 'view' | 'workflow' | 'holds'>;
 
 /**
  * Names for the ids a text mentions, from lists the app already reads: a record opens at
@@ -139,7 +139,9 @@ const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
       ? '/artifacts'
       : kind === 'review'
         ? pathOf(rows, 'reviews')
-        : rows.find((row) => row.workflow === kind)?.path;
+        : kind
+          ? rowOf(rows, kind)?.path
+          : undefined;
   return path && `${path}/${id}`;
 };
 
@@ -149,7 +151,8 @@ const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
  * record or a miss, is kept for the session, so a text that grows or is drawn again asks only for
  * what it newly mentions and keeps every name it had while that is asked. An answer older than
  * a few minutes is asked again where a text next mentions it, and shown until the new one comes;
- * a failed request leaves its ids to be asked again; another project starts afresh.
+ * `again` asks even a fresh one, for a page whose states must move as it polls. A failed
+ * request leaves its ids to be asked again; another project starts afresh.
  */
 const FRESH_MS = 5 * 60_000;
 const told = new Map<string, { reference: Reference; at: number }>();
@@ -160,7 +163,7 @@ let heard = 0;
 let round = 0;
 let epoch = scopeVersion();
 let timer: ReturnType<typeof setTimeout> | undefined;
-function askNames(ids: readonly string[]): void {
+function askNames(ids: readonly string[], again = false): void {
   if (epoch !== scopeVersion() || told.size > 20_000) {
     told.clear();
     queued.clear();
@@ -170,7 +173,7 @@ function askNames(ids: readonly string[]): void {
   }
   const stale = Date.now() - FRESH_MS;
   for (const id of ids)
-    if (!asking.has(id) && !((told.get(id)?.at ?? -Infinity) > stale)) queued.add(id);
+    if (!asking.has(id) && (again || !((told.get(id)?.at ?? -Infinity) > stale))) queued.add(id);
   if (!queued.size || timer) return;
   timer = setTimeout(() => {
     timer = undefined;
@@ -196,6 +199,8 @@ function askNames(ids: readonly string[]): void {
     }
   });
 }
+/** Ask these ids again now, as a page does when it has just changed what they name. */
+export const refreshReferences = (ids: readonly string[]) => askNames(ids, true);
 const hear = (listener: () => void) => {
   hearing.add(listener);
   return () => void hearing.delete(listener);
@@ -204,17 +209,27 @@ const hear = (listener: () => void) => {
 /**
  * These records as their owners name them, through project.references: each one's name, where
  * it opens (on the row that lists its workflow, `routeOf`), and the state it stands in. Ids asked
- * alike share the page's one request; an id nobody named is absent.
+ * alike share the page's one request; an id nobody named is absent. With `every` (ms) they are
+ * asked again at that cadence while the tab is shown, so a state moves as the page polls; the
+ * names already told stand meanwhile.
  */
 export function useReferences(
   ids: readonly string[],
+  every?: number,
 ): ReadonlyMap<string, Named & { state?: string }> {
   const version = useSyncExternalStore(
     hear,
     () => heard,
     () => heard,
   );
-  useEffect(() => askNames(ids), [ids]);
+  useEffect(() => {
+    askNames(ids);
+    if (!every) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== 'hidden') askNames(ids, true);
+    }, every);
+    return () => clearInterval(timer);
+  }, [ids, every]);
   // The rows say where each record opens: the ones the shell already holds.
   const rows = useRows();
   return useMemo(() => {

@@ -20,7 +20,7 @@ import {
 } from '../components';
 import { ArrowRightIcon } from '../icons';
 import { ListPage, Segments, useListFilter } from '../list-filters';
-import { homeOf } from '../navigation';
+import { homeOf, rowOf } from '../navigation';
 import { ThreeStates } from '../states';
 import {
   clock,
@@ -262,7 +262,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   });
   // A lease's record opens on the row that lists its workflow, as a record a text names does.
   const routeOf = ({ workflow, instanceId }: SessionSummary) => {
-    const owner = workflow && shell.rows.find((entry) => entry.workflow === workflow);
+    const owner = workflow && rowOf(shell.rows, workflow);
     return owner ? { to: `${owner.path}/${instanceId}`, kind: owner.view.kind } : undefined;
   };
   // Every machine Fleet was asked for, the ended ones too: its own page, a step further.

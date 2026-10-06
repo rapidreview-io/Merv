@@ -16,6 +16,8 @@ export const reflectionUiPlugin = {
         order: 35,
         path: '/reflections',
         workflow: 'reflection',
+        // A lens lives in its wave, so its page opens one too.
+        holds: ['reflection.lens'],
         view: { kind: 'reflections' },
         home: { tool: 'reflection.list', keep: ['id', 'title', 'ownerId', 'workflow', 'lenses'] },
         // A wave names the review of it, which is asked for as work: a wave is no delivery.

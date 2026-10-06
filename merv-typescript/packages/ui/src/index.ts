@@ -194,9 +194,11 @@ export const uiPlugin = {
           }),
       // A work key's sidebar is asked of the owner of its record's workflow.
       workflows: workflowsOf(() => ctx.get('workflows')),
-      // A work record opens on the page of the row that lists its workflow.
+      // A work record opens on the page of the row that lists or holds its workflow.
       route: (workflow, id) => {
-        const row = ui.rows().find((entry) => entry.workflow === workflow);
+        const row = ui
+          .rows()
+          .find((entry) => entry.workflow === workflow || entry.holds?.includes(workflow));
         return row && `${row.path}/${encodeURIComponent(id)}`;
       },
     };

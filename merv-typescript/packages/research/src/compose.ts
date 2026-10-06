@@ -7,7 +7,7 @@ import {
   type Transaction,
   type WorkflowDependency,
 } from '@merv/contracts';
-import type { BindingChecks, Capabilities, ResearchService } from './index.js';
+import type { ResearchService } from './index.js';
 import type { ResearchDigest, ResearchRecord } from './types.js';
 
 // A cycle's digest: what it decided, composed from records once it is over and kept as an
@@ -21,9 +21,8 @@ const DIGEST_TEXT_CHARS = 300;
 const DIGEST_LIST_LIMIT = 100;
 
 /**
- * The cycle's digest, composed and stored if it has none. Completing and ending a cycle must
- * never wait on it, so there a missing capability leaves the column empty and whoever names
- * the cycle as a predecessor composes it late; `required` refuses instead.
+ * The cycle's digest, composed and stored if it has none; `late` when a successor composes it
+ * after the cycle was over, as it does for a cycle that ended before digests existed.
  *
  * Two creators naming one undigested predecessor may both compose. The guarded update keeps
  * one: writers are serialised, so the second waits for the first and then matches no row or
@@ -35,35 +34,21 @@ export async function digested(
   caller: Caller,
   record: ResearchRecord,
   tx: Transaction,
-  checks: BindingChecks,
-  options: { late: boolean; required: boolean },
-): Promise<Artifact | null> {
+  late: boolean,
+): Promise<Artifact> {
   if (record.digest) return record.digest;
   const children = this.children(record);
   const selected = (await this.workflows.prerequisites(caller, [record.id], tx))
     .get(record.id)!
     .filter((item) => !children.includes(item.id));
-  const needed: (keyof Capabilities)[] = [
-    'artifacts',
-    ...(selected.some((item) => item.workflow === 'task') ? (['tasks'] as const) : []),
-    ...(selected.some((item) => item.workflow === 'experiment') ? (['experiments'] as const) : []),
-    ...(record.reflectionId ? (['reflections'] as const) : []),
-    ...(record.integrations.length ? (['code'] as const) : []),
-  ];
-  if (!options.required && needed.some((name) => !this.bindings[name])) return null;
-  const content = JSON.stringify(
-    await this.compose(caller, record, selected, tx, checks, options.late),
-  );
-  const artifact = await this.use('artifacts', checks, (service) =>
-    service.create(
-      caller,
-      {
-        title: `Cycle digest: ${clip(record.name, 180)}`,
-        content,
-        mediaType: 'application/json',
-      },
-      tx,
-    ),
+  const artifact = await this.providers.artifacts.create(
+    caller,
+    {
+      title: `Cycle digest: ${clip(record.name, 180)}`,
+      content: JSON.stringify(await this.compose(caller, record, selected, tx, late)),
+      mediaType: 'application/json',
+    },
+    tx,
   );
   await tx.run(
     'UPDATE research_cycles SET digest=? WHERE id=? AND digest IS NULL',
@@ -72,13 +57,7 @@ export async function digested(
   );
   const stored = JSON.parse((await this.row(caller, record.id, tx)).digest!) as Artifact;
   if (stored.id === artifact.id)
-    await this.event(
-      caller,
-      'digested',
-      record.id,
-      { artifactId: artifact.id, late: options.late },
-      tx,
-    );
+    await this.event(caller, 'digested', record.id, { artifactId: artifact.id, late }, tx);
   return stored;
 }
 
@@ -89,26 +68,22 @@ export async function compose(
   record: ResearchRecord,
   selected: WorkflowDependency[],
   tx: Transaction,
-  checks: BindingChecks,
   late: boolean,
 ): Promise<ResearchDigest> {
+  const { reflections, code } = this.providers;
   const text = (value: string) => clip(value, DIGEST_TEXT_CHARS);
   const ref = ({ id, title, hash }: Artifact) => ({ id, title: text(title), hash });
   // A cycle ended while reflecting has a child with nothing approved in it.
   const reflection = record.reflectionId
-    ? await this.use('reflections', checks, async (service) =>
-        (await service.get(caller, record.reflectionId!, tx)).workflow.state === 'approved'
-          ? await service.approved(caller, record.reflectionId!, tx)
-          : null,
-      )
+    ? (await reflections.get(caller, record.reflectionId, tx)).workflow.state === 'approved'
+      ? await reflections.approved(caller, record.reflectionId, tx)
+      : null
     : null;
   const taskId = record.integrations.at(-1);
   const integration = taskId
     ? {
         taskId,
-        publication:
-          (await this.use('code', checks, (code) => code.unit(caller, taskId, tx))).publication
-            ?.state ?? null,
+        publication: (await code.unit(caller, taskId, tx)).publication?.state ?? null,
       }
     : null;
   // A cycle reads only its selected work, directly from the providers that own it.
@@ -119,14 +94,10 @@ export async function compose(
     ...new Set(selected.filter((item) => item.workflow === workflow).map((item) => item.id)),
   ];
   const experiments = (
-    await mapAsync(ids('experiment'), (id) =>
-      this.use('experiments', checks, (service) => service.get(caller, id, tx)),
-    )
+    await mapAsync(ids('experiment'), (id) => this.providers.experiments.get(caller, id, tx))
   ).sort(byCreated);
   const tasks = (
-    await mapAsync(ids('task'), (id) =>
-      this.use('tasks', checks, (service) => service.record(caller, id, tx)),
-    )
+    await mapAsync(ids('task'), (id) => this.providers.tasks.record(caller, id, tx))
   ).sort(byCreated);
   const lists = {
     experiments: experiments.map((entry) => ({

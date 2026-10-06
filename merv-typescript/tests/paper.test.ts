@@ -360,51 +360,57 @@ test('reviewer edits retain provenance, roll back together, and enforce revision
   );
 });
 
-test('historical producer proposals remain readable without changing the current paper', async (t) => {
+test('retired paper proposals stay stored but are no longer read, and an edit drops a stored proposal id', async (t) => {
   const f = await fixture(t);
   const legacy = {
     id: 'paperproposal_old',
     projectId: f.operator.projectId,
     source: { kind: 'experiment', id: 'experiment-old', revision: 3 },
-    artifact: { id: 'artifact-old', hash: 'retained-hash' },
-    documents: [
-      {
-        edit: {
-          kind: 'results',
-          expectedRevision: 0,
-          changes: [{ id: 'old', title: 'Old proposal', content: 'Never accepted' }],
-        },
-        before: (await f.paper.read(f.reader)).documents.results.current,
-      },
-    ],
+    documents: [],
     evidence: [],
-    createdBy: f.producer.actorId,
-    createdAt: '2026-09-20T00:00:00Z',
     acceptance: null,
   };
-  await f.state.transaction((tx) =>
-    tx.run(
+  // As a proposal once published it: the revision names its proposal.
+  const published = {
+    projectId: f.operator.projectId,
+    kind: 'results',
+    revision: 1,
+    sections: [{ id: 'current', title: 'Current finding', content: 'Main agent text' }],
+    updatedBy: f.producer.actorId,
+    updatedAt: '2026-09-20T00:00:00Z',
+    proposalId: legacy.id,
+  };
+  await f.state.transaction(async (tx) => {
+    await tx.run(
       'INSERT INTO paper_proposals(id,project_id,record,acceptance) VALUES(?,?,?,?)',
       legacy.id,
       f.operator.projectId,
       JSON.stringify(legacy),
       null,
-    ),
-  );
-  await f.reload();
-  // Read without the stored copy of each document before its edit.
-  const shown = { ...legacy, documents: legacy.documents.map(({ edit }) => ({ edit })) };
-  assert.deepEqual((await f.paper.read(f.reader)).proposals, [shown]);
-  await f.paper.patch(f.producer, {
-    kind: 'results',
-    expectedRevision: 0,
-    requestId: f.request(),
-    changes: [{ id: 'current', title: 'Current finding', content: 'Main agent text' }],
+    );
+    await tx.run(
+      'INSERT INTO paper_revisions(project_id,kind,revision,record) VALUES(?,?,?,?)',
+      f.operator.projectId,
+      'results',
+      1,
+      JSON.stringify(published),
+    );
   });
+  await f.reload();
   const read = await f.paper.read(f.reader);
-  assert.deepEqual(read.proposals, [shown]);
-  assert.equal(read.documents.results.current.sections.length, 1);
+  assert.deepEqual(Object.keys(read).sort(), ['citations', 'documents']);
   assert.equal(read.documents.results.current.sections[0].id, 'current');
+  const next = await f.paper.patch(f.producer, {
+    kind: 'results',
+    expectedRevision: 1,
+    requestId: f.request(),
+    changes: [{ id: 'current', content: 'Edited' }],
+  });
+  assert.ok(!('proposalId' in next));
+  const kept = await f.state.transaction((tx) =>
+    tx.get<{ n: number }>('SELECT COUNT(*)::int AS n FROM paper_proposals'),
+  );
+  assert.equal(kept?.n, 1);
 });
 
 test('context sections list every written current and published section whole, in the paper’s order', async (t) => {

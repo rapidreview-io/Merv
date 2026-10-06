@@ -19,7 +19,7 @@ import {
   cx,
   useArtifacts,
 } from '../components';
-import { useReferences } from '../markdown';
+import { refreshReferences, useReferences } from '../markdown';
 import { ReferenceLookup } from './paper-references';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
@@ -43,6 +43,8 @@ import {
 export { ResearchCommand } from '../components';
 
 const KINDS = Object.keys(labels) as PaperKind[];
+/** How often the paper, and the states of what it names, are read again. */
+const EVERY = 10_000;
 
 /** A fragment a person can read, from the section's own title. */
 const slug = (title: string) =>
@@ -68,16 +70,9 @@ function compose(workspace: PaperWorkspace): DocView[] {
     const rows: Omit<SectionRow, 'n' | 'anchor'>[] = held.current.sections.map((section) => ({
       section,
     }));
-    // The proposal a publication carried names the exact sections that review moved.
-    const source = workspace.proposals.find(
-      (proposal) => proposal.id === held.published?.publication.proposalId,
-    );
-    const moved = new Set(
-      held.published?.publication.sectionIds ??
-        source?.documents.flatMap((item) =>
-          item.edit.kind === kind ? item.edit.changes.map((change) => change.id) : [],
-        ),
-    );
+    // A publication names the sections its review moved; an early one that names none
+    // stands behind every section it still holds word for word.
+    const moved = held.published?.publication.sectionIds;
     return {
       kind,
       n: at + 1,
@@ -96,7 +91,7 @@ function compose(workspace: PaperWorkspace): DocView[] {
             ? `-${row.section.id.slice(-6)}`
             : ''),
         published:
-          moved.has(row.section.id) &&
+          (!moved || moved.includes(row.section.id)) &&
           JSON.stringify(row.section) ===
             JSON.stringify(
               held.published?.document.sections.find((section) => section.id === row.section.id),
@@ -135,8 +130,8 @@ function useReading(anchors: string[]): string | undefined {
 const Opens = ({ to, children }: { to?: string; children: ReactNode }) =>
   to ? <Link to={to}>{children}</Link> : <>{children}</>;
 /**
- * The records the paper names that are not its own, as one key: where each proposal and
- * publication came from, and the reviews that wrote or accepted it.
+ * The records the paper names that are not its own, as one key: where each publication
+ * came from, and the reviews that wrote or accepted it.
  */
 function citedBy(
   workspace: PaperWorkspace | undefined,
@@ -144,10 +139,6 @@ function citedBy(
 ): string {
   if (!workspace) return '';
   const ids = new Set<string>();
-  for (const proposal of workspace.proposals) {
-    ids.add(proposal.source.id);
-    if (proposal.acceptance) ids.add(proposal.acceptance.reviewId);
-  }
   const revisions: (PaperRevisionSummary | undefined)[] = kept.flatMap((held) => held.data ?? []);
   for (const { current, published } of Object.values(workspace.documents)) {
     revisions.push(current, published?.document);
@@ -159,14 +150,14 @@ function citedBy(
 
 /**
  * The paper is one record, not four: the act first, then the document itself in
- * one reading column beside its outline, then how it got here, what proposed and
- * accepted it, and the machine text last.
+ * one reading column beside its outline, then how it got here, the reviews that
+ * published it, and the machine text last.
  */
 function PaperPage({ row }: ViewProps) {
   const { actor } = useSession();
   const { pathname } = useLocation();
   const { kind: opened } = useParams();
-  const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: 10000 });
+  const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: EVERY });
   const artifacts = useArtifacts();
   const nameOf = useActorNames();
   // Every retained revision of each document, for History; a read that fails
@@ -182,11 +173,14 @@ function PaperPage({ row }: ViewProps) {
   };
   // What the paper names that is not its own, named and routed by its owners.
   const cited = citedBy(workspace.data, Object.values(kept));
-  const named = useReferences(useMemo(() => (cited ? cited.split(' ') : []), [cited]));
+  const ids = useMemo(() => (cited ? cited.split(' ') : []), [cited]);
+  // A review's state moves while the paper stands still, so it is asked again as the paper is.
+  const named = useReferences(ids, EVERY);
   /** A saved edit writes a revision, so History is read again with the workspace. */
   const reload = () => {
     workspace.reload();
     for (const held of Object.values(kept)) held.reload();
+    refreshReferences(ids);
   };
   const [editing, setEditing] = useState<{ kind: PaperKind; section?: PaperSection } | null>(null);
   const [citing, setCiting] = useState<string | null>(null);
@@ -212,7 +206,7 @@ function PaperPage({ row }: ViewProps) {
         <LoadState {...workspace} />
       </div>
     );
-  const { citations, proposals } = workspace.data;
+  const { citations } = workspace.data;
   const writable = actor.role === 'operator' || actor.role === 'producer';
   const editable = (_kind: string) => writable;
   const extendable = (kind: string) => writable && kind !== 'problem';
@@ -220,10 +214,6 @@ function PaperPage({ row }: ViewProps) {
 
   /** A source this page cannot name is left out, never printed as its identifier. */
   const sourceOf = (source: PaperSource) => named.get(source.id);
-  const Source = ({ source }: { source: PaperSource }) => {
-    const found = sourceOf(source);
-    return found ? <Opens to={found.to}>{found.name}</Opens> : null;
-  };
   /** Every citation that named this section, in the ledger's own order. */
   const Markers = ({ section }: { section: string }) => (
     <span className="cites">
@@ -246,24 +236,14 @@ function PaperPage({ row }: ViewProps) {
         <>Written by {verdict(revision.review.id, revision.updatedBy)}</>,
         revision.updatedAt ? <Ago at={revision.updatedAt} /> : null,
       ]);
-    const from = proposals.find((proposal) => proposal.id === revision.proposalId);
-    if (from?.acceptance)
-      return dotted([
-        sourceOf(from.source) ? (
-          <>
-            Published from <Source source={from.source} />
-          </>
-        ) : (
-          'Published'
-        ),
-        <>accepted by {verdict(from.acceptance.reviewId, from.acceptance.reviewerId)}</>,
-        revision.updatedAt ? <Ago at={revision.updatedAt} /> : null,
-      ]);
     const who = nameOf(revision.updatedBy);
+    // A revision published before reviews wrote the paper carries no review of its own.
+    const publishedHere =
+      workspace.data!.documents[revision.kind].published?.document.revision === revision.revision;
     return dotted([
       who ? `Edited by ${who}` : null,
       revision.updatedAt ? <Ago at={revision.updatedAt} /> : null,
-      'never reviewed',
+      publishedHere ? 'published' : 'never reviewed',
     ]);
   };
   const attribution = (doc: DocView, item: SectionRow): ReactNode => {
@@ -280,9 +260,6 @@ function PaperPage({ row }: ViewProps) {
     .filter(Boolean)
     .sort()
     .at(-1);
-  const retained = [
-    ...new Set(proposals.flatMap((proposal) => proposal.evidence.map((file) => file.id))),
-  ];
   const written = docs.flatMap((doc) => doc.current.sections);
   // The limits are per document (100 sections, 160,000 characters); the fullest one is shown.
   const fullest = docs.reduce(
@@ -294,8 +271,6 @@ function PaperPage({ row }: ViewProps) {
     },
     { kind: '' as PaperKind | '', characters: 0, sections: 0 },
   );
-  // What proposed this paper is named by its source; one nobody can name is left out.
-  const proposed = proposals.some((proposal) => sourceOf(proposal.source));
   // Every revision each document retained, once, newest first when they are read.
   const revisions = new Map<string, { doc: DocView; revision: PaperRevisionSummary }>();
   // The revision a document's own heading already states is not History's to say again.
@@ -473,26 +448,8 @@ function PaperPage({ row }: ViewProps) {
         ) : undefined
       }
       related={
-        proposed || published.length > 0 || retained.length > 0 ? (
+        published.length > 0 ? (
           <>
-            {proposed && (
-              <Group label="Earlier paper proposals">
-                {proposals.map((proposal) => {
-                  const found = sourceOf(proposal.source);
-                  return found ? (
-                    <Row
-                      key={proposal.id}
-                      name={
-                        <Opens to={found.to}>
-                          <strong>{found.name}</strong>
-                        </Opens>
-                      }
-                      stand={<StatusPill value={found.state} />}
-                    />
-                  ) : null;
-                })}
-              </Group>
-            )}
             {published.length > 0 && (
               <Group label="Paper reviews">
                 {/* One review publishes every document it accepted, so it is one row. */}
@@ -521,15 +478,6 @@ function PaperPage({ row }: ViewProps) {
                     ) : null;
                   },
                 )}
-              </Group>
-            )}
-            {retained.length > 0 && (
-              <Group label="Evidence retained with it">
-                {retained.map((id) => (
-                  <li className="row" key={id}>
-                    <Evidence artifactId={id} artifact={artifacts.get(id)} meta />
-                  </li>
-                ))}
               </Group>
             )}
           </>

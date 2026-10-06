@@ -20,7 +20,7 @@ import test, { type TestContext } from 'node:test';
 import { ResearchService } from '../packages/research/src/index.js';
 import { createApp } from './fixtures/app.js';
 import { feasibilityStatement } from './feasibility-fixture.js';
-import { hostedCode, type Main } from './fixtures/research.js';
+import { hostedCode, providersOf, type Main } from './fixtures/research.js';
 import { publicationBlockers, type PublicationStanding } from '@merv/code-work/unit-store';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -93,18 +93,15 @@ async function fixture(t: TestContext, plugin = false) {
     plugin
       ? (app.ctx.research as ResearchService)
       : await createService(
-          new ResearchService(app.ctx.state, app.ctx.scope, app.ctx.workflows),
-        ).then((research) => {
-          research.bindPaper(app.ctx.paper);
-          research.bindReflections(app.ctx.reflections);
-          research.bindTasks(app.ctx.tasks);
-          research.bindExperiments(app.ctx.experiments);
-          research.bindArtifacts(app.ctx.artifacts);
-          research.bindCode(app.ctx.codeWork);
-          return research;
-        });
+          new ResearchService(
+            app.ctx.state,
+            app.ctx.scope,
+            app.ctx.workflows,
+            providersOf(app.ctx),
+          ),
+        );
   let research = await service();
-  let release: (() => Promise<void>) | undefined;
+  let release: (() => void | Promise<void>) | undefined;
   let sequence = 0;
   const id = () => `automatic-test-${++sequence}`;
   const boot = await app.ctx.scope.credentials.bootstrap({

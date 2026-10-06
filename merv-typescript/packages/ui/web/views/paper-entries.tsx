@@ -140,7 +140,7 @@ export function Entry({
   );
 }
 
-/** Current document text; earlier producer proposals remain in retained history. */
+/** Current document text, with what published it. */
 export function Block({
   row,
   from,

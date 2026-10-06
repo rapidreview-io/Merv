@@ -93,7 +93,18 @@ const capabilities: Record<string, readonly string[]> = {
     'domainEvents',
   ],
   knowledge: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
-  research: ['state', 'scope', 'workflows'],
+  research: [
+    'state',
+    'scope',
+    'workflows',
+    'domainEvents',
+    'paper',
+    'reflections',
+    'tasks',
+    'experiments',
+    'artifacts',
+    'codeWork',
+  ],
   paper: ['state', 'scope', 'artifacts'],
   reflections: [
     'state',
@@ -149,15 +160,6 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['reviews', 'sandboxes'],
   experiments: ['codeWork', 'sandboxes'],
-  research: [
-    'domainEvents',
-    'paper',
-    'reflections',
-    'tasks',
-    'experiments',
-    'artifacts',
-    'codeWork',
-  ],
   knowledge: ['codeWork'],
   // A lens's continuity key, registered while Sessions is loaded; without it no session runs.
   reflections: ['sessions'],

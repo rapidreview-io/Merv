@@ -48,9 +48,9 @@ The owning scientific workflow validates the live independent reviewer, claim, s
 
 New revisions name the reviewer as author and retain the review ID, source experiment/reflection revision and verdict. Publication records retain the source evidence hashes and changed section IDs. Later main-agent edits retain the previous review revision and are attributed as direct edits, without inheriting its review attribution.
 
-Old producer proposals, accepted publications and standalone-writing history remain readable. Unaccepted historical proposals do not overlay the current paper or apply automatically when a review completes. The UI displays current text and retains links to earlier proposal sources and review history.
+Old producer proposals stay stored in `paper_proposals` but nothing reads them: they do not overlay the current paper or apply when a review completes. Accepted publications and standalone-writing history remain readable. A publication from that time names no sections, so the UI shows it behind every section it still holds word for word.
 
-`paper.read` returns current documents, citations and retained historical proposals; kind selects a document and history returns its revisions. `paper.cite` maintains the bibliographic ledger independently; citation changes do not rewrite Literature prose. Neither paper reads nor publication records claim that all project evidence has been incorporated.
+`paper.read` returns current documents and citations; kind selects a document and history returns its revisions. `paper.cite` maintains the bibliographic ledger independently; citation changes do not rewrite Literature prose. Neither paper reads nor publication records claim that all project evidence has been incorporated.
 
 ## Experiment references
 

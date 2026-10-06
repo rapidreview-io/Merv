@@ -986,7 +986,6 @@ test('plan and results reviewers write the paper with every verdict, atomically 
           assert.equal(doc.published!.publication.source.id, e.id);
           assert.equal(doc.published!.publication.verdict, decision);
         }
-        assert.equal((await paper.read(f.reader)).proposals.length, 0);
       });
     }
 });

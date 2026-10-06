@@ -30,14 +30,14 @@ flowchart LR
   end
   owner -- "calls research.advance" --> research
   research -- "registers research workflow, publishes automation blockers" --> workflows
-  research -. "reads Problem" .-> paper
-  research -. "waits on, creates tasks" .-> tasks
-  research -. "waits on, creates experiments" .-> experiments
-  research -. "creates reflection wave" .-> reflections
+  research -- "reads Problem" --> paper
+  research -- "waits on, creates tasks" --> tasks
+  research -- "waits on, creates experiments" --> experiments
+  research -- "creates reflection wave" --> reflections
   research -- "opens next cycle" --> research
-  research -. "subscribes workflow.transition" .-> domainEvents
-  research -. "writes cycle digest" .-> artifacts
-  research -. "publishes to main" .-> codeWork
+  research -- "subscribes workflow.transition" --> domainEvents
+  research -- "writes cycle digest" --> artifacts
+  research -- "publishes to main" --> codeWork
   research -- "registers /work page" --> ui
   research -- "injects" --> scope
   research -- "injects" --> state
@@ -46,10 +46,10 @@ flowchart LR
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Research drives the cycle of tasks, experiments and reflections, each of which keeps its own workflow; it registers only `research`. Only State, Scope and Workflows are required: the dotted arrows are providers it binds while they are loaded, and in automatic mode workflow events advance a cycle without the owner.
+Research drives the cycle of tasks, experiments and reflections, each of which keeps its own workflow; it registers only `research`. Every plugin it points to is required, and in automatic mode workflow events advance a cycle without the owner.
 
 ## Surface
 
-- `@merv/research`: the `research` service. It registers `research@6` with Workflows and, while Domain Events is loaded, subscribes to workflow, code, paper and research events to advance automatic cycles.
+- `@merv/research`: the `research` service. It registers `research@6` with Workflows and subscribes through Domain Events to workflow, code, paper and research events to advance automatic cycles.
 - `@merv/research/tools`: `research.create`, `research.list`, `research.get`, `research.lineage`, `research.replan`, `research.end` and `research.advance`.
 - `@merv/research/ui`: the `/work` page, framed by its cycle, and the `/research` cycles page.

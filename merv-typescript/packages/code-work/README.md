@@ -73,9 +73,8 @@ The default composition enables the integration, with both Code and CodeWork opt
 Disable Code to suspend all its adapters. Code builds its repository journal and mirror;
 CodeWork opens them with its callbacks (what imported history changes, which sessions hold a
 workspace) and runs imports and the `/code/v2` workspace protocol on them, so disabling it keeps Code's records, repository files and GitHub connection but stops that
-work and withdraws every `code.*` tool and `/code` route until it is enabled again. Use [the no-Code configuration](../../config/no-code.example.json) to start research
-without any Code entries. Existing Git work waits for restoration; code-free research can
-complete its full review and reflection lifecycle.
+work and withdraws every `code.*` tool and `/code` route until it is enabled again. Use [the no-Code configuration](../../config/no-code.example.json) to start without any Code
+entries; it leaves out Research, which requires Code. Existing Git work waits for restoration.
 
 GitHub's default branch and the branch selected for Merv are different settings. The selected
 branch is the project's base, whatever its name. Each running unit keeps its exact starting

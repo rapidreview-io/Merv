@@ -106,7 +106,7 @@ export async function automaticResearch(
       'actor.permissions_changed',
     ],
     handle: async (event, tx) => {
-      // Startup and each provider bind ask for a resume; a later one still to come answers this.
+      // Startup asks for a resume, as does a retry; a later one still to come answers this.
       const later = { projectId: event.projectId, type: 'research.resume', after: event.id };
       if (event.type === 'research.resume' && (await state.findEvents(later, 1, tx)).length) return;
       // Only a defining cycle reads the paper, so only it can be unblocked by a patch.
@@ -137,8 +137,8 @@ export async function automaticResearch(
           // A database that is briefly unavailable is retried with the event, a bounded number
           // of times the consumer's own durable attempt count keeps, before it shows as a blocker.
           // Any other refusal shows at once: the consumer is shared by every project and must
-          // not wait on it. An unbound provider's bind wakes the cycle again, and any other
-          // outage is tried again later, as nothing else may happen in this project.
+          // not wait on it. An outage is tried again later, as nothing else may happen in this
+          // project.
           if (TRANSIENT.includes(error.code)) {
             const consumer = (await events.status()).find((item) => item.id === CONSUMER);
             if ((consumer?.attempts ?? UNAVAILABLE_RETRIES) < UNAVAILABLE_RETRIES) throw error;
@@ -167,7 +167,7 @@ export const automaticRequest = (cycle: string, revision: number, action: string
 export async function bindAutomatic(
   this: ResearchService,
   events: DomainEvents,
-): Promise<() => Promise<void>> {
+): Promise<() => void | Promise<void>> {
   this.open();
   const release = await automaticResearch(
     this.state,
@@ -177,18 +177,13 @@ export async function bindAutomatic(
     async (caller, row, tx) => await this.reconcileAutomatic(caller, row, tx),
     (row) => this.retryUnavailable(row),
   );
-  this.automaticBound = true;
   try {
     await this.wakeAutomatic();
   } catch (error) {
-    this.automaticBound = false;
     await release();
     throw error;
   }
-  return async () => {
-    this.automaticBound = false;
-    await release();
-  };
+  return release;
 }
 
 /**
@@ -208,7 +203,7 @@ export function retryUnavailable(
   this.retrying.add(row.project_id);
   const wake = async () => {
     this.retrying.delete(row.project_id);
-    if (this.closed || !this.automaticBound) return;
+    if (this.closed) return;
     const source = JSON.parse(row.source_json) as DelegationSource;
     await this.state.transaction(async (tx) => {
       const out = await tx.all<{ blocker_json: string | null }>(
@@ -238,9 +233,9 @@ export function retryUnavailable(
   this.detached(() => setTimeout(retry, this.retryAfterMs).unref());
 }
 
-/** Startup and provider restoration must also revisit events previously consumed while blocked. */
+/** Startup must also revisit events previously consumed while blocked. */
 export async function wakeAutomatic(this: ResearchService): Promise<void> {
-  if (!this.automaticBound || this.closed) return;
+  if (this.closed) return;
   await this.state.transaction(async (tx) => {
     // One resume per project: its consumer reconciles every open cycle there.
     const cycles = await this.workflows.open('research', null, tx);
@@ -271,7 +266,7 @@ export async function reconcileAutomatic(
   if (definition.terminal.includes(record.workflow.state)) return null;
   if (record.workflow.state === 'defining' && record.previousCycleId) {
     const previous = await this.get(caller, record.previousCycleId, tx);
-    const current = await this.definition(caller, tx, []);
+    const current = await this.definition(caller, tx);
     check(
       !previous.problem || current.revision === previous.problem.revision,
       'research_definition_changed',
@@ -408,31 +403,22 @@ export async function closeBlockedWork(
       );
       const requestId = automaticRequest(record.id, work.revision, `close:${id}`);
       if (work.workflow === 'task') {
-        await this.use('tasks', [], (service) =>
-          service.markFailed(
-            caller,
-            {
-              taskId: id,
-              expectedRevision: work.revision,
-              reason,
-              requestId,
-            },
-            tx,
-          ),
+        await this.providers.tasks.markFailed(
+          caller,
+          { taskId: id, expectedRevision: work.revision, reason, requestId },
+          tx,
         );
       } else {
-        await this.use('experiments', [], (service) =>
-          service.transition(
-            caller,
-            {
-              experimentId: id,
-              expectedRevision: work.revision,
-              transition: 'abandon',
-              evidence: { reason },
-              requestId,
-            },
-            tx,
-          ),
+        await this.providers.experiments.transition(
+          caller,
+          {
+            experimentId: id,
+            expectedRevision: work.revision,
+            transition: 'abandon',
+            evidence: { reason },
+            requestId,
+          },
+          tx,
         );
       }
       await this.event(

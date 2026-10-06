@@ -7,14 +7,17 @@ import { fileURLToPath } from 'node:url';
 import { validateRunnerConfig } from '@merv/runner';
 import { createApp } from './fixtures/app.js';
 
-test('the no-Code example is the default composition without its Code entries', () => {
+test('the no-Code example is the default composition without its Code entries, and without Research, which requires Code', () => {
   const read = (name: string) =>
     JSON.parse(readFileSync(new URL(`../config/${name}`, import.meta.url), 'utf8')) as {
       plugins: { id: string }[];
     };
   const code = (id: string) => id === 'code' || id.startsWith('code-');
+  const research = (id: string) => id === 'research' || id.startsWith('research-');
   assert.deepEqual(read('no-code.example.json'), {
-    plugins: read('default.json').plugins.filter((entry) => !code(entry.id)),
+    plugins: read('default.json')
+      .plugins.filter((entry) => !code(entry.id))
+      .map((entry) => (research(entry.id) ? { ...entry, required: false, disabled: true } : entry)),
   });
 });
 
@@ -30,8 +33,9 @@ test('a no-Code compatibility server can read history but refuses new work', asy
     rmSync(directory, { recursive: true, force: true });
   });
   assert.ok(app.status().every((entry) => !entry.id.startsWith('code')));
-  for (const id of ['research', 'tasks', 'experiments', 'reflections', 'reviews', 'api', 'ui'])
+  for (const id of ['tasks', 'experiments', 'reflections', 'reviews', 'api', 'ui'])
     assert.equal(app.status().find((entry) => entry.id === id)?.state, 'active', id);
+  assert.equal(app.ctx.get('research'), undefined);
   assert.equal(app.ctx.get('code'), undefined);
   assert.equal(app.ctx.get('codeWork'), undefined);
   const boot = await app.ctx.scope.credentials.bootstrap({

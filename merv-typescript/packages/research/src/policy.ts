@@ -129,7 +129,6 @@ export function policy(this: ResearchService): WorkflowPolicy {
             context.caller,
             record,
             context.tx,
-            [],
             parse(nextWaveChoiceSchema, context.input ?? {}),
           );
         },
@@ -140,14 +139,14 @@ export function policy(this: ResearchService): WorkflowPolicy {
               requiredInput: async (context: WorkflowCheckContext) => {
                 const { caller, snapshot, tx, input } = context;
                 // A choice made, or asked by the advance taking this, was judged by the check;
-                // a skip must not need Reflections.
+                // a skip reads no plan.
                 const choice = parse(nextWaveChoiceSchema, input ?? {});
                 if (choice.nextWave || this.checked.found(context)) return [];
                 // Without Git's answer a preflight reads the cycle as completing: the choice
                 // is asked whenever the plan continues, and honoured only when it completes. The
                 // transition carries that answer, so an advance that injects is not asked.
                 const record = await this.get(caller, snapshot.id, tx);
-                return (await this.continuing(caller, record, tx, [], choice.move ?? 'complete'))
+                return (await this.continuing(caller, record, tx, choice.move ?? 'complete'))
                   ? ['nextWave']
                   : [];
               },
