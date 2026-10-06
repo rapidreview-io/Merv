@@ -1236,10 +1236,7 @@ export abstract class ExperimentProgram {
           ),
         ],
       },
-      // A lease taken before 2026-10-06 froze the paper's sections, not its items: read it now.
-      projectPaper: inputs.paper.items
-        ? inputs.paper
-        : await this.paper.contextInput(context.caller, CONTEXT_CHARS, context.tx),
+      projectPaper: inputs.paper,
       feedback: {
         items: [
           textItem(
