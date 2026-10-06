@@ -68,9 +68,10 @@ export interface Language {
   load: Load;
 }
 const BY_NAME = new Map<string, Language>(
-  LANGUAGES.flatMap(([id, label, names, load]) =>
-    names.split(' ').map((name) => [name, { id, label, load }] as const),
-  ),
+  LANGUAGES.flatMap(([id, label, names, load]) => {
+    const language = { id, label, load };
+    return names.split(' ').map((name) => [name, language] as const);
+  }),
 );
 
 /**
@@ -93,68 +94,39 @@ export const highlightable = (code: string) =>
   code.split('\n', MAX_HIGHLIGHT_LINES + 1).length <= MAX_HIGHLIGHT_LINES;
 /**
  * A grammar's time on one line grows far faster than the line: a minified line would hold the
- * page for a minute. A block with a line past this is left uncoloured.
+ * highlighter for a minute. A block with a line past this is left uncoloured.
  */
 const MAX_HIGHLIGHT_LINE = 1_000;
-const colourable = (code: string) =>
+export const colourable = (code: string) =>
   highlightable(code) && code.split('\n').every((line) => line.length <= MAX_HIGHLIGHT_LINE);
 
 let core: Promise<HighlighterCore> | undefined;
-/** The highlighter once it has loaded, so code in a language it already holds is coloured as it is drawn. */
-let ready: HighlighterCore | undefined;
 const grammars = new Map<string, Promise<void>>();
 
 const highlighter = () =>
   (core ??= Promise.all([import('shiki/core'), import('shiki/engine/javascript')]).then(
-    async ([{ createHighlighterCore }, { createJavaScriptRegexEngine }]) =>
-      (ready = await createHighlighterCore({
+    ([{ createHighlighterCore }, { createJavaScriptRegexEngine }]) =>
+      createHighlighterCore({
         // A grammar whose patterns the engine cannot translate exactly still colours what it can.
         engine: createJavaScriptRegexEngine({ forgiving: true }),
         themes: [import('shiki/themes/github-light.mjs'), import('shiki/themes/github-dark.mjs')],
         langs: [],
-      })),
+      }),
   ));
 
-function tokens(highlighter: HighlighterCore, code: string, lang: string): Piece[][] {
-  return highlighter
-    .codeToTokens(code, {
-      lang,
-      themes: { light: 'github-light', dark: 'github-dark' },
-      defaultColor: false,
-      // Shiki stops a line after 500 ms and colours its rest as one token. A grammar compiles as
-      // it first reads, so a busy machine could cut the first theme's line and not the second's:
-      // the colours would hang on the clock. colourable() bounds the work instead.
-      tokenizeTimeLimit: 0,
-    })
-    .tokens.map((line) =>
-      line.map((token) => ({
-        content: token.content,
-        style: token.htmlStyle as Record<string, string>,
-      })),
-    );
-}
-
-/** The lines of `code` coloured now, where its grammar has already loaded; otherwise nothing. */
-export function highlightNow(code: string, language: Language | undefined): Piece[][] | undefined {
-  if (!ready || !language || !colourable(code)) return undefined;
-  if (!ready.getLoadedLanguages().includes(language.id)) return undefined;
-  try {
-    return tokens(ready, code, language.id);
-  } catch {
-    return undefined;
-  }
-}
-
 /**
- * The lines of `code` coloured, once the highlighter and its grammar load; nothing where
- * they cannot, or where the code is no longer `wanted` by the time they have.
+ * The lines of `code` in the language `lang` names coloured, once the highlighter and its grammar
+ * load, with `begin` called as the colouring starts; null where they cannot be. Some lines take a
+ * grammar seconds even within colourable()'s bounds, so the page calls this off its thread
+ * (code-block.tsx), where a block not coloured in time is left plain.
  */
-export async function highlight(
+export async function colour(
   code: string,
-  language: Language | undefined,
-  wanted: () => boolean = () => true,
-): Promise<Piece[][] | undefined> {
-  if (!language || !colourable(code)) return undefined;
+  lang: string,
+  begin: () => void = () => {},
+): Promise<Piece[][] | null> {
+  const language = languageOf(lang);
+  if (!language || !colourable(code)) return null;
   try {
     const shiki = await highlighter();
     let grammar = grammars.get(language.id);
@@ -164,8 +136,24 @@ export async function highlight(
         (grammar = language.load().then((module) => shiki.loadLanguage(module.default))),
       );
     await grammar;
-    return wanted() ? tokens(shiki, code, language.id) : undefined;
+    begin();
+    return shiki
+      .codeToTokens(code, {
+        lang: language.id,
+        themes: { light: 'github-light', dark: 'github-dark' },
+        defaultColor: false,
+        // Shiki stops a line after 500 ms and colours its rest as one token. A grammar compiles as
+        // it first reads, so a busy machine could cut the first theme's line and not the second's:
+        // the colours would hang on the clock. The page's clock bounds the work instead.
+        tokenizeTimeLimit: 0,
+      })
+      .tokens.map((line) =>
+        line.map((token) => ({
+          content: token.content,
+          style: token.htmlStyle as Record<string, string>,
+        })),
+      );
   } catch {
-    return undefined;
+    return null;
   }
 }

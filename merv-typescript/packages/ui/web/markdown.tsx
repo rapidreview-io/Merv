@@ -15,6 +15,7 @@ import { CodeBlock, NUMBERED_FROM } from './code-block';
 import { TeX } from './math';
 import { Mermaid } from './mermaid';
 import { pathOf, rowOf, useRows } from './navigation';
+import { offThread } from './off-thread';
 import type { Row } from './shell-types';
 import { safeHref, splitIds } from './markdown-links';
 
@@ -317,11 +318,9 @@ export function RecordText({
 
 /**
  * The parser (`markdown-parse`: micromark, GFM and math) is not part of the page's first load,
- * and it reads in a worker, so no text holds the page's one thread: micromark is superlinear on
- * a few texts, such as thousands of `*` or of links that never close in one paragraph. A text the
- * worker has not read in READ_MS stands as typed, and a new worker reads the next. That clock runs
- * only once the worker says it has loaded, so a slow download gives up no text. Where no worker
- * starts, as in a test's DOM, the parser loads into the page and reads there.
+ * and it reads off the page's thread (off-thread.ts): a text the worker has not read in time
+ * stands as typed. Where no worker starts, as in a test's DOM, the parser loads into the page and
+ * reads there.
  */
 type Parse = (source: string) => Block[];
 let parse: Parse | undefined;
@@ -330,79 +329,8 @@ export const loadParser = () =>
   (loading ??= import('./markdown-parse').then((module) => {
     parse = module.parseMarkdown;
   }));
-const READ_MS = 2000;
 /** The trees of the texts read last; null for one not read in time. */
-const trees = new Map<string, Block[] | null>();
-/** The texts to read, oldest first, each with whoever still waits for it. */
-const waiting = new Map<string, Set<() => void>>();
-/** Undefined until one starts; null once none could. */
-let worker: Worker | null | undefined;
-/** Whether the worker has said it loaded: until then it is downloading, not reading. */
-let loaded = false;
-let busy = false;
-const inPage = () => worker === null || typeof Worker === 'undefined';
-
-function keep(source: string, tree: Block[] | null): void {
-  trees.delete(source);
-  trees.set(source, tree);
-  if (trees.size > 500) trees.delete(trees.keys().next().value!);
-}
-
-/** The oldest text someone still waits for, read in the worker, or in the page where none runs. */
-function readNext(): void {
-  if (busy) return;
-  // A text nobody waits for any more, such as what a growing one was, is not read.
-  for (const [text, waiters] of waiting) if (!waiters.size) waiting.delete(text);
-  const [next] = waiting;
-  if (!next) return;
-  const [source, waiters] = next;
-  busy = true;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const done = (tree: Block[] | null) => {
-    clearTimeout(timer);
-    busy = false;
-    keep(source, tree);
-    waiting.delete(source);
-    for (const wake of waiters) wake();
-    readNext();
-  };
-  if (!inPage())
-    try {
-      if (!worker) {
-        worker = new Worker(new URL('./markdown-worker.ts', import.meta.url), { type: 'module' });
-        loaded = false;
-      }
-    } catch {
-      worker = null;
-    }
-  if (inPage()) {
-    loadParser().then(
-      () => done(parse!(source)),
-      () => done(null),
-    );
-    return;
-  }
-  const time = () =>
-    (timer = setTimeout(() => {
-      worker?.terminate();
-      worker = undefined;
-      done(null);
-    }, READ_MS));
-  worker!.onmessage = (event: MessageEvent<Block[] | 'loaded'>) => {
-    if (event.data !== 'loaded') return done(event.data);
-    loaded = true;
-    time();
-  };
-  // A worker that cannot start leaves every text to the page.
-  worker!.onerror = () => {
-    worker = null;
-    clearTimeout(timer);
-    busy = false;
-    readNext();
-  };
-  worker!.postMessage(source);
-  if (loaded) time();
-}
+const trees = offThread<string, Block[]>((source) => loadParser().then(() => parse!(source)));
 
 /**
  * The tree of a text, or null while it is first read or where it is too long or slow to read.
@@ -411,15 +339,13 @@ function readNext(): void {
 function useTree(source: string): Block[] | null {
   const [, wake] = useReducer((count: number) => count + 1, 0);
   const long = source.length > MAX_READ;
-  if (!long && inPage() && parse && !trees.has(source)) keep(source, parse(source));
-  const tree = long ? null : trees.get(source);
-  useEffect(() => {
-    if (tree !== undefined) return;
-    const waiters = waiting.get(source) ?? new Set();
-    waiting.set(source, waiters.add(wake));
-    readNext();
-    return () => void waiters.delete(wake);
-  }, [source, tree]);
+  if (!long && trees.inPage() && parse && trees.known(source) === undefined)
+    trees.keep(source, parse(source));
+  const tree = long ? null : trees.known(source);
+  useEffect(
+    () => (tree === undefined ? trees.want(source, source, wake) : undefined),
+    [source, tree],
+  );
   const last = useRef({ source, tree: null as Block[] | null });
   if (tree !== undefined) {
     last.current = { source, tree };
