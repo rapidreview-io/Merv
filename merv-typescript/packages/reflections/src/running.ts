@@ -11,6 +11,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from './types.js';
+import { lensName } from './models.js';
 
 /**
  * A reflection wave on the Running page. The open wave is one node at the head of the work
@@ -154,7 +155,7 @@ export function waveNode(facts: WaveFacts): RunningNode {
 
 function lensTable({ wave, leases }: WaveFacts): RunningSection {
   const rows = wave.lenses.map((lens): RunningRow => {
-    const perspective = [lens.perspective.replaceAll('_', ' ')];
+    const perspective = [lensName(lens.perspective)];
     if (lens.artifact) return { cells: [perspective, ['Submitted']] };
     const { held, since } = stepOf(leases, lens.workflow);
     return held

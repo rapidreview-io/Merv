@@ -45,6 +45,7 @@ import {
 import type { Paper } from '@merv/paper/types';
 import type {} from '@merv/sessions/types';
 import { parseChangeSpec } from './change-spec.js';
+import { lensName } from './models.js';
 import { waveNode, wavePanel, type WaveFacts } from './running.js';
 import {
   CHANGE_SPEC_CRITERION,
@@ -120,7 +121,7 @@ interface LeaseRow {
 }
 /** Every step is named as its record is: a wave by its title, a lens by its wave and perspective in words. */
 const named = ({ wave, lens }: Current) =>
-  lens ? `${wave.title}: ${lens.perspective.replaceAll('_', ' ')}` : wave.title;
+  lens ? `${wave.title}: ${lensName(lens.perspective)}` : wave.title;
 const submitted = (wave: WaveRow) =>
   wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
 const summarized = (content: string) =>
@@ -1086,7 +1087,7 @@ export class ReflectionService implements Reflections {
           references: (await this.lensRows(wave, context.tx)).map((child) => ({
             kind: 'workflow',
             id: child.id,
-            label: child.perspective,
+            label: lensName(child.perspective),
           })),
         };
       },

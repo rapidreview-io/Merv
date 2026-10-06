@@ -16,7 +16,7 @@ import { Tabs, recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
 import { useCommand } from '../mutations';
 import { Gate, StageMark } from '../process';
-import type { Reflection } from '@merv/reflections/models';
+import { lensName, type Reflection } from '@merv/reflections/models';
 import { ArtifactBody } from './artifacts';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
@@ -83,7 +83,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
     ...(wave.report ? [{ value: 'report', label: 'Report' }] : []),
     ...wave.lenses.map((lens) => ({
       value: lens.id,
-      label: words(lens.perspective).replace(/^./, (first) => first.toUpperCase()),
+      label: lensName(lens.perspective).replace(/^./, (first) => first.toUpperCase()),
     })),
   ];
   const open = tabs.find((tab) => tab.value === params.get('lens'))?.value ?? tabs[0]?.value;
