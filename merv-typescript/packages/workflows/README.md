@@ -290,9 +290,16 @@ provider owns, always reads `failed: false`, because its provider replans it. A 
 `addDependencies` is a command: it records history and bumps the revision, so a lease
 pinned to the old revision ends. A provider's system edges bump nothing.
 `relations` hands a provider one instance, with its data, and both directions of its edges;
-the instance has no edge to judge it by, so its `failed` says it ended outside success. What
-the provider makes of them, such as whether a version declares a workspace, it derives
-itself, from `pinned`.
+the instance has no edge to judge it by, so its `failed` says it ended outside success. Each
+also says whether its version declares a workspace, read from the pinned manifests, so the
+answer holds while the owning program is unloaded. A snapshot reads each instance's
+relations once, and so does a write transaction until it writes; each caller gets a copy.
+
+**System reads.** Other plugins read instances and history through these, not by SQL of
+their own. `open` lists a workflow's
+unended instances, `revisions` says where several instances stand without their data,
+`movedBy` names who made a move and `moves` counts the moves of one action whose recorded
+data names a value: each runs in the caller's `tx` and authorizes no caller.
 
 **Blockers.** A provider's blockers stay on an instance across non-terminal moves until
 the provider replaces them; they are cleared when the instance reaches a terminal state.

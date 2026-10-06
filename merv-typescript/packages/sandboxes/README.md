@@ -28,6 +28,7 @@ flowchart LR
   workerAgent -- "MCP launch connection" --> sandboxesService
   sandboxes -- "injects" --> sessions
   sandboxes -- "injects" --> artifacts
+  sandboxes -- "injects" --> workflows
   sessions -- "emits session.closed" --> sandboxes
   workflows -- "emits workflow.transition" --> sandboxes
   fleet -- "injects" --> sandboxes

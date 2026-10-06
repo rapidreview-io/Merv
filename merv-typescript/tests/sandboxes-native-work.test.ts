@@ -6,6 +6,7 @@ import {
   type Scope,
   type StoredEvent,
   type Transaction,
+  type Workflows,
   sha256Hex,
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
@@ -167,7 +168,18 @@ async function fixture(
       "INSERT INTO sandbox_native_projects(project_id,connection_id) VALUES('project','connection')",
     );
   });
-  const work = new NativeWorkService(state, connections);
+  /** Workflows' read of the instance, over the columns above. */
+  const workflows = {
+    relations: async (projectId: string, instanceId: string, tx: Transaction) => {
+      const row = await tx.get<{ workflow: string; revision: number; data_json: string }>(
+        'SELECT workflow,revision,data_json FROM wf_instances WHERE id=? AND project_id=?',
+        instanceId,
+        projectId,
+      );
+      return row ? { instance: { ...row, data: JSON.parse(row.data_json) } } : null;
+    },
+  } as unknown as Pick<Workflows, 'relations'>;
+  const work = new NativeWorkService(state, connections, workflows);
   /** A move of the instance as Workflows commits it, delivered to the transition consumer. */
   const move = async (change: { attempt?: string; closed?: boolean }, tx: Transaction) => {
     const instance = (await tx.get<{ revision: number; data_json: string }>(

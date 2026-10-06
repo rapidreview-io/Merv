@@ -25,16 +25,13 @@ import {
   type StoredEvent,
   type Transaction,
   type WorkflowProvidedBlockerInput,
+  type WorkflowRelation,
+  type WorkflowRelations,
   type Workflows,
 } from '@merv/contracts';
 import { checkFailure } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
 import { resolutionProvenance } from './provenance.js';
-import {
-  providerRelations,
-  type WorkflowProviderDependency,
-  type WorkflowProviderRelations,
-} from './relations.js';
 import type { CodeUnitPublicationSeal } from './publications.js';
 import type {
   CodeCapture,
@@ -190,7 +187,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     caller = structuredClone(caller);
     derivationInputs = derivationInputs && [...derivationInputs];
     await this.scope.require(caller, 'read', tx);
-    const relations = await this.dependencies(tx, caller.projectId, unitId);
+    const relations = await this.workflows.relations(caller.projectId, unitId, tx);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
     for (const id of derivationInputs ?? []) {
       const input = await this.relations(tx, caller.projectId, id);
@@ -339,7 +336,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   ): Promise<CodeUnitAcceptance> {
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
-    const relations = await this.dependencies(tx, caller.projectId, input.unitId);
+    const relations = await this.workflows.relations(caller.projectId, input.unitId, tx);
     check(
       relations &&
         relations.instance.settled &&
@@ -615,26 +612,12 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     });
   }
 
-  /**
-   * What a unit depends on. A snapshot gets each answer once, and so does a write transaction
-   * until it writes: one that moves an instance must see what it moved.
-   */
-  private async dependencies(
-    tx: Transaction,
-    projectId: string,
-    unitId: string,
-  ): Promise<WorkflowProviderRelations | null> {
-    return await this.state.remember(`code-work:relations:${projectId}:${unitId}`, () =>
-      providerRelations(this.workflows, projectId, unitId, tx),
-    );
-  }
-
   private async relations(
     tx: Transaction,
     projectId: string,
     unitId: string,
-  ): Promise<WorkflowProviderRelations> {
-    const relations = await this.dependencies(tx, projectId, unitId);
+  ): Promise<WorkflowRelations> {
+    const relations = await this.workflows.relations(projectId, unitId, tx);
     check(relations, 'code_unit_not_found', 'No such unit of work in this project', 404);
     const frontier = await tx.get<{ inputs_json: string }>(
       'SELECT inputs_json FROM code_unit_frontiers WHERE project_id=? AND unit_id=?',
@@ -644,7 +627,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     if (frontier) {
       // Scheduling prerequisites still gate the owner; only the frozen frontier contributes code.
       const inputs = await mapAsync(JSON.parse(frontier.inputs_json) as string[], async (id) => {
-        const input = await this.dependencies(tx, projectId, id);
+        const input = await this.workflows.relations(projectId, id, tx);
         check(input, 'code_unit_not_found', 'A declared frontier unit is missing', 409);
         return input.instance;
       });
@@ -679,7 +662,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       key: string,
       message: string,
       next: string,
-      related = [] as WorkflowProviderDependency[],
+      related = [] as WorkflowRelation[],
     ) => ({
       key,
       code: 'code_base_pending',
@@ -735,10 +718,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         },
       };
     const blockers: WorkflowProvidedBlockerInput[] = [];
-    const commits = new Map<
-      string,
-      { sources: BaseBody['sources']; units: WorkflowProviderDependency[] }
-    >();
+    const commits = new Map<string, { sources: BaseBody['sources']; units: WorkflowRelation[] }>();
     const seen = new Set<string>();
     const queue = [...relations.dependencies];
     for (let node = queue.shift(); node; node = queue.shift()) {
@@ -754,7 +734,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       }
       const intact = !accepted || digest(accepted) === unit!.acceptance_hash;
       if (intact && (accepted ? accepted.code === null : !node.declaresWorkspace)) {
-        const below = await this.dependencies(tx, projectId, node.id);
+        const below = await this.workflows.relations(projectId, node.id, tx);
         for (const child of (below?.dependencies ?? []).filter((item) => item.kind !== 'system'))
           if (child.settled) queue.push(child);
           else
@@ -876,7 +856,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       );
       const resolutionBlockers: WorkflowProvidedBlockerInput[] = [];
       for (const record of resolutions) {
-        const task = await this.dependencies(tx, projectId, record.resolutionTaskId!);
+        const task = await this.workflows.relations(projectId, record.resolutionTaskId!, tx);
         resolutionBlockers.push({
           key: `resolution:${record.key}`,
           code: 'code_merge_conflict',
@@ -992,7 +972,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
    * so those are never written onto an instance that has ended.
    */
   private async reconcileUnit(tx: Transaction, projectId: string, unitId: string): Promise<void> {
-    const relations = await this.dependencies(tx, projectId, unitId);
+    const relations = await this.workflows.relations(projectId, unitId, tx);
     if (!relations) return;
     const row = await this.row(tx, projectId, unitId);
     if (
@@ -1076,7 +1056,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       'SELECT unit_id FROM code_units WHERE project_id=? AND base_json IS NULL AND acceptance_json IS NULL',
       projectId,
     )) {
-      const relations = await this.dependencies(tx, projectId, row.unit_id);
+      const relations = await this.workflows.relations(projectId, row.unit_id, tx);
       if (!relations || relations.instance.terminal) continue;
       const derived = await this.derive(tx, projectId, relations.instance.id);
       if (
@@ -1157,7 +1137,8 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     )) {
       const accepted = JSON.parse(unit.acceptance_json!) as AcceptanceBody;
       if (!accepted.code || !base.members.includes(accepted.code.commit)) continue;
-      const name = (await this.dependencies(tx, projectId, unit.unit_id))?.instance.name ?? null;
+      const name =
+        (await this.workflows.relations(projectId, unit.unit_id, tx))?.instance.name ?? null;
       const entries = units.get(accepted.code.commit) ?? [];
       units.set(accepted.code.commit, [...entries, { id: unit.unit_id, name }]);
     }
@@ -1210,7 +1191,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       `SELECT ${unitColumns} FROM code_units WHERE project_id=?${records.some((base) => base.quarantined) ? '' : ' AND quarantine_base_key IS NOT NULL'}`,
       projectId,
     )) {
-      const relations = await this.dependencies(tx, projectId, row.unit_id);
+      const relations = await this.workflows.relations(projectId, row.unit_id, tx);
       if (relations) units.push({ ...row, terminal: relations.instance.terminal });
     }
     const tainted = new Map<string, string>();
@@ -1341,7 +1322,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       return;
     }
     if (event.data.terminal === false) return;
-    const ended = await this.dependencies(tx, event.projectId, event.subjectId);
+    const ended = await this.workflows.relations(event.projectId, event.subjectId, tx);
     if (!ended?.instance.terminal) return;
     const seen = new Set<string>();
     const queue = [...ended.dependents];
@@ -1352,7 +1333,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         await this.reconcileUnit(tx, event.projectId, node.id);
         continue;
       }
-      const above = await this.dependencies(tx, event.projectId, node.id);
+      const above = await this.workflows.relations(event.projectId, node.id, tx);
       queue.push(...(above?.dependents ?? []));
     }
   }
@@ -1393,7 +1374,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     // Only a unit that may still take a base is derived: one accepted or ended never will.
     const open =
       !base && row.acceptance_json === null
-        ? await this.dependencies(tx, row.project_id, row.unit_id)
+        ? await this.workflows.relations(row.project_id, row.unit_id, tx)
         : null;
     return {
       ...stored,
@@ -1412,7 +1393,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     unitId: string,
     blockers: WorkflowProvidedBlockerInput[],
   ): Promise<void> {
-    const owner = await this.dependencies(tx, projectId, unitId);
+    const owner = await this.workflows.relations(projectId, unitId, tx);
     if (!owner) return;
     const row = owner.instance.terminal ? undefined : await this.writers.row(tx, projectId, unitId);
     const code = row?.quarantine_operation_id

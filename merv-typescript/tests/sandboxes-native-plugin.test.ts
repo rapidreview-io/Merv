@@ -8,7 +8,7 @@ import { Context } from 'cordis';
 import { ArtifactStore } from '@merv/artifacts';
 import { DurableEvents } from '@merv/domain-events';
 import { DiskBlobs } from '@merv/blobs';
-import { createService, type ArtifactFileProvider } from '@merv/contracts';
+import { createService, type ArtifactFileProvider, type Transaction } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
 import type { LaunchConnectionsProvider } from '@merv/sessions/types';
 import { ApiServer } from '../packages/api/src/http.js';
@@ -115,6 +115,17 @@ async function foundation(t: TestContext) {
     ctx.provide('artifacts', artifacts);
     ctx.provide('sessions', sessions as never);
     ctx.provide('domainEvents', events);
+    // Workflows' read of an instance, over the columns a test that needs one creates.
+    ctx.provide('workflows', {
+      relations: async (projectId: string, instanceId: string, tx: Transaction) => {
+        const row = await tx.get<{ workflow: string; revision: number; data_json: string }>(
+          'SELECT workflow,revision,data_json FROM wf_instances WHERE id=? AND project_id=?',
+          instanceId,
+          projectId,
+        );
+        return row ? { instance: { ...row, data: JSON.parse(row.data_json) } } : null;
+      },
+    } as never);
   };
   t.after(async () => {
     await ctx.fiber.dispose();

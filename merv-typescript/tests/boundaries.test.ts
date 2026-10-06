@@ -143,8 +143,8 @@ const capabilities: Record<string, readonly string[]> = {
   ui: ['api', 'tools'],
 };
 const optionalCapabilities: Record<string, readonly string[]> = {
-  // Native compute follows session closes and workflow transitions through its own consumers.
-  sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state'],
+  // Native compute follows session closes and workflow transitions, reading instances through Workflows.
+  sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state', 'workflows'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['reviews', 'sandboxes'],

@@ -2765,10 +2765,7 @@ export class LeasedSessions implements Sessions {
     }
     const { calls, sessions, agents } = await this.reading(async (tx) => ({
       calls: full ? await this.observations.activity(tx) : undefined,
-      sessions: await tx.all<{ id: string }>(
-        `SELECT s.id FROM worker_sessions s WHERE s.status IN ('offered','active')${full ? '' : " AND ((s.session_json::json->>'expiresAt')<=? OR s.revision IS DISTINCT FROM (SELECT revision FROM wf_instances w WHERE w.id=s.instance_id AND w.project_id=s.project_id))"} ORDER BY s._merv_rowid`,
-        ...(full ? [] : [isoNow(this.clock)]),
-      ),
+      sessions: await this.live(tx, !full),
       agents: full
         ? // A dormant agent, which holds no credential, waits for its work, not its delegation.
           await tx.all<{ id: string }>(
@@ -2788,6 +2785,29 @@ export class LeasedSessions implements Sessions {
         this.readFirst((tx) => this.conversations.expire(tx)),
       );
     }
+  }
+  /** The live sessions, oldest first; when `lapsing`, only those past their deadline or moved. */
+  private async live(tx: Transaction, lapsing: boolean): Promise<{ id: string }[]> {
+    const live = await tx.all<{
+      id: string;
+      project_id: string;
+      instance_id: string;
+      revision: number;
+      expired: boolean | null;
+    }>(
+      "SELECT id,project_id,instance_id,revision,(session_json::json->>'expiresAt')<=? AS expired FROM worker_sessions WHERE status IN ('offered','active') ORDER BY _merv_rowid",
+      isoNow(this.clock),
+    );
+    if (!lapsing) return live;
+    const at = new Map<string, number>();
+    for (const projectId of new Set(live.map((row) => row.project_id)))
+      for (const [id, instance] of await this.workflows.revisions(
+        projectId,
+        live.filter((row) => row.project_id === projectId).map((row) => row.instance_id),
+        tx,
+      ))
+        at.set(id, instance.revision);
+    return live.filter((row) => row.expired || at.get(row.instance_id) !== row.revision);
   }
   /** One live session's upkeep: a closure found, stranding or a change of quiet. */
   private async upkeep(id: string, tx: Transaction, calls?: Map<string, string>) {

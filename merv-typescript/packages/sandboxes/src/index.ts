@@ -776,92 +776,95 @@ export const sandboxesPlugin = {
     }
     // Native compute is available only with its real authority/evidence owners.
     // Fleet and Code continue using their existing dedicated connections.
-    ctx.inject(['state', 'scope', 'artifacts', 'sessions', 'domainEvents'], async (ctx) => {
-      const settings = config.native!;
-      const secret = process.env[settings.applicationSecretEnv];
-      check(
-        secret && /^[!-~]{16,4096}$/.test(secret),
-        'sandbox_setup_required',
-        'Configure Sandboxes application authentication',
-        503,
-      );
-      const service = new SandboxService(config);
-      const connections = new NativeConnections(
-        ctx.state,
-        ctx.scope,
-        settings,
-        process.env[config.urlEnv]!,
-      );
-      await ctx.state.migrate('sandboxes-native', nativeMigrations);
-      await initializeComputeLedgers(ctx.state);
-      const work = new NativeWorkService(ctx.state, connections);
-      service.bindNativeMachines(new NativeMachineReader(ctx.state, connections));
-      const evidence = new NativeEvidence(ctx.state, ctx.scope, ctx.artifacts, connections);
-      work.setEvidencePublisher((...args) => evidence.publish(...args));
-      service.bindNativeWork(work);
-      check(
-        ctx.artifacts.registerFileProvider,
-        'sandbox_setup_required',
-        'Native compute requires retained-file support',
-        503,
-      );
-      ctx.effect(() =>
-        ctx.artifacts.registerFileProvider!('sandboxes-native', {
-          download: (projectId, reference) =>
-            service.nativeOperation(() => evidence.download(projectId, reference)),
-        }),
-      );
-      ctx.effect(() =>
-        ctx.sessions.registerLaunchConnections((session) =>
-          service.nativeOperation(() => work.launchConnections(session)),
-        ),
-      );
-      // Sandboxes follows every workflow's lifecycle itself. Both handlers act only on work and
-      // leases it already holds and read the instance as it stands, so a replay of the whole
-      // history changes nothing; from the beginning, nothing logged while it was unloaded is lost.
-      await ctx.effect(async function* () {
-        yield await ctx.domainEvents.subscribe({
-          id: 'sandboxes.native-leases.v1',
-          types: ['session.closed'],
-          from: 'beginning',
-          handle: (event, tx) => service.nativeOperation(() => work.sessionClosed(event, tx)),
-        });
-        yield await ctx.domainEvents.subscribe({
-          id: 'sandboxes.native-work.v1',
-          types: ['workflow.transition'],
-          from: 'beginning',
-          handle: (event, tx) => service.nativeOperation(() => work.transitioned(event, tx)),
-        });
-      });
-      let stopping = false;
-      let pending: Promise<void> | undefined;
-      const tick = () => {
-        if (stopping || pending) return;
-        pending = service
-          .nativeOperation(async () => {
-            // A failing revocation pass never holds back assignment upkeep.
-            await connections.reconcileRevocations().catch(() => undefined);
-            if (!stopping) await work.reconcile();
-          })
-          .catch(() => {
-            // Durable intents remain pending and are retried on the next tick.
-          })
-          .finally(() => {
-            pending = undefined;
+    ctx.inject(
+      ['state', 'scope', 'artifacts', 'sessions', 'domainEvents', 'workflows'],
+      async (ctx) => {
+        const settings = config.native!;
+        const secret = process.env[settings.applicationSecretEnv];
+        check(
+          secret && /^[!-~]{16,4096}$/.test(secret),
+          'sandbox_setup_required',
+          'Configure Sandboxes application authentication',
+          503,
+        );
+        const service = new SandboxService(config);
+        const connections = new NativeConnections(
+          ctx.state,
+          ctx.scope,
+          settings,
+          process.env[config.urlEnv]!,
+        );
+        await ctx.state.migrate('sandboxes-native', nativeMigrations);
+        await initializeComputeLedgers(ctx.state);
+        const work = new NativeWorkService(ctx.state, connections, ctx.workflows);
+        service.bindNativeMachines(new NativeMachineReader(ctx.state, connections));
+        const evidence = new NativeEvidence(ctx.state, ctx.scope, ctx.artifacts, connections);
+        work.setEvidencePublisher((...args) => evidence.publish(...args));
+        service.bindNativeWork(work);
+        check(
+          ctx.artifacts.registerFileProvider,
+          'sandbox_setup_required',
+          'Native compute requires retained-file support',
+          503,
+        );
+        ctx.effect(() =>
+          ctx.artifacts.registerFileProvider!('sandboxes-native', {
+            download: (projectId, reference) =>
+              service.nativeOperation(() => evidence.download(projectId, reference)),
+          }),
+        );
+        ctx.effect(() =>
+          ctx.sessions.registerLaunchConnections((session) =>
+            service.nativeOperation(() => work.launchConnections(session)),
+          ),
+        );
+        // Sandboxes follows every workflow's lifecycle itself. Both handlers act only on work and
+        // leases it already holds and read the instance as it stands, so a replay of the whole
+        // history changes nothing; from the beginning, nothing logged while it was unloaded is lost.
+        await ctx.effect(async function* () {
+          yield await ctx.domainEvents.subscribe({
+            id: 'sandboxes.native-leases.v1',
+            types: ['session.closed'],
+            from: 'beginning',
+            handle: (event, tx) => service.nativeOperation(() => work.sessionClosed(event, tx)),
           });
-      };
-      ctx.effect(() => {
-        const timer = setInterval(tick, 5000);
-        timer.unref();
-        tick();
-        return async () => {
-          stopping = true;
-          clearInterval(timer);
-          await pending;
+          yield await ctx.domainEvents.subscribe({
+            id: 'sandboxes.native-work.v1',
+            types: ['workflow.transition'],
+            from: 'beginning',
+            handle: (event, tx) => service.nativeOperation(() => work.transitioned(event, tx)),
+          });
+        });
+        let stopping = false;
+        let pending: Promise<void> | undefined;
+        const tick = () => {
+          if (stopping || pending) return;
+          pending = service
+            .nativeOperation(async () => {
+              // A failing revocation pass never holds back assignment upkeep.
+              await connections.reconcileRevocations().catch(() => undefined);
+              if (!stopping) await work.reconcile();
+            })
+            .catch(() => {
+              // Durable intents remain pending and are retried on the next tick.
+            })
+            .finally(() => {
+              pending = undefined;
+            });
         };
-      });
-      publish(ctx, service, connections);
-    });
+        ctx.effect(() => {
+          const timer = setInterval(tick, 5000);
+          timer.unref();
+          tick();
+          return async () => {
+            stopping = true;
+            clearInterval(timer);
+            await pending;
+          };
+        });
+        publish(ctx, service, connections);
+      },
+    );
   },
 };
 export default sandboxesPlugin;

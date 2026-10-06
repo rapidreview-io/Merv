@@ -23,6 +23,7 @@ import {
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowDependency,
+  type WorkflowSnapshot,
   type WorkRoute,
 } from '@merv/contracts';
 import type { Code, CodeCaptureRef } from '@merv/code-work/types';
@@ -96,14 +97,9 @@ export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
 /** One experiment's row for the Running page: its place and the lease on it now. */
-interface StandingRow {
-  id: string;
+interface StandingRow extends Omit<WorkflowSnapshot, 'data'> {
   name: string;
   review_id: string | null;
-  state: string;
-  version: number;
-  revision: number;
-  updated_at: string;
   lease_id: string | null;
 }
 /** What one board read knows beside an experiment's own row. */
@@ -304,15 +300,23 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     where: string,
     ...params: (string | number)[]
   ): Promise<StandingRow[]> {
-    return await tx.all<StandingRow>(
-      `SELECT e.id,e.name,e.review_id,w.state,w.version,w.revision,w.updated_at,l.id AS lease_id
-       FROM experiments e JOIN wf_instances w ON w.id=e.id
-       LEFT JOIN experiment_leases l ON l.project_id=e.project_id AND l.experiment_id=e.id
-        AND l.revision=w.revision AND l.released_at IS NULL
-       WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
+    const rows = await tx.all<Pick<StandingRow, 'id' | 'name' | 'review_id'>>(
+      `SELECT e.id,e.name,e.review_id FROM experiments e WHERE e.project_id=? AND ${where} ORDER BY e.created_at,e.id`,
       caller.projectId,
       ...params,
     );
+    const ids = rows.map((row) => row.id);
+    const at = await this.workflows.revisions(caller.projectId, ids, tx);
+    const live = await tx.all<{ id: string; experiment_id: string; revision: number }>(
+      `SELECT id,experiment_id,revision FROM experiment_leases WHERE project_id=? AND released_at IS NULL AND experiment_id IN (${ids.map(() => '?').join(',') || 'NULL'})`,
+      caller.projectId,
+      ...ids,
+    );
+    return rows.flatMap((row) => {
+      const w = at.get(row.id);
+      const lease = live.find((l) => l.experiment_id === row.id && l.revision === w?.revision);
+      return w ? [{ ...w, ...row, lease_id: lease?.id ?? null }] : [];
+    });
   }
   /**
    * When the last lease on each unheld experiment ended at its current revision. Only a live
@@ -364,8 +368,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       id: row.id,
       name: row.name,
       state: row.state,
-      updatedAt: row.updated_at,
-      idleSince: released && released > row.updated_at ? released : row.updated_at,
+      updatedAt: row.updatedAt,
+      idleSince: released && released > row.updatedAt ? released : row.updatedAt,
       // A new attempt is not a return by itself, so the record's own arrivals say it.
       again:
         producing(row.state) &&

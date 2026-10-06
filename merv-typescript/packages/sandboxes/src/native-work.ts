@@ -1,12 +1,14 @@
 import { randomBytes } from 'node:crypto';
 import {
   check,
+  forRead,
   sha256Hex,
   type Json,
   type Sql,
   type State,
   type StoredEvent,
   type Transaction,
+  type Workflows,
 } from '@merv/contracts';
 import { computeEpoch, computeProfile, type ComputeProfile } from './compute-capability.js';
 import type { NativeMcpConnection, Session } from '@merv/sessions/types';
@@ -89,7 +91,7 @@ export const nativeWorkKind = (workflow: string): string =>
 const LEASE_HORIZON_MS = 8 * 24 * 3_600_000;
 /** Open work at rest under a live assignment is looked at this often, not on every pass. */
 const RESTING_MS = 30_000;
-type InstanceRow = { workflow: string; revision: number; data_json: string };
+type Instance = { workflow: string; revision: number; data: Record<string, unknown> };
 const workflowTerminal = (state: string) => ['completed', 'failed', 'cancelled'].includes(state);
 const jobTerminal = (state: string) =>
   ['succeeded', 'failed', 'cancelled', 'timed_out'].includes(state);
@@ -113,6 +115,7 @@ export class NativeWorkService {
   constructor(
     private readonly state: State,
     private readonly connections: NativeConnections,
+    private readonly workflows: Pick<Workflows, 'relations'>,
   ) {}
   setEvidencePublisher(publisher: Publisher): void {
     this.publisher = publisher;
@@ -130,12 +133,8 @@ export class NativeWorkService {
       work,
     );
   }
-  private instance(sql: Sql, project: string, id: string) {
-    return sql.get<InstanceRow>(
-      'SELECT workflow,revision,data_json FROM wf_instances WHERE id=? AND project_id=?',
-      id,
-      project,
-    );
+  private async instance(tx: Transaction, project: string, id: string) {
+    return (await this.workflows.relations(project, id, tx))?.instance;
   }
   /** Binds the work to the project's current funded connection, its payer from then on. */
   async pin(project: string, workflow: string, work: string, tx: Transaction): Promise<void> {
@@ -164,13 +163,10 @@ export class NativeWorkService {
    * derived at this revision or a later one is left, so a replayed event changes nothing. A
    * changed epoch queues reconciliation, which cancels the older attempt's jobs and access.
    */
-  private async advance(tx: Transaction, row: NativeWorkRow, instance: InstanceRow) {
+  private async advance(tx: Transaction, row: NativeWorkRow, instance: Instance) {
     if (row.closed_at || (row.epoch_revision !== null && row.epoch_revision >= instance.revision))
       return;
-    const epoch = computeEpoch(
-      JSON.parse(instance.data_json) as Record<string, unknown>,
-      instance.revision,
-    );
+    const epoch = computeEpoch(instance.data, instance.revision);
     await tx.run(
       `UPDATE sandbox_native_work SET desired_attempt=?::text,epoch_revision=?,
       transition_pending=CASE WHEN desired_attempt IS DISTINCT FROM ?::text THEN TRUE ELSE transition_pending END
@@ -365,16 +361,16 @@ export class NativeWorkService {
     const { projectId, instanceId } = session;
     // A project without a funded connection runs its work without compute, read without
     // taking the writer lock.
-    const current = await this.state.read(async (sql) => {
-      if (!(await this.connected(projectId, sql))) return null;
+    const current = await forRead(this.state, async (tx) => {
+      if (!(await this.connected(projectId, tx))) return null;
       return {
-        row: await this.row(sql, projectId, workflow, instanceId),
-        instance: await this.instance(sql, projectId, instanceId),
+        row: await this.row(tx, projectId, workflow, instanceId),
+        instance: await this.instance(tx, projectId, instanceId),
       };
     });
     if (!current) return [];
     // The lease names the instance at its current revision, or it is not live.
-    const atLease = (instance: InstanceRow | undefined): instance is InstanceRow =>
+    const atLease = (instance: Instance | undefined): instance is Instance =>
       !!instance &&
       instance.workflow === workflow &&
       instance.revision === session.expectedRevision;

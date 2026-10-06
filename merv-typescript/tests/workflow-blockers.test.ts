@@ -253,8 +253,12 @@ test('a provider reads an instance, its edges and the pinned manifests of their 
     { ...definition, name: 'bare' },
     { ...policy(false), assignments: [] },
   );
+  const none = policy(false);
+  none.assignments![0]!.execution!.workspace = { mode: 'none' };
+  const off = await f.workflows.register({ ...definition, name: 'off' }, none);
   const plain = await build.start(f.owner, { workflow: 'build', requestId: 'plain' });
   const git = await coded.start(f.owner, { workflow: 'coded', requestId: 'git' });
+  const named = await off.start(f.owner, { workflow: 'off', requestId: 'off' });
   const unmanifested = await bare.start(f.owner, { workflow: 'bare', requestId: 'bare' });
   await bare.transition(f.owner, {
     instanceId: unmanifested.id,
@@ -266,7 +270,7 @@ test('a provider reads an instance, its edges and the pinned manifests of their 
     workflow: 'build',
     requestId: 'top',
     data: { goal: 'Ship the build' },
-    dependsOn: [plain.id, git.id, unmanifested.id],
+    dependsOn: [plain.id, git.id, unmanifested.id, named.id],
   });
   await coded.transition(f.owner, {
     instanceId: git.id,
@@ -280,7 +284,8 @@ test('a provider reads an instance, its edges and the pinned manifests of their 
     async (tx) => await f.workflows.relations(f.owner.projectId, top.id, tx),
   );
   assert.ok(read);
-  // The engine's view is domain-free: the instance carries its data, not a goal or a workspace.
+  // The engine's view is domain-free: the instance carries its data, not a goal. Whether a
+  // version declares a workspace comes from its pinned manifests, the withdrawn one's too.
   assert.deepEqual(read.instance, {
     id: top.id,
     workflow: 'build',
@@ -291,16 +296,23 @@ test('a provider reads an instance, its edges and the pinned manifests of their 
     settled: false,
     terminal: false,
     failed: false,
+    declaresWorkspace: false,
     data: { goal: 'Ship the build' },
   });
   assert.deepEqual(
     Object.fromEntries(
-      read.dependencies.map((item) => [item.id, [item.settled, item.terminal, item.revision]]),
+      read.dependencies.map((item) => [
+        item.id,
+        [item.settled, item.terminal, item.revision, item.declaresWorkspace],
+      ]),
     ),
     {
-      [plain.id]: [false, false, 0],
-      [git.id]: [true, true, 1],
-      [unmanifested.id]: [true, true, 1],
+      [plain.id]: [false, false, 0, false],
+      [git.id]: [true, true, 1, true],
+      // A terminal dependency whose version pins no manifest declares no workspace.
+      [unmanifested.id]: [true, true, 1, false],
+      // A manifest that names the mode `none` declares none either.
+      [named.id]: [false, false, 0, false],
     },
   );
   assert.equal(
@@ -314,14 +326,106 @@ test('a provider reads an instance, its edges and the pinned manifests of their 
     async (tx) => await f.workflows.relations(f.owner.projectId, git.id, tx),
   );
   assert.deepEqual(
-    below?.dependents.map((item) => item.id),
-    [top.id],
+    below?.dependents.map((item) => [item.id, item.declaresWorkspace]),
+    [[top.id, false]],
   );
+  assert.equal(below?.instance.declaresWorkspace, true);
   assert.equal(
     await f.state.transaction(
       async (tx) => await f.workflows.relations(f.owner.projectId, 'missing', tx),
     ),
     null,
+  );
+});
+
+test('one write transaction reads an instance afresh after each move, and each reader gets a copy', async (t) => {
+  const f = await fixture(t);
+  const build = await f.workflows.register(definition, policy(false));
+  const below = await build.start(f.owner, { workflow: 'build', requestId: 'below' });
+  const above = await build.start(f.owner, { workflow: 'build', requestId: 'above' });
+  const { projectId } = f.owner;
+  await f.state.transaction(async (tx) => {
+    const first = (await f.workflows.relations(projectId, above.id, tx))!;
+    first.instance.data.changed = true;
+    first.dependencies.push(first.instance);
+    (await f.workflows.get(f.owner, above.id, tx)).data.changed = true;
+    assert.deepEqual((await f.workflows.relations(projectId, above.id, tx))?.dependencies, []);
+    assert.deepEqual((await f.workflows.get(f.owner, above.id, tx)).data, {});
+    await build.addDependencies(
+      f.owner,
+      { instanceId: above.id, dependsOn: [below.id], expectedRevision: 0, requestId: 'add' },
+      tx,
+    );
+    assert.equal((await f.workflows.get(f.owner, above.id, tx)).revision, 1);
+    assert.deepEqual(
+      (await f.workflows.relations(projectId, above.id, tx))?.dependencies.map((item) => [
+        item.id,
+        item.settled,
+      ]),
+      [[below.id, false]],
+    );
+    await build.transition(
+      f.owner,
+      { instanceId: below.id, action: 'finish', requestId: 'finish', expectedRevision: 0 },
+      tx,
+    );
+    assert.deepEqual(
+      (await f.workflows.relations(projectId, above.id, tx))?.dependencies.map((item) => [
+        item.id,
+        item.settled,
+      ]),
+      [[below.id, true]],
+    );
+    assert.equal((await f.workflows.get(f.owner, below.id, tx)).state, 'built');
+  });
+});
+
+test('system reads name where instances stand and count the moves that recorded a value', async (t) => {
+  const f = await fixture(t);
+  const build = await f.workflows.register(definition, policy(false));
+  const one = await build.start(f.owner, { workflow: 'build', requestId: 'one' });
+  const two = await build.start(f.owner, { workflow: 'build', requestId: 'two' });
+  await build.transition(f.owner, {
+    instanceId: one.id,
+    action: 'finish',
+    requestId: 'finish',
+    expectedRevision: 0,
+    data: { sheetId: 'art_sheet', other: 'art_other' },
+  });
+  const { projectId } = f.owner;
+  const read = await f.state.transaction(
+    async (tx) => await f.workflows.revisions(projectId, [one.id, two.id, one.id, 'missing'], tx),
+  );
+  assert.deepEqual(
+    Object.fromEntries(
+      [...read].map(([key, { id, workflow, version, state, revision }]) => [
+        key,
+        { id, workflow, version, state, revision },
+      ]),
+    ),
+    {
+      [one.id]: { id: one.id, workflow: 'build', version: 1, state: 'built', revision: 1 },
+      [two.id]: { id: two.id, workflow: 'build', version: 1, state: 'building', revision: 0 },
+    },
+  );
+  assert.equal('data' in read.get(one.id)!, false);
+  assert.equal(read.get(two.id)!.updatedAt, two.updatedAt);
+  assert.equal((await f.workflows.revisions('elsewhere', [one.id])).size, 0);
+  const moves = async (keys: string[], values: string[], action = 'finish') =>
+    await f.workflows.moves(projectId, { action, keys, values });
+  assert.equal(await moves(['sheetId'], ['art_sheet']), 1);
+  assert.equal(await moves(['other', 'sheetId'], ['art_none', 'art_other']), 1);
+  // The value must be the one recorded under a key named, by a move of the action named.
+  assert.equal(await moves(['sheetId'], ['art_other']), 0);
+  assert.equal(await moves(['sheetId'], ['art_sheet'], 'abandon'), 0);
+  assert.equal(await moves(['sheetId'], []), 0);
+  assert.equal(
+    await f.workflows.moves('elsewhere', {
+      action: 'finish',
+      keys: ['sheetId'],
+      values: ['art_sheet'],
+    }),
+    0,
   );
 });
 

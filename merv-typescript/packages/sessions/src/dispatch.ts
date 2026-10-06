@@ -1522,11 +1522,17 @@ export class SessionDispatch {
               : { code: 'runner_refusing', machine: refusing.machine.hostname }
             : null;
     // A target is waiting when its record still stands where it failed and nothing holds it.
-    const holds = await tx.all<HoldRow>(
-      `SELECT h.* FROM session_dispatch_holds h JOIN wf_instances w ON w.id=h.instance_id AND w.project_id=h.project_id AND w.revision=h.revision
-        WHERE h.project_id=? AND h.attempts>0 AND NOT EXISTS (SELECT 1 FROM worker_sessions l WHERE l.project_id=w.project_id AND l.instance_id=w.id AND l.revision=w.revision AND l.status IN ('offered','active'))`,
+    const unheld = await tx.all<HoldRow>(
+      `SELECT h.* FROM session_dispatch_holds h WHERE h.project_id=? AND h.attempts>0
+        AND NOT EXISTS (SELECT 1 FROM worker_sessions l WHERE l.project_id=h.project_id AND l.instance_id=h.instance_id AND l.revision=h.revision AND l.status IN ('offered','active'))`,
       projectId,
     );
+    const at = await this.workflows.revisions(
+      projectId,
+      unheld.map((row) => row.instance_id),
+      tx,
+    );
+    const holds = unheld.filter((row) => at.get(row.instance_id)?.revision === row.revision);
     const failing = new Set(holds.map((row) => `${row.instance_id}:${row.revision}`));
     const { deferred, quiet } = admissible
       ? await this.waits(projectId, tx, admissible, dispatch, failing, own.length > 0)
