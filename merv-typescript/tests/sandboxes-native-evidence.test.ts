@@ -452,6 +452,23 @@ test("a capture whose workflow names no attempt is registered under its launchin
   );
 });
 
+test('a capture title cut at its limit never ends in half a character', async (t) => {
+  const f = await fixture(t);
+  f.objects.set('obj', file('obj'));
+  f.captures.push({
+    id: 'capture',
+    state: 'succeeded',
+    result: { outputs: { outputs: 'obj' }, output_state: 'committed' },
+  });
+  f.receipts.set('capture', [{ name: 'outputs/obj', object_id: 'obj' }]);
+  const prefix = 'Compute capture — ';
+  // The emoji straddles the title's 200th code unit.
+  const name = `${'x'.repeat(200 - prefix.length - 1)}🧪 run`;
+  await f.evidence.publish(f.work, f.connection, { ...f.workflow, name });
+  const [collection] = await f.artifacts.list(f.caller);
+  assert.equal(collection?.title, `${prefix}${'x'.repeat(200 - prefix.length - 1)}`);
+});
+
 test('nondelegated admin workflows do not publish Merv evidence or stall closure', async (t) => {
   const f = await fixture(t);
   f.captures.push({

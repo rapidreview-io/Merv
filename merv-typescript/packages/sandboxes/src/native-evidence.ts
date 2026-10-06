@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   check,
+  clip,
   digest,
   MervError,
   type ArtifactCollectionInput,
@@ -285,7 +286,7 @@ export class NativeEvidence {
         const artifact = await this.artifacts.createCollection(
           caller,
           {
-            title: `Compute capture — ${workflow.name || workflow.id} / ${node.id}`.slice(0, 200),
+            title: clip(`Compute capture — ${workflow.name || workflow.id} / ${node.id}`, 200),
             sourceKey: `native:${digest([connection.id, workflow.namespace, workflow.id, node.id])}`,
             files: files.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
             metadata: {
