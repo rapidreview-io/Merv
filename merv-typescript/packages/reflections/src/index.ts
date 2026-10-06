@@ -6,7 +6,7 @@ import {
   everyAsync,
   sha256Hex,
 } from '@merv/contracts';
-import { artifactItem } from '@merv/context-builder/artifact-item';
+import { artifactItem, itemArtifactIds, textItem } from '@merv/context-builder/artifact-item';
 import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { keyId, keyKind } from '@merv/contracts';
@@ -43,6 +43,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
+import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
 import type {} from '@merv/sessions/types';
 import { parseChangeSpec } from './change-spec.js';
 import { lensName } from './names.js';
@@ -70,8 +71,7 @@ import type {
 export type * from './types.js';
 
 /** What review.start and review.get tell the reviewer of a reflection wave's synthesis. */
-const REVIEW_GUIDANCE =
-  'Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.';
+const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. ${PAPER_REVIEW_GUIDANCE}`;
 
 interface WaveRow {
   id: string;
@@ -667,22 +667,6 @@ export class ReflectionService implements Reflections {
     const previousCycle = (
       lens ? await this.workflows.get(context.caller, wave.id, context.tx) : context.snapshot
     ).data.previousCycleDigestId;
-    const item = (
-      id: string,
-      title: string,
-      priority: number,
-      text: string,
-      note: string,
-      tool: string,
-      input: Record<string, string | number | boolean | null>,
-    ): ContextItem => ({
-      id,
-      title,
-      priority,
-      body: { text },
-      note,
-      refs: [{ tool, input }],
-    });
     const noted = (artifact: Artifact, priority: number, note: string): ContextItem =>
       artifactItem(artifact, {
         id: `artifact:${artifact.id}:${sha256Hex(Buffer.from(note)).slice(0, 12)}`,
@@ -718,39 +702,38 @@ export class ReflectionService implements Reflections {
       Number.MAX_SAFE_INTEGER,
     ).rounds;
     const reviewItems = historicalRounds.map((entry, index) =>
-      item(
+      textItem(
         `review:${entry.reviewId}`,
         `Reflection review ${index + 1}`,
-        index === historicalRounds.length - 1 ? 700 : 350,
         JSON.stringify(entry),
-        `reflection ${wave.id}; earlier review round ${index + 1}`,
-        'review.get',
-        { reviewId: entry.reviewId },
+        {
+          priority: index === historicalRounds.length - 1 ? 700 : 350,
+          note: `reflection ${wave.id}; earlier review round ${index + 1}`,
+          refs: [{ tool: 'review.get', input: { reviewId: entry.reviewId } }],
+        },
       ),
     );
     const reviewerFeedback =
       review && (reviews.length || review.recovery)
         ? [
-            {
-              ...item(
-                `review:${review.id}:limited-feedback`,
-                'Prior review synopsis and current recovery',
-                700,
-                JSON.stringify({
-                  previousReviews: reviews.slice(-1).map(({ id, synopsis }) => ({ id, synopsis })),
-                  recovery: review.recovery ?? null,
-                }),
-                `reflection ${wave.id}; limited reviewer feedback`,
-                'review.get',
-                { reviewId: review.id },
-              ),
-              refs: [
-                ...(reviews.length
-                  ? [{ tool: 'review.get', input: { reviewId: reviews.at(-1)!.id } }]
-                  : []),
-                { tool: 'review.get', input: { reviewId: review.id } },
-              ],
-            },
+            textItem(
+              `review:${review.id}:limited-feedback`,
+              'Prior review synopsis and current recovery',
+              JSON.stringify({
+                previousReviews: reviews.slice(-1).map(({ id, synopsis }) => ({ id, synopsis })),
+                recovery: review.recovery ?? null,
+              }),
+              {
+                priority: 700,
+                note: `reflection ${wave.id}; limited reviewer feedback`,
+                refs: [
+                  ...(reviews.length
+                    ? [{ tool: 'review.get', input: { reviewId: reviews.at(-1)!.id } }]
+                    : []),
+                  { tool: 'review.get', input: { reviewId: review.id } },
+                ],
+              },
+            ),
           ]
         : [];
     const previousArtifact =
@@ -759,14 +742,19 @@ export class ReflectionService implements Reflections {
         : null;
     return embedded({
       assignment: [
-        item(
+        textItem(
           `reflection:${wave.id}:${lens ? `lens:${lens.id}` : 'wave'}:${context.snapshot.revision}`,
           lens ? `${lens.perspective} lens assignment` : 'Reflection assignment',
-          1000,
           assignment,
-          `reflection ${wave.id}; attempt ${wave.attempt}`,
-          lens ? 'reflection.lens' : 'reflection.get',
-          lens ? { lensId: lens.id } : { reflectionId: wave.id },
+          {
+            priority: 1000,
+            note: `reflection ${wave.id}; attempt ${wave.attempt}`,
+            refs: [
+              lens
+                ? { tool: 'reflection.lens', input: { lensId: lens.id } }
+                : { tool: 'reflection.get', input: { reflectionId: wave.id } },
+            ],
+          },
         ),
       ],
       projectPaper: paper.items,
@@ -781,14 +769,15 @@ export class ReflectionService implements Reflections {
           : [],
       assessment: review
         ? [
-            item(
+            textItem(
               `review:${review.id}:assessment`,
               'Exact independent review criteria',
-              950,
               JSON.stringify(review),
-              `reflection ${wave.id}; current review`,
-              'review.get',
-              { reviewId: review.id },
+              {
+                priority: 950,
+                note: `reflection ${wave.id}; current review`,
+                refs: [{ tool: 'review.get', input: { reviewId: review.id } }],
+              },
             ),
           ]
         : [],
@@ -801,15 +790,6 @@ export class ReflectionService implements Reflections {
   }
   /** Every artifact the inputs name: the worker's artifact grants and the ones its source
    *  approved at acquisition. */
-  private inputIds(inputs: Record<string, ContextInput>): string[] {
-    return [
-      ...new Set(
-        Object.values(inputs).flatMap((input) =>
-          input.items.flatMap((item) => ('artifactId' in item.body ? [item.body.artifactId] : [])),
-        ),
-      ),
-    ];
-  }
   private async references(context: WorkflowCheckContext) {
     const current = await this.current(context);
     const { wave, lens } = current;
@@ -823,7 +803,7 @@ export class ReflectionService implements Reflections {
       reflectionId: wave.id,
       artifacts: [
         ...new Set([
-          ...this.inputIds(inputs),
+          ...itemArtifactIds(inputs),
           ...(context.caller.session
             ? (await this.artifacts.executionOutputs(context.caller, context.tx)).map((a) => a.id)
             : []),
@@ -960,7 +940,7 @@ export class ReflectionService implements Reflections {
             items: [{ ...assessment.items[0]!, body: { text: JSON.stringify(review) } }],
           };
         }
-        const ids = this.inputIds(inputs);
+        const ids = itemArtifactIds(inputs);
         await this.artifacts.getAll(context.source, ids, context.tx);
         const receipt = {
           leaseId: context.leaseId,

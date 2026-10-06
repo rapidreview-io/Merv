@@ -70,7 +70,7 @@ import type { Code } from '@merv/code-work/types';
 import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import type { Paper } from '@merv/paper/types';
-import { artifactItem } from '@merv/context-builder/artifact-item';
+import { artifactItem, textItem } from '@merv/context-builder/artifact-item';
 import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
 import {
   acceptanceChecks,
@@ -1789,13 +1789,17 @@ export class TaskService implements Tasks {
     if (checkpoints.length) {
       // One item each, newest first to be embedded, and each read back alone by its ID.
       inputs.checkpoints = {
-        items: checkpoints.map((checkpoint, index) => ({
-          id: `checkpoints:${checkpoint.id}`,
-          title: `Saved ${checkpoint.createdAt} at revision ${checkpoint.revision}`,
-          body: { text: JSON.stringify(checkpoint) },
-          priority: ITEM_RULES.checkpoints!.priority! + index,
-          refs: [{ tool: 'task.get', input: { taskId: task.id, checkpointId: checkpoint.id } }],
-        })),
+        items: checkpoints.map((checkpoint, index) =>
+          textItem(
+            `checkpoints:${checkpoint.id}`,
+            `Saved ${checkpoint.createdAt} at revision ${checkpoint.revision}`,
+            JSON.stringify(checkpoint),
+            {
+              priority: ITEM_RULES.checkpoints!.priority! + index,
+              refs: [{ tool: 'task.get', input: { taskId: task.id, checkpointId: checkpoint.id } }],
+            },
+          ),
+        ),
       };
       const artifactIds = [...new Set(checkpoints.flatMap((c) => c.artifactIds))];
       if (artifactIds.length) inputs.checkpointEvidence = { artifactIds };
@@ -1831,17 +1835,14 @@ export class TaskService implements Tasks {
         items:
           'text' in input
             ? [
-                {
-                  id: `${key}:${task.id}`,
-                  title: titles.get(key)!,
-                  body: { text: input.text },
+                textItem(`${key}:${task.id}`, titles.get(key)!, input.text, {
                   ...rule,
                   refs: [
                     key === 'assessment' || key === 'recovery'
                       ? { tool: 'review.get', input: { reviewId: task.reviewId } }
                       : { tool: 'task.get', input: { taskId: task.id } },
                   ],
-                },
+                }),
               ]
             : await mapAsync(input.artifactIds, async (id) =>
                 artifactItem(await this.artifacts.get(caller, id, tx), {
