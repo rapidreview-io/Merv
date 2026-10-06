@@ -42,9 +42,10 @@ export interface Task {
   deliveryCodeArtifactId?: string;
   /**
    * The brief is the one Tasks composed from the title, the goal and the checks, so it says
-   * nothing the record does not. Work contexts embed the record without it.
+   * nothing the record does not. Work contexts embed the record without it. Absent on a
+   * receipt kept before Tasks sent it, which reads as not composed.
    */
-  composed: boolean;
+  composed?: boolean;
 }
 /**
  * The commit a Git task delivered. The receipt stays resolvable through its ref, so the record
