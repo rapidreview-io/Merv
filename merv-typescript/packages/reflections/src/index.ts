@@ -299,6 +299,7 @@ export class ReflectionService implements Reflections {
   ): Promise<Reflection> {
     const row = await this.row(caller, id, tx);
     const submission = submitted(row);
+    const own = await this.ownLens(caller, id, tx);
     return {
       id,
       projectId: row.project_id,
@@ -306,9 +307,8 @@ export class ReflectionService implements Reflections {
       ownerId: row.owner_id,
       createdAt: row.created_at,
       attempt: row.attempt,
-      lenses: await mapAsync(
-        await this.lensRows(row, tx),
-        async (lens) => await this.hydrateLens(caller, lens, tx),
+      lenses: await mapAsync(await this.lensRows(row, tx), async (lens) =>
+        this.withheld(await this.hydrateLens(caller, lens, tx), own),
       ),
       workflow: await this.workflows.get(caller, id, tx),
       review: row.review_id
@@ -337,11 +337,31 @@ export class ReflectionService implements Reflections {
   }
   async lens(caller: Caller, id: string, transaction?: Transaction): Promise<ReflectionLens> {
     caller = structuredClone(caller);
-    return await inTransaction(
-      this.state,
-      transaction,
-      async (tx) => await this.hydrateLens(caller, await this.lensRow(caller, id, tx), tx),
+    return await inTransaction(this.state, transaction, async (tx) => {
+      const row = await this.lensRow(caller, id, tx);
+      const own = await this.ownLens(caller, row.reflection_id, tx);
+      return this.withheld(await this.hydrateLens(caller, row, tx), own);
+    });
+  }
+  /**
+   * The lens a worker session was leased in this wave while the wave reflects, or undefined for
+   * any other caller. Such a worker reads no other lens's output, so the five stay independent;
+   * synthesis and review sessions, leased the wave itself, read them all.
+   */
+  private async ownLens(caller: Caller, reflectionId: string, tx: Transaction) {
+    if (!caller.session) return undefined;
+    const lease = await tx.get<{ id: string }>(
+      'SELECT r.id FROM reflection_leases l JOIN reflection_lenses r ON r.id=l.instance_id WHERE l.id=? AND l.project_id=? AND r.reflection_id=?',
+      caller.session.id,
+      caller.projectId,
+      reflectionId,
     );
+    if (!lease) return undefined;
+    const wave = await this.workflows.get(caller, reflectionId, tx);
+    return wave.state === 'reflecting' ? lease.id : undefined;
+  }
+  private withheld(lens: ReflectionLens, own: string | undefined): ReflectionLens {
+    return own === undefined || lens.id === own ? lens : { ...lens, artifact: null };
   }
   private async command<T>(
     caller: Caller,

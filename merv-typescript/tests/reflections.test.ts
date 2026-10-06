@@ -1052,6 +1052,52 @@ test('leased lens calls use exact execution evidence, retain context through rel
   assert.equal(agent.id, execution.agentId);
 });
 
+test('a lens worker cannot read the other lenses of its reflecting wave', async (t) => {
+  const f = await fixture(t);
+  const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'independent-wave' });
+  const [first, mine] = wave.lenses;
+  const producer = await f.actor('First lens');
+  const report = await f.create(producer, first!.perspective);
+  await f.app.ctx.reflections.submitLens(producer, {
+    lensId: first!.id,
+    artifactId: report.id,
+    expectedRevision: 0,
+    requestId: 'first-lens',
+  });
+  const secret = token();
+  await f.app.ctx.sessions.registerAgent(f.owner, {
+    name: mine!.perspective,
+    runnerId: 'external',
+    requestId: mine!.id,
+    secret,
+  });
+  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+    instanceId: mine!.id,
+    expectedRevision: 0,
+    requestId: `assign-${mine!.id}`,
+  });
+  const worker = await f.app.ctx.sessions.authenticate(secret);
+  const read = (await f.app.ctx.tools.call('reflection.get', worker, {
+    reflectionId: wave.id,
+  })) as Reflection;
+  assert.equal(read.workflow.state, 'reflecting');
+  assert.deepEqual(
+    read.lenses.map((lens) => lens.artifact),
+    [null, null, null, null, null],
+  );
+  assert.ok(!JSON.stringify(read).includes(report.id), 'no other lens output reaches the worker');
+  const other = (await f.app.ctx.tools.call('reflection.lens', worker, {
+    lensId: first!.id,
+  })) as Reflection['lenses'][number];
+  assert.equal(other.artifact, null);
+  assert.ok(!JSON.stringify(other).includes(report.id));
+  // Anyone outside the wave's lens sessions still reads every submitted lens.
+  const shown = await f.app.ctx.reflections.get(f.owner, wave.id);
+  assert.equal(shown.lenses[0]!.artifact!.id, report.id);
+  assert.equal((await f.app.ctx.reflections.lens(f.owner, first!.id)).artifact!.id, report.id);
+  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
+});
+
 test('ordinary session workers execute a lens, synthesis and repair; unload preserves frozen assignments', async (t) => {
   const f = await fixture(t);
   let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'leased-wave' });
