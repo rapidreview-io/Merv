@@ -341,3 +341,70 @@ test('disconnect stops follow-up GitHub reads and automation setup', async (t) =
     });
   }
 });
+
+/** Reconnect the same owner with tokens whose next use refreshes them. */
+async function expiring(f: Awaited<ReturnType<typeof githubFixture>>, seconds: number) {
+  f.control.expiresIn = seconds;
+  const begin = await f.github.begin(f.caller, {
+    expectedRevision: (await f.github.status(f.caller)).revision,
+  });
+  const cookie = begin.cookie.split(';')[0]!.slice('merv_github_flow='.length);
+  const state = new URL(begin.url).searchParams.get('state')!;
+  await f.github.callback({ state, code: 'c', cookie });
+  await f.github.finish(f.caller, cookie);
+}
+
+test('an import fetching on the installation token survives an owner-token refresh meanwhile', async (t) => {
+  const f = await githubFixture(t);
+  await f.enable('read');
+  await expiring(f, 61);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let fetching!: () => void;
+  const started = new Promise<void>((resolve) => (fetching = resolve));
+  const imported = f.github.importRemote.read(f.caller, async (target) => {
+    assert.ok(target.env.GIT_CONFIG_VALUE_0);
+    fetching();
+    await gate;
+    return 'fetched';
+  });
+  await started;
+  // A minute passes during a long fetch; another owner-token use refreshes the token.
+  t.mock.method(Date, 'now', () => new Date().getTime() + 2_000);
+  await f.github.branches(f.caller);
+  t.mock.restoreAll();
+  assert.equal(f.calls.filter((c) => c.body?.grant_type === 'refresh_token').length, 1);
+  release();
+  assert.equal(await imported, 'fetched');
+});
+
+test('a settings change during an owner-token refresh keeps the refreshed tokens', async (t) => {
+  const f = await githubFixture(t);
+  await f.enable('write');
+  await expiring(f, 1);
+  f.control.expiresIn = 3600;
+  let entered!: () => void, release!: () => void;
+  const refreshing = new Promise<void>((resolve) => (entered = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  f.control.before = async (path) => {
+    if (path !== '/login/oauth/access_token') return;
+    entered();
+    await gate;
+  };
+  const listing = f.github.branches(f.caller);
+  await refreshing;
+  // Another operator turns automation off while GitHub mints the owner's new tokens.
+  await f.github.configureAutomation(f.reviewer, {
+    expectedRevision: (await f.github.status(f.caller)).revision,
+    mode: 'off',
+    baseBranch: 'main',
+  });
+  release();
+  assert.equal((await listing)[0]!.name, 'main');
+  assert.equal((await f.github.status(f.caller)).status, 'connected');
+  assert.deepEqual(
+    f.calls.filter((c) => c.method === 'DELETE').map((c) => c.path),
+    [],
+    'the new tokens were never revoked',
+  );
+});

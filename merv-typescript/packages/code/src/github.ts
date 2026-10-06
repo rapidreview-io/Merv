@@ -487,24 +487,18 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     try {
       tokens = await client.refresh(pending.tokens.refreshToken);
       const refreshed = tokens;
-      return await this.state.transaction(async (tx) => {
+      // The claim alone proves the slot is still this owner's: reconnecting or disconnecting
+      // clears it. A settings change meanwhile only bumps the revision, and the owner's new
+      // tokens are kept; whether this caller may still use them is asked afterwards.
+      const row = await this.state.transaction(async (tx) => {
         const row = await this.row(tx, caller.projectId);
-        check(
-          row.refresh_id === claim &&
-            row.owner === pending.row.owner &&
-            row.revision === pending.row.revision,
-          'github_conflict',
-          'GitHub connection changed while refreshing',
-          409,
-        );
-        await this.authority(caller, tx, row, access);
         const result = await tx.run(
           `UPDATE code_github SET credentials=?,token_version=token_version+1,refresh_id=NULL,refresh_until=NULL
-          WHERE project_id=? AND refresh_id=? AND revision=?`,
+          WHERE project_id=? AND refresh_id=? AND owner=?`,
           client.seal(refreshed, `tokens:${caller.projectId}:${row.token_version + 1}`),
           caller.projectId,
           claim,
-          row.revision,
+          pending.row.owner,
         );
         check(
           result.changes === 1,
@@ -512,8 +506,11 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
           'GitHub connection changed while refreshing',
           409,
         );
-        return { token: refreshed.accessToken, row: await this.row(tx, caller.projectId) };
+        return await this.row(tx, caller.projectId);
       });
+      tokens = undefined;
+      await this.state.transaction((tx) => this.authority(caller, tx, row, access));
+      return { token: refreshed.accessToken, row };
     } catch (error) {
       if (tokens) await client.revoke(tokens.accessToken);
       await this.state
@@ -752,32 +749,40 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   /**
    * How an import reads the linked repository: as the administrator who asked, pinned to the
    * connection they selected, with an installation token that only the one Git child sees in
-   * its environment and that is given up when the call ends.
+   * its environment and that is given up when the call ends. Since the fetch never carries the
+   * owner's OAuth token, a refresh of that token meanwhile does not discard the import.
    */
   readonly importRemote: CodeImportRemote = {
     read: (caller, use, expected) =>
-      this.automation(caller, 'read', undefined, async (client, _token, binding) => {
-        check(
-          !expected ||
-            (binding.revision === expected.revision &&
-              binding.repository.id === expected.repositoryId &&
-              binding.baseBranch === expected.baseBranch),
-          'github_conflict',
-          'Repository settings changed; the selected import remains pinned to its original connection',
-          409,
-        );
-        const grant = await client.installationToken(binding.repository, false);
-        try {
-          return await use({
-            url: `https://github.com/${binding.repository.fullName}.git`,
-            protocol: 'https',
-            repository: binding.repository,
-            env: githubGitEnv(grant.token),
-          });
-        } finally {
-          await client.revokeInstallationToken(grant.token).catch(() => {});
-        }
-      }),
+      this.automation(
+        caller,
+        'read',
+        undefined,
+        async (client, _token, binding) => {
+          check(
+            !expected ||
+              (binding.revision === expected.revision &&
+                binding.repository.id === expected.repositoryId &&
+                binding.baseBranch === expected.baseBranch),
+            'github_conflict',
+            'Repository settings changed; the selected import remains pinned to its original connection',
+            409,
+          );
+          const grant = await client.installationToken(binding.repository, false);
+          try {
+            return await use({
+              url: `https://github.com/${binding.repository.fullName}.git`,
+              protocol: 'https',
+              repository: binding.repository,
+              env: githubGitEnv(grant.token),
+            });
+          } finally {
+            await client.revokeInstallationToken(grant.token).catch(() => {});
+          }
+        },
+        undefined,
+        true,
+      ),
   };
   async publicationBinding(caller: Caller, tx: Transaction) {
     const row = await this.connection(caller, tx, 'write');
