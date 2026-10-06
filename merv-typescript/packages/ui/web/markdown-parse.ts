@@ -4,7 +4,8 @@ import { gfmFromMarkdown } from 'mdast-util-gfm';
 import { mathFromMarkdown } from 'mdast-util-math';
 import { gfm } from 'micromark-extension-gfm';
 import { math } from 'micromark-extension-math';
-import { safeHref, splitIds, type Block, type Inline } from './markdown';
+import type { Block, Inline } from './markdown';
+import { safeHref, splitIds } from './markdown-links';
 
 /**
  * The text is read by micromark into mdast, a tree and never HTML, with GFM (tables, task

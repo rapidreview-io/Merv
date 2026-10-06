@@ -13,8 +13,17 @@ const { createElement, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router-dom');
-const { MAX_READ, Markdown, MarkdownPieces, RecordText, idsIn, recordNames, safeHref, shortId } =
-  await import('../packages/ui/web/markdown.js');
+const {
+  MAX_READ,
+  Markdown,
+  MarkdownPieces,
+  RecordText,
+  idsIn,
+  loadParser,
+  recordNames,
+  safeHref,
+  shortId,
+} = await import('../packages/ui/web/markdown.js');
 const { parseInline, parseMarkdown } = await import('../packages/ui/web/markdown-parse.js');
 const { ArtifactBody, fileType } = await import('../packages/ui/web/views/artifacts.js');
 
@@ -359,35 +368,100 @@ test('whatever it is given, the parser answers with blocks and never throws', ()
   assert.match(JSON.stringify(parseMarkdown('>'.repeat(50) + ' deep')), /deep/);
 });
 
-test('no text a member can post holds the page: the work is bounded per character', () => {
+test('no text a member can post holds the page: each is read off its thread, in time or not at all', async (t) => {
+  // The browser's Worker, on a Node thread that loads the worker module as the page would.
+  const { Worker: Thread } = await import('node:worker_threads');
+  const threads: InstanceType<typeof Thread>[] = [];
+  class PageWorker {
+    onmessage?: (event: { data: unknown }) => void;
+    onerror?: () => void;
+    private thread: InstanceType<typeof Thread>;
+    constructor(url: URL) {
+      this.thread = new Thread(
+        `const { parentPort } = require('node:worker_threads');
+        require('tsx/esm/api').register();
+        globalThis.addEventListener = (_, listener) => parentPort.on('message', (data) => listener({ data }));
+        globalThis.postMessage = (data) => parentPort.postMessage(data);
+        import(${JSON.stringify(url.href)});`,
+        { eval: true },
+      );
+      this.thread.on('message', (data) => this.onmessage?.({ data }));
+      this.thread.on('error', () => this.onerror?.());
+      threads.push(this.thread);
+    }
+    postMessage(data: unknown) {
+      this.thread.postMessage(data);
+    }
+    terminate() {
+      void this.thread.terminate();
+    }
+  }
+  // A text read in the worker draws as it does when read on the page (a trailing newline keeps
+  // the page's reading out of the worker's way and changes nothing drawn).
+  const rich =
+    '# Goal\n\n- [x] **done** and `code`\n  - nested\n\n> a quote\n>\n> on two lines\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nSee [the run](/runs/1).';
+  await loadParser();
+  const drawn = document.createElement('div');
+  drawn.innerHTML = renderToStaticMarkup(page(`${rich}\n`));
+  Object.assign(globalThis, { Worker: PageWorker });
+  t.after(async () => {
+    delete (globalThis as { Worker?: unknown }).Worker;
+    await unmount();
+    await Promise.all(threads.map((thread) => thread.terminate()));
+  });
   const runs = (count: number) =>
     Array.from({ length: count }, (_, index) => '`'.repeat(index + 1)).join(' ');
-  // Each of these took seconds, or minutes, when every bracket walked to the paragraph's end.
-  const slow: [string, string][] = [
-    ['brackets before backtick runs', '['.repeat(3000) + runs(95)],
-    ['a heading of spaces', `# a${' '.repeat(80_000)}b`],
-    ['a line of spaces before a break', `a${' '.repeat(80_000)}b\nc`],
-    // micromark's text resolver is superlinear on runs of links that never close, so these
-    // are 32 kB rather than the 80 kB of the others.
-    ['links that never close', '[a]('.repeat(8_000)],
-    ['angle destinations that never close', '[a](<'.repeat(6_400)],
-    ['titles that never close', '[a](b "'.repeat(11_000)],
-    ['a divider of spaces', `a|b\n|-|-|${' '.repeat(80_000)}x`],
-    ['a list item of spaces', `- ${' '.repeat(80_000)} `],
-    [
-      'a table of nothing but pipes',
-      `${'|'.repeat(8000)}\n${'|-'.repeat(8000)}\n${'|'.repeat(8000)}`,
-    ],
-    ['an address of dots', `<a@${'b.'.repeat(40_000)}@>`],
-    ['an address of closing brackets', `http://a.b/${')'.repeat(80_000)}`],
+  // Each of these held the page's thread for seconds, or minutes, when it was read there.
+  const slow = [
+    '['.repeat(3000) + runs(95),
+    `# a${' '.repeat(80_000)}b`,
+    `a${' '.repeat(80_000)}b\nc`,
+    '[a]('.repeat(20_000),
+    '[a](<'.repeat(16_000),
+    '[a](b "'.repeat(11_430),
+    'a*'.repeat(40_000),
+    `a|b\n|-|-|${' '.repeat(80_000)}x`,
+    `- ${' '.repeat(80_000)} `,
+    `<a@${'b.'.repeat(40_000)}@>`,
+    `http://a.b/${')'.repeat(80_000)}`,
   ];
-  for (const [name, source] of slow) {
-    const started = performance.now();
-    assert.ok(Array.isArray(parseMarkdown(source)), name);
-    // A generous budget for a slow machine; the defect it guards against was 100x over it.
-    assert.ok(performance.now() - started < 1500, `${name} took too long`);
+  // How long the page's thread goes without a turn, sampled every few milliseconds.
+  let longest = 0;
+  let last = performance.now();
+  const ticks = setInterval(() => {
+    longest = Math.max(longest, performance.now() - last);
+    last = performance.now();
+  }, 5);
+  t.after(() => clearInterval(ticks));
+  const texts = [...slow, rich];
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      ...texts.map((source, key) =>
+        createElement('section', { key }, createElement(Markdown, { source })),
+      ),
+    ),
+  );
+  // The worker reads in order, so once the last text is drawn every other one is settled.
+  for (let waited = 0; !document.querySelector('section:last-child .md'); waited += 50) {
+    assert.ok(waited < 120_000, 'the worker reads every text, or gives it up');
+    await settle(50);
   }
-  // Bounding the work did not change what is read.
+  clearInterval(ticks);
+  assert.ok(longest <= 300, `the page's thread was held for ${Math.round(longest)} ms`);
+  assert.equal(document.querySelector('section:last-child')!.innerHTML, drawn.innerHTML);
+  // Each is read, or, where the worker could not read it in time (emphasis that never closes
+  // takes a minute), it stands as its author typed it.
+  const sections = [...document.querySelectorAll('section')];
+  slow.forEach((source, at) => {
+    const typed = sections[at]!.querySelector('pre.doc');
+    assert.ok(sections[at]!.querySelector('.md') || typed?.textContent === source, `${at}`);
+  });
+  assert.equal(sections[6]!.querySelector('pre.doc')?.textContent, slow[6]);
+});
+
+test('bounding the work did not change what is read', () => {
   assert.equal(said(parseInline('[`a]`](/x) and `` ` `` and [b](</y z> "t")')), 'a] and ` and b');
   assert.deepEqual(
     parseMarkdown('# Goal #\n## ##\n### a#b ###   ').map((block: Node) => [

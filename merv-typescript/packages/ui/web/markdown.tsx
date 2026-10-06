@@ -3,6 +3,7 @@ import {
   memo,
   useEffect,
   useMemo,
+  useReducer,
   useRef,
   useState,
   useSyncExternalStore,
@@ -15,6 +16,9 @@ import { TeX } from './math';
 import { Mermaid } from './mermaid';
 import { pathOf, useRows } from './navigation';
 import type { Row } from './shell-types';
+import { safeHref, splitIds } from './markdown-links';
+
+export { safeHref, splitIds };
 
 /**
  * Briefs, deliveries and reports are written in Markdown, and they are most of
@@ -56,20 +60,9 @@ export type Block =
 
 /* Record ids ------------------------------------------------------------- */
 
-/**
- * Every id this system mints is `newId(prefix)`: a lowercase prefix, an underscore
- * and a UUID's 32 hex digits (`art_…`, `wf_…`, `review_…`, `claim_…`, `exp_sub_…`).
- * The shape is recognised whole, so a prefix a later plugin adds is still shortened
- * rather than printed; what an id names and where it leads is its owner's to say.
- */
-const ID = '[a-z][a-z_]{0,30}_[0-9a-f]{32}(?![0-9A-Za-z_])';
-const ID_AT = new RegExp(ID, 'y');
-const ID_ANYWHERE = new RegExp(`(?<![0-9A-Za-z_])(${ID})`, 'g');
 export const prefixOf = (id: string) => id.slice(0, id.lastIndexOf('_'));
 /** What stands for an id nobody could name: its prefix and its last six. */
 export const shortId = (id: string) => `${prefixOf(id)}_…${id.slice(-6)}`;
-/** A text cut at its ids: even places are the author's words, odd places are ids. */
-export const splitIds = (text: string): string[] => text.split(ID_ANYWHERE);
 /** The ids a text mentions, once each. */
 export const idsIn = (text: string): string[] => [
   ...new Set(splitIds(text).filter((_, at) => at % 2)),
@@ -305,34 +298,14 @@ export function RecordText({
   );
 }
 
-/* Links ------------------------------------------------------------------ */
-
-/**
- * The only addresses that become an href: http, https, mailto, and a relative one,
- * which can only stay on this origin. Whitespace and control characters go first,
- * because a browser ignores them inside a scheme and `java\tscript:` must not pass;
- * anything else — javascript:, data:, vbscript:, file: — is refused and its text stays.
- */
-export function safeHref(raw: string): { href: string; external: boolean } | null {
-  // eslint-disable-next-line no-control-regex
-  const href = raw.replace(/[\u0000-\u0020\u007f-\u009f\u200b-\u200f\u2028-\u202e\ufeff]/g, '');
-  if (!href) return null;
-  // A browser reads a backslash as a slash, so `/\host` is another origin too.
-  if (/^[/\\]{2}/.test(href))
-    return { href: `https:${href.replaceAll('\\', '/')}`, external: true };
-  const scheme = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(href)?.[1]?.toLowerCase();
-  if (scheme === undefined) return { href, external: false };
-  return scheme === 'http' || scheme === 'https' || scheme === 'mailto'
-    ? { href, external: true }
-    : null;
-}
-
 /* Parsing ---------------------------------------------------------------- */
 
 /**
- * The parser (`markdown-parse`: micromark, GFM and math) loads the first time a document is
- * drawn, so it is not part of the page's first load; until then, and wherever it cannot load,
- * a document stands as the text its author wrote.
+ * The parser (`markdown-parse`: micromark, GFM and math) is not part of the page's first load,
+ * and it reads in a worker, so no text holds the page's one thread: micromark is superlinear on
+ * a few texts, such as thousands of `*` or of links that never close in one paragraph. A text the
+ * worker has not read in READ_MS stands as typed, and a new worker reads the next. Where no worker
+ * starts, as in a test's DOM, the parser loads into the page and reads there.
  */
 type Parse = (source: string) => Block[];
 let parse: Parse | undefined;
@@ -341,25 +314,91 @@ export const loadParser = () =>
   (loading ??= import('./markdown-parse').then((module) => {
     parse = module.parseMarkdown;
   }));
+const READ_MS = 2000;
+/** The trees of the texts read last; null for one not read in time. */
+const trees = new Map<string, Block[] | null>();
+/** The texts to read, oldest first, each with whoever still waits for it. */
+const waiting = new Map<string, Set<() => void>>();
+/** Undefined until one starts; null once none could. */
+let worker: Worker | null | undefined;
+let busy = false;
+const inPage = () => worker === null || typeof Worker === 'undefined';
 
-/** The tree of a text, or null while the parser loads or where the text is too long to read. */
-function useTree(source: string): Block[] | null {
-  const [ready, setReady] = useState(!!parse);
-  useEffect(() => {
-    if (ready) return;
-    let live = true;
+function keep(source: string, tree: Block[] | null): void {
+  trees.delete(source);
+  trees.set(source, tree);
+  if (trees.size > 500) trees.delete(trees.keys().next().value!);
+}
+
+/** The oldest text someone still waits for, read in the worker, or in the page where none runs. */
+function readNext(): void {
+  if (busy) return;
+  // A text nobody waits for any more, such as what a growing one was, is not read.
+  for (const [text, waiters] of waiting) if (!waiters.size) waiting.delete(text);
+  const [next] = waiting;
+  if (!next) return;
+  const [source, waiters] = next;
+  busy = true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const done = (tree: Block[] | null) => {
+    clearTimeout(timer);
+    busy = false;
+    keep(source, tree);
+    waiting.delete(source);
+    for (const wake of waiters) wake();
+    readNext();
+  };
+  if (!inPage())
+    try {
+      worker ??= new Worker(new URL('./markdown-worker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      worker = null;
+    }
+  if (inPage()) {
     loadParser().then(
-      () => live && setReady(true),
-      () => undefined,
+      () => done(parse!(source)),
+      () => done(null),
     );
-    return () => {
-      live = false;
-    };
-  }, [ready]);
-  return useMemo(
-    () => (ready && parse && source.length <= MAX_READ ? parse(source) : null),
-    [ready, source],
-  );
+    return;
+  }
+  timer = setTimeout(() => {
+    worker?.terminate();
+    worker = undefined;
+    done(null);
+  }, READ_MS);
+  worker!.onmessage = (event: MessageEvent<Block[]>) => done(event.data);
+  // A worker that cannot start leaves every text to the page.
+  worker!.onerror = () => {
+    worker = null;
+    clearTimeout(timer);
+    busy = false;
+    readNext();
+  };
+  worker!.postMessage(source);
+}
+
+/**
+ * The tree of a text, or null while it is first read or where it is too long or slow to read.
+ * While a text that grew is read, the tree of what it was stands, so a streamed one does not flash.
+ */
+function useTree(source: string): Block[] | null {
+  const [, wake] = useReducer((count: number) => count + 1, 0);
+  const long = source.length > MAX_READ;
+  if (!long && inPage() && parse && !trees.has(source)) keep(source, parse(source));
+  const tree = long ? null : trees.get(source);
+  useEffect(() => {
+    if (tree !== undefined) return;
+    const waiters = waiting.get(source) ?? new Set();
+    waiting.set(source, waiters.add(wake));
+    readNext();
+    return () => void waiters.delete(wake);
+  }, [source, tree]);
+  const last = useRef({ source, tree: null as Block[] | null });
+  if (tree !== undefined) {
+    last.current = { source, tree };
+    return tree;
+  }
+  return source.startsWith(last.current.source) ? last.current.tree : null;
 }
 
 /* Rendering --------------------------------------------------------------- */
