@@ -108,11 +108,14 @@ export class SessionConversations {
   async closed(session: Session, tx: Transaction): Promise<void> {
     const row = await this.row(session, tx);
     const failed = session.deferral?.cause === 'resume_failed' && session.continuity?.resume;
+    // The failed session holds the dropped row, so an earlier one's late declaration is refused.
+    const drop = !!failed && row?.sha256 === failed.sha256;
     if (row && (row.session_id === session.id || row.agent_id === session.agentId))
       await tx.run(
-        `UPDATE session_conversations SET updated_at=?${failed && row.sha256 === failed.sha256 ? ',harness=NULL,conversation_id=NULL,sha256=NULL,size=NULL,uploaded_at=NULL' : ''}
+        `UPDATE session_conversations SET updated_at=?${drop ? ',session_id=?,harness=NULL,conversation_id=NULL,sha256=NULL,size=NULL,uploaded_at=NULL' : ''}
          WHERE project_id=? AND continuity_key=?`,
         session.closedAt ?? isoNow(this.clock),
+        ...(drop ? [session.id] : []),
         row.project_id,
         row.continuity_key,
       );

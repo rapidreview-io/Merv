@@ -1,0 +1,95 @@
+import { readdirSync } from 'node:fs';
+import type { AgentEvent } from '@merv/contracts';
+import type { SessionUsageReport } from '@merv/sessions/types';
+import { conversationIdPattern, type RunnerProfile } from '../profiles.js';
+
+/**
+ * What the runner knows of one agent harness: how it prints and where it keeps its
+ * conversations. Each harness's module answers for it; the rest of the runner only asks.
+ */
+export interface Harness {
+  /** A reader of its output a line at a time (`at` is the line's place in the log), keeping
+   *  what a block spread over lines needs. */
+  lines(): (text: string, at: number) => AgentEvent[];
+  /** What the run spent, from the last report the output holds, for the profile's model. */
+  usage(output: string, model?: string): SessionUsageReport | undefined;
+  /** The conversation id it printed first. */
+  conversationId(output: string): string | undefined;
+  /** What it prints when it finds no conversation to resume. */
+  resumeRefused: RegExp;
+  /** A log line, by its first 32 bytes, as a transcript sees it: a partial-message piece, a
+   *  whole message that repeats such pieces, or neither. */
+  line(head: string): 'delta' | 'whole' | undefined;
+  /** Where a launch keeps its conversations. */
+  home(profile: RunnerProfile, runDirectory: string, environment: NodeJS.ProcessEnv): string;
+  /** A conversation's file in that home. */
+  locate(root: string, id: string): string | undefined;
+  /** Where a conversation is put to be resumed: its directory and file name. */
+  restorePath(root: string, cwd: string, id: string): [string, string];
+  /** Takes these conversations out of a home the runner shares. */
+  forget(root: string, ids: string[]): void;
+}
+
+// Lines are the harness's own JSON, read field by field.
+export type Line = Record<string, any>;
+
+export const read = (line: string): Line | undefined => {
+  try {
+    const value = JSON.parse(line);
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+export const str = (value: unknown) => (typeof value === 'string' ? value : '');
+/** What a tool answered: its text, with anything else named by its type. */
+export const answer = (content: unknown): string =>
+  typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content
+          .map((part) =>
+            part?.type === 'text' ? str(part.text) : `[${str(part?.type) || 'content'}]`,
+          )
+          .join('\n')
+      : '';
+export const entries = (directory: string) => {
+  try {
+    return readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+};
+
+/** The JSON lines of `output` that hold `marker`. */
+function* events(output: string, marker: string) {
+  for (const line of output.split('\n')) if (line.includes(marker)) yield read(line) ?? {};
+}
+/** The first id `pick` finds on a line holding `marker`, if it is a conversation id. */
+export function firstId(output: string, marker: string, pick: (event: Line) => unknown) {
+  for (const event of events(output, marker)) {
+    const id = pick(event);
+    if (typeof id === 'string' && conversationIdPattern.test(id)) return id;
+  }
+  return undefined;
+}
+
+/** The last `type` event's usage whose counts (and `cache` counts, absent as 0) are all whole. */
+export function spent(output: string, type: string, model?: string, cache: string[] = []) {
+  let usage: SessionUsageReport | undefined;
+  for (const event of events(output, `"${type}"`)) {
+    const [input, outputTokens, ...cached] = ['input_tokens', 'output_tokens', ...cache].map(
+      (key, index) => event.usage?.[key] ?? (index < 2 ? undefined : 0),
+    );
+    if (
+      event.type === type &&
+      [input, outputTokens, ...cached].every((count) => Number.isSafeInteger(count) && count >= 0)
+    )
+      usage = {
+        inputTokens: input + cached.reduce((sum, count) => sum + count, 0),
+        outputTokens,
+        ...(model && { model }),
+      };
+  }
+  return usage;
+}

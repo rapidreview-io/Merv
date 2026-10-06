@@ -21,13 +21,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Session } from '@merv/sessions/types';
 import {
-  conversationId,
   forgetConversations,
   keepConversation,
-  launchCodexHome,
   redactConversation,
   restoreConversation,
 } from '../packages/runner/src/conversation.js';
+import { launchCodexHome } from '../packages/runner/src/harness/codex.js';
+import { harnesses } from '../packages/runner/src/harness/index.js';
 import { buildLaunch, type RunnerProfile } from '../packages/runner/src/profiles.js';
 import {
   launchId,
@@ -109,12 +109,17 @@ test('a launch that may be continued keeps its conversation; a resumed one names
 
 test('the id the harness printed first; a conversation restored is found and taken out again', (t) => {
   assert.equal(
-    conversationId('claude', `noise\n{"type":"system","subtype":"init","session_id":"${id}"}\n`),
+    harnesses.claude.conversationId(
+      `noise\n{"type":"system","subtype":"init","session_id":"${id}"}\n`,
+    ),
     id,
   );
-  assert.equal(conversationId('codex', `{"type":"thread.started","thread_id":"${id}"}\n`), id);
   assert.equal(
-    conversationId('codex', '{"type":"thread.started","thread_id":"../x"}\n'),
+    harnesses.codex.conversationId(`{"type":"thread.started","thread_id":"${id}"}\n`),
+    id,
+  );
+  assert.equal(
+    harnesses.codex.conversationId('{"type":"thread.started","thread_id":"../x"}\n'),
     undefined,
   );
   for (const profile of [claude(), codex]) {
@@ -209,7 +214,7 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const args = process.argv.slice(2), at = args.indexOf('--resume'), root = process.env.CLAUDE_CONFIG_DIR;
 const input = fs.readFileSync(0, 'utf8');
 let id = at >= 0 ? args[at + 1] : crypto.randomUUID(), file;
-if (at >= 0 && fs.existsSync(path.join(root, 'refuse-resume'))) { console.log('no rollout found'); process.exit(1); }
+if (at >= 0 && fs.existsSync(path.join(root, 'refuse-resume'))) { console.log('No conversation found with session ID: ' + args[at + 1]); process.exit(1); }
 if (at >= 0) {
   for (const project of fs.readdirSync(path.join(root, 'projects')))
     if (fs.existsSync(path.join(root, 'projects', project, id + '.jsonl'))) file = path.join(root, 'projects', project, id + '.jsonl');

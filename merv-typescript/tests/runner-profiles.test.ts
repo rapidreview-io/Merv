@@ -28,13 +28,16 @@ import {
   buildLaunch,
   collectRepositorySkillPaths,
   handoffGraceMs,
-  harnessUsage,
   validateProfile,
   mcpUrlVariable,
   sessionTokenVariable,
   type RunnerProfile,
   type LaunchRequest,
 } from '../packages/runner/src/profiles.js';
+import { harnessOf } from '../packages/runner/src/harness/index.js';
+
+const harnessUsage = (profile: RunnerProfile, output: string) =>
+  harnessOf(profile)?.usage(output, 'model' in profile ? profile.model : undefined);
 
 const secret = `ms_${'s'.repeat(43)}`;
 const codex: RunnerProfile = {
