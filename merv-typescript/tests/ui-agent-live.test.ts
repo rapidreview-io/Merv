@@ -297,3 +297,14 @@ test('a stream path that resolves to another host is never asked, so the credent
   }
   assert.deepEqual(requests, [], 'nothing was sent anywhere');
 });
+
+test('incremental SSE parser handles split frames and rejects oversized events', async () => {
+  const { frameParser } = await import('../packages/ui/web/event-stream.js');
+  const frames: { event: string; data: string }[] = [];
+  const parse = frameParser((value) => frames.push(value));
+  parse(': heartbeat\r\nevent: del');
+  parse('ta\r\ndata: {"text":"ok"}\r');
+  parse('\n\r\n');
+  parse(`data: ${'x'.repeat(70_000)}\n\n`);
+  assert.deepEqual(frames, [{ event: 'delta', data: '{"text":"ok"}' }]);
+});

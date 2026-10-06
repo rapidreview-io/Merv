@@ -7,7 +7,7 @@ import type { ChangeSpec } from './types.js';
  * The plan rides in the submission, the approval, every reflection.get and the reviewer's
  * bounded context, so its limits are set by what a reviewer can read, not by what storage holds.
  */
-export const CHANGE_SPEC_LIMITS = {
+const CHANGE_SPEC_LIMITS = {
   bytes: 64_000,
   items: 12,
   experiments: MAX_ACTIVE_EXPERIMENTS,

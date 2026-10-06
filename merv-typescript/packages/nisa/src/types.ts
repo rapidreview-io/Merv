@@ -23,7 +23,7 @@ export interface NisaConfig {
 
 /** An arXiv ID in either form: 2303.08774, or hep-th/9901001 (hep-th_9901001 as Nisa's index
  * writes it). A version suffix or an arxiv: prefix is dropped. */
-export type NisaArxivId = string;
+type NisaArxivId = string;
 
 export interface NisaSearchInput {
   /** One plain keyword query, or up to 8 phrasings searched together. */

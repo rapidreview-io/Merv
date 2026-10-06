@@ -12,7 +12,7 @@ export const createInput = z
   .object({ requestId: id, title: z.string().trim().min(1).max(200).default(defaultTitle) })
   .strict();
 /** A model id as the provider names it, e.g. 'gpt-6-luna'. */
-export const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
+const modelId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$/);
 /** pi.send; `model` is the one the page shows, which must still be the conversation's. */
 export const sendInput = z
   .object({ commandId: id, text: z.string().trim().min(1).max(32_000), model: modelId.optional() })
@@ -30,7 +30,7 @@ export const machineInput = z.object({ machine: machineKey }).strict();
 export const switchMachineInput = z
   .object({ machine: machineKey, reason: z.string().trim().min(10).max(300) })
   .strict();
-export const workerInput = z.object({ workerId: id }).strict();
+const workerInput = z.object({ workerId: id }).strict();
 /** /next; the probe is HMAC-SHA256 base64url. */
 export const nextInput = workerInput
   .extend({

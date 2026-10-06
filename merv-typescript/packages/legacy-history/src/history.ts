@@ -42,7 +42,7 @@ export const legacyHistoryTypes = [
 ] as const;
 export type LegacyHistoryType = (typeof legacyHistoryTypes)[number];
 
-export interface LegacyHistoryRecord {
+interface LegacyHistoryRecord {
   type: LegacyHistoryType;
   id: string;
   hash: string;
@@ -69,7 +69,7 @@ interface ArtifactRetentionReceipt {
   counts: FileRetentionCounts;
   projectCounts: Record<string, FileRetentionCounts>;
 }
-export interface LegacyHistorySummaryRow {
+interface LegacyHistorySummaryRow {
   type: LegacyHistoryType;
   id: string;
   hash: string;

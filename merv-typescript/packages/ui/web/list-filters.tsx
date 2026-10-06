@@ -30,7 +30,7 @@ const SCOPES: readonly Choice<Scope>[] = [
   { value: 'everyone', label: 'Everyone' },
 ];
 /** One state a list holds, and how much of the list is in it. */
-export interface StateCount {
+interface StateCount {
   value: string;
   count: number;
 }
@@ -81,7 +81,7 @@ const typing = (target: EventTarget | null) =>
  * the words and ids a person searches it by. A fact a kind does not have is left
  * out, and its control is not drawn.
  */
-export interface ListShape<T> {
+interface ListShape<T> {
   stateOf?(item: T): string;
   isOpen?(state: string): boolean;
   /** Present only where the record has an owner: what draws Mine / Everyone. */
@@ -687,7 +687,7 @@ function Narrowing({ reset, children }: { reset?(): void; children: ReactNode })
 
 /** Above this the record opens beside its list; narrower than this it is the page. */
 const WIDE = window.matchMedia('(min-width: 1080px)');
-export const useWide = () =>
+const useWide = () =>
   useSyncExternalStore(
     (listener) => {
       WIDE.addEventListener('change', listener);

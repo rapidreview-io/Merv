@@ -63,7 +63,7 @@ const STILL_MS = 300;
  * every piece that arrives. Until then, and for a language it does not know, there
  * is nothing, and the code is drawn plain.
  */
-export function useHighlight(code: string, language: Language | undefined) {
+function useHighlight(code: string, language: Language | undefined) {
   const [drawn] = useState(() => ({ code, language, lines: highlightNow(code, language) }));
   const [later, setLater] = useState<{ code: string; language: Language; lines: Piece[][] }>();
   const first = drawn.code === code && drawn.language === language;

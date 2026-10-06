@@ -943,7 +943,6 @@ export class LeasedSessions implements Sessions {
     const row = await this.row(tx, session.id);
     await this.credentials.renew(row.token_hash, 'sessions', session.expiresAt, tx);
   }
-  /** The record moved by this worker's own hand: its handoff landed. */
   /** Why an ended session refuses: a session closed after its own handoff moved the record
    *  says it completed, however it was closed, so a retry can tell its delivery landed. */
   private async endedHere(session: Session, tx: Transaction): Promise<MervError> {

@@ -267,7 +267,7 @@ const STALLS: Record<Stall['code'], (waiting: number, stall: Stall) => RunningAt
  * an operator's read counts. The control says the state it sets; only a start while work waits
  * wears the accent.
  */
-export function laneSummary(reading: DispatchReading): RunningSummary {
+function laneSummary(reading: DispatchReading): RunningSummary {
   const { dispatch, fleet, machines, waiting, stall, operator } = reading;
   const says: RunningPhrase = [
     'Dispatch ',
@@ -329,7 +329,7 @@ const QUIET: Record<DispatchReading['quiet'][number]['code'], (since: string) =>
  * it, resumes by itself, so it only replaces the work's line, without the red. All but the
  * held are an operator's: see SessionDispatch.running.
  */
-export function dispatchMarks(reading: DispatchReading): RunningMark[] {
+function dispatchMarks(reading: DispatchReading): RunningMark[] {
   const key = (instanceId: string) => runningKey('work', instanceId);
   return [
     ...reading.failures

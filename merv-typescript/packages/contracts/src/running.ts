@@ -359,7 +359,6 @@ export interface RunningPanel extends RunningPanelPart {
  */
 export type WorkRoute = (workflow: string, id: string) => string | undefined;
 
-/** A link to a work record: its key, and its page and its kind's word where a page shows it. */
 /**
  * A lease is labelled for the agent that takes it (`Work: …`, `Review: …`, or a recipe's dotted
  * name) and the role beside it already says which, so a person reads the record's name: the rest.
@@ -367,6 +366,7 @@ export type WorkRoute = (workflow: string, id: string) => string | undefined;
 const PURPOSE = /^(?:Work|Review|[a-z]+(?:\.\w+)+):\s+/;
 export const workName = (label: string) => label.replace(PURPOSE, '');
 
+/** A link to a work record: its key, and its page and its kind's word where a page shows it. */
 export function workLink(route: WorkRoute, workflow: string, id: string) {
   const page = route(workflow, id);
   return {

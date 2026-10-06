@@ -350,7 +350,7 @@ const SOURCE_LANGS: Partial<Record<FileType['reads'], string>> = {
   notebook: 'json',
 };
 
-export interface FileType {
+interface FileType {
   /** The short human word for it: Markdown, JSON, PNG image. */
   label: string;
   icon: IconName;

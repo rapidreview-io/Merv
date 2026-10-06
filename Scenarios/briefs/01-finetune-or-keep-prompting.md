@@ -6,7 +6,7 @@ MCP at `/mcp`). Self-contained: a reader who has never seen the scenario can
 run it from this file alone.
 
 Source of record for the server's limits and gaps:
-`merv-typescript/docs/SCENARIO_RUNS_PLAN_2026-09-17.md`.
+`merv-typescript/docs/archive/SCENARIO_RUNS_PLAN_2026-09-17.md`.
 
 ---
 

@@ -6,8 +6,9 @@
  *
  * A block that is still being written arrives in pieces under one `id`: each piece's `delta` is
  * appended to the ones before it, and `done` closes the block. A block sent whole is one event with
- * `done`. Every text is scrubbed of credentials before it leaves the machine and is cut to
- * AGENT_EVENT_TEXT characters; `cut` counts what was dropped.
+ * `done`. Every text is scrubbed of credentials before it leaves the machine. Thinking and text
+ * longer than AGENT_EVENT_TEXT characters are split into more pieces, nothing dropped; a tool's
+ * input or output is cut to AGENT_EVENT_TEXT characters, and `cut` counts what was dropped.
  */
 export const AGENT_EVENT_TEXT = 16_000;
 

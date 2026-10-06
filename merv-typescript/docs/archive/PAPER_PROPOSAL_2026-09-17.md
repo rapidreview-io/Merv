@@ -8,7 +8,7 @@ Read-only study commissioned after the founder ruled "Paper needs to look beauti
 
 A read-only design study for `/paper`, written against `merv-typescript/docs/UI_DESIGN.md` (the lab-notebook contract,
 its Tinker chrome ruling, the no-identifiers ruling, the icons-only-in-the-rail ruling, the verb table and the wave-1/2
-anatomies), `docs/UI_REFERENCES.md`, `docs/UI_TRANSLATION_2026-09-16.md`, and the paper plugin as it actually is
+anatomies), `docs/UI_REFERENCES.md`, `docs/archive/UI_TRANSLATION_2026-09-16.md`, and the paper plugin as it actually is
 (`packages/paper/src/{index,types,models,tools,input}.ts`, `docs/LIVING_PAPER.md`).
 
 Founder ruling being answered (`docs/UI_DESIGN.md`, rail rulings of 2026-09-17): **"Paper must look beautiful and
@@ -146,7 +146,7 @@ ${reviewId}` as prose; both go.
   - line 2 — the standing: `Cited in Prior work, Setup · 2 retained files · updated 3d ago`.
   - The row is a `<details>`: opening it shows `notes` as prose, the mono identifier line, and each `refs` entry through
     the shared `Evidence` component, so a retained file **opens inside the ledger** and costs nothing until opened
-    (the fix `docs/UI_TRANSLATION_2026-09-16.md` line 72 already demands: "the paper citation ledger, which dumps raw
+    (the fix `docs/archive/UI_TRANSLATION_2026-09-16.md` line 72 already demands: "the paper citation ledger, which dumps raw
     ref strings as mono text with no way to read any of it").
   - An entry no section names reads `Not cited in any section` in `--faint` — a fact that could exist and does not.
 
@@ -399,7 +399,7 @@ line count of `packages/ui/web`. Visual check with `dev_docs/cordis_seed_more.mj
 | **Word diff on a 100,000-character section.**                                                                                                      | Diff only sections a proposal actually changes (`edit.changes[].id`), cap at 20,000 tokens and fall back to "the whole section is replaced" above it.                                                                                                                              |
 | **Two proposals touching the same section** (possible: proposals are retained until accepted, and `paper_revision_conflict` only fires on accept). | Show each proposal's diff against _its own_ pinned `before`, one under the other, each with its source line. Never merge two proposals into one rendering.                                                                                                                         |
 | **The published revision is behind the current one** for Problem/Literature, which `paper.patch` moves without review.                             | The standing line says `current revision 7 · published revision 4`; the toggle reads the published text. Never imply a `paper.patch` edit was reviewed.                                                                                                                            |
-| **Someone asks for an accept button** on a pending proposal.                                                                                       | Refuse in the review: `paper.accept` is not a registered tool, and a sixteenth verb is a different system (`docs/UI_TRANSLATION_2026-09-16.md` on the primitive set).                                                                                                              |
+| **Someone asks for an accept button** on a pending proposal.                                                                                       | Refuse in the review: `paper.accept` is not a registered tool, and a sixteenth verb is a different system (`docs/archive/UI_TRANSLATION_2026-09-16.md` on the primitive set).                                                                                                      |
 | **The map and the palette** reference paper sections as record nodes (`map.tsx`), and `⌘K` does not search documents.                              | Out of scope for this wave; the route shape `/paper/:kind#<section>` is unchanged, so the map's links keep working. Palette search over sections is a separate, small follow-up.                                                                                                   |
 
 ---

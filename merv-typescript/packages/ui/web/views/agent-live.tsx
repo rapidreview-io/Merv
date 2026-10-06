@@ -22,7 +22,7 @@ const LONG_CHARS = 1500;
 
 const capital = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 /** A session as its chip names it: the responsibility it holds, in the workflow's words. */
-export const sessionLabel = (session: Pick<AgentStreamSession, 'role' | 'state'>) =>
+const sessionLabel = (session: Pick<AgentStreamSession, 'role' | 'state'>) =>
   `${capital(words(session.role))} · ${words(session.state)}`;
 
 const Cut = ({ count }: { count: number }) =>

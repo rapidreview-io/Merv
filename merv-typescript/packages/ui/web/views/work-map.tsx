@@ -102,7 +102,7 @@ export function absorberOf(board: RunningBoard, key: RunningKey): RunningNode | 
 }
 
 /** One unit of work on the map: what the wave's records say of it, and what the board does. */
-export interface MapUnit {
+interface MapUnit {
   key: RunningKey;
   /** The word for what it is: Task, Experiment, Reflection. */
   kind: string;

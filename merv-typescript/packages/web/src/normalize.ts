@@ -6,7 +6,7 @@
 import { record } from '@merv/contracts';
 import type { WebExtractInput, WebPage, WebResult, WebSearch, WebSearchInput } from './types.js';
 
-export const MAX_RESULT_CHARS = 6_000;
+const MAX_RESULT_CHARS = 6_000;
 export const MAX_TOTAL_CHARS = 24_000;
 export const MAX_EXTRACT_CHARS = 20_000;
 /** Tavily refuses a longer query. */
@@ -23,7 +23,7 @@ const TIME_RANGES: Record<string, string> = {
 };
 
 /** A search Tavily can take, or the answer that no request should be made. */
-export type SearchPlan =
+type SearchPlan =
   | {
       query: string;
       max_results: number;
@@ -135,7 +135,7 @@ const text = (value: unknown, max: number): string =>
     ? cut(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ''), max)
     : '';
 /** An http(s) address a person may follow, or undefined. */
-export function webUrl(value: unknown): string | undefined {
+function webUrl(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 2048) return undefined;
   try {
     const url = new URL(value.trim());
@@ -181,7 +181,7 @@ export function tavilyResults(
 
 /** The fallback's answer text and its distinct sources, in the order the response gives them:
  * the searches' own sources, then the answer's citations. */
-export function openaiAnswer(response: Record<string, unknown>): {
+function openaiAnswer(response: Record<string, unknown>): {
   answer: string;
   sources: { title: string; url: string }[];
 } {
@@ -249,7 +249,7 @@ export function fallbackPrompt(plan: Exclude<SearchPlan, { answer: WebSearch }>)
 }
 
 /** A page to read, or the answer that it cannot be. */
-export type ExtractPlan =
+type ExtractPlan =
   | {
       url: string;
       extract_depth: 'basic' | 'advanced';

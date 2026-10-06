@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, accountRequest, scopeVersion, useScopeVersion } from '../api';
 
-export interface SandboxesConnectionStatus {
+interface SandboxesConnectionStatus {
   available: boolean;
   connected: boolean;
   connectionId?: string | null;

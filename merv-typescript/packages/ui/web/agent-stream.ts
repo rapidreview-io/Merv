@@ -23,7 +23,7 @@ export type AgentBlock =
     }
   | { kind: 'status'; key: string; at: string; text: string };
 
-export interface AgentTimeline {
+interface AgentTimeline {
   blocks: AgentBlock[];
   /** Where each block's key stands in `blocks`. */
   index: ReadonlyMap<string, number>;

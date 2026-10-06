@@ -141,7 +141,7 @@ export const holding = (lease: LeaseFacts, now: Now) => {
 };
 
 /** The runner fields the same read sends. `live` is the server's own freshness call. */
-export interface RunnerFacts {
+interface RunnerFacts {
   live?: boolean | null;
   lastSeenAt?: string | null;
   lastDecision?: string | null;

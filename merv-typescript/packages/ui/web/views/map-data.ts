@@ -16,11 +16,11 @@ export type Flow = { state: string; updatedAt: string; workflow?: string; versio
  * Each record as the home read keeps it: the fields of its row's `home.keep`, each the record's
  * own, long prose cut to a summary.
  */
-export type MapExperiment = Pick<
+type MapExperiment = Pick<
   Experiment,
   'id' | 'name' | 'intent' | 'ownerId' | 'conclusion' | 'workflow'
 >;
-export type MapTask = Pick<
+type MapTask = Pick<
   Task,
   'id' | 'title' | 'goal' | 'producerId' | 'dependencies' | 'dependents' | 'failure' | 'workflow'
 >;
@@ -28,7 +28,7 @@ export type MapCycle = Pick<
   ResearchRecord,
   'id' | 'name' | 'ownerId' | 'workflow' | 'researchDependencies' | 'reflectionId' | 'automation'
 >;
-export type MapReview = Pick<
+type MapReview = Pick<
   ReviewRequest,
   | 'id'
   | 'subjectId'
@@ -41,7 +41,7 @@ export type MapReview = Pick<
   | 'findings'
   | 'createdAt'
 >;
-export type MapReflection = Pick<Reflection, 'id' | 'title' | 'ownerId' | 'workflow' | 'lenses'>;
+type MapReflection = Pick<Reflection, 'id' | 'title' | 'ownerId' | 'workflow' | 'lenses'>;
 /**
  * What Home and the rail read, as the server composes it (`ui.home`): the project's
  * records, under the id of the row that lists them, and the gate of every open workflow in it,

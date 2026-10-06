@@ -67,7 +67,6 @@ export interface CodeStoreOptions {
   autoMerge?: boolean;
 }
 
-/** One Code capability over machine commands, units, bases and publications. */
 /**
  * Refusals at a lease that only mean "not yet": a base still pending, contested, merging or
  * needing an operator, or a last writer still handing over what it left. Each is published
