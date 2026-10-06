@@ -561,6 +561,39 @@ test('a cycle a passing outage refused is tried again without another event', as
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
 });
 
+test('a retry that fails while the database is still down is tried again', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  f.research.retryAfterMs = 30;
+  const work = await f.experiment();
+  const cycle = await f.create([work.id]);
+  await f.pump();
+  const original = f.app.ctx.reflections.create.bind(f.app.ctx.reflections);
+  let failures = 1;
+  t.mock.method(f.app.ctx.reflections, 'create', async (...args: Parameters<typeof original>) => {
+    if (failures-- > 0) throw new MervError('code_git_timeout', 'Git did not answer in time', 503);
+    return await original(...args);
+  });
+  // The retry's own write finds the database down the first time.
+  const append = f.app.ctx.state.appendEvent.bind(f.app.ctx.state);
+  let down = 1;
+  t.mock.method(f.app.ctx.state, 'appendEvent', async (...args: Parameters<typeof append>) => {
+    if (args[1].type === 'research.resume' && down-- > 0)
+      throw new MervError('state_unavailable', 'The database is unavailable', 503);
+    return await append(...args);
+  });
+  await f.failExperiment(work.id);
+  await f.pump();
+  for (let wait = 0; wait < 40; wait++) {
+    await f.app.ctx.domainEvents.drain();
+    if ((await f.research.get(f.owner, cycle.id)).workflow.state === 'reflecting') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal(down, -1, 'the first retry failed');
+  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+});
+
 test('outages that alternate their codes are still tried again only for the bound, by one timer per project', async (t) => {
   const f = await fixture(t);
   await f.define();

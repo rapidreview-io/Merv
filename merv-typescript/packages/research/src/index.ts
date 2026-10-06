@@ -1570,8 +1570,10 @@ export class ResearchService implements Research {
    * its cycles reports an outage first seen less than `unavailableForMs` ago: an idle project
    * has no other event to wake it. The bound is the outage's first sighting, kept beside the
    * cycle, so outages that alternate their codes cannot extend it. One retry waits per project.
+   * A retry that cannot even be read or written is tried again, within the bound from `since`,
+   * when this retry was first asked for.
    */
-  private retryUnavailable(row: AutomaticRow): void {
+  private retryUnavailable(row: AutomaticRow, since = Date.now()): void {
     if (this.retrying.has(row.project_id)) return;
     this.retrying.add(row.project_id);
     const wake = async () => {
@@ -1599,9 +1601,11 @@ export class ResearchService implements Research {
       });
     };
     // Outside the consumer's transaction context, which ends before this runs.
-    this.detached(() =>
-      setTimeout(() => void wake().catch(() => undefined), this.retryAfterMs).unref(),
-    );
+    const retry = () =>
+      void wake().catch(() => {
+        if (Date.now() - since < this.unavailableForMs) this.retryUnavailable(row, since);
+      });
+    this.detached(() => setTimeout(retry, this.retryAfterMs).unref());
   }
 
   /** Startup and provider restoration must also revisit events previously consumed while blocked. */
