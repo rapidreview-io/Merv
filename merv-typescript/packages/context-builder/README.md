@@ -2,6 +2,45 @@
 
 Provides `contextBuilder`; requires State, Scope and Artifacts. There are no context-adapter plugins and no new context-specific tool adapter. Existing Tasks owns task-type definitions and registers their recipes directly.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    workerAgent["Worker agent"]
+  end
+  subgraph researchLayer["Research logic"]
+    tasks["Tasks"]
+    experiments["Experiments"]
+    reflections["Reflections"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    contextBuilder["Context Builder<br/><small>recipes to prompts</small>"]
+    artifacts["Artifacts"]
+    scope["Scope"]
+    state["State"]
+    blobs["Blobs"]
+  end
+  subgraph externalLayer["External"]
+    postgres[("PostgreSQL")]
+    blobStore[("Blob store")]
+  end
+  workerAgent -- "calls task.context" --> tasks
+  tasks -- "injects" --> contextBuilder
+  experiments -- "injects" --> contextBuilder
+  reflections -- "injects" --> contextBuilder
+  contextBuilder -- "injects" --> artifacts
+  contextBuilder -- "injects" --> scope
+  contextBuilder -- "injects" --> state
+  artifacts -- "injects" --> blobs
+  state -- "reads/writes" --> postgres
+  blobs -- "reads/writes" --> blobStore
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class contextBuilder self
+```
+
+Context Builder sits below the research plugins that hand agents a prompt: each registers its own recipes, and an agent's `task.context` call ends here as a package rendered from Artifacts and saved through State. The builder holds no task, review or experiment rules of its own.
+
 A type definition contains a name, immutable version, assignment kind (`work` or `review`) and a declarative recipe: instructions, ordered sections, required/optional inputs, output instructions, a character budget and `format: 2`, the item renderer. A definition without `format` is refused with `recipe_format_retired` (owner, 2026-09-28): the frozen renderers are gone, and the rows of format-less versions stay in `context_recipes`. Registering returns a lifecycle-bound preview/build/replay handle and disposer. Disposing a handle, or closing the builder, refuses new calls; a call already running finishes or fails atomically. Replacing a published recipe requires a new version. Reinstalling an identical version is supported. Registering a version already stored only reads it, so a restart opens no write transaction. `preview` and `replay` run in the caller's transaction when given one or inside one; otherwise they read in a read-only snapshot, and `preview` reads artifact bytes after it closes, so neither takes State's writer lock. A render looks up the metadata of each artifact its inputs name once.
 
 Build inputs identify the subject/revision/current review claim and give each named section a list of items. Unknown inputs fail. Budgets count JavaScript string characters, not model tokens. The source manifest lists every artifact the build resolved, embedded or not, by its ID, title, media type, hash and size; a package saved before the manifest was narrowed keeps the full artifact rows it recorded, and replay returns it as saved. No arbitrary filesystem paths, HTTP fetches or executable templates are evaluated, and document content is identified as source material.

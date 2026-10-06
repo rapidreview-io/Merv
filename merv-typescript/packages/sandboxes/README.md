@@ -1,5 +1,45 @@
 # Sandboxes
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    person["Person<br/><small>Settings, Integrations</small>"]
+    workerAgent["Worker agent"]
+  end
+  subgraph researchLayer["Research logic"]
+    tasks["Tasks"]
+    experiments["Experiments"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    sandboxes["Sandboxes<br/><small>compute connections and work</small>"]
+    sessions["Sessions"]
+    workflows["Workflows"]
+    artifacts["Artifacts"]
+    fleet["Fleet"]
+    codeWork["Code work"]
+  end
+  subgraph externalLayer["External"]
+    sandboxesService["Sandboxes service<br/><small>compute and machines</small>"]
+  end
+  person -- "HTTP /sandboxes/connection" --> sandboxes
+  sandboxes -- "HTTP /v1" --> sandboxesService
+  workerAgent -- "MCP launch connection" --> sandboxesService
+  sandboxes -- "injects" --> sessions
+  sandboxes -- "injects" --> artifacts
+  sessions -- "emits session.closed" --> sandboxes
+  workflows -- "emits workflow.transition" --> sandboxes
+  fleet -- "injects" --> sandboxes
+  codeWork -- "injects" --> sandboxes
+  tasks -- "injects" --> sandboxes
+  experiments -- "injects" --> sandboxes
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class sandboxes self
+```
+
+Sandboxes is Merv's link to the external Sandboxes service: a person connects a project, and a leased session's agent reaches compute directly through the MCP launch connection Sandboxes hands Sessions. It follows `session.closed` and `workflow.transition` to revoke that access and move pinned work forward, while Fleet, Code work, Tasks and Experiments use it as a service.
+
 ## Native compute as an assignment capability
 
 When `native` is configured, Sandboxes attaches compute to a leased worker session of any

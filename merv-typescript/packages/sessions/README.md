@@ -7,6 +7,57 @@ prepared invocation belongs to the registration that admitted it: withdrawing or
 even with the same provider, prevents later dispatch, and cleanup still goes to the original provider. A handler
 already admitted may finish. Its `@merv/sessions/api` adapter (config row `sessions-api`) injects `sessions` and `api`: it mounts `/sessions` and registers the session (`ms_`, POST `/mcp` only), managed-runner (`mr_`, its control routes only) and enrollment (`me_`) credentials, all withdrawn with it. Its optional `/ui` adapter injects `sessions` and `ui`, and its optional `/tools` adapter injects `sessions` and `tools` for usage, dispatch, observation and session messaging. It launches no processes.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    person["Person<br/><small>browser</small>"]
+    workerAgent["Worker agent"]
+  end
+  subgraph researchLayer["Research logic"]
+    tasks["Tasks"]
+    experiments["Experiments"]
+    reflections["Reflections"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    subgraph machine["Agent machine"]
+      runner["Runner"]
+    end
+    api["API<br/><small>HTTP, /mcp and tools</small>"]
+    sessions["Sessions<br/><small>agents, leases, live stream</small>"]
+    workflows["Workflows"]
+    scope["Scope"]
+    blobs["Blobs"]
+    fleet["Fleet"]
+    sandboxes["Sandboxes"]
+  end
+  subgraph externalLayer["External"]
+    blobStore[("Blob store")]
+  end
+  runner -- "launches" --> workerAgent
+  runner -- "HTTP /sessions/lease" --> sessions
+  runner -- "HTTP /sessions/:id/stream" --> sessions
+  runner -- "HTTP /sessions/:id/conversation" --> sessions
+  workerAgent -- "HTTP /mcp" --> api
+  person -- "HTTP /sessions/:id/events" --> sessions
+  sessions -- "injects" --> api
+  sessions -- "injects" --> workflows
+  sessions -- "injects" --> scope
+  sessions -- "injects" --> blobs
+  blobs -- "reads/writes" --> blobStore
+  fleet -- "injects" --> sessions
+  sandboxes -- "injects" --> sessions
+  sessions -- "emits session.closed" --> tasks
+  sessions -- "emits session.closed" --> experiments
+  sessions -- "emits session.closed" --> reflections
+  sessions -- "emits session.closed" --> sandboxes
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class sessions self
+```
+
+Sessions is Main's side of every agent machine: the runner leases work, streams the agent's events and declares its conversation over `/sessions`, while the agent calls tools at `/mcp` under the session's policy. A person's page reads the same live stream, and `session.closed` releases the domain leases and compute that named the session.
+
 The UI adapter's `ui.read` row returns project status without parameters, or agent
 activity with `{rowId: 'sessions', params: {agentId}}`. The inspector uses the shared
 browser polling hook at four-second intervals, retaining the last successful read
