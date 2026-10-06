@@ -113,7 +113,6 @@ export function bindsRepository(
 export const unitColumns =
   'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key,publishes_at,publication_id';
 export const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-export const CODE_DRIVER = 'code.v2';
 
 /** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
 export class WorkUnitRecords {

@@ -16,7 +16,7 @@ import { pendingMerge } from '@merv/code/pending-merge';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeStore } from '@merv/code/store/operations';
 import { workBranch } from '@merv/code/store/refs';
-import { CODE_DRIVER } from './units.js';
+import { CODE_DRIVER } from './workspace.js';
 import type { CodeWriterService } from '@merv/code/writers';
 
 /**

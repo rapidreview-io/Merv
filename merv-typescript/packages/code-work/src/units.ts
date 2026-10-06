@@ -53,7 +53,7 @@ import {
   type ProjectRow,
   type UnitRow,
 } from './unit-store.js';
-export { bindsRepository, CODE_DRIVER } from './unit-store.js';
+export { bindsRepository } from './unit-store.js';
 
 /**
  * What an open publication means for the unit that is waiting on it. A done unit carrying one

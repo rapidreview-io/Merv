@@ -53,7 +53,8 @@ import type {
   CodeCaptureRef,
   ResolutionWorkCreator,
 } from './types.js';
-import { CODE_DRIVER, CodeUnitService } from './units.js';
+import { CodeUnitService } from './units.js';
+import { CODE_DRIVER } from './workspace.js';
 import type { CodeWriterService } from '@merv/code/writers';
 
 /** How many times verification imports one merge commit before an operator imports it. */

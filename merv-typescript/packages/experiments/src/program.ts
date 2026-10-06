@@ -9,6 +9,7 @@ import {
   executionOutputs,
 } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
+import { codeWorkspace } from '@merv/code-work/workspace';
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
@@ -72,7 +73,6 @@ export const runningNode = {
   versions: Object.keys(programVersions).map(Number),
   state: 'running',
 };
-const CODE_DRIVER = 'code.v2';
 /** The contract a new experiment runs on. */
 export const programVersion = (largeUploads = false): number =>
   Number(
@@ -378,23 +378,9 @@ function execution(state: ActiveState, version: number): WorkflowExecutionPolicy
     readOnly: reviewing(state),
     workspace:
       state === 'running'
-        ? {
-            mode: 'persistent',
-            namespace: 'experiments',
-            base: 'reference:base',
-            perBase: false,
-            retain: true,
-            advancesCentral: false,
-            driver: CODE_DRIVER,
-          }
+        ? codeWorkspace('work', 'experiments')
         : state === 'experiment_review'
-          ? {
-              mode: 'ephemeral',
-              namespace: 'experiment-reviews',
-              base: 'reference:code',
-              retain: false,
-              driver: CODE_DRIVER,
-            }
+          ? codeWorkspace('review', 'experiment-reviews')
           : { mode: 'none' },
     tools: [
       grant(
