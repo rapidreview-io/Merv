@@ -1,6 +1,12 @@
 import type { TaskConfirmation } from './types.js';
-import { visible, check } from '@merv/contracts';
+import { visible, check, clip } from '@merv/contracts';
 import type { CodeCapture } from '@merv/code-work/types';
+
+/** How Tasks titles the brief it composes from a task's title, goal and checks. */
+const COMPOSED = 'Task brief: ';
+export const composedBriefTitle = (title: string) => clip(`${COMPOSED}${title}`, 300);
+/** Whether a brief is the one Tasks composed, which only repeats the title, goal and checks. */
+export const composedBrief = (brief: { title: string }) => brief.title.startsWith(COMPOSED);
 
 export const acceptanceChecks = (checks: string[]) =>
   checks.map((text, index) => ({ number: index + 1, text }));

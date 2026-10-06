@@ -19,6 +19,7 @@ import {
 } from '@merv/contracts';
 import { RESERVED_CONTEXT_INPUTS } from './definitions.js';
 import {
+  composedBriefTitle,
   renderAssessment,
   renderBrief,
   renderDeliveredCommit,
@@ -162,7 +163,7 @@ export async function createTask(
         content = renderBrief({ ...input, checks }, true);
         brief = await this.artifacts.create(
           caller,
-          { title: clip(`Task brief: ${input.title}`, 300), content },
+          { title: composedBriefTitle(input.title), content },
           tx,
         );
       } else {

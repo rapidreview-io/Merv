@@ -15,8 +15,6 @@ import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import type { Task } from '@merv/tasks/models';
 import type { CodeUnit } from '@merv/code-work/models';
 
-/** How the server titles the brief it composes from a task's title, goal and checks. */
-const COMPOSED = 'Task brief: ';
 /**
  * The page's one section. A check is stated once, in its row, with everything said
  * about it: the producer's claim, the reviewer's finding, the files either cites. The
@@ -30,7 +28,7 @@ export function TaskChecks({ task: t, reviews }: { task: Task; reviews: Loaded<R
   const artifacts = useArtifacts();
   const review = reviews.data?.find((item) => item.id === t.reviewId);
   const brief = artifacts.get(t.briefId);
-  const composed = !brief || brief.title.startsWith(COMPOSED);
+  const composed = !brief || t.composed;
   return (
     <div className="stack stack--lg">
       <div className="stack">

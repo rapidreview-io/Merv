@@ -138,7 +138,8 @@ test('the brief the server composed stays shut: the page has already said all of
   serve('/tools/artifact.list', {
     body: { result: [file(composed, 'Task brief: Reproduce grokking')] },
   });
-  await mount(checksPage(task({ briefId: composed })));
+  // Tasks says it composed the brief; the page does not read that from the title.
+  await mount(checksPage(task({ briefId: composed, composed: true })));
   await settle(10);
   const brief = document.querySelector<HTMLDetailsElement>('details.crit-file')!;
   assert.ok(!brief.open, 'its title, goal and checks are the header and the rows above it');

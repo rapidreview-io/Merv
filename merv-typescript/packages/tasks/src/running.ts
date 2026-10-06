@@ -21,6 +21,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
+import { composedBrief } from './evidence.js';
 import type { TaskLeaseRow, TaskRow, TaskService } from './index.js';
 import { roundsFrom, taskVersions } from './workflow.js';
 
@@ -51,8 +52,6 @@ export interface TaskStanding {
 
 const ENDED: Record<string, string> = { done: 'Done', failed: 'Failed' };
 const ended = (state: string) => Object.hasOwn(ENDED, state);
-/** How the server titles the brief it composes from the title, the goal and the checks. */
-const COMPOSED = 'Task brief: ';
 
 /** Where a task stands, in the order its card is read: the first that holds wins. */
 type Holding =
@@ -282,7 +281,7 @@ export function taskPanel(
     { title: 'Goal', place: 'content', kind: 'text', text: record.goal, clamp: 4 },
     // A brief somebody wrote can say more than the goal and the checks; the one the server
     // composes only repeats them, so it is not offered.
-    ...(brief && !brief.title.startsWith(COMPOSED)
+    ...(brief && !composedBrief(brief)
       ? [
           {
             title: 'Pinned brief',

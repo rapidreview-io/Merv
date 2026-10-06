@@ -460,6 +460,26 @@ test('a rendered brief is checked as written, without reading it back', async (t
   assert.equal((await f.artifacts.list(f.producer)).length, artifacts);
 });
 
+test('a task record says whether Tasks composed its brief, so no reader tests the title', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const composed = await f.tasks.create(f.producer, {
+    title: 'Adder',
+    goal: 'Build an adder.',
+    checks: ['Adds two numbers.'],
+    requestId: 'composed',
+  });
+  const written = await f.create();
+  assert.equal((await f.tasks.get(f.producer, composed.id)).composed, true);
+  assert.deepEqual(
+    (await f.tasks.list(f.producer)).map((task) => [task.id, task.composed]),
+    [
+      [composed.id, true],
+      [written.id, false],
+    ],
+  );
+});
+
 test('a task keeps at most 200 Done-when checks, so its delivery always fits a workflow move', async (t) => {
   const f = await fixture();
   t.after(f.cleanup);

@@ -18,6 +18,7 @@ function fixture() {
     projectId: 'project',
     producerId: 'producer',
     briefId: 'brief',
+    composed: false,
     evidenceVersion: 2,
     acceptanceChecks: acceptance.checks.map((text, index) => ({ number: index + 1, text })),
     deliveryConfirmations: acceptance.checks.map((_, index) => ({

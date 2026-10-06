@@ -30,7 +30,7 @@ import type { Code } from '@merv/code-work/types';
 import type { Sandboxes } from '@merv/sandboxes/types';
 import type { Paper } from '@merv/paper/types';
 import { TASK_TYPES } from './definitions.js';
-import { acceptanceChecks } from './evidence.js';
+import { acceptanceChecks, composedBrief } from './evidence.js';
 import { resolutionTasks } from './resolution-brief.js';
 import type {
   ServiceTaskCreator,
@@ -371,6 +371,11 @@ export class TaskService implements Tasks {
       found.map((item) => item.snapshot),
       tx,
     );
+    const briefs = await this.artifacts.getAll(
+      caller,
+      rows.map((row) => row.brief_id),
+      tx,
+    );
     return rows.map((row, index) => {
       const { snapshot: workflow, workStarts, dependencies, dependents } = found[index];
       // The instance data repeats the brief the record already carries; it is not sent twice.
@@ -398,6 +403,7 @@ export class TaskService implements Tasks {
         deliveryAssessmentId: (workflow.data.deliveryAssessmentId as string | undefined) ?? null,
         producerId: row.producer_id,
         briefId: row.brief_id,
+        composed: composedBrief(briefs[index]),
         deliveryIds: JSON.parse(row.delivery_ids),
         reviewId: row.review_id,
         workflow: { ...workflow, data },

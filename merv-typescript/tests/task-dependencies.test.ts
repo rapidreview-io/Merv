@@ -206,6 +206,7 @@ function assignmentTask(task: Task) {
     checks: _c,
     settled: _s,
     failed: _f,
+    composed: _composed,
     acceptanceChecks,
     goal: _g,
     workflow,

@@ -176,6 +176,7 @@ export async function contextInputs(
     checks: _checks,
     settled: _settled,
     failed: _failed,
+    composed: _composed,
     acceptanceChecks,
     ...record
   } = task;
