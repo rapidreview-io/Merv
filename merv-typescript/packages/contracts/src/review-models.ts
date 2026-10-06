@@ -19,6 +19,18 @@ export interface ReviewProvenance {
   excludedActorIds: string[];
   hash: string;
 }
+/** A route a rejecting verdict may send its subject back along (`returnTo`), in a reviewer's words. */
+export interface ReviewReturn {
+  value: string;
+  label: string;
+}
+/** What the owning domain tells a reviewer reading or claiming one of its reviews. */
+export interface ReviewGuide {
+  /** The owner's verdict rules. */
+  guidance?: string;
+  /** The routes a rejecting verdict may choose; absent where the owner's routes are fixed. */
+  returns?: ReviewReturn[];
+}
 export interface ReviewRequest {
   provenance?: ReviewProvenance;
   /** Why no independent reviewer can currently take this request. */

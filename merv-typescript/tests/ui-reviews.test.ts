@@ -109,9 +109,10 @@ const reject = async () => {
 };
 
 /** The desk of one gate, answered and rejected: the routes it offers, and what it sends. */
-const rejected = async (workflow: string, state: string) => {
+const rejected = async (workflow: string, state: string, returns?: unknown[]) => {
   const submitted: { body?: Record<string, unknown> } = {};
-  serve('/tools/review.get', { body: { result: claimed } });
+  // The owning domain names its return routes on the review it serves.
+  serve('/tools/review.get', { body: { result: { ...claimed, ...(returns && { returns }) } } });
   serve('/tools/workflow.status_and_next', { body: { result: desk(workflow, state) } });
   serve('/tools/review.submit', (_, body) => {
     submitted.body = body;
@@ -128,7 +129,10 @@ const rejected = async (workflow: string, state: string) => {
 
 test('a reflection rejection is sent back to synthesis or to five new lenses, as its reviewer chooses', async (t) => {
   t.after(async () => await unmount());
-  const { routes, submitted } = await rejected('reflection', 'in_review');
+  const { routes, submitted } = await rejected('reflection', 'in_review', [
+    { value: 'synthesizing', label: 'Synthesis, for a revised report' },
+    { value: 'reflecting', label: 'Lenses, for five new reports' },
+  ]);
   assert.deepEqual(routes, ['Synthesis, for a revised report', 'Lenses, for five new reports']);
   assert.ok(text().includes('Choose where the work returns.'), 'no route is chosen for them');
   await click('Lenses, for five new reports');
@@ -139,7 +143,10 @@ test('a reflection rejection is sent back to synthesis or to five new lenses, as
 
 test('an experiment results rejection keeps its own two routes', async (t) => {
   t.after(async () => await unmount());
-  const { routes } = await rejected('experiment', 'experiment_review');
+  const { routes } = await rejected('experiment', 'experiment_review', [
+    { value: 'planned', label: 'Planning, for a new design and attempt' },
+    { value: 'running', label: 'Running, to repair under the approved plan' },
+  ]);
   assert.deepEqual(routes, [
     'Planning, for a new design and attempt',
     'Running, to repair under the approved plan',

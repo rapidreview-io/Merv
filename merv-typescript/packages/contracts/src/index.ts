@@ -1938,8 +1938,20 @@ export interface Workflows {
 }
 import type { Verdict } from './types.js';
 export type { Verdict } from './types.js';
-import type { ReviewFinding, ReviewProvenance, ReviewRequest } from './review-models.js';
-export type { ReviewFinding, ReviewProvenance, ReviewRequest } from './review-models.js';
+import type {
+  ReviewFinding,
+  ReviewGuide,
+  ReviewProvenance,
+  ReviewRequest,
+  ReviewReturn,
+} from './review-models.js';
+export type {
+  ReviewFinding,
+  ReviewGuide,
+  ReviewProvenance,
+  ReviewRequest,
+  ReviewReturn,
+} from './review-models.js';
 export type ReviewProvenanceResolver = (
   projectId: string,
   subjectId: string,
@@ -1999,6 +2011,8 @@ export interface ReviewSubmitOwner {
   fields?: readonly string[];
   /** Refuses a claim of an owned review that the owner's rules could never let finish. */
   claim?(caller: Caller, review: Readonly<ReviewRequest>, tx: Transaction): Promise<void>;
+  /** The routes a rejecting verdict on this review may choose, where the owner offers a choice. */
+  returns?(review: Readonly<ReviewRequest>, tx: Transaction): Promise<readonly ReviewReturn[]>;
   /**
    * The gate each owned review among these was read at, for a domain whose records are
    * reviewed at more than one. Read-only; ids it does not own are left out.
@@ -2010,13 +2024,9 @@ export interface Reviews {
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void;
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;
-  /** The verdict rules of the one domain that owns this review, when it states any. A review the
-   * caller has just read (get, start) is not read again. */
-  guidance(
-    caller: Caller,
-    review: string | ReviewRequest,
-    tx?: Transaction,
-  ): Promise<string | undefined>;
+  /** What the one domain that owns this review tells its reviewer: its verdict rules and return
+   * routes, where it states them. A review the caller has just read (get, start) is not read again. */
+  guide(caller: Caller, review: string | ReviewRequest, tx?: Transaction): Promise<ReviewGuide>;
   request(caller: Caller, input: ReviewInput, tx?: Transaction): Promise<ReviewRequest>;
   reissue(
     caller: Caller,
