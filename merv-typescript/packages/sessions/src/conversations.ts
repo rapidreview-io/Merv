@@ -1,7 +1,8 @@
 import { check, type Blobs, type Caller, type State, type Transaction } from '@merv/contracts';
-import { isoNow, readFirst } from './common.js';
+import { isoNow, live, readFirst } from './common.js';
 import { postgresMigrations } from './conversations.postgres.js';
 import { freezeLaunchSnapshot } from './launch-connections.js';
+import { deliver, uploads } from './transcripts.js';
 import type {
   ContinuityProvider,
   ContinuityUnit,
@@ -29,7 +30,6 @@ type Facts = Omit<SessionConversationDeclaration, 'hostRef' | 'deliver'>;
 const namespace = (projectId: string) => `conversations-${projectId}`;
 /** How long an agent waits, dormant, for its work to come back to it. */
 export const dormantMs = 14 * 86_400_000;
-const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 
 /**
  * Continuity: when work comes back to a state it was in, the agent that held that state takes it
@@ -156,14 +156,7 @@ export class SessionConversations {
     caller: Caller,
     input: SessionControl & SessionConversationDeclaration,
   ): Promise<SessionTranscript> {
-    const blobs = this.blobs;
-    check(blobs, 'blob_unavailable', 'Conversation storage is not loaded', 503);
-    check(
-      blobs.upload && blobs.stored,
-      'conversations_unsupported',
-      'Conversation storage takes no uploads',
-      409,
-    );
+    const blobs = uploads(this.blobs, 'conversation');
     const {
       hostRef: _host,
       deliver: _deliver,
@@ -219,38 +212,30 @@ export class SessionConversations {
       uploadedAt: row.uploaded_at,
     });
     if (row.uploaded_at !== null || !input.deliver) return view(row);
-    const key = namespace(row.project_id),
-      stored = await blobs.stored(key, row.sha256!);
-    check(
-      stored === null || stored === Number(row.size),
-      'conversation_mismatch',
-      'A stored conversation with this SHA-256 has another size',
-      409,
+    return await deliver(blobs, 'conversation', namespace(row.project_id), view(row), () =>
+      this.state.transaction(async (tx) => {
+        await tx.run(
+          'UPDATE session_conversations SET uploaded_at=? WHERE project_id=? AND continuity_key=? AND session_id=? AND sha256=? AND uploaded_at IS NULL',
+          isoNow(this.clock),
+          row.project_id,
+          row.continuity_key,
+          row.session_id,
+          row.sha256,
+        );
+        const now = await tx.get<Row>(
+          'SELECT * FROM session_conversations WHERE project_id=? AND continuity_key=?',
+          row.project_id,
+          row.continuity_key,
+        );
+        check(
+          now?.session_id === row.session_id,
+          'conversation_superseded',
+          'A later session of this work holds its conversation',
+          409,
+        );
+        return view(now);
+      }),
     );
-    if (stored === null)
-      return { ...view(row), upload: await blobs.upload(key, row.sha256!, Number(row.size)) };
-    return await this.state.transaction(async (tx) => {
-      await tx.run(
-        'UPDATE session_conversations SET uploaded_at=? WHERE project_id=? AND continuity_key=? AND session_id=? AND sha256=? AND uploaded_at IS NULL',
-        isoNow(this.clock),
-        row.project_id,
-        row.continuity_key,
-        row.session_id,
-        row.sha256,
-      );
-      const now = await tx.get<Row>(
-        'SELECT * FROM session_conversations WHERE project_id=? AND continuity_key=?',
-        row.project_id,
-        row.continuity_key,
-      );
-      check(
-        now?.session_id === row.session_id,
-        'conversation_superseded',
-        'A later session of this work holds its conversation',
-        409,
-      );
-      return view(now);
-    });
   }
   /** The signed GET of what a live session resumes, for the runner that attached it. */
   async download(caller: Caller, input: SessionControl & { hostRef: string }) {
