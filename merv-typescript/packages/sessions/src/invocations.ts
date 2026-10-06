@@ -178,9 +178,6 @@ export class SessionInvocations implements SessionInvocationPolicy {
           ...(prepared.session.agentSessionId
             ? { agentSessionId: prepared.session.agentSessionId }
             : {}),
-          ...(caller.session?.agentCredentialHash
-            ? { agentCredentialHash: caller.session.agentCredentialHash }
-            : {}),
           invocationId,
         }),
       }),

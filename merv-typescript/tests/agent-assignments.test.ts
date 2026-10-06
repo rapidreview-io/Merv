@@ -25,8 +25,8 @@ async function runner(
   });
 }
 
-test('one agent can produce successive tasks and review other work, but cannot review its own or inherit unpinned outputs', async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), 'merv-continuing-agent-'));
+test('successive leases produce tasks and review other work, and inherit no unpinned outputs', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-successive-leases-'));
   const app = await createApp({ directory, api: true, port: 0 });
   t.after(async () => {
     await app.stop();
@@ -42,13 +42,6 @@ test('one agent can produce successive tasks and review other work, but cannot r
     credentialId: boot.credential.id,
   };
   await runner(app, owner);
-  const token = secret();
-  const agent = await app.ctx.sessions.registerAgent(owner, {
-    name: 'Continuing agent',
-    runnerId: 'external',
-    requestId: 'register',
-    secret: token,
-  });
   const createTask = async (requestId: string, by = owner) =>
     await currentTask(app.ctx, by, {
       title: requestId,
@@ -62,17 +55,25 @@ test('one agent can produce successive tasks and review other work, but cannot r
     for (const lease of held.values()) lease.driver?.dispose();
   });
   const assign = async (task: Task, requestId: string) => {
-    const session = await app.ctx.sessions.assignAgent(token, {
+    const token = secret();
+    const session = await app.ctx.sessions.offer(owner, {
       instanceId: task.id,
       expectedRevision: task.workflow.revision,
+      runnerId: 'external',
       requestId,
+      secret: token,
     });
     held.set(session.id, await work.attach(session));
-    return session;
+    return { session, caller: () => app.ctx.sessions.authenticate(token) };
+  };
+  const release = async (id: string) => {
+    await app.ctx.sessions.release(owner, { sessionId: id, runnerId: 'external' });
+    await work.release(held.get(id)!);
+    held.delete(id);
   };
   const first = await createTask('first');
-  const a = await assign(first, 'work-first');
-  const callerA = await app.ctx.sessions.authenticate(token);
+  const { session: a, caller: workerA } = await assign(first, 'work-first');
+  const callerA = await workerA();
   const proof = (await app.ctx.tools.call('artifact.create', callerA, {
     title: 'Proof',
     content: 'Observed 2 + 3 = 5.',
@@ -92,24 +93,10 @@ test('one agent can produce successive tasks and review other work, but cannot r
     }),
   )) as Task;
   assert.equal(submitted.workflow.state, 'in_review');
-  await app.ctx.sessions.releaseAgentAssignment(token, a.id);
-  await work.release(producing);
-  held.delete(a.id);
-  await assert.rejects(async () => await assign(submitted, 'self-review'), {
-    code: 'review_independence',
-  });
-  // What the agent is refused it is not offered: its own delivery's review is not available.
-  assert.ok(
-    !(await app.ctx.sessions.agentSelf(token)).available.some(
-      (item) => item.instanceId === first.id,
-    ),
-  );
-  assert.equal((await app.ctx.sessions.agentSelf(token)).current, null);
+  await release(a.id);
   const second = await createTask('second');
-  const b = await assign(second, 'work-second');
-  const callerB = await app.ctx.sessions.authenticate(token);
-  assert.equal(callerB.actorId, callerA.actorId);
-  assert.equal(b.agentId, agent.id);
+  const { session: b, caller: workerB } = await assign(second, 'work-second');
+  const callerB = await workerB();
   // It reads the earlier proof like anything else in the project; it did not author it.
   assert.ok(await app.ctx.tools.call('artifact.read', callerB, { artifactId: proof.id }));
   const changingCaller = structuredClone(callerB);
@@ -125,11 +112,9 @@ test('one agent can produce successive tasks and review other work, but cannot r
       message: 'Worker actors require their live session authority',
     },
   );
-  await app.ctx.sessions.releaseAgentAssignment(token, b.id);
-  await work.release(held.get(b.id)!);
-  held.delete(b.id);
-  // Another producer submits separate work. The same agent may now become a reviewer; had its
-  // own source delivered it, the agent would be that source's hand and could not.
+  await release(b.id);
+  // Another producer submits separate work. The owner's agent may review it; had its own source
+  // delivered it, the agent would be that source's hand and could not.
   const issued = await app.ctx.scope.credentials.issueActor(owner, {
     name: 'Other',
     role: 'producer',
@@ -155,19 +140,14 @@ test('one agent can produce successive tasks and review other work, but cannot r
     (caller, input) => app.ctx.tasks.submitDelivery(caller, input as never),
   );
   await work.release(otherLease);
-  const reviewExecution = await assign(reviewTask, 'review-other');
-  const reviewer = await app.ctx.sessions.authenticate(token);
-  assert.equal(reviewer.actorId, agent.actorId);
+  const { session: reviewExecution, caller: reviewing } = await assign(reviewTask, 'review-other');
+  const reviewer = await reviewing();
+  assert.equal(reviewer.actorId, reviewExecution.actorId);
   assert.equal(reviewExecution.role, 'reviewer');
   assert.equal((await app.ctx.scope.require(reviewer, 'review')).role, 'reviewer');
   await assert.rejects(async () => await app.ctx.scope.require(reviewer, 'write'), {
     code: 'forbidden',
   });
-  assert.equal(
-    (await app.ctx.sessions.agentSelf(token)).assignments.length,
-    3,
-    'Refused self-review created no execution',
-  );
   // A leased reviewer asking whether its submission is ready is answered against the call it
   // would make: reviewId, claimId and expectedRevision are bound to the lease rather than
   // typed, so the question must not come back saying the claim is stale.
@@ -224,17 +204,12 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
     requestId: 'create-survey',
   });
   await runner(app, owner);
-  const token = secret();
-  await app.ctx.sessions.registerAgent(owner, {
-    name: 'Paper agent',
-    runnerId: 'external',
-    requestId: 'register-paper-agent',
-    secret: token,
-  });
-  const session = await app.ctx.sessions.assignAgent(token, {
+  const session = await app.ctx.sessions.offer(owner, {
     instanceId: task.id,
     expectedRevision: task.workflow.revision,
+    runnerId: 'external',
     requestId: 'work-survey',
+    secret: secret(),
   });
   const context = session.assignment.context!;
   assert.equal(`${context.type}@${context.typeVersion}`, 'task.work@4');
@@ -254,7 +229,7 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
   assert.ok(context.prompt.includes('\n### paper:literature:current:1:0:literature-0-'));
 });
 
-test('an agent route closes a session as what happened to it, and a closed session only once', async (t) => {
+test('a release closes a session as what happened to it, and a closed session only once', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-agent-close-'));
   const app = await createApp({ directory, api: true, port: 0 });
   t.after(async () => {
@@ -302,17 +277,13 @@ test('an agent route closes a session as what happened to it, and a closed sessi
   // A delivered handoff is recorded as that, whichever route closes the session.
   await runner(app, owner);
   const token = secret();
-  await app.ctx.sessions.registerAgent(owner, {
-    name: 'Continuing agent',
-    runnerId: 'external',
-    requestId: 'register',
-    secret: token,
-  });
   const task = await createTask('delivered');
-  const execution = await app.ctx.sessions.assignAgent(token, {
+  const execution = await app.ctx.sessions.offer(owner, {
     instanceId: task.id,
     expectedRevision: task.workflow.revision,
+    runnerId: 'external',
     requestId: 'work',
+    secret: token,
   });
   const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: owner });
   const lease = await work.attach(execution);
@@ -334,7 +305,8 @@ test('an agent route closes a session as what happened to it, and a closed sessi
       commandId,
     }),
   );
-  const closed = await app.ctx.sessions.releaseAgentAssignment(token, execution.id);
+  const control = { sessionId: execution.id, runnerId: 'external' };
+  const closed = await app.ctx.sessions.release(owner, control);
   await work.release(lease);
   assert.deepEqual(
     [closed.status, closed.closeReason, closed.outcome],
@@ -342,7 +314,6 @@ test('an agent route closes a session as what happened to it, and a closed sessi
   );
 
   // A closed session's release records nothing and echoes no deferral it did not record.
-  const control = { sessionId: execution.id, runnerId: 'external' };
   const again = await app.ctx.sessions.release(owner, {
     ...control,
     outcome: 'preparation_deferred',

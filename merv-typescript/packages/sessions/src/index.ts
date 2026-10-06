@@ -6,7 +6,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 import { managedNoncePostgresMigration } from './managed-nonce.postgres.js';
-import { createHash } from 'node:crypto';
 import type { Context } from 'cordis';
 import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
@@ -36,19 +35,17 @@ import {
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { SessionRunning } from './running.js';
-import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
+import { AgentDirectory, tokenDigest } from './agents.js';
 import { AgentObservations } from './observations.js';
 import {
   clone,
   isoNow,
   live,
-  liveTargets,
   ordinary,
   ownerOf,
   readFirst,
   refused,
   safeError,
-  targetKey,
   text,
   type Row,
 } from './common.js';
@@ -60,7 +57,7 @@ import { SessionConversations } from './conversations.js';
 import { SessionMessages } from './messages.js';
 import { SessionInvocations } from './invocations.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
-import type { Agent, AgentStatus, AgentRegistration, AgentAssignment } from './types.js';
+import type { Agent, AgentStatus } from './types.js';
 import type {
   Session,
   SessionContinuity,
@@ -134,7 +131,6 @@ const secret = z.string().regex(sessionSecretPattern);
 const offerSchema = z
   .object({
     requestId: trimmed(256),
-    agentId: trimmed(200).optional(),
     instanceId: trimmed(200),
     expectedRevision: z.number().int().nonnegative().safe(),
     runnerId: trimmed(200),
@@ -152,10 +148,6 @@ const offerRefusals = {
     hardDeadlineSeconds: ['invalid_deadline', 'Session hard deadline must be 300–604800 seconds'],
   },
 } as const;
-const assignmentSchema = offerSchema.omit({ agentId: true, runnerId: true, secret: true });
-const registrationSchema = z
-  .object({ name: trimmed(200), runnerId: trimmed(200), requestId: trimmed(256), secret })
-  .strict();
 /** Every control names its session and the runner that holds it; the runner is checked. */
 const controlSchema = z.object({ sessionId: z.string(), runnerId: trimmed(200) }).strict();
 const hostSchema = controlSchema.extend({
@@ -376,9 +368,7 @@ export class LeasedSessions implements Sessions {
       this.credentials,
       available,
     );
-    this.directory = await createService(
-      new AgentDirectory(state, scope, this.clock, this.credentials),
-    );
+    this.directory = await createService(new AgentDirectory(state, scope, this.clock));
     this.observations = await createService(
       new AgentObservations(state, scope, this.clock, available),
     );
@@ -429,7 +419,7 @@ export class LeasedSessions implements Sessions {
         (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
         async (agentId, reason, tx) => {
           const agent = await this.directory.get(agentId, tx);
-          if (!agent.persistent && !(await this.currentAgentExecution(agent, tx)))
+          if (!(await this.currentAgentExecution(agent, tx)))
             await this.directory.retire(agent, reason, tx);
         },
         available,
@@ -666,12 +656,6 @@ export class LeasedSessions implements Sessions {
       401,
     );
     await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
-    if (caller.session.agentCredentialHash)
-      await this.credentials.authenticateHash(
-        caller.session.agentCredentialHash,
-        'session-agent',
-        tx,
-      );
     if (
       requiredPermission !== 'read' &&
       caller.session?.invocationId !== undefined &&
@@ -781,10 +765,7 @@ export class LeasedSessions implements Sessions {
     if (failure) await this.dispatch.failed(session, failure, tx);
     // A session that may be continued leaves its agent dormant, its credential revoked above.
     if (session.continuity) await this.conversations.closed(session, tx);
-    else {
-      const agent = await this.directory.get(session.agentId!, tx);
-      if (!agent.persistent) await this.directory.retire(agent, reason, tx);
-    }
+    else await this.directory.retire(await this.directory.get(session.agentId!, tx), reason, tx);
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: 'system:sessions',
@@ -888,13 +869,8 @@ export class LeasedSessions implements Sessions {
 
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
     ordinary(caller);
-    return await this.offerParsed(
-      structuredClone(caller),
-      closed(offerSchema, input, offerRefusals),
-    );
-  }
-  /** Both callers parse first: an assignment's derived request id runs past a caller's bound. */
-  private async offerParsed(caller: Caller, input: SessionOffer): Promise<Session> {
+    caller = structuredClone(caller);
+    input = closed(offerSchema, input, offerRefusals);
     await this.prepareControl(caller);
     return await this.transaction(async (tx) => await this.offerTransaction(caller, input, tx));
   }
@@ -925,7 +901,6 @@ export class LeasedSessions implements Sessions {
       runnerId: input.runnerId,
       hardDeadlineSeconds: duration,
       tokenHash: tokenDigest(input.secret),
-      ...(input.agentId ? { agentId: input.agentId } : {}),
     });
     const old = await tx.get<Row>(
       `${SESSION} WHERE owner_hash=? AND runner_id=? AND request_id=?`,
@@ -971,59 +946,42 @@ export class LeasedSessions implements Sessions {
       'Session secret was already used',
       409,
     );
-    // Continuity, for work no agent was named for: the key of the work as it stands, and the
-    // conversation its latest closed session kept, taken up by the same agent where it can be.
+    // Continuity: the key of the work as it stands, and the conversation its latest closed
+    // session kept, taken up by the same idle agent where it can be. A resumed agent is Sessions'
+    // choice, not the runner's: it may have run anywhere.
     let continuity: SessionContinuity | undefined, resumed: Agent | undefined;
-    if (!input.agentId) {
-      const unit = await this.workflows.get(caller, input.instanceId, tx);
-      const key = this.conversations.key({
-        instanceId: unit.id,
-        workflow: unit.workflow,
-        state: unit.state,
-        data: unit.data,
-        role,
-      });
-      const latest =
-        key === null ? null : await this.conversations.latest(caller.projectId, key, tx);
-      const agent = latest && (await this.directory.get(latest.agentId, tx));
-      if (
-        agent &&
-        agent.status === 'active' &&
-        digest(agent.source) === owner.hash &&
-        !(await this.currentAgentExecution(agent, tx))
-      )
-        resumed = agent;
-      if (key !== null) continuity = { key, ...(resumed && { resume: latest!.resume }) };
-    }
+    const unit = await this.workflows.get(caller, input.instanceId, tx);
+    const key = this.conversations.key({
+      instanceId: unit.id,
+      workflow: unit.workflow,
+      state: unit.state,
+      data: unit.data,
+      role,
+    });
+    const latest = key === null ? null : await this.conversations.latest(caller.projectId, key, tx);
+    const prior = latest && (await this.directory.get(latest.agentId, tx));
+    if (
+      prior &&
+      prior.status === 'active' &&
+      digest(prior.source) === owner.hash &&
+      !(await this.currentAgentExecution(prior, tx))
+    )
+      resumed = prior;
+    if (key !== null) continuity = { key, ...(resumed && { resume: latest!.resume }) };
     const id = newId('session');
-    const agent = input.agentId
-      ? await this.directory.controlled(caller, input.agentId, tx)
-      : (resumed ??
-        (await this.directory.create(
-          caller,
-          {
-            name: `Agent ${input.runnerId}`.slice(0, 200),
-            runnerId: input.runnerId,
-            requestId: `assignment:${digest({ requestId: input.requestId, runnerId: input.runnerId })}`,
-            secret: input.secret,
-          },
-          tx,
-          false,
-        )));
+    const agent =
+      resumed ??
+      (await this.directory.create(
+        caller,
+        {
+          name: `Agent ${input.runnerId}`.slice(0, 200),
+          runnerId: input.runnerId,
+          requestId: `assignment:${digest({ requestId: input.requestId, runnerId: input.runnerId })}`,
+          secret: input.secret,
+        },
+        tx,
+      ));
     await this.directory.require(agent, tx, 409);
-    // A resumed agent is Sessions' choice, not the runner's: it may have run anywhere.
-    check(
-      resumed || agent.runnerId === input.runnerId,
-      'agent_forbidden',
-      'Agent belongs to another runner',
-      403,
-    );
-    check(
-      !(await this.currentAgentExecution(agent, tx)),
-      'agent_busy',
-      'Release the current assignment before requesting another',
-      409,
-    );
     await this.scope.setAgentRole(owner.source, agent.actorId, role, tx);
     const actor = { id: agent.actorId };
     const worker = this.worker({
@@ -1140,19 +1098,6 @@ export class LeasedSessions implements Sessions {
     });
     return clone(session);
   }
-  async registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent> {
-    ordinary(caller);
-    caller = structuredClone(caller);
-    input = closed(registrationSchema, input, {
-      fallback: ['invalid_agent', 'Agent requires a name, runner, request and ms_ secret'],
-    });
-    await this.prepareControl(caller);
-    return await this.transaction(async (tx) => {
-      // An agent is a new actor of the project: registering one is a write.
-      await this.scope.require(caller, 'write', tx);
-      return await this.directory.create(caller, input, tx);
-    });
-  }
   private async currentAgentExecution(agent: Agent, tx: Transaction): Promise<Session | null> {
     const row = await tx.get<Row>(
       `${SESSION} WHERE actor_id=? AND status IN ('offered','active')`,
@@ -1199,92 +1144,6 @@ export class LeasedSessions implements Sessions {
       if (current)
         await this.closeReleased(current, { reason: 'agent_retired', outcome: 'halted' }, tx);
       return await this.directory.retire(agent, 'agent_retired', tx);
-    });
-  }
-  async rotateAgent(
-    caller: Caller,
-    agentId: string,
-  ): Promise<{ agent: Agent; token: string; expiresAt: string }> {
-    ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      const agent = await this.directory.controlled(caller, agentId, tx);
-      await this.directory.require(agent, tx, 409);
-      check(
-        agent.persistent,
-        'agent_forbidden',
-        'Only continuing agents may rotate credentials',
-        403,
-      );
-      await this.credentials.revokeSubject('sessions', agent.id, 'session-agent', tx);
-      const expiresAt = new Date(this.clock() + 30 * 24 * 60 * 60_000).toISOString();
-      const issued = await this.credentials.issue(
-        {
-          owner: 'sessions',
-          subject: agent.id,
-          kind: 'session-agent',
-          prefix: 'ms_',
-          expiresAt,
-          hardDeadline: expiresAt,
-        },
-        tx,
-      );
-      return { agent, token: issued.token, expiresAt };
-    });
-  }
-  async agentSelf(token: string) {
-    // A status poll only reads; the timer sweep records closures, and a candidate scan over
-    // every instance must not hold the writer lock.
-    return await this.reading(async (tx) => {
-      const agent = await this.directory.authenticate(token, tx);
-      const busy = await liveTargets(tx, agent.projectId);
-      const available = (
-        await this.workflows.dispatchCandidates(sourceCaller(agent.source), tx, agent.actorId)
-      ).filter((item) => item.role !== 'operator' && !busy.has(targetKey(item)));
-      return { ...(await this.agentStatuses([agent], tx))[0]!, available };
-    });
-  }
-  async assignAgent(token: string, input: AgentAssignment): Promise<Session> {
-    input = closed(assignmentSchema, input, offerRefusals);
-    const agent = await this.reading(async (tx) => await this.directory.authenticate(token, tx));
-    // The connection credential stays fixed. Each execution has a distinct, undisclosed credential.
-    const secret = `ms_${createHash('sha256')
-      .update(canonical({ token, requestId: input.requestId }))
-      .digest('base64url')}`;
-    // An agent's request ids are its own: the replay key is per runner, so they carry the agent.
-    return await this.offerParsed(sourceCaller(agent.source), {
-      ...input,
-      requestId: `${agent.id}:${input.requestId}`,
-      agentId: agent.id,
-      runnerId: agent.runnerId,
-      secret,
-    });
-  }
-  async releaseAgentAssignment(token: string, executionId: string): Promise<Session> {
-    check(text(executionId), 'invalid_session', 'An execution identifier is required');
-    return await this.transaction(async (tx) => {
-      const agent = await this.directory.authenticate(token, tx);
-      const session = this.decode(await this.row(tx, executionId));
-      check(
-        session.agentId === agent.id,
-        'agent_forbidden',
-        'Assignment belongs to another agent',
-        403,
-      );
-      return await this.closeReleased(session, {}, tx);
-    });
-  }
-  async resetAgentContext(token: string, reason: string): Promise<Agent> {
-    return await this.transaction(async (tx) => {
-      const agent = await this.directory.authenticate(token, tx);
-      check(
-        !(await this.currentAgentExecution(agent, tx)),
-        'agent_busy',
-        'Release the assignment before resetting context',
-        409,
-      );
-      return await this.directory.reset(agent, reason, tx);
     });
   }
   /**
@@ -1967,21 +1826,8 @@ export class LeasedSessions implements Sessions {
   }
   async authenticate(token: string): Promise<Caller> {
     const result = await this.readFirst(async (tx) => {
-      const credential = await this.credentials.authenticate(
-        token,
-        ['session-agent', 'session-execution'],
-        tx,
-      );
-      const agent =
-        credential.kind === 'session-agent'
-          ? await this.directory.get(credential.subject, tx)
-          : undefined;
-      if (agent) await this.directory.require(agent, tx);
-      const current = agent ? await this.currentAgentExecution(agent, tx) : undefined;
-      if (agent) check(current, 'agent_idle', 'Agent has no current assignment', 409);
-      const row = current
-        ? await this.row(tx, current.id)
-        : await tx.get<Row>(`${SESSION} WHERE id=?`, credential.subject);
+      const credential = await this.credentials.authenticate(token, 'session-execution', tx);
+      const row = await tx.get<Row>(`${SESSION} WHERE id=?`, credential.subject);
       check(row, 'unauthorized', 'Invalid session bearer credential', 401);
       const session = this.decode(row),
         error = await this.reconcile(session, tx);
@@ -2021,10 +1867,7 @@ export class LeasedSessions implements Sessions {
           },
         });
       }
-      const caller = this.worker(session);
-      if (credential.kind === 'session-agent')
-        caller.session!.agentCredentialHash = credential.tokenHash;
-      return { caller };
+      return { caller: this.worker(session) };
     });
     if (result.error) throw result.error;
     return result.caller!;

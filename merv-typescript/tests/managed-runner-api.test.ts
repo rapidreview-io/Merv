@@ -148,7 +148,7 @@ test('managed HTTP credentials stay on enrollment and control routes', async (t)
     f.projectId,
   );
   assert.equal(active.status, 200, JSON.stringify(active));
-  for (const path of ['/tools', '/projects', '/account', '/mcp']) {
+  for (const path of ['/tools', '/projects', '/account', '/mcp', '/sessions/self']) {
     const result = await f.request(path, token, 'GET', undefined, f.projectId);
     assert.equal(result.status, 403, `${path}: ${JSON.stringify(result)}`);
     assert.equal(result.body.error?.code, 'managed_runner_forbidden');
@@ -157,14 +157,6 @@ test('managed HTTP credentials stay on enrollment and control routes', async (t)
     const result = await f.request(path, token, 'POST', {}, f.projectId);
     assert.equal(result.status, 403, `${path}: ${JSON.stringify(result)}`);
     assert.equal(result.body.error?.code, 'managed_runner_forbidden');
-  }
-  // An agent's own routes authenticate its key themselves, and refuse a runner's.
-  for (const [method, path] of [
-    ['GET', '/sessions/self'],
-    ['POST', '/sessions/self/assignment'],
-  ] as const) {
-    const result = await f.request(path, token, method, method === 'POST' ? {} : undefined);
-    assert.equal(result.status, 401, `${path}: ${JSON.stringify(result)}`);
   }
   // A path nothing serves yet may be its owner's, not loaded: a runner's bearer gets 503 there.
   const unserved = await f.request('/probe', token, 'GET');
@@ -342,9 +334,6 @@ async function credentialGate(t: TestContext) {
         'huggingfaceAccess',
         'launchConnections',
         'transcript',
-        'assignAgent',
-        'releaseAgentAssignment',
-        'resetAgentContext',
       ].map((name) => [name, reach(`sessions.${name}`)]),
     ),
     authenticate: reach('sessions.authenticate', session),
@@ -357,11 +346,6 @@ async function credentialGate(t: TestContext) {
     managed: {
       authenticate: reach('sessions.managed.authenticate', managed),
       enroll: reach('sessions.managed.enroll', { controlToken: 'mr_new' }),
-    },
-    agentSelf: async (token: string) => {
-      reached.push('sessions.agentSelf');
-      if (!token.startsWith('ms_')) throw new MervError('unauthorized', 'Invalid agent key', 401);
-      return {};
     },
   } as unknown as SessionRoutes;
   const code = {
@@ -505,6 +489,7 @@ const ownersPresent: GateRow[] = [
       ['POST', '/sessions/halt'],
       ['POST', '/sessions/lease?probe=1'],
       ['POST', '/code/transport/grant'],
+      ['GET', '/sessions/self'],
     ] as const
   ).map(([method, path]): GateRow => ({ bearer: 'mr_', method, path, refused: managedForbidden })),
   // A path nothing serves may belong to an owner not loaded yet.
@@ -530,14 +515,6 @@ const ownersPresent: GateRow[] = [
     reaches,
     changes: 'step 8',
   })),
-  {
-    bearer: 'mr_',
-    method: 'GET',
-    path: '/sessions/self',
-    reaches: 'sessions.agentSelf',
-    answers: 401,
-    changes: 'step 8',
-  },
   // Enrollment refuses any bearer but an enrollment credential before its body is read.
   {
     bearer: 'mr_',
@@ -563,6 +540,7 @@ const ownersPresent: GateRow[] = [
       ['POST', '/mcp'],
       ['GET', '/projects'],
       ['POST', '/sessions/lease'],
+      ['GET', '/sessions/self'],
     ] as const
   ).map(([method, path]): GateRow => ({ bearer: 'me_', method, path, refused: managedForbidden })),
   {
@@ -573,16 +551,8 @@ const ownersPresent: GateRow[] = [
     changes: 'step 8',
   },
   { bearer: 'me_', method: 'GET', path: '/ui', reaches: '/ui', changes: 'step 8' },
-  {
-    bearer: 'me_',
-    method: 'GET',
-    path: '/sessions/self',
-    reaches: 'sessions.agentSelf',
-    answers: 401,
-    changes: 'step 8',
-  },
   { bearer: 'me_', method: 'GET', path: '/code/github/callback', reaches: 'code.github.callback' },
-  // A session credential uses only POST /mcp; an agent key its own routes.
+  // A session credential uses only POST /mcp.
   { bearer: 'ms_', method: 'POST', path: '/mcp', body: listTools, reaches: 'tools.describe' },
   ...(
     [
@@ -592,30 +562,10 @@ const ownersPresent: GateRow[] = [
       ['GET', '/account'],
       ['GET', '/sessions/status'],
       ['POST', '/sessions/lease'],
+      ['GET', '/sessions/self'],
+      ['POST', '/sessions/self/assignment'],
     ] as const
   ).map(([method, path]): GateRow => ({ bearer: 'ms_', method, path, refused: sessionForbidden })),
-  { bearer: 'ms_', method: 'GET', path: '/sessions/self', reaches: 'sessions.agentSelf' },
-  {
-    bearer: 'ms_',
-    method: 'POST',
-    path: '/sessions/self/assignment',
-    body: {},
-    reaches: 'sessions.assignAgent',
-  },
-  {
-    bearer: 'ms_',
-    method: 'POST',
-    path: '/sessions/self/release',
-    body: { executionId: 'execution' },
-    reaches: 'sessions.releaseAgentAssignment',
-  },
-  {
-    bearer: 'ms_',
-    method: 'POST',
-    path: '/sessions/self/context-reset',
-    body: { reason: 'fresh start' },
-    reaches: 'sessions.resetAgentContext',
-  },
   // A worker's model relay authenticates the session secret itself.
   {
     bearer: 'ms_',
@@ -711,32 +661,6 @@ test('credential confinement: each bearer reaches only its owner, and an absent 
   // Withdrawn, the routes answer 503 before any credential is looked at.
   const withdrawn = await gate.request('GET', '/sessions/status', 'actor-token');
   assert.deepEqual([withdrawn.status, withdrawn.code], [503, 'unavailable']);
-});
-
-test('agent routes match before authenticating, and authenticate before any body', async (t) => {
-  const gate = await credentialGate(t);
-  const unknown = await gate.request('POST', '/sessions/self/nope', bearers.ms_, {});
-  assert.deepEqual([unknown.status, unknown.code, unknown.reached], [404, 'not_found', []]);
-  const wrongMethod = await gate.request('GET', '/sessions/self/release', bearers.ms_);
-  assert.deepEqual([wrongMethod.status, wrongMethod.reached], [404, []]);
-  // A bad key is refused before its body is read: this body would otherwise be a 415.
-  const bad = await gate.request(
-    'POST',
-    '/sessions/self/release',
-    'not-an-agent',
-    Buffer.from('x'),
-  );
-  assert.deepEqual(
-    [bad.status, bad.code, bad.reached],
-    [401, 'unauthorized', ['sessions.agentSelf']],
-  );
-  // Only the agent's own routes skip API authentication and the read snapshot.
-  assert.equal((await gate.request('GET', '/sessions/self', bearers.ms_)).status, 200);
-  assert.equal(gate.snapshots(), 0);
-  const selfish = await gate.request('GET', '/sessions/selfish', 'not-a-credential');
-  assert.deepEqual([selfish.status, selfish.reached], [401, []]);
-  assert.equal((await gate.request('GET', '/sessions/selfish', 'actor-token')).status, 404);
-  assert.equal(gate.snapshots(), 1);
 });
 
 test('private HF delivery is managed-only and never cacheable', async (t) => {

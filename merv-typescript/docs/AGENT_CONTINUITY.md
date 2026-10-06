@@ -1,72 +1,42 @@
-# Continuing agents and assignment executions
+# Agents and assignment executions
 
-Sessions owns the agent instance and its lifecycle. Identity issues and verifies credentials; Scope checks the corresponding actor and source authority. Workflows owns assignment reservations. A credential identifies an existing agent or execution; it does not create another agent record.
+Sessions owns the agent and its lifecycle. Identity issues and verifies credentials; Scope checks the corresponding actor and source authority. Workflows owns assignment reservations. Every agent is created by an offer (`POST /sessions/offer`, or automatic dispatch's lease) and works through that offer's execution credential.
 
 ## Identities
 
-| Field                    | Meaning                                            | Changes on a new assignment? |
-| ------------------------ | -------------------------------------------------- | ---------------------------- |
-| `agent.id`               | Continuing agent instance, owned by Agent Sessions | No                           |
-| `agent.actorId`          | Scope actor used to attribute its work             | No                           |
-| `agent.sessionId`        | Continuing authenticated agent session             | No                           |
-| `execution.id`           | One assignment execution and workflow lease        | Yes                          |
-| `execution.contextEpoch` | Context-reset epoch captured when offered          | Only after a declared reset  |
+| Field                    | Meaning                                     | Changes on a new assignment?              |
+| ------------------------ | ------------------------------------------- | ----------------------------------------- |
+| `agent.id`               | Agent instance, owned by Sessions           | Only when no conversation is resumed      |
+| `agent.actorId`          | Scope actor used to attribute its work      | Only when no conversation is resumed      |
+| `agent.sessionId`        | The agent's own session id                  | Only when no conversation is resumed      |
+| `execution.id`           | One assignment execution and workflow lease | Yes                                       |
+| `execution.contextEpoch` | Context-reset epoch captured when offered   | No; 0 except on retired continuing agents |
 
-The existing `Session` type, `/sessions/offer`, `/sessions/:id` routes and persisted `sessionId` references in Code and Runner retain their assignment-execution meaning for compatibility. They are not identifiers for the continuing connection. Every new execution carries `agentId` and `agentSessionId`; historical rows can omit them. Caller `session.id` deliberately remains the execution ID so a delayed invocation cannot acquire authority from a later assignment.
+The `Session` type, `/sessions/offer`, `/sessions/:id` routes and persisted `sessionId` references in Code and Runner keep their assignment-execution meaning. Every execution carries `agentId` and `agentSessionId`; historical rows can omit them. Caller `session.id` deliberately remains the execution ID so a delayed invocation cannot acquire authority from a later assignment.
 
-## Connecting your own agent
+## Continuing agents were removed
 
-An authenticated source (human, user key or actor credential) registers the agent using `POST /sessions/agents` with a body:
+Until 2026-10-06 a source could register a continuing agent (`POST /sessions/agents`), rotate its 30-day key (`POST /sessions/agents/:agentId/rotate`), and let it acquire and release assignments itself (`/sessions/self`, `/sessions/self/assignment`, `/sessions/self/release`, `/sessions/self/context-reset`). These routes, the `agentId` field of an offer and the `session-agent` credential are gone: the routes answer as unknown, an offer naming an agent is refused as malformed, and a continuing agent's key no longer authenticates. Their `agents` rows (`persistent: true`, a `token_hash`, a `contextEpoch`) stay as attribution history and are never deleted.
 
-```json
-{
-  "name": "My research agent",
-  "runnerId": "my-agent-host",
-  "requestId": "register-instance-001",
-  "secret": "ms_<43 base64url characters from 32 random bytes>"
-}
-```
-
-Use a cryptographically random secret. Only its digest is stored; registration returns metadata, not the secret. Replaying the same source/runner/request returns the original agent. Changed input conflicts, and replay never revives a retired agent. The agent remains bound to that source authority and project; knowing an agent ID cannot take it over.
-
-Continuing agent keys expire after 30 days. The authorizing source can call `POST /sessions/agents/:agentId/rotate` to receive `{ agent, token, expiresAt }`. Store the returned token securely and switch the client's bearer immediately: all prior keys stop working, including previously authenticated calls when they next check authority. Rotation preserves the agent, actor and assignment history. The agent's own key cannot rotate itself. Existing keys receive their initial 30-day deadline when first migrated; restarting does not extend it.
-
-The continuing credential supports these controls, even between assignments:
-
-| Route                               | Purpose                                                                                                                |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `GET /sessions/self`                | Agent identity, current execution, assignment history and available-work metadata                                      |
-| `POST /sessions/self/assignment`    | Explicitly acquire an assignment with `instanceId`, `expectedRevision`, `requestId` and optional `hardDeadlineSeconds` |
-| `POST /sessions/self/release`       | Release the supplied `executionId`; a stale release cannot close a later execution                                     |
-| `POST /sessions/self/context-reset` | Record an idle agent's declared context reset with a short `reason`                                                    |
-
-After acquisition, use the **same agent secret** as the MCP bearer. The server activates the current assignment on first accepted MCP use and applies that assignment's fixed tool/argument policy. An idle agent has no domain-tool authority; its self-control endpoint remains available. It cannot administer other agents, choose a different project, obtain operator tool permissions, or delegate another agent.
-
-Before another assignment, finish or explicitly release the current one. Acquisition reconciles stale/finished work and drains durable cleanup before offering a successor. One agent can hold only one live assignment, enforced transactionally and by a database index. Acquiring work does not launch a process or perform an automatic handoff.
-
-The authorizing source can use `GET /sessions/agents`, `GET /sessions/agents/:agentId`, and `DELETE /sessions/agents/:agentId` to inspect or retire its agents. Retirement closes live work and revokes the security actor. Source credential revocation, expiry, rotation, or membership-epoch changes remain fail-closed; a replacement credential does not silently reclaim the old agent.
+An external agent of your own uses an actor credential (see [Actor credentials](ACTOR_CREDENTIALS.md)) for its own project work, or is offered a step through `/sessions/offer` and works with that execution's secret.
 
 ## Assignment boundaries
 
-Each execution freezes the assignment, context, reference IDs, tool policy and workflow revision. Retained history records what context was supplied, not what a model demonstrably remembers. Explicit resets increment the context epoch while preserving agent identity and older snapshots. Resetting context does not make a producer an independent reviewer.
+Each execution freezes the assignment, context, reference IDs, tool policy and workflow revision. Retained history records what context was supplied, not what a model demonstrably remembers.
 
-Ending an assignment releases its workflow/domain ownership and permissions without retiring a continuing agent. Sessions renews execution credentials on activation and heartbeat, up to the execution's fixed hard deadline, and revokes them on closure. Hosted Codex retains its existing one-minute model-call handoff grace; closed executions cannot make MCP calls. Output attribution keeps the stable actor. Access to newly authored output is filtered by the exact execution event, so old unpinned files are not silently authorized because the actor ID matches. Experiments likewise require the current execution's own plan/report where fresh authorship is required. Review independence continues to compare the stable producer/reviewer actor.
+Ending an assignment releases its workflow/domain ownership and permissions. Sessions renews execution credentials on activation and heartbeat, up to the execution's fixed hard deadline, and revokes them on closure. Hosted Codex retains its existing one-minute model-call handoff grace; closed executions cannot make MCP calls. Output attribution keeps the stable actor. Access to newly authored output is filtered by the exact execution event, so old unpinned files are not silently authorized because the actor ID matches. Experiments likewise require the current execution's own plan/report where fresh authorship is required. Review independence compares the producer and reviewer actors, and a source's agents count as that source's hand.
 
 Already prepared invocations, claims, workspace observations, command receipts and final code captures remain tied to their original execution ID. A late release, result, or cleanup event cannot be redirected to the agent's next assignment. A running remote request may still finish after release; it does not gain the next assignment's authority.
 
 ## Runner and existing clients
 
-Automatic dispatch launches a fresh, nonpersistent agent per execution, or continues the dormant agent that last held the same work ([Sessions README](../packages/sessions/README.md#continuity)). A nonpersistent agent retires when its execution closes unless that execution may be continued; then it stays dormant until its work comes back, a later agent supersedes it, or 14 days pass. Runner recovery and workspace capture stay keyed by execution ID; snapshots now also include agent and agent-session IDs. There is no automatic process handoff.
+An offer creates a fresh agent per execution, or continues the dormant agent that last held the same work ([Sessions README](../packages/sessions/README.md#continuity)). An agent retires when its execution closes unless that execution may be continued; then it stays dormant until its work comes back, a later agent supersedes it, or 14 days pass. Runner recovery and workspace capture stay keyed by execution ID; snapshots also include agent and agent-session IDs. There is no automatic process handoff.
 
-Existing one-assignment clients can continue using `/sessions/offer` and their execution token. A trusted source can additionally offer to a registered continuing agent by supplying `agentId` and the same `runnerId`. The execution token must differ from the continuing credential.
+The authorizing source can use `GET /sessions/agents`, `GET /sessions/agents/:agentId`, and `DELETE /sessions/agents/:agentId` to inspect or retire its agents. Retirement closes live work and revokes the security actor.
 
-The Sessions UI shows agents separately from assignment executions. Agent status can be idle while its identity remains active. Retired agents and historical executions remain attributable.
+## Storage
 
-## Storage upgrade
-
-New immutable identity records live in the Sessions-owned `agents` table. Additive migrations remove the old one-actor-ever constraints from session, task and experiment lease tables; live assignment uniqueness remains enforced. Historical IDs, snapshots, foreign-key references and retention triggers are preserved. Scope distinguishes managed agent actors from historical session actors and permits assignment-role changes only through its internal managed-agent operation.
-
-SQLite table rebuilds run in a transaction with foreign keys checked before commit and enforcement restored on either success or failure. Migration fingerprints for previously shipped schemas are unchanged. No existing agent is inferred to be a continuing external process; register a continuing agent explicitly.
+Agents live in the Sessions-owned `agents` table. Live assignment uniqueness is enforced per actor. Historical IDs, snapshots, foreign-key references and retention triggers are preserved. Scope distinguishes managed agent actors from historical session actors and permits assignment-role changes only through its internal managed-agent operation.
 
 ## Agent activity UI and observations
 

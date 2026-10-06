@@ -30,13 +30,7 @@ import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
 import { ordinary as unmanaged, text, workNameOf } from './common.js';
 import { platformPhrase } from './rules.js';
-import type {
-  Agent,
-  SessionPlatform,
-  SessionRole,
-  SessionWorkspace,
-  StuckReport,
-} from './types.js';
+import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from './types.js';
 
 /**
  * The Running page's reading of Sessions: a node for every live lease and where it runs, the
@@ -375,7 +369,6 @@ interface PanelRow extends LeaseRow {
   close_reason: string | null;
   outcome: string | null;
   deferral: string | null;
-  agent_id: string | null;
   workspace_mode: string | null;
   brief: string | null;
   attachment_json: string | null;
@@ -629,7 +622,7 @@ export class SessionRunning {
       const row = await tx.get<PanelRow>(
         `SELECT ${LEASE},x.j #>> '{closedAt}' AS closed_at,
           x.j #>> '{closeReason}' AS close_reason,x.j #>> '{outcome}' AS outcome,
-          x.j #>> '{deferral,cause}' AS deferral,x.j #>> '{agentId}' AS agent_id,
+          x.j #>> '{deferral,cause}' AS deferral,
           x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,
           CASE WHEN CAST(? AS INTEGER)=1 THEN LEFT(x.j #>> '{assignment,brief}',${briefCap + 1}) END AS brief,
           w.attachment_json,w.result_json
@@ -822,39 +815,12 @@ export class SessionRunning {
         });
       }
 
-      // A continuing agent carries context from its earlier assignments.
-      const agent = row.agent_id
-        ? await tx.get<{ agent_json: string }>(
-            'SELECT agent_json FROM agents WHERE id=? AND project_id=?',
-            row.agent_id,
-            caller.projectId,
-          )
-        : undefined;
-      const continuing: Agent | null = agent ? JSON.parse(agent.agent_json) : null;
-      // How many assignments came before is not said: worker_sessions has no index to count an
-      // actor's by, and this sidebar is read every few seconds.
-      if (continuing?.persistent) {
-        sections.push({
-          title: 'Agent',
-          place: 'details',
-          kind: 'facts',
-          rows: [
-            { label: 'Name', value: [ellipsis(continuing.name, 200)] },
-            ...(continuing.contextEpoch > 0
-              ? [{ label: 'Context resets', value: [{ count: continuing.contextEpoch }] }]
-              : []),
-          ],
-        });
-      }
-
       // The guard names who holds it and on what, in the Sessions page's own sentences.
-      const who = continuing?.persistent
-        ? ellipsis(continuing.name, 24)
-        : lease.fleet
-          ? 'The agent on a Fleet VM'
-          : machine
-            ? `The agent on ${ellipsis(machine.hostname, 24)}`
-            : 'An agent';
+      const who = lease.fleet
+        ? 'The agent on a Fleet VM'
+        : machine
+          ? `The agent on ${ellipsis(machine.hostname, 24)}`
+          : 'An agent';
       const halt: RunningAction = {
         label: 'Halt lease',
         verb: 'halt',

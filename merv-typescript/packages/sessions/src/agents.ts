@@ -1,74 +1,57 @@
 import { postgresMigrations } from './agents.postgres.js';
 import { ownerOf } from './common.js';
 import {
-  visible,
   check,
   digest,
-  MervError,
   newId,
   type Caller,
-  type DelegationSource,
   type Scope,
   type State,
   type Transaction,
 } from '@merv/contracts';
-import type { Agent, AgentRegistration } from './types.js';
-import { tokenDigest, type CredentialStore } from '@merv/identity/credentials';
+import type { Agent } from './types.js';
+import { tokenDigest } from '@merv/identity/credentials';
 
 export { tokenDigest };
 export { sourceCaller } from '@merv/scope/rules';
 interface AgentRow {
   id: string;
   owner_hash: string;
-  token_hash: string | null;
-  fingerprint: string;
   agent_json: string;
 }
 
-/** Agent identity and continuity belong to Sessions; Scope stores its security actor. */
+/** What an offer names its implicit agent by. */
+interface AgentRegistration {
+  name: string;
+  runnerId: string;
+  requestId: string;
+  secret: string;
+}
+
+/**
+ * Agent identity and continuity belong to Sessions; Scope stores its security actor. Every agent
+ * is the implicit one of an offer. Rows of the retired continuing agents (`persistent`, with a
+ * `token_hash`) stay readable as history; nothing authenticates their credentials any more.
+ */
 export class AgentDirectory {
   constructor(
     private state: State,
     private scope: Scope,
     private clock: () => number,
-    private credentials: CredentialStore,
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('agents', [{ version: 1, sql: postgresMigrations[1] }]);
   }
-  /** Sessions parsed the input: a registration, or the implicit agent of an offer. */
-  async create(
-    caller: Caller,
-    input: AgentRegistration,
-    tx: Transaction,
-    persistent = true,
-  ): Promise<Agent> {
+  /** The implicit agent of an offer, which Sessions parsed. */
+  async create(caller: Caller, input: AgentRegistration, tx: Transaction): Promise<Agent> {
     const { source, hash: owner } = await ownerOf(this.scope, caller, tx);
-    const fingerprint = digest({ name: input.name, secret: tokenDigest(input.secret), persistent });
-    const old = await tx.get<AgentRow>(
-      'SELECT * FROM agents WHERE owner_hash=? AND runner_id=? AND request_id=?',
-      owner,
-      input.runnerId,
-      input.requestId,
-    );
-    if (old) {
-      check(
-        old.fingerprint === fingerprint,
-        'request_conflict',
-        'Agent registration was already used for different input',
-        409,
-      );
-      return JSON.parse(old.agent_json);
-    }
-    const tokenHash = tokenDigest(input.secret);
-    check(
-      !(await tx.get('SELECT id FROM agents WHERE token_hash=?', tokenHash)) &&
-        !(await tx.get('SELECT id FROM worker_sessions WHERE token_hash=?', tokenHash)),
-      'session_secret_used',
-      'Session secret was already used',
-      409,
-    );
+    // The offer replays its own request and refuses a used secret before it gets here.
+    const fingerprint = digest({
+      name: input.name,
+      secret: tokenDigest(input.secret),
+      persistent: false,
+    });
     const id = newId('agent'),
       sessionId = newId('agent_session');
     const actor = await this.scope.createSessionActor(
@@ -84,7 +67,7 @@ export class AgentDirectory {
       source,
       runnerId: input.runnerId,
       name: input.name.trim(),
-      persistent,
+      persistent: false,
       status: 'active',
       contextEpoch: 0,
       createdAt: new Date(this.clock()).toISOString(),
@@ -98,31 +81,11 @@ export class AgentDirectory {
       owner,
       input.runnerId,
       input.requestId,
-      persistent ? tokenDigest(input.secret) : null,
+      null,
       fingerprint,
       'active',
       JSON.stringify(agent),
     );
-    if (persistent) {
-      const expiresAt = new Date(this.clock() + 30 * 24 * 60 * 60_000).toISOString();
-      try {
-        await this.credentials.issue(
-          {
-            owner: 'sessions',
-            subject: id,
-            kind: 'session-agent',
-            token: input.secret,
-            expiresAt,
-            hardDeadline: expiresAt,
-          },
-          tx,
-        );
-      } catch (error) {
-        if (error instanceof MervError && error.code === 'credential_conflict')
-          throw new MervError('session_secret_used', 'Session secret was already used', 409);
-        throw error;
-      }
-    }
     await this.state.appendEvent(tx, {
       projectId: agent.projectId,
       actorId: caller.actorId,
@@ -149,14 +112,6 @@ export class AgentDirectory {
     );
     return agent;
   }
-  async authenticate(secret: string, tx: Transaction): Promise<Agent> {
-    const credential = await this.credentials.authenticate(secret, 'session-agent', tx);
-    const row = await tx.get<AgentRow>('SELECT * FROM agents WHERE id=?', credential.subject);
-    check(row, 'unauthorized', 'Invalid agent credential', 401);
-    const agent: Agent = JSON.parse(row.agent_json);
-    await this.require(agent, tx);
-    return agent;
-  }
   /** The agent's own call answers 401; a controller naming a retired agent gets a conflict. */
   async require(agent: Agent, tx: Transaction, status = 401): Promise<void> {
     check(agent.status === 'active', 'agent_retired', 'Agent has been retired', status);
@@ -176,7 +131,6 @@ export class AgentDirectory {
     agent.status = 'retired';
     agent.retiredAt = new Date(this.clock()).toISOString();
     await this.save(agent, tx);
-    await this.credentials.revokeSubject('sessions', agent.id, 'session-agent', tx);
     await this.scope.retireSessionActor(agent.actorId, reason, tx);
     await this.state.appendEvent(tx, {
       projectId: agent.projectId,
@@ -184,24 +138,6 @@ export class AgentDirectory {
       type: 'agent.retired',
       subjectId: agent.id,
       data: { agentSessionId: agent.sessionId, reason },
-    });
-    return agent;
-  }
-  async reset(agent: Agent, reason: string, tx: Transaction): Promise<Agent> {
-    await this.require(agent, tx);
-    check(
-      typeof reason === 'string' && visible(reason) && reason.length <= 200,
-      'invalid_reason',
-      'Context reset requires a short reason',
-    );
-    agent.contextEpoch++;
-    await this.save(agent, tx);
-    await this.state.appendEvent(tx, {
-      projectId: agent.projectId,
-      actorId: agent.actorId,
-      type: 'agent.context_reset',
-      subjectId: agent.id,
-      data: { contextEpoch: agent.contextEpoch, reason },
     });
     return agent;
   }

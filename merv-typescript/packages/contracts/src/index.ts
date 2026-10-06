@@ -728,7 +728,6 @@ export interface Caller {
   session?: {
     id: string;
     agentSessionId?: string;
-    agentCredentialHash?: string;
     invocationId?: string;
   };
   conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
@@ -1113,8 +1112,8 @@ export interface Scope {
     tx: Transaction,
   ): Promise<Actor>;
   /** Changes an agent's role within what `source` may delegate. Scope does not know who owns an
-   * agent: the caller must already have proven it controls this one (Sessions:
-   * `AgentDirectory.controlled`). */
+   * agent: the caller must already have proven it controls this one (Sessions: the agent an
+   * offer creates, or resumes for the same source). */
   setAgentRole(
     source: DelegationSource,
     actorId: string,

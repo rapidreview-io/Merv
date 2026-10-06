@@ -835,27 +835,6 @@ test('a lease names the others on its machine by their work and role word', asyn
   ]);
 });
 
-test('a continuing agent’s lease names the agent, and its sidebar counts nothing of its history', async (t) => {
-  const f = await fixture(t);
-  const token = secret();
-  await f.sessions.registerAgent(f.source, {
-    name: 'Citation agent',
-    runnerId: 'external',
-    requestId: request(),
-    secret: token,
-  });
-  const work = await f.instance();
-  const assigned = await f.sessions.assignAgent(token, {
-    instanceId: work.id,
-    expectedRevision: work.revision,
-    requestId: request(),
-  });
-  const panel = await f.panel(f.owner, `session:${assigned.id}`);
-  // An agent's earlier assignments could only be counted by reading the project's leases.
-  assert.deepEqual(facts(panel, 'Agent'), { Name: ['Citation agent'] });
-  assert.ok(panel.actions[0].guard!.consequence.startsWith('Citation agent holds this lease'));
-});
-
 /** A machine Fleet rents as the work host of one new piece of work, enrolled and reporting as
  *  ip-10-0-0-7. */
 async function rent(f: Awaited<ReturnType<typeof fixture>>) {

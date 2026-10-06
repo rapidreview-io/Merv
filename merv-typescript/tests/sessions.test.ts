@@ -1580,170 +1580,21 @@ test('metadata and assignment callbacks cannot commit a lease after changing run
   }
 });
 
-test('a continuing agent keeps its identity and credential across explicit assignments while old calls stay fenced', async (t) => {
-  const f = await fixture(t),
-    token = secret();
-  const registration = {
-    name: 'My continuing agent',
-    runnerId: 'external',
-    requestId: 'agent',
-    secret: token,
-  };
-  const supplied = { ...registration },
-    source = { ...f.source };
-  const registering = f.sessions.registerAgent(source, supplied);
-  Object.assign(source, f.owner);
-  Object.assign(supplied, { name: 'Replacement', secret: secret() });
-  const agent = await registering;
-  assert.equal(agent.source.actorId, f.source.actorId);
-  assert.equal(agent.name, registration.name);
-  assert.deepEqual(await f.sessions.registerAgent(f.source, registration), agent);
-  assert.equal((await f.sessions.agentSelf(token)).current, null);
-  await assert.rejects(async () => await f.sessions.authenticate(token), { code: 'agent_idle' });
-  await assert.rejects(async () => await f.sessions.agent(f.owner, agent.id), {
-    code: 'agent_forbidden',
-  });
-  const first = await f.instance(),
-    second = await f.instance();
-  const firstInput = { instanceId: first.id, expectedRevision: 0, requestId: 'first' };
-  const assignmentInput = { ...firstInput };
-  const assigning = f.sessions.assignAgent(token, assignmentInput);
-  Object.assign(assignmentInput, { instanceId: second.id, requestId: 'replacement' });
-  const a = await assigning;
-  assert.equal(a.instanceId, first.id);
-  assert.equal(a.agentId, agent.id);
-  assert.equal(a.actorId, agent.actorId);
-  const callerA = await f.sessions.authenticate(token);
-  const inputA = { instanceId: first.id, expectedRevision: 0 };
-  const delayed = await f.sessions.invocations.prepare(callerA, 'finish', inputA);
-  await assert.rejects(
-    async () =>
-      await f.sessions.assignAgent(token, {
-        instanceId: second.id,
-        expectedRevision: 0,
-        requestId: 'too-early',
-      }),
-    { code: 'agent_busy' },
-  );
-  await assert.rejects(async () => await f.sessions.resetAgentContext(token, 'context reset'), {
-    code: 'agent_busy',
-  });
-  await f.sessions.releaseAgentAssignment(token, a.id);
-  assert.equal((await f.sessions.agentSelf(token)).agent.status, 'active');
-  assert.equal(
-    (await f.scope.actors(f.owner)).find((actor) => actor.id === agent.actorId)?.active,
-    true,
-  );
-  const b = await f.sessions.assignAgent(token, {
-    instanceId: second.id,
-    expectedRevision: 0,
-    requestId: 'second',
-  });
-  assert.notEqual(a.id, b.id);
-  assert.equal(b.agentSessionId, a.agentSessionId);
-  assert.equal(b.actorId, a.actorId);
-  assert.equal(b.assignment.instanceId, second.id);
-  await f.sessions.releaseAgentAssignment(token, a.id);
-  assert.equal(
-    (await f.sessions.agentSelf(token)).current?.id,
-    b.id,
-    'A late release cannot close the successor',
-  );
-  const otherToken = secret();
-  await f.sessions.registerAgent(f.source, {
-    name: 'Another agent',
-    runnerId: 'external',
-    requestId: 'other-agent',
-    secret: otherToken,
-  });
-  await assert.rejects(async () => await f.sessions.releaseAgentAssignment(otherToken, b.id), {
-    code: 'agent_forbidden',
-  });
-  await assert.rejects(
-    async () =>
-      await f.sessions.offer(f.owner, {
-        agentId: agent.id,
-        instanceId: (await f.instance(f.owner)).id,
-        expectedRevision: 0,
-        runnerId: 'external',
-        requestId: 'takeover',
-        secret: secret(),
-      }),
-    { code: 'agent_forbidden' },
-  );
-  await assert.rejects(async () => await f.scope.require(callerA, 'read'), {
-    code: 'session_closed',
-  });
-  // Released because the agent was reassigned, not because its handoff landed: the refusal
-  // says closed, and its reason travels in the message.
-  await assert.rejects(
-    f.sessions.invocations.run(delayed, () => {
-      throw new Error('Old handler must not run');
-    }),
-    { code: 'session_closed' },
-  );
-  const callerB = await f.sessions.authenticate(token);
-  assert.equal(callerB.actorId, callerA.actorId);
-  assert.equal(callerB.session?.id, b.id);
-  await assert.rejects(async () => await f.sessions.invocations.prepare(callerB, 'finish', inputA));
-  assert.equal(
-    (await f.sessions.assignAgent(token, firstInput)).id,
-    a.id,
-    'Replay returns its historical receipt',
-  );
-  assert.equal(
-    (await f.sessions.agentSelf(token)).current?.id,
-    b.id,
-    'Replay cannot change current work',
-  );
-  await f.restart();
-  assert.equal((await f.sessions.authenticate(token)).actorId, agent.actorId);
-  assert.equal((await f.sessions.agentSelf(token)).assignments.length, 2);
-  await f.sessions.releaseAgentAssignment(token, b.id);
-  const reset = await f.sessions.resetAgentContext(token, 'Agent compacted its context');
-  assert.equal(reset.contextEpoch, 1);
-  const c = await f.sessions.assignAgent(token, {
-    instanceId: (await f.instance()).id,
-    expectedRevision: 0,
-    requestId: 'third',
-  });
-  assert.equal(c.contextEpoch, 1);
-  assert.equal((await f.sessions.agentSelf(token)).assignments[0].contextEpoch, 0);
-  await f.sessions.retireAgent(f.source, agent.id);
-  await assert.rejects(async () => await f.sessions.agentSelf(token), { code: 'unauthorized' });
-  assert.equal(
-    (await f.scope.actors(f.owner)).find((actor) => actor.id === agent.actorId)?.active,
-    false,
-  );
-  assert.equal((await f.sessions.get(f.source, c.id)).status, 'released');
-  assert.ok(
-    !JSON.stringify(
-      await f.state.read(async (sql) => await sql.all('SELECT * FROM agents')),
-    ).includes(token),
-  );
-});
-
 test('agent reads and retirement retain the original controlling source', async (t) => {
   const f = await fixture(t);
-  const agent = await f.sessions.registerAgent(f.source, {
-    name: 'Owned agent',
-    runnerId: 'external',
-    requestId: 'agent',
-    secret: secret(),
-  });
+  const agentId = (await f.offer()).session.agentId!;
   for (const method of ['agents', 'agent', 'retireAgent'] as const) {
     await t.test(method, async () => {
       const caller = { ...f.owner };
       const pending =
-        method === 'agents' ? f.sessions.agents(caller) : f.sessions[method](caller, agent.id);
+        method === 'agents' ? f.sessions.agents(caller) : f.sessions[method](caller, agentId);
       Object.assign(caller, f.source);
       if (method === 'agents') assert.deepEqual(await pending, []);
       else await assert.rejects(pending, { code: 'agent_forbidden' });
     });
   }
-  assert.equal((await f.sessions.agent(f.source, agent.id)).agent.status, 'active');
+  assert.equal((await f.sessions.agent(f.source, agentId)).agent.status, 'active');
 });
-
 test('session reads and controls retain the original controlling source', async (t) => {
   for (const method of ['list', 'get', 'attach', 'heartbeat', 'release'] as const) {
     await t.test(method, async (t) => {
@@ -1806,34 +1657,20 @@ test('release retains its validated reason, outcome and session while pending', 
   assert.equal(released.outcome, 'launch_failed');
 });
 
-test('source revocation retires even an idle continuing agent; failed assignment does not leak ownership or alter identity', async (t) => {
-  const f = await fixture(t),
-    token = secret();
-  const agent = await f.sessions.registerAgent(f.source, {
-    name: 'Idle agent',
-    runnerId: 'external',
-    requestId: 'idle',
-    secret: token,
-  });
-  await assert.rejects(
-    async () =>
-      await f.sessions.assignAgent(token, {
-        instanceId: 'missing',
-        expectedRevision: 0,
-        requestId: 'failed',
-      }),
-  );
-  assert.equal((await f.sessions.agentSelf(token)).assignments.length, 0);
-  assert.equal((await f.sessions.agentSelf(token)).agent.id, agent.id);
+test('source revocation retires an offered agent and its actor', async (t) => {
+  const f = await fixture(t);
+  const { session } = await f.offer();
   await f.scope.credentials.revokeActor(f.owner, f.source.actorId);
   await f.sessions.sweep();
-  await assert.rejects(async () => await f.sessions.agentSelf(token), { code: 'unauthorized' });
+  assert.deepEqual(
+    await f.state.read((sql) => sql.get('SELECT status FROM agents WHERE id=?', session.agentId!)),
+    { status: 'retired' },
+  );
   assert.equal(
-    (await f.scope.actors(f.owner)).find((actor) => actor.id === agent.actorId)?.active,
+    (await f.scope.actors(f.owner)).find((actor) => actor.id === session.actorId)?.active,
     false,
   );
 });
-
 test('upgrading the historical one-worker schema preserves a live execution and its dispatch receipt', async (t) => {
   const f = await fixture(t, true);
   const { token, session } = await f.offer();
@@ -1887,22 +1724,9 @@ test('upgrading the historical one-worker schema preserves a live execution and 
   );
 });
 
-test('agent observations retain tool timings and estimates across assignments without retaining payloads', async (t) => {
+test('agent observations retain tool timings and estimates across a restart without retaining payloads', async (t) => {
   const f = await fixture(t);
-  const token = secret();
-  const agent = await f.sessions.registerAgent(f.source, {
-    name: 'Observed agent',
-    runnerId: 'external',
-    requestId: 'observe',
-    secret: token,
-  });
-  const assign = async (requestId: string) =>
-    await f.sessions.assignAgent(token, {
-      instanceId: (await f.instance()).id,
-      expectedRevision: 0,
-      requestId,
-    });
-  const first = await assign('first');
+  const { session: first, token } = await f.offer();
   const caller = await f.sessions.authenticate(token);
   const pending = await f.sessions.invocations.prepare(caller, 'artifact.read', {
     artifactId: 'frozen-artifact',
@@ -1925,7 +1749,7 @@ test('agent observations retain tool timings and estimates across assignments wi
     f.sessions.invocations.run(pending, () => 'duplicate'),
     { code: 'session_invocation' },
   );
-  let observed = await f.sessions.observations.read(f.owner, agent.id);
+  let observed = await f.sessions.observations.read(f.owner, first.agentId!);
   assert.equal(observed.toolCalls[0]!.status, 'running');
   assert.equal(observed.toolCalls[0]!.outputTokens, null);
   assert.equal(observed.agent.currentExecutionId, first.id);
@@ -1933,7 +1757,7 @@ test('agent observations retain tool timings and estimates across assignments wi
   f.advance(1234);
   finish({ secret: 'sensitive-result-never-retained' });
   await running;
-  observed = await f.sessions.observations.read(f.owner, agent.id);
+  observed = await f.sessions.observations.read(f.owner, first.agentId!);
   assert.equal(observed.toolCalls[0]!.status, 'succeeded');
   assert.equal(observed.toolCalls[0]!.durationMs, 1234);
   assert.ok(observed.toolCalls[0]!.inputTokens > 0);
@@ -1947,7 +1771,7 @@ test('agent observations retain tool timings and estimates across assignments wi
     inputTokens: observed.toolCalls[0]!.inputTokens,
     outputTokens: observed.toolCalls[0]!.outputTokens,
   });
-  await assert.rejects(async () => await f.sessions.observations.read(caller, agent.id), {
+  await assert.rejects(async () => await f.sessions.observations.read(caller, first.agentId!), {
     code: 'session_forbidden',
   });
   await assert.rejects(
@@ -1957,9 +1781,9 @@ test('agent observations retain tool timings and estimates across assignments wi
       ),
     { code: 'state_constraint' },
   );
-  await f.sessions.releaseAgentAssignment(token, first.id);
-  const second = await assign('second');
-  const worker = await f.sessions.authenticate(token);
+  await f.sessions.release(f.source, { sessionId: first.id, runnerId: 'runner' });
+  const { session: second, token: secondToken } = await f.offer();
+  const worker = await f.sessions.authenticate(secondToken);
   const failed = await f.sessions.invocations.prepare(worker, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
@@ -1998,17 +1822,23 @@ test('agent observations retain tool timings and estimates across assignments wi
     },
   );
   await f.restart();
-  observed = await f.sessions.observations.read(f.owner, agent.id);
-  assert.equal(observed.agent.id, agent.id);
-  assert.equal(observed.assignments.length, 2);
-  assert.equal(observed.assignments[0]!.id, second.id);
+  assert.equal(
+    (await f.sessions.observations.read(f.owner, first.agentId!)).tokenStats.totalCalls,
+    1,
+  );
+  observed = await f.sessions.observations.read(f.owner, second.agentId!);
+  assert.equal(observed.agent.id, second.agentId);
+  assert.deepEqual(
+    observed.assignments.map((a) => a.id),
+    [second.id],
+  );
   assert.deepEqual(
     observed.toolCalls.map((c) => c.status),
-    ['interrupted', 'failed', 'succeeded'],
+    ['interrupted', 'failed'],
   );
   assert.equal(observed.toolCalls[0]!.finishedAt, null);
-  assert.equal(observed.tokenStats.totalCalls, 3);
-  assert.equal(observed.tokenStats.completedCalls, 2);
+  assert.equal(observed.tokenStats.totalCalls, 2);
+  assert.equal(observed.tokenStats.completedCalls, 1);
   const serialized =
     JSON.stringify(observed) +
     JSON.stringify(
@@ -2016,6 +1846,7 @@ test('agent observations retain tool timings and estimates across assignments wi
     );
   for (const secret of [
     token,
+    secondToken,
     'sensitive-result-never-retained',
     'secret-in-error',
     'frozen-artifact',
@@ -2023,83 +1854,33 @@ test('agent observations retain tool timings and estimates across assignments wi
     assert.equal(serialized.includes(secret), false);
 });
 
-test('owner rotation keeps a continuing agent across idle and active assignments', async (t) => {
-  const f = await fixture(t);
-  const firstToken = secret();
-  const agent = await f.sessions.registerAgent(f.source, {
-    name: 'Rotating agent',
-    runnerId: 'external',
-    requestId: 'rotate',
-    secret: firstToken,
-  });
-  const first = await f.sessions.rotateAgent(f.source, agent.id);
-  assert.equal(first.agent.id, agent.id);
-  assert.match(first.token, /^ms_[A-Za-z0-9_-]{43}$/);
-  await assert.rejects(f.sessions.agentSelf(firstToken), { code: 'unauthorized' });
-  assert.equal((await f.sessions.agentSelf(first.token)).agent.id, agent.id);
-  const assignment = await f.sessions.assignAgent(first.token, {
-    instanceId: (await f.instance()).id,
-    expectedRevision: 0,
-    requestId: 'after-idle-rotation',
-  });
-  const priorCaller = await f.sessions.authenticate(first.token);
-  assert.equal(priorCaller.session?.id, assignment.id);
-  const priorInvocation = await f.sessions.invocations.prepare(priorCaller, 'artifact.read', {
-    artifactId: 'frozen-artifact',
-  });
-  const second = await f.sessions.rotateAgent(f.source, agent.id);
-  assert.equal(second.agent.id, agent.id);
-  await assert.rejects(f.sessions.agentSelf(first.token), { code: 'unauthorized' });
-  await assert.rejects(
-    f.sessions.invocations.run(priorInvocation, () => 'must not run'),
-    {
-      code: 'unauthorized',
-    },
-  );
-  assert.equal((await f.sessions.authenticate(second.token)).session?.id, assignment.id);
-  await f.sessions.releaseAgentAssignment(second.token, assignment.id);
-  assert.equal((await f.sessions.agentSelf(second.token)).current, null);
-});
-
 test('a session credential hash that is not in the ledger never authenticates, even after a restart', async (t) => {
   const f = await fixture(t);
-  const agentToken = secret();
-  const agent = await f.sessions.registerAgent(f.source, {
-    name: 'Legacy agent',
-    runnerId: 'external',
-    requestId: 'legacy-agent',
-    secret: agentToken,
-  });
   const offered = await f.offer();
   // Records whose hash the ledger does not hold, as an image before Identity owned it wrote them.
   await f.state.transaction(async (tx) => {
     await tx.run('ALTER TABLE identity_credentials DISABLE TRIGGER identity_credentials_no_delete');
     await tx.run(
-      'DELETE FROM identity_credentials WHERE owner=? AND subject IN (?,?)',
+      'DELETE FROM identity_credentials WHERE owner=? AND subject=?',
       'sessions',
-      agent.id,
       offered.session.id,
     );
     await tx.run('ALTER TABLE identity_credentials ENABLE TRIGGER identity_credentials_no_delete');
   });
-  await assert.rejects(f.sessions.agentSelf(agentToken), { code: 'unauthorized' });
   await assert.rejects(f.sessions.authenticate(offered.token), { code: 'unauthorized' });
   await f.restart();
-  await assert.rejects(f.sessions.agentSelf(agentToken), { code: 'unauthorized' });
   await assert.rejects(f.sessions.authenticate(offered.token), { code: 'unauthorized' });
   assert.equal(
     await f.state.read((sql) =>
       sql.get(
-        'SELECT 1 FROM identity_credentials WHERE owner=? AND subject IN (?,?)',
+        'SELECT 1 FROM identity_credentials WHERE owner=? AND subject=?',
         'sessions',
-        agent.id,
         offered.session.id,
       ),
     ),
     undefined,
   );
-  // Their owners can still retire them.
-  await f.sessions.retireAgent(f.source, agent.id);
+  // Its owner can still release it.
   await f.sessions.release(f.source, { sessionId: offered.session.id, runnerId: 'runner' });
 });
 
@@ -2159,14 +1940,9 @@ test('agent table includes retired instances in join order and is not truncated 
   const ids: string[] = [];
   for (let index = 0; index < 202; index++) {
     f.advance(1000);
-    const agent = await f.sessions.registerAgent(f.source, {
-      name: `Agent ${index}`,
-      runnerId: 'external',
-      requestId: `join-${index}`,
-      secret: secret(),
-    });
-    ids.unshift(agent.id);
-    if (index === 201) await f.sessions.retireAgent(f.source, agent.id);
+    const agentId = (await f.offer()).session.agentId!;
+    ids.unshift(agentId);
+    if (index === 201) await f.sessions.retireAgent(f.source, agentId);
   }
   const agents = (await f.sessions.dispatch.projectStatus(f.owner)).agents!;
   assert.deepEqual(
@@ -2174,35 +1950,24 @@ test('agent table includes retired instances in join order and is not truncated 
     ids,
   );
   assert.equal(agents[0]!.status, 'retired');
-  assert.ok(agents.every((agent) => agent.createdAt && agent.runnerId === 'external'));
+  assert.ok(agents.every((agent) => agent.createdAt && agent.runnerId === 'runner'));
 });
 
-test('PostgreSQL preserves continuing agent identity, lease fencing and tool observations', async (t) => {
+test('PostgreSQL preserves lease fencing and tool observations', async (t) => {
   const f = await fixture(t);
-  const token = secret();
-  const agent = await f.sessions.registerAgent(f.source, {
-    name: 'PostgreSQL agent',
-    runnerId: 'external',
-    requestId: 'postgres-agent',
-    secret: token,
-  });
-  assert.deepEqual((await f.sessions.observations.read(f.owner, agent.id)).tokenStats, {
+  const { session: first, token } = await f.offer();
+  assert.deepEqual((await f.sessions.observations.read(f.owner, first.agentId!)).tokenStats, {
     totalCalls: 0,
     completedCalls: 0,
     inputTokens: 0,
     outputTokens: 0,
-  });
-  const first = await f.sessions.assignAgent(token, {
-    instanceId: (await f.instance()).id,
-    expectedRevision: 0,
-    requestId: 'first',
   });
   const worker = await f.sessions.authenticate(token);
   const prepared = await f.sessions.invocations.prepare(worker, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
   await f.sessions.invocations.run(prepared, () => ({ content: 'answer' }));
-  const observation = await f.sessions.observations.read(f.owner, agent.id);
+  const observation = await f.sessions.observations.read(f.owner, first.agentId!);
   assert.equal(observation.toolCalls[0]?.executionId, first.id);
   assert.equal(observation.toolCalls[0]?.status, 'succeeded');
   assert.equal(observation.tokenStats.totalCalls, 1);
@@ -2216,17 +1981,9 @@ test('PostgreSQL preserves continuing agent identity, lease fencing and tool obs
   });
   assert.ok(Object.values(observation.tokenStats).every(Number.isSafeInteger));
   assert.equal(typeof observation.toolCallTotal, 'number');
-  await f.sessions.releaseAgentAssignment(token, first.id);
-  const next = await f.sessions.assignAgent(token, {
-    instanceId: (await f.instance()).id,
-    expectedRevision: 0,
-    requestId: 'next',
-  });
-  assert.equal(next.actorId, first.actorId);
-  assert.equal(next.agentId, agent.id);
-  assert.notEqual(next.id, first.id);
+  await f.sessions.release(f.source, { sessionId: first.id, runnerId: 'runner' });
+  const next = await f.offer();
   await assert.rejects(f.scope.require(worker, 'read'), { code: 'session_closed' });
-  assert.equal((await f.sessions.agentSelf(token)).assignments.length, 2);
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).liveSessionCount, 1);
   await f.instance();
   await f.sessions.dispatch.heartbeatRunner(f.source, presenceInput);
@@ -2235,7 +1992,7 @@ test('PostgreSQL preserves continuing agent identity, lease fencing and tool obs
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).liveSessionCount, 2);
   await f.scope.credentials.revokeActor(f.owner, f.source.actorId);
   await f.sessions.sweep();
-  await assert.rejects(f.sessions.agentSelf(token), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.authenticate(next.token), { code: 'unauthorized' });
 });
 
 for (const boundary of ['offer expiry', 'hard deadline'] as const) {

@@ -3,6 +3,7 @@ import { currentTask, currentWork } from '../tests/fixtures/current-work.js';
 import { currentExperiment } from '../tests/fixtures/current-experiment.js';
 import { join } from 'node:path';
 import type { Caller } from '@merv/contracts';
+import type { Session } from '@merv/sessions/types';
 
 /**
  * What the Running page draws, seeded in the demo server's own process: work in every state a
@@ -144,16 +145,16 @@ export async function seedRunning(
     producer: Tool;
     producerCaller: Caller;
     reviewer: Tool;
-    joinAgent: (
-      name: string,
+    offerTo: (
+      record: { id: string; workflow: { revision: number } },
       requestId: string,
       runnerId?: string,
-    ) => Promise<{ agent: { id: string }; token: string }>;
+    ) => Promise<{ session: Session; token: string }>;
     sweep: DemoLease & { taskId: string };
   },
 ): Promise<{ machines: DemoMachine[]; leases: DemoLease[]; close(): Promise<void> }> {
   const { ctx } = app;
-  const { url, owner, token, joinAgent, sweep } = input;
+  const { url, owner, token, offerTo, sweep } = input;
   const p = input.producer;
   const r = input.reviewer;
   const work = currentWork(ctx, {
@@ -166,17 +167,12 @@ export async function seedRunning(
   const leases: DemoLease[] = [sweep];
   /** An agent on a machine, taking one record, with the tool route its lease credential opens. */
   const agent = async (
-    name: string,
     requestId: string,
     machine: DemoMachine,
     record: { id: string; workflow: { revision: number } },
   ) => {
-    const joined = await joinAgent(name, requestId, machine.runnerId);
-    const session = await ctx.sessions.assignAgent(joined.token, {
-      instanceId: record.id,
-      expectedRevision: record.workflow.revision,
-      requestId: `${requestId}-assignment`,
-    });
+    const joined = await offerTo(record, `${requestId}-assignment`, machine.runnerId);
+    const { session } = joined;
     await work.attach(session);
     const reads: Read[] = [['workflow.assignment', { instanceId: record.id }]];
     const lease = {
@@ -249,7 +245,7 @@ export async function seedRunning(
     {},
     ['Commuted pairs count as the same equation: a + b and b + a must land in one split.'],
   );
-  const cleaner = await agent('Demo · data cleaner', 'demo-running-cleaner', lab, clean);
+  const cleaner = await agent('demo-running-cleaner', lab, clean);
   const audit = await cleaner.call('artifact.create', {
     title: 'Leak audit: held-out split',
     content: [
@@ -295,7 +291,7 @@ export async function seedRunning(
     ],
     'demo-running-harness-delivery',
   );
-  const reviewing = await agent('Demo · harness reviewer', 'demo-running-reviewer', studio, {
+  const reviewing = await agent('demo-running-reviewer', studio, {
     id: harness.id,
     workflow: delivered.workflow,
   });
@@ -414,7 +410,7 @@ export async function seedRunning(
     requestId: 'demo-running-design-verdict',
   });
   const running = await p('experiment.get_state', { experimentId: experiment.id });
-  const runner = await agent('Demo · p113 runner', 'demo-running-p113', lab, running);
+  const runner = await agent('demo-running-p113', lab, running);
   await runner.call('experiment.get_state', { experimentId: experiment.id });
   await runner.call('artifact.read', { artifactId: plan.id });
   const log = await runner.call('artifact.create', {
@@ -440,7 +436,7 @@ export async function seedRunning(
     requestId: 'demo-running-reflection',
   });
   const [lens] = wave.lenses;
-  const reflecting = await agent('Demo · methods lens', 'demo-running-lens', studio, lens);
+  const reflecting = await agent('demo-running-lens', studio, lens);
   await reflecting.call('reflection.lens', { lensId: lens.id });
   await reflecting.call('project.records');
   reflecting.reads.push(['reflection.lens', { lensId: lens.id }], ['project.records', {}]);

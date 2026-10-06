@@ -52,7 +52,7 @@ export class SessionConversations {
       runnerId: string,
       tx: Transaction,
     ) => Promise<Session>,
-    /** Retires a dormant agent; one in use or persistent is left as it is. */
+    /** Retires a dormant agent; one in use is left as it is. */
     private retire: (agentId: string, reason: string, tx: Transaction) => Promise<void>,
     /** Refuses once Sessions has closed. */
     private available: () => void,

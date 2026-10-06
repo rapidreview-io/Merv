@@ -193,17 +193,12 @@ test('a lens with an agent makes the wave solid and its row the way to that sess
   const f = await fixture(t);
   const wave = await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' });
   const [first, ...rest] = wave.lenses;
-  const secret = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: 'Lens agent',
-    runnerId: 'external',
-    requestId: 'agent',
-    secret,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const execution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: first!.id,
     expectedRevision: 0,
+    runnerId: 'external',
     requestId: 'assign-lens',
+    secret: token(),
   });
   const held = ['Lenses ', { count: 0, of: 5 }, ' · ', '1 with an agent'];
   const node = drawn(await f.board(f.owner), wave)!;
@@ -241,7 +236,7 @@ test('a lens with an agent makes the wave solid and its row the way to that sess
   assert.ok(table.rows.some(({ cells }) => cells[0]![0] === 'next steps'));
 
   // A lease let go leaves the revision where it was, so the lens has waited since then.
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
+  await f.app.ctx.sessions.release(f.owner, { sessionId: execution.id, runnerId: 'external' });
   const [{ released_at: released }] = await f.app.ctx.state.transaction(
     async (tx) =>
       await tx.all<{ released_at: string }>(
@@ -414,18 +409,14 @@ test('a review leased to an agent says so rather than naming the agent, and lett
     await f.app.ctx.reflections.create(f.owner, { title: 'Wave', requestId: 'wave' }),
   );
   wave = await f.synthesize(wave, await f.text(f.owner, 'Changes'));
-  const secret = token();
   // The owner wrote the synthesis, so the review worker is directed by someone else.
-  await f.app.ctx.sessions.registerAgent(await f.actor('Lead', 'operator'), {
-    name: 'Review agent',
-    runnerId: 'external',
-    requestId: 'review-agent',
-    secret,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const lead = await f.actor('Lead', 'operator');
+  const execution = await f.app.ctx.sessions.offer(lead, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,
+    runnerId: 'external',
     requestId: 'review',
+    secret: token(),
   });
   assert.equal(execution.role, 'reviewer');
   // The lease started the review, so its reviewer is the agent.
@@ -439,7 +430,7 @@ test('a review leased to an agent says so rather than naming the agent, and lett
   let sidebar = await f.panel(f.owner, keyOf(wave.id));
   assert.deepEqual([sidebar.header.says, sidebar.live], [['Review · with an agent'], true]);
 
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
+  await f.app.ctx.sessions.release(lead, { sessionId: execution.id, runnerId: 'external' });
   await f.app.ctx.domainEvents.drain();
   const [{ released_at: released }] = await f.app.ctx.state.transaction(
     async (tx) =>

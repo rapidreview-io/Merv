@@ -71,8 +71,8 @@ the exact image ID, and the successful final JSON alongside the release evidence
 
 The check exercises all default plugins, compiled UI assets, actual MCP artifact and
 managed Git creation and leased delivery without GitHub, an independent leased review,
-fencing of a completed worker, one continuing agent across two real Git assignments,
-six tool-call observations with numeric token estimates, a
+fencing of a completed worker, a second real Git assignment offered to a fresh agent,
+that agent's two tool-call observations with numeric token estimates, a
 signed private file download, research advancing into a five-lens reflection wave,
 and persistence after a full application stop/restart. The managed admission task, second task and reflection
 wave intentionally remain unfinished in the isolated smoke project. Token counts are

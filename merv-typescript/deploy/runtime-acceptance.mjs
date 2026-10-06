@@ -6,7 +6,6 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -24,7 +23,7 @@ function checkpoint(value) {
   console.log(JSON.stringify({ acceptance: 'running', stage }));
 }
 
-/** Reuses the established task, agent-assignment, and research test scenarios. */
+/** Reuses the established task, leased-work, and research test scenarios. */
 export async function exerciseRuntime(start) {
   let app, work;
   const workDirectory = await mkdtemp(join(tmpdir(), 'merv-runtime-work-'));
@@ -126,22 +125,7 @@ export async function exerciseRuntime(start) {
     );
 
     work = currentWork(app.ctx, { directory: workDirectory, source: owner });
-    const held = new Map();
-    await app.ctx.sessions.dispatch.heartbeatRunner(owner, {
-      runnerId: 'external',
-      machine: { hostname: 'acceptance', system: process.platform, architecture: process.arch },
-      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
-      capacity: 1,
-      capabilities: ['code.v2'],
-    });
-    const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    const { agent } = await http('/sessions/agents', boot.token, {
-      name: 'Smoke continuing agent',
-      runnerId: 'external',
-      requestId: 'register',
-      secret,
-    });
-    // The continuing agent uses actual managed Git for every assignment.
+    // Each lease is offered to a fresh agent and uses actual managed Git.
     const createTask = (requestId) =>
       currentTask(app.ctx, owner, {
         title: `Synthetic ${requestId}`,
@@ -149,28 +133,11 @@ export async function exerciseRuntime(start) {
         checks: ['Two plus three equals five.'],
         requestId,
       });
-    const assign = async (task, requestId) => {
-      const result = await http('/sessions/self/assignment', secret, {
-        instanceId: task.id,
-        expectedRevision: task.workflow.revision,
-        requestId,
-      });
-      const lease = await work.attach(await app.ctx.sessions.get(owner, result.execution.id));
-      lease.worker = await app.ctx.sessions.authenticate(secret);
-      held.set(result.execution.id, lease);
-      return result;
-    };
-    const release = async (execution) => {
-      await http('/sessions/self/release', secret, { executionId: execution.id });
-      await work.release(held.get(execution.id));
-      held.delete(execution.id);
-    };
 
     checkpoint('task-delivery');
     const first = await createTask('first-task');
-    const { execution: firstExecution } = await assign(first, 'first-assignment');
-    const worker = await connect(secret);
-    const callerA = await app.ctx.sessions.authenticate(secret);
+    const firstLease = await work.lease(first);
+    const worker = await connect(firstLease.token);
     const artifact = await call(worker, 'artifact.create', {
       title: 'Synthetic arithmetic evidence',
       content: 'Observed 2 + 3 = 5.',
@@ -179,7 +146,7 @@ export async function exerciseRuntime(start) {
       (await call(worker, 'artifact.read', { artifactId: artifact.id })).content,
       'Observed 2 + 3 = 5.',
     );
-    const commandId = await work.commit(held.get(firstExecution.id));
+    const commandId = await work.commit(firstLease);
     const pending = await call(worker, 'task.submit_delivery', {
       commandId,
       taskId: first.id,
@@ -196,45 +163,38 @@ export async function exerciseRuntime(start) {
       requestId: 'deliver-first',
     });
     assert.equal(pending.workflow.state, 'in_review');
-    await release(firstExecution);
+    await work.release(firstLease);
 
-    checkpoint('agent-continuity');
+    checkpoint('agent-observation');
     const second = await createTask('second-task');
-    const { execution: secondExecution } = await assign(second, 'second-assignment');
-    const callerB = await app.ctx.sessions.authenticate(secret);
-    assert.equal(
-      callerA.actorId,
-      callerB.actorId,
-      'Agent identity must survive assignment changes',
-    );
-    assert.equal(callerB.actorId, agent.actorId);
-    assert.equal(firstExecution.agentId, secondExecution.agentId);
-    assert.notEqual(firstExecution.id, secondExecution.id);
-    const secondArtifact = await call(worker, 'artifact.create', {
+    const secondLease = await work.lease(second);
+    const secondExecution = secondLease.session;
+    assert.notEqual(firstLease.session.id, secondExecution.id);
+    const secondWorker = await connect(secondLease.token);
+    const secondArtifact = await call(secondWorker, 'artifact.create', {
       title: 'Second assignment output',
       content: 'Synthetic second assignment observation.',
     });
-    await call(worker, 'artifact.read', { artifactId: secondArtifact.id });
-    const live = await http(`/sessions/agents/${agent.id}/observation`, boot.token);
+    await call(secondWorker, 'artifact.read', { artifactId: secondArtifact.id });
+    const agentId = secondExecution.agentId;
+    const live = await http(`/sessions/agents/${agentId}/observation`, boot.token);
     assert.equal(
       live.assignments.find((entry) => entry.id === secondExecution.id)?.instanceId,
       second.id,
     );
     assert.equal(live.agent.currentExecutionId, secondExecution.id);
-    await release(secondExecution);
-    assert.equal((await http('/sessions/self', secret)).current, null);
-    const observation = await http(`/sessions/agents/${agent.id}/observation`, boot.token);
-    assert.equal(observation.assignments.length, 2);
-    assert.equal(observation.tokenStats.totalCalls, 6);
-    assert.equal(observation.tokenStats.completedCalls, 6);
+    await work.release(secondLease);
+    const observation = await http(`/sessions/agents/${agentId}/observation`, boot.token);
+    assert.equal(observation.assignments.length, 1);
+    assert.equal(observation.tokenStats.totalCalls, 2);
+    assert.equal(observation.tokenStats.completedCalls, 2);
     assert.ok(Object.values(observation.tokenStats).every(Number.isSafeInteger));
     assert.ok(observation.tokenStats.inputTokens > 0 && observation.tokenStats.outputTokens > 0);
     assert.equal(observation.tokenAccounting.kind, 'estimate');
     assert.ok(observation.toolCalls.every((entry) => entry.status === 'succeeded'));
-    assert.equal(new Set(observation.toolCalls.map((entry) => entry.executionId)).size, 2);
     assert.ok(
-      !JSON.stringify(observation).includes(secret),
-      'Observation must not expose agent credentials',
+      !JSON.stringify(observation).includes(secondLease.token),
+      'Observation must not expose session credentials',
     );
 
     checkpoint('independent-review');
@@ -365,10 +325,9 @@ export async function exerciseRuntime(start) {
       (await call(restarted, 'artifact.read', { artifactId: artifact.id })).content,
       'Observed 2 + 3 = 5.',
     );
-    assert.equal((await http('/sessions/self', secret)).agent.id, agent.id);
-    const retained = await http(`/sessions/agents/${agent.id}/observation`, boot.token);
+    const retained = await http(`/sessions/agents/${agentId}/observation`, boot.token);
     assert.deepEqual(retained.tokenStats, observation.tokenStats);
-    assert.equal(retained.assignments.length, 2);
+    assert.equal(retained.assignments.length, 1);
     assert.equal((await app.ctx.research.get(owner, research.id)).reflectionId, reflection.id);
     assert.equal((await app.ctx.reflections.get(owner, reflection.id)).lenses.length, 5);
     const dispatch = (await app.ctx.sessions.dispatch.projectStatus(owner)).dispatch;
@@ -378,8 +337,7 @@ export async function exerciseRuntime(start) {
       pluginCount,
       taskState: 'done',
       closedWorkerReplay: 'fenced',
-      agentId: agent.id,
-      assignments: 2,
+      agentId,
       toolCalls: retained.tokenStats.totalCalls,
       tokenAccounting: 'payload estimates, not model billing',
       tokenStats: retained.tokenStats,

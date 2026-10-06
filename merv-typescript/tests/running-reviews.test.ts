@@ -542,17 +542,13 @@ test('an agent that took the review with its lease reads as an agent, and the si
     capacity: 4,
     capabilities: ['code.v2'],
   });
-  const agent = await f.app.ctx.sessions.registerAgent(f.operator, {
-    name: 'Reviewing agent',
-    runnerId: 'external',
-    requestId: 'register',
-    secret: token,
-  });
   const delivered = await f.deliver(await f.task());
-  const lease = await f.app.ctx.sessions.assignAgent(token, {
+  const lease = await f.app.ctx.sessions.offer(f.operator, {
     instanceId: delivered.id,
     expectedRevision: delivered.workflow.revision,
+    runnerId: 'external',
     requestId: 'review-lease',
+    secret: token,
   });
   assert.equal(lease.role, 'reviewer');
   const claim = (await f.app.ctx.state.events(f.operator.projectId)).find(
@@ -561,7 +557,7 @@ test('an agent that took the review with its lease reads as an agent, and the si
   assert.ok(claim);
   const standing = facts((await f.sections(f.operator, delivered.id))[0]);
   assert.deepEqual(standing.Standing, [
-    { actor: agent.actorId, prefix: 'With ', unnamed: 'With an agent' },
+    { actor: lease.actorId, prefix: 'With ', unnamed: 'With an agent' },
   ]);
   assert.deepEqual(standing['Claimed for'], [{ since: claim.createdAt }]);
 

@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Run inside Main's container after a release. Only a synthetic project and agent are created.
+// Run inside Main's container after a release. Only a synthetic project and its actors are
+// created; every one is revoked before the canary returns.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { PostgresState } from '@merv/state';
 import { ProjectScope } from '@merv/scope';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 
-const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 const nonce = () => randomBytes(8).toString('hex');
 
 export async function runCanary({ state, scope, origin }) {
   const credentials = new CredentialStore(state);
-  let boot, source, helper, agentId;
+  let boot, source, helper, agentActorId;
   let retired = false;
   const request = async (path, token, method = 'GET', body, projectId = source?.projectId) => {
     const response = await fetch(`${origin}${path}`, {
@@ -27,11 +27,13 @@ export async function runCanary({ state, scope, origin }) {
     const value = await response.json().catch(() => ({}));
     return { status: response.status, value };
   };
-  const expect = async (path, token, method, body, status) => {
-    const response = await request(path, token, method, body);
-    assert.equal(response.status, status, `${method} ${path}: HTTP ${response.status}`);
-    return response.value;
+  /** One tool call over HTTP, as Merv's own pages make it. */
+  const tool = async (name, token, input, status, projectId) => {
+    const response = await request(`/tools/${name}`, token, 'POST', input, projectId);
+    assert.equal(response.status, status, `${name}: HTTP ${response.status}`);
+    return response.value.result;
   };
+  const whoami = (token, status, projectId) => tool('actor.whoami', token, {}, status, projectId);
   try {
     const label = nonce();
     boot = await scope.credentials.bootstrap({
@@ -62,45 +64,31 @@ export async function runCanary({ state, scope, origin }) {
       role: 'operator',
       expiresAt: deadline,
     });
-    const outsider = await request(
-      '/sessions/agents',
+    // Registration: the source creates an agent's actor and its first project-bound credential.
+    const registered = await tool(
+      'actor.create',
       source.token,
-      'GET',
-      undefined,
-      'project_identity_canary_other',
-    );
-    assert.equal(outsider.status, 403, `Wrong-project agent list: HTTP ${outsider.status}`);
-    const original = secret();
-    const registered = await expect(
-      '/sessions/agents',
-      source.token,
-      'POST',
-      {
-        name: 'Identity canary agent',
-        runnerId: 'external',
-        requestId: label,
-        secret: original,
-      },
+      { name: 'Identity canary agent', role: 'reader' },
       200,
     );
-    agentId = registered.agent.id;
-    const self = await expect('/sessions/self', original, 'GET', undefined, 200);
-    assert.equal(self.agent.id, agentId);
-    const rotated = await expect(
-      `/sessions/agents/${agentId}/rotate`,
+    agentActorId = registered.actor.id;
+    const original = registered.token;
+    assert.equal((await whoami(original, 200)).id, agentActorId);
+    // The credential is bound to its project: naming another is refused.
+    await whoami(original, 403, 'project_identity_canary_other');
+    const rotated = await tool(
+      'actor.rotate_token',
       source.token,
-      'POST',
-      {},
+      { credentialId: registered.credential.id },
       200,
     );
-    assert.equal(rotated.agent.id, agentId);
+    assert.equal(rotated.actor.id, agentActorId);
     assert.notEqual(rotated.token, original);
-    await expect('/sessions/self', original, 'GET', undefined, 401);
-    const next = await expect('/sessions/self', rotated.token, 'GET', undefined, 200);
-    assert.equal(next.agent.id, agentId);
-    await expect(`/sessions/agents/${agentId}`, source.token, 'DELETE', undefined, 200);
+    await whoami(original, 401);
+    assert.equal((await whoami(rotated.token, 200)).id, agentActorId);
+    await tool('actor.revoke', source.token, { actorId: agentActorId }, 200);
     retired = true;
-    await expect('/sessions/self', rotated.token, 'GET', undefined, 401);
+    await whoami(rotated.token, 401);
     const migration = await state.read((sql) =>
       sql.get(
         'SELECT hash FROM component_migrations WHERE component=? AND version=?',
@@ -112,7 +100,7 @@ export async function runCanary({ state, scope, origin }) {
     return {
       result: 'pass',
       projectId: source.projectId,
-      agentId,
+      actorId: agentActorId,
       registration: 200,
       wrongProject: 403,
       oldAfterRotation: 401,
@@ -121,15 +109,17 @@ export async function runCanary({ state, scope, origin }) {
       identityMigrationHash: migration.hash,
     };
   } finally {
-    // Retire before revoking its source. No assignment or machine is ever requested.
+    // Retire the agent's actor before revoking its source.
     let cleanupError;
-    if (agentId && !retired && source) {
+    if (agentActorId && !retired && source) {
       try {
-        const response = await request(`/sessions/agents/${agentId}`, source.token, 'DELETE');
+        const response = await request('/tools/actor.revoke', source.token, 'POST', {
+          actorId: agentActorId,
+        });
         if (response.status !== 200)
-          cleanupError = new Error(`Canary agent cleanup failed: HTTP ${response.status}`);
+          cleanupError = new Error(`Canary actor cleanup failed: HTTP ${response.status}`);
       } catch {
-        cleanupError = new Error('Canary agent cleanup failed');
+        cleanupError = new Error('Canary actor cleanup failed');
       }
     }
     try {
@@ -147,7 +137,7 @@ export async function runCanary({ state, scope, origin }) {
       if (boot) await credentials.revoke(tokenDigest(boot.token), 'scope');
       if (helper) await credentials.revoke(tokenDigest(helper.token), 'scope');
       if (source) {
-        const denied = await request('/sessions/agents', source.token);
+        const denied = await request('/tools/actor.whoami', source.token, 'POST', {});
         if (denied.status !== 401)
           cleanupError ??= new Error(`Canary source remained usable: HTTP ${denied.status}`);
       }

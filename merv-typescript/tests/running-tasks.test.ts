@@ -1,7 +1,6 @@
 import type { Task, TaskCreate } from '@merv/tasks/types';
 import { currentTask, currentWork } from './fixtures/current-work.js';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -156,28 +155,6 @@ async function fixture(t: TestContext) {
       reason: 'The source archive is gone.',
       requestId: `fail-${++sequence}`,
     });
-  /** A new agent of the operator's takes the task's current step on a lease. */
-  const lease = async (task: { id: string }, name: string) => {
-    const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    await app.ctx.sessions.dispatch.heartbeatRunner(operator, {
-      runnerId: `external-${sequence + 1}`,
-      machine: { hostname: 'running-test', system: 'darwin', architecture: 'arm64' },
-      platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
-      capacity: 1,
-      capabilities: ['code.v2'],
-    });
-    await app.ctx.sessions.registerAgent(operator, {
-      name,
-      runnerId: `external-${++sequence}`,
-      requestId: `agent-${sequence}`,
-      secret,
-    });
-    return await app.ctx.sessions.assignAgent(secret, {
-      instanceId: task.id,
-      expectedRevision: (await current(task)).workflow.revision,
-      requestId: `assign-${sequence}`,
-    });
-  };
   return {
     app,
     boot,
@@ -193,7 +170,6 @@ async function fixture(t: TestContext) {
     deliver,
     verdict,
     markFailed,
-    lease,
     work,
   };
 }

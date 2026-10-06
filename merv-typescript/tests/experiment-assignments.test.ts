@@ -1386,56 +1386,6 @@ test('historical observations stay project-scoped and pure after source revocati
   );
 });
 
-test('a continuing agent can acquire successive experiment leases without inheriting unpinned outputs', async (t) => {
-  const f = await fixture(t),
-    token = `ms_${randomBytes(32).toString('base64url')}`;
-  const agent = await f.sessions.registerAgent(f.source, {
-    name: 'Continuing researcher',
-    runnerId: 'external',
-    requestId: f.request(),
-    secret: token,
-  });
-  const first = await f.create(),
-    second = await f.create();
-  const a = await f.sessions.assignAgent(token, {
-    instanceId: first.id,
-    expectedRevision: 0,
-    requestId: f.request(),
-  });
-  const callerA = await f.sessions.authenticate(token);
-  const artifact = await f.run(
-    callerA,
-    'artifact.create',
-    { title: 'Private draft', content: plan },
-    async (worker) => await f.artifacts.create(worker, { title: 'Private draft', content: plan }),
-  );
-  await f.sessions.releaseAgentAssignment(token, a.id);
-  const b = await f.sessions.assignAgent(token, {
-    instanceId: second.id,
-    expectedRevision: 0,
-    requestId: f.request(),
-  });
-  const callerB = await f.sessions.authenticate(token);
-  assert.equal(b.actorId, agent.actorId);
-  assert.equal(a.agentSessionId, b.agentSessionId);
-  await assert.rejects(
-    async () =>
-      await f.sessions.invocations.prepare(callerB, 'artifact.read', { artifactId: artifact.id }),
-  );
-  assert.equal(
-    (
-      await f.state.read(
-        async (sql) =>
-          await sql.get<{ n: number }>(
-            'SELECT COUNT(*) AS n FROM experiment_leases WHERE actor_id=?',
-            agent.actorId,
-          ),
-      )
-    )?.n,
-    2,
-  );
-});
-
 test('an assigned reviewer updates the paper through its scoped verdict only', async (t) => {
   const f = await fixture(t);
   const pending = (await f.design()).experiment;

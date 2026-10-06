@@ -1,9 +1,9 @@
 # Sessions
 
-Continuing agent identity, authenticated sessions, and assignment execution lifecycle. The provider injects
+Agent identity, authenticated sessions, and assignment execution lifecycle. The provider injects
 `state`, `scope`, `workflows`, `domainEvents`, and registers its session tool policy with `tools` whenever a tool
 registry is loaded. It stores [transcripts](#transcripts) through `blobs` whenever Blobs is loaded, and is Secrets'
-authority for [Hugging Face access](#private-account-credential-delivery) whenever Secrets is loaded. Agent and
+authority for [Hugging Face access](#private-account-credential-delivery) whenever Secrets is loaded. Session and
 managed-runner credentials live in Identity's credential store (`@merv/identity/credentials`). What a runner
 advertises (`RUNNER_HARNESSES`, the platform and capability schemas, session statuses) is the pure-rules module
 `@merv/sessions/rules`, which the runner imports too. The registry refuses session callers while no policy is registered. A policy decision or
@@ -89,7 +89,7 @@ for delivery limits and the distinction between acknowledgment and incorporation
 
 Every close writes what the session cost to `session_usage`, and budgets only pause automatic dispatch; see [loop limits, usage and budgets](../../docs/BUDGETS_AND_LIMITS.md).
 
-See [continuing agents and explicit assignment changes](../../docs/AGENT_CONTINUITY.md) for registration, self-control routes, identity semantics and migration.
+Every agent is created by an offer; the continuing agents that registered and took assignments themselves were removed on 2026-10-06. See [agents and assignment executions](../../docs/AGENT_CONTINUITY.md) for identity semantics, what remains of their rows, and observations.
 
 Workflows owns the fixed policy and generic ownership hooks. Sessions freezes the
 assignment, stores only the secret digest, validates source authority, activates
@@ -113,7 +113,7 @@ The older `POST /sessions/:id/huggingface`, which returned the account token its
 
 ## Continuity
 
-When work comes back to a state it was in, the agent that held that state takes it up again with its own conversation, as a new session with a new lease and credential. Each offer with no named `agentId` gets `session.continuity.key`: the instance's workflow's registered provider's key (`conversations.register(workflow, provider)`, one per workflow; `null` means never), else `[instanceId, state, role]`. The role is part of every key, so a reviewer never continues a producer's conversation; a reviewer of a later round does continue the earlier reviewer's.
+When work comes back to a state it was in, the agent that held that state takes it up again with its own conversation, as a new session with a new lease and credential. Each offer gets `session.continuity.key`: the instance's workflow's registered provider's key (`conversations.register(workflow, provider)`, one per workflow; `null` means never), else `[instanceId, state, role]`. The role is part of every key, so a reviewer never continues a producer's conversation; a reviewer of a later round does continue the earlier reviewer's.
 
 - `session_conversations` holds one row per `(project_id, continuity_key)`: the key's latest closed session and its agent, and the conversation that session's runner declared (`harness`, `conversation_id`, `sha256`, `size`), `uploaded_at` once delivered. A close takes the row for its session; the agent the row named before is retired (`superseded`) when it is another. A close of the row's own agent that declared nothing (a lapsed offer, a failed launch, a lost machine) leaves the row's conversation in place and stamps `updated_at` with its close, so that session, and no earlier one, may still declare. A close released `preparation_deferred` with cause `resume_failed` (its harness found no conversation to resume) instead drops the row's conversation when it is the one that session resumed: the key's next offer goes to a fresh agent, on whatever machine, rather than failing to resume it again.
 - An offer whose key's row has a declared conversation (delivered or still on its way; a runner that cannot fetch it launches the same agent fresh), and whose agent is active, belongs to the same source and holds no live session, reuses that agent and its actor, from any runner, and carries `continuity.resume` (`sessionId`, `harness`, `conversationId`, `sha256`, `size`) in the frozen session. Fingerprints and replay are unchanged.

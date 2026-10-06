@@ -544,11 +544,14 @@ canary above and, from `merv-typescript`, run:
 ssh -o BatchMode=yes ResearchSuite_Control 'sudo timeout 12m docker exec -i -e MERV_IDENTITY_CANARY=1 -w /app merv-typescript-control-1 node --input-type=module -' < deploy/identity-auth-canary.mjs
 ```
 
-The reviewed script creates one isolated project,
-registers, rotates and retires one external agent, verifies wrong-project and
-revoked-token denials, and revokes every synthetic credential in Scope and
-Identity. It prints the applied `identity-credentials@1` migration hash for the
-published-migration receipt. The synthetic project and retired agent remain as
+The reviewed script creates one isolated project and,
+through `POST /tools`, creates one agent actor with `actor.create`, rotates its
+credential with `actor.rotate_token` and withdraws it with `actor.revoke`. It
+verifies the wrong-project (403), old-after-rotation (401), rotated (200) and
+retired (401) answers of `actor.whoami`, and revokes every synthetic credential in
+Scope and Identity. It prints one JSON line with `result: pass`, the agent's
+`actorId` and the applied `identity-credentials@1` migration hash for the
+published-migration receipt. The synthetic project and revoked actors remain as
 audit history; they have no usable credentials or running machine.
 
 Publish the reviewed main-server source before building an immutable release.

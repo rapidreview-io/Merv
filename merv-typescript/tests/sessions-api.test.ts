@@ -162,33 +162,31 @@ function errorCode(result: any): string {
   return JSON.parse(result.content[0].text).error.code;
 }
 
-test('only the source owner can rotate an agent key, and the old key stops working', async (t) => {
+test('an offer cannot name an agent, its agent is the source’s to read and retire, and the continuing-agent routes are gone', async (t) => {
   const f = await fixture(t);
-  const token = `ms_${randomBytes(32).toString('base64url')}`;
-  const registered = await f.http('/sessions/agents', f.boot.token, {
-    name: 'External client',
-    runnerId: 'external',
-    requestId: 'register',
-    secret: token,
+  const { session, secret, input } = await f.offer();
+  const named = await f.http('/sessions/offer', f.boot.token, {
+    ...input,
+    requestId: 'named',
+    agentId: session.agentId,
   });
-  assert.equal(registered.status, 200);
-  const agentId = registered.body.agent.id;
-  const route = `/sessions/agents/${agentId}/rotate`;
-  assert.equal((await f.http(route, token, {})).status, 403);
-  const outsider = await f.app.ctx.scope.credentials.bootstrap({
-    projectName: 'Other',
-    actorName: 'Other',
-  });
-  assert.equal((await f.http(route, outsider.token, {})).status, 404);
-  const rotated = await f.http(route, f.boot.token, {});
-  assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
-  assert.equal(rotated.body.agent.id, agentId);
-  assert.ok(rotated.body.expiresAt);
-  assert.notEqual(rotated.body.token, token);
-  assert.equal((await f.http('/sessions/self', token)).status, 401);
-  assert.equal((await f.http('/sessions/self', rotated.body.token)).status, 200);
+  assert.deepEqual([named.status, named.body.error.code], [400, 'invalid_session_offer']);
+  const agentRoute = `/sessions/agents/${session.agentId}`;
+  assert.equal((await f.http(agentRoute, f.boot.token)).body.assignments.length, 1);
+  assert.equal((await f.http(agentRoute, secret)).status, 403, 'A worker cannot administer agents');
+  const retired = await f.http(agentRoute, f.boot.token, undefined, undefined, 'DELETE');
+  assert.equal(retired.body.agent.status, 'retired');
+  for (const [path, body] of [
+    ['/sessions/agents', { name: 'Agent', runnerId: 'r', requestId: 'r', secret }],
+    [`${agentRoute}/rotate`, {}],
+    ['/sessions/self', undefined],
+    ['/sessions/self/assignment', {}],
+  ] as const)
+    assert.equal((await f.http(path, f.boot.token, body)).status, 404, path);
+  // An ms_ bearer, an old continuing agent's included, carries only POST /mcp.
+  const old = await f.http('/sessions/self', `ms_${randomBytes(32).toString('base64url')}`);
+  assert.deepEqual([old.status, old.body.error.code], [403, 'session_transport_forbidden']);
 });
-
 test('session messages reach the next tool boundary, fence writes, and retain a worker reply', async (t) => {
   const f = await fixture(t);
   let writes = 0;
@@ -908,74 +906,6 @@ test('leased mounted calls require source grants and keep upstream project argum
     2,
     'A released lease cannot dispatch an already connected call',
   );
-});
-
-test('an external agent explicitly changes assignments over HTTP and keeps its MCP identity and secret', async (t) => {
-  const f = await fixture(t);
-  f.app.ctx.tools.register({
-    name: 'checked.echo',
-    description: 'Identity probe',
-    inputSchema: z.object({ tenant: z.string() }).strict(),
-    handler: (caller) => ({
-      actorId: caller.actorId,
-      executionId: caller.session?.id,
-      agentSessionId: caller.session?.agentSessionId,
-    }),
-  });
-  const token = `ms_${randomBytes(32).toString('base64url')}`;
-  const registered = await f.http('/sessions/agents', f.boot.token, {
-    name: 'External agent',
-    runnerId: 'external',
-    requestId: 'register',
-    secret: token,
-  });
-  assert.equal(registered.status, 200, JSON.stringify(registered));
-  const agent = registered.body.agent;
-  assert.equal((await f.http('/sessions/self', token)).body.agent.id, agent.id);
-  assert.equal(
-    (await f.http('/sessions/agents', token)).status,
-    403,
-    'Agent connection cannot administer agents',
-  );
-  const assigned = await f.http('/sessions/self/assignment', token, {
-    instanceId: f.instance.id,
-    expectedRevision: 0,
-    requestId: 'one',
-  });
-  assert.equal(assigned.status, 200, JSON.stringify(assigned));
-  const client = await f.connect(token);
-  const call = () => client.callTool({ name: 'checked.echo', arguments: { tenant: 'fixed' } });
-  const first = JSON.parse(((await call()) as { content: { text: string }[] }).content[0].text);
-  assert.equal(first.actorId, agent.actorId);
-  const released = await f.http('/sessions/self/release', token, {
-    executionId: assigned.body.execution.id,
-  });
-  assert.equal(released.status, 200);
-  assert.equal((await f.http('/sessions/self', token)).body.current, null);
-  // Explicitly take another execution of the same still-open work, with fresh lease/context.
-  const again = await f.http('/sessions/self/assignment', token, {
-    instanceId: f.instance.id,
-    expectedRevision: 0,
-    requestId: 'two',
-  });
-  assert.equal(again.status, 200, JSON.stringify(again));
-  const second = JSON.parse(((await call()) as { content: { text: string }[] }).content[0].text);
-  assert.equal(second.actorId, first.actorId);
-  assert.equal(second.agentSessionId, first.agentSessionId);
-  assert.notEqual(second.executionId, first.executionId);
-  assert.equal(
-    (await f.http(`/sessions/agents/${agent.id}`, f.boot.token)).body.assignments.length,
-    2,
-  );
-  assert.equal(
-    (await f.http(`/sessions/agents/${agent.id}`, f.boot.token, undefined, undefined, 'DELETE'))
-      .status,
-    200,
-  );
-  assert.equal((await f.http('/sessions/self', token)).status, 401);
-  assert.equal((await f.http('/sessions/self/release', token, { executionId: 'x' })).status, 401);
-  assert.equal((await f.http('/sessions/self/nope', token, {})).status, 404);
-  assert.ok(!JSON.stringify([registered, assigned, again]).includes(token));
 });
 
 test('project observers see real MCP call metadata and failures, without worker capabilities or payloads', async (t) => {
