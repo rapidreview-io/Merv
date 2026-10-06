@@ -4,6 +4,7 @@ import type {
   SessionWorkspace,
   WorkflowDispatchCandidate,
 } from '@merv/contracts/types';
+import type { RunningPhrase } from '@merv/contracts/running';
 
 export interface SessionWorkspaceRecord {
   attachment: SessionWorkspace;
@@ -13,6 +14,16 @@ export interface SessionWorkspaceRecord {
 export type SessionRole = 'producer' | 'reviewer' | 'reader';
 
 export type SessionStatus = 'offered' | 'active' | 'released' | 'expired';
+
+/**
+ * A lease's behaviour as the read that sent it saw it (`leaseLiveness` in rules.ts): its
+ * verdict, the only word that takes colour, and the rest of the line, which stays quiet.
+ */
+export interface LeaseLiveness {
+  verdict: SessionStatus | 'lapsed';
+  tone: 'ok' | 'warn' | 'bad' | 'dim';
+  rest: RunningPhrase;
+}
 
 export type SessionOutcome =
   | 'released'
@@ -200,6 +211,7 @@ export interface SessionSummary {
   closedAt: string | null;
   closeReason: string | null;
   outcome?: SessionOutcome | null;
+  liveness: LeaseLiveness;
   /** An active session's activation or latest tool call, whichever is later; null otherwise. */
   lastActivityAt: string | null;
   /** When an active session's idle clock passed `idleNoticeSeconds`; null while it moves. */
@@ -250,6 +262,7 @@ export interface AgentObservation {
     closedAt: string | null;
     closeReason: string | null;
     outcome?: SessionOutcome | null;
+    liveness: LeaseLiveness;
     workflow: { name: string; state: string };
     revision: number;
     tools: string[];

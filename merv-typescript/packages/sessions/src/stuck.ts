@@ -18,6 +18,7 @@ import type {
 import { publicBudget } from './usage.js';
 import { lastActivity } from './observations.js';
 import { isoNow, targetKey, workNameOf } from './common.js';
+import { leaseLiveness } from './rules.js';
 import type { DispatchContext, HoldRow, SessionDispatch, SessionRow } from './dispatch.js';
 import { freshForMs, rented, type RunnerRow } from './runners.js';
 
@@ -518,6 +519,7 @@ export async function projectStatus(
   return await ctx.state.transaction(async (tx) => {
     const actor = await ctx.ordinary(caller, 'read', tx);
     const activity = await ctx.observations.activity(tx, caller.projectId);
+    const now = ctx.clock();
     const sessions: SessionSummary[] = (
       await tx.all<
         SessionRow & {
@@ -548,7 +550,7 @@ export async function projectStatus(
       const quietAt = lastActivityAt
         ? Date.parse(lastActivityAt) + ctx.thresholds.idleNoticeSeconds * 1000
         : Infinity;
-      const quietSince = quietAt <= ctx.clock() ? new Date(quietAt).toISOString() : null;
+      const quietSince = quietAt <= now ? new Date(quietAt).toISOString() : null;
       return {
         id: session.id,
         agentId: session.agentId,
@@ -570,6 +572,7 @@ export async function projectStatus(
         closedAt: session.closedAt,
         closeReason: session.closeReason,
         outcome: session.outcome ?? null,
+        liveness: leaseLiveness(session, now),
         lastActivityAt,
         quietSince,
         workspaceMode: row.workspace_mode ?? 'none',

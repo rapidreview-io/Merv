@@ -22,18 +22,11 @@ import { ArrowRightIcon } from '../icons';
 import { ListPage, Segments, useListFilter } from '../list-filters';
 import { homeOf, rowOf } from '../navigation';
 import { ThreeStates } from '../states';
-import {
-  clock,
-  decisionLiveness,
-  holding,
-  leaseLiveness,
-  runnerLiveness,
-  type Clock,
-} from '../liveness';
+import { clock, decisionLiveness, runnerLiveness, type Clock } from '../liveness';
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
-import { AgentDetail, activity } from './agent-sessions-panel';
+import { AgentDetail, activity, holding, leaseLiveness } from './agent-sessions-panel';
 import { personName } from './people';
 import type {
   AgentSummary,
@@ -144,7 +137,7 @@ function LeaseRow({
   reload(): void;
 }) {
   const panelId = `lease-${session.id}`;
-  const held = holding(session, now);
+  const held = holding(session);
   const work = session.name;
   const halt = useHalt(
     `/sessions/${encodeURIComponent(session.id)}/halt`,
@@ -273,13 +266,13 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
     labels: (agent) => [agent.name, agent.currentAssignment?.label],
     ids: (agent) => [agent.id],
   });
-  const live = (status?.sessions ?? []).filter((session) => holding(session, now));
+  const live = (status?.sessions ?? []).filter((session) => holding(session));
   // A lease that ended more than a day ago is history, one control away rather than the page.
   const [older, showOlder] = useState(false);
   const leases = (status?.sessions ?? []).filter(
     (session) =>
       older ||
-      holding(session, now) ||
+      holding(session) ||
       now.at - Date.parse(session.closedAt ?? session.expiresAt) < 86_400_000,
   );
   // What an agent is on, named by its own record or, failing that, by the lease.

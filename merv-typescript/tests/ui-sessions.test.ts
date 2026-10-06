@@ -7,13 +7,16 @@ import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { click, jump, mount, requests, serve, settle, text, unmount } from './ui-render.js';
 import type { AgentSummary } from '@merv/sessions/types';
+import { leaseLiveness, type LeaseFacts } from '@merv/sessions/rules';
 
 const { createElement, useState } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { AgentsPage } = await import('../packages/ui/web/views/sessions.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
-const { AgentDetail } = await import('../packages/ui/web/views/agent-sessions-panel.js');
+const { AgentDetail, leaseLiveness: drawn } =
+  await import('../packages/ui/web/views/agent-sessions-panel.js');
+const { clock, clockOf } = await import('../packages/ui/web/liveness.js');
 
 // Every test opens a fresh account scope, including the shared tool-result cache.
 beforeEach(() => setToken('ui-sessions-fixture'));
@@ -50,7 +53,7 @@ const page = () =>
 function status(over: Record<string, unknown> = {}) {
   const now = Date.now();
   const at = (ms: number) => new Date(now + ms).toISOString();
-  return {
+  return worded({
     observedAt: at(0),
     canManage: true,
     liveSessionCount: 1,
@@ -114,9 +117,99 @@ function status(over: Record<string, unknown> = {}) {
     queue: [],
     queueTotal: 0,
     ...over,
-  };
+  });
 }
+/** Each lease worded as Sessions words it, at the moment the read was observed. */
+const worded = <T extends { observedAt: string; sessions: unknown }>(read: T): T => ({
+  ...read,
+  sessions: (read.sessions as LeaseFacts[]).map((lease) => ({
+    ...lease,
+    liveness: leaseLiveness(lease, Date.parse(read.observedAt)),
+  })),
+});
 const read = (over: Record<string, unknown> = {}) => ({ body: { result: status(over) } });
+
+const fixed = Date.parse('2026-09-16T12:00:00.000Z');
+const before = (seconds: number) => new Date(fixed - seconds * 1000).toISOString();
+/** A lease as Sessions words it at `read`, drawn by the page on its clock `on`. */
+const drawnAt = (
+  lease: Partial<LeaseFacts>,
+  on: number | ReturnType<typeof clock>,
+  read = clockOf(on).at,
+) =>
+  drawn(
+    {
+      liveness: leaseLiveness(
+        {
+          createdAt: before(3600),
+          activatedAt: null,
+          expiresAt: before(-3600),
+          ...lease,
+        } as LeaseFacts,
+        read,
+      ),
+    },
+    clockOf(on),
+  );
+
+test('a lease states its behaviour, worded by Sessions and only drawn by the page', () => {
+  const table: [Partial<LeaseFacts>, string][] = [
+    [{ status: 'offered', createdAt: before(120) }, 'offered · not taken up · 2m'],
+    [{ status: 'active', activatedAt: before(540), expiresAt: before(-3600) }, 'active · 9m'],
+    // Past its expiry and not yet swept: behaviour, not the lifecycle word.
+    [
+      { status: 'active', activatedAt: before(9000), expiresAt: before(240) },
+      'lapsed · lease ran out · 4m',
+    ],
+    // Its hard deadline ends it as surely as its expiry.
+    [
+      {
+        status: 'active',
+        activatedAt: before(9000),
+        expiresAt: before(-60),
+        hardDeadline: before(10),
+      },
+      'lapsed · lease ran out · 0s',
+    ],
+    [
+      { status: 'released', closedAt: before(720), outcome: 'halted' },
+      'released · halted · 12m ago',
+    ],
+    // An ending that says no more than the state word is not a second clause.
+    [{ status: 'released', closedAt: before(720), outcome: 'released' }, 'released · 12m ago'],
+    // The clock clause is dropped, not zeroed, when its stamp is missing.
+    [{ status: 'expired', expiresAt: before(10_800) }, 'expired'],
+  ];
+  for (const [lease, phrase] of table)
+    assert.equal(drawnAt(lease, fixed).phrase, phrase, JSON.stringify(lease));
+  const tone = (lease: Partial<LeaseFacts>) => drawnAt(lease, fixed).tone;
+  assert.equal(tone({ status: 'active', activatedAt: before(540), expiresAt: before(-60) }), 'ok');
+  assert.equal(tone({ status: 'active', expiresAt: before(60) }), 'bad');
+  assert.equal(tone({ status: 'released', closedAt: before(60) }), 'dim');
+  assert.equal(tone({ status: 'offered', createdAt: before(60) }), 'warn');
+});
+
+test('a verdict is the read’s, and its clock cannot outrun the payload it was drawn from', () => {
+  const observedAt = new Date(fixed - 240_000).toISOString();
+  // The page has been open four minutes on a payload that is four minutes old.
+  const stale = clock(observedAt, observedAt, fixed, 8_000);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.since, 240_000);
+  // Anchored to the server's own clock, so a browser 10 minutes fast changes nothing.
+  assert.equal(clock(observedAt, observedAt, fixed + 600_000, 8_000).at - fixed, 600_000);
+  // A lease that had 60s left when the payload was read is still active: no
+  // heartbeat since then has been seen, and absence of news is not an expiry. Its
+  // clock stops at the moment of that read.
+  const lease: Partial<LeaseFacts> = {
+    status: 'active',
+    activatedAt: new Date(fixed - 900_000).toISOString(),
+    expiresAt: new Date(fixed - 180_000).toISOString(),
+  };
+  assert.equal(drawnAt(lease, stale, fixed - 240_000).phrase, 'active · 11m');
+  // The same lease read by a payload young enough to have seen the window close.
+  const fresh = clock(new Date(fixed).toISOString(), new Date(fixed).toISOString(), fixed, 8_000);
+  assert.equal(drawnAt(lease, fresh).phrase, 'lapsed · lease ran out · 3m');
+});
 
 test('the page states its subject without a click, in one liveness vocabulary', async (t) => {
   t.after(unmount);
@@ -396,11 +489,9 @@ test('a clock that jumps cannot lapse a lease the read never saw', async (t) => 
 
 test('a read that itself saw the window close says lapsed, and offers no halt', async (t) => {
   t.after(unmount);
-  const lapsed = status();
   // The payload was measured after this lease's expiry: the server saw it close.
-  (lapsed.sessions[0] as Record<string, unknown>).expiresAt = new Date(
-    Date.now() - 5_000,
-  ).toISOString();
+  const expiresAt = new Date(Date.now() - 5_000).toISOString();
+  const lapsed = status({ sessions: [{ ...status().sessions[0], expiresAt }] });
   serve('/tools/ui.read', () => ({ body: { result: lapsed } }));
   await mount(page());
   assert.ok(text().includes('lapsed'), text().slice(0, 400));

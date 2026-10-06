@@ -14,15 +14,30 @@ import {
 } from '../components';
 import { CloseIcon } from '../icons';
 import { Segments } from '../list-filters';
-import { clock, holding, leaseLiveness, type Clock } from '../liveness';
+import { clock, say, type Clock, type Liveness } from '../liveness';
 import { rowOf, useRows } from '../navigation';
-import type { AgentSummary, AgentObservation as Observation } from '@merv/sessions/models';
+import type {
+  AgentSummary,
+  LeaseLiveness,
+  AgentObservation as Observation,
+} from '@merv/sessions/models';
+import { valueText } from './running-phrase';
 
 /** The same lease, as the agent's own observation sends it. */
 type Assignment = Observation['assignments'][number];
 const count = (value: number) => value.toLocaleString();
 const duration = (ms: number | null) =>
   ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
+/** A lease's liveness as Sessions sent it, its clocks read on the page's own clock. */
+export const leaseLiveness = ({ liveness }: { liveness: LeaseLiveness }, now: Clock): Liveness =>
+  say(
+    liveness.verdict,
+    liveness.tone,
+    liveness.rest.map((value) => valueText(value, { now, nameOf: () => undefined })).join(''),
+  );
+/** Whether the lease is still held, as the verdict beside it says, so the two never disagree. */
+export const holding = ({ liveness }: { liveness: LeaseLiveness }) =>
+  liveness.verdict === 'offered' || liveness.verdict === 'active';
 export const activity = (agent: AgentSummary) =>
   agent.status === 'retired' ? 'retired' : agent.currentExecutionId ? 'assigned' : 'unassigned';
 
@@ -48,7 +63,7 @@ function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: C
             rows={[
               ['Joined', <Stamp at={assignment.createdAt} />],
               [
-                holding(assignment, now) ? 'Lease expires' : 'Lease ran to',
+                holding(assignment) ? 'Lease expires' : 'Lease ran to',
                 <Stamp at={assignment.expiresAt} />,
               ],
               !!assignment.closedAt && ['Closed', <Stamp at={assignment.closedAt} />],
