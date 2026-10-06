@@ -120,6 +120,14 @@ export class NativeConnections {
     return this.credentials.open<{ bearer: string }>(row.credentials, `connection:${row.id}`)
       .bearer;
   }
+  /** The project's open work moves to `connectionId`; each gets a new grant there when it runs. */
+  private async rebind(tx: Transaction, projectId: string, connectionId: string) {
+    await tx.run(
+      'UPDATE sandbox_native_work SET connection_id=?,native_grant_id=NULL,namespace=NULL,evidence_checked_at=NULL,last_error=NULL WHERE project_id=? AND closed_at IS NULL',
+      connectionId,
+      projectId,
+    );
+  }
   async status(caller: Caller): Promise<NativeConnectionStatus> {
     const status = await this.state.snapshot(() =>
       this.state.transaction(async (tx) => {
@@ -225,14 +233,17 @@ export class NativeConnections {
     );
     await this.saveReceipt(row, payload, receipt);
     const moving = await this.state.read((sql) =>
-      sql.all<NativeWorkRow>(
-        'SELECT * FROM sandbox_native_work WHERE project_id=? AND closed_at IS NULL',
+      sql.all<NativeWorkRow & { disconnected: boolean }>(
+        `SELECT w.*,c.revoked_at IS NOT NULL AS disconnected FROM sandbox_native_work w
+        JOIN sandbox_native_connections c ON c.id=w.connection_id
+        WHERE w.project_id=? AND w.closed_at IS NULL`,
         caller.projectId,
       ),
     );
     const grants: { old: NativeConnectionRow; path: string }[] = [];
     for (const work of moving)
-      if (work.native_grant_id)
+      // A disconnected connection's grants went with it: there is nothing to check or retire.
+      if (work.native_grant_id && !work.disconnected)
         grants.push({
           old: await this.get(work.connection_id),
           path: `/v1/delegations/works/${work.native_grant_id}`,
@@ -310,11 +321,7 @@ export class NativeConnections {
         caller.projectId,
         row.id,
       );
-      await tx.run(
-        'UPDATE sandbox_native_work SET connection_id=?,native_grant_id=NULL,namespace=NULL,evidence_checked_at=NULL,last_error=NULL WHERE project_id=? AND closed_at IS NULL',
-        row.id,
-        caller.projectId,
-      );
+      await this.rebind(tx, caller.projectId, row.id);
       await tx.run('UPDATE sandbox_native_connections SET revoke_pending=FALSE WHERE id=?', row.id);
       await tx.run('UPDATE sandbox_native_flows SET completed_at=? WHERE id=?', this.now(), row.id);
       if (
@@ -592,6 +599,8 @@ export class NativeConnections {
           caller.projectId,
           row.id,
         );
+        // Open work left on the disconnected account is paid by this one from now on.
+        await this.rebind(tx, caller.projectId, row.id);
         await tx.run(
           'UPDATE sandbox_native_connections SET revoke_pending=FALSE WHERE id=?',
           row.id,

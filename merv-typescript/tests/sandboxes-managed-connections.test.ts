@@ -210,6 +210,34 @@ test('empty issued pilot migrates after revocation while completed work retains 
   );
 });
 
+test('open work on a disconnected connection moves when managed ML is enabled again', async (t) => {
+  const f = await fixture(t);
+  await prior(f);
+  const first = await f.service.enableManaged(f.a);
+  await f.state.transaction((tx) =>
+    tx.run(
+      "UPDATE sandbox_native_work SET native_grant_id='managed_work',namespace='managed_ns' WHERE work_id='pilot'",
+    ),
+  );
+  await f.service.disconnect(f.a);
+  f.calls.length = 0;
+  // The disconnected connection's grant went with it: nothing is checked or retired through it.
+  const again = await f.service.enableManaged(f.a);
+  assert.equal(again.connected, true);
+  assert.notEqual(again.connectionId, first.connectionId);
+  const pilot = await f.state.read((tx) =>
+    tx.get<any>("SELECT * FROM sandbox_native_work WHERE work_id='pilot'"),
+  );
+  assert.deepEqual(
+    [pilot.connection_id, pilot.native_grant_id, pilot.closed_at],
+    [again.connectionId, null, null],
+  );
+  assert.deepEqual(
+    f.calls.filter((x) => x.includes('/works/')),
+    [],
+  );
+});
+
 test('work with retained resources cannot be silently rebound to managed funding', async (t) => {
   const f = await fixture(t);
   await prior(f);

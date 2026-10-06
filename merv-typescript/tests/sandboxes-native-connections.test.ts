@@ -184,6 +184,28 @@ test('native consent persists encrypted authority, binds the same human, and sur
   assert.notEqual(flow.code, '0');
 });
 
+test('open work on a disconnected account moves to the account connected next', async (t) => {
+  const f = await foundation(t);
+  const first = await f.service.finish(f.caller, await f.ready());
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,native_grant_id,namespace)
+      VALUES(?,'task','open_work',?,'old_grant','old_ns')`,
+      f.caller.projectId,
+      first.connectionId,
+    ),
+  );
+  await f.service.disconnect(f.caller);
+  const next = await f.service.finish(f.caller, await f.ready());
+  assert.notEqual(next.connectionId, first.connectionId);
+  const work = await f.state.read((sql) =>
+    sql.get<{ connection_id: string; native_grant_id: string | null }>(
+      "SELECT connection_id,native_grant_id FROM sandbox_native_work WHERE work_id='open_work'",
+    ),
+  );
+  assert.deepEqual(work, { connection_id: next.connectionId, native_grant_id: null });
+});
+
 test('lost exchange reply can replay its exact persisted request', async (t) => {
   const f = await foundation(t);
   const cookie = await f.ready();
