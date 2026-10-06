@@ -35,6 +35,8 @@ test('UiRegistry validates rows, orders them, reports live status, and disposes 
     row('x', 1, { group: 'Work' }),
     row('x', 1.5),
     row('x', 1, { path: 'relative' }),
+    row('x', 1, { path: '//evil' }),
+    row('x', 1, { path: '/Work' }),
     row('x', 1, { view: {} }),
   ])
     assert.throws(

@@ -23,6 +23,15 @@ export const runningKey = (kind: string, id: string): RunningKey => `${kind}:${i
 export const keyKind = (key: RunningKey): string => key.slice(0, key.indexOf(':'));
 export const keyId = (key: RunningKey): string => key.slice(key.indexOf(':') + 1);
 
+/**
+ * A path on this app's own host, safe to follow or to send a credential to: one leading slash,
+ * never `//` or `/\` (a browser reads `\` as `/`, so either names another host), then only
+ * the characters a path, query or fragment carries, never whitespace or a control character,
+ * which a browser strips, leaving `//host` again. At most 500 characters.
+ */
+export const sameOriginPath = (value: unknown): value is string =>
+  typeof value === 'string' && /^\/(?![/\\])[A-Za-z0-9\-._~%!$&'()*+,;=:@/?#]{0,499}$/.test(value);
+
 /** Money as the services send it: a decimal string, so a sub-cent rate is not rounded away. */
 export interface RunningMoney {
   amount: string;

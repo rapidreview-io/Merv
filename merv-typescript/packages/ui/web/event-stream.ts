@@ -1,3 +1,4 @@
+import { sameOriginPath } from '@merv/contracts/running';
 import { currentToken, projectSelection } from './api';
 
 type Frame = { event: string; data: string };
@@ -75,7 +76,7 @@ export async function readEventStream(
   accept: (event: string, value: object) => void,
 ): Promise<boolean> {
   // The credential goes to this app's own host and nowhere else, whatever path it is handed.
-  if (new URL(path, location.href).origin !== location.origin) throw new StreamError(403);
+  if (!sameOriginPath(path)) throw new StreamError(403);
   const response = await fetch(path, {
     signal,
     credentials: 'omit',

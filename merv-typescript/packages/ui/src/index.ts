@@ -1,4 +1,4 @@
-import { clip, visible, mapAsync, runningKeyPattern } from '@merv/contracts';
+import { clip, visible, mapAsync, runningKeyPattern, sameOriginPath } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
@@ -39,7 +39,11 @@ export class UiRegistry implements Ui {
     );
     check(idPattern.test(row.group), 'invalid_row', 'Row group must be a lowercase identifier');
     check(Number.isInteger(row.order), 'invalid_row', 'Row order must be an integer');
-    check(/^\/[a-z0-9/-]*$/.test(row.path), 'invalid_row', 'Row path must be an absolute route');
+    check(
+      sameOriginPath(row.path) && /^[a-z0-9/-]*$/.test(row.path),
+      'invalid_row',
+      'Row path must be an absolute route',
+    );
     check(
       !!row.view && typeof row.view === 'object' && typeof row.view.kind === 'string',
       'invalid_row',

@@ -75,6 +75,7 @@ export {
   runningKey,
   keyKind,
   keyId,
+  sameOriginPath,
   workLink,
   dependencyRows,
 } from './running.js';
