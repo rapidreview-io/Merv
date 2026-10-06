@@ -4,3 +4,5 @@ import { parseMarkdown } from './markdown-parse';
 addEventListener('message', (event: MessageEvent<string>) =>
   postMessage(parseMarkdown(event.data)),
 );
+// The page gives a text its time only from here: until now this was still downloading.
+postMessage('loaded');

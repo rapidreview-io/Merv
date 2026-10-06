@@ -5,7 +5,7 @@
  * the browser as an address it should not open. The parser is pure, so most of
  * this asserts on its tree; the last tests mount the component and read the DOM.
  */
-import test from 'node:test';
+import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mount, serve, settle, text, unmount } from './ui-render.js';
 
@@ -368,8 +368,11 @@ test('whatever it is given, the parser answers with blocks and never throws', ()
   assert.match(JSON.stringify(parseMarkdown('>'.repeat(50) + ' deep')), /deep/);
 });
 
-test('no text a member can post holds the page: each is read off its thread, in time or not at all', async (t) => {
-  // The browser's Worker, on a Node thread that loads the worker module as the page would.
+/**
+ * The browser's Worker, on a Node thread that loads the worker module as the page would, after
+ * `startMs` as a page still downloading it does.
+ */
+async function installWorker(t: TestContext, startMs = 0) {
   const { Worker: Thread } = await import('node:worker_threads');
   const threads: InstanceType<typeof Thread>[] = [];
   class PageWorker {
@@ -382,7 +385,7 @@ test('no text a member can post holds the page: each is read off its thread, in 
         require('tsx/esm/api').register();
         globalThis.addEventListener = (_, listener) => parentPort.on('message', (data) => listener({ data }));
         globalThis.postMessage = (data) => parentPort.postMessage(data);
-        import(${JSON.stringify(url.href)});`,
+        setTimeout(() => import(${JSON.stringify(url.href)}), ${startMs});`,
         { eval: true },
       );
       this.thread.on('message', (data) => this.onmessage?.({ data }));
@@ -396,6 +399,16 @@ test('no text a member can post holds the page: each is read off its thread, in 
       void this.thread.terminate();
     }
   }
+  Object.assign(globalThis, { Worker: PageWorker });
+  t.after(async () => {
+    delete (globalThis as { Worker?: unknown }).Worker;
+    await unmount();
+    await Promise.all(threads.map((thread) => thread.terminate()));
+  });
+  return threads;
+}
+
+test('no text a member can post holds the page: each is read off its thread, in time or not at all', async (t) => {
   // A text read in the worker draws as it does when read on the page (a trailing newline keeps
   // the page's reading out of the worker's way and changes nothing drawn).
   const rich =
@@ -403,12 +416,7 @@ test('no text a member can post holds the page: each is read off its thread, in 
   await loadParser();
   const drawn = document.createElement('div');
   drawn.innerHTML = renderToStaticMarkup(page(`${rich}\n`));
-  Object.assign(globalThis, { Worker: PageWorker });
-  t.after(async () => {
-    delete (globalThis as { Worker?: unknown }).Worker;
-    await unmount();
-    await Promise.all(threads.map((thread) => thread.terminate()));
-  });
+  await installWorker(t);
   const runs = (count: number) =>
     Array.from({ length: count }, (_, index) => '`'.repeat(index + 1)).join(' ');
   // Each of these held the page's thread for seconds, or minutes, when it was read there.
@@ -459,6 +467,21 @@ test('no text a member can post holds the page: each is read off its thread, in 
     assert.ok(sections[at]!.querySelector('.md') || typed?.textContent === source, `${at}`);
   });
   assert.equal(sections[6]!.querySelector('pre.doc')?.textContent, slow[6]);
+});
+
+test('a worker still downloading is waited for: its clock runs only once it has loaded', async (t) => {
+  // A module of its own, so no worker an earlier test started stands in for this one.
+  const { Markdown: Fresh } = await import('../packages/ui/web/markdown.js?slow-start');
+  // Loading takes longer than any one text is given to be read.
+  await installWorker(t, 3000);
+  await mount(
+    createElement(MemoryRouter, null, createElement(Fresh, { source: 'A **slow** start.' })),
+  );
+  // Until it is read it stands as typed; it is read once the worker has loaded, not given up.
+  for (let waited = 0; !document.querySelector('.md strong'); waited += 50) {
+    assert.ok(waited < 15_000, 'read once the worker has loaded');
+    await settle(50);
+  }
 });
 
 test('bounding the work did not change what is read', () => {

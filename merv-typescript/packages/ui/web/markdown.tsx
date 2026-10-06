@@ -319,7 +319,8 @@ export function RecordText({
  * The parser (`markdown-parse`: micromark, GFM and math) is not part of the page's first load,
  * and it reads in a worker, so no text holds the page's one thread: micromark is superlinear on
  * a few texts, such as thousands of `*` or of links that never close in one paragraph. A text the
- * worker has not read in READ_MS stands as typed, and a new worker reads the next. Where no worker
+ * worker has not read in READ_MS stands as typed, and a new worker reads the next. That clock runs
+ * only once the worker says it has loaded, so a slow download gives up no text. Where no worker
  * starts, as in a test's DOM, the parser loads into the page and reads there.
  */
 type Parse = (source: string) => Block[];
@@ -336,6 +337,8 @@ const trees = new Map<string, Block[] | null>();
 const waiting = new Map<string, Set<() => void>>();
 /** Undefined until one starts; null once none could. */
 let worker: Worker | null | undefined;
+/** Whether the worker has said it loaded: until then it is downloading, not reading. */
+let loaded = false;
 let busy = false;
 const inPage = () => worker === null || typeof Worker === 'undefined';
 
@@ -365,7 +368,10 @@ function readNext(): void {
   };
   if (!inPage())
     try {
-      worker ??= new Worker(new URL('./markdown-worker.ts', import.meta.url), { type: 'module' });
+      if (!worker) {
+        worker = new Worker(new URL('./markdown-worker.ts', import.meta.url), { type: 'module' });
+        loaded = false;
+      }
     } catch {
       worker = null;
     }
@@ -376,12 +382,17 @@ function readNext(): void {
     );
     return;
   }
-  timer = setTimeout(() => {
-    worker?.terminate();
-    worker = undefined;
-    done(null);
-  }, READ_MS);
-  worker!.onmessage = (event: MessageEvent<Block[]>) => done(event.data);
+  const time = () =>
+    (timer = setTimeout(() => {
+      worker?.terminate();
+      worker = undefined;
+      done(null);
+    }, READ_MS));
+  worker!.onmessage = (event: MessageEvent<Block[] | 'loaded'>) => {
+    if (event.data !== 'loaded') return done(event.data);
+    loaded = true;
+    time();
+  };
   // A worker that cannot start leaves every text to the page.
   worker!.onerror = () => {
     worker = null;
@@ -390,6 +401,7 @@ function readNext(): void {
     readNext();
   };
   worker!.postMessage(source);
+  if (loaded) time();
 }
 
 /**
