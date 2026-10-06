@@ -5,6 +5,47 @@ resolution. Tasks, Experiments, Artifacts, Reviews and Code continue to own thei
 source records. Research claims were retired: each one was converted into a
 Markdown text artifact titled `Claim: …`, which resolves like any other artifact.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph people["People & agents"]
+    browser["Browser person<br/><small>Paper page</small>"]
+    worker["Worker agent"]
+  end
+  subgraph logic["Research logic"]
+    knowledge["Knowledge<br/><small>records and references</small>"]
+    tasks["Tasks"]
+    experiments["Experiments"]
+  end
+  subgraph foundations["Foundations"]
+    api["API<br/><small>tool registry</small>"]
+    workflows["Workflows<br/><small>durable workflow engine</small>"]
+    artifacts["Artifacts"]
+    reviews["Reviews"]
+    codeWork["Code Work<br/><small>Git captures</small>"]
+    state["State"]
+  end
+  subgraph external["External"]
+    postgres[("PostgreSQL")]
+  end
+  worker -- "calls project.records" --> knowledge
+  browser -- "calls project.references" --> knowledge
+  knowledge -- "registers two tools" --> api
+  knowledge -- "reads task records" --> tasks
+  knowledge -- "reads experiments" --> experiments
+  knowledge -- "resolves wf_ ids" --> workflows
+  knowledge -- "resolves artifact refs" --> artifacts
+  knowledge -- "resolves review refs" --> reviews
+  knowledge -. "resolves code captures" .-> codeWork
+  knowledge -- "injects" --> state
+  state -- "reads/writes" --> postgres
+  class knowledge self
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+```
+
+Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Reflection waves and research cycles resolve through their workflow records, so it needs neither Reflections nor Research; the dotted arrow is an optional binding.
+
 | Entrypoint              | Requires                                                   | Provides                                |
 | ----------------------- | ---------------------------------------------------------- | --------------------------------------- |
 | `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Code | `knowledge` service                     |

@@ -3,6 +3,51 @@
 Experiments owns research questions, attempts, evidence selections and the two
 independent review gates. It registers two current contracts, `experiment@36`/`40` (small/large uploads), on which Sandboxes attaches native compute. Their numeric versions identify immutable implementation contracts, not experiment attempt numbers. Four context recipes, `EXPERIMENT_RECIPES`, describe planning, design review, execution and results review. The retired `experiment.plan@1` and `@2` stay in `context_recipes` as history; their packages were deleted with their work items.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph people["People & agents"]
+    worker["Worker agent"]
+  end
+  subgraph logic["Research logic"]
+    experiments["Experiments<br/><small>questions and attempts</small>"]
+    research["Research<br/><small>cycle coordinator</small>"]
+    reflections["Reflections<br/><small>lens waves</small>"]
+    paper["Paper<br/><small>living paper</small>"]
+  end
+  subgraph foundations["Foundations"]
+    workflows["Workflows<br/><small>durable workflow engine</small>"]
+    reviews["Reviews<br/><small>independent verdicts</small>"]
+    contextBuilder["Context Builder<br/><small>assignment context</small>"]
+    artifacts["Artifacts<br/><small>immutable evidence</small>"]
+    domainEvents["Domain Events"]
+    codeWork["Code Work<br/><small>managed Git</small>"]
+    sandboxes["Sandboxes<br/><small>native compute</small>"]
+    state["State"]
+  end
+  subgraph external["External"]
+    postgres[("PostgreSQL")]
+  end
+  worker -- "calls experiment.* tools" --> experiments
+  research -- "creates plan experiments" --> experiments
+  reflections -- "pauses new experiments" --> experiments
+  experiments -- "registers experiment workflow" --> workflows
+  experiments -- "requests design, results reviews" --> reviews
+  experiments -- "registers four recipes" --> contextBuilder
+  experiments -- "applies paper changes" --> paper
+  experiments -- "pins evidence" --> artifacts
+  experiments -- "subscribes lease release" --> domainEvents
+  experiments -. "binds managed Git" .-> codeWork
+  experiments -. "binds compute" .-> sandboxes
+  experiments -- "injects" --> state
+  state -- "reads/writes" --> postgres
+  class experiments self
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+```
+
+Experiments carries a research question through planning, a run and two independent reviews on its own `experiment` workflow. Those reviewers' paper changes land in Methods and Results through Paper, and Research creates the experiments an approved reflection plan names; dotted arrows are optional bindings.
+
 Other stored versions remain read-only history. Their attempts, submissions, evidence, verdicts and pinned workflow graphs are retained, but their old runtime implementations are not registered. They cannot dispatch, accept attachments or transitions, or acquire new review claims, and they do not occupy a current execution slot. No old record is upgraded into another contract. Creating a current experiment starts planning; it does not launch a process or decide whether a scientific claim is true.
 
 | Entrypoint                | Requires                                                                  | Provides                                                        |

@@ -2,6 +2,51 @@
 
 A Cordis program implementing the durable task/delivery/review loop. Requires `state`, `scope`, `artifacts`, `workflows`, `reviews`, and `contextBuilder`; provides `tasks`. Core code has no dependency on transport or the tool registry.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph people["People & agents"]
+    worker["Worker agent"]
+  end
+  subgraph logic["Research logic"]
+    tasks["Tasks<br/><small>reviewed units of work</small>"]
+    research["Research<br/><small>cycle coordinator</small>"]
+    reflections["Reflections<br/><small>lens waves</small>"]
+    paper["Paper<br/><small>living paper</small>"]
+  end
+  subgraph foundations["Foundations"]
+    workflows["Workflows<br/><small>durable workflow engine</small>"]
+    reviews["Reviews<br/><small>independent verdicts</small>"]
+    contextBuilder["Context Builder<br/><small>assignment context</small>"]
+    artifacts["Artifacts<br/><small>immutable evidence</small>"]
+    domainEvents["Domain Events"]
+    codeWork["Code Work<br/><small>managed Git</small>"]
+    sandboxes["Sandboxes<br/><small>native compute</small>"]
+    state["State"]
+  end
+  subgraph external["External"]
+    postgres[("PostgreSQL")]
+  end
+  worker -- "calls task.* tools" --> tasks
+  research -- "creates plan, consolidation tasks" --> tasks
+  reflections -- "pauses new tasks" --> tasks
+  tasks -- "registers task workflow" --> workflows
+  tasks -- "requests reviews" --> reviews
+  tasks -- "registers recipes" --> contextBuilder
+  tasks -- "reads paper sections" --> paper
+  tasks -- "pins evidence" --> artifacts
+  tasks -- "subscribes lease release" --> domainEvents
+  tasks -. "binds managed Git" .-> codeWork
+  tasks -. "binds compute" .-> sandboxes
+  tasks -- "injects" --> state
+  state -- "reads/writes" --> postgres
+  class tasks self
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+```
+
+Tasks is the reviewed unit of work in the research cycle: it registers the `task` workflow with Workflows, routes every delivery through Reviews, and builds each assignment from its recipes in Context Builder. Research creates the tasks an approved reflection plan names, and the consolidation task that brings a cycle's accepted code to main; dotted arrows are optional bindings.
+
 Tasks registers its action checks and descriptions with Workflows. `task.get` and
 `task.list` include caller-specific `guidance`; `workflow.status_and_next` returns
 the same evaluated decision. The required task section carries it into every
