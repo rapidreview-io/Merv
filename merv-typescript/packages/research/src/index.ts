@@ -337,6 +337,9 @@ export class ResearchService implements Research {
       row.id,
     );
     const workflow = await this.workflows.get(caller, row.id, tx);
+    const selected = (await this.workflows.dependencies(caller, row.id, tx)).dependencies.filter(
+      (item) => !children.includes(item.id),
+    );
     return {
       ...record,
       automation: automatic
@@ -358,9 +361,11 @@ export class ResearchService implements Research {
       successorId: successor?.id ?? null,
       previousCycleId: row.predecessor_id,
       digest: row.digest ? (JSON.parse(row.digest) as Artifact) : null,
-      researchDependencies: (await this.workflows.dependencies(caller, row.id, tx)).dependencies
-        .map((item) => item.id)
-        .filter((item) => !children.includes(item)),
+      researchDependencies: selected.map((item) => item.id),
+      progress: {
+        settled: selected.filter((item) => item.settled).length,
+        total: selected.length,
+      },
       workflow,
       problem: row.problem ? JSON.parse(row.problem) : null,
       reflectionId: row.reflection_id,

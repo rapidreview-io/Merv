@@ -67,6 +67,8 @@ export interface ResearchRecord {
   name: string;
   createdAt: string;
   researchDependencies: string[];
+  /** How many of researchDependencies ended in success, of how many. */
+  progress: { settled: number; total: number };
   workflow: WorkflowSnapshot;
   /** Exact definition accepted on leaving the defining stage. */
   problem: PaperRevision | null;

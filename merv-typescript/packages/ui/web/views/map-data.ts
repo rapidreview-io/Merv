@@ -26,7 +26,14 @@ export type MapTask = Pick<
 >;
 export type MapCycle = Pick<
   ResearchRecord,
-  'id' | 'name' | 'ownerId' | 'workflow' | 'researchDependencies' | 'reflectionId' | 'automation'
+  | 'id'
+  | 'name'
+  | 'ownerId'
+  | 'workflow'
+  | 'researchDependencies'
+  | 'progress'
+  | 'reflectionId'
+  | 'automation'
 >;
 export type MapReview = Pick<
   ReviewRequest,

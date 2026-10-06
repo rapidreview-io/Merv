@@ -596,6 +596,7 @@ const cycle = (state: string) => ({
   name: 'QA cycle 1',
   createdAt: new Date().toISOString(),
   researchDependencies: ['wf_task', 'wf_done'],
+  progress: { settled: 1, total: 2 },
   workflow: { state, revision: 3, updatedAt: new Date().toISOString() },
   problem: null,
   reflectionId: null,

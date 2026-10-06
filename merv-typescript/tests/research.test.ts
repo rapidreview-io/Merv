@@ -1059,6 +1059,7 @@ test('research owner authorization, project scoping, selected prerequisite succe
     { code: 'forbidden' },
   );
   const widened = await replan([selected.id, spare.id]);
+  assert.deepEqual(widened.progress, { settled: 0, total: 2 });
   assert.deepEqual(
     (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies
       .map((item) => item.id)
@@ -1096,6 +1097,8 @@ test('research owner authorization, project scoping, selected prerequisite succe
     requestId: f.id(),
   };
   const reflecting = await f.research.advance(f.owner, advance);
+  // Progress counts the selected work that ended well, and never the cycle's own wave.
+  assert.deepEqual(reflecting.progress, { settled: 1, total: 1 });
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
   assert.deepEqual(await f.research.advance(f.owner, advance), reflecting);
   await assert.rejects(
