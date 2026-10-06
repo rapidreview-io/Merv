@@ -34,6 +34,10 @@ export interface PaperRevision {
   proposalId?: string;
   review?: { id: string; source: PaperSource; verdict: Verdict };
 }
+/** A retained revision as history lists it: its section bodies are read with its number. */
+export type PaperRevisionSummary = Omit<PaperRevision, 'sections'> & {
+  sections: Pick<PaperSection, 'id' | 'title'>[];
+};
 export interface PaperCitation {
   id: string;
   projectId: string;

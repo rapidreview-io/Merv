@@ -23,6 +23,7 @@ import type {
   PaperProposal,
   PaperPublication,
   PaperRevision,
+  PaperRevisionSummary,
   PaperWorkspace,
   PaperReview,
   PaperEdit,
@@ -140,7 +141,7 @@ export class PaperService implements Paper {
     caller: Caller,
     documentKind: PaperKind,
     transaction?: Transaction,
-  ): Promise<PaperRevision[]> {
+  ): Promise<PaperRevisionSummary[]> {
     caller = this.capture(caller);
     parse(kind, documentKind);
     return await inTransaction(this.state, transaction, async (tx) => {
@@ -151,7 +152,10 @@ export class PaperService implements Paper {
           caller.projectId,
           documentKind,
         )
-      ).map((row) => JSON.parse(row.record));
+      ).map((row) => {
+        const { sections, ...revision } = JSON.parse(row.record) as PaperRevision;
+        return { ...revision, sections: sections.map(({ id, title }) => ({ id, title })) };
+      });
     });
   }
   async revision(

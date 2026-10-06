@@ -11,6 +11,7 @@ import type {
   PaperCitation,
   PaperKind,
   PaperRevision,
+  PaperRevisionSummary,
   PaperSection,
   PaperSource,
   PaperWorkspace,
@@ -680,11 +681,14 @@ function PaperPage({ row, shell }: ViewProps) {
   const nameOf = useActorNames();
   // Every retained revision of each document, for History; a read that fails
   // leaves that document standing on the two revisions the workspace carries.
-  const kept: Record<PaperKind, Loaded<PaperRevision[]>> = {
-    problem: useTool<PaperRevision[]>('paper.read', { kind: 'problem', history: true }),
-    literature: useTool<PaperRevision[]>('paper.read', { kind: 'literature', history: true }),
-    methods: useTool<PaperRevision[]>('paper.read', { kind: 'methods', history: true }),
-    results: useTool<PaperRevision[]>('paper.read', { kind: 'results', history: true }),
+  const kept: Record<PaperKind, Loaded<PaperRevisionSummary[]>> = {
+    problem: useTool<PaperRevisionSummary[]>('paper.read', { kind: 'problem', history: true }),
+    literature: useTool<PaperRevisionSummary[]>('paper.read', {
+      kind: 'literature',
+      history: true,
+    }),
+    methods: useTool<PaperRevisionSummary[]>('paper.read', { kind: 'methods', history: true }),
+    results: useTool<PaperRevisionSummary[]>('paper.read', { kind: 'results', history: true }),
   };
   /** A saved edit writes a revision, so History is read again with the workspace. */
   const reload = () => {
@@ -749,7 +753,7 @@ function PaperPage({ row, shell }: ViewProps) {
     return <Link to={`/reviews/${reviewId}`}>{who ? `${who}’s review` : 'the review'}</Link>;
   };
   /** A revision belongs to its document; a change belongs to its section. */
-  const said = (revision: PaperRevision): ReactNode => {
+  const said = (revision: PaperRevisionSummary): ReactNode => {
     if (revision.review)
       return dotted([
         <>Written by {verdict(revision.review.id)}</>,
@@ -806,9 +810,9 @@ function PaperPage({ row, shell }: ViewProps) {
   // What proposed this paper is named by its source; one nobody can name is left out.
   const proposed = proposals.some((proposal) => sourceOf(proposal.source));
   // Every revision each document retained, once, newest first when they are read.
-  const revisions = new Map<string, { doc: DocView; revision: PaperRevision }>();
+  const revisions = new Map<string, { doc: DocView; revision: PaperRevisionSummary }>();
   // The revision a document's own heading already states is not History's to say again.
-  const headed = (doc: DocView, revision: PaperRevision) =>
+  const headed = (doc: DocView, revision: PaperRevisionSummary) =>
     !doc.publication && revision.revision === doc.current.revision;
   for (const doc of docs)
     for (const revision of kept[doc.kind].data ??

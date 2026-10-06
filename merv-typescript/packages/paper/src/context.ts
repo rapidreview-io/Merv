@@ -34,19 +34,13 @@ export function contextSections(documents: PaperWorkspace['documents']): PaperCo
                 ? 600
                 : 250,
           note: `${kind}/${status} revision ${revision.revision}; section ${section.id}; updated ${revision.updatedAt ?? 'unknown'}${publication ? `; publication ${publication.id}` : ''}`,
-          // paper.read returns a current section by its ID, and a published one by its revision.
-          refs:
-            status === 'current'
-              ? [
-                  { tool: 'paper.read', input: { kind, section: section.id } },
-                  { tool: 'paper.read', input: { kind, history: true } },
-                ]
-              : [
-                  {
-                    tool: 'paper.read',
-                    input: { kind, revision: revision.revision, section: section.id },
-                  },
-                ],
+          // paper.read returns exactly this section of this revision, whatever came after it.
+          refs: [
+            {
+              tool: 'paper.read',
+              input: { kind, revision: revision.revision, section: section.id },
+            },
+          ],
         });
       }
     }
