@@ -336,6 +336,101 @@ test('returned-for-changes work has a new start and retained review feedback; te
   }
 });
 
+test('a brief at its size limit and a returned review at its limits still leave a work context', async () => {
+  const f = await fixture();
+  try {
+    // 20 checks of about 1,500 characters: a brief near 32,000 that the task record repeated.
+    const checks = Array.from({ length: 20 }, (_, i) => `Check ${i} ${'x'.repeat(1490)}`);
+    const task = await f.create({ checks });
+    const first = await f.begin(f.producer.caller, task.id);
+    assert.equal(first.context!.prompt.split(checks[19]).length, 2, 'each check is embedded once');
+    const held = await f.work.lease(await f.app.ctx.tasks.get(f.producer.caller, task.id));
+    const proof = await f.app.ctx.artifacts.create(held.worker, { title: 'Proof', content: 'x' });
+    const commandId = await f.work.commit(held);
+    await f.work.run(
+      held,
+      'task.submit_delivery',
+      confirmedDelivery(
+        {
+          taskId: task.id,
+          expectedRevision: 0,
+          artifactIds: [proof.id],
+          commandId,
+          requestId: 's',
+        },
+        checks.length,
+      ),
+      (caller, input) => f.app.ctx.tasks.submitDelivery(caller, input as never),
+    );
+    await f.work.release(held);
+    const claim = await f.claim(await f.app.ctx.tasks.get(f.producer.caller, task.id));
+    const reviewed = reviewedFindings(claim) as { findings: { notes: string }[] };
+    await f.work.run(
+      f.reviewLease!,
+      'review.submit',
+      {
+        reviewId: claim.id,
+        claimId: claim.claimId!,
+        expectedRevision: 1,
+        verdict: 'needs_changes',
+        notes: `Start of the notes. ${'n'.repeat(15000)}`,
+        ...reviewed,
+        findings: reviewed.findings.map((finding) => ({
+          ...finding,
+          status: 'not_met',
+          notes: 'f'.repeat(8000),
+        })),
+        evidence: { log: 'l'.repeat(60000) },
+        requestId: 'return',
+      },
+      (caller, input) => f.app.ctx.tasks.submitReview(caller, input as never),
+    );
+    await f.work.release(f.reviewLease!);
+    const rework = await f.begin(f.producer.caller, task.id, 2);
+    const prompt = rework.context!.prompt;
+    assert.equal(prompt.split('Start of the notes.').length, 2, 'the notes are embedded once');
+    assert.match(prompt, new RegExp(`read review\\.get ${claim.id} for the whole assessment`));
+    assert.equal(
+      (await f.app.ctx.reviews.get(f.producer.caller, claim.id)).findings[0].notes.length,
+      8000,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+test('a task whose work context could never fit its recipe is refused when it is created', async () => {
+  const f = await fixture();
+  try {
+    const type = {
+      name: 'test.tiny-work',
+      version: 1,
+      kind: 'work' as const,
+      recipe: {
+        instructions: 'Perform the task.',
+        maxChars: 8000,
+        sections: [
+          { key: 'task', title: 'Task', required: true },
+          { key: 'brief', title: 'Brief', required: true },
+        ],
+        outputInstructions: 'Submit retained evidence.',
+        format: 2 as const,
+      },
+    };
+    await f.app.ctx.tasks.registerType(type);
+    const before = (await f.app.ctx.tasks.records(f.operator)).length;
+    await assert.rejects(
+      async () => await f.create({ type: type.name, goal: `Goal ${'g'.repeat(6000)}` }),
+      { code: 'invalid_brief' },
+    );
+    assert.equal((await f.app.ctx.tasks.records(f.operator)).length, before);
+    const fits = await f.create({ type: type.name, goal: `Goal ${'g'.repeat(1000)}` });
+    assert.equal((await f.begin(f.producer.caller, fits.id)).context!.type, type.name);
+  } finally {
+    await f.close();
+  }
+});
+
 test('unavailable task recipes block begin while task reads and explicit closure remain usable', async () => {
   const f = await fixture();
   try {

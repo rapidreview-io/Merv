@@ -197,9 +197,11 @@ async function snapshot(app: App, caller: Caller) {
 
 function assignmentTask(task: Task) {
   // Reverse links can change when unrelated downstream tasks are created. The
-  // pinned assignment keeps forward prerequisites and canonical guidance only.
-  const { dependents: _dependents, ...assignment } = task;
-  return assignment;
+  // pinned assignment keeps forward prerequisites and canonical guidance only; the
+  // goal and checks are the brief's, and the last round's notes the feedback's.
+  const { dependents: _d, checks: _c, acceptanceChecks: _a, goal: _g, workflow, ...rest } = task;
+  const { revisionContext: _r, ...data } = workflow.data;
+  return { ...rest, workflow: { ...workflow, data } };
 }
 
 test('A → B → C becomes ready one independent pass at a time; needs_changes stays pending and context carries current dependency facts', async () => {
