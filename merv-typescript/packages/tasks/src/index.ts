@@ -745,6 +745,8 @@ export class TaskService implements Tasks {
                   action: 'resume',
                   requestId: `task:resume:${context.input!.requestId}`,
                   input: context.input,
+                  // The task runs again; the reason it stopped stays its feedback, not a failure.
+                  data: { failure: null },
                 },
                 context.tx,
               );

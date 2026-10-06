@@ -1199,7 +1199,7 @@ export class ReflectionService implements Reflections {
                 transitions: ['approve', 'revise_synthesis', 'restart_lenses'],
                 tool: 'review.submit',
                 instruction:
-                  'Verify the pinned synthesis and maintain Methods/Results with your own paperChanges in the verdict. If no paper edit is warranted, explain why in notes; pass or return to synthesizing/reflection.',
+                  'Verify the pinned synthesis and maintain Methods/Results with your own paperChanges in the verdict. If no paper edit is warranted, explain why in notes; pass, or return it with returnTo synthesizing or reflecting.',
                 requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
                 arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
                   const wave = await this.row(caller, snapshot.id, tx);
