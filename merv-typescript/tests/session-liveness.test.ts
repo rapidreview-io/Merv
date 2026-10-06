@@ -1287,6 +1287,7 @@ async function views(f: Awaited<ReturnType<typeof fixture>>, step: string) {
     byId(
       of('dispatch_held', 'dispatch_failing').map((item) => ({
         instanceId: item.instanceId!,
+        revision: item.expectedRevision!,
         attempts: item.attempts!,
         held: item.kind === 'dispatch_held',
       })),
