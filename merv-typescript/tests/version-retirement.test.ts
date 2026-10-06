@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import pg from 'pg';
-import type { Caller, Migration } from '@merv/contracts';
+import { migrationList, type Caller } from '@merv/contracts';
 import {
   planRetirementLedgerSql,
   planRetirementPreconditionsSql,
@@ -260,8 +260,8 @@ test('the census embeds the ledger text the migrations run, and reports their re
 function recordMigrations(t: TestContext) {
   const recorded = new Map<string, string>();
   const original = PostgresState.prototype.migrate;
-  PostgresState.prototype.migrate = async function (component: string, migrations: Migration[]) {
-    for (const migration of migrations)
+  PostgresState.prototype.migrate = async function (component, migrations) {
+    for (const migration of migrationList(migrations))
       recorded.set(key(component, migration.version), migration.sql);
     return await original.call(this, component, migrations);
   };
