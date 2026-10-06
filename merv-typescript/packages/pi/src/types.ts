@@ -175,12 +175,12 @@ export interface PiMachine {
 }
 /** A catalog entry as one person sees it in one project. */
 export interface PiMachineOption extends PiMachine {
-  /** False where this person may not choose it here (see PiService.machineChoice). */
+  /** False where this person may not choose it here (see PiCore.machineChoice). */
   available: boolean;
   /** Why not, in a short phrase the picker shows; set only when unavailable. */
   reason?: string;
 }
-/** PiService.machineChoice: whether a person, and so their agent, may run on a machine here. */
+/** PiCore.machineChoice: whether a person, and so their agent, may run on a machine here. */
 export type PiMachineChoice = { allowed: true } | { allowed: false; reason: string };
 /** Why a move failed, in the service's own words: it reaches later turns' system prompts and the
  * person's page, so it is never text a model or a person wrote. */
