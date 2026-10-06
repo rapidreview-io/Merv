@@ -493,7 +493,9 @@ test('retiring the versions that can no longer start deletes their records and n
                 delete row[column];
             // reflections@3, reviews@11, reviews@14 and workflows@11 add columns after the
             // retirement; jsonb orders keys by length.
+            // sessions@13 gives each session its actor's thread, these sessions having no agent.
             const added = {
+              worker_sessions: { thread_id: `thr_${String(row.actor_id)}` },
               reflections: { abandoned: null },
               wf_blockers: { cause: null },
               reviews: {
@@ -522,6 +524,16 @@ test('retiring the versions that can no longer start deletes their records and n
   expected.wf_leases = movedLeases(before);
   const after = await snapshot(client);
   after.wf_leases = after.wf_leases!.map(comparableLease).sort();
+  // The threads sessions@13 makes of the surviving sessions (sessions.test.ts covers them).
+  assert.deepEqual(
+    after.session_threads!.map((text) => (JSON.parse(text) as { id: string }).id).sort(),
+    [
+      ...new Set(
+        after.worker_sessions!.map((text) => (JSON.parse(text) as { thread_id: string }).thread_id),
+      ),
+    ].sort(),
+  );
+  delete after.session_threads;
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))
     assert.deepEqual(after[table], expected[table], table);
 

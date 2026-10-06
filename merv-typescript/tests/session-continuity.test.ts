@@ -13,9 +13,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { Caller, WorkflowPolicy } from '@merv/contracts';
 import { excludedFromReview } from '@merv/reviews/rules';
 import { MachineRunner } from '@merv/runner';
-import { dormantMs } from '../packages/sessions/src/conversations.js';
+import { dormantMs } from '../packages/sessions/src/threads.js';
 import type { LeasedSessions } from '../packages/sessions/src/index.js';
-import type { Session } from '../packages/sessions/src/types.js';
+import type {
+  Session,
+  ThreadConversation,
+  ThreadView,
+  VisitView,
+} from '../packages/sessions/src/types.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
 import { s3Blobs } from './fixtures/s3-blobs.js';
@@ -195,7 +200,7 @@ async function fixture(t: TestContext) {
     age: async (ms: number) =>
       await app.ctx.state.transaction((tx) =>
         tx.run(
-          'UPDATE session_conversations SET updated_at=?',
+          "UPDATE session_threads SET updated_at=? WHERE status<>'retired'",
           new Date(Date.now() - ms).toISOString(),
         ),
       ),
@@ -211,7 +216,7 @@ test('work that comes back resumes its producer: same agent actor, new session, 
   });
   await f.release(first.session);
   // Its agent waits, dormant: the session's own credential is revoked as before.
-  assert.equal((await f.agent(first.session.agentId!)).status, 'active');
+  assert.equal((await f.agent(first.session.threadId!)).status, 'active');
   const { bytes, facts } = await f.keep(first.session, first.control);
 
   await f.move(unit.id, 'submit');
@@ -225,7 +230,7 @@ test('work that comes back resumes its producer: same agent actor, new session, 
   // Another runner takes the returned work: the earlier agent, its conversation, a new session.
   const second = await f.offer(unit.id, 'runner-b');
   assert.notEqual(second.session.id, first.session.id);
-  assert.equal(second.session.agentId, first.session.agentId);
+  assert.equal(second.session.threadId, first.session.threadId);
   assert.equal(second.session.actorId, first.session.actorId);
   assert.deepEqual(second.session.continuity, {
     key: first.session.continuity!.key,
@@ -286,23 +291,23 @@ test('a key without a delivered conversation offers a new agent; the one it repl
   // Nothing was delivered: the next offer of the key is fresh, and its close supersedes the first.
   const second = await f.offer(unit.id);
   assert.equal(second.session.continuity?.resume, undefined);
-  assert.notEqual(second.session.agentId, first.session.agentId);
+  assert.notEqual(second.session.threadId, first.session.threadId);
   await f.release(second.session);
-  assert.equal((await f.agent(first.session.agentId!)).status, 'retired');
-  assert.equal((await f.agent(second.session.agentId!)).status, 'active');
+  assert.equal((await f.agent(first.session.threadId!)).status, 'retired');
+  assert.equal((await f.agent(second.session.threadId!)).status, 'active');
   // A conversation of the latest session, delivered, is what the next offer resumes.
   await f.keep(second.session, second.control);
   const third = await f.offer(unit.id);
-  assert.equal(third.session.agentId, second.session.agentId);
+  assert.equal(third.session.threadId, second.session.threadId);
   assert.equal(third.session.continuity?.resume?.sessionId, second.session.id);
   await f.release(third.session);
   // An agent whose work stays away past the dormancy window is retired by the sweep.
   await f.age(dormantMs + 1);
   await f.sessions.sweep();
-  assert.equal((await f.agent(second.session.agentId!)).status, 'retired');
+  assert.equal((await f.agent(second.session.threadId!)).status, 'retired');
   const fourth = await f.offer(unit.id);
   assert.equal(fourth.session.continuity?.resume, undefined);
-  assert.notEqual(fourth.session.agentId, second.session.agentId);
+  assert.notEqual(fourth.session.threadId, second.session.threadId);
 });
 
 test('a resumed session that closes having declared nothing leaves the conversation it continued', async (t) => {
@@ -320,10 +325,10 @@ test('a resumed session that closes having declared nothing leaves the conversat
   });
   // The next offer still resumes the same agent with the same conversation, and nobody is retired.
   const third = await f.offer(unit.id, 'runner-c');
-  assert.equal(third.session.agentId, first.session.agentId);
+  assert.equal(third.session.threadId, first.session.threadId);
   assert.deepEqual(third.session.continuity?.resume, { sessionId: first.session.id, ...facts });
   await f.release(third.session);
-  assert.equal((await f.agent(first.session.agentId!)).status, 'active');
+  assert.equal((await f.agent(first.session.threadId!)).status, 'active');
   // The last session to close may still declare what it kept; an earlier one of it may not.
   await f.keep(third.session, third.control);
   const stale = await f.http('POST', `/sessions/${second.session.id}/conversation`, f.token, {
@@ -332,7 +337,7 @@ test('a resumed session that closes having declared nothing leaves the conversat
   });
   assert.deepEqual([stale.status, stale.body.error.code], [409, 'conversation_superseded']);
   const fourth = await f.offer(unit.id, 'runner-a');
-  assert.equal(fourth.session.agentId, first.session.agentId);
+  assert.equal(fourth.session.threadId, first.session.threadId);
   assert.equal(fourth.session.continuity?.resume?.sessionId, third.session.id);
 });
 
@@ -376,8 +381,8 @@ test('a conversation its harness could not take up is dropped: the next offer, o
     sessionId: fourth.session.id,
     ...kept.facts,
   });
-  assert.equal(fifth.session.agentId, fourth.session.agentId);
-  assert.equal((await f.agent(first.session.agentId!)).status, 'retired');
+  assert.equal(fifth.session.threadId, fourth.session.threadId);
+  assert.equal((await f.agent(first.session.threadId!)).status, 'retired');
   // A resume failure of a conversation the key no longer holds drops nothing newer.
   await f.release(fifth.session);
   const sixth = await f.offer(unit.id, 'runner-f');
@@ -400,7 +405,7 @@ test('a late declaration of the agent’s session newer than the row’s convers
   await f.release(third.session);
   const late = await f.keep(second.session, second.control);
   const fourth = await f.offer(unit.id, 'runner-d');
-  assert.equal(fourth.session.agentId, first.session.agentId);
+  assert.equal(fourth.session.threadId, first.session.threadId);
   assert.deepEqual(fourth.session.continuity?.resume, {
     sessionId: second.session.id,
     ...late.facts,
@@ -438,20 +443,20 @@ test('a conversation declared but not yet stamped as delivered is still resumed 
   });
   // The work came back before the runner's upload: the same agent takes it, never a fresh one.
   const second = await f.offer(unit.id);
-  assert.equal(second.session.agentId, first.session.agentId);
+  assert.equal(second.session.threadId, first.session.threadId);
   assert.deepEqual(second.session.continuity?.resume, { sessionId: first.session.id, ...facts });
   await f.release(second.session);
-  assert.equal((await f.agent(first.session.agentId!)).status, 'active');
+  assert.equal((await f.agent(first.session.threadId!)).status, 'active');
 });
 
 test('a provider keys a workflow: across instances, or never', async (t) => {
   const f = await fixture(t);
   const keys: (string | null)[] = ['shared', null];
-  const dispose = f.sessions.conversations.register('continuity-test', ({ role }) =>
+  const dispose = f.sessions.threads.register('continuity-test', ({ role }) =>
     keys.length ? keys.shift()! : `${role}:last`,
   );
   t.after(dispose);
-  assert.throws(() => f.sessions.conversations.register('continuity-test', () => null), {
+  assert.throws(() => f.sessions.threads.register('continuity-test', () => null), {
     code: 'continuity_registered',
   });
   const a = await f.offer((await f.start()).id);
@@ -462,7 +467,7 @@ test('a provider keys a workflow: across instances, or never', async (t) => {
   const b = await f.offer((await f.start()).id);
   assert.equal(b.session.continuity, undefined);
   await f.release(b.session);
-  assert.equal((await f.agent(b.session.agentId!)).status, 'retired');
+  assert.equal((await f.agent(b.session.threadId!)).status, 'retired');
   const refused = await f.http('POST', `/sessions/${b.session.id}/conversation`, f.token, {
     ...b.control,
     harness: 'claude',
@@ -474,15 +479,15 @@ test('a provider keys a workflow: across instances, or never', async (t) => {
   // Another instance with the same key continues the first.
   keys.push('shared');
   const c = await f.offer((await f.start()).id);
-  assert.equal(c.session.agentId, a.session.agentId);
+  assert.equal(c.session.threadId, a.session.threadId);
   assert.equal(c.session.continuity?.resume?.sessionId, a.session.id);
 });
 
 test('research keys: a lens by wave and perspective across restarts, an experiment across attempts', async (t) => {
   const f = await fixture(t);
-  const { conversations } = f.sessions as unknown as LeasedSessions;
+  const { threads } = f.sessions as unknown as LeasedSessions;
   const lens = (instanceId: string, attempt: number, perspective: string, role = 'producer') =>
-    conversations.key({
+    threads.key({
       instanceId,
       workflow: 'reflection.lens',
       state: 'reflecting',
@@ -495,7 +500,7 @@ test('research keys: a lens by wave and perspective across restarts, an experime
   assert.equal(lens('lens-1', 1, 'theory', 'reviewer'), null);
   // A design revision starts a new attempt of the same experiment: the planner continues.
   const experiment = (attempt: number, state: string, role: 'producer' | 'reviewer') =>
-    conversations.key({
+    threads.key({
       instanceId: 'experiment',
       workflow: 'experiment',
       state,
@@ -620,4 +625,152 @@ test('real runners: a hosted machine that cannot resume puts it off once; a fres
   assert.equal(third.continuity?.resume, undefined);
   const record = fresh.runner.snapshot().launches[0]!;
   assert.equal(record.sessionId, third.id);
+});
+
+test('a work item’s threads: each stage’s worker with its visits, and its conversation from stream or stored transcript', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  // The agent printed a few events, which the runner streamed.
+  await f.ok('POST', `/sessions/${first.session.id}/stream`, f.token, {
+    ...first.control,
+    from: 0,
+    to: 10,
+    events: [{ kind: 'text', id: 't1', delta: 'Working on it', done: true }],
+  });
+  await f.release(first.session);
+  // Its runner kept the transcript of what Claude Code printed.
+  const transcript = [
+    { type: 'system', subtype: 'init', model: 'claude-x', session_id: 'c1' },
+    {
+      type: 'assistant',
+      message: {
+        id: 'm1',
+        content: [
+          { type: 'text', text: 'Reading the plan' },
+          { type: 'tool_use', id: 'u1', name: 'mcp__merv__workflow.assignment', input: {} },
+        ],
+      },
+    },
+    {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'u1', content: 'ok' }] },
+    },
+    { type: 'result', subtype: 'success', num_turns: 2 },
+  ]
+    .map((line) => JSON.stringify(line))
+    .join('\n');
+  const bytes = Buffer.from(`${transcript}\n`);
+  const facts = {
+    ...first.control,
+    sha256: createHash('sha256').update(bytes).digest('hex'),
+    size: bytes.length,
+    logBytes: bytes.length,
+    truncated: false,
+  };
+  const path = `/sessions/${first.session.id}/transcript`;
+  const { upload } = (await f.ok('POST', path, f.token, { ...facts, deliver: true })).transcript;
+  assert.equal(
+    (
+      await fetch(upload.url, {
+        method: 'PUT',
+        headers: upload.headers,
+        body: new Uint8Array(bytes),
+      })
+    ).status,
+    200,
+  );
+  await f.ok('POST', path, f.token, { ...facts, deliver: true });
+  await f.keep(first.session, first.control);
+  await f.move(unit.id, 'submit');
+  const review = await f.offer(unit.id, 'runner-a');
+  await f.release(review.session);
+  await f.move(unit.id, 'revise');
+  // A launch that failed before the agent ran, then the resumed producer, still live.
+  const failed = await f.offer(unit.id, 'runner-b');
+  await f.ok('POST', `/sessions/${failed.session.id}/release`, f.token, {
+    runnerId: 'runner-b',
+    reason: 'local_process_exit_code_70',
+    outcome: 'launch_failed',
+  });
+  const live = await f.offer(unit.id, 'runner-c');
+  assert.equal(live.session.threadId, first.session.threadId);
+
+  const { threads } = await f.ok('GET', `/sessions/threads?instanceId=${unit.id}`, f.token);
+  assert.deepEqual(
+    threads.map((thread: ThreadView) => [thread.id, thread.state, thread.role, thread.status]),
+    [
+      [first.session.threadId, 'working', 'producer', 'live'],
+      [review.session.threadId, 'review', 'reviewer', 'retired'],
+    ],
+  );
+  const visits: VisitView[] = threads[0].visits;
+  assert.deepEqual(
+    visits.map((visit) => [
+      visit.sessionId,
+      visit.status,
+      visit.launched,
+      visit.resumed,
+      visit.hasConversation,
+      visit.runnerId,
+    ]),
+    [
+      [first.session.id, 'released', true, false, true, 'runner-a'],
+      [failed.session.id, 'released', false, true, false, 'runner-b'],
+      [live.session.id, 'offered', false, true, false, 'runner-c'],
+    ],
+  );
+  assert.deepEqual(
+    [visits[1]!.outcome, visits[1]!.why, visits[1]!.harness],
+    ['launch_failed', 'local_process_exit_code_70', 'codex'],
+  );
+  assert.equal(visits[2]!.liveness?.verdict, 'offered');
+  assert.equal(visits[0]!.liveness, undefined);
+  // The same as a tool, for anyone who may read the work; never for a leased worker.
+  const tool = await f.app.ctx.tools.invoke('session.threads', f.owner, { instanceId: unit.id });
+  assert.deepEqual((tool.value as { threads: ThreadView[] }).threads, threads);
+  const worker = await f.sessions.authenticate(live.input.secret);
+  await assert.rejects(f.sessions.threads.list(worker, unit.id), { code: 'session_forbidden' });
+
+  // An operator reads what the agent did: the stream while it is kept, then the transcript.
+  const conversation = `/sessions/threads/${first.session.threadId}/conversation`;
+  let read: ThreadConversation = await f.ok('GET', conversation, f.token);
+  assert.deepEqual(
+    read.visits.map((visit) => [visit.sessionId, visit.from, visit.events.length]),
+    [
+      [first.session.id, 'stream', 1],
+      [failed.session.id, 'none', 0],
+      [live.session.id, 'none', 0],
+    ],
+  );
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run('DELETE FROM session_events WHERE session_id=?', first.session.id),
+  );
+  read = await f.ok('GET', conversation, f.token);
+  assert.equal(read.visits[0]!.from, 'transcript');
+  assert.deepEqual(
+    read.visits[0]!.events.map(({ event }) => event),
+    [
+      { kind: 'status', id: 'status-0', text: 'Started · claude-x' },
+      { kind: 'text', id: 'm1.whole1-0', delta: 'Reading the plan', done: true },
+      { kind: 'tool_call', id: 'u1', name: 'workflow.assignment', input: '{}' },
+      { kind: 'tool_result', id: 'u1', output: 'ok' },
+      { kind: 'status', id: 'status-3', text: 'Finished · success · 2 turns' },
+    ],
+  );
+  // Only an operator: a reader may list the threads but not read the conversation.
+  const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
+  assert.equal(
+    (await f.http('GET', `/sessions/threads?instanceId=${unit.id}`, reader.token)).status,
+    200,
+  );
+  const refused = await f.http('GET', conversation, reader.token);
+  assert.deepEqual([refused.status, refused.body.error.code], [403, 'forbidden']);
+  const missing = await f.http('GET', '/sessions/threads/thr_missing/conversation', f.token);
+  assert.deepEqual([missing.status, missing.body.error.code], [404, 'thread_not_found']);
+  const unknown = await f.http('GET', `/sessions/threads?instanceId=${unit.id}&x=1`, f.token);
+  assert.equal(unknown.status, 400);
 });

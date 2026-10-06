@@ -367,7 +367,7 @@ export class ProjectScope implements Scope {
   }
   async createSessionActor(
     source: DelegationSource,
-    input: { sessionId: string; agentId?: string; role: Exclude<Role, 'operator'>; name: string },
+    input: { sessionId: string; threadId?: string; role: Exclude<Role, 'operator'>; name: string },
     tx: Transaction,
   ): Promise<Actor> {
     source = structuredClone(source);
@@ -378,10 +378,10 @@ export class ProjectScope implements Scope {
         typeof input.sessionId === 'string' &&
         input.sessionId.length > 0 &&
         input.sessionId.length <= 200 &&
-        (input.agentId === undefined ||
-          (typeof input.agentId === 'string' &&
-            input.agentId.length > 0 &&
-            input.agentId.length <= 200)) &&
+        (input.threadId === undefined ||
+          (typeof input.threadId === 'string' &&
+            input.threadId.length > 0 &&
+            input.threadId.length <= 200)) &&
         typeof input.name === 'string' &&
         visible(input.name) &&
         input.name.length <= 200,
@@ -396,7 +396,7 @@ export class ProjectScope implements Scope {
       role: input.role,
       active: true,
       sessionId: input.sessionId,
-      ...(input.agentId !== undefined ? { agentId: input.agentId } : {}),
+      ...(input.threadId !== undefined ? { threadId: input.threadId } : {}),
     };
     await tx.run(
       'INSERT INTO actors(id,project_id,name,role,active,session_id,agent_id) VALUES(?,?,?,?,1,?,?)',
@@ -405,7 +405,7 @@ export class ProjectScope implements Scope {
       value.name,
       value.role,
       input.sessionId,
-      input.agentId ?? null,
+      input.threadId ?? null,
     );
     return value;
   }
@@ -673,7 +673,10 @@ export class ProjectScope implements Scope {
         // It acts only while the person who vouched for it may still write here.
         await this.requireDelegation(vouchedBy, 'write', sql as Transaction);
       } else if (row.session_id) {
-        const own = (caller.session?.agentSessionId ?? caller.session?.id) === row.session_id;
+        // A thread's actor is its visits'; an actor from before threads, its one session's.
+        const own = row.agent_id
+          ? row.agent_id === caller.session?.threadId
+          : row.session_id === caller.session?.id;
         check(own, 'forbidden', 'Worker actors require their live session authority', 403);
         source = await this.sessions.provider().require(caller, sql as Transaction, permission);
         // A session that ended has retired its actor, and Sessions above said how it ended (its

@@ -2,7 +2,20 @@ import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
 import { ordinary as unmanaged, safeCount, text, workName, workNameOf } from './common.js';
 import { leaseLiveness } from './liveness.js';
-import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
+import type { AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
+
+/** A thread as an agent: its first visit's runner names it. */
+interface ThreadRow {
+  id: string;
+  actor_id: string;
+  status: 'open' | 'dormant' | 'retired';
+  created_at: string;
+  latest_session_id: string | null;
+  runner_id: string;
+  first_session_id: string;
+}
+const THREAD = `SELECT t._merv_rowid AS seq,t.id,t.actor_id,t.status,t.created_at,t.latest_session_id,f.runner_id,f.id AS first_session_id
+  FROM session_threads t CROSS JOIN LATERAL (SELECT id,runner_id FROM worker_sessions WHERE thread_id=t.id ORDER BY _merv_rowid LIMIT 1) f`;
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
 function estimate(value: unknown): number | null {
@@ -25,22 +38,20 @@ const named = ({ assignment }: Session) => ({
 });
 
 function summarizeAgent(
-  agent: Agent,
+  thread: ThreadRow,
   currentExecutionId: string | null,
   currentAssignment: AgentSummary['currentAssignment'] = null,
 ): AgentSummary {
   return {
-    id: agent.id,
-    sessionId: agent.sessionId,
-    actorId: agent.actorId,
-    name: agent.name,
-    status: agent.status,
-    contextEpoch: agent.contextEpoch,
-    persistent: agent.persistent,
+    id: thread.id,
+    sessionId: currentExecutionId ?? thread.latest_session_id ?? thread.first_session_id,
+    actorId: thread.actor_id,
+    name: `Agent ${thread.runner_id}`.slice(0, 200),
+    status: thread.status === 'retired' ? 'retired' : 'active',
     currentExecutionId,
     currentAssignment,
-    createdAt: agent.createdAt,
-    runnerId: agent.runnerId,
+    createdAt: thread.created_at,
+    runnerId: thread.runner_id,
   };
 }
 
@@ -140,23 +151,24 @@ export class AgentObservations {
     return new Map(rows.map((row) => [row.id, row.at]));
   }
 
-  /** Every agent of the project and its live assignment, read in the status transaction. */
+  /** Every thread of the project and its live visit, read in the status transaction. */
   async summaries(tx: Transaction, projectId: string): Promise<AgentSummary[]> {
     return (
-      await tx.all<{
-        agent_json: string;
-        execution_id: string | null;
-        execution_label: string;
-        execution_name: string;
-        execution_role: Session['role'];
-      }>(
-        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, ${workNameOf('w.session_json::jsonb')} AS execution_name, (w.session_json::jsonb #>> '{role}') AS execution_role
-          FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY a._merv_rowid DESC`,
+      await tx.all<
+        ThreadRow & {
+          execution_id: string | null;
+          execution_label: string;
+          execution_name: string;
+          execution_role: Session['role'];
+        }
+      >(
+        `SELECT a.*, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, ${workNameOf('w.session_json::jsonb')} AS execution_name, (w.session_json::jsonb #>> '{role}') AS execution_role
+          FROM (${THREAD} WHERE t.project_id=?) a LEFT JOIN worker_sessions w ON w.thread_id=a.id AND w.status IN ('offered','active') ORDER BY a.created_at DESC,a.seq DESC`,
         projectId,
       )
     ).map((row) =>
       summarizeAgent(
-        JSON.parse(row.agent_json),
+        row,
         row.execution_id,
         row.execution_id
           ? { label: row.execution_label, name: row.execution_name, role: row.execution_role }
@@ -177,17 +189,16 @@ export class AgentObservations {
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       check(!caller.session, 'session_forbidden', 'Workers cannot browse other agents', 403);
-      const row = await tx.get<{ agent_json: string }>(
-        'SELECT agent_json FROM agents WHERE id=? AND project_id=?',
+      const thread = await tx.get<ThreadRow>(
+        `${THREAD} WHERE t.id=? AND t.project_id=?`,
         agentId,
         caller.projectId,
       );
-      check(row, 'agent_not_found', 'Agent not found in this project', 404);
-      const agent: Agent = JSON.parse(row.agent_json);
+      check(thread, 'agent_not_found', 'Agent not found in this project', 404);
       const sessions = (
         await tx.all<{ session_json: string }>(
-          'SELECT session_json FROM worker_sessions WHERE actor_id=? AND project_id=? ORDER BY _merv_rowid DESC',
-          agent.actorId,
+          'SELECT session_json FROM worker_sessions WHERE thread_id=? AND project_id=? ORDER BY _merv_rowid DESC',
+          thread.id,
           caller.projectId,
         )
       ).map((row) => JSON.parse(row.session_json) as Session);
@@ -198,10 +209,10 @@ export class AgentObservations {
       const columns = `c.id,c.execution_id AS "executionId",c.tool,c.status,c.started_at AS "startedAt",c.finished_at AS "finishedAt",
         c.duration_ms AS "durationMs",c.input_tokens AS "inputTokens",c.output_tokens AS "outputTokens"`;
       const from =
-        'FROM session_tool_calls c JOIN worker_sessions s ON s.id=c.execution_id WHERE s.actor_id=? AND s.project_id=?';
+        'FROM session_tool_calls c JOIN worker_sessions s ON s.id=c.execution_id WHERE s.thread_id=? AND s.project_id=?';
       const calls = await tx.all<AgentToolCall>(
         `SELECT ${columns} ${from} ORDER BY CASE WHEN c.status='running' THEN 0 ELSE 1 END,c._merv_rowid DESC LIMIT 100`,
-        agent.actorId,
+        thread.id,
         caller.projectId,
       );
       const aggregate = (await tx.get<
@@ -209,7 +220,7 @@ export class AgentObservations {
       >(
         `SELECT COUNT(*) AS "totalCalls",COALESCE(SUM(c.input_tokens),0) AS "inputTokens",
         COALESCE(SUM(c.output_tokens),0) AS "outputTokens",COALESCE(SUM(CASE WHEN c.status IN ('succeeded','failed') THEN 1 ELSE 0 END),0) AS "completedCalls" ${from}`,
-        agent.actorId,
+        thread.id,
         caller.projectId,
       ))!;
       const stats: AgentObservation['tokenStats'] = {
@@ -220,7 +231,7 @@ export class AgentObservations {
       };
       return {
         agent: summarizeAgent(
-          agent,
+          thread,
           current?.id ?? null,
           current ? { ...named(current), role: current.role } : null,
         ),

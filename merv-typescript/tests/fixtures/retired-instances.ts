@@ -11,6 +11,7 @@
  */
 import type pg from 'pg';
 import { digest } from '@merv/contracts';
+import { postgresMigrations as sessionMigrations } from '../../packages/sessions/src/index.postgres.js';
 import { postgresMigrations as knowledgeMigrations } from '../../packages/knowledge/src/storage.postgres.js';
 import { postgresMigrations as taskMigrations } from '../../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as experimentProgramMigrations } from '../../packages/experiments/src/program.postgres.js';
@@ -415,6 +416,15 @@ ${reflectionLeases.slice(reflectionLeases.indexOf('CREATE TABLE reflection_lease
 DELETE FROM component_migrations WHERE (component='workflows' AND version=12)
   OR (component='tasks' AND version=10) OR (component='experiment_program' AND version=4)
   OR (component='reflections' AND version=5);`);
+    // So did threads (sessions@13): version 3's attribution guard returns.
+    const agentGuard = sessionMigrations[3]!;
+    await client.query(`DROP TRIGGER worker_sessions_thread_immutable ON worker_sessions;
+DROP FUNCTION worker_sessions_thread_immutable_guard();
+ALTER TABLE worker_sessions DROP COLUMN thread_id;
+DROP TABLE session_threads;
+DROP FUNCTION session_threads_guard();
+${agentGuard.slice(agentGuard.indexOf('CREATE OR REPLACE FUNCTION worker_sessions_agent_immutable_guard'))}
+DELETE FROM component_migrations WHERE component='sessions' AND version=13;`);
     // sessions@12 (an index on closed usage) came later still.
     await client.query(`DROP INDEX session_usage_closed;
 DELETE FROM component_migrations WHERE component='sessions' AND version=12;`);

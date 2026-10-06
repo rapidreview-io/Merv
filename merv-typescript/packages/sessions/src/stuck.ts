@@ -504,7 +504,7 @@ export async function projectStatus(
       >(
         // A frozen assignment can be half a megabyte: the 200 rows are chosen first, and each is
         // parsed once, in SQL, and sent without its assignment, execution, lease and source.
-        `SELECT s.id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
+        `SELECT s.id,s.thread_id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
           ${workNameOf('x.j')} AS name,x.j #>> '{execution,workflow}' AS workflow,x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
           FROM (SELECT * FROM worker_sessions WHERE project_id=? ORDER BY CASE WHEN status IN ('offered','active') THEN 0 ELSE 1 END,_merv_rowid DESC LIMIT 200) s
           CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
@@ -522,8 +522,7 @@ export async function projectStatus(
       const quietSince = quietAt <= now ? new Date(quietAt).toISOString() : null;
       return {
         id: session.id,
-        agentId: session.agentId,
-        agentSessionId: session.agentSessionId,
+        threadId: row.thread_id,
         actorId: session.actorId,
         instanceId: session.instanceId,
         ...(row.workflow ? { workflow: row.workflow } : {}),

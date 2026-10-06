@@ -12,8 +12,8 @@ export interface Actor {
   active: boolean;
   /** Present only for the persistent actor representing a project member. */
   user?: { issuer: string; subject: string };
-  /** Credentialless actor owned by an agent session (or a historical assignment). */
-  agentId?: string;
+  /** Credentialless actor owned by a Sessions thread (or a historical assignment). */
+  threadId?: string;
   sessionId?: string;
 }
 export interface Project {

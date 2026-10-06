@@ -23,8 +23,7 @@ export interface RunnerSnapshot {
   launches: {
     id: string;
     sessionId: string;
-    agentId?: string;
-    agentSessionId?: string;
+    threadId?: string;
     status: string;
     platform: string;
     deadline: number;

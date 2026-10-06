@@ -416,7 +416,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                       {live.map((session) => (
                         <li key={session.id}>
                           {session.name} · {term(session.role)} ·{' '}
-                          {agentName.get(session.agentId ?? '') ?? 'no agent yet'}
+                          {agentName.get(session.threadId ?? '') ?? 'no agent yet'}
                         </li>
                       ))}
                       {/* The guard names every lease under the click, including the
@@ -449,7 +449,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     session={session}
                     now={now}
                     route={routeOf(session)}
-                    name={agentName.get(session.agentId ?? '')}
+                    name={agentName.get(session.threadId ?? '')}
                     canManage={status.canManage}
                     reload={state.reload}
                     open={open === session.id}

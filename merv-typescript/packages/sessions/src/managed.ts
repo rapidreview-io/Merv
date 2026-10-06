@@ -14,7 +14,8 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import { sourceCaller, tokenDigest } from './agents.js';
+import { sourceCaller } from '@merv/scope/rules';
+import { tokenDigest } from '@merv/identity/credentials';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
 import type { CredentialStore } from '@merv/identity/credentials';
 import type { CallerRules } from '@merv/api/types';
@@ -711,7 +712,7 @@ export class ManagedRunnerBindings {
       const owed = await tx.get<{ declared_at: string }>(
         // A conversation the session kept is owed as its transcript is.
         `SELECT declared_at FROM session_transcripts WHERE session_id=? AND uploaded_at IS NULL
-         UNION ALL SELECT updated_at FROM session_conversations WHERE session_id=? AND sha256 IS NOT NULL AND uploaded_at IS NULL
+         UNION ALL SELECT updated_at FROM session_threads WHERE latest_session_id=? AND sha256 IS NOT NULL AND uploaded_at IS NULL AND status<>'retired'
          ORDER BY 1 LIMIT 1`,
         row.bound_session_id,
         row.bound_session_id,

@@ -1228,8 +1228,8 @@ test('the sweep reads only sessions that still hold events, however many ended l
   await f.state.transaction(async (tx) => {
     // Many sessions that ended long ago and whose streams were pruned already.
     await tx.run(
-      `INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json)
-        SELECT id||'_'||n,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id||'_'||n,token_hash||'_'||n,fingerprint,status,session_json
+      `INSERT INTO worker_sessions(id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json)
+        SELECT id||'_'||n,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id||'_'||n,token_hash||'_'||n,fingerprint,status,session_json
         FROM worker_sessions, generate_series(1,500) AS n WHERE id=?`,
       session.id,
     );

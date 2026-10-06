@@ -35,7 +35,7 @@ import {
 } from '@merv/contracts';
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { SessionRunning } from './running.js';
-import { AgentDirectory, tokenDigest } from './agents.js';
+import { tokenDigest } from '@merv/identity/credentials';
 import { AgentObservations } from './observations.js';
 import {
   clone,
@@ -53,11 +53,10 @@ import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules, type HuggingFaceBinding } from './managed.js';
 import { SessionTranscripts } from './transcripts.js';
 import { SessionStreams } from './stream.js';
-import { SessionConversations } from './conversations.js';
+import { SessionThreads } from './threads.js';
 import { SessionMessages } from './messages.js';
 import { SessionInvocations } from './invocations.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
-import type { Agent } from './types.js';
 import type {
   Session,
   SessionContinuity,
@@ -295,7 +294,7 @@ const SESSION =
   'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
 /** The same row without its workspace capture, for a check that never reads it. */
 const BARE =
-  'SELECT id,project_id,owner_hash,session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions';
+  'SELECT id,project_id,thread_id,owner_hash,session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions';
 interface Frame {
   tx: Transaction;
   actorId: string;
@@ -319,7 +318,7 @@ export class LeasedSessions implements Sessions {
   transcripts!: SessionTranscripts;
   /** Each worker agent's live stream, read by the events route. */
   streams!: SessionStreams;
-  conversations!: SessionConversations;
+  threads!: SessionThreads;
   /** Operator messages to live sessions. */
   messaging!: SessionMessages;
   /** The tool policy: each leased worker's MCP calls. */
@@ -328,7 +327,6 @@ export class LeasedSessions implements Sessions {
   secrets?: Pick<Secrets, 'createHuggingFaceAccess'>;
   private readonly sections = new Map<string, StatusSection>();
   private launchConnectionsProvider?: LaunchConnectionsProvider;
-  private directory!: AgentDirectory;
   observations!: AgentObservations;
   managed!: ManagedRunnerBindings;
   private credentials!: CredentialStore;
@@ -367,7 +365,6 @@ export class LeasedSessions implements Sessions {
       this.credentials,
       available,
     );
-    this.directory = await createService(new AgentDirectory(state, scope, this.clock));
     this.observations = await createService(
       new AgentObservations(state, scope, this.clock, available),
     );
@@ -411,18 +408,12 @@ export class LeasedSessions implements Sessions {
         available,
       ),
     );
-    this.conversations = await createService(
-      new SessionConversations(
-        state,
-        this.clock,
-        (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
-        async (agentId, reason, tx) => {
-          const agent = await this.directory.get(agentId, tx);
-          if (!(await this.executing(agent, tx))) await this.directory.retire(agent, reason, tx);
-        },
-        available,
-      ),
-    );
+    this.threads = new SessionThreads(state, scope, this.clock, {
+      controlled: (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
+      readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
+      stream: (sessionId) => this.streams.snapshot(sessionId),
+      available,
+    });
     this.messaging = new SessionMessages(state, scope, this.clock, {
       transaction: (fn) => this.transaction(fn),
       reading: (fn) => this.reading(fn),
@@ -515,7 +506,7 @@ export class LeasedSessions implements Sessions {
   private lookup(session: Session): SessionLookup {
     return {
       id: session.id,
-      ...(session.agentId ? { agentId: session.agentId } : {}),
+      threadId: session.threadId,
       actorId: session.actorId,
       instanceId: session.instanceId,
       expectedRevision: session.expectedRevision,
@@ -526,7 +517,15 @@ export class LeasedSessions implements Sessions {
     };
   }
   private decode(row: Row): Session {
-    const session: Session = JSON.parse(row.session_json);
+    // The column, never the JSON: a session stored before threads names its agent there, which
+    // the next save drops.
+    const {
+      agentId: _agent,
+      agentSessionId: _agentSession,
+      contextEpoch: _epoch,
+      ...stored
+    } = JSON.parse(row.session_json);
+    const session: Session = { ...stored, threadId: row.thread_id };
     if (row.attachment_json !== null)
       session.workspace = {
         attachment: JSON.parse(row.attachment_json),
@@ -535,7 +534,7 @@ export class LeasedSessions implements Sessions {
     return session;
   }
   private async save(tx: Transaction, session: Session): Promise<void> {
-    const { workspace: _workspace, ...stored } = session;
+    const { workspace: _workspace, threadId: _thread, ...stored } = session;
     await tx.run(
       'UPDATE worker_sessions SET status=?,session_json=? WHERE id=?',
       session.status,
@@ -543,16 +542,11 @@ export class LeasedSessions implements Sessions {
       session.id,
     );
   }
-  private worker(
-    session: Pick<Session, 'id' | 'actorId' | 'projectId' | 'agentSessionId'>,
-  ): Caller {
+  private worker(session: Pick<Session, 'id' | 'actorId' | 'projectId' | 'threadId'>): Caller {
     return {
       actorId: session.actorId,
       projectId: session.projectId,
-      session: {
-        id: session.id,
-        ...(session.agentSessionId ? { agentSessionId: session.agentSessionId } : {}),
-      },
+      session: { id: session.id, threadId: session.threadId },
     };
   }
   private async framed<T>(frame: Frame, fn: () => T | Promise<T>): Promise<T> {
@@ -560,9 +554,8 @@ export class LeasedSessions implements Sessions {
     return this.frames.run([...(this.frames.getStore() ?? []), frame], fn);
   }
   private async source(session: Session, tx: Transaction): Promise<void> {
+    // Its thread's actor is Scope's to check: retired with its thread, unless this visit holds it.
     await this.scope.requireDelegation(session.source, permission(session.role), tx);
-    if (session.agentId)
-      await this.directory.require(await this.directory.get(session.agentId, tx), tx);
   }
   /**
    * The session's lease still holds; with `frozen`, also the references its execution grants now.
@@ -761,9 +754,8 @@ export class LeasedSessions implements Sessions {
         ? 'offer_expired'
         : undefined;
     if (failure) await this.dispatch.failed(session, failure, tx);
-    // A session that may be continued leaves its agent dormant, its credential revoked above.
-    if (session.continuity) await this.conversations.closed(session, tx);
-    else await this.directory.retire(await this.directory.get(session.agentId!, tx), reason, tx);
+    // A session that may be continued leaves its thread dormant, its credential revoked above.
+    await this.threads.closed(session, reason, tx);
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: 'system:sessions',
@@ -938,55 +930,34 @@ export class LeasedSessions implements Sessions {
     // Reuse is a malformed runner offer, never a failed launch of the target.
     const tokenHash = tokenDigest(input.secret);
     check(
-      !(await tx.get('SELECT id FROM worker_sessions WHERE token_hash=?', tokenHash)) &&
-        !(await tx.get('SELECT id FROM agents WHERE token_hash=?', tokenHash)),
+      !(await tx.get('SELECT id FROM worker_sessions WHERE token_hash=?', tokenHash)),
       'session_secret_used',
       'Session secret was already used',
       409,
     );
-    // Continuity: the key of the work as it stands, and the conversation its latest closed
-    // session kept, taken up by the same idle agent where it can be. A resumed agent is Sessions'
-    // choice, not the runner's: it may have run anywhere.
-    let continuity: SessionContinuity | undefined, resumed: Agent | undefined;
+    // Continuity: the thread of the work as it stands, resumed with the conversation it kept
+    // where it can be, else a new one.
     const unit = await this.workflows.get(caller, input.instanceId, tx);
-    const key = this.conversations.key({
-      instanceId: unit.id,
-      workflow: unit.workflow,
-      state: unit.state,
-      data: unit.data,
-      role,
-    });
-    const latest = key === null ? null : await this.conversations.latest(caller.projectId, key, tx);
-    const prior = latest && (await this.directory.get(latest.agentId, tx));
-    if (
-      prior &&
-      prior.status === 'active' &&
-      digest(prior.source) === owner.hash &&
-      !(await this.executing(prior, tx))
-    )
-      resumed = prior;
-    if (key !== null) continuity = { key, ...(resumed && { resume: latest!.resume }) };
     const id = newId('session');
-    const agent =
-      resumed ??
-      (await this.directory.create(
-        caller,
-        {
-          name: `Agent ${input.runnerId}`.slice(0, 200),
-          runnerId: input.runnerId,
-          requestId: `assignment:${digest({ requestId: input.requestId, runnerId: input.runnerId })}`,
-          secret: input.secret,
-        },
-        tx,
-      ));
-    await this.directory.require(agent, tx, 409);
-    await this.scope.setAgentRole(owner.source, agent.actorId, role, tx);
-    const actor = { id: agent.actorId };
+    const thread = await this.threads.open(
+      caller.projectId,
+      owner,
+      {
+        instanceId: unit.id,
+        workflow: unit.workflow,
+        state: unit.state,
+        data: unit.data,
+        role,
+      },
+      input.runnerId,
+      tx,
+    );
+    const actor = { id: thread.actorId };
     const worker = this.worker({
       id,
       actorId: actor.id,
       projectId: caller.projectId,
-      agentSessionId: agent.sessionId,
+      threadId: thread.id,
     });
     const frozen = await this.framed(
       { tx, actorId: actor.id, sessionId: id, source: owner.source, role },
@@ -1025,9 +996,7 @@ export class LeasedSessions implements Sessions {
     const hard = Math.min(time + duration * 1000, delegationEnd(owner.source));
     const session: Session = {
       id,
-      agentId: agent.id,
-      agentSessionId: agent.sessionId,
-      contextEpoch: agent.contextEpoch,
+      threadId: thread.id,
       projectId: caller.projectId,
       actorId: actor.id,
       source: owner.source,
@@ -1044,14 +1013,16 @@ export class LeasedSessions implements Sessions {
       closedAt: null,
       closeReason: null,
       outcome: null,
-      ...(continuity && { continuity }),
+      ...(thread.continuity && { continuity: thread.continuity }),
       ...frozen,
     };
+    const { threadId: _thread, ...stored } = session;
     await tx.run(
-      'INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+      'INSERT INTO worker_sessions(id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',
       id,
       session.projectId,
       actor.id,
+      thread.id,
       session.instanceId,
       session.expectedRevision,
       owner.hash,
@@ -1060,7 +1031,7 @@ export class LeasedSessions implements Sessions {
       tokenDigest(input.secret),
       fingerprint,
       session.status,
-      JSON.stringify(session),
+      JSON.stringify(stored),
     );
     try {
       await this.credentials.issue(
@@ -1095,13 +1066,6 @@ export class LeasedSessions implements Sessions {
       },
     });
     return clone(session);
-  }
-  /** Whether the agent holds an offered or active execution. */
-  private async executing(agent: Agent, tx: Transaction): Promise<boolean> {
-    return !!(await tx.get(
-      "SELECT 1 FROM worker_sessions WHERE actor_id=? AND status IN ('offered','active')",
-      agent.actorId,
-    ));
   }
   /**
    * Every live session of the project that holds a workspace on `driver`, whoever offered it.
@@ -1659,7 +1623,7 @@ export class LeasedSessions implements Sessions {
   ): Promise<SessionTranscript> {
     caller = structuredClone(caller);
     this.ensureOpen();
-    return await this.conversations.record(
+    return await this.threads.record(
       caller,
       closed(conversationSchema, input, conversationRefusals),
     );
@@ -1667,7 +1631,7 @@ export class LeasedSessions implements Sessions {
   async resume(caller: Caller, input: SessionControl & { hostRef: string }) {
     caller = structuredClone(caller);
     this.ensureOpen();
-    return await this.conversations.download(
+    return await this.threads.download(
       caller,
       closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals),
     );
@@ -1866,26 +1830,24 @@ export class LeasedSessions implements Sessions {
       this.checkedAt = this.clock();
       this.failing.clear();
     }
-    const { sessions, agents } = await this.reading(async (tx) => ({
+    const { sessions, threads } = await this.reading(async (tx) => ({
       sessions: await this.live(tx, !full),
-      agents: full
-        ? // A dormant agent, which holds no credential, waits for its work, not its delegation.
+      threads: full
+        ? // A dormant thread, which holds no credential, waits for its work, not its delegation.
           await tx.all<{ id: string }>(
-            "SELECT id FROM agents a WHERE status='active' AND (token_hash IS NOT NULL OR EXISTS (SELECT 1 FROM worker_sessions s WHERE s.actor_id=a.actor_id AND s.status IN ('offered','active')))",
+            "SELECT DISTINCT thread_id AS id FROM worker_sessions WHERE status IN ('offered','active')",
           )
         : [],
     }));
     // A session that failed is retried by the next full pass, not by every tick and lease.
     for (const { id } of sessions.filter(({ id }) => full || !this.failing.has(id)))
       await this.alone(id, () => this.readFirst((tx) => this.upkeep(id, tx)));
-    for (const { id } of agents)
-      await this.alone(id, () => this.readFirst((tx) => this.lapsed(id, tx)));
+    for (const { id } of threads)
+      await this.alone(id, () => this.readFirst((tx) => this.threads.lapsed(id, tx)));
     if (full) {
       await this.alone('service-work', () => this.readFirst((tx) => this.serviceWork.expire(tx)));
       await this.alone('session-events', () => this.streams.prune());
-      await this.alone('conversations', () =>
-        this.readFirst((tx) => this.conversations.expire(tx)),
-      );
+      await this.alone('threads', () => this.readFirst((tx) => this.threads.expire(tx)));
     }
   }
   /** The live sessions, oldest first; when `lapsing`, only those past their deadline or moved. */
@@ -1924,15 +1886,6 @@ export class LeasedSessions implements Sessions {
         'expired',
         stranded ? 'machine_retired' : 'host_failed',
       );
-  }
-  private async lapsed(id: string, tx: Transaction): Promise<void> {
-    const agent = await this.directory.get(id, tx);
-    try {
-      await this.directory.require(agent, tx);
-    } catch (error) {
-      const failure = safeError(error);
-      if (failure.status < 500) await this.directory.retire(agent, failure.code, tx);
-    }
   }
   /** One subject on its own: its failure is logged once per code and never stops the rest. */
   private async alone<T>(subject: string, fn: () => Promise<T>): Promise<T | false> {
@@ -1999,9 +1952,9 @@ export const sessionsPlugin = {
       // Transcripts go to the object store; while Blobs is unloaded a runner is told to retry.
       ctx.inject(['blobs'], (ctx) => {
         ctx.effect(() => {
-          sessions.transcripts.blobs = sessions.conversations.blobs = ctx.blobs;
+          sessions.transcripts.blobs = sessions.threads.blobs = ctx.blobs;
           return () => {
-            sessions.transcripts.blobs = sessions.conversations.blobs = undefined;
+            sessions.transcripts.blobs = sessions.threads.blobs = undefined;
           };
         });
       });

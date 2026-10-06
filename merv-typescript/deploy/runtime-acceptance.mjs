@@ -176,15 +176,15 @@ export async function exerciseRuntime(start) {
       content: 'Synthetic second assignment observation.',
     });
     await call(secondWorker, 'artifact.read', { artifactId: secondArtifact.id });
-    const agentId = secondExecution.agentId;
-    const live = await http(`/sessions/agents/${agentId}/observation`, boot.token);
+    const threadId = secondExecution.threadId;
+    const live = await http(`/sessions/agents/${threadId}/observation`, boot.token);
     assert.equal(
       live.assignments.find((entry) => entry.id === secondExecution.id)?.instanceId,
       second.id,
     );
     assert.equal(live.agent.currentExecutionId, secondExecution.id);
     await work.release(secondLease);
-    const observation = await http(`/sessions/agents/${agentId}/observation`, boot.token);
+    const observation = await http(`/sessions/agents/${threadId}/observation`, boot.token);
     assert.equal(observation.assignments.length, 1);
     assert.equal(observation.tokenStats.totalCalls, 2);
     assert.equal(observation.tokenStats.completedCalls, 2);
@@ -325,7 +325,7 @@ export async function exerciseRuntime(start) {
       (await call(restarted, 'artifact.read', { artifactId: artifact.id })).content,
       'Observed 2 + 3 = 5.',
     );
-    const retained = await http(`/sessions/agents/${agentId}/observation`, boot.token);
+    const retained = await http(`/sessions/agents/${threadId}/observation`, boot.token);
     assert.deepEqual(retained.tokenStats, observation.tokenStats);
     assert.equal(retained.assignments.length, 1);
     assert.equal((await app.ctx.research.get(owner, research.id)).reflectionId, reflection.id);
@@ -337,7 +337,7 @@ export async function exerciseRuntime(start) {
       pluginCount,
       taskState: 'done',
       closedWorkerReplay: 'fenced',
-      agentId,
+      threadId,
       toolCalls: retained.tokenStats.totalCalls,
       tokenAccounting: 'payload estimates, not model billing',
       tokenStats: retained.tokenStats,

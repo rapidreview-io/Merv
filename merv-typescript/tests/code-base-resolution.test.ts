@@ -26,6 +26,7 @@ import { resolutionFixture } from './fixtures/resolution.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { assessment as reviewAssessment } from './fixtures/review-verdict.js';
 import { boundProject } from './fixtures/code-binding.js';
+import { fixtureThread } from './fixtures/threads.js';
 
 async function fixture(t: TestContext, human = false) {
   const f = await resolutionFixture(t, { human });
@@ -82,10 +83,11 @@ async function fixture(t: TestContext, human = false) {
     const id = `source-${randomBytes(8).toString('hex')}`;
     await f.state.transaction(async (tx) => {
       await tx.run(
-        "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,'released',?)",
+        "INSERT INTO worker_sessions(id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,'released',?)",
         id,
         f.admin.projectId,
         actorId,
+        await fixtureThread(tx, f.admin.projectId, actorId),
         unitId,
         revision,
         id,

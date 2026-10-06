@@ -73,6 +73,7 @@ function request(readOnly = false, workspace?: WorkflowWorkspacePolicy): LaunchR
   };
   const session: Session = {
     id: 'session_fixture',
+    threadId: 'thr_fixture',
     projectId: target.projectId,
     actorId: target.actorId,
     source: {

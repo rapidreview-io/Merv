@@ -1,4 +1,4 @@
-import { createService, migrationList } from '@merv/contracts';
+import { createService } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -29,7 +29,7 @@ import { openState } from './fixtures/state.js';
 import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
-async function fixture(t: TestContext, legacySchema = false) {
+async function fixture(t: TestContext) {
   let clock = Date.now(),
     builds = 0,
     brokenBuild = false,
@@ -37,15 +37,6 @@ async function fixture(t: TestContext, legacySchema = false) {
   let buildHook: ((tx: Transaction) => void | Promise<void>) | undefined;
   let leaseCheckHook: (() => void | Promise<void>) | undefined;
   const state = await openState();
-  const migrate = state.migrate.bind(state);
-  if (legacySchema)
-    state.migrate = async (component, migrations) =>
-      await migrate(
-        component,
-        component === 'sessions'
-          ? migrationList(migrations).filter((m) => m.version <= 2)
-          : migrations,
-      );
   const scope = await createService(new ProjectScope(state, () => clock));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state)),
@@ -176,7 +167,6 @@ async function fixture(t: TestContext, legacySchema = false) {
       sweepIntervalMs: 60_000,
     }),
   );
-  state.migrate = migrate;
   const instance = async (caller = source) =>
     await handle.start(caller, {
       workflow: definition.name,
@@ -336,7 +326,7 @@ test('offers reserve one worker, store only the digest, bind receipts to source 
   assert.deepEqual(caller, {
     actorId: session.actorId,
     projectId: session.projectId,
-    session: { id: session.id, agentSessionId: session.agentSessionId },
+    session: { id: session.id, threadId: session.threadId },
   });
   await assert.rejects(
     async () => await f.sessions.offer(caller, { ...input, secret: secret(), requestId: 'nested' }),
@@ -1177,7 +1167,7 @@ test('dispatch controls and observations retain their original authorization', a
       }),
     projectStatus: (caller) => f.sessions.dispatch.projectStatus(caller),
     workspaceObservation: (caller) => f.sessions.workspaceObservation(caller, session.id),
-    agentObservation: (caller) => f.sessions.observations.read(caller, session.agentId!),
+    agentObservation: (caller) => f.sessions.observations.read(caller, session.threadId),
   };
   for (const [name, operation] of Object.entries(operations)) {
     await t.test(name, async () => {
@@ -1648,7 +1638,9 @@ test('source revocation retires an offered agent and its actor', async (t) => {
   await f.scope.credentials.revokeActor(f.owner, f.source.actorId);
   await f.sessions.sweep();
   assert.deepEqual(
-    await f.state.read((sql) => sql.get('SELECT status FROM agents WHERE id=?', session.agentId!)),
+    await f.state.read((sql) =>
+      sql.get('SELECT status FROM session_threads WHERE id=?', session.threadId),
+    ),
     { status: 'retired' },
   );
   assert.equal(
@@ -1656,57 +1648,159 @@ test('source revocation retires an offered agent and its actor', async (t) => {
     false,
   );
 });
-test('upgrading the historical one-worker schema preserves a live execution and its dispatch receipt', async (t) => {
-  const f = await fixture(t, true);
-  const { token, session } = await f.offer();
+test('upgrading agents to threads keeps a live execution, a dormant conversation and a dispatch receipt', async (t) => {
+  const f = await fixture(t);
+  const release = (session: { id: string }) =>
+    f.sessions.release(f.source, { sessionId: session.id, runnerId: 'runner' });
+  const again = async (instanceId: string) =>
+    await f.sessions.offer(f.source, {
+      instanceId,
+      expectedRevision: 0,
+      runnerId: 'runner',
+      requestId: randomBytes(10).toString('hex'),
+      secret: secret(),
+    });
+  // A dormant agent whose runner declared a conversation, and a session from before agents.
+  const dormant = (await f.offer()).session;
+  await release(dormant);
+  const early = (await f.offer()).session;
+  await release(early);
+  // A key's agent whose next offer did not resume it: production left it active until that
+  // offer's session closed, and that session is live now.
+  const rival = (await f.offer()).session;
+  await release(rival);
+  const token = secret();
+  const live = await f.sessions.offer(f.source, {
+    instanceId: rival.instanceId,
+    expectedRevision: 0,
+    runnerId: 'runner',
+    requestId: 'live',
+    secret: token,
+  });
   const active = await f.sessions.authenticate(token);
-  // Current code runs only on current tables, so the historical schema gets its row by hand.
   const runner = { id: 'runner_legacy' };
-  await f.state.transaction(
-    async (tx) =>
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      "INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,'legacy-owner','runner','{}','{}','{}',?)",
+      runner.id,
+      f.source.projectId,
+      new Date().toISOString(),
+    );
+    await tx.run(
+      'INSERT INTO session_dispatch_receipts(owner_hash,runner_id,request_id,fingerprint,session_id,runner_ref,platform_json) VALUES(?,?,?,?,?,?,?)',
+      'legacy-owner',
+      'runner',
+      'legacy-request',
+      'legacy-fingerprint',
+      live.id,
+      runner.id,
+      '{}',
+    );
+  });
+  const before = await f.sessions.get(f.source, live.id);
+  const sha256 = 'a'.repeat(64);
+  // Back to the tables production holds before sessions@13: agentId in each session's JSON, the
+  // key's latest closed session in session_conversations, no thread anywhere.
+  await f.state.transaction(async (tx) => {
+    await tx.run(`
+      DROP TRIGGER worker_sessions_thread_immutable ON worker_sessions;
+      DROP FUNCTION worker_sessions_thread_immutable_guard();
+      CREATE FUNCTION worker_sessions_agent_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN RETURN NEW; END $g$;
+      CREATE TRIGGER worker_sessions_agent_immutable BEFORE UPDATE ON worker_sessions FOR EACH ROW EXECUTE FUNCTION worker_sessions_agent_immutable_guard();
+      CREATE TABLE agents(id TEXT PRIMARY KEY);
+      CREATE FUNCTION agents_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN RETURN OLD; END $g$;
+      CREATE TRIGGER agents_no_delete BEFORE DELETE ON agents FOR EACH ROW EXECUTE FUNCTION agents_no_delete_guard();
+      CREATE TABLE session_conversations(project_id TEXT, continuity_key TEXT, session_id TEXT, agent_id TEXT REFERENCES agents(id),
+        harness TEXT, conversation_id TEXT, sha256 TEXT, size BIGINT, updated_at TEXT, uploaded_at TEXT);
+      INSERT INTO agents SELECT id FROM session_threads;
+      ALTER TABLE worker_sessions DISABLE TRIGGER worker_sessions_immutable;
+      UPDATE worker_sessions SET session_json=(CASE WHEN id='${early.id}' THEN session_json::jsonb
+        ELSE jsonb_set(session_json::jsonb,'{agentId}',to_jsonb(thread_id)) END)::text;
+      ALTER TABLE worker_sessions ENABLE TRIGGER worker_sessions_immutable;
+      ALTER TABLE worker_sessions DROP COLUMN thread_id;
+      DROP TABLE session_threads;
+      INSERT INTO component_migrations VALUES('agents',1,'legacy'),('session_conversations',1,'legacy');
+      DELETE FROM component_migrations WHERE component='sessions' AND version=13;`);
+    await tx.run('UPDATE actors SET active=1 WHERE id=?', rival.actorId);
+    // A session from before agents had an actor of its own, retired with it.
+    await tx.run('UPDATE actors SET active=0 WHERE id=?', early.actorId);
+    for (const [session, conversation] of [
+      [dormant, true],
+      [rival, false],
+    ] as const)
       await tx.run(
-        "INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,'legacy-owner','runner','{}','{}','{}',?)",
-        runner.id,
-        f.source.projectId,
-        new Date().toISOString(),
-      ),
-  );
-  await f.state.transaction(
-    async (tx) =>
-      await tx.run(
-        'INSERT INTO session_dispatch_receipts(owner_hash,runner_id,request_id,fingerprint,session_id,runner_ref,platform_json) VALUES(?,?,?,?,?,?,?)',
-        'legacy-owner',
-        'runner',
-        'legacy-request',
-        'legacy-fingerprint',
+        'INSERT INTO session_conversations VALUES(?,?,?,?,?,?,?,?,?,NULL)',
+        session.projectId,
+        session.continuity!.key,
         session.id,
-        runner.id,
-        '{}',
-      ),
-  );
-  const before = await f.sessions.get(f.source, session.id);
+        session.threadId,
+        ...(conversation
+          ? ['claude', '0199a0b2-1111-7222-8333-944445555666', sha256, 1]
+          : [null, null, null, null]),
+        session.closedAt ?? new Date().toISOString(),
+      );
+  });
   await f.restart();
-  assert.deepEqual(await f.sessions.get(f.source, session.id), before);
+
+  const threads = await f.state.read((sql) =>
+    sql.all<{ id: string; status: string; retired_reason: string | null; sha256: string | null }>(
+      'SELECT id,status,retired_reason,sha256 FROM session_threads ORDER BY id',
+    ),
+  );
+  const earlyThread = `thr_${early.actorId}`;
+  assert.deepEqual(
+    threads,
+    [
+      { id: dormant.threadId, status: 'dormant', retired_reason: null, sha256 },
+      { id: rival.threadId, status: 'retired', retired_reason: 'superseded', sha256: null },
+      { id: live.threadId, status: 'open', retired_reason: null, sha256: null },
+      { id: earlyThread, status: 'retired', retired_reason: 'retired', sha256: null },
+    ].sort((a, b) => (a.id < b.id ? -1 : 1)),
+  );
+  assert.deepEqual(
+    await f.state.read(async (sql) => ({
+      tables: await sql.get(
+        "SELECT to_regclass('agents')::text AS agents,to_regclass('session_conversations')::text AS conversations",
+      ),
+      components: await sql.all(
+        "SELECT component FROM component_migrations WHERE component IN ('agents','session_conversations')",
+      ),
+      early: await sql.get('SELECT thread_id FROM worker_sessions WHERE id=?', early.id),
+    })),
+    {
+      tables: { agents: null, conversations: null },
+      components: [],
+      early: { thread_id: earlyThread },
+    },
+  );
+  // The live execution reads and authenticates as it did, as its thread's actor.
+  assert.deepEqual(await f.sessions.get(f.source, live.id), before);
   assert.deepEqual(await f.sessions.authenticate(token), active);
+  // The dormant thread resumes with the conversation its row kept.
+  const resumed = await again(dormant.instanceId);
+  assert.deepEqual(
+    [resumed.threadId, resumed.actorId, resumed.continuity?.resume?.sha256],
+    [dormant.threadId, dormant.actorId, sha256],
+  );
   assert.equal(
     (
-      await f.state.read(
-        async (sql) =>
-          await sql.get<{ session_id: string }>(
-            'SELECT session_id FROM session_dispatch_receipts WHERE request_id=?',
-            'legacy-request',
-          ),
+      await f.state.read((sql) =>
+        sql.get<{ session_id: string }>(
+          'SELECT session_id FROM session_dispatch_receipts WHERE request_id=?',
+          'legacy-request',
+        ),
       )
     )?.session_id,
-    session.id,
+    live.id,
   );
-  await assert.rejects(
-    async () =>
-      await f.state.transaction(
-        async (tx) => await tx.run('DELETE FROM worker_sessions WHERE id=?', session.id),
-      ),
-    { code: 'state_constraint' },
-  );
+  for (const sql of [
+    'DELETE FROM worker_sessions WHERE id=?',
+    'DELETE FROM session_threads WHERE id=?',
+  ])
+    await assert.rejects(
+      f.state.transaction((tx) => tx.run(sql, sql.includes('threads') ? live.threadId : live.id)),
+      { code: 'state_constraint' },
+    );
 });
 
 test('agent observations retain tool timings and estimates across a restart without retaining payloads', async (t) => {
@@ -1734,7 +1828,7 @@ test('agent observations retain tool timings and estimates across a restart with
     f.sessions.invocations.run(pending, () => 'duplicate'),
     { code: 'session_invocation' },
   );
-  let observed = await f.sessions.observations.read(f.owner, first.agentId!);
+  let observed = await f.sessions.observations.read(f.owner, first.threadId);
   assert.equal(observed.toolCalls[0]!.status, 'running');
   assert.equal(observed.toolCalls[0]!.outputTokens, null);
   assert.equal(observed.agent.currentExecutionId, first.id);
@@ -1742,7 +1836,7 @@ test('agent observations retain tool timings and estimates across a restart with
   f.advance(1234);
   finish({ secret: 'sensitive-result-never-retained' });
   await running;
-  observed = await f.sessions.observations.read(f.owner, first.agentId!);
+  observed = await f.sessions.observations.read(f.owner, first.threadId);
   assert.equal(observed.toolCalls[0]!.status, 'succeeded');
   assert.equal(observed.toolCalls[0]!.durationMs, 1234);
   assert.ok(observed.toolCalls[0]!.inputTokens > 0);
@@ -1756,7 +1850,7 @@ test('agent observations retain tool timings and estimates across a restart with
     inputTokens: observed.toolCalls[0]!.inputTokens,
     outputTokens: observed.toolCalls[0]!.outputTokens,
   });
-  await assert.rejects(async () => await f.sessions.observations.read(caller, first.agentId!), {
+  await assert.rejects(async () => await f.sessions.observations.read(caller, first.threadId), {
     code: 'session_forbidden',
   });
   await assert.rejects(
@@ -1808,11 +1902,11 @@ test('agent observations retain tool timings and estimates across a restart with
   );
   await f.restart();
   assert.equal(
-    (await f.sessions.observations.read(f.owner, first.agentId!)).tokenStats.totalCalls,
+    (await f.sessions.observations.read(f.owner, first.threadId)).tokenStats.totalCalls,
     1,
   );
-  observed = await f.sessions.observations.read(f.owner, second.agentId!);
-  assert.equal(observed.agent.id, second.agentId);
+  observed = await f.sessions.observations.read(f.owner, second.threadId);
+  assert.equal(observed.agent.id, second.threadId);
   assert.deepEqual(
     observed.assignments.map((a) => a.id),
     [second.id],
@@ -1894,7 +1988,7 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
   const before = await f.state.read(
     async (sql) => await sql.get('SELECT COUNT(*) AS n FROM events'),
   );
-  const observation = await f.sessions.observations.read(viewer, offered.session.agentId!);
+  const observation = await f.sessions.observations.read(viewer, offered.session.threadId);
   assert.equal(observation.toolCalls.length, 100);
   assert.equal(observation.toolCallTotal, 105);
   assert.equal(observation.tokenStats.totalCalls, 105);
@@ -1910,13 +2004,13 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
     async () =>
       await f.sessions.observations.read(
         { actorId: other.actor.id, projectId: other.project.id },
-        offered.session.agentId!,
+        offered.session.threadId,
       ),
     { code: 'agent_not_found' },
   );
   await f.scope.credentials.revokeActor(f.owner, reader.actor.id);
   await assert.rejects(
-    async () => await f.sessions.observations.read(viewer, offered.session.agentId!),
+    async () => await f.sessions.observations.read(viewer, offered.session.threadId),
   );
 });
 
@@ -1926,7 +2020,7 @@ test('agent table includes retired instances in join order and is not truncated 
   for (let index = 0; index < 202; index++) {
     f.advance(1000);
     const { session } = await f.offer();
-    ids.unshift(session.agentId!);
+    ids.unshift(session.threadId);
     // The newest is halted; its agent, left dormant for its work, retires at the sweep after 14 days.
     if (index === 201) await f.sessions.dispatch.halt(f.owner, { sessionId: session.id });
   }
@@ -1944,7 +2038,7 @@ test('agent table includes retired instances in join order and is not truncated 
 test('PostgreSQL preserves lease fencing and tool observations', async (t) => {
   const f = await fixture(t);
   const { session: first, token } = await f.offer();
-  assert.deepEqual((await f.sessions.observations.read(f.owner, first.agentId!)).tokenStats, {
+  assert.deepEqual((await f.sessions.observations.read(f.owner, first.threadId)).tokenStats, {
     totalCalls: 0,
     completedCalls: 0,
     inputTokens: 0,
@@ -1955,7 +2049,7 @@ test('PostgreSQL preserves lease fencing and tool observations', async (t) => {
     artifactId: 'frozen-artifact',
   });
   await f.sessions.invocations.run(prepared, () => ({ content: 'answer' }));
-  const observation = await f.sessions.observations.read(f.owner, first.agentId!);
+  const observation = await f.sessions.observations.read(f.owner, first.threadId);
   assert.equal(observation.toolCalls[0]?.executionId, first.id);
   assert.equal(observation.toolCalls[0]?.status, 'succeeded');
   assert.equal(observation.tokenStats.totalCalls, 1);

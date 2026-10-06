@@ -62,7 +62,7 @@ export const actor = (row: ActorRow): Actor => ({
   active: !!row.active,
   ...(row.user_issuer ? { user: { issuer: row.user_issuer, subject: row.user_subject! } } : {}),
   ...(row.service_owner ? { serviceOwner: row.service_owner } : {}),
-  ...(row.agent_id ? { agentId: row.agent_id } : {}),
+  ...(row.agent_id ? { threadId: row.agent_id } : {}),
   ...(row.session_id ? { sessionId: row.session_id } : {}),
 });
 export const credential = (row: CredentialRow): ActorCredential => ({

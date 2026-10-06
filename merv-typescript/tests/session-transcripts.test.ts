@@ -250,7 +250,7 @@ test('a declaration records derived metadata with no store I/O; a delivery HEADs
       workflow: 'transcript-test',
       role: 'producer',
       runner_id: 'runner',
-      agent_id: session.agentId,
+      agent_id: session.threadId,
       host_ref: control.hostRef,
       hostname: machine.hostname,
       sha256: facts.sha256,
