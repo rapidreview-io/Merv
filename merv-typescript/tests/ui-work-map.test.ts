@@ -1018,6 +1018,81 @@ test('a held card’s sidebar borrows the board’s mark: the sentence, who ends
   assert.ok(move.querySelector('svg'), 'the shell ends the link with its own arrow');
 });
 
+test('a held card’s mark carries its owner’s release: it asks why, sends a fresh request, says a refusal and reads again', async (t) => {
+  t.after(unmount);
+  drawn();
+  const given = board();
+  const held = given.lanes.work.nodes.find(({ key }) => key === 'work:wf_table')!;
+  held.attention = {
+    says: ['Held after ', { count: 5 }, ' failed launches'],
+    who: 'A project admin can release the hold',
+    action: {
+      label: 'Release hold',
+      verb: 'start',
+      tool: 'session.release_hold',
+      input: { instanceId: 'wf_table', expectedRevision: 3 },
+      allowed: true,
+      guard: {
+        title: 'Release this hold?',
+        consequence:
+          'Dispatch offers this work again. If its launches keep failing, it is held again.',
+      },
+      ask: { field: 'reason', label: 'Reason', value: 'Cause fixed; retry' },
+      requestId: true,
+    },
+  };
+  answers(given);
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/session.release_hold', (call, input) => {
+    sent.push(input);
+    return call === 1
+      ? {
+          status: 409,
+          body: {
+            error: {
+              code: 'hold_not_held',
+              message: 'This target is still being retried; it is not held',
+            },
+          },
+        }
+      : { body: { result: { instanceId: 'wf_table', revision: 3, attempts: 0, heldAt: null } } };
+  });
+  await mount(page());
+  await press(card('work:wf_table'));
+  assert.ok(text().includes('A project admin can release the hold'));
+  await press(button('Release hold', $('.running-panel-head')!)!);
+  const guard = $('.guard')!;
+  assert.equal(guard.getAttribute('aria-label'), 'Release this hold?');
+  const reason = guard.querySelector<HTMLInputElement>('input')!;
+  assert.equal(reason.value, 'Cause fixed; retry');
+  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  await act(async () => {
+    set.call(reason, 'Image rebuilt');
+    reason.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  const boards = reads('ui.running');
+  await press(button('Release hold', $('.guard')!)!);
+  assert.equal(sent.length, 1);
+  const [first] = sent;
+  assert.deepEqual(
+    { ...first, requestId: undefined },
+    { instanceId: 'wf_table', expectedRevision: 3, reason: 'Image rebuilt', requestId: undefined },
+  );
+  assert.equal(typeof first!.requestId, 'string');
+  // A refusal is said in the guard, which stays, and nothing is read again as though it worked.
+  assert.equal(
+    $('.guard [role="alert"]')!.textContent,
+    'This target is still being retried; it is not held',
+  );
+  assert.equal(reads('ui.running'), boards);
+  await press(button('Release hold', $('.guard')!)!);
+  assert.equal(sent.length, 2);
+  assert.notEqual(sent[1]!.requestId, first!.requestId, 'a new press is a new request');
+  assert.equal(sent[1]!.reason, 'Image rebuilt');
+  assert.equal($('.guard'), null);
+  assert.ok(reads('ui.running') > boards, 'a release reads the board again');
+});
+
 test('a link that is a fact’s whole value is a target of its own; one inside a sentence stays text', async (t) => {
   t.after(unmount);
   drawn();

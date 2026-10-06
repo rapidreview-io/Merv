@@ -213,9 +213,25 @@ export function actionOf(value: unknown, tools: ReadonlySet<string>): RunningAct
 const actionsOf = (value: unknown, tools: ReadonlySet<string>): RunningAction[] =>
   Array.isArray(value) ? kept(value, (action) => actionOf(action, tools)) : [];
 
+/** Attention whose control is for a tool this server has; any other control is left off. */
+function offered<T extends RunningAttention | undefined>(
+  attention: T,
+  tools: ReadonlySet<string>,
+): T {
+  if (!attention?.action || tools.has(attention.action.tool)) return attention;
+  const { action: _, ...rest } = attention;
+  return rest as T;
+}
+
 export function summaryOf(value: unknown, tools: ReadonlySet<string>): RunningSummary | null {
   const summary = parsed(runningSummary)(value);
-  return summary && { ...summary, actions: summary.actions.filter(({ tool }) => tools.has(tool)) };
+  return (
+    summary && {
+      ...summary,
+      ...(summary.attention ? { attention: offered(summary.attention, tools) } : {}),
+      actions: summary.actions.filter(({ tool }) => tools.has(tool)),
+    }
+  );
 }
 
 const keysOf = (value: unknown, except: string): string[] =>
@@ -534,7 +550,7 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
   }
   for (const node of remaining) {
     const attention = strongest([node.attention, ...(marked.get(node.key) ?? [])]);
-    if (attention) node.attention = attention;
+    if (attention) node.attention = offered(attention, names);
     const took = absorbed.get(node.key);
     if (took?.length) node.aliases = took;
     else delete node.aliases;
@@ -685,12 +701,13 @@ export async function runningPanel(
       ({ contribution, sections }) => ({ owner: contribution.owner, sections }),
     ),
   );
+  const names = await tools();
   return {
     key,
     observedAt: new Date().toISOString(),
-    header,
+    header: header.attention ? { ...header, attention: offered(header.attention, names) } : header,
     sections,
-    actions: actionsOf(own.actions, await tools()),
+    actions: actionsOf(own.actions, names),
     ...(sameOriginPath(own.route) ? { route: own.route } : {}),
     live: own.live === true,
     aliases,

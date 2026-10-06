@@ -179,6 +179,12 @@ export const runningAttention = z
      */
     to: lenient(z.intersection(runningTarget, z.object({ text: linkText(40) })).optional()),
     /**
+     * The control that ends the wait, drawn under the sentence in the sidebar's head
+     * ('Release hold'). One this reader may not use, or for a tool this server lacks, is
+     * left off; the need still stands.
+     */
+    action: lenient(z.lazy(() => runningAction).optional()),
+    /**
      * Not a person's move, only what the drawing owner cannot see: the words replace the
      * node's first line in ink, without the red, and are not counted as needing anyone
      * ('Ready · launch failed 2 times, retrying'). Any red attention outranks a quiet one.
@@ -298,6 +304,19 @@ export const runningAction = z
     primary: lenient(z.boolean().optional()),
     /** A guarded control names its consequence before acting. */
     guard: z.object({ title: words(80), consequence: words(400) }).optional(),
+    /**
+     * Words the person writes before acting, sent in the input under `field` and starting
+     * as `value` (`{ field: 'reason', label: 'Reason', value: 'Cause fixed; retry' }`).
+     */
+    ask: z
+      .object({
+        field: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]{0,63}$/),
+        label: words(60),
+        value: words(500),
+      })
+      .optional(),
+    /** The tool replays by requestId: each press sends a new one, and a retry the same. */
+    requestId: flag,
     /**
      * What the answer must hold for the act to count as done. Below `min` the guard stays
      * open with `nothing` under it, and nothing is refreshed as if it had worked: a lease that
