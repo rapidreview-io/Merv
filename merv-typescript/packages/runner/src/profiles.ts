@@ -295,6 +295,8 @@ function codexArgs(
     'exec',
     '--ignore-user-config',
     '--ignore-rules',
+    // Only a session that may be continued keeps its conversation.
+    ...(request.session.continuity ? [] : ['--ephemeral']),
     '--skip-git-repo-check',
     '--sandbox',
     sealed(request.session) ? 'read-only' : 'workspace-write',
@@ -449,6 +451,7 @@ function claudeArgs(
     // Thinking and text arrive while they are written, for the live view.
     '--include-partial-messages',
     ...(request.resume ? ['--resume', request.resume] : []),
+    ...(request.session.continuity ? [] : ['--no-session-persistence']),
     '--setting-sources',
     '',
     '--strict-mcp-config',
@@ -678,7 +681,7 @@ export function buildLaunch(
   const stdin = [
     ...(request.resume
       ? [
-          'You are continuing your earlier work on this unit; it was returned to you with review feedback.',
+          'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).',
         ]
       : []),
     request.prompt,

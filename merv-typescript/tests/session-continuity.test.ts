@@ -265,8 +265,9 @@ test('work that comes back resumes its producer: same agent actor, new session, 
     ),
   );
 
-  // The first session's conversation is no longer the latest once the second closes.
+  // The first session's conversation is no longer the latest once the second delivers its own.
   await f.release(second.session);
+  await f.keep(second.session, second.control);
   const stale = await f.http('POST', `/sessions/${first.session.id}/conversation`, f.token, {
     ...first.control,
     ...facts,
@@ -299,6 +300,60 @@ test('a key without a delivered conversation offers a new agent; the one it repl
   const fourth = await f.offer(unit.id);
   assert.equal(fourth.session.continuity?.resume, undefined);
   assert.notEqual(fourth.session.agentId, second.session.agentId);
+});
+
+test('a resumed session that closes having declared nothing leaves the conversation it continued', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  await f.release(first.session);
+  const { facts } = await f.keep(first.session, first.control);
+  // The resumed launch fails before its harness runs (a lost machine, a lapsed offer): nothing kept.
+  const second = await f.offer(unit.id, 'runner-b');
+  assert.equal(second.session.continuity?.resume?.sessionId, first.session.id);
+  await f.ok('POST', `/sessions/${second.session.id}/release`, f.token, {
+    runnerId: 'runner-b',
+    outcome: 'launch_failed',
+  });
+  // The next offer still resumes the same agent with the same conversation, and nobody is retired.
+  const third = await f.offer(unit.id, 'runner-c');
+  assert.equal(third.session.agentId, first.session.agentId);
+  assert.deepEqual(third.session.continuity?.resume, { sessionId: first.session.id, ...facts });
+  await f.release(third.session);
+  assert.equal((await f.agent(first.session.agentId!)).status, 'active');
+  // The last session to close may still declare what it kept; an earlier one of it may not.
+  await f.keep(third.session, third.control);
+  const stale = await f.http('POST', `/sessions/${second.session.id}/conversation`, f.token, {
+    ...second.control,
+    ...facts,
+  });
+  assert.deepEqual([stale.status, stale.body.error.code], [409, 'conversation_superseded']);
+  const fourth = await f.offer(unit.id, 'runner-a');
+  assert.equal(fourth.session.agentId, first.session.agentId);
+  assert.equal(fourth.session.continuity?.resume?.sessionId, third.session.id);
+});
+
+test('a conversation declared but not yet stamped as delivered is still resumed by its agent', async (t) => {
+  const f = await fixture(t);
+  const unit = await f.start();
+  const first = await f.offer(unit.id);
+  await f.release(first.session);
+  const facts = {
+    harness: 'claude',
+    conversationId: '0199a0b2-1111-7222-8333-944445555666',
+    sha256: createHash('sha256').update('x').digest('hex'),
+    size: 1,
+  };
+  await f.ok('POST', `/sessions/${first.session.id}/conversation`, f.token, {
+    ...first.control,
+    ...facts,
+  });
+  // The work came back before the runner's upload: the same agent takes it, never a fresh one.
+  const second = await f.offer(unit.id);
+  assert.equal(second.session.agentId, first.session.agentId);
+  assert.deepEqual(second.session.continuity?.resume, { sessionId: first.session.id, ...facts });
+  await f.release(second.session);
+  assert.equal((await f.agent(first.session.agentId!)).status, 'active');
 });
 
 test('a provider keys a workflow: across instances, or never', async (t) => {

@@ -13,6 +13,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -21,7 +22,9 @@ import { join } from 'node:path';
 import type { Session } from '@merv/sessions/types';
 import {
   conversationId,
+  forgetConversations,
   keepConversation,
+  launchCodexHome,
   redactConversation,
   restoreConversation,
 } from '../packages/runner/src/conversation.js';
@@ -57,11 +60,13 @@ const codex: RunnerProfile = {
   enabled: true,
   parallelism: 1,
 };
-const launch = (profile: RunnerProfile, resume?: string) =>
+const continued =
+  'You are continuing your earlier work on this unit. Read the current assignment and its context sections: they supersede anything earlier in this conversation (earlier plans, inputs, or feedback you already addressed).';
+const launch = (profile: RunnerProfile, resume?: string, kept = true) =>
   buildLaunch(
     profile,
     {
-      session: offer('argv') as unknown as Session,
+      session: { ...offer('argv'), ...(kept && { continuity: { key: 'key' } }) } as Session,
       prompt: 'Worker prompt.',
       secret: bearer,
       mcpUrl: 'http://127.0.0.1:9/mcp',
@@ -72,19 +77,20 @@ const launch = (profile: RunnerProfile, resume?: string) =>
     { PATH: '/usr/bin' },
   );
 
-test('a fresh launch keeps its conversation; a resumed one names it, with one line before the prompt', () => {
+test('a launch that may be continued keeps its conversation; a resumed one names it, with one line before the prompt', () => {
   for (const profile of [claude(), codex]) {
     const fresh = launch(profile),
-      resumed = launch(profile, id);
-    assert.ok(
-      !fresh.args.includes('--no-session-persistence') && !fresh.args.includes('--ephemeral'),
+      resumed = launch(profile, id),
+      unkept = launch(profile, undefined, false);
+    const persistence = profile.harness === 'claude' ? '--no-session-persistence' : '--ephemeral';
+    // A session nothing continues (a review, a named agent's) leaves no conversation behind.
+    assert.deepEqual(
+      unkept.args.filter((arg) => !fresh.args.includes(arg)),
+      [persistence],
     );
+    assert.ok(!fresh.args.includes(persistence) && !resumed.args.includes(persistence));
     assert.ok(!fresh.args.includes(id) && !fresh.stdin.includes('continuing'));
-    assert.ok(
-      resumed.stdin.startsWith(
-        'You are continuing your earlier work on this unit; it was returned to you with review feedback.\nWorker prompt.',
-      ),
-    );
+    assert.ok(resumed.stdin.startsWith(`${continued}\nWorker prompt.`));
     assert.equal(resumed.stdin.slice(resumed.stdin.indexOf('\n') + 1), fresh.stdin);
     if (profile.harness === 'claude') {
       assert.deepEqual(
@@ -121,13 +127,25 @@ test('the id the harness printed first; a conversation restored is found and tak
       CODEX_HOME: join(root, 'codex'),
     };
     const bytes = Buffer.from('{"type":"user","text":"hello"}\n');
-    const path = restoreConversation(profile, cwd, id, bytes, environment);
+    // A local Codex launch has a home of its own in its run directory, the machine's login linked.
+    const own = launchCodexHome(profile, run, environment);
+    assert.equal(own, profile.harness === 'codex' ? join(run, 'codex-home') : undefined);
+    if (own) assert.equal(readlinkSync(join(own, 'auth.json')), join(root, 'codex', 'auth.json'));
+    const path = restoreConversation(profile, run, cwd, id, bytes, environment);
     assert.match(
       path,
       profile.harness === 'claude'
         ? new RegExp(`/claude/projects/[A-Za-z0-9-]+/${id}\\.jsonl$`)
-        : new RegExp(`/codex/sessions/\\d{4}/\\d{2}/\\d{2}/rollout-[0-9T-]+-${id}\\.jsonl$`),
+        : new RegExp(`/codex-home/sessions/\\d{4}/\\d{2}/\\d{2}/rollout-[0-9T-]+-${id}\\.jsonl$`),
     );
+    const sides =
+      profile.harness === 'claude'
+        ? [
+            `${path.slice(0, -'.jsonl'.length)}/tool-results`,
+            ...['file-history', 'session-env'].map((d) => join(root, 'claude', d, id)),
+          ]
+        : [];
+    for (const side of sides) mkdirSync(side, { recursive: true });
     assert.deepEqual(readFileSync(path), bytes);
     const event =
       profile.harness === 'claude'
@@ -142,8 +160,15 @@ test('the id the harness printed first; a conversation restored is found and tak
       size: bytes.length,
     });
     assert.deepEqual(readFileSync(join(run, 'conversation.jsonl')), bytes);
-    assert.equal(existsSync(path), false, 'the shared home keeps no conversation');
+    forgetConversations(run, profile, undefined, environment);
+    for (const left of [path, ...sides, ...(own ? [own] : [])])
+      assert.equal(existsSync(left), false, `the shared home keeps nothing: ${left}`);
     assert.equal(keepConversation(run, profile, [], environment), undefined);
+    // A conversation restored for a launch that never took it up is forgotten too.
+    const unused = restoreConversation(profile, run, cwd, id, bytes, environment);
+    rmSync(join(run, 'stdout.log'));
+    forgetConversations(run, profile, id, environment);
+    assert.equal(existsSync(unused), false);
   }
 });
 
@@ -182,6 +207,7 @@ const fs = require('fs'), path = require('path'), crypto = require('crypto');
 const args = process.argv.slice(2), at = args.indexOf('--resume'), root = process.env.CLAUDE_CONFIG_DIR;
 const input = fs.readFileSync(0, 'utf8');
 let id = at >= 0 ? args[at + 1] : crypto.randomUUID(), file;
+if (at >= 0 && fs.existsSync(path.join(root, 'refuse-resume'))) { console.log('no rollout found'); process.exit(1); }
 if (at >= 0) {
   for (const project of fs.readdirSync(path.join(root, 'projects')))
     if (fs.existsSync(path.join(root, 'projects', project, id + '.jsonl'))) file = path.join(root, 'projects', project, id + '.jsonl');
@@ -198,7 +224,13 @@ fs.appendFileSync(file, JSON.stringify({ type: 'user', first: input.split('\\n')
   return path;
 };
 /** The stand-in server, with the routes a continued session's runner calls and a store. */
-function continuing(t: TestContext, bytes: Buffer, recorded = bytes, stores = true) {
+function continuing(
+  t: TestContext,
+  bytes: Buffer,
+  recorded = bytes,
+  stores = true,
+  names = ['continued'],
+) {
   const root = directory(t);
   const config = join(root, 'claude');
   mkdirSync(config);
@@ -208,18 +240,20 @@ function continuing(t: TestContext, bytes: Buffer, recorded = bytes, stores = tr
     if (before === undefined) delete process.env.CLAUDE_CONFIG_DIR;
     else process.env.CLAUDE_CONFIG_DIR = before;
   });
-  const work = offer('continued');
-  work.continuity = {
-    key: 'key',
-    resume: {
-      sessionId: 'session_earlier',
-      harness: 'claude',
-      conversationId: id,
-      sha256: createHash('sha256').update(recorded).digest('hex'),
-      size: recorded.length,
+  const queue: Body[] = names.map((name) => ({
+    ...offer(name),
+    continuity: {
+      key: 'key',
+      resume: {
+        sessionId: 'session_earlier',
+        harness: 'claude',
+        conversationId: id,
+        sha256: createHash('sha256').update(recorded).digest('hex'),
+        size: recorded.length,
+      },
     },
-  };
-  const queue = [work];
+  }));
+  const work = queue[0]!;
   const fake = server(() => queue.shift() ?? null);
   const declared: Body[] = [];
   const fetcher = async (input: string | URL | Request, init?: RequestInit) => {
@@ -232,7 +266,7 @@ function continuing(t: TestContext, bytes: Buffer, recorded = bytes, stores = tr
       declared.push(body);
       return Response.json({
         conversation: {
-          sessionId: work.id,
+          sessionId: decodeURIComponent(url.pathname.split('/')[2]!),
           sha256: body.sha256,
           size: body.size,
           uploadedAt: body.deliver && stores ? 'now' : null,
@@ -242,7 +276,7 @@ function continuing(t: TestContext, bytes: Buffer, recorded = bytes, stores = tr
     return await fake.fetch(input, init);
   };
   const f = machine(t, [claude(harness(root))], fetcher as typeof fetch);
-  return { f, work, declared, config };
+  return { f, work, declared, config, fake };
 }
 const settled = (f: ReturnType<typeof machine>, sessionId: string) =>
   metadata(f.config.directory, launchId(sessionId));
@@ -276,8 +310,7 @@ test('a resumed launch continues the restored conversation and keeps it again, r
     { type: 'user', first: 'earlier turn' },
     {
       type: 'user',
-      first:
-        'You are continuing your earlier work on this unit; it was returned to you with review feedback.',
+      first: continued,
       bearer: '[REDACTED]',
     },
   ]);
@@ -316,4 +349,33 @@ test('a launch whose conversation is still owed stays pending once its transcrip
   assert.equal(settled(f, work.id).conversation?.state, 'owed');
   // A hosted machine leaves once nothing is pending: not before the conversation is delivered.
   assert.equal(runner.snapshot().launches[0]?.transcriptPending, true);
+});
+
+test('a harness that will not take up its restored conversation is put off once, then runs fresh', async (t) => {
+  const earlier = Buffer.from('{"type":"user","first":"earlier turn"}\n');
+  const { f, work, config, fake, declared } = continuing(t, earlier, earlier, true, [
+    'once',
+    'again',
+  ]);
+  writeFileSync(join(config, 'refuse-resume'), '');
+  const runner = f.make();
+  await runner.start();
+  await until(
+    runner,
+    () =>
+      fake.releases('session_again').length > 0 &&
+      settled(f, 'session_again').conversation?.state === 'uploaded',
+    'delivery',
+  );
+  // The first launch's failure to resume is no failure of the work, and nothing counts it.
+  assert.deepEqual(
+    fake.releases(work.id).map((call) => [call.body?.outcome, call.body?.deferral]),
+    [['preparation_deferred', { cause: 'resume_failed', code: 'resume_failed' }]],
+  );
+  // The next launch of the same conversation on this machine starts afresh, and is kept.
+  assert.deepEqual(settled(f, 'session_again').resumed, { unavailable: 'resume_failed_before' });
+  assert.notEqual(declared.at(-1)!.conversationId, id);
+  // The conversation restored for the launch that refused it was not left behind.
+  for (const project of readdirSync(join(config, 'projects')))
+    assert.ok(!readdirSync(join(config, 'projects', project)).includes(`${id}.jsonl`));
 });
