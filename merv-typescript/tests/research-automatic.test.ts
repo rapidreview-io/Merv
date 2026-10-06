@@ -608,22 +608,30 @@ test('outages that alternate their codes are still tried again only for the boun
     // Each refusal names another outage, so the published blocker's `since` keeps moving.
     throw new MervError(calls++ % 2 ? 'code_git_timeout' : 'sandbox_unavailable', 'Down', 503);
   });
-  const timers = t.mock.method(globalThis, 'setTimeout');
-  const retries = () => timers.mock.calls.filter((call) => call.arguments[1] === 37).length;
+  // Retry timers waiting at once, and the most there ever were.
+  const timer = globalThis.setTimeout;
+  let waiting = 0,
+    most = 0;
+  t.mock.method(globalThis, 'setTimeout', ((run: () => void, ms?: number) => {
+    if (ms !== 37) return timer(run, ms);
+    most = Math.max(most, ++waiting);
+    return timer(() => {
+      waiting--;
+      run();
+    }, ms);
+  }) as typeof setTimeout);
   for (const work of works) await f.failExperiment(work.id);
   await f.pump();
-  // Two cycles of one project refused in one pass: one resume tries both again.
-  assert.equal(retries(), 1);
   const settle = async () => {
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => timer(resolve, 300));
     await f.app.ctx.domainEvents.drain();
     return calls;
   };
-  await settle();
-  await settle();
-  await settle();
+  for (let round = 0; round < 5; round++) await settle();
   const after = await settle();
   assert.ok(after > 4, 'the outage was tried again while it was new');
+  // Two cycles of one project refused in one pass: one resume tries both again.
+  assert.equal(most, 1);
   assert.equal(await settle(), after, 'retries stop once the first outage is older than the bound');
 });
 
