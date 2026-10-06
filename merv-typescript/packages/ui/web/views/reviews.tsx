@@ -21,12 +21,16 @@ import type { HomeData } from './map-data';
 import { useActorNames } from './people';
 import type { Task, TaskConfirmation } from '@merv/tasks/models';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
-import type { ReviewGuide, ReviewRequest } from '@merv/contracts/types';
+import type { ReviewGuide, ReviewRequest, Verdict } from '@merv/contracts/types';
+import {
+  REVIEW_VERDICTS,
+  SYNOPSIS_LENGTH,
+  assessmentProblem,
+  synopsisProblem,
+} from '@merv/reviews/rules';
 
-/** review.submit enumerates exactly these finding words and these verdicts. */
+/** review.submit enumerates exactly these finding words. */
 const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
-const VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
-type Verdict = (typeof VERDICTS)[number];
 
 /** A review as review.get and review.list answer it; review.get adds its owner's return routes. */
 export type Review = ReviewRequest & Pick<ReviewGuide, 'returns'>;
@@ -525,7 +529,66 @@ function Controls({
 }
 
 /** The longest synopsis review.submit takes. */
-const SYNOPSIS_MAX = 420;
+const SYNOPSIS_MAX = SYNOPSIS_LENGTH.max;
+
+/**
+ * The first rule of review.submit a desk's verdict breaks, said to the reviewer, and the
+ * criterion it is about. The rules are Reviews' own (`@merv/reviews/rules`); only the words
+ * and their order are the desk's: each check is answered first, then the synopsis, then the
+ * verdict, then where a rejection returns.
+ */
+export function deskProblem(
+  review: Pick<ReviewRequest, 'criteria' | 'artifactIds' | 'requiredCriteria'>,
+  {
+    synopsis,
+    verdict,
+    findings,
+    routed,
+  }: {
+    synopsis: string;
+    verdict?: Verdict;
+    findings: { criterionNumber: number; status?: string; evidenceIds: string[]; notes: string }[];
+    /** A rejection has a return route chosen, or needs none. */
+    routed: boolean;
+  },
+): { text: string; at?: number } | undefined {
+  const said = synopsis.trim();
+  const finding = assessmentProblem(review, { verdict, findings });
+  const verdictRule = finding?.rule === 'unmet' || finding?.rule === 'required';
+  if (finding && !verdictRule)
+    return finding.rule === 'uncited'
+      ? {
+          text: `Check ${finding.criterion} is met, so it must cite at least one pinned file.`,
+          at: finding.criterion,
+        }
+      : finding.rule === 'unanswered'
+        ? {
+            text: `Check ${finding.criterion} still needs a finding and notes.`,
+            at: finding.criterion,
+          }
+        : { text: finding.message, at: finding.criterion };
+  const problem = synopsisProblem(synopsis);
+  if (problem === 'length')
+    return said.length < SYNOPSIS_LENGTH.min
+      ? { text: `The synopsis needs ${SYNOPSIS_LENGTH.min - said.length} more characters.` }
+      : { text: `The synopsis is ${said.length - SYNOPSIS_MAX} characters too long.` };
+  if (problem === 'format')
+    return {
+      text: 'The synopsis is one plain paragraph: no line breaks, Markdown, lists or headings.',
+    };
+  if (problem === 'identifier')
+    return { text: 'The synopsis names things in words, not by their identifiers.' };
+  if (!verdict) return { text: 'Choose a verdict.' };
+  if (finding?.rule === 'unmet')
+    return { text: 'A passing verdict needs every check met or waived.', at: finding.criterion };
+  if (finding?.rule === 'required')
+    return {
+      text: `Check ${finding.criterion} is required: a passing verdict needs it met, not waived.`,
+      at: finding.criterion,
+    };
+  if (verdict !== 'pass' && !routed) return { text: 'Choose where the work returns.' };
+  return undefined;
+}
 
 /** The verdict desk. Every rule below is review.submit's own, checked before it is sent. */
 function Desk({
@@ -556,50 +619,20 @@ function Desk({
   });
   const drafts = review.criteria.map((_, index) => values[index + 1] ?? BLANK);
   const said = synopsis.trim();
-  const bare = drafts.findIndex((draft) => !draft.status || !draft.notes.trim());
-  const uncited = drafts.findIndex((draft) => draft.status === 'met' && !draft.evidenceIds.length);
-  const objection = drafts.findIndex(
-    (draft) => draft.status !== 'met' && draft.status !== 'waived',
-  );
-  // A check the requesting domain depends on passes only met: a waiver cannot stand in for it.
-  const required = review.requiredCriteria?.find((number) => drafts[number - 1]?.status !== 'met');
+  const findings = drafts.map((draft, index) => ({
+    criterionNumber: index + 1,
+    status: draft.status,
+    evidenceIds: draft.evidenceIds,
+    notes: draft.notes.trim(),
+  }));
   // The rule still unmet, and the criterion it is about: the sentence under the
   // control is the way there, so nobody counts list items to find number 3.
-  const unmet: { text: string; at?: number } | undefined =
-    bare >= 0
-      ? { text: `Check ${bare + 1} still needs a finding and notes.`, at: bare + 1 }
-      : uncited >= 0
-        ? {
-            text: `Check ${uncited + 1} is met, so it must cite at least one pinned file.`,
-            at: uncited + 1,
-          }
-        : said.length < 40
-          ? { text: `The synopsis needs ${40 - said.length} more characters.` }
-          : said.length > SYNOPSIS_MAX
-            ? { text: `The synopsis is ${said.length - SYNOPSIS_MAX} characters too long.` }
-            : /[\r\n\u2028\u2029`]/u.test(synopsis) || said.startsWith('#')
-              ? {
-                  text: 'The synopsis is one plain paragraph: no line breaks, backticks or headings.',
-                }
-              : /\b(?:wf|art|review|actor|project|context|exp|task|claim|res|rver|syn|rev|lit|paper)_[A-Za-z0-9]/u.test(
-                    synopsis,
-                  )
-                ? { text: 'The synopsis names things in words, not by their identifiers.' }
-                : !verdict
-                  ? { text: 'Choose a verdict.' }
-                  : verdict === 'pass' && objection >= 0
-                    ? {
-                        text: 'A passing verdict needs every check met or waived.',
-                        at: objection + 1,
-                      }
-                    : verdict === 'pass' && required !== undefined
-                      ? {
-                          text: `Check ${required} is required: a passing verdict needs it met, not waived.`,
-                          at: required,
-                        }
-                      : verdict !== 'pass' && routes.length > 0 && !returnTo
-                        ? { text: 'Choose where the work returns.' }
-                        : undefined;
+  const unmet = deskProblem(review, {
+    synopsis,
+    verdict,
+    findings,
+    routed: routes.length === 0 || !!returnTo,
+  });
   return (
     // One form's width and one field anatomy with the producer's desk, which stands in
     // this same slot on the task's page: the field keeps its name once something is typed.
@@ -617,7 +650,7 @@ function Desk({
         </p>
       )}
       <div className="cluster">
-        {VERDICTS.filter((value) => passes || value !== 'pass').map((value) => (
+        {REVIEW_VERDICTS.filter((value) => passes || value !== 'pass').map((value) => (
           <button
             key={value}
             type="button"
@@ -663,12 +696,7 @@ function Desk({
             // statement, so a reviewer is never asked to write it twice.
             notes: said,
             synopsis: said,
-            findings: drafts.map((draft, index) => ({
-              criterionNumber: index + 1,
-              status: draft.status,
-              evidenceIds: draft.evidenceIds,
-              notes: draft.notes.trim(),
-            })),
+            findings,
             expectedRevision: review.subjectRevision,
           })
         }

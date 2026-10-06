@@ -2,8 +2,9 @@ import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeEpoch, computeGuidance } from '@merv/sandboxes/compute-capability';
 import { requireDependencies } from '@merv/workflows/rules';
 import {
+  directsIndependently,
   excludedFromReview,
-  requireDirecting,
+  NOT_INDEPENDENT,
   reviewHistory,
   REVIEW_SUBMIT_INPUT,
   REVIEW_VERDICTS,
@@ -1366,7 +1367,7 @@ export abstract class ExperimentProgram {
     );
     // A source may have directed a prior producer session, but never directs the review of
     // work it produced itself. The rest of independence belongs to the new worker.
-    requireDirecting(review, context.caller.actorId);
+    check(directsIndependently(review, context.caller.actorId), ...NOT_INDEPENDENT);
     return 'reviewer';
   }
 

@@ -465,3 +465,49 @@ test('a draft belongs to its review: opening the next review starts it blank', a
   assert.ok(!text().includes('Only true of the first review.'));
   assert.ok(!notes() || notes()!.value === '', notes()?.value);
 });
+
+test('the desk takes and refuses a synopsis exactly as review.submit does', async (t) => {
+  t.after(async () => await unmount());
+  const { validateAssessment } = await import('../packages/reviews/src/findings.js');
+  const synopses = [
+    // A word with an underscore is no identifier: the server takes it, and so does the desk.
+    'The task_queue cache fix holds up well under load and meets every check.',
+    // An identifier, Markdown and a list marker: the server refuses each, and so does the desk.
+    'The lens session_3f9a1c2b found the results hold up under every check we ran.',
+    'The **main** claim holds under every check that the reviewer ran on it today.',
+    '- The delivery meets all checks and the cache fix holds up well under load.',
+  ];
+  for (const synopsis of synopses) {
+    serve('/tools/review.get', { body: { result: claimed } });
+    serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+    await mount(page());
+    await settle(10);
+    await click('not met');
+    await write(
+      document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Notes on check 1"]')!,
+      'The methods disagreement is not resolved.',
+    );
+    await write(
+      [...document.querySelectorAll('label')]
+        .find((label) => label.textContent?.startsWith('Synopsis'))!
+        .querySelector('textarea')!,
+      synopsis,
+    );
+    await click('needs changes');
+    const submit = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent === 'Submit verdict',
+    )!;
+    let accepted = true;
+    try {
+      validateAssessment(claimed as never, {
+        verdict: 'needs_changes',
+        synopsis,
+        findings: [{ criterionNumber: 1, status: 'not_met', evidenceIds: [], notes: 'Not yet.' }],
+      });
+    } catch {
+      accepted = false;
+    }
+    assert.equal(!submit.disabled, accepted, synopsis);
+    await unmount();
+  }
+});

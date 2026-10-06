@@ -1,6 +1,7 @@
 import {
+  directsIndependently,
   excludedFromReview,
-  requireDirecting,
+  NOT_INDEPENDENT,
   reviewHistory,
   REVIEW_SUBMIT_INPUT,
 } from '@merv/reviews/rules';
@@ -545,7 +546,7 @@ export class TaskService implements Tasks {
       'Review is already claimed or no longer current',
       409,
     );
-    requireDirecting(review, caller.actorId);
+    check(directsIndependently(review, caller.actorId), ...NOT_INDEPENDENT);
     await this.reviewCommit(caller, snapshot, review, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');
     return 'reviewer';

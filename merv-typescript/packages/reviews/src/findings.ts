@@ -1,8 +1,10 @@
 import { types as nodeTypes } from 'node:util';
+import { assessmentProblem, synopsisProblem } from './rules.js';
 import {
-  visible,
   check,
+  MervError,
   plain,
+  visible,
   type Data,
   type ReviewFinding,
   type ReviewRequest,
@@ -70,9 +72,6 @@ export function evidenceFrom(input: { evidence?: unknown }): Data {
   return validateEvidence(ownField(input, 'evidence', 'invalid_evidence', 'Review evidence'));
 }
 
-/** A generated identifier: a short lowercase prefix, then a token carrying digits (exp_3f9a1c…). */
-const entityId = /\b[a-z]{2,16}_(?=[A-Za-z]*\d)[A-Za-z0-9]{6,}/u;
-
 /** Checks the shape and provenance of an assessment, never the truth of its findings. */
 export function validateAssessment(
   review: Pick<ReviewRequest, 'criteria' | 'artifactIds' | 'requiredCriteria'>,
@@ -80,97 +79,17 @@ export function validateAssessment(
 ): { synopsis: string; findings: ReviewFinding[]; evidence: Data } {
   const evidence = evidenceFrom(input);
   check(
-    typeof input.synopsis === 'string' &&
-      visible(input.synopsis) &&
-      input.synopsis.trim().length >= 40 &&
-      input.synopsis.trim().length <= 420 &&
-      !/[\r\n\u2028\u2029`]|\*\*|__|\]\(|<\/?[a-z]+>/iu.test(input.synopsis) &&
-      !/^\s*(?:#|[-*+]\s|\d+[.)]\s|>)/u.test(input.synopsis) &&
-      !entityId.test(input.synopsis),
+    !synopsisProblem(input.synopsis),
     'invalid_synopsis',
     'Supply a plain single-paragraph synopsis of 40–420 characters, without entity IDs or Markdown, explaining the overall verdict',
   );
-  const synopsis = input.synopsis.trim();
-  const value: unknown = input.findings;
-  check(
-    Array.isArray(value),
-    'invalid_findings',
-    'Supply one finding for every numbered review criterion',
-  );
-  const seen = new Set<number>();
-  for (const item of value) {
-    check(
-      item &&
-        typeof item === 'object' &&
-        !Array.isArray(item) &&
-        Object.keys(item).every((key) =>
-          ['criterionNumber', 'status', 'evidenceIds', 'notes'].includes(key),
-        ),
-      'invalid_findings',
-      'Findings must contain criterionNumber, status, evidenceIds and notes only',
-    );
-    check(
-      Number.isSafeInteger(item.criterionNumber) &&
-        item.criterionNumber >= 1 &&
-        item.criterionNumber <= review.criteria.length &&
-        !seen.has(item.criterionNumber),
-      'invalid_findings',
-      `Each criterion from 1 through ${review.criteria.length} must appear exactly once`,
-    );
-    seen.add(item.criterionNumber);
-    check(
-      ['met', 'not_met', 'not_verified', 'waived'].includes(item.status),
-      'invalid_findings',
-      'Finding status must be met, not_met, not_verified, or waived',
-    );
-    check(
-      typeof item.notes === 'string' && visible(item.notes) && item.notes.length <= 16000,
-      'invalid_findings',
-      `Criterion ${item.criterionNumber} needs assessment notes (1–16000 characters)`,
-    );
-    check(
-      Array.isArray(item.evidenceIds) &&
-        new Set(item.evidenceIds).size === item.evidenceIds.length &&
-        item.evidenceIds.every(
-          (id: unknown) => typeof id === 'string' && review.artifactIds.includes(id),
-        ),
-      'invalid_findings',
-      `Criterion ${item.criterionNumber} must refer only to distinct pinned artifact IDs`,
-    );
-    check(
-      item.status !== 'met' || item.evidenceIds.length > 0,
-      'invalid_findings',
-      `Criterion ${item.criterionNumber} claims met and requires retained evidence`,
-    );
-  }
-  check(
-    seen.size === review.criteria.length,
-    'invalid_findings',
-    `Missing findings for criteria: ${review.criteria
-      .map((_, index) => index + 1)
-      .filter((number) => !seen.has(number))
-      .join(', ')}`,
-  );
-  check(
-    input.verdict !== 'pass' ||
-      value.every((item) => item.status === 'met' || item.status === 'waived'),
-    'invalid_findings',
-    'A passing verdict requires every criterion to be met or explicitly waived with a reason',
-  );
-  // The requesting domain depends on these criteria, so a reviewer's waiver cannot stand in
-  // for them; needs_changes is the way out when one cannot be met.
-  const unmet = (review.requiredCriteria ?? []).find(
-    (number) => value.find((item) => item.criterionNumber === number)?.status !== 'met',
-  );
-  check(
-    input.verdict !== 'pass' || unmet === undefined,
-    'criterion_not_waivable',
-    `Criterion ${unmet} is required: a passing verdict needs it met with retained evidence, and it cannot be waived. Return needs_changes if it is not met`,
-  );
+  const synopsis = (input.synopsis as string).trim();
+  const problem = assessmentProblem(review, input);
+  if (problem) throw new MervError(problem.code, problem.message);
   return {
     synopsis,
     evidence,
-    findings: (value as ReviewFinding[])
+    findings: (input.findings as ReviewFinding[])
       .map((item) => ({
         criterionNumber: item.criterionNumber,
         status: item.status,
