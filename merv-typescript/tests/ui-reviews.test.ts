@@ -511,3 +511,19 @@ test('the desk takes and refuses a synopsis exactly as review.submit does', asyn
     await unmount();
   }
 });
+
+test('the desk says notes are too long in the words review.submit refuses them with', async () => {
+  const { deskProblem } = await import('../packages/ui/web/views/reviews.js');
+  const review = { criteria: ['Reproduces'], artifactIds: ['art_1'], requiredCriteria: [] };
+  const desk = (notes: string) =>
+    deskProblem(review, {
+      synopsis: '',
+      findings: [{ criterionNumber: 1, status: 'met', evidenceIds: ['art_1'], notes }],
+      routed: true,
+    });
+  assert.deepEqual(desk(' '), { text: 'Check 1 still needs a finding and notes.', at: 1 });
+  assert.deepEqual(desk('n'.repeat(16_001)), {
+    text: 'Criterion 1 needs assessment notes (1–16000 characters)',
+    at: 1,
+  });
+});

@@ -82,7 +82,7 @@ export function synopsisProblem(synopsis: unknown): 'length' | 'format' | 'ident
 /**
  * The first rule of review.submit a verdict's findings break, in the order it checks them, or
  * undefined. `rule` is which: the findings' own shape, a criterion left without a word or notes,
- * one met without evidence, a pass over a criterion neither met nor waived, or a pass over a
+ * notes longer than review.submit keeps, one met without evidence, a pass over a criterion neither met nor waived, or a pass over a
  * required criterion that is not met. The server refuses with `code` and `message`; a desk words
  * the same rule for a person and points at `criterion`.
  */
@@ -91,14 +91,14 @@ export function assessmentProblem(
   input: { verdict?: Verdict | null; findings?: unknown },
 ):
   | {
-      rule: 'shape' | 'unanswered' | 'uncited' | 'unmet' | 'required';
+      rule: 'shape' | 'unanswered' | 'long' | 'uncited' | 'unmet' | 'required';
       criterion?: number;
       code: string;
       message: string;
     }
   | undefined {
   const refused = (
-    rule: 'shape' | 'unanswered' | 'uncited' | 'unmet',
+    rule: 'shape' | 'unanswered' | 'long' | 'uncited' | 'unmet',
     message: string,
     criterion?: number,
   ) => ({ rule, message, code: 'invalid_findings', ...(criterion ? { criterion } : {}) });
@@ -139,7 +139,7 @@ export function assessmentProblem(
       );
     if (!(typeof item.notes === 'string' && visible(item.notes) && item.notes.length <= 16000))
       return refused(
-        'unanswered',
+        typeof item.notes === 'string' && item.notes.length > 16000 ? 'long' : 'unanswered',
         `Criterion ${number} needs assessment notes (1–16000 characters)`,
         number,
       );
