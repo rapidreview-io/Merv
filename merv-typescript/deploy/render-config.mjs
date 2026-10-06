@@ -363,8 +363,6 @@ if (piEnabled) {
   if (!/^[A-Za-z0-9_-]{32,200}$/.test(process.env[hostKeyEnv] ?? '')) {
     throw new Error(`Missing or invalid ${hostKeyEnv}`);
   }
-  const runtimeKey = process.env.MERV_PI_RUNTIME_KEY ?? 'project';
-  if (!['project', 'person'].includes(runtimeKey)) throw new Error('Invalid MERV_PI_RUNTIME_KEY');
   config.plugins.push(
     { id: 'pi-tools', name: '@merv/pi/tools' },
     { id: 'pi-api', name: '@merv/pi/api' },
@@ -384,7 +382,6 @@ if (piEnabled) {
         baseUrl: httpsOrigin('MERV_TS_PUBLIC_ORIGIN'),
         turnTimeoutSeconds: integer('MERV_PI_TURN_TIMEOUT_SECONDS', 300, 10, 900),
         idleTimeoutSeconds: integer('MERV_PI_IDLE_TIMEOUT_SECONDS', 600, 5, 3600),
-        runtimeKey,
         host: { projectId: hostProjectId, credentialEnv: hostKeyEnv },
         machines: runtimes.map(({ key, label, slots, agent }) => ({ key, label, slots, agent })),
         agentMoves: optIn('MERV_PI_AGENT_MOVES'),

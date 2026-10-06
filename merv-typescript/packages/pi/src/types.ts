@@ -229,7 +229,7 @@ export interface PiNextSlot extends PiSlot {
 export interface PiHostRecord {
   /** 'pih_…' */
   id: string;
-  /** `${userId}:${projectId}` (config.runtimeKey 'project', the default), or userId ('person'). */
+  /** `${userId}:${projectId}`: one host per person per project. */
   key: string;
   userId: string;
   status: 'live' | 'ended';

@@ -66,8 +66,7 @@ export class PiService extends PiWorkerProtocol implements Pi, FleetOwner {
     }, this.config.pollIntervalMs);
     this.timer.unref();
   }
-  /** The person's last model pick here, a pi_people row of its own: never the machine record, and
-   * per project whatever runtimeKey says. */
+  /** The person's last model pick here, a pi_people row of its own: never the machine record. */
   private pickKey(userId: string, projectId: string): string {
     return `model:${userId}:${projectId}`;
   }

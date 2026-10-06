@@ -204,9 +204,9 @@ export abstract class PiCore {
   protected get hostProject(): string {
     return this.config.host!.projectId;
   }
-  /** One host per person per project (the ruling), or per person with runtimeKey 'person'. */
+  /** One host per person per project (the ruling). */
   protected key(userId: string, projectId: string): string {
-    return this.config.runtimeKey === 'project' ? `${userId}:${projectId}` : userId;
+    return `${userId}:${projectId}`;
   }
   /** A catalog model; a missing or withdrawn id means the default, models[0]. */
   protected model(id?: string) {
@@ -364,8 +364,7 @@ export abstract class PiCore {
    * another requires write permission in this project. Otherwise the picker shows the reason,
    * a new host starts on the default, and switch_machine is not offered. Checked again at each claim: a
    * machine its person may no longer choose takes none of their turns and is left for the
-   * default (take, settle). With runtimeKey 'person' one host serves several projects, and a turn
-   * from one where the machine is not allowed waits for that move. */
+   * default (take, settle). */
   async machineChoice(
     source: DelegationSource,
     machine: string,

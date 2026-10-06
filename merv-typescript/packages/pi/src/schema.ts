@@ -100,8 +100,6 @@ export const piConfig = z
     turnTimeoutSeconds: z.number().int().min(10).max(900).default(300),
     idleTimeoutSeconds: z.number().int().min(5).max(3600).default(600),
     pollIntervalMs: z.number().int().min(100).max(30_000).default(1000),
-    /** MERV_PI_RUNTIME_KEY: one host per person per project (the ruling), or per person. */
-    runtimeKey: z.enum(['project', 'person']).default('project'),
     /** The operator's Pi host project (MERV_PI_HOST_PROJECT_ID), whose service key rents every
      * host slot; credentialEnv names the variable holding it. Required when enabled (refined
      * below). */
