@@ -17,7 +17,8 @@ const { parseAnsi } = await import('../packages/ui/web/ansi.js');
 const { lineElements } = await import('../packages/ui/web/code-block.js');
 const { parseDelimited } = await import('../packages/ui/web/csv.js');
 const { languageOf } = await import('../packages/ui/web/highlight.js');
-const { Markdown, parseInline, parseMarkdown } = await import('../packages/ui/web/markdown.js');
+const { Markdown } = await import('../packages/ui/web/markdown.js');
+const { parseInline, parseMarkdown } = await import('../packages/ui/web/markdown-parse.js');
 const { Mermaid, mermaidLoader } = await import('../packages/ui/web/mermaid.js');
 const { ArtifactBody, fileType } = await import('../packages/ui/web/views/artifacts.js');
 

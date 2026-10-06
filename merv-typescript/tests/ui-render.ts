@@ -193,6 +193,8 @@ export const jump = async (ms: number, thenWait = 1200) => {
   await settle(thenWait);
 };
 export async function mount(element: ReactElement): Promise<void> {
+  // Documents are drawn as they are once the page has loaded the Markdown parser.
+  await (await import('../packages/ui/web/markdown.js')).loadParser();
   host = document.createElement('div');
   document.body.appendChild(host);
   root = createRoot(host);
