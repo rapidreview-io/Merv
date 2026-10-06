@@ -3,6 +3,7 @@ import type { WorkflowExecutionPolicy } from '@merv/contracts';
 /**
  * Compute as a capability of a leased assignment, for any workflow. Pure: units import it to
  * render guidance, and Sandboxes applies the same rule when it attaches a launch connection.
+ * A unit binds compute by declaring its native work kind as the `computeKind` reference.
  * See docs/COMPUTE_CAPABILITY.md.
  */
 export type ComputeProfile = 'execute' | 'check' | 'none';

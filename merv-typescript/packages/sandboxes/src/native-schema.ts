@@ -110,6 +110,13 @@ END $$;
     version: 4,
     sql: `ALTER TABLE sandbox_native_captures ADD COLUMN attempt_ref TEXT;`,
   },
+  {
+    // The native work kind the owner declares when it binds compute, kept for the background
+    // reconcile, which has no session. Existing rows take the kind they were sent until now.
+    version: 5,
+    sql: `ALTER TABLE sandbox_native_work ADD COLUMN native_kind TEXT;
+UPDATE sandbox_native_work SET native_kind=CASE WHEN work_kind IN ('task','experiment') THEN work_kind ELSE 'task' END;`,
+  },
 ];
 
 export interface NativeConnectionRow {
@@ -126,7 +133,7 @@ export interface NativeConnectionRow {
 }
 export interface NativeWorkRow {
   project_id: string;
-  /** The workflow name; the native service is sent nativeWorkKind() of it. */
+  /** The workflow name. */
   work_kind: string;
   work_id: string;
   connection_id: string;
@@ -138,6 +145,8 @@ export interface NativeWorkRow {
   transition_pending: boolean;
   evidence_checked_at: string | null;
   last_error: string | null;
+  /** The native work kind its owner declared when it bound compute. */
+  native_kind: string | null;
 }
 export interface NativeAssignmentRow {
   lease_id: string;

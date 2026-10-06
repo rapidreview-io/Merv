@@ -203,7 +203,7 @@ async function fixture(
   };
   if (pinned)
     await state.transaction(async (tx) => {
-      await work.pin('project', workflow, id, tx);
+      await work.pin('project', workflow, id, 'task', tx);
       await work.transitioned(transitionEvent(workflow, id, 1), tx);
     });
   /** A lease issued before compute became a capability: it names its scope. */
@@ -226,7 +226,8 @@ async function fixture(
         },
       },
     }) as unknown as Session;
-  /** A lease of any workflow now: Sandboxes derives profile and epoch from it. */
+  /** A lease of any workflow now, its unit declaring the `task` kind unless it says otherwise:
+   *  Sandboxes derives profile and epoch from it. */
   const leased = (
     lease = 'lease_one',
     {
@@ -242,7 +243,7 @@ async function fixture(
       expectedRevision: revision,
       hardDeadline: new Date(Date.now() + 3_600_000).toISOString(),
       lease: { leaseId: lease, instanceId: id, projectId: 'project', workflow },
-      execution: { workflow, policy, references },
+      execution: { workflow, policy, references: { computeKind: 'task', ...references } },
     }) as unknown as Session;
   const readWork = () =>
     state.read((sql) =>
@@ -289,7 +290,7 @@ test('native work pins one payer and returns only verified capture IDs from the 
   const f = await fixture(t);
   await f.state.transaction(async (tx) => {
     assert.equal(await f.work.connected('project', tx), true);
-    await f.work.pin('project', 'task', 'task_work', tx);
+    await f.work.pin('project', 'task', 'task_work', 'task', tx);
     assert.equal((await f.readWork())!.connection_id, 'connection');
     assert.equal((await f.readWork())!.desired_attempt, '1');
     await tx.run("UPDATE sandbox_native_work SET namespace='ns_work' WHERE work_id='task_work'");
@@ -747,7 +748,7 @@ test('pending cleanup takes a bounded reconciliation slot ahead of ordinary evid
   assert.equal((await f.readWork())!.transition_pending, false);
 });
 
-test('any workflow gets compute: a reflection-like lease is pinned on first launch, checks, and is sent as a task', async (t) => {
+test('any workflow gets compute: a reflection-like lease is pinned on first launch, checks, and is sent as the kind it declares', async (t) => {
   const f = await fixture(t, { workflow: 'reflection.lens', id: 'lens_work', pinned: false });
   assert.equal(await f.readWork(), undefined);
   const [connection] = await f.work.launchConnections(
@@ -756,6 +757,7 @@ test('any workflow gets compute: a reflection-like lease is pinned on first laun
   assert.equal(connection!.name, 'sandboxes');
   const work = (await f.readWork())!;
   assert.equal(work.work_kind, 'reflection.lens');
+  assert.equal(work.native_kind, 'task');
   assert.equal(work.connection_id, 'connection');
   assert.equal(work.desired_attempt, '1');
   assert.equal(work.epoch_revision, 1);
@@ -778,6 +780,16 @@ test('a unit can withhold compute, an unfunded project gets none, and a stale le
       f.leased('lease_one', { references: { computeProfile: 'none' } }),
     ),
     [],
+  );
+  assert.equal(await f.readWork(), undefined);
+  // A unit binds compute only by declaring its native kind.
+  const undeclared = f.leased('lease_undeclared');
+  delete (undeclared.execution.references as Record<string, unknown>).computeKind;
+  assert.deepEqual(await f.work.launchConnections(undeclared), []);
+  assert.equal(await f.readWork(), undefined);
+  await assert.rejects(
+    f.work.launchConnections(f.leased('lease_bad', { references: { computeKind: 'not a kind' } })),
+    { code: 'sandbox_scope_conflict' },
   );
   assert.equal(await f.readWork(), undefined);
   await assert.rejects(f.work.launchConnections(f.leased('lease_two', { revision: 2 })), {
@@ -924,6 +936,55 @@ test('leases issued before the change keep their named scope beside new leases o
   await assert.rejects(f.work.launchConnections(f.session('lease_late')), {
     code: 'sandbox_scope_conflict',
   });
+});
+
+test('the declared kind is stored with the work, and the background reconcile sends it without a session', async (t) => {
+  const f = await fixture(t, { workflow: 'experiment', id: 'exp_work', pinned: false });
+  // The first launch pins the work but its work-creation reply is lost.
+  f.loseWorkReply();
+  await assert.rejects(
+    f.work.launchConnections(f.leased('lease_one', { references: { computeKind: 'experiment' } })),
+  );
+  assert.equal((await f.readWork())!.native_kind, 'experiment');
+  await f.work.reconcile();
+  const created = f.calls.filter((c) => c.path === '/v1/delegations/works');
+  assert.equal(created.length, 2);
+  for (const call of created)
+    assert.deepEqual(call.body, { work_ref: 'exp_work', work_kind: 'experiment' });
+  assert.equal((await f.readWork())!.native_grant_id, 'grant_work');
+});
+
+test('migration 5 gives existing work the kind it was sent until then', async (t) => {
+  const state = await openState(':memory:');
+  t.after(() => state.close());
+  await state.transaction(async (tx) => tx.run(WF_INSTANCES));
+  await state.migrate('native-work-migration', nativeMigrations.slice(0, 4));
+  await state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at)
+      VALUES('connection','project','root','account','member','sealed','2026-10-01')`,
+    );
+    for (const [kind, id] of [
+      ['task', 'a'],
+      ['experiment', 'b'],
+      ['reflection.lens', 'c'],
+    ])
+      await tx.run(
+        'INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id) VALUES(?,?,?,?)',
+        'project',
+        kind,
+        id,
+        'connection',
+      );
+  });
+  await state.migrate('native-work-migration', nativeMigrations);
+  const rows = await state.read((sql) =>
+    sql.all<NativeWorkRow>('SELECT * FROM sandbox_native_work ORDER BY work_id'),
+  );
+  assert.deepEqual(
+    rows.map((row) => row.native_kind),
+    ['task', 'experiment', 'task'],
+  );
 });
 
 test('migration 3 accepts any workflow name and derives existing epochs from their instances', async (t) => {

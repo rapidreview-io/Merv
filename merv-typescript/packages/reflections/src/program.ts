@@ -443,6 +443,8 @@ export async function references(this: ReflectionService, context: WorkflowCheck
       ? await this.reviews.get(context.caller, wave.review_id, context.tx)
       : null;
   return {
+    // Native Sandboxes knows only task and experiment work; a reflection's checks run as a task.
+    computeKind: 'task',
     researchReviews: (JSON.parse(wave.feedback) as { id: string }[]).map((review) => review.id),
     reflectionId: wave.id,
     artifacts: [

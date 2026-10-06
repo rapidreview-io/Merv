@@ -452,6 +452,8 @@ export async function workflowExecutionReferences(
     ? await this.currentLease(caller, snapshot.id, snapshot.revision, tx)
     : null;
   return {
+    // The native Sandboxes work kind a task binds compute under.
+    computeKind: 'task',
     // Conflict resolution is service work: it gets no compute.
     ...(serviceOwned(snapshot.version) ? { computeProfile: 'none' } : {}),
     artifacts: lease

@@ -47,7 +47,9 @@ Sandboxes is Merv's link to the external Sandboxes service: a person connects a 
 
 When `native` is configured, Sandboxes attaches compute to a leased worker session of any
 workflow (docs/COMPUTE_CAPABILITY.md). Its launch-connections provider derives everything from
-the session: the profile from `computeProfile(policy, references.computeProfile)` in
+the session: the native work kind from the `computeKind` reference its owner declares (an
+assignment that declares none gets no compute), the profile from
+`computeProfile(policy, references.computeProfile)` in
 `@merv/sandboxes/compute-capability`, and the epoch from the instance's workflow data
 `computeEpoch`, else its revision. The first launch in a project with a funded connection pins
 the work, keyed by workflow name and instance id; a project without one runs the work without
@@ -64,9 +66,8 @@ jobs and access) and closes it on the terminal move. Units read retained evidenc
 taken under those epochs (a capture registered before captures recorded theirs answers for any;
 a workflow that names no attempt records the attempt of the assignment whose token launched it,
 and is cancelled once that attempt is old; one no assignment of the work launched is not evidence).
-The native service is sent `work_kind`
-`experiment` for the `experiment` workflow and `task` for every other one, until it confirms
-other kinds. Leases issued before 2026-10-04 still carry `sandboxConnectionId`/`sandboxAttempt`/
+The native service is sent the declared kind as `work_kind`; the work row stores it, so the
+background reconcile needs no session. Leases issued before 2026-10-04 still carry `sandboxConnectionId`/`sandboxAttempt`/
 `sandboxProfile` references and are issued exactly as they name.
 
 Settings → Integrations enables compute through the same Supabase sign-in used by
