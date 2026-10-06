@@ -133,6 +133,22 @@ export class NativeEvidence {
     if (workflow.state === 'running' || workflow.state === 'cleaning_up') return;
     const key = JSON.stringify([connection.id, workflow.namespace, workflow.id]);
     if (this.settled.has(key)) return;
+    // A workflow that names no attempt is the attempt of the assignment whose token launched
+    // it; one no assignment of this work launched is not delegated Merv evidence either.
+    const attempt =
+      workflow.attempt_ref ??
+      (
+        await this.state.read((sql) =>
+          sql.get<{ attempt_ref: string }>(
+            'SELECT attempt_ref FROM sandbox_native_assignments WHERE project_id=? AND work_kind=? AND work_id=? AND native_token_id=?',
+            work.project_id,
+            work.work_kind,
+            work.work_id,
+            workflow.origin_grant_id,
+          ),
+        )
+      )?.attempt_ref;
+    if (!attempt) return;
     await this.connections.get(connection.id);
     for (const node of await this.captures(work, connection, workflow.id)) {
       const registered = await this.state.read((sql) =>
@@ -275,7 +291,7 @@ export class NativeEvidence {
             metadata: {
               ownerKind: work.work_kind,
               ownerId: work.work_id,
-              attempt: workflow.attempt_ref ?? null,
+              attempt,
               nativeWorkflowId: workflow.id,
               captureNode: node.id,
               captureState: node.state,
@@ -295,9 +311,7 @@ export class NativeEvidence {
           workflow.id,
           node.id,
           artifact.id,
-          // A workflow launched under no assignment is the work's at its epoch of the time, so
-          // no capture answers for every attempt.
-          workflow.attempt_ref ?? work.desired_attempt,
+          attempt,
         );
       });
     }

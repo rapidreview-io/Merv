@@ -726,6 +726,13 @@ export class NativeWorkService {
     await this.fresh(work);
     let pending = false;
     let evidencePending = false;
+    // What names no attempt is the attempt of the assignment whose token launched it.
+    const old = (resource: NativeWorkflow | NativeJob) => {
+      const attempt =
+        resource.attempt_ref ??
+        local.find((a) => a.native_token_id === resource.origin_grant_id)?.attempt_ref;
+      return !!resource.origin_grant_id && !!attempt && attempt !== work.desired_attempt;
+    };
     for (const workflow of resources.workflows) {
       if (this.publisher) {
         try {
@@ -734,22 +741,14 @@ export class NativeWorkService {
           evidencePending = true;
         }
       } else if (workflow.nodes && Object.keys(workflow.nodes).length) evidencePending = true;
-      const obsolete =
-        work.closed_at ||
-        (workflow.origin_grant_id &&
-          workflow.attempt_ref &&
-          workflow.attempt_ref !== work.desired_attempt);
-      if (obsolete && !workflowTerminal(workflow.state)) {
+      if ((work.closed_at || old(workflow)) && !workflowTerminal(workflow.state)) {
         await this.fresh(work);
         await request('/actions', 'POST', { kind: 'workflow_cancel', id: workflow.id });
         pending = true;
       }
     }
     for (const job of resources.jobs) {
-      const obsolete =
-        work.closed_at ||
-        (job.origin_grant_id && job.attempt_ref && job.attempt_ref !== work.desired_attempt);
-      if (!job.workflow_id && obsolete && !jobTerminal(job.state)) {
+      if (!job.workflow_id && (work.closed_at || old(job)) && !jobTerminal(job.state)) {
         await this.fresh(work);
         await request('/actions', 'POST', { kind: 'job_cancel', id: job.id });
         pending = true;

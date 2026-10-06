@@ -440,6 +440,43 @@ test('attempt reconciliation fences old assignments and cancels only old provena
   assert.equal((await f.readWork())!.transition_pending, true);
 });
 
+test("a workflow that names no attempt is cancelled once its launching assignment's attempt is old", async (t) => {
+  const f = await fixture(t);
+  await f.work.launchConnections(f.session());
+  await f.state.transaction((tx) => f.move({ attempt: '2' }, tx));
+  f.resources(() => ({
+    namespace: 'ns_work',
+    next: { workflows: null, jobs: null, sandboxes: null },
+    sandboxes: [],
+    jobs: [],
+    workflows: [
+      {
+        id: 'unnamed_old',
+        namespace: 'ns_work',
+        state: 'running',
+        origin_grant_id: 'token_lease_one',
+        attempt_ref: null,
+        admission_profile: 'execute',
+        nodes: {},
+      },
+      {
+        id: 'unknown_origin',
+        namespace: 'ns_work',
+        state: 'running',
+        origin_grant_id: 'someone_else',
+        attempt_ref: null,
+        admission_profile: 'execute',
+        nodes: {},
+      },
+    ],
+  }));
+  await f.work.reconcile();
+  assert.deepEqual(
+    f.calls.filter((c) => c.path.endsWith('/actions')).map((c) => c.body),
+    [{ kind: 'workflow_cancel', id: 'unnamed_old' }],
+  );
+});
+
 test('closure pages both streams, preserves finalizers, retries evidence independently, and confirms stopped machines', async (t) => {
   const f = await fixture(t);
   await f.work.launchConnections(f.session());
