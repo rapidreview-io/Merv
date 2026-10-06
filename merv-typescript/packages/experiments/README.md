@@ -24,6 +24,7 @@ flowchart LR
     domainEvents["Domain Events"]
     codeWork["Code Work<br/><small>managed Git</small>"]
     sandboxes["Sandboxes<br/><small>native compute</small>"]
+    scope["Scope"]
     state["State"]
   end
   subgraph external["External"]
@@ -40,6 +41,7 @@ flowchart LR
   experiments -- "subscribes lease release" --> domainEvents
   experiments -. "binds managed Git" .-> codeWork
   experiments -. "binds compute" .-> sandboxes
+  experiments -- "injects" --> scope
   experiments -- "injects" --> state
   state -- "reads/writes" --> postgres
   class experiments self

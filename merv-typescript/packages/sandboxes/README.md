@@ -19,6 +19,7 @@ flowchart LR
     artifacts["Artifacts"]
     fleet["Fleet"]
     codeWork["Code work"]
+    ui["UI"]
   end
   subgraph externalLayer["External"]
     sandboxesService["Sandboxes service<br/><small>compute and machines</small>"]
@@ -29,6 +30,7 @@ flowchart LR
   sandboxes -- "injects" --> sessions
   sandboxes -- "injects" --> artifacts
   sandboxes -- "injects" --> workflows
+  sandboxes -- "ui adapter: Sandboxes rows, Running part" --> ui
   sessions -- "emits session.closed" --> sandboxes
   workflows -- "emits workflow.transition" --> sandboxes
   fleet -- "injects" --> sandboxes

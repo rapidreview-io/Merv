@@ -21,6 +21,7 @@ flowchart LR
     sandboxes[Sandboxes]
     api["API<br/><small>HTTP and tool registry</small>"]
     ui[UI]
+    scope[Scope]
     state[State]
     blobs[Blobs]
   end
@@ -39,6 +40,7 @@ flowchart LR
   artifacts -- "registers artifact.* tools" --> api
   artifacts -- "registers Files row" --> ui
   artifacts -- "emits artifact.created" --> state
+  artifacts -- "injects" --> scope
   artifacts -- "injects" --> blobs
   state -- "reads/writes" --> postgres
   blobs -- "reads/writes" --> blobStore
