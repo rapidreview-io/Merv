@@ -24,7 +24,7 @@ import { namesOf } from './people';
 import { newest, useHome, type Flow, type HomeData } from './map-data';
 
 /**
- * What needs the reader: Home's first part, which was the Now page. One column of record
+ * What needs the reader: Home's first part, Needs you. One column of record
  * cards, each saying its move in one sentence a person reads, made from facts the gate
  * carries — the ready action, a prerequisite that failed, whether a review sent it back. The
  * server's own instruction is written for the agent holding the tool, so it is never the

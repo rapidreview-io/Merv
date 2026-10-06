@@ -99,7 +99,7 @@ export const codeToolsPlugin = {
           ['suspend', 'Suspend this base while retaining its current work and history.'],
           [
             'resume',
-            'Resume a suspended base in its prior work state. A resolution task suspended by its review budget still needs workflow.extend_limit.',
+            'Resume a suspended base in its prior work state. A suspended resolution task resumes as its blocker’s next move says.',
           ],
           [
             'cancel',

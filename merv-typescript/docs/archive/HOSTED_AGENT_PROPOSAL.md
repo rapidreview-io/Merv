@@ -1,6 +1,6 @@
 # Optional hosted Pi agent — implementation proposal
 
-> Historical proposal, superseded by [Optional Fleet and Pi agent](FLEET_PI_PROPOSAL.md). The current design separates shared compute into an optional Fleet plugin and makes the Pi package depend on it. Use the newer proposal for implementation planning.
+> Historical proposal, superseded by [Optional Fleet and Pi agent](../FLEET_PI_PROPOSAL.md). The current design separates shared compute into an optional Fleet plugin and makes the Pi package depend on it. Use the newer proposal for implementation planning.
 
 Status: design only. No implementation or deployment is authorized by this document. Prepared 2026-09-23 from the current Merv checkout, the sibling merv-sandboxes checkout, and current upstream documentation.
 

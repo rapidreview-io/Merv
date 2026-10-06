@@ -119,6 +119,8 @@ interface Context {
   readOnly?: boolean;
   /** Shared by every scope of one snapshot: whether an isolated read holds its savepoint. */
   isolation?: { open: boolean };
+  /** Shared by every scope of one snapshot: what `remember` keeps. */
+  memo?: Map<string, Promise<unknown>>;
 }
 
 /** Explicit transactions stay on one connection; async context never crosses requests. */
@@ -520,6 +522,7 @@ END $merv$;`);
     scope.live = true;
     scope.readOnly = true;
     scope.isolation = { open: false };
+    scope.memo = new Map();
     return await this.within(
       connection,
       READ_BEGIN,
@@ -585,6 +588,18 @@ END $merv$;`);
       scope.live = false;
       isolation.open = false;
     }
+  }
+
+  async remember<T>(key: string, compute: () => Promise<T>): Promise<T> {
+    const memo = this.context.getStore()?.memo;
+    if (!memo) return await compute();
+    const held = memo.get(key) as Promise<T> | undefined;
+    // A sibling's failure (its own statement timeout, say) is not this caller's: decide afresh.
+    if (held) return await held.catch(() => this.remember(key, compute));
+    const value = compute();
+    memo.set(key, value);
+    value.catch(() => memo.get(key) === value && memo.delete(key));
+    return await value;
   }
 
   assertTransaction(tx: Transaction): void {

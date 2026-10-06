@@ -605,8 +605,6 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     this.assertOpen();
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
-      // A project snapshot shares dependency reads; writing paths always read fresh facts.
-      this.asked.set(tx, new Map());
       const stored = await this.readStatus(caller, tx);
       return {
         ...stored,
@@ -618,25 +616,17 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   }
 
   /**
-   * What a unit depends on. A read that has said it is taking the whole project in one
-   * transaction gets each answer once; every writing path asks Workflows again, because a
-   * transaction that moves an instance must see what it moved.
+   * What a unit depends on. A snapshot gets each answer once; every writing path asks Workflows
+   * again, because a transaction that moves an instance must see what it moved.
    */
-  private readonly asked = new WeakMap<
-    Transaction,
-    Map<string, Promise<WorkflowProviderRelations | null>>
-  >();
   private async dependencies(
     tx: Transaction,
     projectId: string,
     unitId: string,
   ): Promise<WorkflowProviderRelations | null> {
-    const held = this.asked.get(tx);
-    if (!held) return await providerRelations(this.workflows, projectId, unitId, tx);
-    const key = `${projectId}:${unitId}`;
-    const known = held.get(key) ?? providerRelations(this.workflows, projectId, unitId, tx);
-    held.set(key, known);
-    return await known;
+    return await this.state.remember(`code-work:relations:${projectId}:${unitId}`, () =>
+      providerRelations(this.workflows, projectId, unitId, tx),
+    );
   }
 
   private async relations(
@@ -699,9 +689,11 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       related: related.map((item) => ({ kind: 'workflow', id: item.id, label: item.name })),
     });
     // Only hosted workflow versions declare units; the binding and imported store are retained.
-    const bound = (await tx.get<Pick<ProjectRow, 'repository_id' | 'binding_json' | 'main_json'>>(
-      'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
-      projectId,
+    const bound = (await this.state.remember(`code-work:binding:${projectId}`, () =>
+      tx.get<Pick<ProjectRow, 'repository_id' | 'binding_json' | 'main_json'>>(
+        'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
+        projectId,
+      ),
     ))!;
     const main = JSON.parse(bound.main_json) as {
       oid: string;
@@ -896,7 +888,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
               : 'Complete the existing resolution task and its independent review; this unit continues from the accepted result.',
           related: [
             {
-              kind: 'task',
+              kind: task?.instance.workflow ?? 'workflow',
               id: record.resolutionTaskId!,
               label: task?.instance.name ?? record.resolutionTaskId!,
             },

@@ -3,6 +3,7 @@ import {
   mapAsync,
   runningKey,
   workLink,
+  workName,
   type Caller,
   type RunningAction,
   type RunningAttention,
@@ -63,15 +64,6 @@ const VERBS: Record<SessionRole, RunningVerb> = {
   reader: 'reads',
 };
 const machineWho = 'An operator checks the machine or halts the lease';
-/**
- * A lease is labelled for the agent that takes it (`Work: …`, `Review: …`, or a recipe's dotted
- * name) and the role already says which, so the record is named by the rest; a closing enum
- * word reads as words. The Sessions page names work the same way (views/agent-sessions-panel.tsx).
- */
-const PURPOSE = /^(?:Work|Review|[a-z]+(?:\.\w+)+):\s+/;
-const LENS = /: ([a-z]+(?:_[a-z]+)+)$/;
-export const workName = (label: string) =>
-  label.replace(PURPOSE, '').replace(LENS, (_, lens: string) => `: ${lens.replaceAll('_', ' ')}`);
 const clip = (text: string, max: number) =>
   text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 

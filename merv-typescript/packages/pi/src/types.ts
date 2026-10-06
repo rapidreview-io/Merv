@@ -296,12 +296,6 @@ export interface PiBootstrap {
   workerToken: string;
   expiresAt: string;
 }
-/** POST /pi-worker/next. */
-export interface PiNextInput {
-  workerId: string;
-  /** The probe the previous reply carried, echoed once to prove this worker is ready (T4). */
-  probe?: string;
-}
 /** The /next reply, sent as is. */
 export interface PiNextReply {
   work: PiWork | null;

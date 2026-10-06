@@ -76,6 +76,7 @@ export {
   keyKind,
   keyId,
   workLink,
+  workName,
   dependencyRows,
 } from './running.js';
 export {
@@ -633,6 +634,12 @@ export interface State {
    * costs only this call, and the snapshot reads on. Calls on one snapshot run one at a time.
    */
   isolated<T>(fn: () => T | Promise<T>): Promise<T>;
+  /**
+   * Inside a snapshot, the value it already holds for `key`, else `compute()`'s, kept until the
+   * snapshot ends (a failure is not kept). Elsewhere it just runs `compute`. Only for answers
+   * that rest on nothing but the snapshot's rows and the key.
+   */
+  remember<T>(key: string, compute: () => Promise<T>): Promise<T>;
   assertTransaction(tx: Transaction): void;
   migrate(component: string, migrations: Migration[]): Promise<void>;
   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;
@@ -1716,6 +1723,13 @@ export interface WorkflowEvaluationInput {
   action?: string;
   input?: Data;
 }
+/** An instance as get() reads it, with its workStarts() and dependencies(). */
+export interface WorkflowRecord {
+  snapshot: WorkflowSnapshot;
+  workStarts: WorkflowWorkStart[];
+  dependencies: WorkflowDependency[];
+  dependents: WorkflowDependency[];
+}
 export interface Workflows {
   /** Metadata-only, project-scoped readiness. Does not reserve work or render assignment bytes. */
   /** Candidates a source may dispatch; with `worker`, only those that worker may take. */
@@ -1827,6 +1841,15 @@ export interface Workflows {
     dependencies: WorkflowDependency[];
     dependents: WorkflowDependency[];
   }>;
+  /**
+   * get(), workStarts() and dependencies() of each of several instances, for a list of records,
+   * in a fixed number of reads however many. An id the project does not hold is left out.
+   */
+  records(
+    caller: Caller,
+    instanceIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<Map<string, WorkflowRecord>>;
   /**
    * What each of several instances depends on, for a view of many that draws prerequisites
    * only: each one's `dependencies` as dependencies() reads it, without what depends on it,

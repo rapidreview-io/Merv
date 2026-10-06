@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { AgentStreamEvent } from '@merv/contracts/agent-stream';
-import { StreamError, readEventStream } from './pi-stream';
+import { StreamError, readEventStream } from './event-stream';
 
 /**
  * A worker agent's live stream as the page reads it: the events Sessions relays, merged into

@@ -16,7 +16,7 @@ not contain task-specific branching or launch agent processes.
 
 ## Source authority and worker identity
 
-Each execution uses its agent’s credentialless Scope actor. Continuing agents reuse that actor across assignments; automatically launched single-assignment agents receive a fresh actor. The source that authorized it
+Each execution uses its agent’s credentialless Scope actor. Continuing agents reuse that actor across assignments; an automatically launched agent receives a fresh actor, unless its offer continues a dormant agent's conversation, which reuses that agent and its actor ([Sessions README](../packages/sessions/README.md#continuity)). The source that authorized it
 is recorded separately: an exact actor credential, a verified human and membership
 epoch, or an exact user-owned key and membership epoch.
 
@@ -33,7 +33,7 @@ Creating another context window inside the same lease does not create a new
 independent reviewer. This is agent independence, not a requirement for two humans.
 
 A worker cannot become an operator, receive an ordinary actor credential or
-delegate another lease. Retiring an agent never revokes its source human or key. Closing an assignment retires only nonpersistent agents.
+delegate another lease. Retiring an agent never revokes its source human or key. Closing an assignment retires a nonpersistent agent unless its session may be continued: that agent stays dormant, with no credential, until its work comes back, a later agent supersedes it, or 14 days pass.
 Domain events retain the worker and nonsecret session identity; the lease retains
 its immutable source provenance.
 

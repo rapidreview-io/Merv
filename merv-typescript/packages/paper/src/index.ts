@@ -20,6 +20,7 @@ import type {
   PaperKind,
   PaperPatch,
   PaperChanges,
+  PaperProposal,
   PaperPublication,
   PaperRevision,
   PaperWorkspace,
@@ -97,10 +98,12 @@ export class PaperService implements Paper {
           'SELECT record,acceptance FROM paper_proposals WHERE project_id=? ORDER BY _merv_rowid DESC',
           caller.projectId,
         )
-      ).map((row) => ({
-        ...JSON.parse(row.record),
-        acceptance: row.acceptance ? JSON.parse(row.acceptance) : null,
-      }));
+      ).map((row) => {
+        // A stored edit also keeps a whole copy of its document before it, which no reader uses.
+        const { documents, ...proposal }: PaperProposal = JSON.parse(row.record);
+        const acceptance = row.acceptance ? JSON.parse(row.acceptance) : null;
+        return { ...proposal, documents: documents.map(({ edit }) => ({ edit })), acceptance };
+      });
       return { documents, citations: await this.citations(caller, tx), proposals };
     });
   }

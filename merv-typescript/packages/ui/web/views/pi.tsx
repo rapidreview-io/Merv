@@ -27,8 +27,8 @@ import { hasAnsi } from '../ansi';
 import { AnsiText } from '../code-block';
 import { JsonView, readJson } from '../json-view';
 import { MarkdownPieces, RecordText, useRecordNames, type RecordNames } from '../markdown';
+import { StreamError } from '../event-stream';
 import {
-  StreamError,
   readPiEvents,
   type PiConversation,
   type PiDelta,

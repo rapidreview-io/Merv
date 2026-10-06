@@ -710,7 +710,7 @@ The source-generated dependency inventory and deterministic SVG/PNG agree on 45 
 
 ## 2026-09-15 — Paper changes inside scientific workflows
 
-See [Paper/workflow responsibility verification](docs/PAPER_WORKFLOW_REFACTOR.md). Backend and UI builds passed; regression: 683 total, 682 pass, zero fail, one optional skip. Experiment/reflection verdict transactions include exact paper edits. Consolidation continues after Reflections and Knowledge unload. Browser verification includes approved paper edits and artifact-based consolidation creation. Native tool catalog: 64 (66 with UI). Dependency graph: 144 edges.
+See [Paper/workflow responsibility verification](docs/archive/PAPER_WORKFLOW_REFACTOR.md). Backend and UI builds passed; regression: 683 total, 682 pass, zero fail, one optional skip. Experiment/reflection verdict transactions include exact paper edits. Consolidation continues after Reflections and Knowledge unload. Browser verification includes approved paper edits and artifact-based consolidation creation. Native tool catalog: 64 (66 with UI). Dependency graph: 144 edges.
 
 ## Live reflections — 15 September 2026
 

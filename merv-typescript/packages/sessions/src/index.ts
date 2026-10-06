@@ -389,6 +389,9 @@ interface Row {
 /** A session row with its workspace capture, read in one statement. */
 const SESSION =
   'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
+/** The same row without its workspace capture, for a check that never reads it. */
+const BARE =
+  'SELECT id,project_id,owner_hash,session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions';
 interface MessageRow {
   id: string;
   project_id: string;
@@ -527,7 +530,7 @@ export class LeasedSessions implements Sessions {
       );
       this.streams = await createService(
         new SessionStreams(state, scope, this.clock, (caller, id, runnerId, tx) =>
-          this.controlled(caller, id, runnerId, tx),
+          this.controlled(caller, id, runnerId, tx, BARE),
         ),
       );
       this.conversations = await createService(
@@ -613,8 +616,8 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     return await readFirst(this.state, fn);
   }
-  private async row(tx: Transaction, id: string): Promise<Row> {
-    const row = await tx.get<Row>(`${SESSION} WHERE id=?`, id);
+  private async row(tx: Transaction, id: string, select = SESSION): Promise<Row> {
+    const row = await tx.get<Row>(`${select} WHERE id=?`, id);
     check(row, 'session_not_found', 'Session not found', 404);
     return row;
   }
@@ -839,15 +842,16 @@ export class LeasedSessions implements Sessions {
     id: string,
     runnerId: string | undefined,
     tx: Transaction,
+    select = SESSION,
   ): Promise<Session> {
     if (caller.managed) {
       await this.managed.controlled(caller, id, runnerId, tx);
-      const row = await this.row(tx, id);
+      const row = await this.row(tx, id, select);
       check(row.project_id === caller.projectId, 'session_not_found', 'Session not found', 404);
       return this.decode(row);
     }
     const owner = await ownerOf(this.scope, caller, tx),
-      row = await this.row(tx, id);
+      row = await this.row(tx, id, select);
     // Another project's session is not found here; another owner's is forbidden.
     check(row.project_id === caller.projectId, 'session_not_found', 'Session not found', 404);
     check(

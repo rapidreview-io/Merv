@@ -118,9 +118,9 @@ interface LeaseRow {
   claim_id: string | null;
   released_at: string | null;
 }
-/** Every step is named as its record is: a wave by its title, a lens by its wave and perspective. */
+/** Every step is named as its record is: a wave by its title, a lens by its wave and perspective in words. */
 const named = ({ wave, lens }: Current) =>
-  lens ? `${wave.title}: ${lens.perspective}` : wave.title;
+  lens ? `${wave.title}: ${lens.perspective.replaceAll('_', ' ')}` : wave.title;
 const submitted = (wave: WaveRow) =>
   wave.submission ? (JSON.parse(wave.submission) as Submission) : null;
 const summarized = (content: string) =>

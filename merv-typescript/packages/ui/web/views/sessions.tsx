@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { workName } from '@merv/contracts/running';
 import type {
   AgentSummary,
   DispatchState,
@@ -40,7 +41,7 @@ import {
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
-import { AgentDetail, activity, workName } from './agent-sessions-panel';
+import { AgentDetail, activity } from './agent-sessions-panel';
 import { personName } from './people';
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;

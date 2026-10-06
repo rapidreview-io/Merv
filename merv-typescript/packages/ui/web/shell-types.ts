@@ -3,7 +3,7 @@ export interface RowStatus {
   count?: number;
   detail?: string;
 }
-/** How Now speaks of a row's records (UiRowNeeds): every word is the owner's. */
+/** How Needs you speaks of a row's records (UiRowNeeds): every word is the owner's. */
 export interface RowNeeds {
   name: string;
   owner: string;

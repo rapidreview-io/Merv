@@ -95,18 +95,21 @@ const workStart = (row: WorkStartRow): WorkflowWorkStart => ({
 });
 
 /** Every start of one instance, in revision order. */
+/** Each instance's starts in revision order, in one read however many; none is []. */
 export async function readWorkStarts(
   sql: Sql,
   projectId: string,
-  instanceId: string,
-): Promise<WorkflowWorkStart[]> {
-  return (
-    await sql.all<WorkStartRow>(
-      'SELECT * FROM wf_work_starts WHERE project_id=? AND instance_id=? ORDER BY revision',
-      projectId,
-      instanceId,
-    )
-  ).map(workStart);
+  instanceIds: readonly string[],
+): Promise<Map<string, WorkflowWorkStart[]>> {
+  const found = new Map(instanceIds.map((id) => [id, [] as WorkflowWorkStart[]]));
+  if (!found.size) return found;
+  for (const row of await sql.all<WorkStartRow>(
+    `SELECT * FROM wf_work_starts WHERE project_id=? AND instance_id IN (${[...found.keys()].map(() => '?').join(',')}) ORDER BY revision`,
+    projectId,
+    ...found.keys(),
+  ))
+    found.get(row.instance_id)!.push(workStart(row));
+  return found;
 }
 
 /** The start at each instance's revision, where there is one, in one read however many. */

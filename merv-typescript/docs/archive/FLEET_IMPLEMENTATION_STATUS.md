@@ -1,6 +1,6 @@
 # Fleet implementation status
 
-The reduced [Fleet/Pi proposal](FLEET_PI_PROPOSAL.md) is approved for staged
+The reduced [Fleet/Pi proposal](../FLEET_PI_PROPOSAL.md) is approved for staged
 implementation. Fleet owns generic VM/runtime lifecycle; a separate workflow
 adapter asks it for capacity, and chat uses independent taskless requests.
 Neither Fleet nor chat depends on the research workflow.
@@ -8,8 +8,8 @@ Neither Fleet nor chat depends on the research workflow.
 **Current (2026-09-24):** Fleet serves hosted Pi in production for every
 connected project, with limits 1/1 and the workflow adapter off. The account cap
 is USD 100 all-time; the $0.10 figures below are historical. Pi state is in
-[PI_IMPLEMENTATION_STATUS.md](PI_IMPLEMENTATION_STATUS.md), and operations and
-deadlines are in [PI_OPERATIONS.md](../deploy/PI_OPERATIONS.md).
+[PI_IMPLEMENTATION_STATUS.md](../PI_IMPLEMENTATION_STATUS.md), and operations and
+deadlines are in [PI_OPERATIONS.md](../../deploy/PI_OPERATIONS.md).
 
 The user approved read-only access to `rapidreview-io/merv-github-smoke` and a
 four-hour project operator credential. Both were configured in the human-created

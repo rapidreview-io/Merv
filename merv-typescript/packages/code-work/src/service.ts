@@ -426,13 +426,16 @@ export class CodeService extends CodeCommandService implements Code {
     input: { unitId: string; writer: boolean },
     tx: Transaction,
   ): Promise<void> {
-    const base = await this.baseStatus(caller, input.unitId, tx);
-    const blocked =
-      base.status === 'blocked'
-        ? base.blockers[0]!
-        : input.writer
-          ? (await this.writerStatus(caller, input.unitId, tx)).blocked
-          : null;
+    await this.scope.require(caller, 'read', tx);
+    // A board's guidance asks this of each unit more than once; one snapshot answers once.
+    const blocked = await this.state.remember(
+      `code-work:leasable:${caller.projectId}:${input.unitId}:${input.writer}`,
+      async () => {
+        const base = await this.baseStatus(caller, input.unitId, tx);
+        if (base.status === 'blocked') return base.blockers[0]!;
+        return input.writer ? (await this.writerStatus(caller, input.unitId, tx)).blocked : null;
+      },
+    );
     if (blocked) refuse(new MervError(blocked.code, blocked.message, 409));
   }
   /** Every admitted upload of the unit is first given the chance to finish; then the fence. */

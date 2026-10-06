@@ -849,6 +849,25 @@ test('sections that break the contract or say nothing are left out, row by row w
     sectionOf({ ...frame, kind: 'ladder', graph: { state: 'x', nodes: [], edges: [] } }),
     null,
   );
+  // An agent's stream is read from any same-origin path, and never from another host.
+  const agent = (events: string) =>
+    sectionOf({
+      ...frame,
+      kind: 'agent',
+      sessions: [
+        {
+          sessionId: 's',
+          state: 'x',
+          role: 'producer',
+          live: true,
+          startedAt: '2026-10-05T00:00:00.000Z',
+          events,
+        },
+      ],
+    });
+  assert.equal((agent('/pi/s/events') as { sessions: unknown[] }).sessions.length, 1);
+  for (const events of ['//evil.test/x', '/\\evil.test/x', 'https://evil.test/x', 'x/events'])
+    assert.equal(agent(events), null, events);
 });
 
 test('sections read what needs a person first, then by place, with code before content, and within a place by who wrote it', () => {

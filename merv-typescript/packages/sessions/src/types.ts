@@ -557,6 +557,8 @@ export interface DispatchDemand {
 /** What the events route reads of agents' live streams: operator authority, events, wakes. */
 export interface SessionStreamReads {
   authorize(caller: Caller, sessionId: string): Promise<{ growing: boolean }>;
+  /** Whether a session `authorize` admitted may still grow, without reading authority again. */
+  growing(sessionId: string, projectId: string): Promise<boolean>;
   after(sessionId: string, after: number, limit: number): Promise<AgentStreamEvent[]>;
   snapshot(sessionId: string): Promise<AgentStreamEvent[]>;
   subscribe(sessionId: string, wake: () => void): () => void;

@@ -46,7 +46,7 @@ entire cycle, and browser checks verified edits, citations, captured sources,
 both publications, reader controls and exact receipt recovery after a lost reply.
 All disposable acceptance processes and tabs were stopped.
 
-The [requirement-by-requirement acceptance record](LIVING_RESEARCH_VERIFICATION.md)
-and [machine-readable evidence](../verification/living-research.json) supersede the
+The [requirement-by-requirement acceptance record](../LIVING_RESEARCH_VERIFICATION.md)
+and [machine-readable evidence](../../verification/living-research.json) supersede the
 unfinished break checkpoint above. Future work is listed in
-[Remaining parity](REMAINING_PARITY.md); it does not redefine this goal's scope.
+[Remaining parity](../REMAINING_PARITY.md); it does not redefine this goal's scope.

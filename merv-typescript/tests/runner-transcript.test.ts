@@ -112,6 +112,15 @@ test('multibyte UTF-8 passes byte for byte across chunks', (t) => {
   }
 });
 
+test('partial-message deltas are left out; the whole messages are kept', (t) => {
+  const path = directory(t);
+  const delta = `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"text":"Hi"}}}`;
+  const whole = `{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]}}`;
+  log(path, `${delta}\n${whole}\n${delta}\n${delta}\n{"type":"result"}\n${delta}`);
+  for (const chunk of [7, 1000])
+    assert.equal(text(path, [], undefined, chunk), `${whole}\n{"type":"result"}\n`);
+});
+
 test('a log over the cap keeps its head and tail at line ends around one marker', (t) => {
   const path = directory(t);
   const cap = 4096;

@@ -1,5 +1,5 @@
 /**
- * Home and Now. Each test states one thing the two pages must do for a person: say a move
+ * Home and its Needs you part. Each test states one thing they must do for a person: say a move
  * in a sentence of their own rather than the agent's instruction, list only what is the
  * reader's to do, put the control on the card, and agree a word with its number. Whose
  * hands everything else is in, and what waits on what, is the Work page's map.
@@ -14,10 +14,10 @@ const { MemoryRouter, Routes, Route } = await import('react-router-dom');
 // only this order has every module evaluated before another one calls into it.
 await import('../packages/ui/web/components.js');
 const { NeedsYou, needsYou, recordSentence, reviewSentence } =
-  await import('../packages/ui/web/views/overview.js');
+  await import('../packages/ui/web/views/needs-you.js');
 
 const { UiRegistry } = await import('../packages/ui/src/index.js');
-// The rows exactly as the plugins register them: every word Now says of a record is its row's.
+// The rows exactly as the plugins register them: every word Needs you says of a record is its row's.
 const registry = new UiRegistry();
 for (const { default: plugin } of [
   await import('../packages/tasks/src/ui.js'),
@@ -444,7 +444,7 @@ test('with nothing to do the part says so once, and an unwell row still needs so
   assert.ok(text().includes('The task store is read-only'));
 });
 
-test('a Code blocker whose next move is a person’s stands on Now, in the person’s words', () => {
+test('a Code blocker whose next move is a person’s stands on Needs you, in the person’s words', () => {
   // Exactly what a real project serves: the task has ended, and the only opinion left
   // about it is Code's, that a person still has to carry its accepted code to main.
   const publication = {
