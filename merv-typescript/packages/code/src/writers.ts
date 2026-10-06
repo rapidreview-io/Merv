@@ -328,14 +328,19 @@ export class CodeWriterService {
   }
 
   /** The completed upload of this unit that delivered a commit, which is its receipt. */
+  /** The first admitted upload of this unit that left it at `commit`, and the merge it verified. */
   async receipt(tx: Transaction, projectId: string, unitId: string, commit: string) {
-    const row = await tx.get<{ id: string }>(
-      "SELECT id FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='completed' AND result_json LIKE ? ORDER BY completed_at,id LIMIT 1",
+    const row = await tx.get<{ id: string; result_json: string }>(
+      "SELECT id,result_json FROM code_operations WHERE project_id=? AND unit_id=? AND kind='upload' AND status='completed' AND result_json LIKE ? ORDER BY completed_at,id LIMIT 1",
       projectId,
       unitId,
       `%"head":"${commit}"%`,
     );
-    return row?.id ?? null;
+    if (!row) return null;
+    const { merge } = JSON.parse(row.result_json) as {
+      merge?: { plan: string; left: string; right: string; firstMerge: string | null };
+    };
+    return { id: row.id, merge: merge ?? null };
   }
 
   async facts(

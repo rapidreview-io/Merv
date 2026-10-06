@@ -67,9 +67,9 @@ Code work is the one bridge between research decisions and Git: Tasks, Experimen
 ## Composition
 
 The default composition enables the integration, with both Code and CodeWork optional.
-Disable Code to suspend all its adapters. CodeWork runs Code's repository journal, imports,
-mirroring and the `/code/v2` workspace protocol on Code's repositories and GitHub service, so
-disabling it keeps Code's records, repository files and GitHub connection but stops that
+Disable Code to suspend all its adapters. Code builds its repository journal and mirror;
+CodeWork opens them with its callbacks (what imported history changes, which sessions hold a
+workspace) and runs imports and the `/code/v2` workspace protocol on them, so disabling it keeps Code's records, repository files and GitHub connection but stops that
 work and withdraws every `code.*` tool and `/code` route until it is enabled again. Use [the no-Code configuration](../../config/no-code.example.json) to start research
 without any Code entries. Existing Git work waits for restoration; code-free research can
 complete its full review and reflection lifecycle.

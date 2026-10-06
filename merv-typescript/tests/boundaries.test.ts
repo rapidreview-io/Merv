@@ -238,9 +238,7 @@ const pureRules = new Set([
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */
 const codeUtilityExports = new Set([
-  'store/managed',
   'base-merge',
-  'changes',
   'configuration',
   'git',
   'github',

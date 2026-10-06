@@ -10,7 +10,7 @@ import {
   declareManagedProject,
   initializeManagedProjects,
   managedRoot,
-} from '@merv/code/store/managed';
+} from '../packages/code/src/store/managed.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { git } from './fixtures/code-store.js';
 

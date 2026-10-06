@@ -1312,12 +1312,14 @@ export class CodeBaseService {
         'A leased worker cannot control server work',
         403,
       );
-      return await tx.get<{ id: string }>(
-        'SELECT id FROM code_operations WHERE project_id=? AND principal_scope=? AND request_id=?',
+      const { requestId, ...body } = input;
+      return await new OperationJournal(
+        tx,
         caller.projectId,
         principal,
-        input.requestId,
-      );
+        requestId,
+        digest(body),
+      ).previous();
     });
     if (replay) return null;
     const row = await this.state.read((sql) => this.row(sql, caller.projectId, input.key));

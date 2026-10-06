@@ -1,6 +1,7 @@
 import { createService } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
+import { CodeUnitStore } from '@merv/code/units';
 import type { PublicationHost } from '../packages/code-work/src/publication-host.js';
 import {
   CodePublicationService,
@@ -49,11 +50,15 @@ const seal = (publicationId: string): CodeUnitPublicationSeal => ({
   },
 });
 
+/** Main as Code stores it; the journal reads nothing else of Code's binding. */
+const units = (f: { state: ConstructorParameters<typeof CodeUnitStore>[0] }) =>
+  new CodeUnitStore(f.state, undefined as never, undefined as never);
+
 async function setup(t: TestContext) {
   const f = await githubFixture(t);
   await f.enable();
   const publications = await createService(
-    new CodePublicationService(f.state, f.scope, f.github, host),
+    new CodePublicationService(f.state, f.scope, f.github, units(f), host),
   );
   const open = (publicationId = 'codeprop_fixture') =>
     f.state.transaction((tx) => publications.openUnit(f.reviewer, seal(publicationId), tx));
@@ -85,7 +90,7 @@ test('pull request creation recovers a lost response and readies exactly that pu
   await f.sync();
   assert.equal(f.pulls.length, 1);
   const restarted = await createService(
-    new CodePublicationService(f.state, f.scope, f.github, host),
+    new CodePublicationService(f.state, f.scope, f.github, units(f), host),
   );
   assert.equal((await restarted.publications(f.caller))[0].review?.id, 'review_fixture');
   const detail = await restarted.publicationDetails(f.caller, 'codeprop_fixture');

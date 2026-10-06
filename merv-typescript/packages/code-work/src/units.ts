@@ -44,16 +44,13 @@ import type {
 } from './types.js';
 
 import {
-  bindsRepository,
   WorkUnitRecords,
   oid,
   unitColumns,
   type AcceptanceBody,
   type BaseBody,
-  type ProjectRow,
   type UnitRow,
 } from './unit-store.js';
-export { bindsRepository } from './unit-store.js';
 
 /**
  * What an open publication means for the unit that is waiting on it. A done unit carrying one
@@ -359,7 +356,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         ? null
         : await this.reviewedCode(caller, input.unitId, input.codeRef, input.reviewSessionId, tx);
     // Reviewed code is accepted only as a commit Code admitted from the unit's own writer.
-    let receipt: string | null = null;
+    let admitted: Awaited<ReturnType<CodeWriterService['receipt']>> = null;
     if (code) {
       const writer = await this.writers.row(tx, caller.projectId, input.unitId);
       check(
@@ -374,7 +371,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         'A capture of this unit is quarantined; it cannot be accepted before an operator fences it',
         409,
       );
-      receipt = await this.writers.receipt(tx, caller.projectId, input.unitId, code.commit);
+      admitted = await this.writers.receipt(tx, caller.projectId, input.unitId, code.commit);
       // A writer fenced before its branch ever moved kept the base it was pinned to.
       const kept =
         writer.writer_state === 'closed' &&
@@ -382,7 +379,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         writer.base_json !== null &&
         code.commit === this.writers.base(writer);
       check(
-        receipt || kept,
+        admitted || kept,
         'code_acceptance_unverifiable',
         'Code never admitted the commit that was reviewed',
         409,
@@ -396,13 +393,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         'Resolution acceptance requires a passing review with the current retained contributor provenance.',
         409,
       );
-      const proof = receipt
-        ? await tx.get<{ result_json: string }>(
-            "SELECT result_json FROM code_operations WHERE id=? AND status='completed'",
-            receipt,
-          )
-        : null;
-      const verified = proof ? JSON.parse(proof.result_json).merge : null;
+      const verified = admitted?.merge;
       check(
         code &&
           verified?.firstMerge &&
@@ -426,7 +417,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       acceptedBy: caller.actorId,
       code,
       storage: code === null ? 'none' : 'code',
-      ...(receipt ? { receipt } : {}),
+      ...(admitted ? { receipt: admitted.id } : {}),
     };
     const existing = await this.row(tx, caller.projectId, input.unitId);
     const stored = await this.retainUnitAcceptance(caller, body, tx);
@@ -679,21 +670,11 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     });
     // Only hosted workflow versions declare units; the binding and imported store are retained.
     const bound = (await this.state.remember(`code-work:binding:${projectId}`, () =>
-      tx.get<Pick<ProjectRow, 'repository_id' | 'binding_json' | 'main_json'>>(
-        'SELECT repository_id,binding_json,main_json FROM code_projects WHERE project_id=?',
-        projectId,
-      ),
+      this.code.binding(tx, projectId),
     ))!;
-    const main = JSON.parse(bound.main_json) as {
-      oid: string;
-      operationId: string;
-      stored?: boolean;
-    };
+    const { main } = bound;
     const missingMain = async () => {
-      const initializing = await tx.get(
-        "SELECT id FROM code_operations WHERE project_id=? AND kind='initialize' AND status='prepared'",
-        projectId,
-      );
+      const initializing = await this.code.initializing(tx, projectId);
       return pending(
         initializing ? 'initialization' : 'main',
         initializing
@@ -717,7 +698,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
           formatVersion: 1,
           kind: 'accepted',
           reference: fixed.reference,
-          repositoryId: bound.repository_id,
+          repositoryId: bound.repositoryId,
           dependencies: [],
           sources: [],
           main: null,
@@ -754,7 +735,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
             );
         continue;
       }
-      if (!intact || !accepted?.code || !bindsRepository(bound, accepted.code.repositoryId)) {
+      if (!intact || !accepted?.code || !bound.repositoryIds.includes(accepted.code.repositoryId)) {
         blockers.push(
           pending(
             `acceptance:${node.id}`,
@@ -846,7 +827,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
             formatVersion: 1,
             kind: 'merged',
             reference: base.result.commit,
-            repositoryId: bound.repository_id,
+            repositoryId: bound.repositoryId,
             dependencies: relations.dependencies.map((item) => item.id).sort(),
             sources: [...commits.values()]
               .flatMap((entry) => entry.sources)
@@ -941,7 +922,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         formatVersion: 1,
         kind: accepted ? 'accepted' : 'main',
         reference: accepted ? accepted[0] : main.oid,
-        repositoryId: bound.repository_id,
+        repositoryId: bound.repositoryId,
         dependencies: relations.dependencies.map((item) => item.id).sort(),
         sources: (accepted?.[1].sources ?? []).sort((left, right) =>
           left.unitId.localeCompare(right.unitId),

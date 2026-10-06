@@ -62,7 +62,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
       f.scope,
       f.sessions,
       f.workflows,
-      { ...core, github: remote?.github ?? core.github },
+      Object.assign(Object.create(core), { github: remote?.github ?? core.github }),
       {
         config: { settleMs: 60_000 },
         // GitHub's history is the source repository; the first `importFailures` fetches fail.

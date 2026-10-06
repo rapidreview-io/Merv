@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CodeGitHubService } from '@merv/code/github';
+import type { CodeUnitStore } from '@merv/code/units';
 import { parseCodeInput } from '@merv/code/input';
 import { migratePublications } from './publications-schema.js';
 import {
@@ -16,6 +17,7 @@ import {
   type CodePublication,
   type GitHubPullRequest,
   type Scope,
+  type Sql,
   type State,
   type Transaction,
 } from '@merv/contracts';
@@ -86,6 +88,7 @@ export class CodePublicationService implements CodePublicationApi {
     private state: State,
     private scope: Scope,
     private github: CodeGitHubService,
+    private units: Pick<CodeUnitStore, 'binding'>,
     private host: PublicationHost,
   ) {}
   async initialize() {
@@ -127,12 +130,7 @@ export class CodePublicationService implements CodePublicationApi {
   async openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction) {
     ({ caller, input } = structuredClone({ caller, input }));
     this.state.assertTransaction(tx);
-    const connection = await tx.get<{ repository_json: string | null }>(
-      'SELECT repository_json FROM code_github WHERE project_id=?',
-      caller.projectId,
-    );
-    const destination =
-      connection?.repository_json && connection.repository_json !== 'null' ? 'github' : 'local';
+    const destination = (await this.github.linked(caller.projectId, tx)) ? 'github' : 'local';
     const at = now();
     const record: CodePublication = {
       destination,
@@ -258,12 +256,8 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return row;
   }
-  private async mainOf(sql: Pick<Transaction, 'get'>, projectId: string) {
-    const project = await sql.get<{ main_json: string }>(
-      'SELECT main_json FROM code_projects WHERE project_id=?',
-      projectId,
-    );
-    return project ? (JSON.parse(project.main_json).oid as string) : null;
+  private async mainOf(sql: Sql, projectId: string) {
+    return (await this.units.binding(sql, projectId))?.main.oid ?? null;
   }
   /**
    * An accepted unit publishes once: a row that can no longer merge as reviewed settles stale,

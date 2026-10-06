@@ -16,7 +16,6 @@ import {
   type CodeLocalBindInput,
   type CodeProjectBinding,
   type CodeProjectStatus,
-  type CodeStoreWarning,
   type CodeUnit,
   type CodeUnitAcceptance,
   type Scope,
@@ -28,13 +27,6 @@ import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { CodeWriterService } from '@merv/code/writers';
 import { resultRef, workBranch } from '@merv/code/store/refs';
 
-export interface ProjectRow {
-  project_id: string;
-  repository_id: string;
-  binding_json: string;
-  main_json: string;
-  store_json: string | null;
-}
 export interface UnitRow {
   project_id: string;
   unit_id: string;
@@ -126,22 +118,6 @@ function storedPublication(publication: PublicationRow): CodeUnitPublication {
     ...(pull ? { pull: { number: pull.number, url: pull.url } } : {}),
     ...(state === 'published' && mergeCommit ? { mergeCommit } : {}),
   };
-}
-/**
- * Whether an acceptance made under `repositoryId` belongs to this project: the repository it is
- * bound to now, or any it was bound to before a verified rebind. A pre-rebind acceptance that
- * passes here goes on to the storage gate below, which a project-keyed import receipt satisfies
- * — safe only because a rebind proves Code's own repository holds every commit the project
- * retained as authoritative before it writes the new binding. Base derivation and publication
- * validate repository lineage through this shared check.
- */
-export function bindsRepository(
-  bound: { repository_id: string; binding_json: string },
-  repositoryId: string,
-): boolean {
-  if (bound.repository_id === repositoryId) return true;
-  const binding = JSON.parse(bound.binding_json) as { previous?: { repositoryId: string }[] };
-  return !!binding.previous?.some((entry) => entry.repositoryId === repositoryId);
 }
 export const unitColumns =
   'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key,publishes_at,publication_id';
@@ -299,16 +275,12 @@ export class WorkUnitRecords {
 
   protected async readStatus(caller: Caller, tx: Transaction): Promise<CodeProjectStatus> {
     await this.scope.require(caller, 'read', tx);
-    const warnings = await tx.get<{ warnings_json: string }>(
-      'SELECT warnings_json FROM code_projects WHERE project_id=?',
-      caller.projectId,
-    );
     return {
       project: await this.project(tx, caller.projectId),
       store: null,
       operations: [],
       mirror: null,
-      warnings: JSON.parse(warnings?.warnings_json ?? '[]') as CodeStoreWarning[],
+      warnings: await this.code.warnings(tx, caller.projectId),
       units: await mapAsync(
         await tx.all<UnitRow>(
           `SELECT ${unitColumns} FROM code_units WHERE project_id=? ORDER BY declared_at DESC,unit_id LIMIT 200`,
