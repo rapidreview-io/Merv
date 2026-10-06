@@ -228,4 +228,21 @@ CREATE TRIGGER wf_success_states_pinned BEFORE UPDATE OR DELETE ON wf_success_st
 DROP TABLE wf_system_requests;
 DROP FUNCTION wf_system_requests_guard();
 `,
+  // One table holds every leased step's lease. The owning programs move their own lease rows
+  // here in their next migrations. Provenance is immutable; only the release is written.
+  11: `
+CREATE TABLE wf_leases (
+    _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, instance_id TEXT NOT NULL,
+    revision BIGINT NOT NULL, workflow TEXT NOT NULL, state TEXT NOT NULL,
+    actor_id TEXT NOT NULL, source_actor_id TEXT, review_id TEXT, claim_id TEXT,
+    receipt TEXT NOT NULL, details TEXT NOT NULL, released_at TEXT
+  );
+  CREATE UNIQUE INDEX wf_leases_active ON wf_leases(project_id,instance_id,revision) WHERE released_at IS NULL;
+  CREATE INDEX wf_leases_instance ON wf_leases(project_id,instance_id,revision);
+  CREATE FUNCTION wf_leases_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN RAISE EXCEPTION USING MESSAGE='Lease provenance is immutable', ERRCODE='23514'; END; $merv$;
+  CREATE TRIGGER wf_leases_immutable BEFORE UPDATE OF id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,details ON wf_leases FOR EACH ROW EXECUTE FUNCTION wf_leases_immutable_guard();
+  CREATE TRIGGER wf_leases_retained BEFORE DELETE ON wf_leases FOR EACH ROW EXECUTE FUNCTION wf_leases_immutable_guard();
+`,
 };

@@ -1,5 +1,4 @@
 import {
-  leaseReleaseConsumer,
   mapAsync,
   childRequest,
   createService,
@@ -21,6 +20,7 @@ import {
   type WorkflowSnapshot,
 } from '@merv/contracts';
 import { CheckedTransitions } from '@merv/workflows/rules';
+import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -247,12 +247,14 @@ export class ReflectionService implements Reflections {
    */
   private async ownLens(caller: Caller, reflectionId: string, tx: Transaction) {
     if (!caller.session) return undefined;
-    const lease = await tx.get<{ id: string }>(
-      'SELECT r.id FROM reflection_leases l JOIN reflection_lenses r ON r.id=l.instance_id WHERE l.id=? AND l.project_id=? AND r.reflection_id=?',
-      caller.session.id,
-      caller.projectId,
-      reflectionId,
-    );
+    const [held] = await leaseRows(tx, { projectId: caller.projectId, id: caller.session.id });
+    const lease =
+      held &&
+      (await tx.get<{ id: string }>(
+        'SELECT id FROM reflection_lenses WHERE id=? AND reflection_id=?',
+        held.instance_id,
+        reflectionId,
+      ));
     if (!lease) return undefined;
     const wave = await this.workflows.get(caller, reflectionId, tx);
     return wave.state === 'reflecting' ? lease.id : undefined;
@@ -437,16 +439,7 @@ export class ReflectionService implements Reflections {
 }
 export const reflectionsPlugin = {
   name: 'merv-reflections',
-  inject: [
-    'state',
-    'scope',
-    'artifacts',
-    'paper',
-    'workflows',
-    'reviews',
-    'contextBuilder',
-    'domainEvents',
-  ],
+  inject: ['state', 'scope', 'artifacts', 'paper', 'workflows', 'reviews', 'contextBuilder'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     await ctx.effect(async function* () {
@@ -464,11 +457,6 @@ export const reflectionsPlugin = {
       );
       yield () => service.close();
       yield ctx.provide('reflections', service);
-    });
-    await ctx.effect(async function* () {
-      yield await ctx.domainEvents.subscribe(
-        leaseReleaseConsumer('reflections.lease-release.v1', 'reflection_leases', ctx.reviews),
-      );
     });
     // A restart makes new lens instances: each perspective's author still takes its own up again.
     ctx.inject(['sessions'], (ctx) => {

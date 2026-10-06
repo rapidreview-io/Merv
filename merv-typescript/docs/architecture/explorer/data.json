@@ -798,8 +798,7 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper",
-        "domainEvents"
+        "paper"
       ],
       "optional": [
         "codeWork",
@@ -1721,8 +1720,7 @@
         "paper",
         "workflows",
         "reviews",
-        "contextBuilder",
-        "domainEvents"
+        "contextBuilder"
       ],
       "optional": [
         "sessions"
@@ -2638,8 +2636,7 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper",
-        "domainEvents"
+        "paper"
       ],
       "optional": [
         "codeWork",
@@ -3113,11 +3110,6 @@
     },
     {
       "from": "experiments",
-      "to": "domainEvents",
-      "optional": false
-    },
-    {
-      "from": "experiments",
       "to": "codeWork",
       "optional": true
     },
@@ -3498,11 +3490,6 @@
     },
     {
       "from": "reflections",
-      "to": "domainEvents",
-      "optional": false
-    },
-    {
-      "from": "reflections",
       "to": "sessions",
       "optional": true
     },
@@ -3848,11 +3835,6 @@
     },
     {
       "from": "tasks",
-      "to": "domainEvents",
-      "optional": false
-    },
-    {
-      "from": "tasks",
       "to": "codeWork",
       "optional": true
     },
@@ -3911,7 +3893,7 @@
     "plugins": 70,
     "providers": 32,
     "adapters": 38,
-    "dependencies": 196
+    "dependencies": 193
   },
   "network": [
     {

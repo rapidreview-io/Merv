@@ -12,6 +12,9 @@
 import type pg from 'pg';
 import { digest } from '@merv/contracts';
 import { postgresMigrations as knowledgeMigrations } from '../../packages/knowledge/src/storage.postgres.js';
+import { postgresMigrations as taskMigrations } from '../../packages/tasks/src/index.postgres.js';
+import { postgresMigrations as experimentProgramMigrations } from '../../packages/experiments/src/program.postgres.js';
+import { postgresMigrations as reflectionMigrations } from '../../packages/reflections/src/index.postgres.js';
 
 /** The component migrations that retire the versions, as each owning component registers it. */
 export const retirementMigrations = [
@@ -402,6 +405,16 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
     );
     if (managed.rows[0].count !== 0)
       throw new Error('Cannot rewind a fixture with managed runners');
+    // The lease tables moved into Workflows later still (workflows@11, tasks@10,
+    // experiment_program@4, reflections@5): each owner's table returns, empty, as it stood.
+    const reflectionLeases = reflectionMigrations[1]!;
+    await client.query(`DROP TABLE wf_leases;
+DROP FUNCTION wf_leases_immutable_guard();
+${taskMigrations[6]}${taskMigrations[7]}${experimentProgramMigrations[1]}${experimentProgramMigrations[2]}
+${reflectionLeases.slice(reflectionLeases.indexOf('CREATE TABLE reflection_leases'))}
+DELETE FROM component_migrations WHERE (component='workflows' AND version=11)
+  OR (component='tasks' AND version=10) OR (component='experiment_program' AND version=4)
+  OR (component='reflections' AND version=5);`);
     // sessions@12 (an index on closed usage) came later still.
     await client.query(`DROP INDEX session_usage_closed;
 DELETE FROM component_migrations WHERE component='sessions' AND version=12;`);

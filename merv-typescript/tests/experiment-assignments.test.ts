@@ -927,7 +927,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
   const lead = await f.issue('operator');
   const before = await f.state.read(async (sql) => ({
     actors: await sql.all('SELECT id FROM actors'),
-    leases: await sql.all('SELECT id FROM experiment_leases'),
+    leases: await sql.all('SELECT id FROM wf_leases'),
     head: await f.state.eventHead(),
   }));
   const read = t.mock.method(f.artifacts, 'read', () => {
@@ -937,7 +937,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
   assert.deepEqual(
     await f.state.read(async (sql) => ({
       actors: await sql.all('SELECT id FROM actors'),
-      leases: await sql.all('SELECT id FROM experiment_leases'),
+      leases: await sql.all('SELECT id FROM wf_leases'),
       head: await f.state.eventHead(),
     })),
     before,
@@ -1134,13 +1134,14 @@ test('successors receive exact rejected findings and manifests across both retur
       review.id,
     );
     if (destination === 'planned') {
-      const recovery = await f.state.read(async (sql) =>
-        JSON.parse(
-          (await sql.get<{ recovery: string }>(
-            'SELECT recovery FROM experiment_leases WHERE id=?',
-            offered.session.id,
-          ))!.recovery,
-        ),
+      const recovery = await f.state.read(
+        async (sql) =>
+          JSON.parse(
+            (await sql.get<{ details: string }>(
+              'SELECT details FROM wf_leases WHERE id=?',
+              offered.session.id,
+            ))!.details,
+          ).recovery,
       );
       assert.deepEqual(
         recovery,
@@ -1280,7 +1281,7 @@ test('declared producer terminal actions and owner cancellation close active wor
     await f.state.read(
       async (sql) =>
         (await sql.get<{ count: number }>(
-          'SELECT COUNT(*) AS count FROM experiment_leases WHERE released_at IS NULL',
+          'SELECT COUNT(*) AS count FROM wf_leases WHERE released_at IS NULL',
         ))!.count,
     ),
     0,
@@ -1423,7 +1424,7 @@ test('a continuing agent can acquire successive experiment leases without inheri
       await f.state.read(
         async (sql) =>
           await sql.get<{ n: number }>(
-            'SELECT COUNT(*) AS n FROM experiment_leases WHERE actor_id=?',
+            'SELECT COUNT(*) AS n FROM wf_leases WHERE actor_id=?',
             agent.actorId,
           ),
       )

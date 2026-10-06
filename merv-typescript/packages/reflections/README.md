@@ -21,7 +21,6 @@ flowchart LR
     contextBuilder["Context Builder<br/><small>assignment context</small>"]
     artifacts["Artifacts<br/><small>lens reports</small>"]
     sessions["Sessions<br/><small>agent continuity</small>"]
-    domainEvents["Domain Events"]
     scope["Scope<br/><small>projects</small>"]
     ui["UI"]
     state["State"]
@@ -31,14 +30,13 @@ flowchart LR
   end
   worker -- "calls reflection.* tools" --> reflections
   research -- "creates reflection wave" --> reflections
-  reflections -- "registers wave, lens workflows; an open wave blocks task and experiment starts" --> workflows
+  reflections -- "registers wave, lens workflows; an open wave blocks task and experiment starts; keeps its leases" --> workflows
   reflections -- "requests synthesis review" --> reviews
   reflections -- "registers three recipes" --> contextBuilder
   reflections -- "applies paper changes" --> paper
   reflections -- "imports @merv/experiments/rules" --> experiments
   reflections -- "reads reports" --> artifacts
   reflections -. "registers lens continuity" .-> sessions
-  reflections -- "subscribes lease release" --> domainEvents
   reflections -- "injects" --> scope
   reflections -- "registers /reflections page" --> ui
   reflections -- "injects" --> state

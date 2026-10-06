@@ -1,14 +1,15 @@
 import { CheckedTransitions } from '@merv/workflows/rules';
+import type { LeaseRow } from '@merv/workflows/lease-rows';
 import {
   check,
   createService,
   digest,
   inTransaction,
-  leaseReleaseConsumer,
   MervError,
   plain,
   receipted,
   visible,
+  type Artifact,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -132,21 +133,12 @@ export interface TaskRow {
   context_inputs: string;
   evidence_version: 2;
 }
-export interface TaskLeaseRow {
-  id: string;
-  project_id: string;
-  task_id: string;
-  revision: number;
-  actor_id: string;
-  source_actor_id: string;
+/** A task's lease: what it pins besides the step, its claim and its receipt. */
+export type TaskLeaseRow = LeaseRow<{
   purpose: 'work' | 'review';
-  review_id: string | null;
-  claim_id: string | null;
-  receipt: string;
-  pinned_artifacts: string;
-  checkpoints: string;
-  released_at: string | null;
-}
+  pinnedArtifacts: Artifact[];
+  checkpoints: TaskCheckpoint[];
+}>;
 const configuration = z
   .object({
     limits: z
@@ -606,16 +598,7 @@ export class TaskService implements Tasks {
 
 export const tasksPlugin = {
   name: 'merv-tasks',
-  inject: [
-    'state',
-    'scope',
-    'artifacts',
-    'workflows',
-    'reviews',
-    'contextBuilder',
-    'paper',
-    'domainEvents',
-  ],
+  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const tasks = await createService(
@@ -643,11 +626,6 @@ export const tasksPlugin = {
       // Generic review.submit lives outside this provider's consumer graph. Stop
       // accepting new routed work before withdrawing Tasks and draining its tools.
       yield () => tasks.withdrawReviewOwner();
-    });
-    await ctx.effect(async function* () {
-      yield await ctx.domainEvents.subscribe(
-        leaseReleaseConsumer('tasks.lease-release.v1', 'task_leases', ctx.reviews),
-      );
     });
   },
 };

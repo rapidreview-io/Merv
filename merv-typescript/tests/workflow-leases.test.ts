@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createService } from '@merv/contracts';
 import { admitDispatch } from '@merv/workflows/execution';
+import { insertLease } from '@merv/workflows/lease-rows';
 import type {
   Caller,
   Data,
@@ -145,7 +146,7 @@ test('lease offer reserves ownership and freezes context atomically; first activ
   const before = await state.read(async (sql) => ({
     actors: await sql.all('SELECT id FROM actors'),
     events: await state.eventHead(),
-    leases: await sql.all('SELECT id FROM task_leases'),
+    leases: await sql.all('SELECT id FROM wf_leases'),
   }));
   const read = artifacts.read;
   artifacts.read = () => {
@@ -156,7 +157,7 @@ test('lease offer reserves ownership and freezes context atomically; first activ
     await state.read(async (sql) => ({
       actors: await sql.all('SELECT id FROM actors'),
       events: await state.eventHead(),
-      leases: await sql.all('SELECT id FROM task_leases'),
+      leases: await sql.all('SELECT id FROM wf_leases'),
     })),
     before,
   );
@@ -373,47 +374,59 @@ test('lease generations survive provider reload but old invocations and released
   assert.notEqual(successor.session.actorId, offered.session.actorId);
 });
 
-test('a lease owner releases the lease of a session closed while its workflow was disabled', async (t) => {
+test('Reviews releases the lease of a closed session, whether or not its owner is loaded', async (t) => {
   const f = await fixture(t);
   const { state, domainEvents } = f.app.ctx;
   const released = async (id: string) =>
     (await state.read(
       async (sql) =>
         await sql.get<{ released_at: string | null }>(
-          'SELECT released_at FROM task_leases WHERE id=?',
+          'SELECT released_at FROM wf_leases WHERE id=?',
           id,
         ),
     ))!.released_at;
-  const consumer = async (id: string) => {
-    const status = (await domainEvents.status()).find((consumer) => consumer.id === id)!;
+  const consumer = async () => {
+    const status = (await domainEvents.status()).find(
+      (consumer) => consumer.id === 'reviews.lease-release.v1',
+    )!;
     return {
       active: status.active,
       error: status.error,
       caughtUp: status.cursor === (await state.eventHead()),
     };
   };
+  const caughtUp = { active: true, error: null, caughtUp: true };
 
-  await t.test('without the registration, closing does not stall Sessions', async () => {
+  await t.test('a close while the workflow is disabled releases its lease', async () => {
     const offered = await f.offer();
     await f.app.setEnabled('tasks', false);
     await f.release(offered.session);
-    assert.equal(await released(offered.session.id), null);
-    const caughtUp = { active: true, error: null, caughtUp: true };
-    assert.equal((await consumer('tasks.lease-release.v1')).active, false);
-    await f.app.setEnabled('tasks', true);
     await domainEvents.drain();
     assert.ok(await released(offered.session.id));
-    assert.deepEqual(await consumer('tasks.lease-release.v1'), caughtUp);
+    assert.deepEqual(await consumer(), caughtUp);
+    await f.app.setEnabled('tasks', true);
+  });
+
+  await t.test('without Reviews, closing does not stall Sessions', async () => {
+    const offered = await f.offer();
+    await f.app.setEnabled('reviews', false);
+    await f.release(offered.session);
+    assert.equal(await released(offered.session.id), null);
+    assert.equal((await consumer()).active, false);
+    await f.app.setEnabled('reviews', true);
+    await domainEvents.drain();
+    assert.ok(await released(offered.session.id));
+    assert.deepEqual(await consumer(), caughtUp);
   });
 
   await t.test('a close logged before the consumer existed is released', async () => {
     const offered = await f.offer();
-    await f.app.setEnabled('tasks', false);
+    await f.app.setEnabled('reviews', false);
     await f.release(offered.session);
     await state.transaction(
-      async (tx) => await tx.run("DELETE FROM event_consumers WHERE id='tasks.lease-release.v1'"),
+      async (tx) => await tx.run("DELETE FROM event_consumers WHERE id='reviews.lease-release.v1'"),
     );
-    await f.app.setEnabled('tasks', true);
+    await f.app.setEnabled('reviews', true);
     await domainEvents.drain();
     assert.ok(await released(offered.session.id));
   });
@@ -432,68 +445,42 @@ test('a lease owner releases the lease of a session closed while its workflow wa
         data: { reason: 'closed' },
       });
     });
-    await f.app.setEnabled('tasks', false);
+    await f.app.setEnabled('reviews', false);
     await state.transaction(
       async (tx) =>
-        await tx.run("UPDATE event_consumers SET cursor=0 WHERE id='tasks.lease-release.v1'"),
+        await tx.run("UPDATE event_consumers SET cursor=0 WHERE id='reviews.lease-release.v1'"),
     );
     const head = await state.eventHead();
-    await f.app.setEnabled('tasks', true);
+    await f.app.setEnabled('reviews', true);
     await domainEvents.drain();
     assert.equal(await released(offered.session.id), first);
     assert.equal(await state.eventHead(), head);
-    assert.deepEqual(await consumer('tasks.lease-release.v1'), {
-      active: true,
-      error: null,
-      caughtUp: true,
-    });
+    assert.deepEqual(await consumer(), caughtUp);
   });
 });
 
-test('Experiments and Reflections release a closed session lease from their own tables', async (t) => {
+test('a closed session releases an Experiments or Reflections lease the same way', async (t) => {
   const f = await fixture(t);
   const { state, domainEvents } = f.app.ctx;
-  const owners = [
-    {
-      consumer: 'experiments.lease-release.v1',
-      table: 'experiment_leases',
-      row: {
-        experiment_id: 'experiment',
-        attempt_index: 1,
-        state: 'planned',
-        source_actor_id: 'source',
-        recovery: '[]',
-      },
-    },
-    {
-      consumer: 'reflections.lease-release.v1',
-      table: 'reflection_leases',
-      row: { instance_id: 'reflection' },
-    },
-  ];
-  for (const { consumer, table, row } of owners) {
-    const lease = {
-      id: `lease-${table}`,
-      project_id: f.source.projectId,
-      revision: 1,
-      actor_id: `worker-${table}`,
-      receipt: '{}',
-      inputs: '{}',
-      artifacts: '[]',
-      ...row,
-    };
+  for (const workflow of ['experiment', 'reflection']) {
+    const id = `lease-${workflow}`;
     await state.transaction(async (tx) => {
-      await tx.run(
-        `INSERT INTO ${table}(${Object.keys(lease).join(',')}) VALUES(${Object.keys(lease)
-          .map(() => '?')
-          .join(',')})`,
-        ...Object.values(lease),
-      );
+      await insertLease(tx, {
+        id,
+        projectId: f.source.projectId,
+        snapshot: { id: workflow, revision: 1, workflow, state: 'planned' },
+        actorId: `worker-${workflow}`,
+        sourceActorId: 'source',
+        reviewId: null,
+        claimId: null,
+        receipt: {},
+        details: {},
+      });
       await state.appendEvent(tx, {
         projectId: f.source.projectId,
         actorId: 'system:sessions',
         type: 'session.closed',
-        subjectId: lease.id,
+        subjectId: id,
         data: { reason: 'closed' },
       });
     });
@@ -501,16 +488,18 @@ test('Experiments and Reflections release a closed session lease from their own 
     const released = await state.read(
       async (sql) =>
         await sql.get<{ released_at: string | null }>(
-          `SELECT released_at FROM ${table} WHERE id=?`,
-          lease.id,
+          'SELECT released_at FROM wf_leases WHERE id=?',
+          id,
         ),
     );
-    assert.ok(released!.released_at, table);
-    const status = (await domainEvents.status()).find((status) => status.id === consumer)!;
+    assert.ok(released!.released_at, workflow);
+    const status = (await domainEvents.status()).find(
+      (status) => status.id === 'reviews.lease-release.v1',
+    )!;
     assert.deepEqual(
       [status.active, status.error, status.cursor],
       [true, null, await state.eventHead()],
-      consumer,
+      workflow,
     );
   }
 });

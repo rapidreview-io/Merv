@@ -82,41 +82,14 @@ const capabilities: Record<string, readonly string[]> = {
   blobs: [],
   scope: ['state'],
   artifacts: ['state', 'scope', 'blobs'],
-  experiments: [
-    'state',
-    'scope',
-    'artifacts',
-    'workflows',
-    'reviews',
-    'contextBuilder',
-    'paper',
-    'domainEvents',
-  ],
+  experiments: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   knowledge: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
   research: ['state', 'scope', 'workflows'],
   paper: ['state', 'scope', 'artifacts'],
-  reflections: [
-    'state',
-    'scope',
-    'artifacts',
-    'workflows',
-    'reviews',
-    'contextBuilder',
-    'paper',
-    'domainEvents',
-  ],
+  reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   workflows: ['state', 'scope'],
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
-  tasks: [
-    'state',
-    'scope',
-    'workflows',
-    'artifacts',
-    'reviews',
-    'contextBuilder',
-    'paper',
-    'domainEvents',
-  ],
+  tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder', 'paper'],
   feed: ['state', 'scope', 'artifacts'],
   // The read-only archive of research imported from the previous server.
   legacyHistory: ['state', 'scope'],
@@ -230,7 +203,8 @@ const sharedContract = (specifier: string) =>
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
  * limits, review independence and history, the prerequisite guard, the paper's Problem, an
  * artifact as a context item, the retirement ledger text every retirement migration embeds, what
- * a runner advertises, and hosted Codex's profile and handoff grace. */
+ * a runner advertises, hosted Codex's profile and handoff grace, and the lease rows every leased
+ * step keeps. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
   '@merv/workflows/rules',
@@ -243,6 +217,7 @@ const pureRules = new Set([
   '@merv/fleet/model-ledger',
   '@merv/fleet/hosted-codex',
   '@merv/workflows/dependency-rows',
+  '@merv/workflows/lease-rows',
   '@merv/code-work/workspace',
   '@merv/paper/rules',
   '@merv/context-builder/artifact-item',

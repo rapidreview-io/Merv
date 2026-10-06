@@ -117,4 +117,19 @@ ALTER TABLE reflections DROP COLUMN corpus, DROP COLUMN paper;
 CREATE TRIGGER reflection_identity_immutable BEFORE UPDATE OF id,project_id,title,owner_id,created_at ON reflections
 FOR EACH ROW EXECUTE FUNCTION reflection_identity_immutable_guard();
 `,
+  // Reflection leases move to Workflows' one lease table (workflows@11), with the state each
+  // was taken at as the wave's or lens's history records it; reflection_leases goes.
+  5: `
+INSERT INTO wf_leases(id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,details,released_at)
+SELECT l.id,l.project_id,l.instance_id,l.revision,
+  COALESCE((SELECT i.workflow FROM wf_instances i WHERE i.id=l.instance_id),'reflection'),
+  COALESCE((SELECT h.to_state FROM wf_history h WHERE h.instance_id=l.instance_id AND h.revision=l.revision),
+    CASE WHEN l.review_id IS NULL THEN 'synthesizing' ELSE 'in_review' END),
+  l.actor_id,l.receipt::jsonb->>'sourceId',l.review_id,l.claim_id,l.receipt,
+  jsonb_build_object('inputs',l.inputs::jsonb,'artifacts',l.artifacts::jsonb)::text,
+  l.released_at
+FROM reflection_leases l ORDER BY l.id;
+DROP TABLE reflection_leases;
+DROP FUNCTION reflection_lease_immutable_guard(), reflection_lease_no_delete_guard();
+`,
 };

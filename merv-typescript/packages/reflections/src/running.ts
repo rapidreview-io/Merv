@@ -1,3 +1,4 @@
+import { leaseRows } from '@merv/workflows/lease-rows';
 import {
   ellipsis,
   inTransaction,
@@ -31,7 +32,7 @@ import { lensName } from './names.js';
  * record, its lease rows and its review limit, in the reader's snapshot; nothing is written.
  */
 
-/** One reflection_leases row. A lease's id is the id of the session that holds it. */
+/** One lease on a wave or lens. A lease's id is the id of the session that holds it. */
 export interface WaveLease {
   id: string;
   instanceId: string;
@@ -262,16 +263,7 @@ export async function runningFacts(
 ): Promise<WaveFacts> {
   const wave = await this.wave(caller, id, tx, true);
   const ids = [wave.id, ...wave.lenses.map((lens) => lens.id)];
-  const leases = await tx.all<{
-    id: string;
-    instance_id: string;
-    revision: number;
-    released_at: string | null;
-  }>(
-    `SELECT id,instance_id,revision,released_at FROM reflection_leases WHERE project_id=? AND instance_id IN (${ids.map(() => '?').join(',')})`,
-    caller.projectId,
-    ...ids,
-  );
+  const leases = await leaseRows(tx, { projectId: caller.projectId, instanceIds: ids });
   return {
     wave,
     leases: leases.map((lease) => ({

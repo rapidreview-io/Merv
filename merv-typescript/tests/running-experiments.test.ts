@@ -294,7 +294,7 @@ test('an open experiment is a work card that says where it stands and what it wa
   const [lease] = await f.app.ctx.state.transaction(
     async (tx) =>
       await tx.all<{ released_at: string }>(
-        'SELECT released_at FROM experiment_leases WHERE experiment_id=?',
+        'SELECT released_at FROM wf_leases WHERE instance_id=?',
         idle.id,
       ),
   );

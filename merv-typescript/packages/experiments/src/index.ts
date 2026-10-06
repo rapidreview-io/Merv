@@ -1,9 +1,9 @@
 import { visible, mapAsync, record } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
-import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
 import { requireDependencies } from '@merv/workflows/rules';
+import { leaseRows } from '@merv/workflows/lease-rows';
 import { z } from 'zod';
 import {
   check,
@@ -330,21 +330,20 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     );
     const ids = rows.map((row) => row.id);
     const at = await this.workflows.revisions(caller.projectId, ids, tx);
-    const live = await tx.all<{ id: string; experiment_id: string; revision: number }>(
-      `SELECT id,experiment_id,revision FROM experiment_leases WHERE project_id=? AND released_at IS NULL AND experiment_id IN (${ids.map(() => '?').join(',') || 'NULL'})`,
-      caller.projectId,
-      ...ids,
-    );
+    const live = await leaseRows(tx, {
+      projectId: caller.projectId,
+      instanceIds: ids,
+      active: true,
+    });
     return rows.flatMap((row) => {
       const w = at.get(row.id);
-      const lease = live.find((l) => l.experiment_id === row.id && l.revision === w?.revision);
+      const lease = live.find((l) => l.instance_id === row.id && l.revision === w?.revision);
       return w ? [{ ...w, ...row, lease_id: lease?.id ?? null }] : [];
     });
   }
   /**
-   * When the last lease on each unheld experiment ended at its current revision. Only a live
-   * lease is indexed, so this is one read for the whole board, and only for work an agent
-   * would hold and nobody does.
+   * When the last lease on each unheld experiment ended at its current revision: one read for
+   * the whole board, and only for work an agent would hold and nobody does.
    */
   private async releases(
     caller: Caller,
@@ -353,15 +352,19 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
   ): Promise<Map<string, string>> {
     const unheld = rows.filter((row) => !row.lease_id && producing(row.state));
     if (!unheld.length) return new Map();
-    const ended = await tx.all<{ experiment_id: string; released_at: string }>(
-      `SELECT experiment_id,MAX(released_at) AS released_at FROM experiment_leases
-       WHERE project_id=? AND released_at IS NOT NULL
-       AND (${unheld.map(() => '(experiment_id=? AND revision=?)').join(' OR ')})
-       GROUP BY experiment_id`,
-      caller.projectId,
-      ...unheld.flatMap((row) => [row.id, row.revision]),
-    );
-    return new Map(ended.map((row) => [row.experiment_id, row.released_at]));
+    const at = new Map(unheld.map((row) => [row.id, row.revision]));
+    const ended = new Map<string, string>();
+    for (const lease of await leaseRows(tx, {
+      projectId: caller.projectId,
+      instanceIds: unheld.map((row) => row.id),
+    }))
+      if (
+        lease.released_at &&
+        at.get(lease.instance_id) === lease.revision &&
+        lease.released_at > (ended.get(lease.instance_id) ?? '')
+      )
+        ended.set(lease.instance_id, lease.released_at);
+    return ended;
   }
   /**
    * Which cards are back where they were, counted from their moves without the moves' data, and
@@ -1602,16 +1605,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
 }
 export const experimentsPlugin = {
   name: 'merv-experiments',
-  inject: [
-    'state',
-    'scope',
-    'artifacts',
-    'workflows',
-    'reviews',
-    'contextBuilder',
-    'paper',
-    'domainEvents',
-  ],
+  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const experiments = await createService(
@@ -1637,11 +1631,6 @@ export const experimentsPlugin = {
       yield () => experiments.close();
       yield ctx.provide('experiments', experiments);
       yield () => experiments.withdrawReviewOwner();
-    });
-    await ctx.effect(async function* () {
-      yield await ctx.domainEvents.subscribe(
-        leaseReleaseConsumer('experiments.lease-release.v1', 'experiment_leases', ctx.reviews),
-      );
     });
   },
 };

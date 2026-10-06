@@ -1,9 +1,13 @@
 import { excludedFromReview, reviewHistory, REVIEW_SUBMIT_INPUT } from '@merv/reviews/rules';
 import {
-  releasedLease,
+  insertLease,
+  leaseRows,
+  reviewedLeaseHooks,
+  type LeaseRow as WorkflowLeaseRow,
+} from '@merv/workflows/lease-rows';
+import {
   everyAsync,
   sha256Hex,
-  checkReceipt,
   markdownSection,
   check,
   type Artifact,
@@ -60,19 +64,11 @@ export interface Current {
   wave: WaveRow;
   lens: LensRow | null;
 }
-export interface LeaseRow {
-  id: string;
-  project_id: string;
-  instance_id: string;
-  revision: number;
-  actor_id: string;
-  receipt: string;
-  inputs: string;
-  artifacts: string;
-  review_id: string | null;
-  claim_id: string | null;
-  released_at: string | null;
-}
+/** A wave's or lens's lease: the inputs it froze and the artifacts they cite. */
+export type LeaseRow = WorkflowLeaseRow<{
+  inputs: Record<string, ContextInput>;
+  artifacts: string[];
+}>;
 /** Every step is named as its record is: a wave by its title, a lens by its wave and perspective in words. */
 const named = ({ wave, lens }: Current) =>
   lens ? `${wave.title}: ${lensName(lens.perspective)}` : wave.title;
@@ -146,13 +142,17 @@ export async function activeLease(
   context: WorkflowCheckContext,
 ): Promise<LeaseRow | undefined> {
   const { caller, snapshot, tx } = context;
-  return await this.once(`lease:${caller.projectId}:${snapshot.id}:${snapshot.revision}`, () =>
-    tx.get<LeaseRow>(
-      'SELECT * FROM reflection_leases WHERE project_id=? AND instance_id=? AND revision=? AND released_at IS NULL',
-      caller.projectId,
-      snapshot.id,
-      snapshot.revision,
-    ),
+  return await this.once(
+    `lease:${caller.projectId}:${snapshot.id}:${snapshot.revision}`,
+    async () =>
+      (
+        await leaseRows<LeaseRow['details']>(tx, {
+          projectId: caller.projectId,
+          instanceIds: [snapshot.id],
+          revision: snapshot.revision,
+          active: true,
+        })
+      )[0],
   );
 }
 export async function lease(
@@ -182,7 +182,7 @@ export async function assignmentInputs(
   lease?: LeaseRow,
 ): Promise<Record<string, ContextInput>> {
   return context.caller.session
-    ? (JSON.parse((lease ?? (await this.lease(context))).inputs) as Record<string, ContextInput>)
+    ? (lease ?? (await this.lease(context))).details.inputs
     : await this.inputs(context, current);
 }
 /** Each lens of an attempt has its own author. */
@@ -245,11 +245,7 @@ export async function admit(
       const lenses = await this.lensRows(wave, tx);
       this.distinctAuthor(lens, lenses, caller.actorId);
       const parallel = await this.once(`leases:${caller.projectId}:${caller.actorId}`, () =>
-        tx.all<{ instance_id: string }>(
-          'SELECT instance_id FROM reflection_leases WHERE project_id=? AND actor_id=? AND released_at IS NULL',
-          caller.projectId,
-          caller.actorId,
-        ),
+        leaseRows(tx, { projectId: caller.projectId, actorId: caller.actorId, active: true }),
       );
       check(
         !parallel.some(
@@ -548,20 +544,16 @@ export function execution(
 export function hooks(
   this: ReflectionService,
 ): NonNullable<NonNullable<WorkflowPolicy['assignments']>[number]['lease']> {
-  return {
+  return reviewedLeaseHooks({
+    reviews: this.reviews,
+    artifacts: this.artifacts,
+    excluded: excludedFromReview,
     label: async (context) => named(await this.current(context)),
-    excludes: async (context, actorId) => {
+    review: async (context) => {
       const { wave, lens } = await this.current(context);
-      return (
-        !lens &&
-        context.snapshot.state === 'in_review' &&
-        !!wave.review_id &&
-        excludedFromReview(
-          await this.reviews.get(context.caller, wave.review_id, context.tx),
-          actorId,
-        )
-      );
+      return !lens && context.snapshot.state === 'in_review' ? wave.review_id : null;
     },
+    lease: async (context) => await this.lease(context),
     role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> => {
       check(!context.caller.session, 'forbidden', 'A worker cannot delegate assignments', 403);
       await this.admit(context, true);
@@ -602,48 +594,20 @@ export function hooks(
         reviewId: review?.id ?? null,
         claimId: review?.claimId ?? null,
       };
-      await context.tx.run(
-        'INSERT INTO reflection_leases VALUES(?,?,?,?,?,?,?,?,?,?,NULL)',
-        context.leaseId,
-        context.caller.projectId,
-        context.snapshot.id,
-        context.snapshot.revision,
-        context.caller.actorId,
-        JSON.stringify(receipt),
-        JSON.stringify(inputs),
-        JSON.stringify(ids),
-        review?.id ?? null,
-        review?.claimId ?? null,
-      );
+      await insertLease(context.tx, {
+        id: context.leaseId,
+        projectId: context.caller.projectId,
+        snapshot: context.snapshot,
+        actorId: context.caller.actorId,
+        sourceActorId: context.source.actorId,
+        reviewId: review?.id ?? null,
+        claimId: review?.claimId ?? null,
+        receipt,
+        details: { inputs, artifacts: ids },
+      });
       return receipt;
     },
-    check: async (context, receipt) => {
-      const lease = await this.lease(context);
-      checkReceipt(lease, receipt, 'Reflection lease receipt changed');
-      if (lease.review_id) {
-        // checkSubmit refuses a reviewer who is not independent of the reviewed work.
-        const review = await this.reviews.checkSubmit(
-          context.caller,
-          lease.review_id,
-          undefined,
-          context.tx,
-        );
-        check(review.claimId === lease.claim_id, 'stale_claim', 'Review claim changed', 409);
-      }
-    },
-    outputs: async (context) => {
-      await this.lease(context);
-      return {
-        artifacts: (await this.artifacts.executionOutputs(context.caller, context.tx)).map(
-          (a) => a.id,
-        ),
-      };
-    },
-    release: async ({ lease, reason, tx }) =>
-      await releasedLease(tx, this.reviews, 'reflection_leases', lease, reason, {
-        instance_id: lease.instanceId,
-      }),
-  };
+  });
 }
 export function policy(this: ReflectionService, lens: boolean): WorkflowPolicy {
   const assignments = (lens ? ['reflecting'] : ['synthesizing', 'in_review']).map((state) => ({

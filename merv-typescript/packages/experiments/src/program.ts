@@ -9,9 +9,14 @@ import {
   REVIEW_SUBMIT_INPUT,
   REVIEW_VERDICTS,
 } from '@merv/reviews/rules';
-import { releasedLease, mapAsync } from '@merv/contracts';
+import { mapAsync } from '@merv/contracts';
+import {
+  insertLease,
+  leaseRows,
+  reviewedLeaseHooks,
+  type LeaseRow as WorkflowLeaseRow,
+} from '@merv/workflows/lease-rows';
 import { grant, literal, reference, target, CheckedTransitions } from '@merv/workflows/rules';
-import { checkReceipt } from '@merv/contracts';
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { postgresMigrations } from './program.postgres.js';
 import {
@@ -37,7 +42,6 @@ import {
   type WorkflowDefinition,
   type WorkflowExecutionPolicy,
   type WorkflowExecutionReferences,
-  type WorkflowLease,
   type WorkflowPolicy,
   type WorkflowSnapshot,
   type Workflows,
@@ -361,23 +365,13 @@ interface FrozenInputs {
   review: ReviewRequest | null;
   feedback: Data;
 }
-interface LeaseRow {
-  id: string;
-  project_id: string;
-  experiment_id: string;
-  revision: number;
-  attempt_index: number;
-  state: ActiveState;
-  actor_id: string;
-  source_actor_id: string;
-  review_id: string | null;
-  claim_id: string | null;
-  receipt: string;
-  artifacts: string;
-  recovery: string;
-  inputs: string;
-  released_at: string | null;
-}
+/** An experiment's lease: the attempt it serves and the inputs, artifacts and recovery it froze. */
+type LeaseRow = WorkflowLeaseRow<{
+  attemptIndex: number;
+  artifacts: Artifact[];
+  recovery: ExperimentEvidence[];
+  inputs: FrozenInputs;
+}>;
 const own = (value: unknown): Data => JSON.parse(JSON.stringify(value)) as Data;
 /** What names an experiment's lease. */
 type LeaseTarget = Pick<Experiment, 'id' | 'projectId'> & {
@@ -624,15 +618,18 @@ export abstract class ExperimentProgram {
     const { projectId, id, workflow } = experiment;
     const lease = await this.state.remember(
       `experiments:lease:${projectId}:${id}:${workflow.revision}`,
-      () =>
-        tx.get<LeaseRow>(
-          'SELECT * FROM experiment_leases WHERE project_id=? AND experiment_id=? AND revision=? AND released_at IS NULL',
-          projectId,
-          id,
-          workflow.revision,
-        ),
+      async () =>
+        (
+          await leaseRows<LeaseRow['details']>(tx, {
+            projectId,
+            instanceIds: [id],
+            revision: workflow.revision,
+            active: true,
+          })
+        )[0],
     );
-    return lease && { ...lease };
+    // A copy: what the lease froze is the caller's to read, not the cached row's.
+    return lease && structuredClone(lease);
   }
 
   /** The caller's live lease on this revision; without `attempt`, at whichever attempt it holds. */
@@ -648,7 +645,7 @@ export abstract class ExperimentProgram {
       lease &&
         lease.id === caller.session.id &&
         lease.actor_id === caller.actorId &&
-        (!experiment.attempt || lease.attempt_index === experiment.attempt.index) &&
+        (!experiment.attempt || lease.details.attemptIndex === experiment.attempt.index) &&
         lease.state === experiment.workflow.state,
       'stale_lease',
       'The worker no longer owns this exact experiment assignment',
@@ -929,7 +926,7 @@ export abstract class ExperimentProgram {
   ): Promise<ExperimentEvidence[]> {
     await this.scope.require(caller, 'read', tx);
     if (!caller.session) return [];
-    return JSON.parse((await this.lease(caller, experiment, tx)).recovery) as ExperimentEvidence[];
+    return (await this.lease(caller, experiment, tx)).details.recovery;
   }
 
   /** Whether this session is the worker holding the experiment's live lease. */
@@ -947,7 +944,7 @@ export abstract class ExperimentProgram {
       const lease = await this.lease(caller, experiment, tx);
       return [
         ...new Set([
-          ...(JSON.parse(lease.artifacts) as Artifact[]).map((artifact) => artifact.id),
+          ...lease.details.artifacts.map((artifact) => artifact.id),
           ...(experiment.captureArtifactIds ?? []),
           ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
         ]),
@@ -1166,9 +1163,7 @@ export abstract class ExperimentProgram {
     const state = context.snapshot.state as ActiveState;
     let inputs: FrozenInputs;
     if (context.caller.session) {
-      inputs = JSON.parse(
-        (await this.lease(context.caller, experiment, context.tx)).inputs,
-      ) as FrozenInputs;
+      inputs = (await this.lease(context.caller, experiment, context.tx)).details.inputs;
       const historical = new Set(inputs.historicalArtifacts ?? []);
       const owned = this.eligibleRecovery(experiment).filter(
         (evidence) => evidence.createdBy === context.caller.actorId,
@@ -1375,19 +1370,32 @@ export abstract class ExperimentProgram {
   }
 
   private leaseHooks(): NonNullable<WorkflowAssignmentRule['lease']> {
-    return {
+    return reviewedLeaseHooks({
+      reviews: this.reviews,
+      artifacts: this.artifacts,
+      excluded: excludedFromReview,
       label: async (context) => (await this.facts(context)).name,
-      excludes: async (context, actorId) => {
+      review: async (context) => {
         const experiment = await this.facts(context);
-        return (
-          !!experiment.reviewId &&
-          reviewing(experiment.workflow.state) &&
-          excludedFromReview(
-            await this.reviews.get(context.caller, experiment.reviewId, context.tx),
-            actorId,
-          )
-        );
+        return reviewing(experiment.workflow.state) ? experiment.reviewId : null;
       },
+      // The lease of the attempt the facts name: Workflows admitted the step just before.
+      lease: async (context) =>
+        await this.lease(context.caller, await this.facts(context), context.tx),
+      captures: async (context, lease) =>
+        (await this.sandboxes?.captures(
+          context.caller.projectId,
+          context.snapshot.id,
+          context.tx,
+          captureEpochs(
+            await this.attemptRevisions(
+              context.snapshot.id,
+              lease.details.attemptIndex,
+              context.tx,
+            ),
+            context.snapshot,
+          ),
+        )) ?? [],
       role: async (context) => await this.leaseRole(context),
       acquire: async (context) => {
         await this.leaseRole({ ...context, caller: context.source });
@@ -1441,59 +1449,20 @@ export abstract class ExperimentProgram {
           reviewId: review?.id ?? null,
           claimId: review?.claimId ?? null,
         };
-        await context.tx.run(
-          'INSERT INTO experiment_leases(id,project_id,experiment_id,revision,attempt_index,state,actor_id,source_actor_id,review_id,claim_id,receipt,artifacts,recovery,inputs) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-          context.leaseId,
-          context.caller.projectId,
-          experiment.id,
-          context.snapshot.revision,
-          experiment.attempt.index,
-          context.snapshot.state,
-          context.caller.actorId,
-          context.source.actorId,
-          review?.id ?? null,
-          review?.claimId ?? null,
-          JSON.stringify(receipt),
-          JSON.stringify(artifacts),
-          JSON.stringify(recovery),
-          JSON.stringify(inputs),
-        );
+        await insertLease(context.tx, {
+          id: context.leaseId,
+          projectId: context.caller.projectId,
+          snapshot: context.snapshot,
+          actorId: context.caller.actorId,
+          sourceActorId: context.source.actorId,
+          reviewId: review?.id ?? null,
+          claimId: review?.claimId ?? null,
+          receipt,
+          details: { attemptIndex: experiment.attempt.index, artifacts, recovery, inputs },
+        });
         return receipt;
       },
-      check: async (context, receipt) => {
-        const { experiment } = await this.admit(context);
-        const lease = await this.lease(context.caller, experiment, context.tx);
-        checkReceipt(lease, receipt, 'The exact experiment lease receipt is required');
-      },
-      outputs: async (context) => {
-        // `check`, the whole admission, ran on this revision just before, in this transaction.
-        const { id, revision, state } = context.snapshot;
-        const lease = await this.lease(
-          context.caller,
-          { id, projectId: context.caller.projectId, workflow: { revision, state } },
-          context.tx,
-        );
-        return {
-          artifacts: [
-            ...new Set([
-              ...(await this.artifacts.executionOutputs(context.caller, context.tx)).map(
-                (artifact) => artifact.id,
-              ),
-              ...((await this.sandboxes?.captures(
-                context.caller.projectId,
-                context.snapshot.id,
-                context.tx,
-                captureEpochs(
-                  await this.attemptRevisions(id, lease.attempt_index, context.tx),
-                  context.snapshot,
-                ),
-              )) ?? []),
-            ]),
-          ],
-        };
-      },
-      release: async ({ lease, reason, tx }) => await this.release(lease, reason, tx),
-    };
+    });
   }
 
   /** The revisions an attempt ran through, as captureEpochs reads them. */
@@ -1508,14 +1477,6 @@ export abstract class ExperimentProgram {
       startedRevision: Number(row.started_revision),
       endedRevision: row.ended_revision === null ? null : Number(row.ended_revision),
     };
-  }
-
-  private async release(lease: WorkflowLease, reason: string, tx: Transaction): Promise<void> {
-    this.state.assertTransaction(tx);
-    await releasedLease(tx, this.reviews, 'experiment_leases', lease, reason, {
-      experiment_id: lease.instanceId,
-      state: lease.state,
-    });
   }
 
   private policy(version: number): WorkflowPolicy {

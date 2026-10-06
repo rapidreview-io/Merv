@@ -240,7 +240,10 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
   assert.equal(`${context.type}@${context.typeVersion}`, 'task.work@4');
   const { receipt } = (await app.ctx.state.transaction(
     async (tx) =>
-      await tx.get<{ receipt: string }>('SELECT receipt FROM task_leases WHERE task_id=?', task.id),
+      await tx.get<{ receipt: string }>(
+        'SELECT receipt FROM wf_leases WHERE instance_id=?',
+        task.id,
+      ),
   ))!;
   assert.ok(Buffer.byteLength(receipt) <= 400 * 1024);
   // The sections that fit are frozen whole, and the rest are named or counted for paper.read.

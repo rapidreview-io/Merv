@@ -20,6 +20,7 @@ flowchart LR
   subgraph foundationsLayer["Foundations"]
     workflows["Workflows<br/><small>durable state machines</small>"]
     sessions["Sessions"]
+    reviews["Reviews"]
     codeWork["Code work"]
     sandboxes["Sandboxes"]
     state["State"]
@@ -29,12 +30,13 @@ flowchart LR
     postgres[("PostgreSQL")]
   end
   workerAgent -- "calls workflow.begin" --> workflows
-  tasks -- "injects; draws dependency-rows" --> workflows
-  experiments -- "injects; draws dependency-rows" --> workflows
-  reflections -- "injects" --> workflows
+  tasks -- "injects; draws dependency-rows, lease-rows" --> workflows
+  experiments -- "injects; draws dependency-rows, lease-rows" --> workflows
+  reflections -- "injects; draws lease-rows" --> workflows
   research -- "injects" --> workflows
   knowledge -- "injects" --> workflows
   sessions -- "injects; runs admitDispatch" --> workflows
+  reviews -- "releases lease rows" --> workflows
   codeWork -- "injects" --> workflows
   workflows -- "emits workflow.transition" --> sandboxes
   workflows -- "emits workflow.transition" --> codeWork
@@ -292,9 +294,24 @@ exists. `lease.check` answers for the worker, at offer and on every admission fo
 lease's life, whether the program's reservation (its receipt) still holds. Source
 admission belongs in `role`, reservation validity in `check`. `lease.release` runs only
 while the program is loaded: Sessions calls `releaseLease` when it closes a session, as a
-best effort. A program that holds lease rows also releases them durably, from its own
-`session.closed` consumer (`leaseReleaseConsumer` in Contracts): a session's id is its
-lease's id, so the release needs neither the registration nor the receipt.
+best effort.
+
+**Lease rows.** Every leased step's lease is one `wf_leases` row (workflows@11), whatever
+program owns the step: the step (instance, revision, workflow and state), the worker and
+its source, the review claim it took, its exact receipt, and `details`, what the program
+pinned with it. `@merv/workflows/lease-rows` is the one way to it: a program's `acquire`
+writes its row with `insertLease`, reads it back with `leaseRows`, holds it by its receipt
+with `checkReceipt` and releases it with `releasedLease`. `reviewedLeaseHooks` builds the
+hooks of a step that is work or the review of it, all but who may hold it, what it pins and
+which review it claims being the same for every owner: a worker the review excludes is
+never offered it, a review lease holds only by the claim it took at the revision it pinned,
+the outputs are what the worker made, and a release returns the claim. The row's provenance is immutable
+and it is never deleted; only `released_at` is written. A release also returns the review
+claim the lease took. Reviews releases every lease durably from one `session.closed`
+consumer, `reviews.lease-release.v1` (`leaseReleaseConsumer` here): a session's id is its
+lease's id, so the release needs neither the registration nor the receipt, and happens
+whether or not the owning program is loaded. Tasks, Experiments and Reflections moved their
+own lease tables into it (tasks@10, experiment_program@4, reflections@5).
 
 **Dependencies.** A dependency's `failed` is a gating fact: a declared edge whose target
 ended outside its pinned success states fails its dependent. A system edge, which a

@@ -439,7 +439,7 @@ export async function checkoutReviewer(
   );
   const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
   check(
-    lease.purpose === 'review' && lease.review_id === review.id,
+    lease.details.purpose === 'review' && lease.review_id === review.id,
     'stale_lease',
     'This worker does not hold the lease of the current review',
     409,

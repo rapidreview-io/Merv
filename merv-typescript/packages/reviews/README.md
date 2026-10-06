@@ -38,7 +38,7 @@ flowchart LR
   reviews -- "injects" --> scope
   reviews -- "injects" --> domainEvents
   reviews -- "injects" --> state
-  reviews -- "imports retirement ledger" --> workflows
+  reviews -- "imports retirement ledger, lease rows" --> workflows
   scope -- "emits actor.revoked" --> reviews
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
   class reviews self
@@ -62,5 +62,7 @@ rejects it. Reads omit the field when absent, preserving old responses.
 See [explicit review return paths](../../docs/REVIEW_RETURN_PATHS.md).
 
 The durable `reviews.actor-revoked.v1` consumer releases revoked actors’ unfinished claims. It preserves the review/evidence snapshot, retains claim history, and emits a causal `review.claim_released` event. Unloaded consumers catch up on reactivation. Submitted verdicts remain immutable. `start` returns a fresh `claimId` and generation; `submit` requires that claim ID. Existing started reviews migrate to stable legacy claim IDs. The row keeps the open claim's `review.started` event id, time and whether a leased agent took it (reviews@14 copied them for claims already open), and a submission asks Scope's `permissionLost` whether the reviewer lost review permission after that event, so Reviews never reads State's event log itself. See [the full recovery contract](../../docs/RECOVERY_AND_CONTEXT.md).
+
+A leased worker's review claim goes with its lease: the durable `reviews.lease-release.v1` consumer releases the Workflows lease of every closed worker session (`leaseReleaseConsumer` from `@merv/workflows/lease-rows`), and with it the claim the lease took, whether or not the step's owning program is loaded.
 
 Every request uses format 2 (format 1 was retired on 2026-09-22). Reissue preserves the pinned format; recovery preserves the assessment inputs and fences previous claims. See [review assessments](../../docs/REVIEW_ASSESSMENTS.md) for storage, validation, UI/context integration and Python parity.
