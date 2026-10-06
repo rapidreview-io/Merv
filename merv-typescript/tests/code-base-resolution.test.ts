@@ -3,7 +3,6 @@ import { CodeService as CoreCodeService } from '@merv/code/service';
 import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { mkdirSync } from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -31,15 +30,18 @@ import { boundProject } from './fixtures/code-binding.js';
 async function fixture(t: TestContext, human = false) {
   const f = await resolutionFixture(t, { human });
   await f.sessions.dispatch.setDispatch(f.admin, { enabled: true });
-  const core = await createService(new CoreCodeService(f.state, f.scope, {}));
+  const root = join(f.directory, 'code');
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, {
+      repositories: { root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 },
+    }),
+  );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, core),
   );
   const units = (code as unknown as { unitStore: CodeUnitService }).unitStore;
-  const root = join(f.directory, 'code');
-  // These tests exercise Git and database transactions, not the store's socket writer lock.
-  mkdirSync(join(root, 'tmp'), { recursive: true });
-  mkdirSync(join(root, 'empty-template'));
+  // These tests drive their own base worker, whose Git they watch: Code's own one stops.
+  await units.bases.close();
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
   const insideTransaction = new AsyncLocalStorage<boolean>();
@@ -64,9 +66,7 @@ async function fixture(t: TestContext, human = false) {
   });
   await bases.initialize();
   units.bases = bases;
-  const unbind = f.tasks.bindCode(code);
-  const unbindReviews = code.bindReviews(f.reviews);
-  f.beforeClose.push(unbindReviews);
+  const unbind = f.bindCode(code);
   const inputAuthor = {
     projectId: f.admin.projectId,
     actorId: (
@@ -415,7 +415,6 @@ async function fixture(t: TestContext, human = false) {
     handle,
     input,
     unbind,
-    unbindReviews,
     unsubscribe,
   };
 }
@@ -528,8 +527,9 @@ test('every reviewer excluded is visible on the resolution task and pinned revie
     JSON.stringify(await f.workflows.evaluate(f.admin, taskId)),
     /Every eligible reviewer/,
   );
+  // Closing Code Work withdraws the provenance it registered with Reviews.
   f.unbind();
-  f.unbindReviews();
+  await f.code.close();
   await assert.rejects(f.reviews.start(f.admin, request.id), { code: 'review_independence' });
   // What follows is the Reviews protocol alone: as the task's own review, only a leased worker
   // could claim it.
@@ -789,7 +789,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
     1,
   );
   const pin = await f.state.transaction((tx) =>
-    f.code.pinBase(f.admin, { unitId: task.id, leaseId: 'resolution-pin' }, tx),
+    f.code.pinBase(f.admin, { unitId: task.id, leaseId: 'resolution-pin', writer: false }, tx),
   );
   assert.equal(pin.reference, left);
   const resolved = await f.resolveCommit();
@@ -800,7 +800,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
   for (const waiter of [...waiters, future]) {
     requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!);
     const pinned = await f.state.transaction((tx) =>
-      f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: waiter.id }, tx),
+      f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: waiter.id, writer: false }, tx),
     );
     assert.equal(pinned.reference, resolved);
     assert.equal(pinned.kind, 'merged');
@@ -816,7 +816,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
     );
   }
   const combined = await f.state.transaction((tx) =>
-    f.code.pinBase(f.admin, { unitId: superset.id, leaseId: superset.id }, tx),
+    f.code.pinBase(f.admin, { unitId: superset.id, leaseId: superset.id, writer: false }, tx),
   );
   for (const input of [resolved, f.d])
     assert.equal(
@@ -1265,7 +1265,9 @@ test('an accepted resolution missing an input never seals or replaces its task',
     ),
   );
   await assert.rejects(
-    f.state.transaction((tx) => f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: 'bad' }, tx)),
+    f.state.transaction((tx) =>
+      f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: 'bad', writer: false }, tx),
+    ),
     { code: 'code_merge_conflict' },
   );
 });

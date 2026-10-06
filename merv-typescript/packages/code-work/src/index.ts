@@ -10,16 +10,13 @@ export const codePlugin = {
   name: 'merv-code-work',
   /** No settings: several accepted commits are always merged into one base on the server. */
   Config: z.object({}).strict().default({}),
-  inject: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
+  inject: ['code', 'state', 'scope', 'sessions', 'workflows', 'reviews', 'domainEvents'],
   async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.workflows, ctx.code),
+        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.workflows, ctx.reviews, ctx.code),
       );
       yield () => service.close();
-      ctx.inject(['reviews'], (ctx) => {
-        ctx.effect(() => service.bindReviews(ctx.reviews));
-      });
       // Where a deployment runs sandboxes, a project check reaches them through this one
       // capability; no tool does, so no leased worker can ever start or stop a machine.
       ctx.inject(['sandboxes'], (ctx) => {
@@ -38,14 +35,6 @@ export const codePlugin = {
         types: ['workflow.transition'],
         from: 'now',
         handle: async (event, tx) => await service.transitioned(event, tx),
-      });
-      // A session's attach and end open and end its writer generation. The cursor is durable,
-      // so what happened while Code was unloaded is caught up on in order.
-      yield await ctx.domainEvents.subscribe({
-        id: 'code.writers.v1',
-        types: ['session.workspace_attached', 'session.closed'],
-        from: 'now',
-        handle: async (event, tx) => await service.sessionChanged(event, tx),
       });
       await service.reconcileAll();
       yield ctx.provide('codeWork', service);

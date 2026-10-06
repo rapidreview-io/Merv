@@ -14,7 +14,7 @@ import {
 } from '@merv/code-work/check-configuration';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
-import { boundProject } from './fixtures/code-binding.js';
+import { boundProject, codeConfig } from './fixtures/code-binding.js';
 import { openRepositories } from './fixtures/code-store.js';
 
 test('research configuration retains one exact journal, accepts maximum IDs, and rolls admission back on check failure', async (t) => {
@@ -26,7 +26,7 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
     actorName: 'Admin',
   });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
-  const core = await createService(new CodeService(state, scope, {}));
+  const core = await createService(new CodeService(state, scope, codeConfig(join(root, 'core'))));
   await boundProject(state, caller.projectId, 'a'.repeat(40));
   await initializeCheckConfiguration(state);
   const repositories = await openRepositories(root);
@@ -113,10 +113,12 @@ test('a configuration answered before receipts moved to Code Work replays by its
   const scope = await createService(new ProjectScope(state));
   const boot = await scope.credentials.bootstrap({ projectName: 'Receipts', actorName: 'Admin' });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
-  const core = await createService(new CodeService(state, scope, {}));
+  const root = mkdtempSync(join(tmpdir(), 'merv-check-receipts-'));
+  const core = await createService(new CodeService(state, scope, codeConfig(root)));
   t.after(async () => {
     await core.close();
     await state.close();
+    rmSync(root, { recursive: true, force: true });
   });
   await boundProject(state, caller.projectId, 'a'.repeat(40));
   // A database as the release before this one left it: Code Work's commands at v2, and the

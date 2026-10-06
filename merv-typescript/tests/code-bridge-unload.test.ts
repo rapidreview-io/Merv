@@ -28,6 +28,7 @@ test(
       'blobs',
       'artifacts',
       'sessions',
+      'reviews',
       'code',
       'code-work',
     ]);

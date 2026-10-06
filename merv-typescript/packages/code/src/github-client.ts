@@ -91,6 +91,11 @@ export interface GitHubTokens {
 }
 
 /** Adapted from Merv GitHub's OAuth/PKCE client. Only GitHub.com is supported. */
+/** A GitHub check run that finished and does not hold a merge back. */
+export const checkPassed = (check: { status: string; conclusion?: string | null }) =>
+  check.status === 'completed' &&
+  ['success', 'neutral', 'skipped'].includes(check.conclusion ?? '');
+
 export class GitHubClient {
   readonly origin: string;
   readonly installUrl: string;
@@ -765,13 +770,7 @@ export class GitHubClient {
       ) as { state?: string } | undefined;
       return (
         // The commit-scoped endpoint supplies the SHA; individual statuses have none.
-        latest?.state === 'success' ||
-        checks.some(
-          (c) =>
-            c.name === name &&
-            c.status === 'completed' &&
-            ['success', 'neutral', 'skipped'].includes(c.conclusion ?? ''),
-        )
+        latest?.state === 'success' || checks.some((c) => c.name === name && checkPassed(c))
       );
     });
   }

@@ -5,13 +5,13 @@ import type { CodeCapture } from '@merv/code-work/types';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { WorkUnitRecords } from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
-import { createService, type WorkflowSnapshot } from '@merv/contracts';
+import { createService, MervError, type WorkflowSnapshot } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { CodeBaseService } from '../packages/code-work/src/bases.js';
-import { boundProject } from './fixtures/code-binding.js';
+import { boundProject, codeConfig } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { githubFixture } from './github-fixture.js';
@@ -32,9 +32,11 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
   const branches = remote?.branches ?? new Map<string, string>();
-  const legacyCore = await createService(new CoreCodeService(f.state, f.scope, {}));
+  const legacyCore = await createService(
+    new CoreCodeService(f.state, f.scope, codeConfig(join(f.directory, 'legacy-code'))),
+  );
   const legacy = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.workflows, legacyCore),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, legacyCore),
   );
   await legacy.close();
   await legacyCore.close();
@@ -62,6 +64,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
       f.scope,
       f.sessions,
       f.workflows,
+      f.reviews,
       Object.assign(Object.create(core), { github: remote?.github ?? core.github }),
       {
         config: { settleMs: 60_000 },
@@ -159,7 +162,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
     f.state.transaction((tx) => code.publishOnAcceptance(f.admin, { unitId: work.id }, tx));
   const pin = (work: WorkflowSnapshot) =>
     f.state.transaction((tx) =>
-      code.pinBase(f.admin, { unitId: work.id, leaseId: `lease-${work.id}` }, tx),
+      code.pinBase(f.admin, { unitId: work.id, leaseId: `lease-${work.id}`, writer: false }, tx),
     );
   const move = (work: WorkflowSnapshot) =>
     handle.transition(f.admin, {
@@ -266,11 +269,9 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
       reason: 'The release matrix passed with this App and its rules.',
       requestId: 'canary',
     });
-  const unbind = f.tasks.bindCode(code);
-  const unbindReviews = code.bindReviews(f.reviews);
+  const unbind = f.bindCode(code);
   f.beforeClose.push(async () => {
     unbind();
-    unbindReviews();
     await code.close();
     await core.close();
     repositories.git.close();
@@ -912,14 +913,16 @@ test('a sync that keeps failing before its pull request opens waits on an operat
   await f.publishes(work);
   await f.pin(work);
   await f.accept(work, f.feature);
-  // Reviews is unbound from publication, so every check of the reviewed facts fails.
-  const host = (f.code as unknown as { publicationHost: { bindReviews(r: unknown): () => void } })
+  // Reviews cannot answer, so every check of the reviewed facts fails.
+  const host = (f.code as unknown as { publicationHost: { review(): Promise<unknown> } })
     .publicationHost;
-  host.bindReviews(f.reviews)();
+  const unavailable = t.mock.method(host, 'review', async () => {
+    throw new MervError('reviews_unavailable', 'Publication requires Reviews', 503);
+  });
   await f.sync();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'setup_required');
   assert.equal((await f.blockers(work.id))[0].code, 'code_publication_setup_required');
-  host.bindReviews(f.reviews);
+  unavailable.mock.restore();
   await f.sync();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'published');
   assert.deepEqual(await f.blockers(work.id), []);

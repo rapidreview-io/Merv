@@ -24,7 +24,7 @@ async function fixture(t: TestContext) {
     }),
   );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.workflows, core, {
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, core, {
       config: { settleMs: 60000 },
       remote: {
         read: async (_caller, use) =>
@@ -39,7 +39,7 @@ async function fixture(t: TestContext) {
   );
   await f.state.transaction((tx) => code.ensureRepository(f.admin, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();
-  const release = f.tasks.bindCode(code);
+  const release = f.bindCode(code);
   f.beforeClose.push(async () => {
     release();
     await code.close();

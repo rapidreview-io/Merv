@@ -53,9 +53,6 @@ async function fixture(t: TestContext) {
     workflows = await createService(new WorkflowsService(state, scope));
     reviews = await createService(new ReviewService(state, scope, artifacts));
     builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
-    tasks = await createService(
-      new TaskService(state, scope, artifacts, workflows, reviews, builder, blankPaper),
-    );
     events = await createService(new DurableEvents(state));
     sessions = await createService(new LeasedSessions(state, scope, workflows, events));
     core = await createService(
@@ -67,8 +64,10 @@ async function fixture(t: TestContext) {
         },
       }),
     );
-    code = await createService(new CodeService(state, scope, sessions, workflows, core));
-    tasks.bindCode(code);
+    code = await createService(new CodeService(state, scope, sessions, workflows, reviews, core));
+    tasks = await createService(
+      new TaskService(state, scope, artifacts, workflows, reviews, builder, code, blankPaper),
+    );
     experiments = await createService(
       new ExperimentService(
         state,
@@ -195,70 +194,6 @@ async function fixture(t: TestContext) {
       return knowledge;
     },
   };
-}
-
-for (const name of ['knowledge', 'experiments'] as const) {
-  test(`${name} Code binding disposal cannot withdraw a replacement binding of the same provider`, async (t) => {
-    const f = await fixture(t);
-    const service = f[name];
-    const old = service.bindCode(f.code);
-    const current = service.bindCode(f.code);
-    const available = async () => {
-      if (name === 'knowledge') {
-        // A bare id Code might hold is as available as Code is.
-        assert.deepEqual(
-          (await f.knowledge.resolve(f.reader, ['code-commit:missing', 'missing'])).map(
-            ({ status }) => status,
-          ),
-          ['missing', 'missing'],
-        );
-      } else {
-        await f.experiments.create(f.producer, {
-          name: f.id(),
-          intent: 'Exercise the current Code binding.',
-          workspace: 'git',
-          requestId: f.id(),
-        });
-      }
-    };
-    const unavailable = async () => {
-      if (name === 'knowledge') {
-        // A bare id Code might hold is as available as Code is.
-        assert.deepEqual(
-          (await f.knowledge.resolve(f.reader, ['code-commit:missing', 'missing'])).map(
-            ({ status }) => status,
-          ),
-          ['unavailable', 'unavailable'],
-        );
-      } else {
-        await assert.rejects(
-          f.experiments.create(f.producer, {
-            name: f.id(),
-            intent: 'Code has been withdrawn.',
-            workspace: 'git',
-            requestId: f.id(),
-          }),
-          { code: 'code_unavailable' },
-        );
-      }
-    };
-    old();
-    await available();
-    current();
-    await unavailable();
-    const replacement = service.bindCode(f.code);
-    old();
-    current();
-    await available();
-    replacement();
-    await unavailable();
-  });
-
-  test(`${name} refuses new Code bindings after its own shutdown`, async (t) => {
-    const f = await fixture(t);
-    f[name].close();
-    assert.throws(() => f[name].bindCode(f.code), { code: `${name}_unavailable` });
-  });
 }
 
 test('Scoped references distinguish missing, unsupported and unpublished without guidance or bytes', async (t) => {

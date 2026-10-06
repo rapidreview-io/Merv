@@ -85,6 +85,7 @@ flowchart BT
   artifacts --> blobs
   code --> state
   code --> scope
+  code --> domainEvents
   merv_code_tools --> codeWork
   merv_code_tools --> tools
   merv_code_ui --> codeWork
@@ -94,8 +95,8 @@ flowchart BT
   codeWork --> scope
   codeWork --> sessions
   codeWork --> workflows
+  codeWork --> reviews
   codeWork --> domainEvents
-  codeWork -. optional .-> reviews
   codeWork -. optional .-> sandboxes
   merv_code_work_api --> codeWork
   merv_code_work_api --> api
@@ -109,8 +110,8 @@ flowchart BT
   experiments --> workflows
   experiments --> reviews
   experiments --> contextBuilder
+  experiments --> codeWork
   experiments --> paper
-  experiments -. optional .-> codeWork
   experiments -. optional .-> sandboxes
   merv_experiments_tools --> experiments
   merv_experiments_tools --> tools
@@ -144,7 +145,7 @@ flowchart BT
   knowledge --> artifacts
   knowledge --> reviews
   knowledge --> workflows
-  knowledge -. optional .-> codeWork
+  knowledge --> codeWork
   merv_knowledge_tools --> knowledge
   merv_knowledge_tools --> tools
   legacyHistory --> state
@@ -254,8 +255,8 @@ flowchart BT
   tasks --> workflows
   tasks --> reviews
   tasks --> contextBuilder
+  tasks --> codeWork
   tasks --> paper
-  tasks -. optional .-> codeWork
   tasks -. optional .-> sandboxes
   tools --> scope
   ui --> api

@@ -52,3 +52,8 @@ export async function boundProject(
       ),
   );
 }
+
+/** Code's required settings, its repository root under a directory the test removes. */
+export const codeConfig = (root: string) => ({
+  repositories: { root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 },
+});

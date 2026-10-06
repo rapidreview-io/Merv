@@ -37,6 +37,7 @@ async function fixture(t: TestContext, legacy = true) {
       writers,
       await createService(new CodeUnitStore(state, scope, writers)),
       { contributors: async () => assert.fail('a migration reads no contributors') },
+      { get: async () => assert.fail('a migration reads no review') },
     ).initialize();
   };
   const run = async (sql: string, ...params: SqlValue[]) =>

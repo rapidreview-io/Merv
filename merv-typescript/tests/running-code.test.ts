@@ -55,6 +55,7 @@ async function fixture(t: TestContext) {
       f.scope,
       f.sessions,
       f.workflows,
+      f.reviews,
       Object.assign(Object.create(core), { github: remote.github }),
       {
         config: { settleMs: 60_000 },
@@ -242,7 +243,7 @@ async function fixture(t: TestContext) {
     const work = await declare(name);
     await f.state.transaction((tx) => code.publishOnAcceptance(f.admin, { unitId: work.id }, tx));
     await f.state.transaction((tx) =>
-      code.pinBase(f.admin, { unitId: work.id, leaseId: `lease-${work.id}` }, tx),
+      code.pinBase(f.admin, { unitId: work.id, leaseId: `lease-${work.id}`, writer: false }, tx),
     );
     await accept(work, feature);
     return work;
@@ -251,11 +252,9 @@ async function fixture(t: TestContext) {
     await f.state.transaction((tx) => tx.run("UPDATE code_publications SET synced_at=''"));
     return await code.syncPublications(f.admin);
   };
-  const unbind = f.tasks.bindCode(code);
-  const unbindReviews = code.bindReviews(f.reviews);
+  const unbind = f.bindCode(code);
   f.beforeClose.push(async () => {
     unbind();
-    unbindReviews();
     await code.close();
     await core.close();
     repositories.git.close();

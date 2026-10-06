@@ -42,7 +42,9 @@ export const createCurrentTask = currentTask;
  * Dispose before closing the host services; the caller owns the temporary directory.
  */
 export function currentWork(host: Host, options: { directory: string; source: Caller }) {
-  const code = (host.codeWork ?? host.code) as Code;
+  // Read on every call: a reloaded Code Work is a new service.
+  const current = () => (host.codeWork ?? host.code) as Code;
+  const code = current();
   const events = (host.domainEvents ?? host.events) as { drain?(): Promise<void> } | undefined;
   assert.ok(code?.v2, 'Current work requires managed Code');
   const held = new Set<Awaited<ReturnType<typeof attach>>>();
@@ -114,9 +116,10 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
     const driver = new CodeWorkspaceDriver(
       { directory, path: join(directory, 'ledger.sqlite'), terminal: () => stopped },
       {
-        call: (route, body) => code.v2!.call(source, route, body),
-        putPart: (id, offset, bytes) => code.v2!.putPart(source, id, offset, Buffer.from(bytes)),
-        readPart: (id, input) => code.v2!.readPart!(source, id, input),
+        call: (route, body) => current().v2!.call(source, route, body),
+        putPart: (id, offset, bytes) =>
+          current().v2!.putPart(source, id, offset, Buffer.from(bytes)),
+        readPart: (id, input) => current().v2!.readPart!(source, id, input),
       },
       { pollMs: 10 },
     );

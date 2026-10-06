@@ -436,8 +436,7 @@ const absent = (error: unknown): null => {
 /** What the reader asks of the rest of Code. */
 export interface CodeRunningSources {
   unit(caller: Caller, unitId: string, tx: Transaction): Promise<CodeUnit>;
-  /** Absent where the server keeps no repositories, and so no bases. */
-  bases(): CodeBaseService | undefined;
+  bases(): CodeBaseService;
   receipt(sql: Sql, projectId: string, instanceId: string): Promise<CodeCommandRecord | null>;
 }
 
@@ -490,8 +489,6 @@ export class CodeRunningReader {
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      // A server that keeps no repositories keeps no bases, nor the table they are kept in.
-      if (!bases) return [];
       const checks = await bases.checking(tx, caller.projectId);
       if (!checks.length) return [];
       const command = await bases.checkCommand(tx, caller.projectId);

@@ -49,11 +49,24 @@ async function fixture(limits?: { reviewRounds: number }) {
     reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const paper = await createService(new PaperService(state, scope, artifacts));
-  const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder, paper, limits),
+  const managed = await managedServices(
+    { state, scope, artifacts, workflows, reviews },
+    path,
+    operator,
   );
-  const managed = await managedServices({ state, scope, artifacts, workflows }, path, operator);
-  tasks.bindCode(managed.code);
+  const tasks = await createService(
+    new TaskService(
+      state,
+      scope,
+      artifacts,
+      workflows,
+      reviews,
+      builder,
+      managed.code,
+      paper,
+      limits,
+    ),
+  );
   const brief = await artifacts.create(producer, {
     title: 'Brief',
     content:

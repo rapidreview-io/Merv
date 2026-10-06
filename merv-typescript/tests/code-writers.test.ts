@@ -77,7 +77,7 @@ test('a lease reserves the next generation only once the last one closed', async
   // A refused offer takes its reservation back with it.
   await assert.rejects(
     f.state.transaction(async (tx) => {
-      await f.code.reserveWriter(f.admin, { unitId: f.unitId, leaseId: 'ses_lost' }, tx);
+      await f.core.writers.reserveWriter(f.admin, { unitId: f.unitId, leaseId: 'ses_lost' }, tx);
       throw new Error('offer refused');
     }),
     /offer refused/,
@@ -90,7 +90,7 @@ test('a lease reserves the next generation only once the last one closed', async
   f.end('ses_2');
   assert.equal((await f.unit()).writerState, 'closing');
   const waiting = await f.state.transaction(
-    async (tx) => await f.code.writerStatus(f.admin, f.unitId, tx),
+    async (tx) => await f.core.writers.writerStatus(f.admin, f.unitId, tx),
   );
   assert.equal(waiting.blocked?.code, 'code_writer_busy', 'a closing unit is no candidate');
   await assert.rejects(f.lease('ses_3'), refused('code_writer_busy'));

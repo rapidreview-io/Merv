@@ -1,11 +1,6 @@
 import assert from 'node:assert/strict';
 import type { TestContext } from 'node:test';
-import {
-  MervError,
-  type StoredEvent,
-  type WorkflowDefinition,
-  type WorkflowPolicy,
-} from '@merv/contracts';
+import { MervError, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
 import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeStoreOptions } from '@merv/code-work/service';
 import { codeStoreFixture, gitSource, type Bundle } from './code-store.js';
@@ -79,12 +74,8 @@ export async function writerFixture(
     /** What an owner's lease acquisition does, in one transaction. */
     lease: async (sessionId: string) =>
       await f.state.transaction(async (tx) => {
-        await f.code.pinBase(f.admin, { unitId: unit.id, leaseId: sessionId }, tx);
-        const writer = await f.code.reserveWriter(
-          f.admin,
-          { unitId: unit.id, leaseId: sessionId },
-          tx,
-        );
+        await f.code.pinBase(f.admin, { unitId: unit.id, leaseId: sessionId, writer: true }, tx);
+        const writer = await f.core.writers.writerStatus(f.admin, unit.id, tx);
         sessions.set(sessionId, {
           id: sessionId,
           projectId: f.admin.projectId,
@@ -96,14 +87,16 @@ export async function writerFixture(
         });
         return writer;
       }),
-    event: async (type: string, sessionId: string) =>
-      await f.state.transaction(
-        async (tx) =>
-          await f.code.sessionChanged(
-            { type, projectId: f.admin.projectId, subjectId: sessionId } as StoredEvent,
-            tx,
-          ),
-      ),
+    /** A session event as Code's writer subscription takes it; it subscribes to these two. */
+    event: async (type: string, sessionId: string) => {
+      const change = (
+        { 'session.workspace_attached': 'attached', 'session.closed': 'closed' } as const
+      )[type as 'session.closed'];
+      if (change)
+        await f.state.transaction((tx) =>
+          f.core.writers.sessionChanged(f.admin.projectId, sessionId, change, tx),
+        );
+    },
     /** A read-only session whose checkout is exactly one referenced commit. */
     reviewer: (sessionId: string, code: string) => {
       sessions.set(sessionId, {

@@ -353,11 +353,11 @@ export async function workflowAssignmentFacts(this: TaskService, context: Workfl
     context.snapshot,
   );
   // An assignment check may answer 503 as a blocker, so the Code gates live here and never in
-  // the action rules a bare task.get evaluates: a stored Git task stays readable without Code.
+  // the action rules a bare task.get evaluates: a stored Git task stays readable while Code is unavailable.
   if (facts.review)
     await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
   else {
-    await this.requireCode().requireLeasable(
+    await this.code.requireLeasable(
       context.caller,
       { unitId: facts.workflow.id, writer: true },
       context.tx,
@@ -489,7 +489,7 @@ export async function pinnedBase(
   snapshot: WorkflowSnapshot,
   tx: Transaction,
 ): Promise<{ base?: string }> {
-  const pin = await this.requireCode().basePin(caller, snapshot.id, tx);
+  const pin = await this.code.basePin(caller, snapshot.id, tx);
   return pin ? { base: pin.reference } : {};
 }
 

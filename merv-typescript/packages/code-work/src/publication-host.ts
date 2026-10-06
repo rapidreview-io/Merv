@@ -49,11 +49,11 @@ type Controls = Omit<NonNullable<CodeProjectStatus['publication']>['controls'], 
 
 /** Hosted publication borrows the repository and admission journal; it never owns a credential. */
 export class PublicationHost {
-  private reviews?: { service: Pick<Reviews, 'get'> };
   constructor(
     private state: State,
     private scope: Scope,
-    private repositories: () => CodeRepositories,
+    private reviews: Pick<Reviews, 'get'>,
+    private repositories: CodeRepositories,
     private mirror: () => MirrorTransport,
     private imported: (caller: Caller, ref: string, oid: string) => Promise<void>,
     private binding: (caller: Caller, tx: Transaction) => Promise<GitHubBinding>,
@@ -66,19 +66,8 @@ export class PublicationHost {
     ) => Promise<void>,
     private changed: (projectId: string, tx: Transaction) => Promise<void>,
   ) {}
-  bindReviews(service: Pick<Reviews, 'get'>): () => void {
-    const binding = { service };
-    this.reviews = binding;
-    return () => {
-      if (this.reviews === binding) this.reviews = undefined;
-    };
-  }
   async review(caller: Caller, reviewId: string, tx: Transaction) {
-    const binding = this.reviews;
-    check(binding, 'reviews_unavailable', 'Publication requires Reviews', 503);
-    const review = await binding.service.get(caller, reviewId, tx);
-    check(this.reviews === binding, 'reviews_unavailable', 'Publication requires Reviews', 503);
-    return review;
+    return await this.reviews.get(caller, reviewId, tx);
   }
   async check(caller: Caller, record: CodePublication, tx: Transaction) {
     if (record.destination !== 'local') {
@@ -141,7 +130,7 @@ export class PublicationHost {
     await this.changed(caller.projectId, tx);
   }
   async ancestor(projectId: string, base: string, head: string) {
-    const repos = this.repositories();
+    const repos = this.repositories;
     const result = await repos.git.run(['merge-base', '--is-ancestor', base, head], {
       env: repos.environment(projectId),
     });
@@ -154,7 +143,7 @@ export class PublicationHost {
     return result.code === 0;
   }
   private async retainSnapshot(caller: Caller, record: CodePublication) {
-    const repos = this.repositories();
+    const repos = this.repositories;
     const ref = `refs/merv/proposals/${record.proposalId}`;
     await repos.run(caller.projectId, async () => {
       const env = repos.environment(caller.projectId);
@@ -211,7 +200,7 @@ export class PublicationHost {
       'This is not a local integration',
       409,
     );
-    const repos = this.repositories();
+    const repos = this.repositories;
     const tree = (
       await repos.git.ok(['rev-parse', `${record.headOid}^{tree}`], {
         env: repos.environment(caller.projectId),
@@ -233,7 +222,7 @@ export class PublicationHost {
 
   async verify(caller: Caller, record: CodePublication, oid: string) {
     await this.import(caller, record, oid);
-    const repos = this.repositories();
+    const repos = this.repositories;
     const output = await repos.git.ok(['show', '-s', '--format=%T%n%P', oid], {
       env: repos.environment(caller.projectId),
     });

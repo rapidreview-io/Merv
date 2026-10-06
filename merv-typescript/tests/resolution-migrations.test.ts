@@ -10,6 +10,8 @@ import {
   pinMerge,
 } from '../packages/code/src/pending-merge.js';
 import { resolutionFixture } from './fixtures/resolution.js';
+import { codeConfig } from './fixtures/code-binding.js';
+import { join } from 'node:path';
 
 test('pending-merge migration preserve populated owner databases and enforce write-once facts', async (t) => {
   const f = await resolutionFixture(t);
@@ -24,9 +26,11 @@ test('pending-merge migration preserve populated owner databases and enforce wri
   f.state.migrate = async (component, migrations) => {
     if (component !== 'code_pending_merges') await migrate(component, migrations);
   };
-  const core = await createService(new CoreCodeService(f.state, f.scope, {}));
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, codeConfig(join(f.directory, 'code'))),
+  );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, core),
   );
   f.beforeClose.push(async () => {
     await code.close();

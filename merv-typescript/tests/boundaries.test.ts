@@ -1,6 +1,7 @@
 import { artifactsPlugin } from '@merv/artifacts';
 import { blobsPlugin } from '@merv/blobs';
 import { codePlugin } from '@merv/code';
+import { codePlugin as codeWorkPlugin } from '@merv/code-work';
 import { contextBuilderPlugin } from '@merv/context-builder';
 import { domainEventsPlugin } from '@merv/domain-events';
 import { feedPlugin } from '@merv/feed';
@@ -82,8 +83,26 @@ const capabilities: Record<string, readonly string[]> = {
   blobs: [],
   scope: ['state'],
   artifacts: ['state', 'scope', 'blobs'],
-  experiments: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
-  knowledge: ['state', 'scope', 'tasks', 'experiments', 'artifacts', 'reviews', 'workflows'],
+  experiments: [
+    'state',
+    'scope',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'codeWork',
+    'paper',
+  ],
+  knowledge: [
+    'state',
+    'scope',
+    'tasks',
+    'experiments',
+    'artifacts',
+    'reviews',
+    'workflows',
+    'codeWork',
+  ],
   research: [
     'state',
     'scope',
@@ -100,7 +119,16 @@ const capabilities: Record<string, readonly string[]> = {
   reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
   workflows: ['state', 'scope'],
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
-  tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder', 'paper'],
+  tasks: [
+    'state',
+    'scope',
+    'workflows',
+    'artifacts',
+    'reviews',
+    'contextBuilder',
+    'codeWork',
+    'paper',
+  ],
   feed: ['state', 'scope', 'artifacts'],
   // The read-only archive of research imported from the previous server.
   legacyHistory: ['state', 'scope'],
@@ -108,8 +136,9 @@ const capabilities: Record<string, readonly string[]> = {
   // Account ciphertext storage is separate from identity authentication and scope authority.
   secrets: ['state'],
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
-  code: ['state', 'scope'],
-  codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
+  // Code follows session attach and close events to open and end writer generations.
+  code: ['state', 'scope', 'domainEvents'],
+  codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'reviews', 'domainEvents'],
   runner: [],
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
   // Legacy transport stands alone; native connection owners are conditional below.
@@ -131,16 +160,15 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state', 'workflows'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
-  codeWork: ['reviews', 'sandboxes'],
-  experiments: ['codeWork', 'sandboxes'],
-  knowledge: ['codeWork'],
+  codeWork: ['sandboxes'],
+  experiments: ['sandboxes'],
   // A lens's continuity key, registered while Sessions is loaded; without it no session runs.
   reflections: ['sessions'],
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
   sessions: ['tools', 'blobs', 'secrets'],
-  tasks: ['codeWork', 'sandboxes'],
+  tasks: ['sandboxes'],
 };
 
 /** Child injections may use their dependencies only inside their own callback. */
@@ -1040,7 +1068,8 @@ test('each service boots with only its declared dependency closure and without A
     web: { plugin: webPlugin, config: { keyEnv: webKeyEnv, origin: 'http://127.0.0.1:1' } },
     nisa: { plugin: nisaPlugin, config: { keyEnv: nisaKeyEnv, origin: 'http://127.0.0.1:1' } },
     sessions: { plugin: sessionsPlugin },
-    code: { plugin: codePlugin },
+    code: { plugin: codePlugin, config: { repositories: { root: join(directory, 'code') } } },
+    codeWork: { plugin: codeWorkPlugin },
     runner: {
       plugin: runnerPlugin,
       config: {
@@ -1147,15 +1176,17 @@ test('each service boots with only its declared dependency closure and without A
               );
             if (target === 'tasks') {
               assert.deepEqual(await ctx.tasks.list(caller), []);
-              await assert.rejects(
-                ctx.tasks.create(caller, {
-                  title: 'Standalone task',
-                  goal: 'Run alone.',
-                  checks: ['The service works.'],
-                  briefId: artifact.id,
-                  requestId: 'task',
-                }),
-                { code: 'code_unavailable' },
+              // Code Work is in Tasks' closure, so a new task gets its managed Git unit.
+              const task = await ctx.tasks.create(caller, {
+                title: 'Standalone task',
+                goal: 'Run alone.',
+                checks: ['The service works.'],
+                briefId: artifact.id,
+                requestId: 'task',
+              });
+              assert.deepEqual(
+                (await ctx.tasks.list(caller)).map(({ id }: { id: string }) => id),
+                [task.id],
               );
             }
             if (target === 'feed')

@@ -133,10 +133,14 @@ export interface CodeUnits {
   ): Promise<CodeUnit>;
   /** What a lease would find now; a pure read, safe under every admission and candidate scan. */
   baseStatus(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBaseStatus>;
-  /** Only an owner's lease acquisition calls this: the base is fixed with the lease it serves. */
+  /**
+   * Only an owner's lease acquisition calls this: the base is fixed with the lease it serves.
+   * For a writable checkout that Code's driver prepares, the lease also becomes the unit's next
+   * writer generation in Code.
+   */
   pinBase(
     caller: Caller,
-    input: { unitId: string; leaseId: string },
+    input: { unitId: string; leaseId: string; writer: boolean },
     tx: Transaction,
   ): Promise<CodeBasePin>;
   /** The pin alone, never a derivation, for an owner's references(). */
@@ -153,24 +157,9 @@ export interface CodeUnits {
 /** The writer fence of a unit; like CodeUnits, reached only inside an owner's transaction. */
 export interface CodeWriters {
   /**
-   * Only an owner's lease acquisition calls this, right after pinBase and for a writable
-   * checkout that Code's driver prepares: the lease becomes the unit's next writer generation.
-   */
-  reserveWriter(
-    caller: Caller,
-    input: { unitId: string; leaseId: string },
-    tx: Transaction,
-  ): Promise<import('@merv/code/store/protocol').CodeWriterStatus>;
-  /** Whether a new writer could be leased now; a pure read, like baseStatus. */
-  writerStatus(
-    caller: Caller,
-    unitId: string,
-    tx: Transaction,
-  ): Promise<import('@merv/code/store/protocol').CodeWriterStatus>;
-  /**
    * Refuses, with Code's own blocker, a unit no lease could take now: its base cannot be
    * derived or, for a writer, the last writer's machine still owes its final capture or an
-   * operator must fence it. Pure reads, like the two statuses it asks.
+   * operator must fence it. Pure reads, like baseStatus.
    */
   requireLeasable(
     caller: Caller,
@@ -178,7 +167,7 @@ export interface CodeWriters {
     tx: Transaction,
   ): Promise<void>;
 }
-/** The project's repository on the server's disk; refused where the server keeps none. */
+/** The project's repository on the server's disk. */
 export interface CodeRepositoryControls {
   /** Declare the project repository before creating new work. */
   ensureRepository(caller: Caller, tx: Transaction): Promise<void>;
@@ -308,8 +297,7 @@ export interface Code
   readonly github: import('@merv/contracts').CodeGitHub;
   /**
    * The workspace protocol, served below `/code/v2/`: a route with its JSON body, or the
-   * bytes of one part. Each parses what it receives. Absent where the server keeps no
-   * repositories, and once Code is closing.
+   * bytes of one part. Each parses what it receives. Absent once Code is closing.
    */
   readonly v2?: {
     call(caller: Caller, route: string, body: unknown): Promise<unknown>;

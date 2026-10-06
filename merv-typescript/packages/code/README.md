@@ -1,9 +1,11 @@
 # Code
 
-Code is an optional Git utility. It retains exact commits, project repository bindings,
+Code is the Git utility. It retains exact commits, project repository bindings,
 workspace inputs and writer generations; owns repository files and Git
 execution; and provides optional GitHub authentication and transport. It depends only on
-**State and Scope**. It does not load Workflows, Reviews, Sessions, or research policies.
+**State, Scope and Domain Events**: it follows session attach and close events to open and end
+writer generations (subscription `code.writers.v1`). It does not load Workflows, Reviews,
+Sessions, or research policies.
 
 The core service is `ctx.code`. Its repository, workspace and writer APIs are technical building
 blocks. Callers retain commits under opaque keys and pin workspace inputs inside their own
@@ -11,9 +13,9 @@ transaction. Retention keys preserve every commit across repository transfers an
 Core checks integrity and concurrency; it does not decide research acceptance, scheduling,
 review requirements, or which experiment's work belongs in a project.
 
-The optional [Code work integration](../code-work/README.md) provides those connections
-and the user-facing tools, machine API and UI. Research can run without either plugin.
-GitHub is separately optional: a local repository does not require a GitHub connection.
+The [Code work integration](../code-work/README.md) provides those connections
+and the user-facing tools, machine API and UI. Tasks, Experiments, Knowledge and Research
+require it, so every composition that loads them loads both plugins. GitHub is optional: a local repository does not require a GitHub connection.
 
 ## Where it sits
 
@@ -29,18 +31,20 @@ flowchart LR
     runner["Runner<br/><small>machine workspace driver</small>"]
     scope[Scope]
     state[State]
+    domainEvents[Domain Events]
   end
   subgraph external["External"]
     postgres[PostgreSQL]
     repositories["Repository files<br/><small>repositories.root</small>"]
     github[GitHub]
   end
-  tasks -- "injects if present" --> codeWork
-  experiments -- "injects if present" --> codeWork
+  tasks -- "injects" --> codeWork
+  experiments -- "injects" --> codeWork
   codeWork -- "injects" --> code
   runner -- "loads workspace driver" --> code
   code -- "injects" --> scope
   code -- "injects" --> state
+  code -- "subscribes to session events" --> domainEvents
   state -- "reads/writes" --> postgres
   code -- "reads/writes" --> repositories
   code -- "App auth, Git transport" --> github
@@ -52,11 +56,11 @@ Code sits at the bottom of the Git path: only Code work injects it, and research
 
 ## Composition and ownership
 
-| Component          | Responsibilities                                                                                   | Required services                                      |
-| ------------------ | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `@merv/code`       | Repository ownership, retained Git facts, fencing, GitHub connection                               | State, Scope                                           |
-| `@merv/code-work`  | Research dependencies, evidence, review provenance, workspace handoff and publication coordination | Code, State, Scope, Sessions, Workflows, Domain Events |
-| Code work adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeWork plus Tools, API or UI                         |
+| Component          | Responsibilities                                                                                   | Required services                                               |
+| ------------------ | -------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `@merv/code`       | Repository ownership, retained Git facts, fencing, GitHub connection                               | State, Scope, Domain Events                                     |
+| `@merv/code-work`  | Research dependencies, evidence, review provenance, workspace handoff and publication coordination | Code, State, Scope, Sessions, Workflows, Reviews, Domain Events |
+| Code work adapters | Existing `code.*` tools, `/code/*` controls and Code UI                                            | CodeWork plus Tools, API or UI                                  |
 
 The utility owns repository locks and the GitHub client. The integration releases its own
 operations when unloaded. Technical changes to bindings and writers notify optional

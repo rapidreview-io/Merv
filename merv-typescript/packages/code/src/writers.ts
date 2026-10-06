@@ -370,6 +370,37 @@ export class CodeWriterService {
     };
   }
 
+  /**
+   * Where a closed writer generation left the unit, if it was this session's: the head with
+   * its tree when this session's final upload moved it there, else the head alone, which is
+   * the base if nothing moved it. An operator's fence and a final admission both close it.
+   */
+  async closedHead(
+    projectId: string,
+    unitId: string,
+    sessionId: string,
+    tx: Sql,
+  ): Promise<{ headOid: string; treeOid?: string } | null> {
+    const writer = await this.row(tx, projectId, unitId);
+    if (writer?.writer_state !== 'closed' || writer.writer_session_id !== sessionId) return null;
+    const final = writer.head_operation_id
+      ? await tx.get<{ payload_json: string }>(
+          "SELECT payload_json FROM code_operations WHERE id=? AND project_id=? AND kind='upload'",
+          writer.head_operation_id,
+          projectId,
+        )
+      : undefined;
+    const upload = final && (JSON.parse(final.payload_json) as Record<string, unknown>);
+    return upload &&
+      upload.kind === 'final' &&
+      upload.sessionId === sessionId &&
+      typeof upload.tip === 'string' &&
+      upload.tip === writer.head_oid &&
+      typeof upload.treeOid === 'string'
+      ? { headOid: upload.tip, treeOid: upload.treeOid }
+      : { headOid: writer.head_oid ?? this.base(writer) };
+  }
+
   /** Workspace identities whose writer generation has begun, without exposing owned storage. */
   async writerIdentities(
     sql: Sql,

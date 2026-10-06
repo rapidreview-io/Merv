@@ -27,7 +27,7 @@ From `consolidating` the advance reads the newest consolidation task and its `Co
 
 Every injected task is appended to `integrations`, newest last, so a cycle's consolidation history is on its record; `research.end` still ends the cycle from `consolidating`.
 
-Research requires State, Scope, Workflows, Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work: every composition that loads it loads them, and it is restarted with any of them. The [no-Code configuration](../config/no-code.example.json) therefore leaves Research out. Research does not depend on Knowledge. Project-wide record/reference reads remain independently available through Knowledge.
+Research requires State, Scope, Workflows, Domain Events, Paper, Reflections, Tasks, Experiments, Artifacts and Code Work: every composition that loads it loads them, and it is restarted with any of them. Research does not depend on Knowledge. Project-wide record/reference reads remain independently available through Knowledge.
 
 Git answers which accepted units are missing outside the committing transaction. The retired Consolidation plugin is never required or loaded.
 

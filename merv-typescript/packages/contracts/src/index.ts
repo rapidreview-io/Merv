@@ -45,7 +45,7 @@ export {
 } from './running.js';
 export * as runningSchema from './running-schema.js';
 export { MAX_TRANSCRIPT_BYTES, sessionSecretPattern } from './session-inputs.js';
-export { WorkspaceDeferred } from './workspace-driver.js';
+export { CODE_DRIVER, WorkspaceDeferred } from './workspace-driver.js';
 export type {
   WorkspaceDriver,
   WorkspaceDriverFactory,

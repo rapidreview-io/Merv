@@ -51,9 +51,6 @@ async function fixture(t: TestContext) {
   const workflows = await createService(new WorkflowsService(state, scope));
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
-  const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder, blankPaper),
-  );
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, {
@@ -69,7 +66,12 @@ async function fixture(t: TestContext) {
       },
     }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, workflows, core));
+  const code = await createService(
+    new CodeService(state, scope, sessions, workflows, reviews, core),
+  );
+  const tasks = await createService(
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, code, blankPaper),
+  );
   const boot = await scope.credentials.bootstrap({
     projectName: 'Experiment assignments',
     actorName: 'Owner',
@@ -119,7 +121,6 @@ async function fixture(t: TestContext) {
   const reviewer = await issue('reviewer');
   await state.transaction((tx) => code.ensureRepository(source, tx));
   await (code as any).store.maintain();
-  tasks.bindCode(code);
   const work = currentWork({ sessions, code, events }, { directory, source });
   const held = new Map<string, Awaited<ReturnType<typeof work.attach>>>();
   const create = async (dependsOn: string[] = [], workspace?: 'git') =>
@@ -1442,7 +1443,6 @@ test('an assigned reviewer updates the paper through its scoped verdict only', a
 
 test('Hosted experiments reject explicit legacy bases before creating work', async (t) => {
   const f = await fixture(t);
-  t.after(f.tasks.bindCode(f.code));
   const prerequisite = await currentTask(f, f.source, {
     title: 'Retained baseline',
     goal: 'Keep the baseline in Git',

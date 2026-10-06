@@ -166,7 +166,6 @@ const configuration = z
 
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
 export class ExperimentService extends ExperimentProgram implements Experiments {
-  private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
@@ -213,18 +212,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       this.unregister();
       throw error;
     }
-  }
-  /** The optional Cordis child owns this binding, not the experiment lifecycle. */
-  bindCode(code: Code): () => void {
-    this.open();
-    const binding = Symbol('code');
-    this.codeBinding = binding;
-    this.code = code;
-    return () => {
-      if (this.codeBinding !== binding) return;
-      this.codeBinding = undefined;
-      this.code = undefined;
-    };
   }
   /** Captures, read from Sandboxes; it attaches compute to leases itself. */
   bindSandboxes(service: Pick<Sandboxes, 'captures'>): () => void {
@@ -530,14 +517,14 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
   }
   /**
    * What Code holds for an experiment: its pinned base, where a base stands, its acceptance.
-   * Null while Code is unloaded or knows no such unit. It is kept off the experiment record,
+   * Null while Code is unavailable or knows no such unit. It is kept off the experiment record,
    * which leases freeze.
    */
   async codeUnit(caller: Caller, id: string): Promise<CodeUnit | null> {
     this.open();
     caller = structuredClone(caller);
     try {
-      return (await this.code?.unit(caller, id)) ?? null;
+      return await this.code.unit(caller, id);
     } catch (error) {
       if (error instanceof MervError && [404, 503].includes(error.status)) return null;
       throw error;
@@ -646,7 +633,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           'New experiments always use Git. Omit workspace or use git.',
         );
         const owner = await this.scope.authorityActor(caller, tx);
-        check(this.code, 'code_unavailable', 'New experiments require managed Code storage', 503);
         await this.code.ensureRepository(caller, tx);
         check(
           await this.code.hosted(caller, tx),
@@ -685,7 +671,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           'git',
         );
         await this.addAttempt(workflow.id, 1, workflow.revision, null, [], createdAt, tx);
-        await this.code!.declareUnit(caller, workflow.id, tx);
+        await this.code.declareUnit(caller, workflow.id, tx);
         await this.record(
           caller,
           'created',
@@ -1091,7 +1077,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       'Git result submission requires its actual worker session',
       403,
     );
-    check(this.code, 'code_unavailable', 'Code captures are unavailable', 503);
     const ref: CodeCaptureRef = { kind: 'session-final', sessionId: caller.session.id };
     const checked = await this.code.checkCapture(
       caller,
@@ -1359,19 +1344,18 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           // Every version records its success, so later work can take its base from it. The
           // reference is the one the submission stored: the review capture is read only while
           // the experiment is under review, and the guard's checkReview has just verified it there.
-          if (this.code)
-            await this.code.acceptUnit(
-              caller,
-              {
-                unitId: experiment.id,
-                terminalRevision: moved.revision,
-                submissionRef: submission.id,
-                reviewRef: review.id,
-                codeRef: submission.codeCaptureRef!,
-                reviewSessionId: caller.session?.id ?? null,
-              },
-              tx,
-            );
+          await this.code.acceptUnit(
+            caller,
+            {
+              unitId: experiment.id,
+              terminalRevision: moved.revision,
+              submissionRef: submission.id,
+              reviewRef: review.id,
+              codeRef: submission.codeCaptureRef!,
+              reviewSessionId: caller.session?.id ?? null,
+            },
+            tx,
+          );
         }
         await tx.run(
           'UPDATE experiments SET review_id=NULL,conclusion=? WHERE id=?',
@@ -1597,15 +1581,22 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    this.codeBinding = undefined;
-    this.code = undefined;
     this.withdrawReviewOwner();
     this.unregister();
   }
 }
 export const experimentsPlugin = {
   name: 'merv-experiments',
-  inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
+  inject: [
+    'state',
+    'scope',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'codeWork',
+    'paper',
+  ],
   Config: configuration,
   async apply(ctx: Context, config: z.infer<typeof configuration>) {
     const experiments = await createService(
@@ -1616,14 +1607,11 @@ export const experimentsPlugin = {
         ctx.workflows,
         ctx.reviews,
         ctx.contextBuilder,
-        undefined,
+        ctx.codeWork,
         ctx.paper,
         config.limits,
       ),
     );
-    ctx.inject(['codeWork'], (ctx) => {
-      ctx.effect(() => experiments.bindCode(ctx.codeWork));
-    });
     ctx.inject(['sandboxes'], (ctx) => {
       ctx.effect(() => experiments.bindSandboxes(ctx.sandboxes));
     });

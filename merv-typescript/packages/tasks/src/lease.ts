@@ -78,7 +78,7 @@ export async function leaseRole(
     // Version 6 is created only by the service binding; its runner remains a producer.
     if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
       await this.scope.require(caller, 'admin', tx);
-    await this.requireCode().requireLeasable(caller, { unitId: snapshot.id, writer: true }, tx);
+    await this.code.requireLeasable(caller, { unitId: snapshot.id, writer: true }, tx);
     this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'work');
     return 'producer';
   }
@@ -134,8 +134,7 @@ export async function acquireLease(
   // The base is fixed with the lease it serves: Workflows reads references() right after
   // this hook in the same transaction, and a refused offer takes the pin back with it.
   if (purpose === 'work') {
-    await this.requireCode().pinBase(source, { unitId: snapshot.id, leaseId }, tx);
-    await this.requireCode().reserveWriter(source, { unitId: snapshot.id, leaseId }, tx);
+    await this.code.pinBase(source, { unitId: snapshot.id, leaseId, writer: true }, tx);
   }
   const review =
     purpose === 'review' ? await this.reviews.start(caller, row.review_id!, tx) : undefined;

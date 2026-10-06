@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   check,
+  CODE_DRIVER,
   effectiveWorkspace,
   MervError,
   type Caller,
@@ -18,7 +19,6 @@ import { pendingMerge } from '@merv/code/pending-merge';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeStore } from '@merv/code/store/operations';
 import { workBranch } from '@merv/code/store/refs';
-import { CODE_DRIVER } from './workspace.js';
 import type { CodeWriterService } from '@merv/code/writers';
 
 const codeWorkspaceManifestInputSchema = z

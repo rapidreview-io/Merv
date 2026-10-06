@@ -6,14 +6,20 @@ import { CodeMirrorService, enqueueMirror } from '@merv/code/store/mirror';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
 import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
+import { codeConfig } from './fixtures/code-binding.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('retention refuses impossible transport before persisting an obligation', async (t) => {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  const code = await createService(new CodeService(state, scope, {}));
+  const root = mkdtempSync(join(tmpdir(), 'merv-code-retention-'));
+  const code = await createService(new CodeService(state, scope, codeConfig(root)));
   t.after(async () => {
     await code.close();
     await state.close();
+    rmSync(root, { recursive: true, force: true });
   });
   const boot = await scope.credentials.bootstrap({
     projectName: 'Retention safety',
@@ -100,10 +106,12 @@ test('retention freezes its ref in the immutable intent and rejects tampered rec
 test('mirror replay preserves its destination while allowing work-tip coalescing', async (t) => {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  const code = await createService(new CodeService(state, scope, {}));
+  const root = mkdtempSync(join(tmpdir(), 'merv-code-retention-'));
+  const code = await createService(new CodeService(state, scope, codeConfig(root)));
   t.after(async () => {
     await code.close();
     await state.close();
+    rmSync(root, { recursive: true, force: true });
   });
   const boot = await scope.credentials.bootstrap({
     projectName: 'Mirror destinations',

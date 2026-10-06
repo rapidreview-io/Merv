@@ -94,14 +94,18 @@ async function fixture(t: TestContext) {
     const invocation = await app.ctx.sessions.invocations.prepare(caller, tool, input);
     return await app.ctx.sessions.invocations.run(invocation, handler);
   }
-  const release = async (session: Session) => {
-    await app.ctx.sessions.release(source, { sessionId: session.id, runnerId: 'test' });
-    await app.ctx.domainEvents.drain();
+  /** The machine's side of a close: its final capture, handed to Code Work. */
+  const settle = async (session: Session) => {
     const lease = held.get(session.id);
     if (lease) {
       await work.release(lease);
       held.delete(session.id);
     }
+  };
+  const release = async (session: Session, settled = true) => {
+    await app.ctx.sessions.release(source, { sessionId: session.id, runnerId: 'test' });
+    await app.ctx.domainEvents.drain();
+    if (settled) await settle(session);
   };
   const deliver = async (caller: Caller) => {
     const artifact = await run(
@@ -128,7 +132,7 @@ async function fixture(t: TestContext) {
     }
     return { artifact, delivered };
   };
-  return { app, source, task, offer, run, release, deliver };
+  return { app, source, task, offer, run, release, settle, deliver };
 }
 
 test('lease offer reserves ownership and freezes context atomically; first activation is metadata only', async (t) => {
@@ -407,13 +411,15 @@ test('Reviews releases the lease of a closed session, whether or not its owner i
     await f.app.setEnabled('tasks', true);
   });
 
+  // Code Work requires Reviews, so the machine hands its final capture over once both are back.
   await t.test('without Reviews, closing does not stall Sessions', async () => {
     const offered = await f.offer();
     await f.app.setEnabled('reviews', false);
-    await f.release(offered.session);
+    await f.release(offered.session, false);
     assert.equal(await released(offered.session.id), null);
     assert.equal((await consumer()).active, false);
     await f.app.setEnabled('reviews', true);
+    await f.settle(offered.session);
     await domainEvents.drain();
     assert.ok(await released(offered.session.id));
     assert.deepEqual(await consumer(), caughtUp);
@@ -422,11 +428,12 @@ test('Reviews releases the lease of a closed session, whether or not its owner i
   await t.test('a close logged before the consumer existed is released', async () => {
     const offered = await f.offer();
     await f.app.setEnabled('reviews', false);
-    await f.release(offered.session);
+    await f.release(offered.session, false);
     await state.transaction(
       async (tx) => await tx.run("DELETE FROM event_consumers WHERE id='reviews.lease-release.v1'"),
     );
     await f.app.setEnabled('reviews', true);
+    await f.settle(offered.session);
     await domainEvents.drain();
     assert.ok(await released(offered.session.id));
   });

@@ -50,7 +50,11 @@ async function fixture(t: TestContext) {
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const managed = await managedServices({ state, scope, artifacts, workflows }, directory, source);
+  const managed = await managedServices(
+    { state, scope, artifacts, workflows, reviews },
+    directory,
+    source,
+  );
   const { events, sessions } = managed;
   const experiments = await createService(
     new ExperimentService(

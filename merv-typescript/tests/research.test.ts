@@ -157,10 +157,13 @@ async function fixture(t: TestContext, store = false) {
     artifact,
     reflect,
     finish,
-    /** Code unloaded or loaded again; this service holds the Code work it was handed. */
+    /**
+     * Code unloaded or loaded again, and with it Tasks and Experiments, which require it; this
+     * service holds the providers it was handed.
+     */
     async code(enabled: boolean) {
       await app.setEnabled('code', enabled);
-      if (enabled) research.providers.code = app.ctx.codeWork;
+      if (enabled) Object.assign(research.providers, providersOf(app.ctx));
     },
     async restart() {
       research.close();
@@ -1735,16 +1738,17 @@ test('Code absence refuses managed Git work without losing approval or partial w
   const { record, command } = await reflected(f, harnessPlan());
   const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
   const before = await counts(f);
+  // Tasks and Experiments require Code Work, so they go with it.
   await f.code(false);
   const input = command('create');
-  await assert.rejects(f.research.advance(f.owner, input), { code: 'code_unavailable' });
-  assert.deepEqual(await counts(f), before);
+  await assert.rejects(f.research.advance(f.owner, input), { code: /_unavailable$/ });
   assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
   assert.equal(
     (await f.research.get(f.owner, record.id)).workflow.revision,
     record.workflow.revision,
   );
   await f.code(true);
+  assert.deepEqual(await counts(f), before);
   assert.ok((await f.research.advance(f.owner, input)).successorId);
 });
 
@@ -1805,11 +1809,12 @@ test('an automatic v2 wave exposes Code absence and rolls back before retry', as
   try {
     await f.app.ctx.domainEvents.drain();
     const blocked = await f.research.get(f.owner, record.id);
-    assert.equal(blocked.automation!.blocker!.code, 'code_unavailable');
+    // Tasks and Experiments require Code Work, so the first of them refuses.
+    assert.match(blocked.automation!.blocker!.code, /_unavailable$/);
     assert.equal(blocked.successorId, null);
-    assert.deepEqual(await counts(f), before);
     assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
     await f.code(true);
+    assert.deepEqual(await counts(f), before);
     await f.research.wakeAutomatic();
     // The advance asks Git outside the consumer's transaction and commits on its own, after the
     // delivery that woke it, so what it moves is delivered in a later pass.

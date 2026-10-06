@@ -15,6 +15,8 @@ import { CodeService } from '@merv/code-work/service';
 import { CodeCommandService } from '@merv/code-work/commands';
 import { workBranch } from '@merv/code/store/refs';
 import { openState } from './fixtures/state.js';
+import { codeConfig } from './fixtures/code-binding.js';
+import { ReviewService } from '@merv/reviews';
 
 const issuer = 'https://identity.example/auth/v1';
 const oid = (char: string) => char.repeat(40);
@@ -45,7 +47,10 @@ async function fixture(t: TestContext, withUnits = true) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-units-'));
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
+  );
+  const reviews = await createService(new ReviewService(state, scope, artifacts));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -54,8 +59,10 @@ async function fixture(t: TestContext, withUnits = true) {
   let core: CoreCodeService;
   /** An older command store can exist before the research unit adapter is installed. */
   const open = async (units: boolean) => {
-    core = await createService(new CoreCodeService(state, scope, {}));
-    const service = new CodeService(state, scope, sessions, workflows, core);
+    core = await createService(
+      new CoreCodeService(state, scope, codeConfig(join(directory, 'code'))),
+    );
+    const service = new CodeService(state, scope, sessions, workflows, reviews, core);
     if (units) await service.initialize();
     else {
       const commands = await createService(new CodeCommandService(state, scope, sessions));
@@ -233,14 +240,37 @@ test('the unit tables arrive beside existing Code rows and hold their write-once
   assert.deepEqual([unit.acceptance?.storage, unit.acceptance?.reference], ['none', null]);
 });
 
+/** What Code's status says of a project its repository does not hold yet. */
+const unhosted = {
+  project: null,
+  bases: [],
+  store: {
+    hosted: false,
+    objectFormat: null,
+    rootOid: null,
+    source: null,
+    tips: [],
+    diskBytes: 0,
+    quotaBytes: 1024 ** 3,
+    limits: { format: 1, denyGlobs: [], secretExemptGlobs: [], check: null },
+  },
+  operations: [],
+  mirror: {
+    state: 'off',
+    repository: null,
+    blockedBy: 'github_unconfigured',
+    pending: 0,
+    oldestPendingAt: null,
+    lastError: null,
+    blockedRefs: [],
+  },
+  warnings: [],
+};
+
 test('only a signed-in administrator binds the repository, and main moves by compare-and-set', async (t) => {
   const f = await fixture(t);
   assert.deepEqual(await f.code.status(f.admin), {
-    project: null,
-    store: null,
-    operations: [],
-    mirror: null,
-    warnings: [],
+    ...unhosted,
     units: [],
     blockers: [],
   });
@@ -329,11 +359,7 @@ test('only a signed-in administrator binds the repository, and main moves by com
   const outsider = await f.scope.caller(f.principal, elsewhere.id);
   await assert.rejects(f.code.unit(outsider, work.id), { code: 'code_unit_not_found' });
   assert.deepEqual(await f.code.status(outsider), {
-    project: null,
-    store: null,
-    operations: [],
-    mirror: null,
-    warnings: [],
+    ...unhosted,
     units: [],
     blockers: [],
   });

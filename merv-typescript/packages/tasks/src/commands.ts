@@ -96,9 +96,9 @@ export async function createTask(
         'invalid_workspace',
         'New tasks always use Git. Omit workspace or use git, and use dependsOn for accepted code dependencies; baseTaskId is retired.',
       );
-      await this.requireCode().ensureRepository(caller, tx);
+      await this.code.ensureRepository(caller, tx);
       check(
-        await this.requireCode().hosted(caller, tx),
+        await this.code.hosted(caller, tx),
         'code_store_required',
         'Import the existing project repository into Code before creating work',
         409,
@@ -237,7 +237,7 @@ export async function createTask(
         typeVersion,
         JSON.stringify(contextInputs),
       );
-      await this.requireCode().declareUnit(caller, workflow.id, tx, service?.baseReference);
+      await this.code.declareUnit(caller, workflow.id, tx, service?.baseReference);
       await recorded(this.state, tx, caller, 'task.created', workflow.id, {
         briefId: brief.id,
         evidenceVersion: 2,
@@ -373,7 +373,7 @@ export async function deliveredCommit(
     'A Git task delivers this worker’s own successful code.commit; only a leased worker can obtain one',
     409,
   );
-  const checked = await this.requireCode().checkCapture(
+  const checked = await this.code.checkCapture(
     caller,
     { kind: 'code-commit', commandId },
     {
@@ -894,7 +894,7 @@ export async function submitReview(
         tx,
       );
       // Acceptance records the exact reviewed commit in the same transaction.
-      if (input.verdict === 'pass' && this.code)
+      if (input.verdict === 'pass')
         await this.code.acceptUnit(
           caller,
           {

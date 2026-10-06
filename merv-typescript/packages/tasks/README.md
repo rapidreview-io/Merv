@@ -36,7 +36,7 @@ flowchart LR
   tasks -- "registers recipes" --> contextBuilder
   tasks -- "reads paper context" --> paper
   tasks -- "pins evidence" --> artifacts
-  tasks -. "binds managed Git" .-> codeWork
+  tasks -- "injects managed Git" --> codeWork
   tasks -. "binds compute" .-> sandboxes
   tasks -- "injects" --> scope
   tasks -- "injects" --> state

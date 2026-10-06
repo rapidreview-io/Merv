@@ -1,4 +1,5 @@
-import { createService, migrationList } from '@merv/contracts';
+import { createService, MervError, migrationList } from '@merv/contracts';
+import type { Code, ResolutionWorkCreator } from '@merv/code-work/types';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -15,6 +16,35 @@ import { LeasedSessions } from '@merv/sessions';
 import { openState } from './state.js';
 import { ownReviews } from './review-verdict.js';
 import { blankPaper } from './blank-paper.js';
+
+/**
+ * The Code Tasks is built with, for a fixture whose test builds its Code afterwards: until the
+ * test binds one, every call is refused as an unavailable Code refuses it.
+ */
+function lateCode() {
+  let current: Code | undefined;
+  let provider: ResolutionWorkCreator | undefined;
+  const code = new Proxy({} as Code, {
+    get: (_, key) => {
+      if (key === 'then') return undefined;
+      if (key === 'bindServiceTasks')
+        return (tasks: ResolutionWorkCreator) => ((provider = tasks), () => (provider = undefined));
+      return (...args: unknown[]) => {
+        if (!current) throw new MervError('code_unavailable', 'Code is unavailable', 503);
+        return (current[key as keyof Code] as (...args: unknown[]) => unknown)(...args);
+      };
+    },
+  });
+  const bind = (real: Code) => {
+    current = real;
+    const release = provider ? real.bindServiceTasks(provider) : () => {};
+    return () => {
+      release();
+      if (current === real) current = undefined;
+    };
+  };
+  return { code, bind };
+}
 
 /** The owner services without a listener, so their transaction tests also run in a sandbox. */
 export async function resolutionFixture(
@@ -50,8 +80,9 @@ export async function resolutionFixture(
   );
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const context = await createService(new RecipeContextBuilder(state, scope, artifacts));
+  const code = lateCode();
   const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, context, blankPaper),
+    new TaskService(state, scope, artifacts, workflows, reviews, context, code.code, blankPaper),
   );
   state.migrate = migrate;
   // Tasks owns its own reviews; the fixture owns every other one a test requests.
@@ -105,5 +136,7 @@ export async function resolutionFixture(
     sessions,
     admin,
     beforeClose,
+    /** Gives Tasks the Code the test built; the returned function takes it back. */
+    bindCode: code.bind,
   };
 }
