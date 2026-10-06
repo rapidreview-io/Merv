@@ -1,6 +1,7 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
 import { ordinary as unmanaged, safeCount, text, workName, workNameOf } from './common.js';
+import { leaseLiveness } from './liveness.js';
 import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
@@ -193,6 +194,7 @@ export class AgentObservations {
       const current = sessions.find(
         (session) => session.status === 'offered' || session.status === 'active',
       );
+      const now = this.clock();
       const columns = `c.id,c.execution_id AS "executionId",c.tool,c.status,c.started_at AS "startedAt",c.finished_at AS "finishedAt",
         c.duration_ms AS "durationMs",c.input_tokens AS "inputTokens",c.output_tokens AS "outputTokens"`;
       const from =
@@ -234,6 +236,7 @@ export class AgentObservations {
           closedAt: session.closedAt,
           closeReason: session.closeReason,
           outcome: session.outcome,
+          liveness: leaseLiveness(session, now),
           workflow: { name: session.execution.workflow, state: session.execution.state },
           revision: session.expectedRevision,
           tools: session.execution.policy.tools.map((tool) => tool.name),

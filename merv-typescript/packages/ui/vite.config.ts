@@ -25,8 +25,10 @@ export default defineConfig({
   base: '/ui/',
   plugins: [react()],
   build: { outDir: '../dist', emptyOutDir: true, sourcemap: false },
-  // The Markdown worker has no DOM, so it decodes entities from their table, not through one.
+  // The worker loads each grammar as its own chunk, so it is a module, as the page starts it.
+  // It has no DOM, so it decodes entities from their table, not through one.
   worker: {
+    format: 'es',
     plugins: () => [
       {
         name: 'worker-entities',

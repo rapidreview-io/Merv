@@ -484,6 +484,39 @@ test('a worker still downloading is waited for: its clock runs only once it has 
   }
 });
 
+test('no code a member can post holds the page: it is coloured off its thread, in time or not at all', async (t) => {
+  // A module of its own, so its colours are done by the worker this test starts.
+  const { CodeBlock } = await import('../packages/ui/web/code-block.js?off-thread');
+  await installWorker(t);
+  // Forty lines a grammar takes over a second each: tens of seconds on the page's thread.
+  const slow = Array(40).fill('<'.repeat(999)).join('\n');
+  let longest = 0;
+  let last = performance.now();
+  const ticks = setInterval(() => {
+    longest = Math.max(longest, performance.now() - last);
+    last = performance.now();
+  }, 5);
+  t.after(() => clearInterval(ticks));
+  await mount(
+    createElement(
+      'div',
+      null,
+      createElement('section', null, createElement(CodeBlock, { code: slow, lang: 'sh' })),
+      createElement('section', null, createElement(CodeBlock, { code: 'ls -la', lang: 'sh' })),
+    ),
+  );
+  // Colours come in order, so once the short block is coloured the long one is settled.
+  for (let waited = 0; !document.querySelector('section:last-child .code-body [style]');) {
+    assert.ok((waited += 50) < 60_000, 'the short block is coloured');
+    await settle(50);
+  }
+  clearInterval(ticks);
+  assert.ok(longest < 200, `the page's thread was held for ${Math.round(longest)} ms`);
+  const long = document.querySelector('section:first-child .code-body')!;
+  assert.equal(long.querySelectorAll('[style]').length, 0, 'given up, it stands plain');
+  assert.equal(long.textContent, slow);
+});
+
 test('bounding the work did not change what is read', () => {
   assert.equal(said(parseInline('[`a]`](/x) and `` ` `` and [b](</y z> "t")')), 'a] and ` and b');
   assert.deepEqual(
@@ -695,9 +728,8 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
   // The fence's grammar loads only when the test lets it. A block drawn afresh is coloured once
   // its grammar is there, and one still streaming is not, so a grammar landing mid-stream would
   // make the pieces and the whole differ by when it landed, not by what they read.
-  const { highlightNow, languageOf } = await import('../packages/ui/web/highlight.js');
+  const { languageOf } = await import('../packages/ui/web/highlight.js');
   const ts = languageOf('ts')!;
-  assert.equal(highlightNow('x', ts), undefined, 'the grammar is not loaded yet');
   const load = ts.load;
   let release!: () => void;
   const released = new Promise<void>((resolve) => (release = resolve));

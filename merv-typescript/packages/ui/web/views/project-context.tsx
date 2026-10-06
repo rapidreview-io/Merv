@@ -3,7 +3,7 @@ import { useTool, type Project } from '../api';
 import { Area, EmptyState, Failure, LoadState, OpenedForm, Submit, cx } from '../components';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
-import { useSession } from '../session';
+import { useSession, writes } from '../session';
 import { useShell } from '../shell';
 
 /** A project nobody has introduced yet, and — for whoever may write it — the way to begin. */
@@ -132,7 +132,7 @@ export function ProjectIntroduction() {
       {project.data && (
         <>
           {project.data.summary && <Markdown source={project.data.summary} />}
-          {!paperWrites && (actor.role === 'operator' || actor.role === 'producer') ? (
+          {!paperWrites && writes(actor) ? (
             <IntroductionEditor
               key={project.data.id}
               project={project.data}

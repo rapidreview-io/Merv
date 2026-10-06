@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createService, digest } from '@merv/contracts';
-import type { Artifact, Caller, Data, ReviewRequest, Role } from '@merv/contracts';
+import type { Artifact, Caller, Data, ReviewGuide, ReviewRequest, Role } from '@merv/contracts';
 import type { Experiment } from '@merv/experiments/types';
 import type { Reflection } from '@merv/reflections/types';
 import { ArtifactStore } from '@merv/artifacts';
@@ -195,6 +195,12 @@ test('the founder decides, only as owner, the delivery of a worker the founder d
   const requested = await f.reviews.get(f.founder, reviewId);
   assert.deepEqual(requested.excludedActorIds, [f.founder.actorId]);
   assert.equal(requested.overridable, true, 'the owner may decide it as owner');
+  // Tasks says what its reader may do: no pass from outside a leased checkout, and that
+  // deciding as owner lifts its leased-claim rule beside Reviews' independence rule.
+  const guided = await f.call<ReviewRequest & ReviewGuide>('review.get', f.founder, { reviewId });
+  assert.deepEqual(guided.verdicts, ['needs_changes', 'fail']);
+  assert.deepEqual(guided.overrides, ['review_independence', 'leased_review_required']);
+  assert.equal((await f.call<ReviewGuide>('review.get', f.key, { reviewId })).overrides, undefined);
 
   // The default stands: the owner's ordinary claim is refused, signed in or on the key.
   for (const caller of [f.founder, f.key])
@@ -214,6 +220,11 @@ test('the founder decides, only as owner, the delivery of a worker the founder d
     ['started', f.founder.actorId, true],
   );
   assert.equal((await f.reviews.get(f.founder, reviewId)).overridable, undefined);
+  assert.deepEqual((await f.call<ReviewGuide>('review.get', f.founder, { reviewId })).verdicts, [
+    'pass',
+    'needs_changes',
+    'fail',
+  ]);
   assert.notEqual((await f.action(f.founder, task.id, 'review.submit')).status, 'blocked');
   const done = await f.call<Task>(
     'review.submit',

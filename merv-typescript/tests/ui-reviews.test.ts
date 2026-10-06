@@ -163,7 +163,7 @@ test('a task review offers no return route, because its domain takes none', asyn
   assert.equal('returnTo' in (submitted.body ?? {}), false);
 });
 
-test('a Git task review is passed from a browser only by its owner deciding as owner', async (t) => {
+test('the desk offers the verdicts the owning domain leaves this reader, and names none itself', async (t) => {
   t.after(async () => await unmount());
   const verdicts = async (review: Record<string, unknown>, workflow = 'task') => {
     serve('/tools/review.get', { body: { result: review } });
@@ -178,13 +178,13 @@ test('a Git task review is passed from a browser only by its owner deciding as o
     await unmount();
     return words;
   };
-  // Only a leased reviewer in a checkout of the delivered commit passes it otherwise.
-  assert.deepEqual(await verdicts(claimed), ['needs changes', 'fail']);
-  assert.deepEqual(await verdicts({ ...claimed, override: true }), [
-    'pass',
+  // The owner rules pass out for this reader (a Git task outside a leased checkout).
+  assert.deepEqual(await verdicts({ ...claimed, verdicts: ['needs_changes', 'fail'] }), [
     'needs changes',
     'fail',
   ]);
+  // Where the owner rules none out, every verdict is offered, whatever the workflow.
+  assert.deepEqual(await verdicts(claimed), ['pass', 'needs changes', 'fail']);
   assert.deepEqual(await verdicts(claimed, 'experiment'), ['pass', 'needs changes', 'fail']);
 });
 
@@ -231,7 +231,15 @@ test('an owner the default leaves out decides the review as owner, with one cont
   const refusal = 'A producer, contributor or directing authority cannot review their own work';
   const claims: unknown[] = [];
   const requested = { ...claimed, status: 'requested', reviewerId: null, claimId: null };
-  serve('/tools/review.get', { body: { result: { ...requested, overridable: true } } });
+  serve('/tools/review.get', {
+    body: {
+      result: {
+        ...requested,
+        overridable: true,
+        overrides: ['review_independence', 'leased_review_required'],
+      },
+    },
+  });
   serve('/tools/workflow.status_and_next', {
     body: {
       result: {

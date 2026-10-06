@@ -1,4 +1,10 @@
-import { excludedFromReview, directsIndependently, standings } from './rules.js';
+import {
+  directsIndependently,
+  excludedFromReview,
+  NOT_INDEPENDENT,
+  REVIEW_VERDICTS,
+  standings,
+} from './rules.js';
 import { canonical, visible, isDirectHuman } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import { bound, createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
@@ -277,13 +283,17 @@ export class ReviewService implements Reviews {
       for (const owner of [...this.owners.values()])
         if ((await owner.owns(review, tx)) === true) matches.push(owner);
       if (matches.length !== 1) return {};
-      const [{ guidance, returns, claims }] = matches;
+      const [{ guidance, returns, verdicts, overrides = [], claims }] = matches;
       const routes = returns ? [...(await returns(review, tx))] : [];
+      const open = verdicts && [...(await verdicts(caller, review, tx))];
       const gate = (await this.gatesOf([review.id], tx)).get(review.id);
       const claimed = claims ? [...(await claims(caller, review, tx))] : [];
       return {
         ...(guidance === undefined ? {} : { guidance }),
         ...(routes.length ? { returns: routes.map(({ value, label }) => ({ value, label })) } : {}),
+        ...(open ? { verdicts: REVIEW_VERDICTS.filter((verdict) => open.includes(verdict)) } : {}),
+        // Deciding as owner lifts Reviews' own independence rule, and what the owner says it lifts.
+        ...(review.overridable ? { overrides: [NOT_INDEPENDENT[0], ...overrides] } : {}),
         ...(gate === undefined ? {} : { gate }),
         ...(claimed.length ? { claims: structuredClone(claimed) } : {}),
       };

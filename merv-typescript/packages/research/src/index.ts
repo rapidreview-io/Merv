@@ -12,6 +12,7 @@ import {
   replayed,
   type Artifact,
   type Artifacts,
+  type Actor,
   type Caller,
   type Data,
   type Scope,
@@ -20,6 +21,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import { CheckedTransitions } from '@merv/workflows/rules';
+import { permits } from '@merv/scope/rules';
 import type { Experiments } from '@merv/experiments/types';
 import { problemDefined } from '@merv/paper/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';
@@ -146,8 +148,8 @@ export class ResearchService implements Research {
     caller = structuredClone(caller);
     parse(getSchema, { researchId: id });
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      return await this.record(caller, await this.row(caller, id, tx), tx);
+      const actor = await this.scope.require(caller, 'read', tx);
+      return await this.record(caller, await this.row(caller, id, tx), tx, actor);
     });
   }
   /**
@@ -190,7 +192,12 @@ export class ResearchService implements Research {
     };
   }
   /** The cycle a row describes, for a caller already authorized to read it. */
-  private async record(caller: Caller, row: Row, tx: Transaction): Promise<ResearchRecord> {
+  private async record(
+    caller: Caller,
+    row: Row,
+    tx: Transaction,
+    actor: Actor,
+  ): Promise<ResearchRecord> {
     const integrations: string[] = row.integrations ? JSON.parse(row.integrations) : [];
     // The selection is what the cycle waits on now, not what it was created with.
     const children = [row.reflection_id, ...integrations];
@@ -233,6 +240,12 @@ export class ResearchService implements Research {
       problem: row.problem ? JSON.parse(row.problem) : null,
       reflectionId: row.reflection_id,
       integrations,
+      // What authorize asks, as the reader's role answers it: a page offers this reader the
+      // cycle's moves only where Research would take them.
+      writable:
+        !caller.session &&
+        permits(actor.role, 'write') &&
+        (caller.actorId === record.ownerId || permits(actor.role, 'admin')),
     };
   }
   async row(caller: Caller, id: string, tx: Transaction): Promise<Row> {
@@ -248,13 +261,13 @@ export class ResearchService implements Research {
     this.open();
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+      const actor = await this.scope.require(caller, 'read', tx);
       return await mapAsync(
         await tx.all<Row>(
           'SELECT * FROM research_cycles WHERE project_id=? ORDER BY _merv_rowid',
           caller.projectId,
         ),
-        async (row) => await this.record(caller, row, tx),
+        async (row) => await this.record(caller, row, tx, actor),
       );
     });
   }

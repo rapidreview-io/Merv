@@ -29,6 +29,7 @@ import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
 import { ordinary as unmanaged, text, workNameOf } from './common.js';
+import { lapsed, leaseLiveness, livenessLine } from './liveness.js';
 import { platformPhrase } from './rules.js';
 import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from './types.js';
 
@@ -40,8 +41,9 @@ import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from
  * stays the sweep's. A frozen assignment can be half a megabyte, so a lease row is parsed once,
  * in SQL, for the few fields a face needs, and never decoded whole.
  *
- * The words are the Sessions page's (views/liveness.ts): a lease is offered, active, lapsed,
- * released or expired; a runner is live or offline; quiet only ever means no Merv call.
+ * A lease's words are its liveness (liveness.ts), as the Agents page has them: it is offered,
+ * active, lapsed, released or expired; a runner is live or offline; quiet only ever means no
+ * Merv call.
  */
 
 /** A call in flight breathes only once it has outlasted a read of the board. */
@@ -136,9 +138,6 @@ export interface Face {
   dot?: RunningNode['dot'];
   attention?: RunningAttention;
 }
-const lapsed = (lease: Pick<Lease, 'status' | 'expiresAt' | 'hardDeadline'>, now: number) =>
-  lease.status === 'active' &&
-  (Date.parse(lease.expiresAt) <= now || Date.parse(lease.hardDeadline) <= now);
 const presentAt = (machine: NonNullable<Lease['machine']>, now: number) =>
   Date.parse(machine.lastSeenAt) + freshForMs > now;
 /**
@@ -176,13 +175,9 @@ function doingLine({ kind, name, text, at }: NonNullable<Lease['doing']>): Runni
 }
 export function face(lease: Lease, now: number, idleNoticeSeconds: number): Face {
   if (lease.status === 'offered')
-    return {
-      line: ['Offered · not taken up · ', { since: lease.createdAt }],
-      look: 'dashed',
-      dot: 'starting',
-    };
+    return { line: livenessLine(leaseLiveness(lease, now)), look: 'dashed', dot: 'starting' };
   // The sweep closes it within the second; until then this read saw its window close.
-  if (lapsed(lease, now)) return { line: ['Lapsed · lease ran out'], look: 'quiet' };
+  if (lapsed(lease, now)) return { line: livenessLine(leaseLiveness(lease, now)), look: 'quiet' };
   const { running, lastAt } = lease.calls;
   const attention = needs(lease, now, idleNoticeSeconds);
   return {
@@ -830,19 +825,11 @@ export class SessionRunning {
         expect: { field: 'halted', min: 1, nothing: 'Nothing was halted.' },
       };
 
-      const says: RunningPhrase =
-        row.status === 'offered'
-          ? ['Offered ', { since: row.created_at }, ` · ${role}`]
-          : row.status === 'active'
-            ? holding
-              ? ['Active ', { since: row.activated_at ?? row.created_at }, ` · ${role}`]
-              : [`Lapsed · lease ran out · ${role}`]
-            : [
-                row.status === 'released' ? 'Released' : 'Expired',
-                ...(ending && ending !== row.status ? [' · ', { state: ending }] : []),
-                ...(row.closed_at ? [' · ', { ago: row.closed_at }] : []),
-                ` · ${role}`,
-              ];
+      const liveness = leaseLiveness(
+        { ...lease, closedAt: row.closed_at, closeReason: row.close_reason, outcome: row.outcome },
+        now,
+      );
+      const says: RunningPhrase = [...livenessLine(liveness), ` · ${role}`];
       return {
         header: {
           kind: 'Agent',

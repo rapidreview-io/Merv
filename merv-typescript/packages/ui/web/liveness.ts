@@ -1,5 +1,7 @@
 /**
- * Liveness for the Agents pages, and the one place an enum becomes words.
+ * Liveness for the Agents pages, and the one place an enum becomes words. A lease's
+ * liveness is Sessions' own (`leaseLiveness` in sessions/liveness.ts), sent with each lease and
+ * only drawn here; a runner's is composed below.
  *
  * Liveness is behavioural, not lifecycle: one verdict and one phrase per record,
  * composed in a fixed order — the state word, a middle clause, then a clock — so
@@ -87,57 +89,9 @@ const since = (at: string | null | undefined, now: number): number | null => {
   const parsed = at ? Date.parse(at) : Number.NaN;
   return Number.isFinite(parsed) ? now - parsed : null;
 };
-const held = (at: string | null | undefined, now: number) => {
-  const delta = since(at, now);
-  return delta === null ? null : `for ${elapsed(delta)}`;
-};
 const ago = (at: string | null | undefined, now: number, what = '') => {
   const delta = since(at, now);
   return delta === null ? null : `${what}${elapsed(delta)} ago`;
-};
-
-/** The lease fields `sessions.projectStatus` sends, all of them optional here. */
-export interface LeaseFacts {
-  status?: string | null;
-  createdAt?: string | null;
-  activatedAt?: string | null;
-  expiresAt?: string | null;
-  closedAt?: string | null;
-  closeReason?: string | null;
-  outcome?: string | null;
-}
-/** A lease's behaviour: taken up or not, still inside its window or past it, how it ended. */
-export function leaseLiveness(lease: LeaseFacts, now: Now): Liveness | null {
-  const { at, since: age } = clockOf(now);
-  // How it ended is a clause only where it says more than the state word already does.
-  const end = lease.outcome || lease.closeReason;
-  const ending = end && end !== lease.status ? words(end) : null;
-  switch (lease.status) {
-    case 'offered':
-      return say('offered', 'warn', 'not taken up', held(lease.createdAt, at));
-    case 'active':
-      // A heartbeat extends an active lease server-side, so only a read that itself
-      // saw the window close may call it lapsed; `at - age` is that read's moment.
-      return (since(lease.expiresAt, at - age) ?? -1) >= 0
-        ? say('lapsed', 'bad', 'lease ran out', held(lease.expiresAt, at))
-        : say('active', 'ok', held(lease.activatedAt ?? lease.createdAt, at));
-    case 'released':
-      return say('released', 'dim', ending, ago(lease.closedAt, at));
-    case 'expired':
-      return say('expired', 'warn', ending, ago(lease.closedAt, at));
-    default:
-      return null;
-  }
-}
-
-/**
- * Whether the lease is still held, asked of the verdict this module composes
- * rather than of the lifecycle word beside it — so a row's countdown, its KV
- * label and its Halt control cannot disagree with the line that says `lapsed`.
- */
-export const holding = (lease: LeaseFacts, now: Now) => {
-  const verdict = leaseLiveness(lease, now)?.verdict;
-  return verdict === 'offered' || verdict === 'active';
 };
 
 /** The runner fields the same read sends. `live` is the server's own freshness call. */

@@ -1,22 +1,32 @@
-import { Fragment, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useReducer,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { parseAnsi } from './ansi';
 import { CopyButton } from './components';
 import {
-  highlight,
+  colour,
+  colourable,
   highlightable,
-  highlightNow,
   languageOf,
   type Language,
   type Piece,
 } from './highlight';
 import { WrapIcon } from './icons';
+import { offThread } from './off-thread';
 
 /**
  * Code as it is read here, wherever it stands: a fence in a document, a file, a
  * check's output. A quiet head names the language and offers the two moves code
  * needs, to wrap its long lines and to copy it; the body is the text as written,
- * drawn plain at once and coloured once its grammar loads (highlight.ts); text in
- * no language it knows is read as a terminal's, coloured by its own escapes (ansi.ts).
+ * drawn plain at once and coloured, off the page's thread, once its grammar loads
+ * (highlight.ts); text in no language it knows is read as a terminal's, coloured by
+ * its own escapes (ansi.ts).
  * Line numbers are drawn by the stylesheet beside each line, never inside it, so
  * whatever a reader selects and copies is the code alone.
  */
@@ -55,35 +65,36 @@ export const AnsiText = ({ text }: { text: string }) => (
 
 /** How long text must stand unchanged before it is coloured again: a block streaming in is not. */
 const STILL_MS = 300;
+/** The colours of the code drawn last, by language and text, done off the page's thread. */
+const colours = offThread<{ code: string; lang: string }, Piece[][] | null>((job) =>
+  colour(job.code, job.lang),
+);
 
 /**
- * The lines of `code` coloured: as first drawn where the highlighter already holds
- * its grammar, otherwise once that loads. Text that then changes, a block still
- * streaming in, is coloured again only once it has stood still a moment, never with
- * every piece that arrives. Until then, and for a language it does not know, there
- * is nothing, and the code is drawn plain.
+ * The lines of `code` coloured: as first drawn where it was coloured before, otherwise
+ * once the highlighter has coloured it. Text that then changes, a block still streaming
+ * in, is coloured again only once it has stood still a moment, never with every piece
+ * that arrives. Until then, and for a language it does not know, there is nothing, and
+ * the code is drawn plain.
  */
 function useHighlight(code: string, language: Language | undefined) {
-  const [drawn] = useState(() => ({ code, language, lines: highlightNow(code, language) }));
-  const [later, setLater] = useState<{ code: string; language: Language; lines: Piece[][] }>();
-  const first = drawn.code === code && drawn.language === language;
-  const now = first ? drawn.lines : undefined;
+  const [first] = useState(code);
+  const [, wake] = useReducer((count: number) => count + 1, 0);
+  const key = language && colourable(code) ? `${language.id}\n${code}` : undefined;
+  const lines = key ? colours.known(key) : undefined;
   useEffect(() => {
-    if (now || !language || !highlightable(code)) return;
-    let live = true;
+    if (!key || lines !== undefined) return;
+    let stop = () => {};
     const still = setTimeout(
-      () =>
-        void highlight(code, language, () => live).then((lines) => {
-          if (live && lines) setLater({ code, language, lines });
-        }),
-      first ? 0 : STILL_MS,
+      () => (stop = colours.want(key, { code, lang: language!.id }, wake)),
+      code === first ? 0 : STILL_MS,
     );
     return () => {
-      live = false;
       clearTimeout(still);
+      stop();
     };
-  }, [code, language, now, first]);
-  return now ?? (later?.code === code && later.language === language ? later.lines : undefined);
+  }, [key, lines]);
+  return lines ?? undefined;
 }
 
 /** The head every block of code wears: what it is, any move of its own, and copy. */

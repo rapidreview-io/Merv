@@ -1,3 +1,4 @@
+import { REVIEW_VERDICTS } from '@merv/reviews/rules';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import type { LeaseRow } from '@merv/workflows/lease-rows';
 import {
@@ -184,6 +185,11 @@ export class TaskService implements Tasks {
           if (row.review_id === review.id && !review.override)
             await leasedClaim(this, caller, snapshot, tx);
         },
+        overrides: ['leased_review_required'],
+        // A Git task passes only from a leased reviewer in a checkout of the delivered commit
+        // (checkoutReviewer), unless its owner decides as owner.
+        verdicts: async (caller, review) =>
+          caller.session || review.override ? REVIEW_VERDICTS : ['needs_changes', 'fail'],
         // A task carries the claims of its newest delivery only, so they stand beside the
         // review of that delivery and beside no earlier one.
         claims: async (caller, review, tx) =>

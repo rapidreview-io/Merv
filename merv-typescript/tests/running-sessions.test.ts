@@ -318,6 +318,12 @@ test('an offered lease is dashed and starting, on the machine that took it, even
     [summary?.label, summary?.name, summary?.workflow],
     ['Work: Rebuild citation index', 'Rebuild citation index', 'running-fixture'],
   );
+  // The Agents page draws the lease in the words its Running card leads with, sent by Sessions.
+  assert.deepEqual(summary?.liveness, {
+    verdict: 'offered',
+    tone: 'warn',
+    rest: ['not taken up · ', { since: offered.createdAt }],
+  });
 });
 
 test('a lease offered before owners named their records reads its label without its purpose', async (t) => {
@@ -490,7 +496,7 @@ test('a revoked key reads as such, and a lease with no runner row is never red f
   assert.deepEqual(nobody.links, [{ to: 'work:wf_1', verb: 'reviews' }]);
   // A lease the read saw run out is lapsed, not red; the sweep closes it.
   const ran = face({ ...lease, machine: null, expiresAt: at(1) }, now, 1800);
-  assert.deepEqual(ran, { line: ['Lapsed · lease ran out'], look: 'quiet' });
+  assert.deepEqual(ran, { line: ['Lapsed · lease ran out · ', { since: at(1) }], look: 'quiet' });
 });
 
 test('the lane says how dispatch stands to everyone, and to an operator only how much waits and why, with its control', async (t) => {
@@ -690,7 +696,7 @@ test('a lease’s sidebar streams its Merv calls, running first, with its terms,
   const panel = await f.panel(f.owner, key);
   assert.equal(panel.header.kind, 'Agent');
   assert.equal(panel.header.title, 'Rebuild citation index');
-  assert.deepEqual(panel.header.says, ['Active ', { since: takenUp }, ' · Producer']);
+  assert.deepEqual(panel.header.says, ['Active · ', { since: takenUp }, ' · Producer']);
   assert.equal(panel.live, true);
   assert.equal(panel.route, undefined, 'the Sessions page opens no one lease');
 
@@ -764,8 +770,7 @@ test('a lease’s sidebar streams its Merv calls, running first, with its terms,
   assert.equal(closed.live, false);
   assert.deepEqual(closed.actions, []);
   assert.deepEqual(closed.header.says, [
-    'Released',
-    ' · ',
+    'Released · ',
     { state: 'halted' },
     ' · ',
     { ago: new Date(f.now()).toISOString() },
@@ -787,7 +792,11 @@ test('a short stream carries the lease’s own moments, and a lease is offered o
   const leased = (await f.sessions.dispatch.lease(f.source, input)).session!;
   const offeredAt = new Date(f.now()).toISOString();
   let panel = await f.panel(f.owner, `session:${leased.id}`);
-  assert.deepEqual(panel.header.says, ['Offered ', { since: offeredAt }, ' · Producer']);
+  assert.deepEqual(panel.header.says, [
+    'Offered · not taken up · ',
+    { since: offeredAt },
+    ' · Producer',
+  ]);
   assert.deepEqual(facts(panel, 'Lease'), {
     Ends: [{ until: leased.hardDeadline }],
     Lapses: [{ until: leased.expiresAt }],

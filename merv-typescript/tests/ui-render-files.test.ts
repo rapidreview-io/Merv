@@ -584,10 +584,9 @@ test('how one file is read, its source shown, does not carry over to the next', 
 });
 
 test('a line is coloured whole however long its grammar takes to read it', async () => {
-  const { highlight, languageOf } = await import('../packages/ui/web/highlight.js');
-  const ts = languageOf('ts')!;
+  const { colour } = await import('../packages/ui/web/highlight.js');
   const code = 'const a = 1;';
-  const steady = await highlight(code, ts);
+  const steady = await colour(code, 'ts');
   assert.ok(steady && steady[0]!.length >= 7, 'every token of the line');
   // A grammar reads its first lines slowly while it compiles, more so on a busy machine: a clock
   // that leaps a second with each look stands for that. The line must not be cut short.
@@ -595,22 +594,20 @@ test('a line is coloured whole however long its grammar takes to read it', async
   let clock = now();
   Date.now = () => (clock += 1000);
   try {
-    assert.deepEqual(await highlight(code, ts), steady);
+    assert.deepEqual(await colour(code, 'ts'), steady);
   } finally {
     Date.now = now;
   }
 });
 
 test('a line too long to colour quickly leaves its block plain, at once', async () => {
-  const { highlight, highlightNow, languageOf } = await import('../packages/ui/web/highlight.js');
-  const ts = languageOf('ts')!;
-  assert.ok(await highlight('const a = 1;', ts), 'the grammar is loaded');
+  const { colour } = await import('../packages/ui/web/highlight.js');
+  assert.ok(await colour('const a = 1;', 'ts'), 'the grammar is loaded');
   // One minified line: the grammar's time grows with a line's length far faster than linearly.
   const line = `const data = [${'1, '.repeat(6_700)}];`;
   assert.ok(line.length >= 20_000);
   const start = performance.now();
-  assert.equal(await highlight(line, ts), undefined);
-  assert.equal(highlightNow(`// a short line\n${line}`, ts), undefined);
+  assert.equal(await colour(`// a short line\n${line}`, 'ts'), null);
   assert.ok(performance.now() - start < 200, `${performance.now() - start} ms`);
 });
 

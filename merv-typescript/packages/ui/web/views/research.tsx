@@ -6,13 +6,11 @@ import { LoadState, RecordPage } from '../components';
 import { recordRoutes } from '../list-filters';
 import { homeOf, pathOf } from '../navigation';
 import { Gate, Relations, StageMark } from '../process';
-import { useSession } from '../session';
 import type { ViewProps } from './index';
 import { CycleMove } from './work';
 
 function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
-  const { actor } = useSession();
   const back = homeOf(shell.rows);
   const cycle = useTool<ResearchRecord>('research.get', { researchId: id }, { every: 10000 });
   const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 5000 });
@@ -23,8 +21,6 @@ function CycleDetail({ row, shell }: ViewProps) {
       </div>
     );
   const record = cycle.data;
-  const writable =
-    actor.role === 'operator' || (actor.role === 'producer' && record.ownerId === actor.id);
   const relations = process.data?.dependencies ?? [];
   const waitsOn = relations.filter((item) => item.direction === 'depends_on');
   const unblocks = relations.filter((item) => item.direction === 'required_by');
@@ -44,7 +40,7 @@ function CycleDetail({ row, shell }: ViewProps) {
       state={<StageMark graph={process.data} shapes={shell.workflows} workflow={record.workflow} />}
       act={
         <Gate graph={process.data}>
-          {writable && (
+          {record.writable && (
             // The stack would stretch the one control to the pane's width.
             <div className="cluster">
               <CycleMove
