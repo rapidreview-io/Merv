@@ -2246,14 +2246,14 @@ test('a person’s Agent tokens are charged before each call and settled after, 
   await f.pi.begin(bound.token, bound.input);
   const grant = await f.pi.authorizeModel(bound.work.modelToken);
   const body = { model: grant.model, input: [], max_output_tokens: 600 };
-  const charged = await f.pi.reserveModel(grant, body);
+  const charged = await f.pi.tokens.reserve(grant, body);
   assert.equal(charged.tokens, Math.ceil(JSON.stringify(body).length / 4) + 600);
   assert.match(charged.day, /^\d{4}-\d{2}-\d{2}$/);
   // A second call at its most would pass the ceiling while the first is still out.
-  await assert.rejects(f.pi.reserveModel(grant, body), code('pi_model_ceiling'));
+  await assert.rejects(f.pi.tokens.reserve(grant, body), code('pi_model_ceiling'));
   // Settled to what it used, the day has room again.
-  await f.pi.settleModel({ inputTokens: 40, outputTokens: 10 }, grant, charged);
-  assert.deepEqual(await f.pi.reserveModel(grant, body), charged);
+  await f.pi.tokens.settle({ inputTokens: 40, outputTokens: 10 }, grant, charged);
+  assert.deepEqual(await f.pi.tokens.reserve(grant, body), charged);
   // A call settles to the day it was charged to, whatever the day is when it finishes.
   await f.state.transaction((tx) =>
     tx.run(
@@ -2263,7 +2263,7 @@ test('a person’s Agent tokens are charged before each call and settled after, 
       10,
     ),
   );
-  await f.pi.settleModel({ inputTokens: 1, outputTokens: 2 }, grant, {
+  await f.pi.tokens.settle({ inputTokens: 1, outputTokens: 2 }, grant, {
     day: '2000-01-01',
     tokens: 10,
   });
