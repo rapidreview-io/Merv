@@ -703,6 +703,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || failed.has(projectId)) continue;
       const owner = workOwner(id);
+      // Accepted: machines the retired per-step owner (`<instance>:<revision>`) rented do not count,
+      // so work it exhausted gets one more two-rental window; grants index this list as it is.
       const attempts = allocations.filter((a) => a.projectId === projectId && a.owner.id === owner);
       // A new task revision has a new id. For this exact revision, stop paying for
       // repeated machines that never claimed work.
