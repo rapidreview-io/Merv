@@ -702,6 +702,14 @@ test('main moving under an approved head is a stale wait, not a failure', async 
     [true],
   );
   assert.deepEqual((await f.code.acceptedSince(f.admin)).unitIds, [work.id]);
+  // A consumer waiting on this publication is woken once.
+  const wakes = (await f.state.events(f.admin.projectId)).filter(
+    (event) => event.type === 'code.publication_stale',
+  );
+  assert.deepEqual(
+    wakes.map((event) => [event.subjectId, event.data.unitId]),
+    [[opened.proposalId, work.id]],
+  );
 });
 
 test('a disabled project and a published tree mismatch both show on the unit', async (t) => {
@@ -904,8 +912,17 @@ test('local integration refuses a main that moved after review', async (t) => {
   await f.accept(work, f.feature);
   await f.setMain(f.moved);
   await f.sync();
+  await f.sync();
   assert.equal((await f.code.status(f.admin)).project?.main.oid, f.moved);
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'stale');
+  const wakes = (await f.state.events(f.admin.projectId)).filter(
+    (event) => event.type === 'code.publication_stale',
+  );
+  assert.deepEqual(
+    wakes.map((event) => event.data.unitId),
+    [work.id],
+    'a consumer waiting on this publication is woken once',
+  );
 });
 
 test('a reviewed delivery with unchanged source can integrate the existing commit', async (t) => {

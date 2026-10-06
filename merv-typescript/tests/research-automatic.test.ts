@@ -173,7 +173,7 @@ async function fixture(t: TestContext, plugin = false) {
   const pump = async () => {
     await app.ctx.domainEvents.drain();
     const status = (await app.ctx.domainEvents.status()).find(
-      (item) => item.id === 'research.automatic.v2',
+      (item) => item.id === 'research.automatic.v3',
     );
     assert.equal(status?.error ?? null, null, JSON.stringify(status));
   };
@@ -519,20 +519,27 @@ test('worker sessions cannot authorize automatic research or advance the outer c
 test('publication-aware automation upgrades the durable subscription and wakes existing cycles', async (t) => {
   const f = await fixture(t);
   await f.define();
-  const releaseOld = await f.app.ctx.domainEvents.subscribe({
-    id: 'research.automatic.v1',
-    from: 'beginning',
-    types: [
-      'workflow.transition',
-      'workflow.limit_extended',
-      'research.created',
-      'research.resume',
-      'paper.patched',
-      'actor.permissions_changed',
-    ],
-    handle: async () => {},
-  });
-  await releaseOld();
+  const types = [
+    'workflow.transition',
+    'workflow.limit_extended',
+    'research.created',
+    'research.resume',
+    'paper.patched',
+    'actor.permissions_changed',
+  ];
+  // The consumers earlier releases left behind, before stale publications woke it as well.
+  for (const [id, more] of [
+    ['research.automatic.v1', []],
+    ['research.automatic.v2', ['code.publication_verified']],
+  ] as const) {
+    const release = await f.app.ctx.domainEvents.subscribe({
+      id,
+      from: 'beginning',
+      types: [...types, ...more],
+      handle: async () => {},
+    });
+    await release();
+  }
   const work = await f.task();
   const cycle = await f.create([work.id]);
   await f.failTask(work.id);
@@ -540,7 +547,7 @@ test('publication-aware automation upgrades the durable subscription and wakes e
   await f.pump();
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
   assert.ok(
-    (await f.app.ctx.domainEvents.status()).some((item) => item.id === 'research.automatic.v1'),
+    (await f.app.ctx.domainEvents.status()).some((item) => item.id === 'research.automatic.v2'),
   );
 });
 
@@ -684,6 +691,42 @@ test('an automatic cycle waits on its consolidation task and its publication as 
     2,
     'the waits cost no cycle',
   );
+});
+
+test('a publication main overtook wakes an automatic cycle to inject its successor', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const work = await f.task();
+  const cycle = await f.create([work.id], { maxCycles: 3 });
+  await f.finishTask(work.id);
+  await f.pump();
+  const main: Main = { unitIds: [work.id] };
+  hostedCode(f.research, f.app.ctx, f.owner, main);
+  await f.approve(cycle.id, next('after-main'));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  await f.pump();
+  const [taskId] = (await f.research.get(f.owner, cycle.id)).integrations;
+  main.publication = { state: 'pending', pull: { number: 3, url: 'https://example.test/pull/3' } };
+  await f.finishTask(taskId);
+  await f.pump();
+  assert.equal(
+    (await f.research.get(f.owner, cycle.id)).automation!.blocker!.code,
+    'publication_pending',
+  );
+  // Main moved first: Code marks the publication stale, and says so.
+  main.publication = { state: 'stale' };
+  main.unitIds = [work.id, taskId];
+  await f.app.ctx.state.transaction((tx) =>
+    recorded(f.app.ctx.state, tx, f.owner, 'code.publication_stale', 'codeprop_test', {
+      unitId: taskId,
+    }),
+  );
+  await f.pump();
+  const record = await f.research.get(f.owner, cycle.id);
+  assert.equal(record.workflow.state, 'consolidating');
+  assert.equal(record.integrations.length, 2, 'the stale publication woke the cycle');
+  assert.equal(record.automation!.blocker!.code, 'dependencies_pending');
 });
 
 test('changed definitions wait for owner acceptance and ending a cycle stops subsequent handoffs', async (t) => {
