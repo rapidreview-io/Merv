@@ -1591,7 +1591,7 @@ test('a lease admits the captures of its own attempt only', async (t) => {
 test('work pinned before Experiments recorded an epoch keeps every one Sandboxes derived', () => {
   // Sandboxes derived the epoch of such work from its revision, so each revision it passed
   // through had its own; a move, which records an epoch from then on, loses none of them.
-  for (const data of [{}, { computeEpoch: '2:running' }]) {
+  for (const data of [{}, { computeEpoch: '2:running' }] as Data[]) {
     const epochs = captureEpochs(2, { data, revision: 7 });
     for (const revision of ['1', '4', '7']) assert.ok(epochs.includes(revision));
     assert.ok(epochs.includes('2:running'));
