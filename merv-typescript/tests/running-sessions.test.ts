@@ -1144,3 +1144,38 @@ test('an agent’s live stream is kept 30 days after its session ended, then the
   // The other lapsed only at the first sweep, 29 days on: its stream is kept.
   assert.equal(await count(kept.session.id), 1);
 });
+
+test('the sweep deletes an ended session’s stream although a live one holds a thousand older events', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.heartbeat();
+  await f.instance();
+  await f.instance();
+  const { session } = await f.active();
+  const busy = await f.active();
+  const event = `'{"kind":"status","id":"s","text":"Working"}'`;
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO session_events(session_id,seq,at,until,event) SELECT ?,n,?,n,${event} FROM generate_series(1,1000) AS n`,
+      busy.session.id,
+      new Date(f.now() - 1000).toISOString(),
+    );
+    await tx.run(
+      `INSERT INTO session_events(session_id,seq,at,until,event) VALUES(?,1,?,1,${event})`,
+      session.id,
+      new Date(f.now()).toISOString(),
+    );
+  });
+  const count = async (id: string) =>
+    Number(
+      (await f.state.read((sql) =>
+        sql.get<{ n: string }>('SELECT COUNT(*) AS n FROM session_events WHERE session_id=?', id),
+      ))!.n,
+    );
+  await f.sessions.dispatch.halt(f.owner, { sessionId: session.id, reason: 'halted_by_operator' });
+  f.advance(31 * 86_400_000);
+  await f.sessions.sweep();
+  // The busy session's older events, which lapsed only now, are not what the sweep waits on.
+  assert.equal(await count(session.id), 0);
+  assert.equal(await count(busy.session.id), 1000);
+});
