@@ -7,7 +7,6 @@ import test, { type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   createService,
-  executionOutputs,
   MervError,
   now,
   sha256Hex,
@@ -227,7 +226,7 @@ test('a session create records its session, and metadata answers carry no bytes'
   ]);
   assert.deepEqual(Object.keys(await store.get(worker, artifact.id)).sort(), keys);
   for (const listed of await store.list(worker)) assert.deepEqual(Object.keys(listed).sort(), keys);
-  const outputs = await executionOutputs(store, worker);
+  const outputs = await store.executionOutputs(worker);
   assert.deepEqual(outputs, [artifact]);
   assert.deepEqual(Object.keys(outputs[0]).sort(), keys);
 });
@@ -268,7 +267,7 @@ test('execution outputs are what this session created as this actor, oldest firs
       )
     ).map((row) => row.id);
   const outputs = async (caller: Caller) =>
-    (await executionOutputs(store, caller)).map((artifact) => artifact.id);
+    (await store.executionOutputs(caller)).map((artifact) => artifact.id);
   for (const caller of [first, second, other])
     assert.deepEqual(await outputs(caller), await receipts(caller));
   assert.equal((await outputs(first)).length, 3);
@@ -277,7 +276,7 @@ test('execution outputs are what this session created as this actor, oldest firs
   assert.equal((await outputs(other)).length, 1);
 
   const list = t.mock.method(store, 'list');
-  await assert.rejects(executionOutputs(store, f.caller), { code: 'forbidden', status: 403 });
+  await assert.rejects(store.executionOutputs(f.caller), { code: 'forbidden', status: 403 });
   assert.equal(list.mock.callCount(), 0);
 });
 
@@ -311,7 +310,7 @@ test('execution outputs page through every output with the caller they started w
     Object.assign(worker, { actorId: peer, session: { id: 'ses_other' } });
     return page;
   });
-  const outputs = await executionOutputs(store, worker);
+  const outputs = await store.executionOutputs(worker);
   assert.deepEqual(
     outputs.map((artifact) => artifact.id),
     expected,

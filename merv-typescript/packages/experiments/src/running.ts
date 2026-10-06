@@ -1,6 +1,5 @@
 import {
   clip,
-  dependencyRows,
   runningKey,
   type ProcessGraph,
   type ReviewRequest,
@@ -14,6 +13,7 @@ import {
   type WorkflowHistoryEntry,
   type WorkRoute,
 } from '@merv/contracts';
+import { dependencyRows } from '@merv/workflows/dependency-rows';
 import type { Experiment } from './models.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
 

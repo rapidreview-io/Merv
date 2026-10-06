@@ -109,6 +109,9 @@ const artifacts = {
   async getMany(caller: Caller, ids: readonly string[]) {
     return await Promise.all(ids.map(async (id) => await artifacts.get(caller, id)));
   },
+  async getAll(caller: Caller, ids: readonly string[]) {
+    return await artifacts.getMany(caller, ids);
+  },
   async read(_caller: Caller, id: string) {
     const entry = stored.get(id);
     if (!entry) throw new MervError('not_found', 'Artifact not found', 404);

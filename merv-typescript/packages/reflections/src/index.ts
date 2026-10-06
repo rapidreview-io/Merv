@@ -9,7 +9,7 @@ import {
 } from '@merv/contracts';
 import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
-import { executionOutputs, getArtifacts, keyId, keyKind } from '@merv/contracts';
+import { keyId, keyKind } from '@merv/contracts';
 import { CheckedTransitions } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -846,7 +846,7 @@ export class ReflectionService implements Reflections {
         ...new Set([
           ...this.inputIds(inputs),
           ...(context.caller.session
-            ? (await executionOutputs(this.artifacts, context.caller, context.tx)).map((a) => a.id)
+            ? (await this.artifacts.executionOutputs(context.caller, context.tx)).map((a) => a.id)
             : []),
         ]),
       ],
@@ -982,7 +982,7 @@ export class ReflectionService implements Reflections {
           };
         }
         const ids = this.inputIds(inputs);
-        await getArtifacts(this.artifacts, context.source, ids, context.tx);
+        await this.artifacts.getAll(context.source, ids, context.tx);
         const receipt = {
           leaseId: context.leaseId,
           instanceId: context.snapshot.id,
@@ -1025,7 +1025,7 @@ export class ReflectionService implements Reflections {
       outputs: async (context) => {
         await this.lease(context);
         return {
-          artifacts: (await executionOutputs(this.artifacts, context.caller, context.tx)).map(
+          artifacts: (await this.artifacts.executionOutputs(context.caller, context.tx)).map(
             (a) => a.id,
           ),
         };
@@ -1272,7 +1272,7 @@ export class ReflectionService implements Reflections {
     );
     if (caller.session)
       check(
-        (await executionOutputs(this.artifacts, caller, tx)).some((a) => a.id === id),
+        (await this.artifacts.executionOutputs(caller, tx)).some((a) => a.id === id),
         'artifact_execution_required',
         'Evidence must be authored in this execution',
         403,

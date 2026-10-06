@@ -13,8 +13,6 @@ import {
   keyId,
   keyKind,
   mapAsync,
-  getArtifacts,
-  executionOutputs,
   MervError,
   newId,
   now,
@@ -484,9 +482,7 @@ export class TaskService implements Tasks {
         return {
           artifacts: [
             ...new Set([
-              ...(await executionOutputs(this.artifacts, caller, tx)).map(
-                (artifact) => artifact.id,
-              ),
+              ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
               ...(await this.captureArtifactIds(caller.projectId, snapshot.id, tx)),
             ]),
           ],
@@ -603,7 +599,7 @@ export class TaskService implements Tasks {
       ]),
     ];
     // The authenticated source approves existing task continuity evidence exactly once.
-    const pinnedArtifacts = await getArtifacts(this.artifacts, source, ids, tx);
+    const pinnedArtifacts = await this.artifacts.getAll(source, ids, tx);
     const receipt: Data = {
       leaseId,
       taskId: snapshot.id,
@@ -643,7 +639,7 @@ export class TaskService implements Tasks {
       ...new Set([
         ...pinned.map((artifact) => artifact.id),
         ...((await this.captureArtifactIds(caller.projectId, lease.task_id, tx)) ?? []),
-        ...(await executionOutputs(this.artifacts, caller, tx)).map((artifact) => artifact.id),
+        ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
       ]),
     ].sort();
   }
@@ -1392,7 +1388,7 @@ export class TaskService implements Tasks {
             'context_missing',
             `Missing required context: ${section.key}`,
           );
-          await getArtifacts(this.artifacts, caller, ids, tx);
+          await this.artifacts.getAll(caller, ids, tx);
         }
         // The brief renders the title and each check on its own numbered line.
         const line = (value: unknown) =>
@@ -2505,7 +2501,7 @@ export class TaskService implements Tasks {
         'A confirmation sheet or commit record Merv rendered for a delivery cannot serve as evidence',
       );
     }
-    const artifacts = await getArtifacts(this.artifacts, caller, input.artifactIds, tx);
+    const artifacts = await this.artifacts.getAll(caller, input.artifactIds, tx);
     const captures = new Set((await this.captureArtifactIds(caller.projectId, row.id, tx)) ?? []);
     check(
       artifacts.every(

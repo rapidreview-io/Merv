@@ -77,7 +77,6 @@ export {
   keyId,
   sameOriginPath,
   workLink,
-  dependencyRows,
 } from './running.js';
 export {
   codexHandoffGraceMs,
@@ -1152,7 +1151,7 @@ export interface Scope {
 }
 /** The most bytes an artifact holds inline: created whole, or read whole or in ranges. */
 export const MAX_ARTIFACT_BYTES = 2_000_000;
-/** The most ids one `Artifacts.getMany` call looks up; `getArtifacts` takes any number. */
+/** The most ids one `Artifacts.getMany` call looks up; `getAll` takes any number. */
 export const MAX_ARTIFACT_IDS = 2000;
 export interface ArtifactInput {
   title: string;
@@ -1238,6 +1237,9 @@ export interface Artifacts {
   /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: the artifacts in input
    * order, duplicates kept; `not_found` for the first id that is not in this project. */
   getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
+  /** `getMany` for any number of ids, MAX_ARTIFACT_IDS at a time: the artifacts in input order,
+   * duplicates kept; `not_found` for the first id that is not in this project. */
+  getAll(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
   /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`; `artifact_size` above the
    * inline limit. Bytes kept in the row are read locally; older rows fetch them from storage. */
   bytes(
@@ -1264,51 +1266,10 @@ export interface Artifacts {
     query?: { before?: string; limit?: number; session?: string },
     tx?: Transaction,
   ): Promise<Artifact[]>;
-}
-/**
- * `Artifacts.getMany` for any number of ids, MAX_ARTIFACT_IDS at a time: the artifacts in input
- * order, duplicates kept; `not_found` for the first id that is not in this project.
- */
-export async function getArtifacts(
-  artifacts: Pick<Artifacts, 'getMany'>,
-  caller: Caller,
-  ids: readonly string[],
-  tx?: Transaction,
-): Promise<Artifact[]> {
-  const found: Artifact[] = [];
-  for (let start = 0; start < ids.length; start += MAX_ARTIFACT_IDS)
-    found.push(
-      ...(await artifacts.getMany(caller, ids.slice(start, start + MAX_ARTIFACT_IDS), tx)),
-    );
-  return found;
-}
-/**
- * The outputs of the calling session worker's execution: the artifacts its session created as
- * this actor, oldest first, metadata only. Scope refuses a session caller whose actor is not
- * that session's worker; any other caller is refused here.
- */
-export async function executionOutputs(
-  artifacts: Pick<Artifacts, 'list'>,
-  caller: Caller,
-  tx?: Transaction,
-): Promise<Artifact[]> {
-  // The session and actor are read after awaits.
-  caller = structuredClone(caller);
-  check(
-    caller.session,
-    'forbidden',
-    'Output receipts require an authenticated session worker',
-    403,
-  );
-  const outputs: Artifact[] = [];
-  const limit = 1000;
-  let page: Artifact[] = [];
-  do {
-    const before = page.at(-1)?.id;
-    page = await artifacts.list(caller, { session: caller.session.id, before, limit }, tx);
-    outputs.push(...page.filter((artifact) => artifact.createdBy === caller.actorId));
-  } while (page.length === limit);
-  return outputs.reverse();
+  /** The outputs of the calling session worker's execution: the artifacts its session created
+   * as this actor, oldest first, metadata only. Scope refuses a session caller whose actor is
+   * not that session's worker; any other caller is refused here. */
+  executionOutputs(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
 }
 export interface WorkflowDefinition {
   name: string;

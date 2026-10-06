@@ -29,8 +29,8 @@ flowchart LR
     postgres[("PostgreSQL")]
   end
   workerAgent -- "calls workflow.begin" --> workflows
-  tasks -- "injects" --> workflows
-  experiments -- "injects" --> workflows
+  tasks -- "injects; draws dependency-rows" --> workflows
+  experiments -- "injects; draws dependency-rows" --> workflows
   reflections -- "injects" --> workflows
   research -- "injects" --> workflows
   knowledge -- "injects" --> workflows

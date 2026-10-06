@@ -405,6 +405,12 @@ export class ArtifactStore implements Artifacts {
       return artifact;
     });
   }
+  async getAll(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]> {
+    const found: Artifact[] = [];
+    for (let start = 0; start < ids.length; start += MAX_ARTIFACT_IDS)
+      found.push(...(await this.getMany(caller, ids.slice(start, start + MAX_ARTIFACT_IDS), tx)));
+    return found;
+  }
   async list(
     caller: Caller,
     { before, limit = 1000, session }: { before?: string; limit?: number; session?: string } = {},
@@ -443,6 +449,25 @@ export class ArtifactStore implements Artifacts {
         )
       ).map(fromRow);
     });
+  }
+  async executionOutputs(caller: Caller, tx?: Transaction): Promise<Artifact[]> {
+    // The session and actor are read after awaits.
+    caller = structuredClone(caller);
+    check(
+      caller.session,
+      'forbidden',
+      'Output receipts require an authenticated session worker',
+      403,
+    );
+    const outputs: Artifact[] = [];
+    const limit = 1000;
+    let page: Artifact[] = [];
+    do {
+      const before = page.at(-1)?.id;
+      page = await this.list(caller, { session: caller.session.id, before, limit }, tx);
+      outputs.push(...page.filter((artifact) => artifact.createdBy === caller.actorId));
+    } while (page.length === limit);
+    return outputs.reverse();
   }
 }
 export const artifactsPlugin = {

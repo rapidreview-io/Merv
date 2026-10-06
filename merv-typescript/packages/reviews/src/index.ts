@@ -1,5 +1,5 @@
 import { excludedFromReview, directsIndependently } from './rules.js';
-import { canonical, visible, sourceCaller, getArtifacts } from '@merv/contracts';
+import { canonical, visible, sourceCaller } from '@merv/contracts';
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -649,7 +649,7 @@ export class ReviewService implements Reviews {
         'invalid_artifacts',
         'Review requires authored output as well as any pinned inputs',
       );
-      const manifest = await getArtifacts(this.artifacts, caller, input.artifactIds, tx);
+      const manifest = await this.artifacts.getAll(caller, input.artifactIds, tx);
       // Exclusions name contributors: authors of retained evidence, the record's owner, or
       // the authority that directed the submitting worker.
       check(

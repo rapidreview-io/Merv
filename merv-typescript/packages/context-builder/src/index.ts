@@ -5,7 +5,6 @@ import { renderItems, type ResolvedArtifacts } from './items.js';
 import {
   check,
   clip,
-  getArtifacts,
   createService,
   recorded,
   visible,
@@ -135,7 +134,7 @@ async function resolve(
   const found = new Map<string, Artifact | MervError>();
   const fetch = async (batch: string[]) => {
     try {
-      const fetched = await getArtifacts(artifacts, caller, batch, tx);
+      const fetched = await artifacts.getAll(caller, batch, tx);
       batch.forEach((id, index) => found.set(id, fetched[index]!));
       return true;
     } catch (error) {
