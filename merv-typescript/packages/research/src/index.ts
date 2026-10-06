@@ -119,8 +119,6 @@ const integrationChecks = [
 const origin = (approved: ApprovedReflection, ...named: string[]) =>
   `\n\nOrigin: reflection ${approved.id}, ${named.join(', ')}.`;
 const pinned = (kind: string, { id, hash }: Artifact) => `${kind} ${id} (${hash})`;
-/** A cycle in one of these states is over: it may be digested and it may be followed. */
-const over = new Set(['complete', 'abandoned', 'failed']);
 /**
  * A digest rides inside a 24000-character reflection context, behind the assignment and any
  * rework feedback. At this bound it still fits beside them instead of being omitted whole.
@@ -191,21 +189,19 @@ export class ResearchService implements Research {
   private bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
   private handle?: Awaited<ReturnType<Workflows['register']>>;
   private checked = new CheckedTransitions();
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
     private workflows: Workflows,
-  ) {
-    this.initialize = async () => {
-      await state.migrate(
-        'research',
-        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-      );
-      // Providers bind later, each as it arrives; see researchPlugin.
-      this.handle = await workflows.register(definition, this.policy());
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate(
+      'research',
+      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+    );
+    // Providers bind later, each as it arrives; see researchPlugin.
+    this.handle = await this.workflows.register(definition, this.policy());
   }
 
   private policy(): WorkflowPolicy {
@@ -349,7 +345,7 @@ export class ResearchService implements Research {
   ): Promise<ResearchAutomation> {
     const { workflow } = record;
     const status = { rootId: row.root_id, cycle: row.cycle_index, maxCycles: row.max_cycles };
-    if (over.has(workflow.state))
+    if (definition.terminal.includes(workflow.state))
       return {
         ...status,
         blocker:
@@ -494,7 +490,7 @@ export class ResearchService implements Research {
   ): Promise<void> {
     const previous = await this.get(caller, previousCycleId, tx);
     check(
-      over.has(previous.workflow.state),
+      definition.terminal.includes(previous.workflow.state),
       'previous_cycle_open',
       'The predecessor cycle is still open; complete or end it before starting its successor',
       409,
@@ -1639,7 +1635,7 @@ export class ResearchService implements Research {
     this.open();
     const record = await this.get(caller, automatic.research_id, tx);
     await this.authorize(caller, record, tx);
-    if (over.has(record.workflow.state)) return null;
+    if (definition.terminal.includes(record.workflow.state)) return null;
     if (record.workflow.state === 'defining' && record.previousCycleId) {
       const previous = await this.get(caller, record.previousCycleId, tx);
       const current = await this.definition(caller, tx, []);
