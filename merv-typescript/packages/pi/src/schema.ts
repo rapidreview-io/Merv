@@ -203,3 +203,72 @@ export const usageMigration = {
     PRIMARY KEY(person, day)
   );`,
 };
+/**
+ * pi@4 keeps what Run told the agent (`ran.told`, and `said`, the part that says how the call
+ * came out) on each call that ran before Pi kept it, so the page reads it as it reads any other.
+ * Run then wrote it only as the person's next message, the first of a later turn answering the
+ * latest calls: `Ran <tool>: <result>` (a tool's receipt ends `. Re-read … for current details.`,
+ * which `said` leaves out), `Ran <tool>; its result is shown only to me.`, or
+ * `<tool> was refused: <why>`. Calls alike are told in the order they ran; words sent with the
+ * person's own after them are theirs. Pi kept `told` from 2026-10-06, and Run had existed since
+ * 2026-09-25, so only proposals run in those eleven days change: the read-only count is
+ * `SELECT count(*) FROM pi_commands, jsonb_array_elements(data_json::jsonb->'proposals') call
+ *  WHERE call->'ran' IS NOT NULL AND call->'ran'->'told' IS NULL`.
+ */
+export const toldMigration = {
+  version: 4,
+  sql: `WITH turns AS (
+    SELECT conversation_id, id, data_json::jsonb AS data,
+      row_number() OVER (PARTITION BY conversation_id ORDER BY created_at, id) AS n
+    FROM pi_commands
+  ), proposing AS (
+    SELECT * FROM turns
+    WHERE jsonb_typeof(data->'proposals') = 'array' AND jsonb_array_length(data->'proposals') > 0
+  ), calls AS (
+    SELECT p.conversation_id, p.n, c.at, c.call->>'name' AS tool,
+      row_number() OVER (PARTITION BY p.conversation_id, p.n, c.call->>'name'
+        ORDER BY c.call->'ran'->>'at', c.at) AS k
+    FROM proposing p, jsonb_array_elements(p.data->'proposals') WITH ORDINALITY AS c(call, at)
+    WHERE c.call->'ran' IS NOT NULL AND c.call->'ran'->'told' IS NULL
+  ), sentences AS (
+    SELECT t.conversation_id, t.n, t.data->'messages'->0->>'text' AS text,
+      (SELECT max(p.n) FROM proposing p
+        WHERE p.conversation_id = t.conversation_id AND p.n < t.n) AS answers,
+      regexp_match(t.data->'messages'->0->>'text', '^Ran (\\S+); its result is shown only to me\\.$') AS secret,
+      regexp_match(t.data->'messages'->0->>'text', '^Ran (\\S+): (.*)$') AS ran,
+      regexp_match(t.data->'messages'->0->>'text', '^(\\S+) was refused: (.*)$') AS refused
+    FROM turns t
+    WHERE t.data->'messages'->0->>'role' = 'user'
+      AND strpos(t.data->'messages'->0->>'text', E'\\n\\n') = 0
+  ), receipts AS (
+    SELECT conversation_id, answers, text, tool, said,
+      row_number() OVER (PARTITION BY conversation_id, answers, tool ORDER BY n) AS k
+    FROM (
+      SELECT *,
+        coalesce(secret[1], ran[1], refused[1]) AS tool,
+        CASE WHEN secret IS NOT NULL THEN NULL
+          WHEN ran IS NOT NULL
+            THEN regexp_replace(ran[2], '\\. Re-read [[:alnum:]_. ]+ for current details\\.$', '')
+          ELSE refused[2] END AS said
+      FROM sentences
+    ) parsed
+    WHERE tool IS NOT NULL AND answers IS NOT NULL
+  ), told AS (
+    SELECT c.conversation_id, c.n, c.at, r.text, r.said
+    FROM calls c JOIN receipts r
+      ON r.conversation_id = c.conversation_id AND r.answers = c.n AND r.tool = c.tool AND r.k = c.k
+  ), kept AS (
+    SELECT p.conversation_id, p.id, jsonb_agg(
+      CASE WHEN t.text IS NULL THEN c.call
+        ELSE jsonb_set(c.call, '{ran}', c.call->'ran'
+          || jsonb_strip_nulls(jsonb_build_object('told', t.text, 'said', t.said))) END
+      ORDER BY c.at) AS proposals
+    FROM proposing p
+    CROSS JOIN jsonb_array_elements(p.data->'proposals') WITH ORDINALITY AS c(call, at)
+    LEFT JOIN told t ON t.conversation_id = p.conversation_id AND t.n = p.n AND t.at = c.at
+    WHERE EXISTS (SELECT 1 FROM told WHERE told.conversation_id = p.conversation_id AND told.n = p.n)
+    GROUP BY p.conversation_id, p.id
+  )
+  UPDATE pi_commands SET data_json = jsonb_set(data_json::jsonb, '{proposals}', kept.proposals)::text
+  FROM kept WHERE pi_commands.conversation_id = kept.conversation_id AND pi_commands.id = kept.id;`,
+};

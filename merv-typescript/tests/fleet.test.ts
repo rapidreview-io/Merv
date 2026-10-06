@@ -205,7 +205,7 @@ async function fixture(t: TestContext, limits: FleetConfig = { globalLimit: 2, p
       state,
       scope,
       runtimes,
-      { enabled: true, allocationTimeoutSeconds: 3600, ...limits },
+      { allocationTimeoutSeconds: 3600, ...limits },
       () => now,
     ),
   );
@@ -257,12 +257,8 @@ test('concurrent controllers reserve within global and project caps; requests ar
   await f.fleet.request(f.caller, input('second'));
   await f.fleet.request(f.caller, input('third'));
   const second = await createService(
-    new FleetService(
-      f.state,
-      f.scope,
-      f.runtimes,
-      { enabled: true, globalLimit: 2, projectLimit: 1 },
-      () => Date.parse('2026-09-22T00:00:00Z'),
+    new FleetService(f.state, f.scope, f.runtimes, { globalLimit: 2, projectLimit: 1 }, () =>
+      Date.parse('2026-09-22T00:00:00Z'),
     ),
   );
   second.registerOwner('workflow', {
@@ -293,12 +289,8 @@ test('concurrent controllers enforce the global cap across projects', async (t) 
   const first = await f.fleet.request(f.caller, input('first-project'));
   const secondAllocation = await f.fleet.request(otherCaller, input('second-project'));
   const second = await createService(
-    new FleetService(
-      f.state,
-      f.scope,
-      f.runtimes,
-      { enabled: true, globalLimit: 1, projectLimit: 2 },
-      () => Date.parse('2026-09-22T00:00:00Z'),
+    new FleetService(f.state, f.scope, f.runtimes, { globalLimit: 1, projectLimit: 2 }, () =>
+      Date.parse('2026-09-22T00:00:00Z'),
     ),
   );
   second.registerOwner('workflow', {
@@ -881,7 +873,6 @@ test('a project named in projectLimits has its own cap, and free() counts what w
   });
   const host = await createService(
     new FleetService(f.state, f.scope, f.runtimes, {
-      enabled: true,
       globalLimit: 4,
       projectLimit: 1,
       projectLimits: { [f.caller.projectId]: 3 },
@@ -1043,13 +1034,7 @@ test('a capped request waits for its offer’s price, then is refused ten minute
   const late = await f.ask('a_3');
   let now = Date.parse(late.createdAt) + 900_000;
   const successor = await createService(
-    new FleetService(
-      f.state,
-      f.scope,
-      f.runtimes,
-      { enabled: true, dailyUsdPerPerson: 2 },
-      () => now,
-    ),
+    new FleetService(f.state, f.scope, f.runtimes, { dailyUsdPerPerson: 2 }, () => now),
   );
   successor.registerOwner('workflow', { ...f.owner, payer: async () => 'person_a' });
   await successor.tick();
@@ -1279,9 +1264,7 @@ test('closing leaves a kept owner’s launched machine running and stops the res
   assert.equal((await f.fleet.inspect(f.caller, work.id)).intent, 'run');
   const restart = async () =>
     await createService(
-      new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
-        Date.parse('2026-09-22T00:00:00Z'),
-      ),
+      new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:00Z')),
     );
   // A Fleet that closes before the owner registers again never fences what it did not own.
   await (await restart()).close();
@@ -1321,9 +1304,7 @@ test('closing leaves a kept owner’s queued and booting work to the successor, 
   assert.deepEqual(await phases(), closed, 'closing admits, creates and stops nothing kept');
   assert.deepEqual([f.runtimes.createKeys.length, f.runtimes.launchKeys], [2, []]);
   const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
-      Date.parse('2026-09-22T00:00:10Z'),
-    ),
+    new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:10Z')),
   );
   await successor.tick();
   assert.deepEqual(await phases(), closed, 'nothing moves before the owner registers again');
@@ -1348,9 +1329,7 @@ test('a create whose reply was lost before closing is recovered by the successor
     ['stop', null, undefined, [`${id}:create`]],
   );
   const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
-      Date.parse('2026-09-22T00:00:00Z'),
-    ),
+    new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:00Z')),
   );
   await successor.tick();
   assert.deepEqual(f.runtimes.createKeys, [`${id}:create`, `${id}:create`]);
@@ -1403,9 +1382,7 @@ test('drain waits for owner completion and close leaves pending delete for a suc
   assert.equal((await f.fleet.inspect(f.caller, allocation.id)).phase, 'releasing');
   f.runtimes.confirmStopped('sbx_1');
   const successor = await createService(
-    new FleetService(f.state, f.scope, f.runtimes, { enabled: true }, () =>
-      Date.parse('2026-09-22T00:00:00Z'),
-    ),
+    new FleetService(f.state, f.scope, f.runtimes, {}, () => Date.parse('2026-09-22T00:00:00Z')),
   );
   successor.registerOwner('workflow', {
     valid: async () => true,

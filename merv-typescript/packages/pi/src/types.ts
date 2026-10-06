@@ -66,7 +66,7 @@ export interface PiSlot {
 export interface PiNextSlot extends PiSlot {
   by: PiMoveBy;
   conversationId: string | null;
-  /** T6 gives up on the slot at this time (requested + 180 s). */
+  /** T6 gives up on the slot at this time: requested + Fleet's readyWindowMs. */
   readyBy: string;
 }
 /** State row pi_hosts: the one live machine set of a host key. Every transition is one transaction

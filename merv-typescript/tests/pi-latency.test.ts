@@ -166,7 +166,6 @@ test(
     };
     const fleet = await createService(
       new FleetService(state, scope, new LocalRuntimes(), {
-        enabled: true,
         globalLimit: 2,
         projectLimit: 2,
         pollIntervalMs: 30_000,

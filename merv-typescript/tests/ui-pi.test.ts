@@ -2111,6 +2111,78 @@ test('a Run whose answer is lost reads how the call came out, shows it, and tell
   assert.equal(sent.length, 1);
 });
 
+test('a Run whose outcome comes later than its answer reads as running, and the agent is told once it shows', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const halt = { id: 'pip_halt', name: 'fleet.halt', input: { id: 'flt_1' }, at: 'later' };
+  const told = 'Ran fleet.halt: {"halted":true}';
+  const turn = (ran?: object) => ({
+    ...command('c1', 'completed'),
+    proposals: [ran ? { ...halt, ran } : halt],
+  });
+  let state = snapshot(conversation(), [turn()]);
+  const stream = boot(
+    () => state,
+    () => [conversation()],
+  );
+  // Pi took the run and is still calling the tool when the connection drops.
+  serve('/tools/pi.run', () => {
+    state = snapshot(conversation(), [turn({ at: 'now' })]);
+    return { network: true as const };
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click());
+  await settle(10);
+  const word = () => document.querySelector('.pi-proposal .pi-receipt-word')?.textContent;
+  assert.equal(word(), 'Running');
+  assert.equal(sent.length, 0);
+  // The call returns and Pi keeps how it came out: the stream shows it, and the agent hears it
+  // under the turn named for the call, once.
+  state = snapshot(conversation(), [turn({ at: 'now', ok: true, told, said: '{"halted":true}' })]);
+  await act(async () => stream.push('snapshot', state));
+  await settle(10);
+  assert.equal(word(), 'Ran');
+  assert.deepEqual(sent, [{ id: 'conversation_1', commandId: 'told_pip_halt', text: told }]);
+  assert.equal(document.querySelector('[role="alert"]'), null);
+  // Shown again, before or after its turn appears, it is not told twice.
+  await act(async () => stream.push('snapshot', { ...state, sequence: 1 }));
+  await settle(10);
+  state = snapshot(
+    conversation(),
+    [
+      turn({ at: 'now', ok: true, told }),
+      command('told_pip_halt', 'completed', [{ role: 'user', text: told }]),
+    ],
+    2,
+  );
+  await act(async () => stream.push('snapshot', state));
+  await settle(10);
+  assert.equal(sent.length, 1);
+  // A call a restart cut off reads as interrupted, and why.
+  const unknown = 'it may have run, but how it came out is unknown';
+  const cut = `fleet.halt was interrupted: ${unknown}.`;
+  state = snapshot(
+    conversation(),
+    [
+      turn({ at: 'now', ok: false, code: 'interrupted', told: cut, said: unknown }),
+      command('told_pip_halt', 'completed', [{ role: 'user', text: cut }]),
+    ],
+    3,
+  );
+  await act(async () => stream.push('snapshot', state));
+  await settle(10);
+  assert.equal(
+    document.querySelector('.pi-proposal .pi-receipt')?.textContent,
+    `Interrupted·${unknown}`,
+  );
+  assert.equal(sent.length, 1);
+});
+
 test('a call is titled by the act its tool’s owner names, and otherwise by the tool’s own words', () => {
   // The owner's title, which Pi keeps on the proposal from the tool's registration.
   assert.equal(
@@ -2314,10 +2386,16 @@ test('a card says how its call came out from what Pi kept, and a run Pi itself r
     cards().map((card) => card.querySelector('.pi-receipt-line')?.textContent),
     ['RanResult', 'Refused·Ask an operator', undefined],
   );
+  // What Pi kept but the agent was never told is told as the page opens, under the turns named
+  // for the calls.
+  assert.deepEqual(
+    sent.map(({ commandId }) => commandId),
+    ['told_pip_task', 'told_pip_halt'],
+  );
   await act(async () => cards()[2].querySelector<HTMLButtonElement>('button.btn')!.click());
   await settle(10);
-  // Nothing ran, so the agent is told nothing; the person reads why.
-  assert.deepEqual(sent, []);
+  // Nothing ran, so the agent is told nothing more; the person reads why.
+  assert.equal(sent.length, 2);
   assert.equal(
     document.querySelector('.pi-error')?.textContent,
     'This conversation already has an active turn',
@@ -2482,63 +2560,6 @@ test('how a run came out is said once, in its card or on a quiet line, never as 
   await act(async () => lines()[0].querySelector('summary')!.click());
   await settle(10);
   assert.match(lines()[0].querySelector('.json')!.textContent!, /Seed sweep.*planned/);
-});
-
-test('a call run before Pi kept what Run told is still a receipt, read from the sentence Run wrote then', async (t) => {
-  t.after(cleanup);
-  setProject('p1');
-  const created = JSON.stringify({ id: 'task_1', title: 'Seed sweep', state: 'planned' });
-  // Pi kept only when each ran and whether it was refused: no `told`, no `said`.
-  const proposals = [
-    { id: 'pip_task', name: 'task.create', input: {}, act: { title: 'New task' }, at: 'then' },
-    { id: 'pip_halt', name: 'session.halt', input: {}, act: { title: 'Halt lease' }, at: 'then' },
-    { id: 'pip_read', name: 'artifact.read', input: {}, act: { title: 'Read file' }, at: 'then' },
-    { id: 'pip_list', name: 'task.list', input: {}, act: { title: 'List tasks' }, at: 'then' },
-  ].map((call, index) => ({
-    ...call,
-    ran: { at: `then${index}`, ok: call.name !== 'session.halt' },
-  }));
-  const turn = (id: string, asked: string, answer: string) =>
-    command(id, 'completed', [
-      { role: 'user', text: asked },
-      { role: 'assistant', text: answer },
-    ]);
-  const next = { id: 'pip_next', name: 'research.advance', input: {}, at: 'later' };
-  const state = snapshot(conversation(), [
-    { ...command('c1', 'completed', [{ role: 'user', text: 'Make the task' }]), proposals },
-    turn('c2', `Ran task.create: ${created}`, 'Created.'),
-    turn('c3', 'session.halt was refused: Actor lacks admin permission', 'Ask an admin.'),
-    turn('c4', 'Ran artifact.read; its result is shown only to me.', 'Downloaded.'),
-    turn('c5', 'Ran task.list: {"count":2}. Re-read task.list for current details.', 'Two.'),
-    turn('c6', 'Ran the numbers again: anything new?', 'Nothing yet.'),
-    { ...command('c7', 'completed', [{ role: 'assistant', text: 'Next?' }]), proposals: [next] },
-  ]);
-  boot(
-    () => state,
-    () => [conversation()],
-  );
-  await open();
-  const lines = () => [...document.querySelectorAll('.pi-receipt')];
-  assert.deepEqual(
-    lines().map((line) => line.querySelector('.pi-receipt-line')!.textContent),
-    [
-      'RanNew taskResult',
-      'RefusedHalt lease·Actor lacks admin permission',
-      'RanRead file',
-      'RanList tasksResult',
-    ],
-  );
-  assert.deepEqual(
-    [...document.querySelectorAll('.pi-message--user')].map((message) => message.textContent),
-    ['YouMake the task', 'YouRan the numbers again: anything new?'],
-  );
-  // The result is what the sentence said, without the receipt's pointer to read on.
-  await act(async () => lines()[0].querySelector('summary')!.click());
-  await act(async () => lines()[3].querySelector('summary')!.click());
-  await settle(10);
-  assert.match(lines()[0].querySelector('.json')!.textContent!, /Seed sweep.*planned/);
-  assert.doesNotMatch(lines()[3].textContent!, /Re-read/);
-  assert.match(lines()[3].querySelector('.json')!.textContent!, /count.*2/);
 });
 
 let go = (_path: string) => {};

@@ -843,9 +843,7 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
     connected: () => true,
     describe: async () => null,
   } as unknown as SandboxRuntimes;
-  const fleet = await createService(
-    new FleetService(f.state, f.scope, runtimes, { enabled: true }, f.now),
-  );
+  const fleet = await createService(new FleetService(f.state, f.scope, runtimes, {}, f.now));
   fleet.registerOwner('workflow', {
     valid: async () => true,
     bootstrap: async () => 'bootstrap',

@@ -190,6 +190,11 @@ export interface ModelRelayHandle {
   close(): void;
 }
 export interface Fleet {
+  /** The longest Fleet rents a machine for (allocationTimeoutSeconds); a longer request gets this. */
+  readonly allocationSeconds: number;
+  /** How long Fleet may take to give up on a machine whose agent never connects, as
+   *  `runtime_not_ready`: every machine it tries, each created, given its minute, and replaced. */
+  readonly readyWindowMs: number;
   /** Look again now, not at the next tick, at everything not yet running steadily (requests,
    * starts, stops). Safe at any time, even inside a transaction; a no-op until the first full
    * pass after start, since owners register after Fleet starts. */

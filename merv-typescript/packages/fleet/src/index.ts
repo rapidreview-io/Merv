@@ -49,8 +49,8 @@ const requestSchema = z
   .strict();
 export const fleetConfig = z
   .object({
-    /** Deployment opt-in; keep false until the actual provider gates pass. */
-    enabled: z.boolean().default(false),
+    /** Ignored: loading Fleet is the switch. Configurations rendered before still carry it. */
+    enabled: z.boolean().optional(),
     globalLimit: z.number().int().min(1).max(64).default(50),
     projectLimit: z.number().int().min(1).max(64).default(5),
     /** MERV_FLEET_PROJECT_LIMITS: caps that replace projectLimit for the named projects. */
@@ -112,6 +112,7 @@ const backoff = (failures: number) => Math.min(60_000, 1000 * 2 ** Math.min(fail
 /** Durable capacity and machine lifecycle. No task, workflow or research dependencies. */
 export class FleetService implements Fleet {
   private readonly config: z.infer<typeof fleetConfig>;
+  private readonly runtimes: SandboxRuntimes;
   private readonly owners = new Map<string, FleetOwner>();
   private pending?: Promise<boolean>;
   private timer?: ReturnType<typeof setTimeout>;
@@ -130,7 +131,7 @@ export class FleetService implements Fleet {
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
-    private readonly runtimes: SandboxRuntimes | undefined,
+    runtimes: SandboxRuntimes | undefined,
     config: FleetConfig = {},
     private readonly clock: () => number = Date.now,
   ) {
@@ -139,11 +140,12 @@ export class FleetService implements Fleet {
     this.config = parsed.data;
     this.startedAt = clock();
     check(
-      !this.config.enabled || runtimes,
+      runtimes,
       'fleet_runtime_unavailable',
-      'Enabled Fleet requires a protected Sandboxes runtime',
+      'Fleet requires a protected Sandboxes runtime',
       503,
     );
+    this.runtimes = runtimes;
   }
   async initialize() {
     await this.state.migrate('fleet', [migration, migrationV2]);
@@ -162,8 +164,13 @@ export class FleetService implements Fleet {
     this.fullAt = Date.now() + this.config.pollIntervalMs;
     this.wake(this.config.pollIntervalMs);
   }
+  get allocationSeconds(): number {
+    return this.config.allocationTimeoutSeconds;
+  }
+  /** A minute to connect, and up to as long again to be created and replaced, per machine. */
+  readonly readyWindowMs = readyAttempts * 2 * readyMs;
   connected(projectId: string): boolean {
-    return this.config.enabled && !!this.runtimes?.connected(projectId);
+    return this.runtimes.connected(projectId);
   }
   /** Each room less what already waits for it: queued work is reserved before a new request. */
   async free(projectId: string, tx?: Transaction): Promise<number> {
@@ -177,7 +184,7 @@ export class FleetService implements Fleet {
     );
   }
   async describe(projectId: string, key: string) {
-    return this.connected(projectId) ? this.runtimes!.describe(projectId, key) : null;
+    return this.connected(projectId) ? this.runtimes.describe(projectId, key) : null;
   }
   private limit(projectId: string): number {
     return this.config.projectLimits[projectId] ?? this.config.projectLimit;
@@ -207,7 +214,7 @@ export class FleetService implements Fleet {
   }
   /** A profile no longer configured rents, launches, renews and admits nothing: its machine stops. */
   private stale(a: FleetAllocation): boolean {
-    return !this.runtimes?.profiles.some((profile) => profile.id === a.profileId);
+    return !this.runtimes.profiles.some((profile) => profile.id === a.profileId);
   }
   /** Judged only once owners have had time to register after a restart. */
   private orphan(a: FleetAllocation): boolean {
@@ -344,12 +351,7 @@ export class FleetService implements Fleet {
       });
   }
   async request(caller: Caller, input: FleetRequest, tx?: Transaction): Promise<FleetAllocation> {
-    check(
-      !this.closed && this.config.enabled,
-      'fleet_disabled',
-      'Fleet admission is disabled',
-      503,
-    );
+    check(!this.closed, 'fleet_disabled', 'Fleet admission is disabled', 503);
     const parsed = requestSchema.safeParse(input);
     check(parsed.success, 'invalid_fleet_request', 'Fleet request is invalid');
     input = parsed.data;
@@ -384,9 +386,7 @@ export class FleetService implements Fleet {
         );
         return decode(previous);
       }
-      const profile = this.runtimes!.profiles.find(
-        (p) => !input.profile || p.key === input.profile,
-      );
+      const profile = this.runtimes.profiles.find((p) => !input.profile || p.key === input.profile);
       check(profile, 'fleet_profile_unavailable', 'That machine is not offered', 409);
       const person = (await owner.payer?.(source, input.owner.id, tx)) ?? undefined;
       if (person && this.config.dailyUsdPerPerson !== undefined)
@@ -519,7 +519,6 @@ export class FleetService implements Fleet {
     const owner = this.owners.get(a.owner.kind);
     if (
       this.closed ||
-      !this.config.enabled ||
       !owner ||
       (asker && owner !== asker) ||
       a.deadlineAt <= this.time() ||
@@ -556,7 +555,7 @@ export class FleetService implements Fleet {
     }));
   }
   private async reserve(): Promise<void> {
-    if (!this.config.enabled || !this.runtimes || this.closed) return;
+    if (this.closed) return;
     const waiting = await this.state.read((sql) => this.all(sql));
     const queued = waiting.filter((a) => a.phase === 'queued');
     if (!queued.length) return;
@@ -566,7 +565,7 @@ export class FleetService implements Fleet {
     const capped = (a: FleetAllocation) => !!a.person && cap !== undefined;
     const place = (a: FleetAllocation) => a.rentedIn ?? a.projectId;
     const offer = (a: FleetAllocation) =>
-      `${place(a)} ${this.runtimes!.profiles.find((p) => p.id === a.profileId)?.key}`;
+      `${place(a)} ${this.runtimes.profiles.find((p) => p.id === a.profileId)?.key}`;
     const prices = new Map<string, number>();
     await Promise.all(
       [...new Set(queued.filter(capped).map(offer))].map(async (key) => {
@@ -689,7 +688,6 @@ export class FleetService implements Fleet {
     this.awake ||= full;
     await this.reserve();
     const allocations = await this.state.read((sql) => this.all(sql));
-    if (!this.runtimes) return false;
     await Promise.all(
       allocations
         .filter(
@@ -757,7 +755,7 @@ export class FleetService implements Fleet {
       });
       return;
     }
-    const runtime = this.runtimes!;
+    const runtime = this.runtimes;
     const place = a.rentedIn ?? a.projectId;
     // One stop per machine, which sets releaseBy; a machine the provider reports deleting is
     // then only watched, until it is gone or releaseBy. A provider that still reports it up is
@@ -771,10 +769,7 @@ export class FleetService implements Fleet {
         });
     };
     const owner = this.owners.get(a.owner.kind);
-    if (
-      a.intent !== 'stop' &&
-      (a.deadlineAt <= this.time() || this.stale(a) || !this.config.enabled || this.orphan(a))
-    )
+    if (a.intent !== 'stop' && (a.deadlineAt <= this.time() || this.stale(a) || this.orphan(a)))
       a = await this.update(a.id, (current) => {
         current.intent = 'stop';
       });
@@ -936,7 +931,7 @@ export class FleetService implements Fleet {
    * machine this allocation could hold (a minute covers a reply still in flight; the longest
    * configured lease covers every profile). Without a create attempt there is none to wait for. */
   private waitOutLease(a: FleetAllocation): void {
-    const lease = Math.max(...this.runtimes!.profiles.map((profile) => profile.leaseSeconds));
+    const lease = Math.max(...this.runtimes.profiles.map((profile) => profile.leaseSeconds));
     a.releaseBy ??= new Date(this.clock() + (lease + 60) * 1000).toISOString();
     a.phase =
       (!a.runtime && a.createAttempted === false) || a.releaseBy <= this.time()
@@ -944,7 +939,7 @@ export class FleetService implements Fleet {
         : 'releasing';
   }
   /** Disposal fences admission durably, then makes one bounded provider cleanup pass.
-   * Pending deletes remain counted and are reconciled when the plugin is re-enabled. A kind
+   * Pending deletes remain counted and are reconciled when the plugin is loaded again. A kind
    * never registered in this process is left alone, and a kept kind's running work in every
    * phase: the successor takes both back.
    */

@@ -99,7 +99,7 @@ async function fixture(t: TestContext) {
       state,
       scope,
       runtimes,
-      { enabled: true, globalLimit: 3, projectLimit: 3, allocationTimeoutSeconds: 3600 },
+      { globalLimit: 3, projectLimit: 3, allocationTimeoutSeconds: 3600 },
       () => now,
     ),
   );

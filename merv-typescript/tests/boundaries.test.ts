@@ -1022,6 +1022,16 @@ test('each service boots with only its declared dependency closure and without A
       config: {
         urlEnv: sandboxUrlEnv,
         connections: [{ projectId: 'synthetic', namespace: 'boundary', tokenEnv: credentialEnv }],
+        // Fleet rents only through a protected runtime.
+        runtimes: [
+          {
+            key: 'standard',
+            provider: 'boundary',
+            offerId: 'offer',
+            releaseId: `rt1_${'0'.repeat(64)}`,
+            leaseSeconds: 3600,
+          },
+        ],
       },
     },
     tools: { plugin: toolsPlugin },

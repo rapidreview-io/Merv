@@ -370,7 +370,6 @@ async function rented(t: TestContext) {
   // Fleet's own passes are its cost, not Sessions': it runs on the uncounted state.
   const fleet = await createService(
     new FleetService(f.state, f.scope, runtimes, {
-      enabled: true,
       globalLimit: 1,
       projectLimit: 1,
       pollIntervalMs: 60_000,
@@ -381,7 +380,6 @@ async function rented(t: TestContext) {
     sessions,
     f.scope,
     {
-      enabled: true,
       people: [`${issuer} founder`],
       modelApiKeyEnv: modelEnv,
       baseUrl: 'https://merv.example.test',

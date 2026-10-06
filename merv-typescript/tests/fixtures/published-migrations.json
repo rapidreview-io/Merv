@@ -575,6 +575,12 @@
       "published": true
     },
     {
+      "component": "pi",
+      "version": 4,
+      "hash": "cca337415ebad7897d53015d3a8310176a6456db44be5358e251ca3613da5094",
+      "published": false
+    },
+    {
       "component": "fleet_workflow",
       "version": 2,
       "hash": "a1c6d4fffb03a822f8d94552d79247b6b26bbb72b1cdcffdefcb33f1bb90329a",

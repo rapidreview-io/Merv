@@ -21,7 +21,7 @@ import type {
   PiMoveFailure,
   PiSlot,
 } from './types.js';
-import { active, decode, gone, lost, type PiCore, readyMs, roleOf, roles } from './core.js';
+import { active, decode, gone, lost, type PiCore, roleOf, roles } from './core.js';
 
 /** A current slot this close to its deadline is replaced by a fresh one of its machine (T10). */
 const rolloverMs = 15 * 60_000;
@@ -709,7 +709,8 @@ export class PiHosts implements FleetOwner {
       ...slot,
       by,
       conversationId: conversationId ?? null,
-      readyBy: new Date(this.core.clock() + readyMs).toISOString(),
+      // Fleet's verdict on a machine that never connects comes first: it tries up to three.
+      readyBy: new Date(this.core.clock() + this.core.fleet.readyWindowMs).toISOString(),
     };
     return true;
   }

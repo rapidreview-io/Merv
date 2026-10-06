@@ -76,7 +76,7 @@ const machine = { sandboxId: 'sbx_created' } as FleetAllocation['runtime'];
 const targets = (prefix: string, count: number): Target[] =>
   Array.from({ length: count }, (_, i) => ({ instanceId: `${prefix}_${i}`, expectedRevision: 0 }));
 
-async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
+async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}) {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
   const login = async (subject: string) =>
@@ -108,6 +108,7 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   /** While set, a reconcile waits at its first read. */
   let held: Promise<void> | undefined;
   const fakeFleet = {
+    allocationSeconds: 86_400,
     registerOwner(kind: string, value: FleetOwner) {
       assert.equal(kind, 'workflow');
       owner = value;
@@ -208,13 +209,12 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
       },
     },
   } as unknown as Sessions;
-  const makeAdapter = (extra: FleetWorkflowConfig) =>
+  const makeAdapter = (extra: Partial<FleetWorkflowConfig>) =>
     new FleetWorkflowAdapter(
       fakeFleet,
       fakeSessions,
       scope,
       {
-        enabled: true,
         people: [`${issuer} founder`],
         modelApiKeyEnv: modelEnv,
         baseUrl: 'https://merv.example.test',
@@ -282,6 +282,21 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
     modelApiKey: process.env[modelEnv]!,
   };
 }
+
+test('the adapter refuses a Fleet that rents machines for less than a step and five minutes', () => {
+  const adapter = (allocationSeconds: number) =>
+    new FleetWorkflowAdapter(
+      { allocationSeconds } as unknown as Fleet,
+      {} as Sessions,
+      {} as never,
+      { people: ['*'], modelApiKeyEnv: 'MERV_UNSET', baseUrl: 'https://merv.example.test' },
+      Date.now,
+      {} as never,
+    );
+  // Sessions starts a two-hour step on a host only with five minutes to stop left after it.
+  assert.throws(() => adapter(7_499), { code: 'invalid_fleet_workflow_config' });
+  assert.ok(adapter(7_500));
+});
 
 test('a refused model reservation stops new Fleet rents until its payer has enough tokens', async (t) => {
   const f = await fixture(t);
@@ -857,6 +872,7 @@ test('a relay call in flight when the adapter unloads gets 503, never 401: its r
     },
   });
   ctx.provide('fleet', {
+    allocationSeconds: 86_400,
     registerOwner: () => () => order.push('owner'),
     listOwned: async () => [],
     modelRelay: (config: ModelRelayConfig<ManagedModelGrant, string, unknown>) => {
@@ -888,7 +904,6 @@ test('a relay call in flight when the adapter unloads gets 503, never 401: its r
     },
   });
   const fiber = ctx.plugin(fleetWorkflowPlugin, {
-    enabled: true,
     people: ['*'],
     modelApiKeyEnv: modelEnv,
     baseUrl: 'https://merv.example.test',
@@ -936,6 +951,7 @@ test('the mounted relay reads a grant through the adapter, charged to the alloca
   ctx.provide('api', { mount: () => () => undefined });
   const kinds = new Map<string, FleetOwner>();
   ctx.provide('fleet', {
+    allocationSeconds: 86_400,
     registerOwner: (kind: string, owner: FleetOwner) => (kinds.set(kind, owner), () => undefined),
     listOwned: async () => [],
     inspectOwned: async (owner: FleetOwner, id: string) => {
@@ -961,7 +977,6 @@ test('the mounted relay reads a grant through the adapter, charged to the alloca
     },
   });
   const fiber = ctx.plugin(fleetWorkflowPlugin, {
-    enabled: true,
     people: ['*'],
     modelApiKeyEnv: modelEnv,
     baseUrl: 'https://merv.example.test',
@@ -1518,7 +1533,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
       state,
       scope,
       runtimes,
-      { enabled: true, globalLimit: workers, projectLimit: workers, pollIntervalMs: 60_000 },
+      { globalLimit: workers, projectLimit: workers, pollIntervalMs: 60_000 },
       () => now,
     ),
   );
@@ -1527,7 +1542,6 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     sessions,
     scope,
     {
-      enabled: true,
       people: [`${issuer} founder`, `${issuer} colleague`],
       modelApiKeyEnv: modelEnv,
       baseUrl: 'https://merv.example.test',
