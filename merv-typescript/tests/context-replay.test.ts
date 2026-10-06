@@ -39,7 +39,10 @@ test('owner replay and build pin recipe and exact assignment, and a reused reque
   );
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   try {
-    const identity = await scope.bootstrap({ projectName: 'Replay', actorName: 'Operator' });
+    const identity = await scope.credentials.bootstrap({
+      projectName: 'Replay',
+      actorName: 'Operator',
+    });
     const caller: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
     const registration = await builder.register(recipe);
     const subject = { id: 'assignment', revision: 3, claimId: 'claim-a' };

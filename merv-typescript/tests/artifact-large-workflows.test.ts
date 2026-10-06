@@ -25,7 +25,10 @@ async function app(t: TestContext, s3: boolean) {
     await started.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await started.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
+  const boot = await started.ctx.scope.credentials.bootstrap({
+    projectName: 'Research',
+    actorName: 'Owner',
+  });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   await waitForManagedCode(started.ctx.codeWork, owner);
   return { app: started, owner };

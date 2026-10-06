@@ -17,13 +17,13 @@ async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-findings-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({
+  const boot = await scope.credentials.bootstrap({
     projectName: 'Structured assessment',
     actorName: 'Operator',
   });
   const operator = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => ({
-    actorId: (await scope.issueActor(operator, { name: role, role })).actor.id,
+    actorId: (await scope.credentials.issueActor(operator, { name: role, role })).actor.id,
     projectId: operator.projectId,
   });
   const producer = await issue('producer'),
@@ -215,7 +215,10 @@ test('structured review preflights reject incomplete, contradictory or unpinned 
       });
       assert.deepEqual(await f.durable(), before);
     }
-    const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+    const other = await f.scope.credentials.bootstrap({
+      projectName: 'Other',
+      actorName: 'Other operator',
+    });
     const foreign = await f.artifacts.create(
       { actorId: other.actor.id, projectId: other.project.id },
       { title: 'Foreign', content: 'Not authorized.' },
@@ -414,7 +417,7 @@ test('revoking a reviewer preserves the v2 snapshot while replacement claims fen
       oldClaim = await f.reviews.start(f.reviewer, requested.id),
       oldInput = f.submit(oldClaim);
     const replacement = await f.issue('reviewer');
-    await f.scope.revokeActor(f.operator, f.reviewer.actorId);
+    await f.scope.credentials.revokeActor(f.operator, f.reviewer.actorId);
     const event = (await f.state.events(f.operator.projectId)).findLast(
       (item) => item.type === 'actor.revoked',
     )!;

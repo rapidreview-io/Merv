@@ -25,7 +25,7 @@ async function fixture(path = ':memory:') {
   let time = initialTime;
   const scope = await createService(new ProjectScope(state, () => time));
   const login = async (subject: string, realm = issuer) =>
-    await scope.acceptVerifiedIdentity({
+    await scope.members.acceptVerifiedIdentity({
       issuer: realm,
       subject,
       expiresAt: new Date(time + 60_000).toISOString(),
@@ -47,33 +47,35 @@ test('verified identities onboard independently of projects; creation receipts r
   assert.deepEqual(await f.scope.projects(alice), []);
   await assert.rejects(async () => await f.scope.caller(alice), { code: 'project_required' });
   const creation = { name: 'Research', requestId: 'create' };
-  const creating = f.scope.createProject(alice, creation);
+  const creating = f.scope.members.createProject(alice, creation);
   creation.requestId = ' ';
   const project = await creating;
   const caller = await f.scope.caller(alice, project.id);
   assert.equal((await f.scope.require(caller, 'admin')).role, 'operator');
   assert.deepEqual((await f.scope.require(caller, 'read')).user, { issuer, subject: 'alice' });
   assert.equal(caller.credentialId, undefined);
-  assert.deepEqual(await f.scope.actorCredentials(caller), []);
+  assert.deepEqual(await f.scope.credentials.actorCredentials(caller), []);
   const head = await f.state.eventHead();
   assert.deepEqual(
-    await f.scope.createProject(alice, { name: 'Research', requestId: 'create' }),
+    await f.scope.members.createProject(alice, { name: 'Research', requestId: 'create' }),
     project,
   );
   assert.equal(await f.state.eventHead(), head);
   await assert.rejects(
-    async () => await f.scope.createProject(alice, { name: 'Changed', requestId: 'create' }),
+    async () =>
+      await f.scope.members.createProject(alice, { name: 'Changed', requestId: 'create' }),
     {
       code: 'request_conflict',
     },
   );
   const bob = await f.login('bob');
-  const b = await f.scope.createProject(bob, { name: 'Bob project', requestId: 'create' });
+  const b = await f.scope.members.createProject(bob, { name: 'Bob project', requestId: 'create' });
   assert.notEqual(b.id, project.id, 'Project receipts are scoped to verified identity');
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
-  await f.scope.removeMember(bob, project.id, 'alice');
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  await f.scope.members.removeMember(bob, project.id, 'alice');
   await assert.rejects(
-    async () => await f.scope.createProject(alice, { name: 'Research', requestId: 'create' }),
+    async () =>
+      await f.scope.members.createProject(alice, { name: 'Research', requestId: 'create' }),
     {
       code: 'membership_required',
     },
@@ -101,16 +103,22 @@ test('a human lists the projects they belong to in the order they joined them', 
   const alice = await f.login('alice'),
     bob = await f.login('bob');
   // Created first, joined last: the listing follows the membership, not the project.
-  const joinedLast = await f.scope.createProject(bob, { name: 'Joined last', requestId: 'z' });
-  const left = await f.scope.createProject(bob, { name: 'Left', requestId: 'left' });
+  const joinedLast = await f.scope.members.createProject(bob, {
+    name: 'Joined last',
+    requestId: 'z',
+  });
+  const left = await f.scope.members.createProject(bob, { name: 'Left', requestId: 'left' });
   f.advance(1_000);
-  const first = await f.scope.createProject(alice, { name: 'First', requestId: 'first' });
+  const first = await f.scope.members.createProject(alice, { name: 'First', requestId: 'first' });
   f.advance(1_000);
-  const second = await f.scope.createProject(alice, { name: 'Second', requestId: 'second' });
+  const second = await f.scope.members.createProject(alice, {
+    name: 'Second',
+    requestId: 'second',
+  });
   f.advance(1_000);
-  await f.scope.addMember(bob, left.id, { subject: 'alice', role: 'operator' });
-  await f.scope.removeMember(bob, left.id, 'alice');
-  await f.scope.addMember(bob, joinedLast.id, { subject: 'alice', role: 'reader' });
+  await f.scope.members.addMember(bob, left.id, { subject: 'alice', role: 'operator' });
+  await f.scope.members.removeMember(bob, left.id, 'alice');
+  await f.scope.members.addMember(bob, joinedLast.id, { subject: 'alice', role: 'reader' });
   const expected = [];
   for (const project of [first, second, joinedLast])
     expected.push(await f.scope.project(await f.scope.caller(alice, project.id)));
@@ -122,9 +130,9 @@ test('one human has independent project roles and attribution actors; issuer and
   t.after(async () => await f.state.close());
   const alice = await f.login('alice'),
     bob = await f.login('bob');
-  const a = await f.scope.createProject(alice, { name: 'A', requestId: 'A' });
-  const b = await f.scope.createProject(bob, { name: 'B', requestId: 'B' });
-  await f.scope.addMember(bob, b.id, { subject: 'alice', role: 'reader' });
+  const a = await f.scope.members.createProject(alice, { name: 'A', requestId: 'A' });
+  const b = await f.scope.members.createProject(bob, { name: 'B', requestId: 'B' });
+  await f.scope.members.addMember(bob, b.id, { subject: 'alice', role: 'reader' });
   const inA = await f.scope.caller(alice, a.id),
     inB = await f.scope.caller(alice, b.id);
   assert.notEqual(inA.actorId, inB.actorId);
@@ -146,23 +154,30 @@ test('one human has independent project roles and attribution actors; issuer and
   await assert.rejects(async () => await f.scope.caller(otherRealm, a.id), {
     code: 'membership_required',
   });
-  const machine = await f.scope.issueActor(inA, { name: 'Worker operator', role: 'operator' });
+  const machine = await f.scope.credentials.issueActor(inA, {
+    name: 'Worker operator',
+    role: 'operator',
+  });
   const principal: Principal = { kind: 'actor', actor: await f.scope.authenticate(machine.token) };
   assert.deepEqual(await f.scope.projects(principal), [a]);
   assert.equal((await f.scope.caller(principal)).projectId, a.id);
   await assert.rejects(async () => await f.scope.caller(principal, b.id), { code: 'forbidden' });
   for (const action of [
     async () =>
-      await f.scope.createProject(principal, { name: 'Machine-owned', requestId: 'machine' }),
-    async () => await f.scope.addMember(principal, a.id, { subject: 'mallory', role: 'operator' }),
+      await f.scope.members.createProject(principal, {
+        name: 'Machine-owned',
+        requestId: 'machine',
+      }),
     async () =>
-      await f.scope.changeMemberRole(principal, a.id, { subject: 'alice', role: 'reader' }),
-    async () => await f.scope.removeMember(principal, a.id, 'alice'),
-    async () => await f.scope.memberships(principal, a.id),
+      await f.scope.members.addMember(principal, a.id, { subject: 'mallory', role: 'operator' }),
+    async () =>
+      await f.scope.members.changeMemberRole(principal, a.id, { subject: 'alice', role: 'reader' }),
+    async () => await f.scope.members.removeMember(principal, a.id, 'alice'),
+    async () => await f.scope.members.memberships(principal, a.id),
   ])
     await assert.rejects(action, { code: 'forbidden' });
   assert.equal(
-    (await f.scope.memberships(alice, b.id)).filter((value) => value.active).length,
+    (await f.scope.members.memberships(alice, b.id)).filter((value) => value.active).length,
     2,
     'Every human member may read membership history',
   );
@@ -181,16 +196,17 @@ test('one human has independent project roles and attribution actors; issuer and
   );
   try {
     for (const operation of [
-      () => f.scope.addMember(changing, b.id, { subject: 'mallory', role: 'operator' }),
-      () => f.scope.changeMemberRole(changing, b.id, { subject: 'alice', role: 'operator' }),
-      () => f.scope.removeMember(changing, b.id, 'alice'),
+      () => f.scope.members.addMember(changing, b.id, { subject: 'mallory', role: 'operator' }),
+      () =>
+        f.scope.members.changeMemberRole(changing, b.id, { subject: 'alice', role: 'operator' }),
+      () => f.scope.members.removeMember(changing, b.id, 'alice'),
     ]) {
       changing.user.subject = 'alice';
       await assert.rejects(operation, { code: 'forbidden' });
     }
     swapTo = 'alice';
     changing.user.subject = 'bob';
-    await assert.rejects(() => f.scope.memberships(changing, a.id), {
+    await assert.rejects(() => f.scope.members.memberships(changing, a.id), {
       code: 'membership_required',
     });
   } finally {
@@ -203,8 +219,11 @@ test('invitations do not verify users, login preserves user identity, and expira
   const f = await fixture();
   t.after(async () => await f.state.close());
   const alice = await f.login('alice');
-  const project = await f.scope.createProject(alice, { name: 'Invitations', requestId: 'create' });
-  const invitation = await f.scope.addMember(alice, project.id, {
+  const project = await f.scope.members.createProject(alice, {
+    name: 'Invitations',
+    requestId: 'create',
+  });
+  const invitation = await f.scope.members.addMember(alice, project.id, {
     subject: 'bob',
     role: 'reviewer',
   });
@@ -232,11 +251,12 @@ test('invitations do not verify users, login preserves user identity, and expira
   assert.deepEqual(refreshed.user, bob.user);
   assert.notEqual(refreshed.expiresAt, bob.expiresAt);
   assert.deepEqual(
-    await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'reviewer' }),
+    await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'reviewer' }),
     invitation,
   );
   await assert.rejects(
-    async () => await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'reader' }),
+    async () =>
+      await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'reader' }),
     {
       code: 'membership_exists',
     },
@@ -270,11 +290,11 @@ test('existing verified identities use a read path while first insertion recheck
   };
   assert.deepEqual(await f.login('alice'), initial);
   const identity = { ...initial.user, expiresAt: initial.expiresAt };
-  const accepting = f.scope.acceptVerifiedIdentity(identity);
+  const accepting = f.scope.members.acceptVerifiedIdentity(identity);
   identity.subject = 'unverified';
   identity.expiresAt = new Date(initialTime + 120_000).toISOString();
   assert.deepEqual(await accepting, initial);
-  const expiring = f.scope.acceptVerifiedIdentity({
+  const expiring = f.scope.members.acceptVerifiedIdentity({
     ...initial.user,
     expiresAt: initial.expiresAt,
   });
@@ -282,7 +302,7 @@ test('existing verified identities use a read path while first insertion recheck
   await assert.rejects(expiring, { code: 'unauthorized' });
   await assert.rejects(
     async () =>
-      await f.scope.acceptVerifiedIdentity({
+      await f.scope.members.acceptVerifiedIdentity({
         issuer,
         subject: 'alice',
         expiresAt: initial.expiresAt,
@@ -300,7 +320,7 @@ test('existing verified identities use a read path while first insertion recheck
   );
   await assert.rejects(
     async () =>
-      await scope.acceptVerifiedIdentity({
+      await scope.members.acceptVerifiedIdentity({
         issuer,
         subject: 'expired-before-insert',
         expiresAt: new Date(initialTime + 1000).toISOString(),
@@ -344,16 +364,19 @@ test('role changes and remove/rejoin preserve actor attribution but fence every 
   t.after(async () => await f.state.close());
   const alice = await f.login('alice'),
     bob = await f.login('bob');
-  const project = await f.scope.createProject(alice, { name: 'Epochs', requestId: 'create' });
+  const project = await f.scope.members.createProject(alice, {
+    name: 'Epochs',
+    requestId: 'create',
+  });
   const invitation = { subject: 'bob', role: 'reviewer' as Role };
-  const inviting = f.scope.addMember(alice, project.id, invitation);
+  const inviting = f.scope.members.addMember(alice, project.id, invitation);
   invitation.subject = 'mallory';
   invitation.role = 'operator';
   const initial = await inviting;
   assert.deepEqual([initial.subject, initial.role], ['bob', 'reviewer']);
   const old = await f.scope.caller(bob, project.id);
   const change = { subject: 'bob', role: 'reader' as Role };
-  const changing = f.scope.changeMemberRole(alice, project.id, change);
+  const changing = f.scope.members.changeMemberRole(alice, project.id, change);
   change.role = 'operator';
   const changed = await changing;
   assert.equal(changed.actorId, initial.actorId);
@@ -379,16 +402,19 @@ test('role changes and remove/rejoin preserve actor attribution but fence every 
     )?.active,
     true,
   );
-  await f.scope.removeMember(alice, project.id, 'bob');
+  await f.scope.members.removeMember(alice, project.id, 'bob');
   const head = await f.state.eventHead();
-  await f.scope.removeMember(alice, project.id, 'bob');
-  await f.scope.removeMember(alice, project.id, 'never-invited');
+  await f.scope.members.removeMember(alice, project.id, 'bob');
+  await f.scope.members.removeMember(alice, project.id, 'never-invited');
   assert.equal(await f.state.eventHead(), head, 'Repeated removal creates no second revoke event');
   await assert.rejects(async () => await f.scope.require(reader, 'read'), {
     code: 'membership_required',
   });
   assert.equal(await f.scope.eligible(project.id, initial.actorId, 'read'), false);
-  const rejoined = await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'reviewer' });
+  const rejoined = await f.scope.members.addMember(alice, project.id, {
+    subject: 'bob',
+    role: 'reviewer',
+  });
   const fresh = await f.scope.caller(bob, project.id);
   assert.equal(rejoined.actorId, initial.actorId);
   assert.notEqual(rejoined.id, initial.id);
@@ -402,7 +428,7 @@ test('role changes and remove/rejoin preserve actor attribution but fence every 
         code: 'membership_required',
       },
     );
-  const history = (await f.scope.memberships(alice, project.id)).filter(
+  const history = (await f.scope.members.memberships(alice, project.id)).filter(
     (value) => value.subject === 'bob',
   );
   assert.deepEqual(
@@ -435,16 +461,19 @@ test('member actors cannot receive machine tokens or generic revocation; indepen
   t.after(async () => await f.state.close());
   const alice = await f.login('alice'),
     bob = await f.login('bob');
-  const project = await f.scope.createProject(alice, {
+  const project = await f.scope.members.createProject(alice, {
     name: 'Actor boundaries',
     requestId: 'create',
   });
   const caller = await f.scope.caller(alice, project.id);
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
-  const machine = await f.scope.issueActor(caller, { name: 'Runner', role: 'producer' });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  const machine = await f.scope.credentials.issueActor(caller, {
+    name: 'Runner',
+    role: 'producer',
+  });
   for (const action of [
-    async () => await f.scope.issueActorCredential(caller, { actorId: caller.actorId }),
-    async () => await f.scope.revokeActor(caller, caller.actorId),
+    async () => await f.scope.credentials.issueActorCredential(caller, { actorId: caller.actorId }),
+    async () => await f.scope.credentials.revokeActor(caller, caller.actorId),
   ])
     await assert.rejects(action, { code: 'member_actor' });
   // Even a malformed imported credential must never make a member actor a machine principal.
@@ -463,11 +492,12 @@ test('member actors cannot receive machine tokens or generic revocation; indepen
   );
   await assert.rejects(async () => await f.scope.authenticate(token), { code: 'unauthorized' });
   for (const action of [
-    async () => await f.scope.rotateCredential(caller, { credentialId: 'credential_imported' }),
-    async () => await f.scope.revokeCredential(caller, 'credential_imported'),
+    async () =>
+      await f.scope.credentials.rotateCredential(caller, { credentialId: 'credential_imported' }),
+    async () => await f.scope.credentials.revokeCredential(caller, 'credential_imported'),
   ])
     await assert.rejects(action, { code: 'member_actor' });
-  await f.scope.removeMember(bob, project.id, 'alice');
+  await f.scope.members.removeMember(bob, project.id, 'alice');
   assert.equal((await f.scope.authenticate(machine.token)).id, machine.actor.id);
   assert.equal(
     (
@@ -492,23 +522,29 @@ test('the last verified human operator is protected until another invited operat
   const f = await fixture();
   t.after(async () => await f.state.close());
   const alice = await f.login('alice');
-  const project = await f.scope.createProject(alice, { name: 'Handoff', requestId: 'create' });
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  const project = await f.scope.members.createProject(alice, {
+    name: 'Handoff',
+    requestId: 'create',
+  });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
   for (const action of [
-    async () => await f.scope.removeMember(alice, project.id, 'alice'),
+    async () => await f.scope.members.removeMember(alice, project.id, 'alice'),
     async () =>
-      await f.scope.changeMemberRole(alice, project.id, { subject: 'alice', role: 'reader' }),
+      await f.scope.members.changeMemberRole(alice, project.id, {
+        subject: 'alice',
+        role: 'reader',
+      }),
   ])
     await assert.rejects(action, { code: 'last_operator', status: 409 });
-  await f.scope.removeMember(alice, project.id, 'bob');
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  await f.scope.members.removeMember(alice, project.id, 'bob');
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
   const bob = await f.login('bob');
-  await f.scope.removeMember(alice, project.id, 'alice');
+  await f.scope.members.removeMember(alice, project.id, 'alice');
   assert.equal(
     (await f.scope.require(await f.scope.caller(bob, project.id), 'admin')).role,
     'operator',
   );
-  await assert.rejects(async () => await f.scope.removeMember(bob, project.id, 'bob'), {
+  await assert.rejects(async () => await f.scope.members.removeMember(bob, project.id, 'bob'), {
     code: 'last_operator',
   });
 });
@@ -517,13 +553,16 @@ test('a project owner is its longest-standing signed-in operator, never an invit
   const f = await fixture();
   t.after(async () => await f.state.close());
   const alice = await f.login('alice');
-  const project = await f.scope.createProject(alice, { name: 'Owners', requestId: 'create' });
+  const project = await f.scope.members.createProject(alice, {
+    name: 'Owners',
+    requestId: 'create',
+  });
   f.advance(1);
-  await f.scope.addMember(alice, project.id, { subject: 'invited', role: 'operator' });
+  await f.scope.members.addMember(alice, project.id, { subject: 'invited', role: 'operator' });
   f.advance(1);
-  await f.scope.addMember(alice, project.id, { subject: 'second', role: 'operator' });
+  await f.scope.members.addMember(alice, project.id, { subject: 'second', role: 'operator' });
   const second = await f.scope.caller(await f.login('second'), project.id);
-  await f.scope.removeMember(alice, project.id, 'alice');
+  await f.scope.members.removeMember(alice, project.id, 'alice');
   const owners = await f.scope.projectOwners();
   assert.deepEqual(
     owners.map((owner) => [owner.projectId, owner.source.kind === 'human' && owner.source.subject]),
@@ -535,16 +574,22 @@ test('a project owner is its longest-standing signed-in operator, never an invit
 test('a project created by signing in bills its creator; a bootstrapped one, its owner once adopted', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const boot = await f.scope.bootstrap({ projectName: 'Bootstrapped', actorName: 'Host' });
+  const boot = await f.scope.credentials.bootstrap({
+    projectName: 'Bootstrapped',
+    actorName: 'Host',
+  });
   assert.equal(await f.scope.projectCreator(boot.project.id), null);
   const alice = await f.login('alice'),
     bob = await f.login('bob');
-  await f.scope.adoptProject(alice, boot.project.id);
+  await f.scope.members.adoptProject(alice, boot.project.id);
   assert.deepEqual(await f.scope.projectCreator(boot.project.id), { issuer, subject: 'alice' });
-  const created = await f.scope.createProject(bob, { name: 'Signed in', requestId: 'create' });
-  await f.scope.addMember(bob, created.id, { subject: 'alice', role: 'operator' });
+  const created = await f.scope.members.createProject(bob, {
+    name: 'Signed in',
+    requestId: 'create',
+  });
+  await f.scope.members.addMember(bob, created.id, { subject: 'alice', role: 'operator' });
   await f.scope.caller(alice, created.id);
-  await f.scope.removeMember(alice, created.id, 'bob');
+  await f.scope.members.removeMember(alice, created.id, 'bob');
   assert.deepEqual(await f.scope.projectCreator(created.id), { issuer, subject: 'bob' });
 });
 
@@ -553,14 +598,14 @@ test('simultaneous self-demotions leave one verified human operator after serial
   t.after(async () => await f.state.close());
   const alice = await f.login('alice'),
     bob = await f.login('bob');
-  const project = await f.scope.createProject(alice, {
+  const project = await f.scope.members.createProject(alice, {
     name: 'Operator race',
     requestId: 'create',
   });
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'operator' });
   const demote = (principal: HumanPrincipal) => async (scope: ProjectScope) =>
     (
-      await scope.changeMemberRole(principal, project.id, {
+      await scope.members.changeMemberRole(principal, project.id, {
         subject: principal.user.subject,
         role: 'reader',
       })
@@ -587,7 +632,7 @@ test('simultaneous self-demotions leave one verified human operator after serial
     'operator',
   );
   assert.equal(
-    (await f.scope.memberships(bob, project.id)).filter(
+    (await f.scope.members.memberships(bob, project.id)).filter(
       (value) => value.active && value.role === 'operator',
     ).length,
     1,
@@ -599,8 +644,11 @@ test('membership mutations, actor state and project receipts roll back with fail
   t.after(async () => await f.state.close());
   const alice = await f.login('alice'),
     bob = await f.login('bob');
-  const project = await f.scope.createProject(alice, { name: 'Atomic', requestId: 'create' });
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'reviewer' });
+  const project = await f.scope.members.createProject(alice, {
+    name: 'Atomic',
+    requestId: 'create',
+  });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'reviewer' });
   const snapshot = async () =>
     await f.state.read(async (sql) => ({
       projects: await sql.all('SELECT * FROM projects'),
@@ -617,13 +665,19 @@ test('membership mutations, actor state and project receipts roll back with fail
     throw Error('Injected membership event failure');
   };
   for (const action of [
-    async () => await f.scope.createProject(alice, { name: 'Failed', requestId: 'failed' }),
-    async () => await f.scope.addMember(alice, project.id, { subject: 'charlie', role: 'reader' }),
+    async () => await f.scope.members.createProject(alice, { name: 'Failed', requestId: 'failed' }),
     async () =>
-      await f.scope.changeMemberRole(alice, project.id, { subject: 'bob', role: 'producer' }),
-    async () => await f.scope.removeMember(alice, project.id, 'bob'),
+      await f.scope.members.addMember(alice, project.id, { subject: 'charlie', role: 'reader' }),
     async () =>
-      await f.scope.adoptProject(bob, project.id, { repairReason: 'Host administrator recovery.' }),
+      await f.scope.members.changeMemberRole(alice, project.id, {
+        subject: 'bob',
+        role: 'producer',
+      }),
+    async () => await f.scope.members.removeMember(alice, project.id, 'bob'),
+    async () =>
+      await f.scope.members.adoptProject(bob, project.id, {
+        repairReason: 'Host administrator recovery.',
+      }),
   ]) {
     await assert.rejects(action, /Injected membership event failure/);
     assert.deepEqual(await snapshot(), before);
@@ -634,7 +688,7 @@ test('membership mutations, actor state and project receipts roll back with fail
     'reviewer',
   );
   assert.notEqual(
-    (await f.scope.createProject(alice, { name: 'Failed', requestId: 'failed' })).id,
+    (await f.scope.members.createProject(alice, { name: 'Failed', requestId: 'failed' })).id,
     project.id,
   );
 });
@@ -653,31 +707,34 @@ test('v2 migration preserves local projects and credentials; adoption is explici
   );
   await new CredentialStore(state).initialize();
   const oldScope = new ProjectScope(state);
-  const legacy = await oldScope.bootstrap({ projectName: 'Legacy', actorName: 'Local operator' });
+  const legacy = await oldScope.credentials.bootstrap({
+    projectName: 'Legacy',
+    actorName: 'Local operator',
+  });
   let scope = await createService(new ProjectScope(state));
   assert.deepEqual(await scope.authenticate(legacy.token), {
     ...legacy.actor,
     credential: legacy.credential,
   });
   const login = async (subject: string) =>
-    await scope.acceptVerifiedIdentity({
+    await scope.members.acceptVerifiedIdentity({
       issuer,
       subject,
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
     });
   const alice = await login('alice');
   assert.deepEqual(await scope.projects(alice), [], 'First login never silently adopts local data');
-  const adopted = await scope.adoptProject(alice, legacy.project.id);
+  const adopted = await scope.members.adoptProject(alice, legacy.project.id);
   assert.equal(adopted.role, 'operator');
   assert.notEqual(adopted.actorId, legacy.actor.id);
   assert.equal((await scope.authenticate(legacy.token)).id, legacy.actor.id);
   const rescuer = await login('rescuer');
-  await assert.rejects(async () => await scope.adoptProject(rescuer, legacy.project.id), {
+  await assert.rejects(async () => await scope.members.adoptProject(rescuer, legacy.project.id), {
     code: 'project_already_adopted',
   });
   for (const repairReason of ['', ' ', 'x'.repeat(2001)])
     await assert.rejects(
-      async () => await scope.adoptProject(rescuer, legacy.project.id, { repairReason }),
+      async () => await scope.members.adoptProject(rescuer, legacy.project.id, { repairReason }),
       {
         code: 'invalid_repair_reason',
       },
@@ -685,7 +742,7 @@ test('v2 migration preserves local projects and credentials; adoption is explici
   const repair = {
     repairReason: 'The previous owner lost their identity-provider account.',
   };
-  const repairing = scope.adoptProject(rescuer, legacy.project.id, repair);
+  const repairing = scope.members.adoptProject(rescuer, legacy.project.id, repair);
   repair.repairReason = ' ';
   const repaired = await repairing;
   assert.equal(
@@ -693,7 +750,8 @@ test('v2 migration preserves local projects and credentials; adoption is explici
     repaired.actorId,
   );
   assert.equal(
-    (await scope.memberships(rescuer, legacy.project.id)).filter((value) => value.active).length,
+    (await scope.members.memberships(rescuer, legacy.project.id)).filter((value) => value.active)
+      .length,
     2,
   );
   const audit = (await state.events(legacy.project.id)).findLast(
@@ -701,8 +759,8 @@ test('v2 migration preserves local projects and credentials; adoption is explici
   )!;
   assert.equal(audit.data.reason, 'The previous owner lost their identity-provider account.');
   assert.equal(audit.data.previousMembershipId, null);
-  await scope.removeMember(rescuer, legacy.project.id, 'alice');
-  const returned = await scope.adoptProject(alice, legacy.project.id, {
+  await scope.members.removeMember(rescuer, legacy.project.id, 'alice');
+  const returned = await scope.members.adoptProject(alice, legacy.project.id, {
     repairReason: 'Restore recovered account.',
   });
   assert.equal(returned.actorId, adopted.actorId);
@@ -735,7 +793,7 @@ test('human task context and review claims integrate with role-loss and remove/r
   const app = await createApp({ directory, api: false });
   try {
     const login = async (subject: string) =>
-      await app.ctx.scope.acceptVerifiedIdentity({
+      await app.ctx.scope.members.acceptVerifiedIdentity({
         issuer,
         subject,
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
@@ -743,12 +801,18 @@ test('human task context and review claims integrate with role-loss and remove/r
     const owner = await login('owner'),
       producerUser = await login('producer'),
       reviewerUser = await login('reviewer');
-    const project = await app.ctx.scope.createProject(owner, {
+    const project = await app.ctx.scope.members.createProject(owner, {
       name: 'Member work',
       requestId: 'create',
     });
-    await app.ctx.scope.addMember(owner, project.id, { subject: 'producer', role: 'producer' });
-    await app.ctx.scope.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
+    await app.ctx.scope.members.addMember(owner, project.id, {
+      subject: 'producer',
+      role: 'producer',
+    });
+    await app.ctx.scope.members.addMember(owner, project.id, {
+      subject: 'reviewer',
+      role: 'reviewer',
+    });
     const operator = await app.ctx.scope.caller(owner, project.id);
     const producer = await app.ctx.scope.caller(producerUser, project.id);
     let reviewer = await app.ctx.scope.caller(reviewerUser, project.id);
@@ -778,7 +842,7 @@ test('human task context and review claims integrate with role-loss and remove/r
       requestId: 'review-request',
     });
     const claimed = await app.ctx.reviews.start(reviewer, pending.id);
-    await app.ctx.scope.changeMemberRole(owner, project.id, {
+    await app.ctx.scope.members.changeMemberRole(owner, project.id, {
       subject: 'reviewer',
       role: 'reader',
     });
@@ -790,15 +854,18 @@ test('human task context and review claims integrate with role-loss and remove/r
     await assert.rejects(async () => await app.ctx.reviews.start(reviewer, claimed.id), {
       code: 'membership_required',
     });
-    await app.ctx.scope.changeMemberRole(owner, project.id, {
+    await app.ctx.scope.members.changeMemberRole(owner, project.id, {
       subject: 'reviewer',
       role: 'reviewer',
     });
     reviewer = await app.ctx.scope.caller(reviewerUser, project.id);
     const reclaimed = await app.ctx.reviews.start(reviewer, claimed.id);
     assert.notEqual(reclaimed.claimId, claimed.claimId);
-    await app.ctx.scope.removeMember(owner, project.id, 'reviewer');
-    await app.ctx.scope.addMember(owner, project.id, { subject: 'reviewer', role: 'reviewer' });
+    await app.ctx.scope.members.removeMember(owner, project.id, 'reviewer');
+    await app.ctx.scope.members.addMember(owner, project.id, {
+      subject: 'reviewer',
+      role: 'reviewer',
+    });
     const rejoined = await app.ctx.scope.caller(reviewerUser, project.id);
     assert.equal(rejoined.actorId, reviewer.actorId);
     await app.ctx.domainEvents.drain();

@@ -23,17 +23,17 @@ async function fixture(path = ':memory:') {
   let time = initialTime;
   const scope = await createService(new ProjectScope(state, () => time));
   const login = async (subject: string, realm = issuer) =>
-    await scope.acceptVerifiedIdentity({
+    await scope.members.acceptVerifiedIdentity({
       issuer: realm,
       subject,
       expiresAt: new Date(time + 3_600_000).toISOString(),
     });
   const owner = await login('owner');
-  const project = await scope.createProject(owner, { name: 'Home', requestId: 'home' });
+  const project = await scope.members.createProject(owner, { name: 'Home', requestId: 'home' });
   const operator = await scope.caller(owner, project.id);
   const principal = async (token: string): Promise<Principal> => ({
     kind: 'key',
-    key: await scope.authenticateKey(token),
+    key: await scope.userKeys.authenticate(token),
   });
   return {
     state,
@@ -53,10 +53,10 @@ test('project keys reuse owner membership attribution, default to their fixed pr
   const f = await fixture();
   t.after(async () => await f.state.close());
   const reader = await f.login('reader');
-  await f.scope.addMember(f.owner, f.project.id, { subject: 'reader', role: 'reader' });
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'reader', role: 'reader' });
   const beforeActors = await f.scope.actors(f.operator);
   const input = { projectId: f.project.id, label: ' Laptop ' };
-  const creating = f.scope.createKey(reader, input);
+  const creating = f.scope.userKeys.create(reader, input);
   input.label = ' ';
   const issued = await creating;
   assert.match(issued.token, /^mk_[A-Za-z0-9_-]{43}$/);
@@ -84,7 +84,7 @@ test('project keys reuse owner membership attribution, default to their fixed pr
     JSON.stringify({
       stored,
       events: await f.state.events(f.project.id),
-      metadata: await f.scope.keys(reader),
+      metadata: await f.scope.userKeys.keys(reader),
     }).includes(issued.token),
     false,
   );
@@ -100,23 +100,26 @@ test('project keys reuse owner membership attribution, default to their fixed pr
 test('account grants cover only current and future owner memberships and always require project selection', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const account = await f.scope.createKey(f.owner, {
+  const account = await f.scope.userKeys.create(f.owner, {
     projectId: f.project.id,
     grantScope: 'account',
   });
-  const fixed = await f.scope.createKey(f.owner, { projectId: f.project.id });
+  const fixed = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
   await assert.rejects(async () => await f.scope.caller(await f.principal(account.token)), {
     code: 'project_required',
   });
   const other = await f.login('other');
-  const future = await f.scope.createProject(other, { name: 'Future', requestId: 'future' });
+  const future = await f.scope.members.createProject(other, {
+    name: 'Future',
+    requestId: 'future',
+  });
   await assert.rejects(
     async () => await f.scope.caller(await f.principal(account.token), future.id),
     {
       code: 'membership_required',
     },
   );
-  await f.scope.addMember(other, future.id, { subject: 'owner', role: 'producer' });
+  await f.scope.members.addMember(other, future.id, { subject: 'owner', role: 'producer' });
   const inFuture = await f.scope.caller(await f.principal(account.token), future.id);
   assert.equal(inFuture.actorId, (await f.scope.caller(f.owner, future.id)).actorId);
   assert.notEqual(inFuture.actorId, f.operator.actorId);
@@ -145,12 +148,15 @@ test('key authority rejects mixed tags, another owner or actor, stale epochs, re
   const f = await fixture();
   t.after(async () => await f.state.close());
   const other = await f.login('other');
-  await f.scope.addMember(f.owner, f.project.id, { subject: 'other', role: 'operator' });
-  const issued = await f.scope.createKey(f.owner, { projectId: f.project.id });
-  const otherKey = await f.scope.createKey(other, { projectId: f.project.id });
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'other', role: 'operator' });
+  const issued = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
+  const otherKey = await f.scope.userKeys.create(other, { projectId: f.project.id });
   const caller = await f.scope.caller(await f.principal(issued.token));
   const otherCaller = await f.scope.caller(other, f.project.id);
-  const machine = await f.scope.issueActor(f.operator, { name: 'Legacy', role: 'operator' });
+  const machine = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Legacy',
+    role: 'operator',
+  });
   for (const invalid of [
     { ...caller, human: f.operator.human },
     { ...caller, credentialId: machine.credential.id },
@@ -169,7 +175,7 @@ test('key authority rejects mixed tags, another owner or actor, stale epochs, re
       await f.scope.require({ actorId: caller.actorId, projectId: caller.projectId }, 'read'),
     { code: 'membership_required' },
   );
-  await f.scope.changeMemberRole(other, f.project.id, { subject: 'owner', role: 'reader' });
+  await f.scope.members.changeMemberRole(other, f.project.id, { subject: 'owner', role: 'reader' });
   await assert.rejects(async () => await f.scope.require(caller, 'read'), {
     code: 'membership_required',
   });
@@ -181,10 +187,11 @@ test('key authority rejects mixed tags, another owner or actor, stale epochs, re
   await assert.rejects(
     async () =>
       await f.state.transaction(async (tx) => {
+        // Identity's ledger alone decides whether a key is live.
         await tx.run(
-          'UPDATE user_keys SET revoked_at=? WHERE id=?',
+          'UPDATE identity_credentials SET revoked_at=? WHERE token_hash=?',
           new Date(initialTime).toISOString(),
-          issued.key.id,
+          createHash('sha256').update(issued.token).digest('hex'),
         );
         await assert.rejects(async () => await f.scope.require(restricted, 'read', tx), {
           code: 'forbidden',
@@ -194,7 +201,7 @@ test('key authority rejects mixed tags, another owner or actor, stale epochs, re
     /Rollback/,
   );
   assert.equal((await f.scope.require(restricted, 'read')).role, 'reader');
-  await f.scope.revokeKey(f.owner, issued.key.id);
+  await f.scope.userKeys.revoke(f.owner, issued.key.id);
   await assert.rejects(async () => await f.scope.require(restricted, 'read'), {
     code: 'forbidden',
   });
@@ -211,29 +218,35 @@ test('key management is human-owner-only; membership loss preserves metadata and
   t.after(async () => await f.state.close());
   const other = await f.login('other');
   const otherRealm = await f.login('owner', 'https://another.example/auth/v1');
-  await f.scope.addMember(f.owner, f.project.id, { subject: 'other', role: 'operator' });
-  const issued = await f.scope.createKey(f.owner, { projectId: f.project.id });
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'other', role: 'operator' });
+  const issued = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
   const old = await f.scope.caller(await f.principal(issued.token));
   for (const notOwner of [other, otherRealm]) {
-    assert.deepEqual(await f.scope.keys(notOwner), []);
-    await assert.rejects(async () => await f.scope.rotateKey(notOwner, { keyId: issued.key.id }), {
-      code: 'not_found',
-    });
-    await assert.rejects(async () => await f.scope.revokeKey(notOwner, issued.key.id), {
+    assert.deepEqual(await f.scope.userKeys.keys(notOwner), []);
+    await assert.rejects(
+      async () => await f.scope.userKeys.rotate(notOwner, { keyId: issued.key.id }),
+      {
+        code: 'not_found',
+      },
+    );
+    await assert.rejects(async () => await f.scope.userKeys.revoke(notOwner, issued.key.id), {
       code: 'not_found',
     });
   }
-  await f.scope.removeMember(other, f.project.id, 'owner');
-  assert.equal((await f.scope.authenticateKey(issued.token)).id, issued.key.id);
+  await f.scope.members.removeMember(other, f.project.id, 'owner');
+  assert.equal((await f.scope.userKeys.authenticate(issued.token)).id, issued.key.id);
   assert.deepEqual(await f.scope.projects(await f.principal(issued.token)), []);
   await assert.rejects(async () => await f.scope.caller(await f.principal(issued.token)), {
     code: 'membership_required',
   });
-  await assert.rejects(async () => await f.scope.rotateKey(f.owner, { keyId: issued.key.id }), {
-    code: 'membership_required',
-  });
-  assert.deepEqual(await f.scope.keys(f.owner, f.project.id), [issued.key]);
-  await f.scope.addMember(other, f.project.id, { subject: 'owner', role: 'reviewer' });
+  await assert.rejects(
+    async () => await f.scope.userKeys.rotate(f.owner, { keyId: issued.key.id }),
+    {
+      code: 'membership_required',
+    },
+  );
+  assert.deepEqual(await f.scope.userKeys.keys(f.owner, f.project.id), [issued.key]);
+  await f.scope.members.addMember(other, f.project.id, { subject: 'owner', role: 'reviewer' });
   const rejoined = await f.scope.caller(await f.principal(issued.token));
   assert.equal(rejoined.actorId, old.actorId);
   assert.notEqual(rejoined.key?.membershipId, old.key?.membershipId);
@@ -241,9 +254,9 @@ test('key management is human-owner-only; membership loss preserves metadata and
     code: 'membership_required',
   });
   assert.equal((await f.scope.require(rejoined, 'review')).role, 'reviewer');
-  await f.scope.removeMember(other, f.project.id, 'owner');
-  await f.scope.revokeKey(f.owner, issued.key.id);
-  assert.ok((await f.scope.keys(f.owner))[0].revokedAt);
+  await f.scope.members.removeMember(other, f.project.id, 'owner');
+  await f.scope.userKeys.revoke(f.owner, issued.key.id);
+  assert.ok((await f.scope.userKeys.keys(f.owner))[0].revokedAt);
   const audit = (await f.state.events(f.project.id)).at(-1)!;
   assert.equal(audit.type, 'actor.key_revoked');
   assert.equal(
@@ -256,8 +269,11 @@ test('key management is human-owner-only; membership loss preserves metadata and
 test('operator keys cannot escape into human administration or independent actor credentials', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const machine = await f.scope.issueActor(f.operator, { name: 'Legacy', role: 'operator' });
-  const issued = await f.scope.createKey(f.owner, {
+  const machine = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Legacy',
+    role: 'operator',
+  });
+  const issued = await f.scope.userKeys.create(f.owner, {
     projectId: f.project.id,
     grantScope: 'account',
   });
@@ -265,23 +281,32 @@ test('operator keys cannot escape into human administration or independent actor
     caller = await f.scope.caller(principal, f.project.id);
   const before = await f.state.eventHead();
   for (const operation of [
-    async () => await f.scope.keys(principal),
-    async () => await f.scope.createKey(principal, { projectId: f.project.id }),
-    async () => await f.scope.rotateKey(principal, { keyId: issued.key.id }),
-    async () => await f.scope.revokeKey(principal, issued.key.id),
-    async () => await f.scope.createProject(principal, { name: 'Escape', requestId: 'escape' }),
-    async () => await f.scope.memberships(principal, f.project.id),
+    async () => await f.scope.userKeys.keys(principal),
+    async () => await f.scope.userKeys.create(principal, { projectId: f.project.id }),
+    async () => await f.scope.userKeys.rotate(principal, { keyId: issued.key.id }),
+    async () => await f.scope.userKeys.revoke(principal, issued.key.id),
     async () =>
-      await f.scope.addMember(principal, f.project.id, { subject: 'escape', role: 'operator' }),
+      await f.scope.members.createProject(principal, { name: 'Escape', requestId: 'escape' }),
+    async () => await f.scope.members.memberships(principal, f.project.id),
     async () =>
-      await f.scope.changeMemberRole(principal, f.project.id, { subject: 'owner', role: 'reader' }),
-    async () => await f.scope.removeMember(principal, f.project.id, 'owner'),
-    async () => await f.scope.issueActor(caller, { name: 'Escape', role: 'operator' }),
-    async () => await f.scope.actorCredentials(caller, machine.actor.id),
-    async () => await f.scope.issueActorCredential(caller, { actorId: machine.actor.id }),
-    async () => await f.scope.rotateCredential(caller, { credentialId: machine.credential.id }),
-    async () => await f.scope.revokeCredential(caller, machine.credential.id),
-    async () => await f.scope.revokeActor(caller, machine.actor.id),
+      await f.scope.members.addMember(principal, f.project.id, {
+        subject: 'escape',
+        role: 'operator',
+      }),
+    async () =>
+      await f.scope.members.changeMemberRole(principal, f.project.id, {
+        subject: 'owner',
+        role: 'reader',
+      }),
+    async () => await f.scope.members.removeMember(principal, f.project.id, 'owner'),
+    async () => await f.scope.credentials.issueActor(caller, { name: 'Escape', role: 'operator' }),
+    async () => await f.scope.credentials.actorCredentials(caller, machine.actor.id),
+    async () =>
+      await f.scope.credentials.issueActorCredential(caller, { actorId: machine.actor.id }),
+    async () =>
+      await f.scope.credentials.rotateCredential(caller, { credentialId: machine.credential.id }),
+    async () => await f.scope.credentials.revokeCredential(caller, machine.credential.id),
+    async () => await f.scope.credentials.revokeActor(caller, machine.actor.id),
   ])
     await assert.rejects(operation, { code: 'forbidden' });
   assert.equal(await f.state.eventHead(), before);
@@ -300,7 +325,7 @@ test('key expiry and rotation preserve grants and support explicit human reautho
   ])
     await assert.rejects(
       async () =>
-        await f.scope.createKey(f.owner, {
+        await f.scope.userKeys.create(f.owner, {
           projectId: f.project.id,
           expiresAt: expiresAt as string,
         }),
@@ -309,7 +334,7 @@ test('key expiry and rotation preserve grants and support explicit human reautho
   for (const grantScope of ['', 'all', null])
     await assert.rejects(
       async () =>
-        await f.scope.createKey(f.owner, {
+        await f.scope.userKeys.create(f.owner, {
           projectId: f.project.id,
           grantScope: grantScope as 'project',
         }),
@@ -318,18 +343,18 @@ test('key expiry and rotation preserve grants and support explicit human reautho
   for (const label of ['', ' ', 'x'.repeat(121), 1])
     await assert.rejects(
       async () =>
-        await f.scope.createKey(f.owner, { projectId: f.project.id, label: label as string }),
+        await f.scope.userKeys.create(f.owner, { projectId: f.project.id, label: label as string }),
       { code: 'invalid_label' },
     );
   const expiresAt = new Date(initialTime + 1000).toISOString();
-  const issued = await f.scope.createKey(f.owner, {
+  const issued = await f.scope.userKeys.create(f.owner, {
     projectId: f.project.id,
     label: 'Device',
     expiresAt,
   });
   const caller = await f.scope.caller(await f.principal(issued.token));
   const rotation: { keyId: string; expiresAt?: string | null } = { keyId: issued.key.id };
-  const rotating = f.scope.rotateKey(f.owner, rotation);
+  const rotating = f.scope.userKeys.rotate(f.owner, rotation);
   rotation.expiresAt = null;
   const rotated = await rotating;
   assert.equal(rotated.key.expiresAt, expiresAt);
@@ -338,35 +363,41 @@ test('key expiry and rotation preserve grants and support explicit human reautho
   assert.equal(rotated.key.label, issued.key.label);
   assert.deepEqual(rotated.key.owner, issued.key.owner);
   assert.equal(rotated.key.grantScope, 'project');
-  await assert.rejects(async () => await f.scope.authenticateKey(issued.token), {
+  await assert.rejects(async () => await f.scope.userKeys.authenticate(issued.token), {
     code: 'unauthorized',
   });
   await assert.rejects(async () => await f.scope.require(caller, 'read'), { code: 'forbidden' });
   await assert.rejects(
-    async () => await f.scope.rotateKey(f.owner, { keyId: issued.key.id, expiresAt: null }),
+    async () => await f.scope.userKeys.rotate(f.owner, { keyId: issued.key.id, expiresAt: null }),
     {
       code: 'key_revoked',
     },
   );
   const expiringCaller = await f.scope.caller(await f.principal(rotated.token));
   f.advance(1000);
-  await assert.rejects(async () => await f.scope.authenticateKey(rotated.token), {
+  await assert.rejects(async () => await f.scope.userKeys.authenticate(rotated.token), {
     code: 'unauthorized',
   });
   await assert.rejects(async () => await f.scope.require(expiringCaller, 'read'), {
     code: 'forbidden',
   });
-  await assert.rejects(async () => await f.scope.rotateKey(f.owner, { keyId: rotated.key.id }), {
-    code: 'invalid_expiry',
+  await assert.rejects(
+    async () => await f.scope.userKeys.rotate(f.owner, { keyId: rotated.key.id }),
+    {
+      code: 'invalid_expiry',
+    },
+  );
+  const renewed = await f.scope.userKeys.rotate(f.owner, {
+    keyId: rotated.key.id,
+    expiresAt: null,
   });
-  const renewed = await f.scope.rotateKey(f.owner, { keyId: rotated.key.id, expiresAt: null });
   assert.equal(renewed.key.expiresAt, null);
-  assert.equal((await f.scope.authenticateKey(renewed.token)).id, renewed.key.id);
-  await f.scope.revokeKey(f.owner, issued.key.id);
-  await assert.rejects(async () => await f.scope.authenticateKey(renewed.token), {
+  assert.equal((await f.scope.userKeys.authenticate(renewed.token)).id, renewed.key.id);
+  await f.scope.userKeys.revoke(f.owner, issued.key.id);
+  await assert.rejects(async () => await f.scope.userKeys.authenticate(renewed.token), {
     code: 'unauthorized',
   });
-  assert.ok((await f.scope.keys(f.owner)).every((key) => key.revokedAt !== null));
+  assert.ok((await f.scope.userKeys.keys(f.owner)).every((key) => key.revokedAt !== null));
   for (const token of [issued.token, rotated.token, renewed.token])
     assert.equal(await f.scope.recognizesCredential(token), true);
   for (const invalid of [
@@ -379,16 +410,16 @@ test('key expiry and rotation preserve grants and support explicit human reautho
     issued.token + '.',
   ]) {
     assert.equal(await f.scope.recognizesCredential(invalid as string), false);
-    await assert.rejects(async () => await f.scope.authenticateKey(invalid as string), {
+    await assert.rejects(async () => await f.scope.userKeys.authenticate(invalid as string), {
       code: 'unauthorized',
     });
   }
   const head = await f.state.eventHead();
-  await f.scope.revokeKey(f.owner, issued.key.id);
+  await f.scope.userKeys.revoke(f.owner, issued.key.id);
   assert.equal(await f.state.eventHead(), head);
   assert.equal((await f.scope.require(f.operator, 'admin')).active, true);
-  const durable = await f.scope.createKey(f.owner, { projectId: f.project.id });
-  const keys = await f.scope.keys(f.owner);
+  const durable = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
+  const keys = await f.scope.userKeys.keys(f.owner);
   const rotationHead = await f.state.eventHead();
   const resolve = Memberships.prototype.resolve;
   const delayed = t.mock.method(
@@ -402,7 +433,7 @@ test('key expiry and rotation preserve grants and support explicit human reautho
   );
   try {
     await assert.rejects(
-      f.scope.rotateKey(f.owner, {
+      f.scope.userKeys.rotate(f.owner, {
         keyId: durable.key.id,
         expiresAt: new Date(initialTime + 2000).toISOString(),
       }),
@@ -411,8 +442,8 @@ test('key expiry and rotation preserve grants and support explicit human reautho
   } finally {
     delayed.mock.restore();
   }
-  assert.equal((await f.scope.authenticateKey(durable.token)).id, durable.key.id);
-  assert.deepEqual(await f.scope.keys(f.owner), keys);
+  assert.equal((await f.scope.userKeys.authenticate(durable.token)).id, durable.key.id);
+  assert.deepEqual(await f.scope.userKeys.keys(f.owner), keys);
   assert.equal(await f.state.eventHead(), rotationHead);
 });
 
@@ -420,16 +451,19 @@ test('account rotation survives losing its issuance project but requires another
   const f = await fixture();
   t.after(async () => await f.state.close());
   const other = await f.login('other');
-  await f.scope.addMember(f.owner, f.project.id, { subject: 'other', role: 'operator' });
-  const second = await f.scope.createProject(other, { name: 'Second', requestId: 'second' });
-  await f.scope.addMember(other, second.id, { subject: 'owner', role: 'reader' });
-  const account = await f.scope.createKey(f.owner, {
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'other', role: 'operator' });
+  const second = await f.scope.members.createProject(other, {
+    name: 'Second',
+    requestId: 'second',
+  });
+  await f.scope.members.addMember(other, second.id, { subject: 'owner', role: 'reader' });
+  const account = await f.scope.userKeys.create(f.owner, {
     projectId: f.project.id,
     grantScope: 'account',
   });
-  const fixed = await f.scope.createKey(f.owner, { projectId: f.project.id });
-  await f.scope.removeMember(other, f.project.id, 'owner');
-  const rotated = await f.scope.rotateKey(f.owner, { keyId: account.key.id });
+  const fixed = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
+  await f.scope.members.removeMember(other, f.project.id, 'owner');
+  const rotated = await f.scope.userKeys.rotate(f.owner, { keyId: account.key.id });
   assert.equal(rotated.key.projectId, f.project.id);
   assert.equal(rotated.key.grantScope, 'account');
   assert.equal(
@@ -442,22 +476,29 @@ test('account rotation survives losing its issuance project but requires another
     'reader',
   );
   assert.equal((await f.state.events(f.project.id)).at(-1)?.actorId, f.operator.actorId);
-  await assert.rejects(async () => await f.scope.rotateKey(f.owner, { keyId: fixed.key.id }), {
-    code: 'membership_required',
-  });
-  await f.scope.removeMember(other, second.id, 'owner');
-  await assert.rejects(async () => await f.scope.rotateKey(f.owner, { keyId: rotated.key.id }), {
-    code: 'membership_required',
-  });
   await assert.rejects(
-    async () => await f.scope.createKey(f.owner, { projectId: second.id, grantScope: 'account' }),
+    async () => await f.scope.userKeys.rotate(f.owner, { keyId: fixed.key.id }),
     {
       code: 'membership_required',
     },
   );
-  assert.equal((await f.scope.keys(f.owner)).length, 3);
-  await f.scope.revokeKey(f.owner, account.key.id);
-  await assert.rejects(async () => await f.scope.authenticateKey(rotated.token), {
+  await f.scope.members.removeMember(other, second.id, 'owner');
+  await assert.rejects(
+    async () => await f.scope.userKeys.rotate(f.owner, { keyId: rotated.key.id }),
+    {
+      code: 'membership_required',
+    },
+  );
+  await assert.rejects(
+    async () =>
+      await f.scope.userKeys.create(f.owner, { projectId: second.id, grantScope: 'account' }),
+    {
+      code: 'membership_required',
+    },
+  );
+  assert.equal((await f.scope.userKeys.keys(f.owner)).length, 3);
+  await f.scope.userKeys.revoke(f.owner, account.key.id);
+  await assert.rejects(async () => await f.scope.userKeys.authenticate(rotated.token), {
     code: 'unauthorized',
   });
 });
@@ -465,7 +506,7 @@ test('account rotation survives losing its issuance project but requires another
 test('key lifecycle writes roll back with their audit events, and key ownership, grants and lineage are immutable', async (t) => {
   const f = await fixture();
   t.after(async () => await f.state.close());
-  const issued = await f.scope.createKey(f.owner, { projectId: f.project.id });
+  const issued = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
   const head = await f.state.eventHead();
   const append = f.state.appendEvent.bind(f.state);
   f.state.appendEvent = async (tx, event) => {
@@ -473,14 +514,14 @@ test('key lifecycle writes roll back with their audit events, and key ownership,
     throw new Error('Audit failure');
   };
   for (const operation of [
-    async () => await f.scope.createKey(f.owner, { projectId: f.project.id }),
-    async () => await f.scope.rotateKey(f.owner, { keyId: issued.key.id }),
-    async () => await f.scope.revokeKey(f.owner, issued.key.id),
+    async () => await f.scope.userKeys.create(f.owner, { projectId: f.project.id }),
+    async () => await f.scope.userKeys.rotate(f.owner, { keyId: issued.key.id }),
+    async () => await f.scope.userKeys.revoke(f.owner, issued.key.id),
   ]) {
     await assert.rejects(operation, /Audit failure/);
     assert.equal(await f.state.eventHead(), head);
-    assert.deepEqual(await f.scope.keys(f.owner), [issued.key]);
-    assert.equal((await f.scope.authenticateKey(issued.token)).id, issued.key.id);
+    assert.deepEqual(await f.scope.userKeys.keys(f.owner), [issued.key]);
+    assert.equal((await f.scope.userKeys.authenticate(issued.token)).id, issued.key.id);
   }
   f.state.appendEvent = append;
   for (const column of [
@@ -506,7 +547,7 @@ test('key lifecycle writes roll back with their audit events, and key ownership,
     async () => await f.state.transaction(async (tx) => await tx.run('DELETE FROM user_keys')),
     { code: 'state_constraint' },
   );
-  const child = await f.scope.rotateKey(f.owner, { keyId: issued.key.id });
+  const child = await f.scope.userKeys.rotate(f.owner, { keyId: issued.key.id });
   await assert.rejects(
     async () =>
       await f.state.transaction(
@@ -528,17 +569,17 @@ test('key lifecycle writes roll back with their audit events, and key ownership,
       ),
     { code: 'state_constraint' },
   );
-  const beforeRevoke = await f.scope.keys(f.owner);
+  const beforeRevoke = await f.scope.userKeys.keys(f.owner);
   f.state.appendEvent = async (tx, event) => {
     await append(tx, event);
     throw new Error('Recursive audit failure');
   };
   await assert.rejects(
-    async () => await f.scope.revokeKey(f.owner, issued.key.id),
+    async () => await f.scope.userKeys.revoke(f.owner, issued.key.id),
     /Recursive audit failure/,
   );
-  assert.deepEqual(await f.scope.keys(f.owner), beforeRevoke);
-  assert.equal((await f.scope.authenticateKey(child.token)).id, child.key.id);
+  assert.deepEqual(await f.scope.userKeys.keys(f.owner), beforeRevoke);
+  assert.equal((await f.scope.userKeys.authenticate(child.token)).id, child.key.id);
   f.state.appendEvent = append;
 });
 
@@ -550,13 +591,13 @@ test('key rotation and revocation are not actor death; owner permission-loss eve
     rmSync(directory, { recursive: true, force: true });
   });
   const reviewerUser = await f.login('reviewer');
-  await f.scope.addMember(f.owner, f.project.id, { subject: 'reviewer', role: 'reviewer' });
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'reviewer', role: 'reviewer' });
   const artifacts = await createService(
     new ArtifactStore(f.state, f.scope, new DiskBlobs(join(directory, 'blobs'))),
   );
   const reviews = await createService(new ReviewService(f.state, f.scope, artifacts));
   ownReviews(reviews);
-  const producerKey = await f.scope.createKey(f.owner, { projectId: f.project.id });
+  const producerKey = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
   const producer = await f.scope.caller(await f.principal(producerKey.token));
   const proof = await artifacts.create(producer, { title: 'Proof', content: 'Passed.' });
   const request = await reviews.request(producer, {
@@ -570,37 +611,40 @@ test('key rotation and revocation are not actor death; owner permission-loss eve
   await assert.rejects(async () => await reviews.start(f.operator, request.id), {
     code: 'review_independence',
   });
-  let issued = await f.scope.createKey(reviewerUser, { projectId: f.project.id });
+  let issued = await f.scope.userKeys.create(reviewerUser, { projectId: f.project.id });
   let reviewer = await f.scope.caller(await f.principal(issued.token));
   let claim = await reviews.start(reviewer, request.id);
-  issued = await f.scope.rotateKey(reviewerUser, { keyId: issued.key.id });
+  issued = await f.scope.userKeys.rotate(reviewerUser, { keyId: issued.key.id });
   await assert.rejects(async () => await reviews.checkSubmit(reviewer, claim.id), {
     code: 'forbidden',
   });
   reviewer = await f.scope.caller(await f.principal(issued.token));
   assert.equal((await reviews.checkSubmit(reviewer, claim.id)).claimId, claim.claimId);
-  await f.scope.revokeKey(reviewerUser, issued.key.id);
+  await f.scope.userKeys.revoke(reviewerUser, issued.key.id);
   assert.equal(await f.scope.eligible(f.project.id, reviewer.actorId, 'review'), true);
   assert.equal(
     (await reviews.checkSubmit(await f.scope.caller(reviewerUser, f.project.id), claim.id)).claimId,
     claim.claimId,
   );
-  issued = await f.scope.createKey(reviewerUser, { projectId: f.project.id });
+  issued = await f.scope.userKeys.create(reviewerUser, { projectId: f.project.id });
   reviewer = await f.scope.caller(await f.principal(issued.token));
   assert.equal((await reviews.checkSubmit(reviewer, claim.id)).claimId, claim.claimId);
   for (const mode of ['role', 'remove']) {
     if (mode === 'role') {
-      await f.scope.changeMemberRole(f.owner, f.project.id, {
+      await f.scope.members.changeMemberRole(f.owner, f.project.id, {
         subject: 'reviewer',
         role: 'reader',
       });
-      await f.scope.changeMemberRole(f.owner, f.project.id, {
+      await f.scope.members.changeMemberRole(f.owner, f.project.id, {
         subject: 'reviewer',
         role: 'reviewer',
       });
     } else {
-      await f.scope.removeMember(f.owner, f.project.id, 'reviewer');
-      await f.scope.addMember(f.owner, f.project.id, { subject: 'reviewer', role: 'reviewer' });
+      await f.scope.members.removeMember(f.owner, f.project.id, 'reviewer');
+      await f.scope.members.addMember(f.owner, f.project.id, {
+        subject: 'reviewer',
+        role: 'reviewer',
+      });
     }
     const restored = await f.scope.caller(await f.principal(issued.token));
     await assert.rejects(async () => await reviews.checkSubmit(reviewer, claim.id), {
@@ -651,11 +695,11 @@ for (const [firstAction, secondAction] of [
     const key = `key-race-${firstAction}-${secondAction}`;
     const f = await fixture(key);
     t.after(async () => await f.state.close());
-    const issued = await f.scope.createKey(f.owner, { projectId: f.project.id });
+    const issued = await f.scope.userKeys.create(f.owner, { projectId: f.project.id });
     const act = (action: 'rotate' | 'revoke') => async (scope: ProjectScope) =>
       action === 'rotate'
-        ? (await scope.rotateKey(f.owner, { keyId: issued.key.id })).key
-        : await scope.revokeKey(f.owner, issued.key.id);
+        ? (await scope.userKeys.rotate(f.owner, { keyId: issued.key.id })).key
+        : await scope.userKeys.revoke(f.owner, issued.key.id);
     const race = await raceWriters({
       schema: schemaFor(key),
       service: scopeWriter(() => initialTime),
@@ -668,7 +712,7 @@ for (const [firstAction, secondAction] of [
       'Second operation cannot enter its callback yet',
     );
     assert.equal(race.first.ok, true);
-    const history = await f.scope.keys(f.owner);
+    const history = await f.scope.userKeys.keys(f.owner);
     if (secondAction === 'rotate')
       assert.deepEqual(race.second, { ok: false, code: 'key_revoked', status: 409 });
     else assert.equal(race.second.ok, true);
@@ -681,7 +725,7 @@ for (const [firstAction, secondAction] of [
       history.filter((key) => key.previousId === issued.key.id).length,
       firstAction === 'rotate' ? 1 : 0,
     );
-    await assert.rejects(async () => await f.scope.authenticateKey(issued.token), {
+    await assert.rejects(async () => await f.scope.userKeys.authenticate(issued.token), {
       code: 'unauthorized',
     });
   });

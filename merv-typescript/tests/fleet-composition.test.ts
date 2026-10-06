@@ -26,7 +26,7 @@ test('Fleet is optional and its row and controls install without research or Ses
   ctx.provide('ui', ui);
   ctx.provide('tools', tools);
   ctx.provide('sandboxes', {} as Sandboxes);
-  const boot = await scope.bootstrap({
+  const boot = await scope.credentials.bootstrap({
     projectName: 'Fleet optional composition',
     actorName: 'Operator',
   });

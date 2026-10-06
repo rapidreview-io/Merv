@@ -58,7 +58,7 @@ test('workflow withdrawal drains task calls and restores domain and assignment t
   let pending: Promise<any> | undefined;
   let unloading: Promise<void> | undefined;
   try {
-    const credentials = await app.ctx.scope.bootstrap({
+    const credentials = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Workflow removal',
       actorName: 'Operator',
     });

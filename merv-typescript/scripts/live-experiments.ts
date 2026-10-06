@@ -75,7 +75,7 @@ Attempt reviewer: in addition to all existing review requirements, read calculat
 
 try {
   app = await createApp({ directory: join(directory, 'server'), api: true, port: 0 });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Native production experiment',
     actorName: 'Fixture owner',
   });
@@ -87,7 +87,7 @@ try {
   });
   secrets.push(boot.token);
   process.env[credentialEnv] = boot.token;
-  const other = await app.ctx.scope.bootstrap({
+  const other = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Separate untouched project',
     actorName: 'Other owner',
   });

@@ -136,8 +136,8 @@ test('relink and owner removal fence delegated automation without changing the c
     { code: 'github_automation_disabled' },
   );
   await f.enable();
-  await f.scope.removeMember(
-    await f.scope.acceptVerifiedIdentity({
+  await f.scope.members.removeMember(
+    await f.scope.members.acceptVerifiedIdentity({
       issuer: f.caller.human!.issuer,
       subject: 'reviewer',
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),

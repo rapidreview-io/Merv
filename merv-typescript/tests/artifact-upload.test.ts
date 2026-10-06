@@ -31,7 +31,10 @@ test('file upload uses normal MCP session authority and returns a verified small
     await app.stop();
     rmSync(dir, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Upload', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Upload',
+    actorName: 'Owner',
+  });
   const owner = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -79,7 +82,10 @@ test('file upload uses normal MCP session authority and returns a verified small
   await assert.rejects(uploadArtifact({ url: app.ctx.api.url!, file, token }), {
     code: 'artifact_upload_failed',
   });
-  const reader = await app.ctx.scope.issueActor(owner, { name: 'Reader', role: 'reader' });
+  const reader = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
   await assert.rejects(uploadArtifact({ url: app.ctx.api.url!, file, token: reader.token }), {
     code: 'artifact_upload_failed',
   });

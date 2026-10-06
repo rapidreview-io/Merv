@@ -25,7 +25,10 @@ async function fixture(t: TestContext) {
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Bytes', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Bytes',
+    actorName: 'Owner',
+  });
   const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   return { app, caller };
 }

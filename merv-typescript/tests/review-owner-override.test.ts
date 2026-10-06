@@ -39,15 +39,18 @@ async function fixture(t: TestContext) {
   });
   const { scope, sessions, tools, reviews, workflows } = app.ctx;
   const login = async (subject: string) =>
-    await scope.acceptVerifiedIdentity({ issuer, subject, expiresAt: expiresAt() });
+    await scope.members.acceptVerifiedIdentity({ issuer, subject, expiresAt: expiresAt() });
   const person = await login('founder');
-  const project = await scope.createProject(person, { name: 'Owner', requestId: 'project' });
+  const project = await scope.members.createProject(person, {
+    name: 'Owner',
+    requestId: 'project',
+  });
   // The founder signed in, and the same person on their own key.
   const founder = await scope.caller(person, project.id);
   const key = await scope.caller({
     kind: 'key',
-    key: await scope.authenticateKey(
-      (await scope.createKey(person, { projectId: project.id })).token,
+    key: await scope.userKeys.authenticate(
+      (await scope.userKeys.create(person, { projectId: project.id })).token,
     ),
   });
   const work = currentWork(app.ctx, { directory: join(directory, 'work'), source: founder });
@@ -58,12 +61,12 @@ async function fixture(t: TestContext) {
   let seq = 0;
   const member = async (role: Role) => {
     const subject = `member-${++seq}`;
-    await scope.addMember(person, project.id, { subject, role });
+    await scope.members.addMember(person, project.id, { subject, role });
     return await scope.caller(await login(subject), project.id);
   };
   /** A machine actor with an actor credential: never a person, whatever its role. */
   const machine = async (role: Role): Promise<Caller> => {
-    const issued = await scope.issueActor(founder, { name: `Machine ${++seq}`, role });
+    const issued = await scope.credentials.issueActor(founder, { name: `Machine ${++seq}`, role });
     return {
       actorId: issued.actor.id,
       projectId: project.id,
@@ -559,14 +562,17 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
     reviews,
     effect: (register: () => () => Promise<void>) => void t.after(register()),
   } as never);
-  const person = await f.scope.acceptVerifiedIdentity({
+  const person = await f.scope.members.acceptVerifiedIdentity({
     issuer,
     subject: 'olive',
     expiresAt: expiresAt(),
   });
-  const project = await f.scope.createProject(person, { name: 'Agent', requestId: 'agent' });
+  const project = await f.scope.members.createProject(person, {
+    name: 'Agent',
+    requestId: 'agent',
+  });
   const owner = await f.scope.caller(person, project.id);
-  const robot = await f.scope.issueActor(owner, { name: 'Robot', role: 'producer' });
+  const robot = await f.scope.credentials.issueActor(owner, { name: 'Robot', role: 'producer' });
   const producer = { actorId: robot.actor.id, projectId: project.id };
   const proof = await artifacts.create(producer, { title: 'Proof', content: 'Observed.' });
   const review = await reviews.request(owner, {
@@ -581,8 +587,8 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
   });
   const key = await f.scope.caller({
     kind: 'key',
-    key: await f.scope.authenticateKey(
-      (await f.scope.createKey(person, { projectId: project.id })).token,
+    key: await f.scope.userKeys.authenticate(
+      (await f.scope.userKeys.create(person, { projectId: project.id })).token,
     ),
   });
   const { token, work, input } = await f.begun(owner);

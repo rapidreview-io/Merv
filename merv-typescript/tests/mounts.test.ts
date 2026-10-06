@@ -39,7 +39,7 @@ async function until(
 async function local(t: TestContext, mountIds = ['fixture']) {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
-  const admin = await scope.bootstrap({ projectName: 'Mounts', actorName: 'Operator' });
+  const admin = await scope.credentials.bootstrap({ projectName: 'Mounts', actorName: 'Operator' });
   const caller = { actorId: admin.actor.id, projectId: admin.project.id };
   const access = scope.toolPolicy;
   access.replace(
@@ -403,7 +403,7 @@ test(
   async (t) => {
     const services = await local(t);
     const actor = (
-      await services.scope.issueActor(services.caller, {
+      await services.scope.credentials.issueActor(services.caller, {
         name: 'Discovery',
         role: 'reader',
       })
@@ -507,7 +507,7 @@ test(
 /** A mount whose discovery actor is a separate reader of the fixture project. */
 async function discovered(t: TestContext, tools = ['media']) {
   const services = await local(t);
-  const { actor } = await services.scope.issueActor(services.caller, {
+  const { actor } = await services.scope.credentials.issueActor(services.caller, {
     name: 'Discovery',
     role: 'reader',
   });
@@ -526,7 +526,7 @@ test('removing the discovery actor fails the next round and ends its session', a
   const { mounts } = await mounted(t, services, [{ ...mount, reconnectMs: 50 }]);
   assert.equal(mounts.status()[0].state, 'ready');
   assert.equal(upstream.sessionCount, 1);
-  await services.scope.revokeActor(services.caller, discovery.actorId);
+  await services.scope.credentials.revokeActor(services.caller, discovery.actorId);
   await until(
     () => mounts.status()[0].errorCode === 'forbidden',
     'A removed discovery actor kept discovering',

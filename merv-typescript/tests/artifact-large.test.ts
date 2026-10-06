@@ -39,7 +39,10 @@ async function largeApp(t: TestContext, disk = false) {
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Research', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Research',
+    actorName: 'Owner',
+  });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const count = async (table: string) =>
     (
@@ -206,7 +209,10 @@ test('a file over the inline limit stays in blobs and downloads through a signed
     f.app.ctx.tools.call('artifact.read', f.owner, { artifactId: artifact.id }),
     { code: 'artifact_size', message: /; use artifact\.read with mode download$/ },
   );
-  const reader = await f.app.ctx.scope.issueActor(f.owner, { name: 'Reviewer', role: 'reader' });
+  const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
+    name: 'Reviewer',
+    role: 'reader',
+  });
   const review: Caller = { actorId: reader.actor.id, projectId: f.owner.projectId };
   const { download } = (await f.app.ctx.tools.call('artifact.read', review, {
     artifactId: artifact.id,
@@ -258,7 +264,10 @@ test('concurrent completions record one artifact', async (t) => {
 
 test('uploads belong to their actor, and a revoked writer gets no URL', async (t) => {
   const f = await largeApp(t);
-  const issued = await f.app.ctx.scope.issueActor(f.owner, { name: 'Producer', role: 'producer' });
+  const issued = await f.app.ctx.scope.credentials.issueActor(f.owner, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const producer: Caller = { actorId: issued.actor.id, projectId: f.owner.projectId };
   const rows = file(Buffer.from('rows'), 'rows');
   // One requestId, two actors: two uploads, and neither learns of the other's.
@@ -273,7 +282,7 @@ test('uploads belong to their actor, and a revoked writer gets no URL', async (t
     () => f.app.ctx.artifacts.uploadComplete(producer, mine.uploadId),
   ])
     await assert.rejects(call(), { code: 'not_found' });
-  await f.app.ctx.scope.revokeActor(f.owner, producer.actorId);
+  await f.app.ctx.scope.credentials.revokeActor(f.owner, producer.actorId);
   const signed = f.server.requests.length;
   for (const call of [
     () => f.app.ctx.artifacts.uploadResume(producer, theirs.uploadId),

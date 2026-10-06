@@ -64,7 +64,10 @@ async function setup(t: TestContext, options: { lockTimeoutMs?: number } = {}) {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await scope.bootstrap({ projectName: 'Placement', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Placement',
+    actorName: 'Operator',
+  });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   return { schema: schemaFor(directory), state, scope, artifacts, builder, boot, operator };
 }
@@ -166,7 +169,7 @@ test('a restart registers its stored recipe versions without a write transaction
 
 test('a render looks up each named artifact once and fails in the same order as before', async (t) => {
   const { scope, artifacts, builder, operator } = await setup(t);
-  const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const foreign = await artifacts.create(
     { actorId: other.actor.id, projectId: other.project.id },
     { title: 'Foreign', content: 'Private.' },
@@ -311,7 +314,8 @@ test('a session worker previews inside a snapshot, where nothing may write', asy
 
 test('a caller revoked after its artifacts are looked up is refused when their bytes are read', async (t) => {
   const { scope, artifacts, builder, operator } = await setup(t);
-  const actor = (await scope.issueActor(operator, { name: 'Reader', role: 'reader' })).actor;
+  const actor = (await scope.credentials.issueActor(operator, { name: 'Reader', role: 'reader' }))
+    .actor;
   const reader: Caller = { projectId: operator.projectId, actorId: actor.id };
   const evidence = await artifacts.create(operator, { title: 'Proof', content: 'Result: 42.' });
   const registration = await builder.register(definition);
@@ -320,7 +324,7 @@ test('a caller revoked after its artifacts are looked up is refused when their b
   // The lookup is one snapshot; the bytes are read after it closes, and authorise again.
   const read = artifacts.read.bind(artifacts);
   artifacts.read = async (caller, id, range, tx) => {
-    await scope.revokeActor(operator, reader.actorId);
+    await scope.credentials.revokeActor(operator, reader.actorId);
     return await read(caller, id, range, tx);
   };
   await assert.rejects(registration.preview(reader, input), { code: 'forbidden' });

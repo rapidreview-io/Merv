@@ -17,7 +17,10 @@ const denied = (error: unknown) => error instanceof MervError && error.status ==
 test('a Scope token hash that is not in the ledger never authenticates, even after a restart', async () => {
   const state = await openState();
   let scope = await createService(new ProjectScope(state, () => time));
-  const operator = await scope.bootstrap({ projectName: 'Migration', actorName: 'Operator' });
+  const operator = await scope.credentials.bootstrap({
+    projectName: 'Migration',
+    actorName: 'Operator',
+  });
   const token = randomBytes(32).toString('base64url');
   const id = newId('credential');
   await state.transaction((tx) =>

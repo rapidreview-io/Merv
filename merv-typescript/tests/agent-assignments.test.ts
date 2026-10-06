@@ -32,7 +32,7 @@ test('one agent can produce successive tasks and review other work, but cannot r
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Agent continuity',
     actorName: 'Owner',
   });
@@ -130,7 +130,10 @@ test('one agent can produce successive tasks and review other work, but cannot r
   held.delete(b.id);
   // Another producer submits separate work. The same agent may now become a reviewer; had its
   // own source delivered it, the agent would be that source's hand and could not.
-  const issued = await app.ctx.scope.issueActor(owner, { name: 'Other', role: 'producer' });
+  const issued = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Other',
+    role: 'producer',
+  });
   const other: Caller = { ...owner, actorId: issued.actor.id, credentialId: issued.credential.id };
   const independent = await createTask('independent', other);
   const otherLease = await work.lease(independent, other);
@@ -192,7 +195,10 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Paper receipt', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Paper receipt',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -255,7 +261,10 @@ test('an agent route closes a session as what happened to it, and a closed sessi
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Agent close', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Agent close',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

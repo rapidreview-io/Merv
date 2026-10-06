@@ -23,14 +23,18 @@ async function fixture(t: TestContext) {
   const state = await openState(':memory:');
   t.after(() => state.close());
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Provider sources', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Provider sources',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
   const source = await scope.delegationSource(owner);
-  const other = (await scope.issueActor(owner, { name: 'Other', role: 'producer' })).actor;
+  const other = (await scope.credentials.issueActor(owner, { name: 'Other', role: 'producer' }))
+    .actor;
   const worker = await state.transaction((tx) =>
     scope.createSessionActor(
       source,
@@ -203,7 +207,10 @@ for (const kind of ['managed', 'conversation'] as const)
 
 test('managed: a source whose actor was revoked is refused', async (t) => {
   const f = await fixture(t);
-  const issued = await f.scope.issueActor(f.owner, { name: 'Runner owner', role: 'producer' });
+  const issued = await f.scope.credentials.issueActor(f.owner, {
+    name: 'Runner owner',
+    role: 'producer',
+  });
   const source = await f.scope.delegationSource({
     actorId: issued.actor.id,
     projectId: issued.actor.projectId,
@@ -212,7 +219,7 @@ test('managed: a source whose actor was revoked is refused', async (t) => {
   f.scope.registerManagedRunnerAuthority({ require: async () => source });
   const runner: Caller = { ...f.callers.managed, actorId: issued.actor.id };
   assert.equal((await f.scope.require(runner, 'read')).id, issued.actor.id);
-  await f.scope.revokeActor(f.owner, issued.actor.id);
+  await f.scope.credentials.revokeActor(f.owner, issued.actor.id);
   await assert.rejects(f.scope.require(runner, 'read'), {
     code: 'managed_runner_forbidden',
     status: 403,
@@ -222,7 +229,10 @@ test('managed: a source whose actor was revoked is refused', async (t) => {
 
 test("managed: the provider's refusal wins over a revoked source actor", async (t) => {
   const f = await fixture(t);
-  const issued = await f.scope.issueActor(f.owner, { name: 'Runner owner', role: 'producer' });
+  const issued = await f.scope.credentials.issueActor(f.owner, {
+    name: 'Runner owner',
+    role: 'producer',
+  });
   const source = await f.scope.delegationSource({
     actorId: issued.actor.id,
     projectId: issued.actor.projectId,
@@ -236,7 +246,7 @@ test("managed: the provider's refusal wins over a revoked source actor", async (
     },
   });
   const runner: Caller = { ...f.callers.managed, actorId: issued.actor.id };
-  await f.scope.revokeActor(f.owner, issued.actor.id);
+  await f.scope.credentials.revokeActor(f.owner, issued.actor.id);
   await assert.rejects(f.scope.require(runner, 'read'), { code: 'managed_runner_forbidden' });
   refuse = true;
   await assert.rejects(f.scope.require(runner, 'read'), {

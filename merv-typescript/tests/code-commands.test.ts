@@ -171,7 +171,7 @@ async function fixture(
     await state.close();
   };
   await open();
-  const boot = await scope!.bootstrap({ projectName: 'Code', actorName: 'Owner' });
+  const boot = await scope!.credentials.bootstrap({ projectName: 'Code', actorName: 'Owner' });
   const source: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -389,7 +389,7 @@ test('project readers can inspect while worker reads and runner control preserve
     worker = await f.ready(),
     otherWorker = await f.ready();
   const queued = await f.code.commit(worker.caller, input());
-  const actor = await f.scope.issueActor(f.source, { name: 'Reader', role: 'reader' });
+  const actor = await f.scope.credentials.issueActor(f.source, { name: 'Reader', role: 'reader' });
   const reader: Caller = {
     actorId: actor.actor.id,
     projectId: f.source.projectId,
@@ -438,7 +438,10 @@ test('project readers can inspect while worker reads and runner control preserve
     await assert.rejects(async () => await f.code.nextCommand(f.source, control), {
       code: 'session_forbidden',
     });
-  const foreign = await f.scope.bootstrap({ projectName: 'Foreign', actorName: 'Foreign owner' });
+  const foreign = await f.scope.credentials.bootstrap({
+    projectName: 'Foreign',
+    actorName: 'Foreign owner',
+  });
   const foreignCaller: Caller = {
     actorId: foreign.actor.id,
     projectId: foreign.project.id,
@@ -448,7 +451,7 @@ test('project readers can inspect while worker reads and runner control preserve
   await assert.rejects(async () => await f.code.operation(foreignCaller, queued.command.id), {
     code: 'code_command_not_found',
   });
-  await f.scope.revokeActor(f.source, reader.actorId);
+  await f.scope.credentials.revokeActor(f.source, reader.actorId);
   await assert.rejects(async () => await f.code.list(reader), { code: 'forbidden' });
   const { hostRef: _hostRef, ...release } = worker.control;
   await f.sessions.release(f.source, release);
@@ -460,8 +463,11 @@ test('runner controls authorize their caller themselves: a revoked source creden
   const f = await fixture(t),
     worker = await f.ready();
   const queued = await f.code.commit(worker.caller, input());
-  const other = await f.scope.issueActor(f.source, { name: 'Operator', role: 'operator' });
-  await f.scope.revokeCredential(
+  const other = await f.scope.credentials.issueActor(f.source, {
+    name: 'Operator',
+    role: 'operator',
+  });
+  await f.scope.credentials.revokeCredential(
     { actorId: other.actor.id, projectId: f.source.projectId, credentialId: other.credential.id },
     f.source.credentialId!,
   );

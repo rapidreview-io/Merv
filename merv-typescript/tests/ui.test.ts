@@ -215,14 +215,17 @@ test('human readers can read Settings membership without a People row or actor a
   });
   const operatorToken = await issueToken('operator-user');
   const readerToken = await issueToken('reader-user');
-  const operator = await app.ctx.scope.acceptVerifiedIdentity(
+  const operator = await app.ctx.scope.members.acceptVerifiedIdentity(
     await app.ctx.identity.verify(operatorToken),
   );
-  const project = await app.ctx.scope.createProject(operator, {
+  const project = await app.ctx.scope.members.createProject(operator, {
     name: 'Shared UI',
     requestId: 'shared-ui',
   });
-  await app.ctx.scope.addMember(operator, project.id, { subject: 'reader-user', role: 'reader' });
+  await app.ctx.scope.members.addMember(operator, project.id, {
+    subject: 'reader-user',
+    role: 'reader',
+  });
   const headers = { authorization: `Bearer ${readerToken}`, 'x-merv-project-id': project.id };
   const shell = await fetch(`${app.ctx.api.url}/tools/ui.shell`, {
     method: 'POST',
@@ -263,7 +266,7 @@ test('human readers can read Settings membership without a People row or actor a
     body: JSON.stringify({ subject: 'another-user', role: 'operator' }),
   });
   assert.equal(forbiddenMutation.status, 403);
-  await app.ctx.scope.removeMember(operator, project.id, 'reader-user');
+  await app.ctx.scope.members.removeMember(operator, project.id, 'reader-user');
   assert.equal(
     (await fetch(`${app.ctx.api.url}/projects/${project.id}/members`, { headers })).status,
     403,
@@ -292,7 +295,10 @@ test('a part of ui.home whose statement fails is null alone, and the rest of the
     ...row('failing', -1),
     home: { tool: 'test.failing_part', keep: ['id'] },
   });
-  const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
+  const credentials = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'UI',
+    actorName: 'Operator',
+  });
   const response = await fetch(`${app.ctx.api.url}/tools/ui.home`, {
     method: 'POST',
     headers: { authorization: `Bearer ${credentials.token}`, 'content-type': 'application/json' },
@@ -327,10 +333,13 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     rmSync(directory, { recursive: true, force: true });
   });
   const url = app.ctx.api.url!;
-  const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
+  const credentials = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'UI',
+    actorName: 'Operator',
+  });
   const operator = credentials.token;
   const reader = (
-    await app.ctx.scope.issueActor(
+    await app.ctx.scope.credentials.issueActor(
       { actorId: credentials.actor.id, projectId: credentials.project.id },
       { name: 'Reader', role: 'reader' },
     )
@@ -636,7 +645,10 @@ test('ui.shell reports a rejected optional configuration as failed, as readiness
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const credentials = await app.ctx.scope.bootstrap({ projectName: 'UI', actorName: 'Operator' });
+  const credentials = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'UI',
+    actorName: 'Operator',
+  });
   const response = await fetch(`${app.ctx.api.url}/tools/ui.shell`, {
     method: 'POST',
     headers: { authorization: `Bearer ${credentials.token}`, 'content-type': 'application/json' },
@@ -698,7 +710,7 @@ test('the Connections row reports mount health and serves mount status through u
   for (let wait = 0; wait < 800 && !settled(); wait++)
     await new Promise((resolve) => setTimeout(resolve, 5));
   assert.ok(settled(), 'a mount never settled');
-  const credentials = await app.ctx.scope.bootstrap({
+  const credentials = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Mounts',
     actorName: 'Operator',
   });

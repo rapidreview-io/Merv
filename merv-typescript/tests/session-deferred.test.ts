@@ -26,7 +26,10 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
     await app.stop();
     rmSync(root, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Deferred', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Deferred',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -49,7 +52,7 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
   const credentialEnv = 'MERV_DEFERRED_RUNNER';
   const previous = process.env[credentialEnv];
   process.env[credentialEnv] = (
-    await app.ctx.scope.issueActor(owner, { name: 'Machine', role: 'operator' })
+    await app.ctx.scope.credentials.issueActor(owner, { name: 'Machine', role: 'operator' })
   ).token;
   t.after(() => {
     if (previous === undefined) delete process.env[credentialEnv];

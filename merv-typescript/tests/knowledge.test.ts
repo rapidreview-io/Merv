@@ -98,7 +98,10 @@ async function fixture(t: TestContext) {
     await state.close();
   };
   await open();
-  const boot = await scope!.bootstrap({ projectName: 'Knowledge corpus', actorName: 'Operator' });
+  const boot = await scope!.credentials.bootstrap({
+    projectName: 'Knowledge corpus',
+    actorName: 'Operator',
+  });
   const operator: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -107,7 +110,7 @@ async function fixture(t: TestContext) {
   await state!.transaction((tx) => code!.ensureRepository(operator, tx));
   await (code! as any).store.maintain();
   const issue = async (role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
-    const issued = await scope.issueActor(operator, { name: role, role });
+    const issued = await scope.credentials.issueActor(operator, { name: role, role });
     return {
       projectId: operator.projectId,
       actorId: issued.actor.id,
@@ -256,7 +259,7 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   const f = await fixture(t);
   const task = await f.completeTask(),
     experiment = await f.createExperiment();
-  const other = await f.scope.bootstrap({
+  const other = await f.scope.credentials.bootstrap({
     projectName: 'Private other project',
     actorName: 'Other operator',
   });
@@ -337,7 +340,7 @@ test('Scoped references distinguish missing, unsupported and unpublished without
 test('Knowledge keeps one caller throughout its inventory and evidence reads', async (t) => {
   const f = await fixture(t);
   await f.createTask();
-  const boot = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const boot = await f.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const other = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -361,7 +364,7 @@ test('Knowledge keeps one caller throughout its inventory and evidence reads', a
   t.mock.method(f.experiments, 'list', async (...args: Parameters<typeof list>) => {
     const result = await list(...args);
     await args[1]!.run(
-      'UPDATE actor_credentials SET revoked_at=? WHERE id=?',
+      'UPDATE identity_credentials SET revoked_at=? WHERE token_hash=(SELECT token_hash FROM actor_credentials WHERE id=?)',
       new Date().toISOString(),
       f.reader.credentialId!,
     );
@@ -378,7 +381,7 @@ test('Historical session capture reference resolves for current readers without 
   const session = held.session;
   await work.release(held);
   await work.close();
-  await f.scope.revokeActor(f.operator, f.producer.actorId);
+  await f.scope.credentials.revokeActor(f.operator, f.producer.actorId);
   t.mock.method(f.sessions, 'get', () =>
     assert.fail('Historical resolution must not reconcile a lease'),
   );

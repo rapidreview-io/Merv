@@ -212,16 +212,22 @@ export async function runNisaMcpScenario(directory: string, checkout: string) {
     });
     const identity = await (async () => {
       try {
-        const admin = await seed.ctx.scope.bootstrap({
+        const admin = await seed.ctx.scope.credentials.bootstrap({
           projectName: 'Nisa MCP composition',
           actorName: 'Operator',
         });
         const operator = { actorId: admin.actor.id, projectId: admin.project.id };
         return {
           operator,
-          alice: await seed.ctx.scope.issueActor(operator, { name: 'Alice', role: 'producer' }),
-          bob: await seed.ctx.scope.issueActor(operator, { name: 'Bob', role: 'producer' }),
-          observer: await seed.ctx.scope.issueActor(operator, {
+          alice: await seed.ctx.scope.credentials.issueActor(operator, {
+            name: 'Alice',
+            role: 'producer',
+          }),
+          bob: await seed.ctx.scope.credentials.issueActor(operator, {
+            name: 'Bob',
+            role: 'producer',
+          }),
+          observer: await seed.ctx.scope.credentials.issueActor(operator, {
             name: 'Observer',
             role: 'reviewer',
           }),

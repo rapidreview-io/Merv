@@ -17,13 +17,13 @@ async function fixture(t: TestContext, version = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-exclusions-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
-  const bootstrap = await scope.bootstrap({
+  const bootstrap = await scope.credentials.bootstrap({
     projectName: 'Contributor independence',
     actorName: 'Operator',
   });
   const operator: Caller = { actorId: bootstrap.actor.id, projectId: bootstrap.project.id };
   const issue = async (role: Role) => ({
-    actorId: (await scope.issueActor(operator, { name: role, role })).actor.id,
+    actorId: (await scope.credentials.issueActor(operator, { name: role, role })).actor.id,
     projectId: operator.projectId,
   });
   const producer = await issue('producer'),
@@ -176,7 +176,7 @@ test('exclusions are immutable set-valued provenance in snapshot and replay, ret
       ),
     { code: 'state_constraint' },
   );
-  await f.scope.revokeActor(f.operator, f.lensA.actorId);
+  await f.scope.credentials.revokeActor(f.operator, f.lensA.actorId);
   const reissueInput = {
     reviewId: review.id,
     subjectRevision: 5,
@@ -199,7 +199,7 @@ test('exclusions are immutable set-valued provenance in snapshot and replay, ret
     review.excludedActorIds,
   );
   const claimed = await f.reviews.start(f.reviewer, reissued.id);
-  await f.scope.revokeActor(f.operator, f.reviewer.actorId);
+  await f.scope.credentials.revokeActor(f.operator, f.reviewer.actorId);
   await assert.rejects(
     async () =>
       await f.reviews.submit(f.reviewer, {
@@ -216,7 +216,10 @@ test('exclusions are immutable set-valued provenance in snapshot and replay, ret
 
 test('excluded IDs must be authors in the exact scoped manifest and are validated without accessor effects', async (t) => {
   const f = await fixture(t);
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const outsider = { projectId: other.project.id, actorId: other.actor.id };
   const otherOutput = await f.artifacts.create(outsider, {
     title: 'Foreign lens',
@@ -324,13 +327,19 @@ test('review entrypoints retain their caller and preflight claim', async (t) => 
     await t.test(method, async (t) => {
       const f = await fixture(t);
       const review = await f.reviews.request(f.producer, f.input());
-      const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+      const other = await f.scope.credentials.bootstrap({
+        projectName: 'Other',
+        actorName: 'Other',
+      });
       const foreign = { projectId: other.project.id, actorId: other.actor.id };
       const reading = method === 'get' || method === 'list';
       const caller = { ...(reading ? foreign : f.reviewer) };
       if (method === 'supersede')
         caller.actorId = (
-          await f.scope.issueActor(f.operator, { name: 'Other producer', role: 'producer' })
+          await f.scope.credentials.issueActor(f.operator, {
+            name: 'Other producer',
+            role: 'producer',
+          })
         ).actor.id;
       const claim = method === 'checkSubmit' ? await f.reviews.start(f.reviewer, review.id) : null;
       const input = {
@@ -455,8 +464,9 @@ test('review submission retains the decision checked before a pending validation
 test('a reissue replays the exclusions a delivery pinned, whoever asks for the new claim', async (t) => {
   const f = await fixture(t);
   const runner = {
-    actorId: (await f.scope.issueActor(f.operator, { name: 'Fleet runner', role: 'operator' }))
-      .actor.id,
+    actorId: (
+      await f.scope.credentials.issueActor(f.operator, { name: 'Fleet runner', role: 'operator' })
+    ).actor.id,
     projectId: f.operator.projectId,
   };
   // A leased delivery pins the record's owner and the authority that directed the worker.

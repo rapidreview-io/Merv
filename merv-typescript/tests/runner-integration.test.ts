@@ -108,7 +108,10 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
     port: 0,
     ...(entries ? { config: { plugins: entries } } : {}),
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Machine runner', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Machine runner',
+    actorName: 'Owner',
+  });
   const source: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -874,10 +877,10 @@ test(
     await runner.start();
     await f.enabled(true);
     await until(() => childResults(f.runnerDirectory).length === 1, runner, 'source-bound child');
-    const replacement = await f.app.ctx.scope.issueActorCredential(f.source, {
+    const replacement = await f.app.ctx.scope.credentials.issueActorCredential(f.source, {
       actorId: f.source.actorId,
     });
-    await f.app.ctx.scope.revokeCredential(
+    await f.app.ctx.scope.credentials.revokeCredential(
       { ...f.source, credentialId: replacement.credential.id },
       f.source.credentialId!,
     );

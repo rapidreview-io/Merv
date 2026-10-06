@@ -69,7 +69,10 @@ async function fixture(t: TestContext) {
     }),
   );
   const code = await createService(new CodeService(state, scope, sessions, workflows, core));
-  const boot = await scope.bootstrap({ projectName: 'Experiment assignments', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Experiment assignments',
+    actorName: 'Owner',
+  });
   const source: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -90,7 +93,7 @@ async function fixture(t: TestContext) {
   let sequence = 0;
   const request = () => `request-${++sequence}`;
   const issue = async (role: 'operator' | 'producer' | 'reviewer' | 'reader'): Promise<Caller> => {
-    const issued = await scope.issueActor(source, { name: role, role });
+    const issued = await scope.credentials.issueActor(source, { name: role, role });
     if (role === 'operator')
       await sessions.dispatch.heartbeatRunner(
         {
@@ -1013,7 +1016,7 @@ test('revoking the source fences its live reviewer before recovery and an author
   const offered = await f.offer(pending, reviewSource);
   const worker = await f.sessions.authenticate(offered.secret);
   const claim = await f.reviews.get(worker, pending.reviewId!);
-  await f.scope.revokeActor(replacementSource, reviewSource.actorId);
+  await f.scope.credentials.revokeActor(replacementSource, reviewSource.actorId);
   await assert.rejects(
     async () => await f.sessions.invocations.prepare(worker, 'review.submit', {}),
     {
@@ -1319,7 +1322,7 @@ test('historical observations stay project-scoped and pure after source revocati
   const ordinary = await f.offer(await f.create());
   const ref = { kind: 'session-final' as const, sessionId: ordinary.session.id };
   assert.equal((await f.code.capture(f.source, ref)).status, 'none');
-  const other = await f.scope.bootstrap({
+  const other = await f.scope.credentials.bootstrap({
     projectName: 'Unrelated project',
     actorName: 'Other operator',
   });
@@ -1349,7 +1352,7 @@ test('historical observations stay project-scoped and pure after source revocati
   // Stop durable delivery before the revocation, so no consumer reacts to it concurrently with
   // the reads measured below.
   await f.events.close();
-  await f.scope.revokeCredential(operator, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(operator, f.source.credentialId!);
   await assert.rejects(async () => await f.code.capture(f.source, ref), { code: 'forbidden' });
   for (const method of ['get', 'list', 'session'] as const)
     t.mock.method(f.sessions, method, () => {
@@ -1666,12 +1669,12 @@ test('a results review whose final capture never landed takes the last admitted 
   await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
     code: 'experiment_capture_pending',
   });
-  const principal = await f.scope.acceptVerifiedIdentity({
+  const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://issuer.example.test',
     subject: 'operator',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  await f.scope.adoptProject(principal, f.source.projectId);
+  await f.scope.members.adoptProject(principal, f.source.projectId);
   const human = await f.scope.caller(principal, f.source.projectId);
   await f.code.fenceUnit(human, { unitId: pending.id, requestId: f.request() });
   const unit = await f.code.unit(f.source, pending.id);
@@ -1790,12 +1793,12 @@ test('a fenced results review whose session admitted no commit reviews the head 
   await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
     code: 'experiment_capture_pending',
   });
-  const principal = await f.scope.acceptVerifiedIdentity({
+  const principal = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://issuer.example.test',
     subject: 'operator',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  await f.scope.adoptProject(principal, f.source.projectId);
+  await f.scope.members.adoptProject(principal, f.source.projectId);
   const human = await f.scope.caller(principal, f.source.projectId);
   await f.code.fenceUnit(human, { unitId: pending.id, requestId: f.request() });
   const unit = await f.code.unit(f.source, pending.id);

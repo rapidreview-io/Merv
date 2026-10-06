@@ -1092,7 +1092,7 @@ test('each service boots with only its declared dependency closure and without A
           assert.equal((await ctx.blobs.get('isolated', stored.hash)).toString(), 'durable bytes');
         }
         if (required.has('scope')) {
-          const credentials = await ctx.scope.bootstrap({
+          const credentials = await ctx.scope.credentials.bootstrap({
             projectName: 'Independent component',
             actorName: 'Operator',
           });

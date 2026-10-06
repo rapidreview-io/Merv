@@ -1174,9 +1174,12 @@ async function assembled(
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const credentials = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Op' });
+  const credentials = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Running',
+    actorName: 'Op',
+  });
   const reader = (
-    await app.ctx.scope.issueActor(
+    await app.ctx.scope.credentials.issueActor(
       { actorId: credentials.actor.id, projectId: credentials.project.id },
       { name: 'Reader', role: 'reader' },
     )

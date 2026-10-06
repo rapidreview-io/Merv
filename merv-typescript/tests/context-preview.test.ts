@@ -64,7 +64,10 @@ async function setup(t: TestContext) {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const identity = await scope.bootstrap({ projectName: 'Preview', actorName: 'Operator' });
+  const identity = await scope.credentials.bootstrap({
+    projectName: 'Preview',
+    actorName: 'Operator',
+  });
   const operator: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
   // INSERT/UPDATE/DELETE statements issued through the state, rolled back or not.
   const changes = countWrites(state);
@@ -143,7 +146,8 @@ test('build saves only an unchanged preview this registration rendered for its c
   const registration = await builder.register(definition);
   const sibling = await builder.register({ ...definition, name: 'test.preview-sibling' });
   const producer: Caller = {
-    actorId: (await scope.issueActor(operator, { name: 'Producer', role: 'producer' })).actor.id,
+    actorId: (await scope.credentials.issueActor(operator, { name: 'Producer', role: 'producer' }))
+      .actor.id,
     projectId: operator.projectId,
   };
   const input = {
@@ -219,7 +223,7 @@ test('build saves only an unchanged preview this registration rendered for its c
 
 test('context requests retain their caller and assignment across authorization', async (t) => {
   const { scope, builder, operator } = await setup(t);
-  const identity = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const identity = await scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const other = { actorId: identity.actor.id, projectId: identity.project.id };
   const registration = await builder.register(definition);
   const original = {
@@ -362,13 +366,16 @@ test('preview checks project membership and revocation, not the work role; handl
     kind: 'review',
   });
   const actor = async (role: 'producer' | 'reviewer' | 'reader'): Promise<Caller> => ({
-    actorId: (await scope.issueActor(operator, { name: role, role })).actor.id,
+    actorId: (await scope.credentials.issueActor(operator, { name: role, role })).actor.id,
     projectId: operator.projectId,
   });
   const producer = await actor('producer'),
     reviewer = await actor('reviewer'),
     reader = await actor('reader');
-  const otherIdentity = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const otherIdentity = await scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other',
+  });
   const other = { actorId: otherIdentity.actor.id, projectId: otherIdentity.project.id };
   const input = {
     subject: { id: 'assignment', revision: 0 },
@@ -387,8 +394,8 @@ test('preview checks project membership and revocation, not the work role; handl
   );
   await assert.rejects(async () => await work.preview(other, input), { code: 'not_found' });
   assert.equal(await changes(), before);
-  await scope.revokeActor(operator, producer.actorId);
-  await scope.revokeActor(operator, reviewer.actorId);
+  await scope.credentials.revokeActor(operator, producer.actorId);
+  await scope.credentials.revokeActor(operator, reviewer.actorId);
   await assert.rejects(async () => await work.preview(producer, input), { code: 'forbidden' });
   await assert.rejects(async () => await review.preview(reviewer, input), { code: 'forbidden' });
   const live = await state.transaction(async (tx) => await work.preview(operator, input, tx));

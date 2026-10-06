@@ -59,7 +59,7 @@ const app = await createApp({
   port: 0,
 });
 try {
-  const credentials = await app.ctx.scope.bootstrap({
+  const credentials = await app.ctx.scope.credentials.bootstrap({
     projectName: 'My project',
     actorName: 'Operator',
   });

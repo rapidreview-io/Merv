@@ -66,7 +66,7 @@ export const scopeToolsPlugin = {
           expiresAt,
         })
         .strict(),
-      async (c, i) => await ctx.scope.issueActor(c, i),
+      async (c, i) => await ctx.scope.credentials.issueActor(c, i),
       false,
       'never',
     );
@@ -74,7 +74,7 @@ export const scopeToolsPlugin = {
       'actor.credentials',
       'Read credential metadata for yourself, or as an operator for another actor in this project. Never returns bearer tokens or digests.',
       z.object({ actorId: z.string().min(1).optional() }).strict(),
-      async (c, i) => await ctx.scope.actorCredentials(c, i.actorId),
+      async (c, i) => await ctx.scope.credentials.actorCredentials(c, i.actorId),
       true,
       'never',
     );
@@ -87,7 +87,7 @@ export const scopeToolsPlugin = {
           expiresAt,
         })
         .strict(),
-      async (c, i) => await ctx.scope.issueActorCredential(c, i),
+      async (c, i) => await ctx.scope.credentials.issueActorCredential(c, i),
       false,
       'never',
     );
@@ -100,7 +100,7 @@ export const scopeToolsPlugin = {
           expiresAt,
         })
         .strict(),
-      async (c, i) => await ctx.scope.rotateCredential(c, i),
+      async (c, i) => await ctx.scope.credentials.rotateCredential(c, i),
       false,
       'never',
     );
@@ -109,7 +109,7 @@ export const scopeToolsPlugin = {
       'Operator: revoke one credential. You may revoke an old token of your own using a different active token; the token authenticating this request cannot revoke itself. This leaves actor identity, work and review claims intact; use actor.revoke to withdraw the actor itself.',
       z.object({ credentialId: z.string().min(1) }).strict(),
       async (c, i) => {
-        await ctx.scope.revokeCredential(c, i.credentialId);
+        await ctx.scope.credentials.revokeCredential(c, i.credentialId);
         return { revoked: true };
       },
       false,
@@ -120,7 +120,7 @@ export const scopeToolsPlugin = {
       'Operator: withdraw another actor, blocking all its tokens and triggering actor-revocation recovery. Use actor.revoke_token to revoke only one credential.',
       z.object({ actorId: z.string().min(1) }).strict(),
       async (c, i) => {
-        await ctx.scope.revokeActor(c, i.actorId);
+        await ctx.scope.credentials.revokeActor(c, i.actorId);
         return { revoked: true };
       },
       false,

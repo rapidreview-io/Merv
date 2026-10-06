@@ -10,13 +10,16 @@ import { code, fixture, offers, type PiFixture } from './fixtures/pi.js';
 import { piModelToolName } from '../packages/pi/src/tool-names.js';
 
 const login = (f: PiFixture, subject: string) =>
-  f.scope.acceptVerifiedIdentity({
+  f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject,
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
 const reader = async (f: PiFixture): Promise<Caller> => {
-  const issued = await f.scope.issueActor(f.operator, { name: 'Reader', role: 'reader' });
+  const issued = await f.scope.credentials.issueActor(f.operator, {
+    name: 'Reader',
+    role: 'reader',
+  });
   return {
     projectId: f.operator.projectId,
     actorId: issued.actor.id,
@@ -57,8 +60,8 @@ async function cutOver(f: PiFixture, host: PiHostRecord, workerId = 'worker_next
 test('one machine per person per project: their conversations share it, another project has its own, and Fleet rows live only in the host project', async (t) => {
   const f = await fixture(t);
   const alice = await login(f, 'alice');
-  const one = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
-  const two = await f.scope.createProject(alice, { name: 'Two', requestId: 'two' });
+  const one = await f.scope.members.createProject(alice, { name: 'One', requestId: 'one' });
+  const two = await f.scope.members.createProject(alice, { name: 'Two', requestId: 'two' });
   const inOne = await f.scope.caller(alice, one.id);
   const inTwo = await f.scope.caller(alice, two.id);
   const first = await f.create(inOne);
@@ -86,10 +89,10 @@ test('keyed per person, two projects’ turns run at once on one machine, and lo
   const f = await fixture(t, { pi: { runtimeKey: 'person' } });
   const alice = await login(f, 'alice');
   const bob = await login(f, 'bob');
-  const one = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
-  const two = await f.scope.createProject(alice, { name: 'Two', requestId: 'two' });
+  const one = await f.scope.members.createProject(alice, { name: 'One', requestId: 'one' });
+  const two = await f.scope.members.createProject(alice, { name: 'Two', requestId: 'two' });
   for (const project of [one, two])
-    await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'reader' });
+    await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'reader' });
   const inOne = await f.scope.caller(bob, one.id);
   const inTwo = await f.scope.caller(bob, two.id);
   const chatOne = await f.create(inOne);
@@ -107,7 +110,7 @@ test('keyed per person, two projects’ turns run at once on one machine, and lo
     await f.pi.begin(token, input);
     turns.push(input);
   }
-  await f.scope.removeMember(alice, one.id, 'bob');
+  await f.scope.members.removeMember(alice, one.id, 'bob');
   const read = (input: (typeof turns)[number]) =>
     f.pi.tool(token, { ...input, name: 'project.get', input: {} });
   await assert.rejects(read(turns[0]), code('pi_authority_stale'));
@@ -120,8 +123,8 @@ test('keyed per person, two projects’ turns run at once on one machine, and lo
 test('each change of the machine reaches every open page that shares it, and only those', async (t) => {
   const f = await fixture(t);
   const alice = await login(f, 'alice');
-  const one = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
-  const two = await f.scope.createProject(alice, { name: 'Two', requestId: 'two' });
+  const one = await f.scope.members.createProject(alice, { name: 'One', requestId: 'one' });
+  const two = await f.scope.members.createProject(alice, { name: 'Two', requestId: 'two' });
   const inOne = await f.scope.caller(alice, one.id);
   const [a, b] = [await f.create(inOne), await f.create(inOne)];
   const elsewhere = await f.create(await f.scope.caller(alice, two.id));
@@ -173,12 +176,14 @@ test('a turn that cannot start ends alone: /next never fails the machine, and se
   const running = await f.claimed(await f.send(chat));
   await f.pi.begin(running.token, running.input);
   // The same person sends with a key of their own, then revokes it while that turn waits.
-  const issued = await f.scope.issueActorCredential(f.operator, { actorId: f.operator.actorId });
+  const issued = await f.scope.credentials.issueActorCredential(f.operator, {
+    actorId: f.operator.actorId,
+  });
   const key = { ...f.operator, credentialId: issued.credential.id };
   const revoked = await f.send(await f.create(key), 'hello', key);
   const served = await f.send(await f.create());
   assert.equal(revoked.hostId, served.hostId);
-  await f.scope.revokeCredential(f.operator, issued.credential.id);
+  await f.scope.credentials.revokeCredential(f.operator, issued.credential.id);
   const next = () => f.pi.next(running.token, { workerId: 'worker_1' });
   assert.equal((await next()).work?.command.id, served.id);
   await f.pi.begin(running.token, {
@@ -549,7 +554,7 @@ test('the hosted drain releases each machine once it idles, and counts it until 
   await f.pi.warm(f.operator, { requestId: 'warm' });
   const [idle] = await f.hosts();
   const alice = await login(f, 'alice');
-  const project = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
+  const project = await f.scope.members.createProject(alice, { name: 'One', requestId: 'one' });
   const inOne = await f.scope.caller(alice, project.id);
   const busy = await f.send(await f.create(inOne), 'hello', inOne);
   const bound = await f.claimed(busy);
@@ -778,15 +783,15 @@ test('switch_machine is never offered, granted or accepted where its person coul
 test('a person who loses write is off Large from their next turn: it waits for, and runs on, Standard', async (t) => {
   const f = await fixture(t, { pi: { idleTimeoutSeconds: 600 } });
   const alice = await login(f, 'alice');
-  const project = await f.scope.createProject(alice, { name: 'One', requestId: 'one' });
-  await f.scope.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
+  const project = await f.scope.members.createProject(alice, { name: 'One', requestId: 'one' });
+  await f.scope.members.addMember(alice, project.id, { subject: 'bob', role: 'producer' });
   const bob = async () => f.scope.caller(await login(f, 'bob'), project.id);
   const producer = await bob();
   await f.pi.setMachine(producer, { machine: 'large' });
   const large = await f.claimed(await f.send(await f.create(producer), 'hello', producer));
   assert.equal(large.work.command.machine, 'large');
   await f.finish(large);
-  await f.scope.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
+  await f.scope.members.changeMemberRole(alice, project.id, { subject: 'bob', role: 'reader' });
   const reader = await bob();
   const held = await f.send(await f.create(reader), 'hello', reader);
   // Large takes none of their turns; the host moves to Standard first, unannounced.
@@ -877,7 +882,7 @@ test('pi@2 ends turns begun on a conversation’s machine, and the pi@1 image re
   const state = await openState();
   t.after(() => state.close());
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Pi ledger', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Pi ledger', actorName: 'Owner' });
   await state.migrate('pi', [migration]);
   const conversation = {
     id: 'pic_old',

@@ -13,12 +13,12 @@ async function foundation(t: TestContext) {
   const scope = await createService(new ProjectScope(state));
   await state.migrate('sandboxes-native', nativeMigrations);
   const issuer = 'https://identity.example/auth/v1';
-  const principal = await scope.acceptVerifiedIdentity({
+  const principal = await scope.members.acceptVerifiedIdentity({
     issuer,
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   });
-  const project = await scope.createProject(principal, {
+  const project = await scope.members.createProject(principal, {
     name: 'Native compute',
     requestId: 'create',
   });
@@ -329,12 +329,15 @@ test('disconnect fences an in-flight first connection even before any local root
 test('a different project operator cannot complete the initiating human consent', async (t) => {
   const f = await foundation(t);
   const cookie = await f.ready();
-  const other = await f.scope.acceptVerifiedIdentity({
+  const other = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'other',
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   });
-  await f.scope.addMember(f.principal, f.project.id, { subject: 'other', role: 'operator' });
+  await f.scope.members.addMember(f.principal, f.project.id, {
+    subject: 'other',
+    role: 'operator',
+  });
   await assert.rejects(
     f.service.finish(await f.scope.caller(other, f.project.id), cookie),
     /account that started/,
@@ -364,18 +367,21 @@ test('reconciliation leaves a persisted pending root alone during a valid finish
 
 test('operator removal during exchange refuses activation and revokes its orphan', async (t) => {
   const f = await foundation(t);
-  const other = await f.scope.acceptVerifiedIdentity({
+  const other = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'other',
     expiresAt: new Date(Date.now() + 3600000).toISOString(),
   });
-  await f.scope.addMember(f.principal, f.project.id, { subject: 'other', role: 'operator' });
+  await f.scope.members.addMember(f.principal, f.project.id, {
+    subject: 'other',
+    role: 'operator',
+  });
   const cookie = await f.ready();
   f.control.pause = deferred<void>();
   const finish = f.service.finish(f.caller, cookie);
   const rejected = assert.rejects(finish);
   await f.control.entered.promise;
-  await f.scope.removeMember(other, f.project.id, 'owner');
+  await f.scope.members.removeMember(other, f.project.id, 'owner');
   f.control.pause.resolve();
   await rejected;
   await f.service.reconcileRevocations();

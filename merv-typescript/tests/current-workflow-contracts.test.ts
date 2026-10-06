@@ -72,9 +72,15 @@ test('retired work survives restart as readable history, with no new claims or m
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'History', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'History',
+    actorName: 'Owner',
+  });
   const owner = { projectId: boot.project.id, actorId: boot.actor.id };
-  const actor = await app.ctx.scope.issueActor(owner, { name: 'Reviewer', role: 'reviewer' });
+  const actor = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Reviewer',
+    role: 'reviewer',
+  });
   const reviewer = { projectId: owner.projectId, actorId: actor.actor.id };
   const artifact = await app.ctx.artifacts.create(owner, {
     title: 'Evidence',

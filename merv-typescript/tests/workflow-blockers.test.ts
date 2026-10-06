@@ -98,7 +98,7 @@ async function fixture(t: TestContext, schemaVersion?: number) {
     workflows.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Blockers', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Blockers', actorName: 'Owner' });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const publish = async (
     instanceId: string,

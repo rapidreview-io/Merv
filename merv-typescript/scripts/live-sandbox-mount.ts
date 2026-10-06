@@ -537,11 +537,11 @@ async function live(outputDirectory: string) {
     process.env[secretVariable] = boundary.token;
     const directory = join(workspace, 'data');
     app = await createApp({ directory, components: ['state', 'scope'] });
-    const operator = await app.ctx.scope.bootstrap({
+    const operator = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Read-only sandbox mount verification',
       actorName: 'Temporary local operator',
     });
-    const actor = await app.ctx.scope.issueActor(
+    const actor = await app.ctx.scope.credentials.issueActor(
       { actorId: operator.actor.id, projectId: operator.project.id },
       { name: 'Fresh sandbox verifier', role: 'reader' },
     );

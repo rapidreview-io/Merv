@@ -20,23 +20,23 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       const state = await openState(':memory:');
       const scope = await createService(new ProjectScope(state));
       const verified = async (subject: string) =>
-        await scope.acceptVerifiedIdentity({
+        await scope.members.acceptVerifiedIdentity({
           issuer: 'https://mount-identity.example/auth/v1',
           subject,
           expiresAt: new Date(Date.now() + 60_000).toISOString(),
         });
       const operator = await verified('operator');
       const owner = await verified('worker');
-      const project = await scope.createProject(operator, {
+      const project = await scope.members.createProject(operator, {
         name: 'Key mount fence',
         requestId: 'project',
       });
-      await scope.addMember(operator, project.id, { subject: 'worker', role: 'producer' });
-      const original = await scope.createKey(owner, { projectId: project.id });
-      const independent = await scope.createKey(owner, { projectId: project.id });
+      await scope.members.addMember(operator, project.id, { subject: 'worker', role: 'producer' });
+      const original = await scope.userKeys.create(owner, { projectId: project.id });
+      const independent = await scope.userKeys.create(owner, { projectId: project.id });
       const captured = await scope.caller({
         kind: 'key',
-        key: await scope.authenticateKey(original.token),
+        key: await scope.userKeys.authenticate(original.token),
       });
       const ownerActorId = captured.actorId;
       const envName = `MERV_KEY_MOUNT_${randomUUID().replaceAll('-', '_')}`;
@@ -126,12 +126,15 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
       await entered.promise;
       assert.equal(dispatched.length, 0);
       if (withdrawal === 'key-revocation') {
-        await scope.revokeKey(owner, original.key.id);
+        await scope.userKeys.revoke(owner, original.key.id);
       } else {
-        await scope.removeMember(operator, project.id, 'worker');
-        await scope.addMember(operator, project.id, { subject: 'worker', role: 'producer' });
+        await scope.members.removeMember(operator, project.id, 'worker');
+        await scope.members.addMember(operator, project.id, {
+          subject: 'worker',
+          role: 'producer',
+        });
         // The bearer is still active: only its captured membership generation is stale.
-        assert.equal((await scope.authenticateKey(original.token)).id, original.key.id);
+        assert.equal((await scope.userKeys.authenticate(original.token)).id, original.key.id);
       }
       release.resolve();
       await denied;
@@ -141,7 +144,7 @@ for (const withdrawal of ['key-revocation', 'membership-rejoin'] as const) {
 
       const currentKey = await scope.caller({
         kind: 'key',
-        key: await scope.authenticateKey(independent.token),
+        key: await scope.userKeys.authenticate(independent.token),
       });
       const currentHuman = await scope.caller(owner, project.id);
       assert.equal(currentKey.actorId, ownerActorId);

@@ -48,7 +48,10 @@ test('local CLI adopts legacy project and explicitly repairs owned membership wi
   const directory = mkdtempSync(join(tmpdir(), 'merv-member-cli-'));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   let app = await createApp({ directory, components: ['state', 'scope'] });
-  const legacy = await app.ctx.scope.bootstrap({ projectName: 'Legacy', actorName: 'Operator' });
+  const legacy = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Legacy',
+    actorName: 'Operator',
+  });
   await app.stop();
   const path = configuration(directory);
   const first = await token('first-human');

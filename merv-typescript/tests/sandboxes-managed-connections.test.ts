@@ -14,12 +14,12 @@ async function fixture(t: TestContext) {
   await state.migrate('sandboxes-native', nativeMigrations);
   t.after(() => state.close());
   const project = async (subject: string, requestId: string): Promise<Caller> => {
-    const principal = await scope.acceptVerifiedIdentity({
+    const principal = await scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example/auth/v1',
       subject,
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
     });
-    const created = await scope.createProject(principal, { name: requestId, requestId });
+    const created = await scope.members.createProject(principal, { name: requestId, requestId });
     return scope.caller(principal, created.id);
   };
   const a = await project('owner-a', 'a');

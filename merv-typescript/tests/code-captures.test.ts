@@ -105,7 +105,7 @@ async function fixture(t: TestContext) {
     ],
   };
   let handle = await app.ctx.workflows.register(definition, policy);
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Capture history',
     actorName: 'Source',
   });
@@ -115,7 +115,7 @@ async function fixture(t: TestContext) {
     credentialId: boot.credential.id,
   };
   const issue = async (role: 'operator' | 'reader') => {
-    const value = await app.ctx.scope.issueActor(source, { name: role, role });
+    const value = await app.ctx.scope.credentials.issueActor(source, { name: role, role });
     return {
       actorId: value.actor.id,
       projectId: value.actor.projectId,
@@ -258,7 +258,7 @@ test('Exact command captures retain historical parent/head/tree/provenance after
     expected,
     'A later command/final result cannot replace this immutable commit',
   );
-  await f.app.ctx.scope.revokeActor(f.admin, f.source.actorId);
+  await f.app.ctx.scope.credentials.revokeActor(f.admin, f.source.actorId);
   await f.app.ctx.domainEvents.drain();
   await assert.rejects(async () => await f.app.ctx.codeWork.capture(f.source, ref), {
     code: 'forbidden',
@@ -441,7 +441,7 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
     receipt: receipt(command),
   });
   const ref = { kind: 'code-commit' as const, commandId: command.id };
-  const foreign = await f.app.ctx.scope.bootstrap({
+  const foreign = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Foreign',
     actorName: 'Foreign operator',
   });
@@ -487,7 +487,7 @@ test('Capture lookup is tenant scoped, rechecks readers, and rejects mismatched 
     worker.caller.actorId,
   );
   assert.deepEqual(await f.snapshot(), before);
-  await f.app.ctx.scope.revokeCredential(f.admin, f.reader.credentialId);
+  await f.app.ctx.scope.credentials.revokeCredential(f.admin, f.reader.credentialId);
   await assert.rejects(async () => await f.app.ctx.codeWork.capture(f.reader, ref), {
     code: 'forbidden',
   });

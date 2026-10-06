@@ -48,7 +48,10 @@ test(
     const repositories = core.repositories!;
     const source = gitSource(t);
     const head = source.commit({ 'notes.md': 'retained research' });
-    const boot = await ctx.scope.bootstrap({ projectName: 'Hosted reload', actorName: 'Owner' });
+    const boot = await ctx.scope.credentials.bootstrap({
+      projectName: 'Hosted reload',
+      actorName: 'Owner',
+    });
     const caller = {
       projectId: boot.project.id,
       actorId: boot.actor.id,

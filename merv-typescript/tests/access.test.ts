@@ -13,21 +13,22 @@ async function setup(t: TestContext) {
   const state = await openState(':memory:');
   t.after(async () => await state.close());
   const scope = await createService(new ProjectScope(state));
-  const first = await scope.bootstrap({
+  const first = await scope.credentials.bootstrap({
     projectName: 'First project',
     actorName: 'First operator',
   });
-  const second = await scope.bootstrap({
+  const second = await scope.credentials.bootstrap({
     projectName: 'Second project',
     actorName: 'Second operator',
   });
   const operator = { projectId: first.project.id, actorId: first.actor.id };
   const other = { projectId: second.project.id, actorId: second.actor.id };
-  const readerActor = (await scope.issueActor(operator, { name: 'First reader', role: 'reader' }))
-    .actor;
+  const readerActor = (
+    await scope.credentials.issueActor(operator, { name: 'First reader', role: 'reader' })
+  ).actor;
   const reader = { projectId: first.project.id, actorId: readerActor.id };
   const otherReaderActor = (
-    await scope.issueActor(other, { name: 'Second reader', role: 'reader' })
+    await scope.credentials.issueActor(other, { name: 'Second reader', role: 'reader' })
   ).actor;
   const otherReader = { projectId: second.project.id, actorId: otherReaderActor.id };
   return { state, scope, operator, reader, other, otherReader };
@@ -68,7 +69,7 @@ test('grants match exact projects, actors, mounts and raw names without changing
   assert.equal((await policy.granted(reader))('research', '_research.search'), false);
   await assert.rejects(async () => await scope.require(reader, 'write'), { code: 'forbidden' });
   await assert.rejects(
-    async () => await scope.issueActor(reader, { name: 'Escalated', role: 'operator' }),
+    async () => await scope.credentials.issueActor(reader, { name: 'Escalated', role: 'operator' }),
     {
       code: 'forbidden',
     },
@@ -100,7 +101,7 @@ test('replacement and actor revocation take effect on every later check without 
     code: 'tool_forbidden',
   });
   assert.equal((await policy.granted(reader))('research', 'paper.get'), true);
-  await scope.revokeActor(operator, reader.actorId);
+  await scope.credentials.revokeActor(operator, reader.actorId);
   assert.equal((await policy.granted(reader))('research', 'paper.get'), false);
   await assert.rejects(async () => await policy.require(reader, 'research', 'paper.get'), {
     code: 'forbidden',
@@ -167,7 +168,10 @@ test('Scope owns tool policy, defaults and suspension with only State as its dep
     assert.equal(ctx.get('tools'), undefined);
     assert.equal(ctx.get('api'), undefined);
     assert.equal(ctx.get('access'), undefined);
-    const owner = await ctx.scope.bootstrap({ projectName: 'Standalone', actorName: 'Operator' });
+    const owner = await ctx.scope.credentials.bootstrap({
+      projectName: 'Standalone',
+      actorName: 'Operator',
+    });
     const caller = { projectId: owner.project.id, actorId: owner.actor.id };
     assert.equal((await ctx.scope.toolPolicy.granted(caller))('research', 'search'), false);
     ctx.scope.toolPolicy.replace([grant(caller)]);

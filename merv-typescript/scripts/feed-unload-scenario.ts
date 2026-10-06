@@ -59,16 +59,16 @@ export async function runFeedUnloadScenario(
   try {
     // The default configuration keeps Feed switched off; switch it on to take it away again.
     for (const id of ['feed', 'feed-tools']) await app.setEnabled(id, true);
-    const credentials = await app.ctx.scope.bootstrap({
+    const credentials = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Feed unload acceptance',
       actorName: 'Operator',
     });
     const operator = { actorId: credentials.actor.id, projectId: credentials.project.id };
-    const producer = await app.ctx.scope.issueActor(operator, {
+    const producer = await app.ctx.scope.credentials.issueActor(operator, {
       name: 'Producer',
       role: 'producer',
     });
-    const reviewer = await app.ctx.scope.issueActor(operator, {
+    const reviewer = await app.ctx.scope.credentials.issueActor(operator, {
       name: 'Reviewer',
       role: 'operator',
     });

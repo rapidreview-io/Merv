@@ -65,12 +65,15 @@ test('HTTP/MCP rotation replaces authority while task and actor identity stay du
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const operator = await app.ctx.scope.bootstrap({
+  const operator = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Credentials',
     actorName: 'Operator',
   });
   const admin = identity(operator);
-  const producer = await app.ctx.scope.issueActor(admin, { name: 'Producer', role: 'producer' });
+  const producer = await app.ctx.scope.credentials.issueActor(admin, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const task = await currentTask(app.ctx, identity(producer), {
     title: 'Retain identity',
     goal: 'Keep work across rotation.',
@@ -176,8 +179,8 @@ test('expiry rejects HTTP and MCP discovery/calls, including a credential invali
   });
   const api = new ApiServer(scope, tools);
   await api.start();
-  const admin = await scope.bootstrap({ projectName: 'Expiry', actorName: 'Operator' });
-  const issued = await scope.issueActor(identity(admin), {
+  const admin = await scope.credentials.bootstrap({ projectName: 'Expiry', actorName: 'Operator' });
+  const issued = await scope.credentials.issueActor(identity(admin), {
     name: 'Expiring',
     role: 'reader',
     expiresAt: new Date(time + 1000).toISOString(),
@@ -211,8 +214,14 @@ test('expiry rejects HTTP and MCP discovery/calls, including a credential invali
 test('registry rechecks credential and remote grants between initial admission and handler dispatch', async (t) => {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
-  const operator = await scope.bootstrap({ projectName: 'Dispatch', actorName: 'Operator' });
-  const issued = await scope.issueActor(identity(operator), { name: 'Worker', role: 'producer' });
+  const operator = await scope.credentials.bootstrap({
+    projectName: 'Dispatch',
+    actorName: 'Operator',
+  });
+  const issued = await scope.credentials.issueActor(identity(operator), {
+    name: 'Worker',
+    role: 'producer',
+  });
   const access = scope.toolPolicy;
   access.replace([
     {
@@ -237,7 +246,7 @@ test('registry rechecks credential and remote grants between initial admission a
     open = resolve;
   });
   const rotated = bothAdmitted.then(() =>
-    scope.rotateCredential(identity(operator), { credentialId: issued.credential.id }),
+    scope.credentials.rotateCredential(identity(operator), { credentialId: issued.credential.id }),
   );
   const gate = async () => {
     if (++gated === 2) open();
@@ -289,8 +298,14 @@ test('registry rechecks credential and remote grants between initial admission a
 test('mount connection setup retains the original credential fence before upstream dispatch', async (t) => {
   const state = await openState(':memory:');
   const scope = await createService(new ProjectScope(state));
-  const operator = await scope.bootstrap({ projectName: 'Mount fence', actorName: 'Operator' });
-  const issued = await scope.issueActor(identity(operator), { name: 'Worker', role: 'producer' });
+  const operator = await scope.credentials.bootstrap({
+    projectName: 'Mount fence',
+    actorName: 'Operator',
+  });
+  const issued = await scope.credentials.issueActor(identity(operator), {
+    name: 'Worker',
+    role: 'producer',
+  });
   const access = scope.toolPolicy;
   access.replace([
     {
@@ -338,7 +353,7 @@ test('mount connection setup retains the original credential fence before upstre
     await state.close();
   });
   const pending = remote.handler('probe')(identity(issued), {});
-  await scope.revokeCredential(identity(operator), issued.credential.id);
+  await scope.credentials.revokeCredential(identity(operator), issued.credential.id);
   release();
   await assert.rejects(Promise.resolve(pending), { code: 'forbidden' });
   assert.equal(calls, 0);
@@ -353,12 +368,12 @@ test('operator self-rotation stages a replacement before invalidating the authen
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const bootstrap = await app.ctx.scope.bootstrap({
+  const bootstrap = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Staged rotation',
     actorName: 'Owner',
   });
   const deadline = new Date(Date.now() + 3_600_000).toISOString();
-  const operator = await app.ctx.scope.issueActor(identity(bootstrap), {
+  const operator = await app.ctx.scope.credentials.issueActor(identity(bootstrap), {
     name: 'Expiring operator',
     role: 'operator',
     expiresAt: deadline,
@@ -428,7 +443,7 @@ test('Identity revocation rejects new authentication and already prepared Scope 
   const { CredentialStore, tokenDigest } = await import('@merv/identity/credentials');
   const credentials = new CredentialStore(state);
   await credentials.initialize();
-  const issued = await scope.bootstrap({
+  const issued = await scope.credentials.bootstrap({
     projectName: 'Central revocation',
     actorName: 'Operator',
   });
@@ -436,8 +451,9 @@ test('Identity revocation rejects new authentication and already prepared Scope 
   await scope.require(caller, 'write');
   await credentials.revoke(tokenDigest(issued.token), 'scope');
   await assert.rejects(scope.authenticate(issued.token), { code: 'unauthorized' });
-  await assert.rejects(scope.require(caller, 'write'), { code: 'unauthorized' });
-  // The credential ledger is authoritative even when legacy metadata has not been changed.
+  // The credential ledger alone decides, even when Scope's row has not been changed: a prepared
+  // caller is refused as after any revocation.
+  await assert.rejects(scope.require(caller, 'write'), { code: 'forbidden', status: 403 });
   const old = await state.read((sql) =>
     sql.get<{ revoked_at: string | null }>(
       'SELECT revoked_at FROM actor_credentials WHERE id=?',

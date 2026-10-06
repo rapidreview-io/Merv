@@ -24,17 +24,20 @@ async function fixture() {
   /** A Scope instance booting on this database, as a restart or a second server would. */
   const boot = async () => await createService(new ProjectScope(state, clock));
   const scope = await boot();
-  const origin = await scope.bootstrap({ projectName: 'Ledger drift', actorName: 'Owner' });
+  const origin = await scope.credentials.bootstrap({
+    projectName: 'Ledger drift',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: origin.actor.id,
     projectId: origin.project.id,
     credentialId: origin.credential.id,
   };
-  const machine = await scope.issueActor(owner, { name: 'Machine', role: 'producer' });
+  const machine = await scope.credentials.issueActor(owner, { name: 'Machine', role: 'producer' });
   const login = async () =>
-    await scope.acceptVerifiedIdentity({ issuer, subject: 'alice', expiresAt: time(hour) });
+    await scope.members.acceptVerifiedIdentity({ issuer, subject: 'alice', expiresAt: time(hour) });
   const alice = await login();
-  const project = await scope.createProject(alice, { name: 'Keys', requestId: 'keys' });
+  const project = await scope.members.createProject(alice, { name: 'Keys', requestId: 'keys' });
   return {
     state,
     scope,
@@ -140,7 +143,7 @@ const unadopted: [
     'actor',
     async (f) => {
       const legacy = await legacyCredential(f);
-      await f.scope.revokeCredential(f.owner, legacy.id);
+      await f.scope.credentials.revokeCredential(f.owner, legacy.id);
       assert.notEqual(await scopeRevokedAt(f, 'actor_credentials', legacy.id), null);
       return legacy;
     },
@@ -151,11 +154,11 @@ const unadopted: [
     'user-key',
     async (f) => {
       const legacy = await legacyKey(f);
-      await f.scope.revokeKey(f.alice, legacy.id);
+      await f.scope.userKeys.revoke(f.alice, legacy.id);
       assert.notEqual(await scopeRevokedAt(f, 'user_keys', legacy.id), null);
       return legacy;
     },
-    async (scope, token) => await scope.authenticateKey(token),
+    async (scope, token) => await scope.userKeys.authenticate(token),
   ],
 ];
 
@@ -171,13 +174,16 @@ for (const [name, kind, retire, authenticate] of unadopted)
 test('a credential or key the ledger never held cannot be rotated', async () => {
   const f = await fixture();
   const credential = await legacyCredential(f);
-  await assert.rejects(f.scope.rotateCredential(f.owner, { credentialId: credential.id }), {
-    code: 'credential_revoked',
-    status: 409,
-  });
+  await assert.rejects(
+    f.scope.credentials.rotateCredential(f.owner, { credentialId: credential.id }),
+    {
+      code: 'credential_revoked',
+      status: 409,
+    },
+  );
   assert.equal(await scopeRevokedAt(f, 'actor_credentials', credential.id), null);
   const key = await legacyKey(f);
-  await assert.rejects(f.scope.rotateKey(f.alice, { keyId: key.id }), {
+  await assert.rejects(f.scope.userKeys.rotate(f.alice, { keyId: key.id }), {
     code: 'key_revoked',
     status: 409,
   });
@@ -196,7 +202,7 @@ test('a credential revoked only in the ledger cannot be rotated', async () => {
     'scope',
   );
   await assert.rejects(
-    f.scope.rotateCredential(f.owner, { credentialId: f.machine.credential.id }),
+    f.scope.credentials.rotateCredential(f.owner, { credentialId: f.machine.credential.id }),
     { code: 'credential_revoked', status: 409 },
   );
   assert.equal(await scopeRevokedAt(f, 'actor_credentials', f.machine.credential.id), null);
@@ -204,7 +210,7 @@ test('a credential revoked only in the ledger cannot be rotated', async () => {
 
 test('a rotation that would outlive its caller is refused before the ledger is consulted', async () => {
   const f = await fixture();
-  const limited = await f.scope.issueActor(f.owner, {
+  const limited = await f.scope.credentials.issueActor(f.owner, {
     name: 'Limited operator',
     role: 'operator',
     expiresAt: f.time(hour),
@@ -217,7 +223,7 @@ test('a rotation that would outlive its caller is refused before the ledger is c
   await f.ledger.revoke(sha256Hex(f.machine.token), 'scope');
   // The machine credential never expires, so keeping its deadline outlives the caller's.
   await assert.rejects(
-    f.scope.rotateCredential(caller, { credentialId: f.machine.credential.id }),
+    f.scope.credentials.rotateCredential(caller, { credentialId: f.machine.credential.id }),
     { code: 'self_expiry_extension', status: 403 },
   );
   assert.equal(await scopeRevokedAt(f, 'actor_credentials', f.machine.credential.id), null);
@@ -225,9 +231,9 @@ test('a rotation that would outlive its caller is refused before the ledger is c
 
 test('a key revoked only in the ledger cannot be rotated', async () => {
   const f = await fixture();
-  const { key, token } = await f.scope.createKey(f.alice, { projectId: f.project.id });
+  const { key, token } = await f.scope.userKeys.create(f.alice, { projectId: f.project.id });
   await f.ledger.revoke(sha256Hex(token), 'scope');
-  await assert.rejects(f.scope.rotateKey(f.alice, { keyId: key.id }), {
+  await assert.rejects(f.scope.userKeys.rotate(f.alice, { keyId: key.id }), {
     code: 'key_revoked',
     status: 409,
   });
@@ -236,25 +242,25 @@ test('a key revoked only in the ledger cannot be rotated', async () => {
 
 test('an expired credential or key is still renewed with an explicit expiry', async () => {
   const f = await fixture();
-  const issued = await f.scope.issueActorCredential(f.owner, {
+  const issued = await f.scope.credentials.issueActorCredential(f.owner, {
     actorId: f.machine.actor.id,
     expiresAt: f.time(hour),
   });
-  const key = await f.scope.createKey(f.alice, {
+  const key = await f.scope.userKeys.create(f.alice, {
     projectId: f.project.id,
     expiresAt: f.time(hour),
   });
   f.advance(2 * hour);
-  const renewed = await f.scope.rotateCredential(f.owner, {
+  const renewed = await f.scope.credentials.rotateCredential(f.owner, {
     credentialId: issued.credential.id,
     expiresAt: f.time(hour),
   });
   assert.equal((await f.scope.authenticate(renewed.token)).id, f.machine.actor.id);
-  const rotated = await f.scope.rotateKey(await f.login(), {
+  const rotated = await f.scope.userKeys.rotate(await f.login(), {
     keyId: key.key.id,
     expiresAt: f.time(hour),
   });
-  assert.equal((await f.scope.authenticateKey(rotated.token)).id, rotated.key.id);
+  assert.equal((await f.scope.userKeys.authenticate(rotated.token)).id, rotated.key.id);
 });
 
 test('revoking a hash another authority owns is refused as a conflict', async () => {
@@ -267,7 +273,7 @@ test('revoking a hash another authority owns is refused as a conflict', async ()
     expiresAt: null,
   });
   const legacy = await legacyCredential(f, { token: foreign.token });
-  await assert.rejects(f.scope.revokeCredential(f.owner, legacy.id), {
+  await assert.rejects(f.scope.credentials.revokeCredential(f.owner, legacy.id), {
     code: 'credential_conflict',
     status: 409,
   });
@@ -326,7 +332,7 @@ test('a user key whose ledger row another owner holds is refused', async () => {
     expiresAt: null,
   });
   const legacy = await legacyKey(f, { token, id });
-  await assert.rejects(f.scope.authenticateKey(token), unauthorized);
+  await assert.rejects(f.scope.userKeys.authenticate(token), unauthorized);
   await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
 });
 
@@ -340,7 +346,7 @@ test('a user key whose ledger row names another subject is refused', async () =>
     expiresAt: null,
   });
   const legacy = await legacyKey(f, { token });
-  await assert.rejects(f.scope.authenticateKey(token), unauthorized);
+  await assert.rejects(f.scope.userKeys.authenticate(token), unauthorized);
   await assert.rejects(f.scope.caller(legacy.principal), unauthorized);
 });
 

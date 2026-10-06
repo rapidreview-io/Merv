@@ -37,7 +37,10 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Code reload', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Code reload',
+    actorName: 'Owner',
+  });
   const source: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,

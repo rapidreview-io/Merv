@@ -80,9 +80,12 @@ async function fixture(t: TestContext) {
       .sign(new TextEncoder().encode(secret));
   const alice = await bearer('alice');
   const bob = await bearer('bob');
-  const owner = await scope.acceptVerifiedIdentity(await verify(alice));
-  const other = await scope.acceptVerifiedIdentity(await verify(bob));
-  const project = await scope.createProject(owner, { name: 'Issuance', requestId: 'issuance' });
+  const owner = await scope.members.acceptVerifiedIdentity(await verify(alice));
+  const other = await scope.members.acceptVerifiedIdentity(await verify(bob));
+  const project = await scope.members.createProject(owner, {
+    name: 'Issuance',
+    requestId: 'issuance',
+  });
   async function request<T = { error: { code: string; message: string } }>(
     path: string,
     options: {
@@ -138,7 +141,7 @@ async function fixture(t: TestContext) {
 
 test('only the verified owner manages key metadata, rotation lineage and strict issuance inputs', async (t) => {
   const f = await fixture(t);
-  await f.scope.addMember(f.owner, f.project.id, { subject: 'bob', role: 'operator' });
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'bob', role: 'operator' });
   const issued = await f.issue({
     label: 'CLI',
     expiresAt: new Date(f.time() + 60_000).toISOString(),
@@ -250,11 +253,11 @@ test('project and account keys resolve current owner roles while account keys re
     'project_required',
     'one membership does not imply an account-key selection',
   );
-  const otherProject = await f.scope.createProject(f.other, {
+  const otherProject = await f.scope.members.createProject(f.other, {
     name: 'Other project',
     requestId: 'other',
   });
-  await f.scope.addMember(f.other, otherProject.id, { subject: 'alice', role: 'reader' });
+  await f.scope.members.addMember(f.other, otherProject.id, { subject: 'alice', role: 'reader' });
   const account = await f.request<{
     kind: string;
     key: UserKey;
@@ -322,7 +325,10 @@ test('project and account keys resolve current owner roles while account keys re
     ).status,
     403,
   );
-  await f.scope.changeMemberRole(f.other, otherProject.id, { subject: 'alice', role: 'producer' });
+  await f.scope.members.changeMemberRole(f.other, otherProject.id, {
+    subject: 'alice',
+    role: 'producer',
+  });
   assert.equal(
     (
       await f.request('/tools/write', {
@@ -334,10 +340,10 @@ test('project and account keys resolve current owner roles while account keys re
     200,
   );
   const captured = await f.scope.caller(
-    { kind: 'key', key: await f.scope.authenticateKey(accountKey.token) },
+    { kind: 'key', key: await f.scope.userKeys.authenticate(accountKey.token) },
     otherProject.id,
   );
-  await f.scope.removeMember(f.other, otherProject.id, 'alice');
+  await f.scope.members.removeMember(f.other, otherProject.id, 'alice');
   assert.equal(
     (
       await f.request('/tools/read', {
@@ -348,7 +354,7 @@ test('project and account keys resolve current owner roles while account keys re
     ).status,
     403,
   );
-  await f.scope.addMember(f.other, otherProject.id, { subject: 'alice', role: 'reviewer' });
+  await f.scope.members.addMember(f.other, otherProject.id, { subject: 'alice', role: 'reviewer' });
   assert.equal(
     (
       await f.request('/tools/read', {
@@ -375,7 +381,7 @@ test('project and account keys resolve current owner roles while account keys re
 test('HTTP and MCP key catalogs use selected authority and preserve remote project arguments', async (t) => {
   const f = await fixture(t);
   const key = await f.issue({ grantScope: 'account' });
-  const elsewhere = await f.scope.createProject(f.owner, {
+  const elsewhere = await f.scope.members.createProject(f.owner, {
     name: 'Elsewhere',
     requestId: 'elsewhere',
   });
@@ -500,7 +506,7 @@ test('keys cannot administer accounts, keys, memberships or independent actor cr
   const f = await fixture(t);
   const key = await f.issue({ grantScope: 'account' });
   const operator = await f.scope.caller(f.owner, f.project.id);
-  const machine = await f.scope.issueActor(operator, {
+  const machine = await f.scope.credentials.issueActor(operator, {
     name: 'Independent agent',
     role: 'operator',
   });
@@ -536,13 +542,13 @@ test('owners retain metadata and recursive revocation after losing all project m
   const f = await fixture(t);
   const key = await f.issue({ grantScope: 'account' });
   const fixed = await f.issue();
-  const elsewhere = await f.scope.createProject(f.other, {
+  const elsewhere = await f.scope.members.createProject(f.other, {
     name: 'Remaining membership',
     requestId: 'remaining',
   });
-  await f.scope.addMember(f.other, elsewhere.id, { subject: 'alice', role: 'reader' });
-  await f.scope.addMember(f.owner, f.project.id, { subject: 'bob', role: 'operator' });
-  await f.scope.removeMember(f.other, f.project.id, 'alice');
+  await f.scope.members.addMember(f.other, elsewhere.id, { subject: 'alice', role: 'reader' });
+  await f.scope.members.addMember(f.owner, f.project.id, { subject: 'bob', role: 'operator' });
+  await f.scope.members.removeMember(f.other, f.project.id, 'alice');
   assert.equal(
     (await f.request(`/account/keys/${fixed.key.id}/rotate`, { body: {} })).status,
     403,
@@ -568,7 +574,7 @@ test('owners retain metadata and recursive revocation after losing all project m
     ).status,
     200,
   );
-  await f.scope.removeMember(f.other, elsewhere.id, 'alice');
+  await f.scope.members.removeMember(f.other, elsewhere.id, 'alice');
   const account = await f.request<{ projects: Project[] }>('/account', {
     token: rotated.body.token,
   });
@@ -609,7 +615,7 @@ test('revocation and expiry between admission and dispatch fence key calls, with
         .object({})
         .strict()
         .transform(async (value) => {
-          if (mode === 'revoke') await f.scope.revokeKey(f.owner, key.key.id);
+          if (mode === 'revoke') await f.scope.userKeys.revoke(f.owner, key.key.id);
           else f.advance(2000);
           return value;
         }),
@@ -633,7 +639,10 @@ test('revocation and expiry between admission and dispatch fence key calls, with
 test('existing opaque actor tokens can begin with mk_ without becoming user keys', async (t) => {
   const f = await fixture(t);
   const caller = await f.scope.caller(f.owner, f.project.id);
-  const legacy = await f.scope.issueActor(caller, { name: 'Legacy actor', role: 'reader' });
+  const legacy = await f.scope.credentials.issueActor(caller, {
+    name: 'Legacy actor',
+    role: 'reader',
+  });
   // Legacy tokens are 43 random base64url characters. Their random prefix is not reserved.
   const token = `mk_${'A'.repeat(40)}`;
   const id = `credential_${randomUUID()}`;
@@ -663,7 +672,7 @@ test('existing opaque actor tokens can begin with mk_ without becoming user keys
   assert.equal(account.body.kind, 'actor');
   assert.equal(account.body.actor.id, legacy.actor.id);
   assert.deepEqual(f.routing, { actor: 1, jwt: 0 });
-  await f.scope.revokeCredential(caller, id);
+  await f.scope.credentials.revokeCredential(caller, id);
   assert.equal((await f.request('/account', { token })).status, 401);
   assert.equal(f.routing.jwt, 0);
 });

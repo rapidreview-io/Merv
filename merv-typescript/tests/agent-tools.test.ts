@@ -14,9 +14,12 @@ test("a person's agent over MCP is offered what a Pi conversation is, while Merv
     await tools.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Agent tools', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Agent tools',
+    actorName: 'Owner',
+  });
   const owner = { projectId: boot.project.id, actorId: boot.actor.id };
-  const issued = await scope.issueActor(owner, { name: 'Reader', role: 'reader' });
+  const issued = await scope.credentials.issueActor(owner, { name: 'Reader', role: 'reader' });
   const reader = { projectId: boot.project.id, actorId: issued.actor.id };
   const input = z.object({}).strict();
   const handler = () => ({ ran: true });

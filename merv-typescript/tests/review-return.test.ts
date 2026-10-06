@@ -30,10 +30,13 @@ async function fixture(maximumMigration = Infinity) {
   const path = directory;
   const state = await openState(path);
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Return route', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Return route',
+    actorName: 'Operator',
+  });
   const operator = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const actor = await scope.issueActor(operator, { name: role, role });
+    const actor = await scope.credentials.issueActor(operator, { name: role, role });
     return { token: actor.token, caller: { actorId: actor.actor.id, projectId: boot.project.id } };
   };
   const producer = await issue('producer'),
@@ -597,7 +600,7 @@ test('Tasks reject supplied routes before command replay and agree with workflow
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-return-'));
   const app = await createApp({ directory, api: false });
   try {
-    const boot = await app.ctx.scope.bootstrap({
+    const boot = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Task fixed routes',
       actorName: 'Operator',
     });

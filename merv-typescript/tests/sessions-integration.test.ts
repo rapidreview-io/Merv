@@ -98,7 +98,7 @@ async function fixture(t: TestContext) {
   const key = issued.body;
   const source = async (): Promise<Caller> =>
     await app.ctx.scope.caller(
-      { kind: 'key', key: await app.ctx.scope.authenticateKey(key.token) },
+      { kind: 'key', key: await app.ctx.scope.userKeys.authenticate(key.token) },
       project.id,
     );
   const taskInput = {

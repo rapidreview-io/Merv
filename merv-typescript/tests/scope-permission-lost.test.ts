@@ -8,7 +8,10 @@ async function fixture(t: any) {
   const state = await openState(':memory:');
   t.after(() => state.close());
   const scope = await createService(new ProjectScope(state));
-  const { project } = await scope.bootstrap({ projectName: 'Lost', actorName: 'Operator' });
+  const { project } = await scope.credentials.bootstrap({
+    projectName: 'Lost',
+    actorName: 'Operator',
+  });
   const append = (type: string, subjectId: string, data: Record<string, string> = {}) =>
     state.transaction(
       async (tx) =>

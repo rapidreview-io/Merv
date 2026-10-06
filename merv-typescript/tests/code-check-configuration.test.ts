@@ -20,7 +20,10 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
   const root = mkdtempSync(join(tmpdir(), 'merv-check-config-'));
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Check configuration', actorName: 'Admin' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Check configuration',
+    actorName: 'Admin',
+  });
   const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
   const core = await createService(new CodeService(state, scope, {}));
   await boundProject(state, caller.projectId, 'a'.repeat(40));

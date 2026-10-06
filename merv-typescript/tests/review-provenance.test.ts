@@ -9,7 +9,8 @@ test('provenance migration preserves populated reviews and freezes certificates'
   const f = await resolutionFixture(t, { reviews: 8 });
   const producer = {
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name: 'Producer', role: 'producer' })).actor.id,
+    actorId: (await f.scope.credentials.issueActor(f.admin, { name: 'Producer', role: 'producer' }))
+      .actor.id,
   };
   const output = await f.artifacts.create(producer, {
     title: 'Evidence',
@@ -104,14 +105,16 @@ test("submission checks the caller's current directing authority against pinned 
   const f = await resolutionFixture(t);
   const producer = {
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name: 'Contributor', role: 'producer' })).actor
-      .id,
+    actorId: (
+      await f.scope.credentials.issueActor(f.admin, { name: 'Contributor', role: 'producer' })
+    ).actor.id,
   };
   const output = await f.artifacts.create(producer, { title: 'Evidence', content: 'Checked' });
   const contributor = {
     projectId: f.admin.projectId,
-    actorId: (await f.scope.issueActor(f.admin, { name: 'Input writer', role: 'producer' })).actor
-      .id,
+    actorId: (
+      await f.scope.credentials.issueActor(f.admin, { name: 'Input writer', role: 'producer' })
+    ).actor.id,
   };
   const body = {
     formatVersion: 1 as const,

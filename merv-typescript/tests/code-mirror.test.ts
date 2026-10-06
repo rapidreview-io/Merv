@@ -434,8 +434,8 @@ test('what publishes a project’s work is the owner’s link and the write auto
   );
 
   // The owner who turned automation on must still administer the project.
-  await f.scope.removeMember(
-    await f.scope.acceptVerifiedIdentity({
+  await f.scope.members.removeMember(
+    await f.scope.members.acceptVerifiedIdentity({
       issuer: f.caller.human!.issuer,
       subject: 'reviewer',
       expiresAt: new Date(Date.now() + 3600_000).toISOString(),
@@ -521,7 +521,10 @@ test('a remote ref that only ends with the published name is not the published r
 
 test('disconnected projects cannot hide connected mirrors beyond the first batch', async (t) => {
   const f = await mirrored(t);
-  const other = await f.scope.bootstrap({ projectName: 'disconnected', actorName: 'owner' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'disconnected',
+    actorName: 'owner',
+  });
   await f.state.transaction(async (tx) => {
     for (let i = 0; i < 105; i++)
       await enqueueMirror(tx, other.project.id, 'mirror-work', `waiting-${i}`, f.root);

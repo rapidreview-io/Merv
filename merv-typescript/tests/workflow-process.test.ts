@@ -29,14 +29,17 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Process', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Process',
+    actorName: 'Owner',
+  });
   const owner: Caller = { projectId: boot.project.id, actorId: boot.actor.id };
   return {
     app,
     owner,
     actor: async (name: string, role: 'producer' | 'operator' = 'producer') => ({
       projectId: owner.projectId,
-      actorId: (await app.ctx.scope.issueActor(owner, { name, role })).actor.id,
+      actorId: (await app.ctx.scope.credentials.issueActor(owner, { name, role })).actor.id,
     }),
     process: async (caller: Caller, instanceId: string) =>
       (await app.ctx.tools.call('workflow.process', caller, { instanceId })) as ProcessGraph,

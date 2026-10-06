@@ -43,7 +43,7 @@ async function fixture(t: TestContext) {
     workflows.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Dispatch', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Dispatch', actorName: 'Owner' });
   const source: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -197,21 +197,27 @@ test('discovery uses the real source authority and transaction; revoked or cross
   const f = await fixture(t);
   const work = await f.register('scoped-work');
   const instance = await work.start();
-  const reader = await f.scope.issueActor(f.source, { name: 'Reader', role: 'reader' });
+  const reader = await f.scope.credentials.issueActor(f.source, { name: 'Reader', role: 'reader' });
   const readerCaller: Caller = {
     ...f.source,
     actorId: reader.actor.id,
     credentialId: reader.credential.id,
   };
   assert.deepEqual(await f.workflows.dispatchCandidates(readerCaller), []);
-  const producer = await f.scope.issueActor(f.source, { name: 'Producer', role: 'producer' });
+  const producer = await f.scope.credentials.issueActor(f.source, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const producerCaller: Caller = {
     ...f.source,
     actorId: producer.actor.id,
     credentialId: producer.credential.id,
   };
   assert.equal((await f.workflows.dispatchCandidates(producerCaller))[0].instanceId, instance.id);
-  const foreign = await f.scope.bootstrap({ projectName: 'Foreign', actorName: 'Other owner' });
+  const foreign = await f.scope.credentials.bootstrap({
+    projectName: 'Foreign',
+    actorName: 'Other owner',
+  });
   const foreignCaller: Caller = { actorId: foreign.actor.id, projectId: foreign.project.id };
   assert.deepEqual(await f.workflows.dispatchCandidates(foreignCaller), []);
   const pendingCaller = { ...foreignCaller };
@@ -508,13 +514,16 @@ test('Tasks contribute source-aware queue labels and recipe availability without
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Task dispatch', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Task dispatch',
+    actorName: 'Owner',
+  });
   const source: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const producerActor = await app.ctx.scope.issueActor(source, {
+  const producerActor = await app.ctx.scope.credentials.issueActor(source, {
     name: 'Producer',
     role: 'producer',
   });
@@ -523,7 +532,7 @@ test('Tasks contribute source-aware queue labels and recipe availability without
     actorId: producerActor.actor.id,
     credentialId: producerActor.credential.id,
   };
-  const reviewerActor = await app.ctx.scope.issueActor(source, {
+  const reviewerActor = await app.ctx.scope.credentials.issueActor(source, {
     name: 'Reviewer',
     role: 'reviewer',
   });

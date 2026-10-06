@@ -157,14 +157,14 @@ async function fixture(
     edges: [{ from: 'working', action: 'finish', to: 'done' }],
   };
   const handle = await workflows.register(definition, policy);
-  const boot = await scope.bootstrap({ projectName: 'Running', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Running', actorName: 'Operator' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
   const issue = async (name: string, role: 'producer' | 'reader') => {
-    const issued = await scope.issueActor(owner, { name, role });
+    const issued = await scope.credentials.issueActor(owner, { name, role });
     return {
       actorId: issued.actor.id,
       projectId: boot.project.id,
@@ -981,14 +981,18 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const credentials = await app.ctx.scope.bootstrap({ projectName: 'Running', actorName: 'Op' });
+  const credentials = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Running',
+    actorName: 'Op',
+  });
   const operator: Caller = {
     actorId: credentials.actor.id,
     projectId: credentials.project.id,
     credentialId: credentials.credential.id,
   };
-  const reader = (await app.ctx.scope.issueActor(operator, { name: 'Reader', role: 'reader' }))
-    .token;
+  const reader = (
+    await app.ctx.scope.credentials.issueActor(operator, { name: 'Reader', role: 'reader' })
+  ).token;
   const tool = async (name: string, token: string, input: unknown = {}) => {
     const response = await fetch(`${app.ctx.api.url}/tools/${name}`, {
       method: 'POST',

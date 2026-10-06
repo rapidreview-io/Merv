@@ -98,11 +98,20 @@ async function mount(
 async function fixture(t: TestContext, timeoutMs = 1500) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-mount-upstream-'));
   const app = await createApp({ directory, components: ['state', 'scope'] });
-  const first = await app.ctx.scope.bootstrap({ projectName: 'Project A', actorName: 'Actor A' });
-  const second = await app.ctx.scope.bootstrap({ projectName: 'Project B', actorName: 'Actor B' });
+  const first = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Project A',
+    actorName: 'Actor A',
+  });
+  const second = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Project B',
+    actorName: 'Actor B',
+  });
   const a = { actorId: first.actor.id, projectId: first.project.id };
   const b = { actorId: second.actor.id, projectId: second.project.id };
-  const another = await app.ctx.scope.issueActor(a, { name: 'Another A actor', role: 'producer' });
+  const another = await app.ctx.scope.credentials.issueActor(a, {
+    name: 'Another A actor',
+    role: 'producer',
+  });
   const a2 = { actorId: another.actor.id, projectId: first.project.id };
   const tokens = { a: 'synthetic-upstream-a', b: 'synthetic-upstream-b' };
   const upstream = new CredentialServer([
@@ -246,7 +255,7 @@ for (const change of ['grant', 'actor'] as const) {
     void operation.catch(() => undefined);
     await held.entered;
     if (change === 'grant') access.replace([]);
-    else await scope.revokeActor(a, a2.actorId);
+    else await scope.credentials.revokeActor(a, a2.actorId);
     held.release();
     await assert.rejects(operation, { code: change === 'grant' ? 'tool_forbidden' : 'forbidden' });
     assert.equal(upstream.callAttempts, 0);

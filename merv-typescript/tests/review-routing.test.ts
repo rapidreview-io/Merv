@@ -38,7 +38,7 @@ async function fixture(t: TestContext, api = false) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Review routing',
     actorName: 'Operator',
   });
@@ -48,7 +48,7 @@ async function fixture(t: TestContext, api = false) {
     credentialId: boot.credential.id,
   };
   const issue = async (role: 'producer' | 'reviewer' | 'reader' | 'operator') => {
-    const result = await app.ctx.scope.issueActor(operator, { name: role, role });
+    const result = await app.ctx.scope.credentials.issueActor(operator, { name: role, role });
     return {
       token: result.token,
       caller: {
@@ -578,7 +578,7 @@ test('routing does not authorize fabricated task reviews, wrong projects, revoke
       code: 'stale_claim',
     },
   );
-  const foreign = await f.app.ctx.scope.bootstrap({
+  const foreign = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other',
   });
@@ -591,7 +591,7 @@ test('routing does not authorize fabricated task reviews, wrong projects, revoke
     { code: 'not_found' },
   );
   assert.equal((await f.app.ctx.reviews.get(f.operator, review.id)).status, 'started');
-  await f.app.ctx.scope.revokeActor(f.operator, f.reviewerSource.actorId);
+  await f.app.ctx.scope.credentials.revokeActor(f.operator, f.reviewerSource.actorId);
   await f.app.ctx.domainEvents.drain();
   const before = await f.durable();
   await assert.rejects(async () => await f.app.ctx.reviews.apply(f.reviewer.caller, input));

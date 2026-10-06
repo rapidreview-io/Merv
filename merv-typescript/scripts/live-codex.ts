@@ -286,7 +286,7 @@ async function run() {
         .setIssuedAt()
         .setExpirationTime('1h')
         .sign(new TextEncoder().encode(secret));
-      const principal = await app.ctx.scope.acceptVerifiedIdentity(
+      const principal = await app.ctx.scope.members.acceptVerifiedIdentity(
         await app.ctx.identity.verify(token),
       );
       return { token, principal };
@@ -297,7 +297,7 @@ async function run() {
     if (sharedIdentity) {
       const verified = await human('test-operator');
       operatorPrincipal = verified.principal;
-      const project = await app.ctx.scope.createProject(operatorPrincipal, {
+      const project = await app.ctx.scope.members.createProject(operatorPrincipal, {
         name: 'Shared identity live acceptance',
         requestId: 'live-project',
       });
@@ -309,7 +309,7 @@ async function run() {
         token: verified.token,
       };
     } else {
-      operator = await app.ctx.scope.bootstrap({
+      operator = await app.ctx.scope.credentials.bootstrap({
         projectName: 'Codex live acceptance',
         actorName: 'Test operator',
       });
@@ -317,13 +317,13 @@ async function run() {
     }
     const participant = async (name: string, role: Role): Promise<TestActor> => {
       if (!sharedIdentity)
-        return await app.ctx.scope.issueActor(caller, {
+        return await app.ctx.scope.credentials.issueActor(caller, {
           name,
           role,
           expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
         });
       const verified = await human(name.includes('reviewer') ? 'test-reviewer' : `test-${role}`);
-      await app.ctx.scope.addMember(operatorPrincipal!, caller.projectId, {
+      await app.ctx.scope.members.addMember(operatorPrincipal!, caller.projectId, {
         subject: verified.principal.user.subject,
         role,
       });
@@ -351,7 +351,7 @@ async function run() {
         assert.equal(issued.key.grantScope, role === 'producer' ? 'account' : 'project');
         originalKeys.set(memberActor.id, issued.key);
         const keyCaller = await app.ctx.scope.caller(
-          { kind: 'key', key: await app.ctx.scope.authenticateKey(issued.token) },
+          { kind: 'key', key: await app.ctx.scope.userKeys.authenticate(issued.token) },
           caller.projectId,
         );
         assert.equal(keyCaller.actorId, memberActor.id);
@@ -373,7 +373,7 @@ async function run() {
     );
     const seedCaller: Caller = userKeys
       ? await app.ctx.scope.caller(
-          { kind: 'key', key: await app.ctx.scope.authenticateKey(producer.token) },
+          { kind: 'key', key: await app.ctx.scope.userKeys.authenticate(producer.token) },
           caller.projectId,
         )
       : sharedIdentity
@@ -420,7 +420,7 @@ async function run() {
     // Rotation changes the bearer generation, not attribution or pending workflow state.
     for (const phase of sharedIdentity ? [] : (['producer', 'reviewer'] as const)) {
       const previous = phase === 'producer' ? producer : reviewer;
-      const replacement = await app.ctx.scope.rotateCredential(caller, {
+      const replacement = await app.ctx.scope.credentials.rotateCredential(caller, {
         credentialId: previous.credential!.id,
       });
       assert.equal(replacement.actor.id, previous.actor.id);
@@ -452,7 +452,7 @@ async function run() {
         assert.deepEqual(replacement.key.owner, previous.key!.owner);
         const principal = {
           kind: 'key' as const,
-          key: await app.ctx.scope.authenticateKey(replacement.token),
+          key: await app.ctx.scope.userKeys.authenticate(replacement.token),
         };
         assert.equal(
           (await app.ctx.scope.caller(principal, caller.projectId)).actorId,
@@ -472,16 +472,16 @@ async function run() {
       }
     }
     if (sharedIdentity) {
-      const other = await app.ctx.scope.createProject(operatorPrincipal!, {
+      const other = await app.ctx.scope.members.createProject(operatorPrincipal!, {
         name: 'Read-only second project',
         requestId: 'other-project',
       });
-      await app.ctx.scope.addMember(operatorPrincipal!, other.id, {
+      await app.ctx.scope.members.addMember(operatorPrincipal!, other.id, {
         subject: 'test-producer',
         role: 'reader',
       });
       if (userKeys) {
-        await app.ctx.scope.addMember(operatorPrincipal!, other.id, {
+        await app.ctx.scope.members.addMember(operatorPrincipal!, other.id, {
           subject: 'test-reviewer',
           role: 'reader',
         });
@@ -538,7 +538,7 @@ async function run() {
     );
     const reviewerSource: Caller = userKeys
       ? await app.ctx.scope.caller(
-          { kind: 'key', key: await app.ctx.scope.authenticateKey(reviewer.token) },
+          { kind: 'key', key: await app.ctx.scope.userKeys.authenticate(reviewer.token) },
           caller.projectId,
         )
       : sharedIdentity
@@ -602,14 +602,14 @@ async function run() {
       const owner = owners.get(producer.actor.id)!;
       const account = {
         kind: 'key' as const,
-        key: await app.ctx.scope.authenticateKey(producer.token),
+        key: await app.ctx.scope.userKeys.authenticate(producer.token),
       };
       const second = (await app.ctx.scope.projects(account)).find(
         (project) => project.id !== caller.projectId,
       )!;
       assert.ok(second, 'The account key reaches a membership added after issuance');
       const captured = await app.ctx.scope.caller(account, caller.projectId);
-      await app.ctx.scope.removeMember(
+      await app.ctx.scope.members.removeMember(
         operatorPrincipal!,
         caller.projectId,
         owner.principal.user.subject,
@@ -643,7 +643,7 @@ async function run() {
       assert.equal(
         (
           await app.ctx.scope.caller(
-            { kind: 'key', key: await app.ctx.scope.authenticateKey(successor.token) },
+            { kind: 'key', key: await app.ctx.scope.userKeys.authenticate(successor.token) },
             second.id,
           )
         ).projectId,
@@ -658,11 +658,11 @@ async function run() {
       );
       assert.equal(revoked.status, 200);
       await revoked.arrayBuffer();
-      await assert.rejects(async () => await app.ctx.scope.authenticateKey(successor.token), {
+      await assert.rejects(async () => await app.ctx.scope.userKeys.authenticate(successor.token), {
         code: 'unauthorized',
       });
       assert.ok(
-        await app.ctx.scope.authenticateKey(reviewer.token),
+        await app.ctx.scope.userKeys.authenticate(reviewer.token),
         'Revocation leaves independent keys intact',
       );
       assert.equal(

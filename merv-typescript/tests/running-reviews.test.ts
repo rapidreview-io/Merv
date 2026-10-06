@@ -49,7 +49,7 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Running reviews',
     actorName: 'Operator',
   });
@@ -59,7 +59,10 @@ async function fixture(t: TestContext) {
     credentialId: boot.credential.id,
   };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const issued = await app.ctx.scope.issueActor(operator, { name: `The ${role}`, role });
+    const issued = await app.ctx.scope.credentials.issueActor(operator, {
+      name: `The ${role}`,
+      role,
+    });
     const caller: Caller = {
       projectId: operator.projectId,
       actorId: issued.actor.id,
@@ -365,7 +368,10 @@ test('why nobody can take a review is said to an operator alone, in ink, and ano
     'unclaimed',
   ]);
 
-  const elsewhere = await f.app.ctx.scope.bootstrap({ projectName: 'Elsewhere', actorName: 'Op' });
+  const elsewhere = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Elsewhere',
+    actorName: 'Op',
+  });
   assert.deepEqual(
     await f.sections(
       { projectId: elsewhere.project.id, actorId: elsewhere.actor.id },

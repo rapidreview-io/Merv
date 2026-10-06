@@ -14,13 +14,13 @@ type App = Awaited<ReturnType<typeof createApp>>;
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-structured-evidence-'));
   const app = await createApp({ directory, api, port: 0 });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Structured evidence',
     actorName: 'Operator',
   });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const actor = await app.ctx.scope.issueActor(operator, { name: role, role });
+    const actor = await app.ctx.scope.credentials.issueActor(operator, { name: role, role });
     return {
       caller: {
         actorId: actor.actor.id,

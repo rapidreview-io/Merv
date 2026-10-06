@@ -26,10 +26,13 @@ async function fixture(limits?: { reviewRounds: number }) {
   const path = mkdtempSync(join(tmpdir(), 'merv-task-test-'));
   const state = await openState(path),
     scope = await createService(new ProjectScope(state));
-  const credentials = await scope.bootstrap({ projectName: 'Test', actorName: 'Operator' });
+  const credentials = await scope.credentials.bootstrap({
+    projectName: 'Test',
+    actorName: 'Operator',
+  });
   const operator: Caller = { actorId: credentials.actor.id, projectId: credentials.project.id };
   const issue = async (name: string, role: 'producer' | 'reviewer' | 'reader'): Promise<Caller> => {
-    const issued = await scope.issueActor(operator, { name, role });
+    const issued = await scope.credentials.issueActor(operator, { name, role });
     return {
       actorId: issued.actor.id,
       projectId: operator.projectId,
@@ -278,7 +281,7 @@ test('task reads, context and failure keep their original caller and inputs', as
   const f = await fixture();
   t.after(f.cleanup);
   const task = await f.create();
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const foreign = { projectId: other.project.id, actorId: other.actor.id };
   for (const method of ['get', 'record', 'records', 'list', 'process'] as const) {
     await t.test(method, async () => {
@@ -358,13 +361,14 @@ test('generic reviews work without a workflow engine or task program and reject 
   const path = mkdtempSync(join(tmpdir(), 'merv-review-only-'));
   const state = await openState(path),
     scope = await createService(new ProjectScope(state));
-  const credential = await scope.bootstrap({
+  const credential = await scope.credentials.bootstrap({
     projectName: 'Standalone review',
     actorName: 'Operator',
   });
   const operator = { actorId: credential.actor.id, projectId: credential.project.id };
   const reviewer = {
-    actorId: (await scope.issueActor(operator, { name: 'Reviewer', role: 'reviewer' })).actor.id,
+    actorId: (await scope.credentials.issueActor(operator, { name: 'Reviewer', role: 'reviewer' }))
+      .actor.id,
     projectId: operator.projectId,
   };
   const artifacts = await createService(

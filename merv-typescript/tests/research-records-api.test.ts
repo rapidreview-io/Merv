@@ -27,7 +27,7 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Research records transport',
     actorName: 'Owner',
   });
@@ -36,9 +36,18 @@ async function fixture(t: TestContext) {
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const producer = await app.ctx.scope.issueActor(operator, { name: 'Producer', role: 'producer' });
-  const reader = await app.ctx.scope.issueActor(operator, { name: 'Reader', role: 'reader' });
-  const reviewer = await app.ctx.scope.issueActor(operator, { name: 'Reviewer', role: 'reviewer' });
+  const producer = await app.ctx.scope.credentials.issueActor(operator, {
+    name: 'Producer',
+    role: 'producer',
+  });
+  const reader = await app.ctx.scope.credentials.issueActor(operator, {
+    name: 'Reader',
+    role: 'reader',
+  });
+  const reviewer = await app.ctx.scope.credentials.issueActor(operator, {
+    name: 'Reviewer',
+    role: 'reviewer',
+  });
   const caller: Caller = {
     actorId: producer.actor.id,
     projectId: boot.project.id,
@@ -133,7 +142,10 @@ test('Introduction HTTP and MCP preserve exact baseline, original replay result 
     { summary: 'Missing baseline', requestId: 'invalid' },
   ])
     assert.equal((await f.http('project.context.update', invalid)).status, 400);
-  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
+  const other = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other owner',
+  });
   assert.equal(
     (await f.http('project.context.update', input, f.producer.token, other.project.id)).status,
     403,
@@ -143,7 +155,7 @@ test('Introduction HTTP and MCP preserve exact baseline, original replay result 
       .summary,
     '',
   );
-  await f.app.ctx.scope.revokeCredential(f.operator, f.producer.credential.id);
+  await f.app.ctx.scope.credentials.revokeCredential(f.operator, f.producer.credential.id);
   assert.equal((await f.http('project.context.update', input)).status, 401);
   assert.equal(
     (await f.app.ctx.state.events(f.boot.project.id)).filter(
@@ -212,7 +224,7 @@ test('Knowledge transport reads complete scoped metadata, exposes unresolved sta
     title: 'Exact input',
     content: 'retained bytes',
   });
-  const foreign = await f.app.ctx.scope.bootstrap({
+  const foreign = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other owner',
   });

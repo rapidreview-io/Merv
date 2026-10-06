@@ -98,7 +98,7 @@ async function fixture(t: TestContext, plugin = false) {
   let release: (() => Promise<void>) | undefined;
   let sequence = 0;
   const id = () => `automatic-test-${++sequence}`;
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Continuous research',
     actorName: 'Owner',
   });
@@ -108,7 +108,7 @@ async function fixture(t: TestContext, plugin = false) {
     credentialId: boot.credential.id,
   };
   const issue = async (role: 'producer' | 'reviewer' | 'operator') => {
-    const actor = await app.ctx.scope.issueActor(owner, { name: id(), role });
+    const actor = await app.ctx.scope.credentials.issueActor(owner, { name: id(), role });
     return {
       projectId: owner.projectId,
       actorId: actor.actor.id,
@@ -668,7 +668,7 @@ test('a revoked source cannot advance, while another authorized cycle keeps movi
   const work = await f.task([], source);
   const blocked = await f.create([work.id], {}, source);
   await f.pump();
-  await f.app.ctx.scope.revokeActor(f.owner, source.actorId);
+  await f.app.ctx.scope.credentials.revokeActor(f.owner, source.actorId);
   await f.failTask(work.id);
   const otherWork = await f.task();
   const other = await f.create([otherWork.id]);

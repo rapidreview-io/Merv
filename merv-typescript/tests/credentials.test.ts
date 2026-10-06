@@ -17,13 +17,19 @@ async function fixture(t: TestContext, clock?: () => number) {
   const state = await openState(':memory:');
   t.after(async () => await state.close());
   const scope = await createService(new ProjectScope(state, clock));
-  const admin = await scope.bootstrap({ projectName: 'First', actorName: 'Operator' });
+  const admin = await scope.credentials.bootstrap({ projectName: 'First', actorName: 'Operator' });
   const operator = { projectId: admin.project.id, actorId: admin.actor.id };
-  const producer = await scope.issueActor(operator, { name: 'Producer', role: 'producer' });
+  const producer = await scope.credentials.issueActor(operator, {
+    name: 'Producer',
+    role: 'producer',
+  });
   const caller = { projectId: operator.projectId, actorId: producer.actor.id };
-  const reader = await scope.issueActor(operator, { name: 'Reader', role: 'reader' });
+  const reader = await scope.credentials.issueActor(operator, { name: 'Reader', role: 'reader' });
   const readerCaller = { projectId: operator.projectId, actorId: reader.actor.id };
-  const second = await scope.bootstrap({ projectName: 'Second', actorName: 'Other operator' });
+  const second = await scope.credentials.bootstrap({
+    projectName: 'Second',
+    actorName: 'Other operator',
+  });
   const other = { projectId: second.project.id, actorId: second.actor.id };
   return { scope, state, admin, operator, caller, readerCaller, other };
 }
@@ -141,7 +147,7 @@ test('mount status, errors and inspected services never contain an upstream secr
     failures.push(error),
   );
   process.env[env.name] = (
-    await scope.issueActor(operator, { name: 'Local', role: 'producer' })
+    await scope.credentials.issueActor(operator, { name: 'Local', role: 'producer' })
   ).token;
   await headersFor(bindings, operator, 'fixture').catch((error) => failures.push(error));
   assert.equal(failures.length, 2);
@@ -196,18 +202,32 @@ test('missing or malformed environment secrets and active local tokens fail with
 test('known local credentials cannot become upstream bearers after expiry, rotation or revocation', async (t) => {
   let time = Date.parse('2026-09-14T00:00:00.000Z');
   const { scope, caller, operator, admin } = await fixture(t, () => time);
-  const expiring = await scope.issueActor(operator, {
+  const expiring = await scope.credentials.issueActor(operator, {
     name: 'Expiring',
     role: 'producer',
     expiresAt: new Date(time + 1000).toISOString(),
   });
-  const rotated = await scope.issueActor(operator, { name: 'Rotated', role: 'producer' });
-  const successor = await scope.rotateCredential(operator, { credentialId: rotated.credential.id });
-  const revoked = await scope.issueActor(operator, { name: 'Revoked token', role: 'producer' });
-  await scope.revokeCredential(operator, revoked.credential.id);
-  const inactive = await scope.issueActor(operator, { name: 'Revoked actor', role: 'producer' });
-  await scope.revokeActor(operator, inactive.actor.id);
-  const foreign = await scope.bootstrap({ projectName: 'Foreign token', actorName: 'Foreign' });
+  const rotated = await scope.credentials.issueActor(operator, {
+    name: 'Rotated',
+    role: 'producer',
+  });
+  const successor = await scope.credentials.rotateCredential(operator, {
+    credentialId: rotated.credential.id,
+  });
+  const revoked = await scope.credentials.issueActor(operator, {
+    name: 'Revoked token',
+    role: 'producer',
+  });
+  await scope.credentials.revokeCredential(operator, revoked.credential.id);
+  const inactive = await scope.credentials.issueActor(operator, {
+    name: 'Revoked actor',
+    role: 'producer',
+  });
+  await scope.credentials.revokeActor(operator, inactive.actor.id);
+  const foreign = await scope.credentials.bootstrap({
+    projectName: 'Foreign token',
+    actorName: 'Foreign',
+  });
   time += 1000;
 
   for (const issued of [expiring, rotated, revoked, inactive])

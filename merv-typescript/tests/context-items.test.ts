@@ -454,9 +454,12 @@ async function setup(t: TestContext) {
     await state.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  const identity = await scope.bootstrap({ projectName: 'Items', actorName: 'Operator' });
+  const identity = await scope.credentials.bootstrap({
+    projectName: 'Items',
+    actorName: 'Operator',
+  });
   const operator: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
-  const other = await scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const outsider: Caller = { actorId: other.actor.id, projectId: other.project.id };
   const read = artifacts.read.bind(artifacts);
   const reads: string[] = [];

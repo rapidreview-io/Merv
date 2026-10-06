@@ -67,7 +67,7 @@ test('small uploaded evidence is readable and attachable while actual oversized 
   // Completion copies the verified bytes into the row: the one storage read happens there.
   assert.equal(requests, 1);
   assert.equal((await f.artifacts.read(f.producer, artifact.id)).content, bytes.toString());
-  const outsider = await f.scope.bootstrap({
+  const outsider = await f.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other owner',
   });
@@ -96,10 +96,10 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
   const dir = mkdtempSync(join(tmpdir(), 'merv-experiments-core-')),
     state = await openState(dir);
   const scope = await createService(new ProjectScope(state)),
-    boot = await scope.bootstrap({ projectName: 'Experiments', actorName: 'Operator' });
+    boot = await scope.credentials.bootstrap({ projectName: 'Experiments', actorName: 'Operator' });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const result = await scope.issueActor(operator, { name: role, role });
+    const result = await scope.credentials.issueActor(operator, { name: role, role });
     return {
       actorId: result.actor.id,
       projectId: operator.projectId,
@@ -341,7 +341,7 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
 test('Experiment reads retain their caller while pending', async (t) => {
   const f = await fixture(t);
   const experiment = await f.running();
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const foreign = { projectId: other.project.id, actorId: other.actor.id };
   for (const method of ['get', 'list', 'exhibit', 'process'] as const) {
     await t.test(method, async () => {
@@ -717,7 +717,10 @@ test('Active cap, name uniqueness and same-project dependencies fail atomically'
     async () => await create('Chained', { dependsOn: [initial.id] }),
     code('invalid_dependency'),
   );
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' }),
+  const other = await f.scope.credentials.bootstrap({
+      projectName: 'Other',
+      actorName: 'Other operator',
+    }),
     caller = { actorId: other.actor.id, projectId: other.project.id };
   await assert.rejects(
     async () => await create('Retired-field', { testedClaimIds: ['claim_retired'] }),
@@ -770,7 +773,7 @@ test('Source revocation is checked before replay and before a composed writer co
   const f = await fixture(t),
     input = { name: 'Authorized', intent: 'Test authority.', requestId: 'auth' };
   await f.experiments.create(f.producer, input);
-  await f.scope.revokeActor(f.operator, f.producer.actorId);
+  await f.scope.credentials.revokeActor(f.operator, f.producer.actorId);
   await assert.rejects(
     async () => await f.experiments.create(f.producer, input),
     code('forbidden'),

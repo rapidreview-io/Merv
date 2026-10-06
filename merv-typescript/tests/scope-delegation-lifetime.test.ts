@@ -17,28 +17,31 @@ async function fixture(t: test.TestContext) {
   const state = await openState(':memory:');
   t.after(() => state.close());
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Delegation lifetime', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Delegation lifetime',
+    actorName: 'Owner',
+  });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
   const deadline = new Date(Date.now() + 3_600_000).toISOString();
-  const lasting = await scope.issueActor(owner, { name: 'Lasting', role: 'producer' });
-  const expiring = await scope.issueActorCredential(owner, {
+  const lasting = await scope.credentials.issueActor(owner, { name: 'Lasting', role: 'producer' });
+  const expiring = await scope.credentials.issueActorCredential(owner, {
     actorId: lasting.actor.id,
     expiresAt: deadline,
   });
-  const alice = await scope.acceptVerifiedIdentity({
+  const alice = await scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'alice',
     expiresAt: deadline,
   });
-  const project = await scope.createProject(alice, { name: 'Keys', requestId: 'keys' });
+  const project = await scope.members.createProject(alice, { name: 'Keys', requestId: 'keys' });
   const key = async (expiresAt: string | null) =>
     await scope.caller({
       kind: 'key',
-      key: (await scope.createKey(alice, { projectId: project.id, expiresAt })).key,
+      key: (await scope.userKeys.create(alice, { projectId: project.id, expiresAt })).key,
     });
   return { state, scope, owner, lasting, expiring, deadline, key };
 }

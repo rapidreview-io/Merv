@@ -33,7 +33,10 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Leased work', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Leased work',
+    actorName: 'Owner',
+  });
   const authenticated = await app.ctx.scope.authenticate(boot.token);
   const source: Caller = {
     actorId: authenticated.id,
@@ -587,7 +590,7 @@ test('logical task owner can reissue worker delivery while preserving immutable 
   assert.equal(replacement.administrativeActorId, f.source.actorId);
   assert.deepEqual(replacement.pinnedInputIds, original.pinnedInputIds);
   assert.deepEqual(replacement.artifactIds, original.artifactIds);
-  const foreign = await f.app.ctx.scope.issueActor(f.source, {
+  const foreign = await f.app.ctx.scope.credentials.issueActor(f.source, {
     role: 'producer',
     name: 'Foreign producer',
   });
@@ -766,7 +769,10 @@ async function engineFixture(t: TestContext) {
     workflows.close();
     await state.close();
   });
-  const boot = await scope.bootstrap({ projectName: 'Lease inputs', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Lease inputs',
+    actorName: 'Owner',
+  });
   const caller: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,

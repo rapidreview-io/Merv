@@ -102,13 +102,13 @@ async function fixture(t: TestContext, maxLaunchFailures?: number) {
     edges: [{ from: 'working', action: 'finish', to: 'done' }],
   };
   const handle = await workflows.register(definition, policy);
-  const boot = await scope.bootstrap({ projectName: 'Usage', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Usage', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issued = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const issued = await scope.credentials.issueActor(owner, { name: 'Producer', role: 'producer' });
   const source: Caller = {
     actorId: issued.actor.id,
     projectId: boot.project.id,

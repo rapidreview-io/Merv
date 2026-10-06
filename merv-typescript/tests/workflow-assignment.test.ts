@@ -35,7 +35,10 @@ const graph: WorkflowDefinition = {
 async function setup(path = ':memory:') {
   const state = await openState(path);
   const scope = await createService(new ProjectScope(state));
-  const credentials = await scope.bootstrap({ projectName: 'Assignments', actorName: 'Operator' });
+  const credentials = await scope.credentials.bootstrap({
+    projectName: 'Assignments',
+    actorName: 'Operator',
+  });
   const caller = { projectId: credentials.project.id, actorId: credentials.actor.id };
   const workflows = await createService(new WorkflowsService(state, scope));
   let builds = 0;
@@ -137,7 +140,7 @@ async function setup(path = ':memory:') {
 test('assignment reads are pure; begin records first activation before rendering current guidance', async (t) => {
   const f = await setup();
   t.after(async () => await f.state.close());
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.scope.credentials.bootstrap({ projectName: 'Other', actorName: 'Other' });
   const foreign = { projectId: other.project.id, actorId: other.actor.id };
   const caller = { ...f.caller };
   const head = await f.state.eventHead();
@@ -207,8 +210,9 @@ test('every assignment and begin rechecks admission, tenant identity and current
   t.after(async () => await f.state.close());
   const input = { instanceId: f.instance.id, expectedRevision: 0 };
   const first = await f.workflows.begin(f.caller, input);
-  const actor = (await f.scope.issueActor(f.caller, { name: 'Replacement', role: 'producer' }))
-    .actor;
+  const actor = (
+    await f.scope.credentials.issueActor(f.caller, { name: 'Replacement', role: 'producer' })
+  ).actor;
   const replacement: Caller = { projectId: actor.projectId, actorId: actor.id };
   const later = await f.workflows.begin(replacement, input);
   assert.equal(later.actorId, actor.id);
@@ -233,11 +237,14 @@ test('every assignment and begin rechecks admission, tenant identity and current
   );
   assert.equal(f.builds(), builds);
   f.admit(true);
-  await f.scope.revokeActor(f.caller, actor.id);
+  await f.scope.credentials.revokeActor(f.caller, actor.id);
   await assert.rejects(async () => await f.workflows.begin(replacement, input), {
     code: 'forbidden',
   });
-  const other = await f.scope.bootstrap({ projectName: 'Elsewhere', actorName: 'Other' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Elsewhere',
+    actorName: 'Other',
+  });
   const stranger = { projectId: other.project.id, actorId: other.actor.id };
   for (const action of [
     async () => await f.workflows.assignment(stranger, f.instance.id),
@@ -555,7 +562,7 @@ test('independent database connections converge on one first activation and reje
     rmSync(directory, { recursive: true, force: true });
   });
   const replacement = (
-    await f.scope.issueActor(f.caller, {
+    await f.scope.credentials.issueActor(f.caller, {
       name: 'Another worker',
       role: 'producer',
     })
@@ -693,7 +700,7 @@ test('simultaneous writers serialize begin while the first transaction remains o
   const f = await setup('assignment-concurrent');
   t.after(async () => await f.state.close());
   const actor = (
-    await f.scope.issueActor(f.caller, {
+    await f.scope.credentials.issueActor(f.caller, {
       name: 'Concurrent worker',
       role: 'producer',
     })

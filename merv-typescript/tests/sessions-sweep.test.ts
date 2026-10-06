@@ -89,13 +89,13 @@ async function fixture(t: TestContext, sweepIntervalMs = 60_000) {
     ],
   };
   const handle = await workflows.register(definition, policy);
-  const boot = await scope.bootstrap({ projectName: 'Sweep', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Sweep', actorName: 'Owner' });
   const owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issued = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const issued = await scope.credentials.issueActor(owner, { name: 'Producer', role: 'producer' });
   const source: Caller = {
     actorId: issued.actor.id,
     projectId: boot.project.id,
@@ -218,7 +218,7 @@ test('a record moved by another hand is recorded by the next light pass alone', 
 test('a revoked source is recorded by the next full pass, not by a light one', async (t) => {
   const f = await fixture(t);
   const { session } = await f.offer();
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await f.pass(false);
   assert.equal(await f.status(session.id), 'offered');
   await f.pass(true);
@@ -229,7 +229,7 @@ test('a revoked source refuses its worker’s next call at once, before any pass
   const f = await fixture(t);
   const { session, token } = await f.offer();
   await f.sessions.authenticate(token);
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(f.sessions.authenticate(token), { status: 403 });
   assert.equal(await f.status(session.id), 'expired', 'the refusal records the closure');
   await assert.rejects(f.sessions.authenticate(token), { status: 401 });
@@ -239,7 +239,7 @@ test('the timer’s pass is full once 30 seconds have passed since the last', as
   const f = await fixture(t, 100);
   const { session } = await f.offer();
   await f.sessions.sweep();
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   f.advance(30_000);
   for (let tries = 0; (await f.status(session.id)) === 'offered'; tries++) {
     assert.ok(tries < 100, 'the timer records the closure');

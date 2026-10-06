@@ -55,16 +55,16 @@ export async function runMountUnloadScenario(
     const seed = await createApp({ directory });
     const identity = await (async () => {
       try {
-        const admin = await seed.ctx.scope.bootstrap({
+        const admin = await seed.ctx.scope.credentials.bootstrap({
           projectName: 'Mount unload',
           actorName: 'Operator',
         });
         const operator = { actorId: admin.actor.id, projectId: admin.project.id };
-        const producer = await seed.ctx.scope.issueActor(operator, {
+        const producer = await seed.ctx.scope.credentials.issueActor(operator, {
           name: 'Producer',
           role: 'producer',
         });
-        const reviewer = await seed.ctx.scope.issueActor(operator, {
+        const reviewer = await seed.ctx.scope.credentials.issueActor(operator, {
           name: 'Reviewer',
           role: 'operator',
         });

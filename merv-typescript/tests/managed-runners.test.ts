@@ -186,13 +186,13 @@ async function fixture(
     },
     policy,
   );
-  const boot = await scope.bootstrap({ projectName: 'Managed', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({ projectName: 'Managed', actorName: 'Owner' });
   let owner: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issued = await scope.issueActor(owner, { name: 'Producer', role: 'producer' });
+  const issued = await scope.credentials.issueActor(owner, { name: 'Producer', role: 'producer' });
   let source: Caller = {
     actorId: issued.actor.id,
     projectId: boot.project.id,
@@ -200,23 +200,26 @@ async function fixture(
   };
   let revokePerson: (() => Promise<unknown>) | undefined;
   if (options.sourceKind) {
-    const person = await scope.acceptVerifiedIdentity({
+    const person = await scope.members.acceptVerifiedIdentity({
       issuer: 'https://identity.example',
       subject: 'original-person',
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
-    const project = await scope.createProject(person, {
+    const project = await scope.members.createProject(person, {
       name: 'Personal source',
       requestId: 'personal',
     });
     owner = source = await scope.caller(person, project.id);
     if (options.sourceKind.endsWith('key')) {
-      const key = await scope.createKey(person, {
+      const key = await scope.userKeys.create(person, {
         projectId: project.id,
         label: 'Personal worker',
       });
-      source = await scope.caller({ kind: 'key', key: await scope.authenticateKey(key.token) });
-      revokePerson = () => scope.revokeKey(person, key.key.id);
+      source = await scope.caller({
+        kind: 'key',
+        key: await scope.userKeys.authenticate(key.token),
+      });
+      revokePerson = () => scope.userKeys.revoke(person, key.key.id);
     } else {
       revokePerson = undefined;
     }
@@ -509,7 +512,7 @@ test('enrollment retries fail closed after allocation expiry or source revocatio
     ...f.input,
     allocationId,
   });
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
     f.sessions.managed.enroll(enrollmentToken, {
       workerNonce: f.workerNonce,
@@ -630,7 +633,10 @@ test('rented machines never exhaust a project’s own runners, and another proje
   assert.equal(await machines(f.owner), 1);
 
   // Another project's runner that happens to share the rented machine's name.
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other owner' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other owner',
+  });
   const otherOwner: Caller = {
     actorId: other.actor.id,
     projectId: other.project.id,
@@ -701,12 +707,15 @@ test('own machines give a managed runner no new work, and the session it holds r
 
 test('a person’s source enrolls a managed runner that leases as that person', async (t) => {
   const f = await fixture(t);
-  const person = await f.scope.acceptVerifiedIdentity({
+  const person = await f.scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'founder',
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
-  const project = await f.scope.createProject(person, { name: 'Person', requestId: 'person' });
+  const project = await f.scope.members.createProject(person, {
+    name: 'Person',
+    requestId: 'person',
+  });
   const owner = await f.scope.caller(person, project.id);
   const source = await f.scope.delegationSource(owner);
   const allocationId = randomUUID();
@@ -949,7 +958,7 @@ test('cancelled admission cannot create a new managed claim', async (t) => {
 
 test('revoking the captured source credential ends managed authority', async (t) => {
   const f = await fixture(t);
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
     f.sessions.managed.authenticate(f.enrolled.controlToken),
     (error: any) => error?.status === 401 || error?.status === 403,
@@ -1026,7 +1035,7 @@ test('a model grant ends when the managed source loses read', async (t) => {
   const request = f.lease();
   assert.ok((await f.sessions.dispatch.lease(f.caller, request)).session);
   await f.sessions.managed.modelGrant(request.secret);
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
     f.sessions.managed.modelGrant(request.secret),
     (error: any) => error?.status === 401 || error?.status === 403,
@@ -1542,7 +1551,7 @@ test('work host keeps capture and transcript barriers, settings, source authorit
   });
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   assert.equal((await f.sessions.dispatch.lease(f.caller, f.lease())).reason, 'platform_disabled');
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(f.sessions.dispatch.lease(f.caller, f.lease()), (error: any) =>
     [401, 403].includes(error.status),
   );
@@ -1575,7 +1584,7 @@ test('revoking the host sponsor ends its review phase and never restores old pro
   const next = (await f.sessions.dispatch.lease(f.caller, nextRequest)).session!;
   assert.equal(next.role, 'reviewer');
   assert.equal((await f.sessions.managed.modelGrant(nextRequest.secret)).id, next.id);
-  await f.scope.revokeCredential(f.owner, f.source.credentialId!);
+  await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(f.sessions.managed.modelGrant(nextRequest.secret), (error: any) =>
     [401, 403].includes(error.status),
   );

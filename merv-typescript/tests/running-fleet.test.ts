@@ -82,7 +82,10 @@ class Runtimes implements SandboxRuntimes {
 async function fixture(t: TestContext) {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.bootstrap({ projectName: 'Running Fleet', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Running Fleet',
+    actorName: 'Operator',
+  });
   const caller: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -269,7 +272,10 @@ test('each open allocation is a machine in the sessions lane, rented for its ste
   assert.equal(board.lanes.work.nodes.length, 3);
   assert.equal(board.lanes.hardware.nodes.length, 0);
   // Another project sees none of them.
-  const other = await f.scope.bootstrap({ projectName: 'Other', actorName: 'Other operator' });
+  const other = await f.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other operator',
+  });
   const stranger: Caller = {
     projectId: other.project.id,
     actorId: other.actor.id,

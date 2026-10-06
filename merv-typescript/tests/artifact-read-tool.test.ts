@@ -35,9 +35,15 @@ test('artifact.read waits on storage holding no reader connection, and a revocat
     await app.stop();
     await rm(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Reads', actorName: 'Owner' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Reads',
+    actorName: 'Owner',
+  });
   const owner: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
-  const issued = await app.ctx.scope.issueActor(owner, { name: 'Reader', role: 'reader' });
+  const issued = await app.ctx.scope.credentials.issueActor(owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
   const reader: Caller = { actorId: issued.actor.id, projectId: owner.projectId };
 
   // Downloads whose links storage holds.
@@ -67,7 +73,7 @@ test('artifact.read waits on storage holding no reader connection, and a revocat
   const listed = (await app.ctx.tools.call('artifact.list', owner, {})) as { id: string }[];
   assert.deepEqual(listed.map((artifact) => artifact.id).sort(), rows.map((row) => row.id).sort());
   // The reader is revoked while its reads wait: none of their URLs reach it.
-  await app.ctx.scope.revokeActor(owner, reader.actorId);
+  await app.ctx.scope.credentials.revokeActor(owner, reader.actorId);
   gate.resolve();
   for (const outcome of await outcomes) {
     assert.equal(outcome.status, 'rejected');

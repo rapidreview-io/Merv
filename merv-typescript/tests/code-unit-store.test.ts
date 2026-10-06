@@ -43,12 +43,12 @@ async function fixture(t: TestContext) {
     await state.close();
     rmSync(root, { recursive: true, force: true });
   });
-  const principal = await scope.acceptVerifiedIdentity({
+  const principal = await scope.members.acceptVerifiedIdentity({
     issuer: 'https://identity.example/auth/v1',
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
-  const project = await scope.createProject(principal, {
+  const project = await scope.members.createProject(principal, {
     name: 'Storage only',
     requestId: 'project',
   });

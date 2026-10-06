@@ -226,7 +226,10 @@ async function prepare(
   let dependentTaskId: string | undefined;
   try {
     const bootstrap = async (projectName: string) => {
-      const credentials = await app.ctx.scope.bootstrap({ projectName, actorName: 'Operator' });
+      const credentials = await app.ctx.scope.credentials.bootstrap({
+        projectName,
+        actorName: 'Operator',
+      });
       const caller = { projectId: credentials.project.id, actorId: credentials.actor.id };
       await waitForManagedCode(app.ctx.codeWork, caller);
       return caller;

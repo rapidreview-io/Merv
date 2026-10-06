@@ -57,7 +57,7 @@ async function retained(t: TestContext) {
   const f = await fixture(t);
   const bytes = Buffer.alloc(2_000_001, 97);
   const hash = createHash('sha256').update(bytes).digest('hex');
-  const identity = await f.app.ctx.scope.bootstrap({
+  const identity = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Retained',
     actorName: 'Operator',
   });
@@ -76,7 +76,10 @@ async function retained(t: TestContext) {
       '2026-08-01T00:00:00Z',
     ),
   );
-  const worker = await f.app.ctx.scope.issueActor(operator, { name: 'Reader', role: 'producer' });
+  const worker = await f.app.ctx.scope.credentials.issueActor(operator, {
+    name: 'Reader',
+    role: 'producer',
+  });
   const caller: Caller = { actorId: worker.actor.id, projectId: operator.projectId };
   return { ...f, operator, caller, bytes, hash };
 }
@@ -102,7 +105,7 @@ test('large retained artifacts remain accessible through the existing tool while
 
 test('artifact downloads reject other projects and arbitrary keys before storage access', async (t) => {
   const f = await retained(t);
-  const outsider = await f.app.ctx.scope.bootstrap({
+  const outsider = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Other',
     actorName: 'Other operator',
   });
@@ -136,7 +139,7 @@ test('revocation during download preparation prevents URL issuance and later req
   });
   const rejected = assert.rejects(pending, { code: 'forbidden' });
   await held.started;
-  await f.app.ctx.scope.revokeActor(f.operator, f.caller.actorId);
+  await f.app.ctx.scope.credentials.revokeActor(f.operator, f.caller.actorId);
   held.release();
   await rejected;
   const count = f.server!.requests.length;
@@ -156,7 +159,10 @@ test('every inline artifact fits in one blob, which its download mirror writes',
 
 test('the first download of bytes kept in the row mirrors them into storage, once', async (t) => {
   const { app, server } = await fixture(t);
-  const identity = await app.ctx.scope.bootstrap({ projectName: 'Mirror', actorName: 'Operator' });
+  const identity = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Mirror',
+    actorName: 'Operator',
+  });
   const caller: Caller = { actorId: identity.actor.id, projectId: identity.project.id };
   const artifact = await app.ctx.artifacts.create(caller, {
     title: 'Inline',
@@ -189,7 +195,10 @@ test('the first download of bytes kept in the row mirrors them into storage, onc
 
 test('Disk advertises no direct download capability and retains ordinary inline reading', async (t) => {
   const { app } = await fixture(t, false);
-  const identity = await app.ctx.scope.bootstrap({ projectName: 'Disk', actorName: 'Operator' });
+  const identity = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Disk',
+    actorName: 'Operator',
+  });
   const caller = { actorId: identity.actor.id, projectId: identity.project.id };
   const artifact = await app.ctx.artifacts.create(caller, {
     title: 'Small',

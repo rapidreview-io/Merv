@@ -22,7 +22,10 @@ async function fixture(t: TestContext, api = false) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Execution', actorName: 'Operator' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Execution',
+    actorName: 'Operator',
+  });
   const operator: Caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
@@ -294,7 +297,7 @@ test('current native task leases leave compute to Sandboxes and admit registered
   );
   assert.equal(delivered.workflow.state, 'in_review');
   await release(second.session.id);
-  const independent = await app.ctx.scope.issueActor(operator, {
+  const independent = await app.ctx.scope.credentials.issueActor(operator, {
     name: 'Independent',
     role: 'operator',
   });

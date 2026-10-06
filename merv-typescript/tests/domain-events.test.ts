@@ -114,13 +114,14 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
   const directory = mkdtempSync(join(tmpdir(), 'merv-recovery-'));
   let app = await createApp({ directory, api: false });
   try {
-    const bootstrap = await app.ctx.scope.bootstrap({
+    const bootstrap = await app.ctx.scope.credentials.bootstrap({
       projectName: 'Recovery',
       actorName: 'Operator',
     });
     const operator = { actorId: bootstrap.actor.id, projectId: bootstrap.project.id };
     const issue = async (role: 'producer' | 'reviewer' | 'operator') => ({
-      actorId: (await app.ctx.scope.issueActor(operator, { name: role, role })).actor.id,
+      actorId: (await app.ctx.scope.credentials.issueActor(operator, { name: role, role })).actor
+        .id,
       projectId: operator.projectId,
     });
     const producer = await issue('producer'),
@@ -143,8 +144,8 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
     const claim = await app.ctx.reviews.start(reviewer, pending.id);
     await app.setEnabled('domain-events', false);
     assert.equal(app.ctx.get('reviews'), undefined);
-    await app.ctx.scope.revokeActor(otherOperator, reviewer.actorId);
-    await app.ctx.scope.revokeActor(operator, otherOperator.actorId);
+    await app.ctx.scope.credentials.revokeActor(otherOperator, reviewer.actorId);
+    await app.ctx.scope.credentials.revokeActor(operator, otherOperator.actorId);
     await app.setEnabled('domain-events', true);
     await until(async () => (await app.ctx.reviews.get(operator, claim.id)).status === 'requested');
     const recovered = await app.ctx.reviews.get(operator, claim.id);
@@ -188,7 +189,7 @@ test('review recovery survives unloaded consumers and revoked initiators, preser
       requestId: 'accept',
     });
     assert.equal(done.status, 'submitted');
-    await app.ctx.scope.revokeActor(operator, replacement.actorId);
+    await app.ctx.scope.credentials.revokeActor(operator, replacement.actorId);
     await app.ctx.domainEvents.drain();
     assert.equal((await app.ctx.reviews.get(operator, claim.id)).status, 'submitted');
     await app.stop();

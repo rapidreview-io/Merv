@@ -17,7 +17,7 @@ type App = Awaited<ReturnType<typeof createApp>>;
 async function fixture(api = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-dependencies-'));
   const app = await createApp({ directory, api, port: 0 });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Dependency tests',
     actorName: 'Operator',
   });
@@ -27,7 +27,7 @@ async function fixture(api = false) {
   });
   const operator: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (role: 'producer' | 'reviewer' | 'reader') => {
-    const issued = await app.ctx.scope.issueActor(operator, { role, name: role });
+    const issued = await app.ctx.scope.credentials.issueActor(operator, { role, name: role });
     return {
       caller: {
         actorId: issued.actor.id,
@@ -89,7 +89,7 @@ async function fixture(api = false) {
     }
   };
   const verdict = async (pending: Task, value: Verdict) => {
-    const runner = await app.ctx.scope.issueActor(operator, {
+    const runner = await app.ctx.scope.credentials.issueActor(operator, {
       name: 'Independent review runner',
       role: 'operator',
     });
@@ -425,7 +425,7 @@ test('dependency creation normalizes IDs, enforces scope and declared success, r
     const beforeMissing = await snapshot(f.app, f.operator);
     await assert.rejects(async () => await f.create([a.id, 'wf_missing']), { code: 'not_found' });
     assert.deepEqual(await snapshot(f.app, f.operator), beforeMissing);
-    const foreign = await f.app.ctx.scope.bootstrap({
+    const foreign = await f.app.ctx.scope.credentials.bootstrap({
       projectName: 'Other project',
       actorName: 'Foreign operator',
     });

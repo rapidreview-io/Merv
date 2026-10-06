@@ -227,13 +227,16 @@ test('a PostgreSQL download must reject a caller revoked while its link is signe
       },
     }),
   );
-  const boot = await scope.bootstrap({ projectName: 'Adversarial test', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Adversarial test',
+    actorName: 'Owner',
+  });
   const operator = {
     projectId: boot.project.id,
     actorId: boot.actor.id,
     credentialId: boot.credential.id,
   };
-  const issued = await scope.issueActor(operator, { name: 'Reader', role: 'reader' });
+  const issued = await scope.credentials.issueActor(operator, { name: 'Reader', role: 'reader' });
   const reader = {
     projectId: boot.project.id,
     actorId: issued.actor.id,
@@ -258,7 +261,7 @@ test('a PostgreSQL download must reject a caller revoked while its link is signe
   const rejected = assert.rejects(pending, { code: 'forbidden' });
   await entered.promise;
   try {
-    await scope.revokeActor(operator, reader.actorId);
+    await scope.credentials.revokeActor(operator, reader.actorId);
   } finally {
     release.resolve();
   }
@@ -272,7 +275,10 @@ test('concurrent registrations of one recipe must have exactly one owner', async
   const scope = await createService(new ProjectScope(state));
   const builder = await createService(new RecipeContextBuilder(state, scope, {} as never));
   t.after(() => builder.close());
-  const boot = await scope.bootstrap({ projectName: 'Recipe race', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Recipe race',
+    actorName: 'Owner',
+  });
   const caller = {
     projectId: boot.project.id,
     actorId: boot.actor.id,

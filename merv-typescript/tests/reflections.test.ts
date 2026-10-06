@@ -44,7 +44,7 @@ async function fixture(t: TestContext, reflections?: object) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Reflection integration',
     actorName: 'Owner',
   });
@@ -55,7 +55,7 @@ async function fixture(t: TestContext, reflections?: object) {
   };
   await waitForManagedCode(app.ctx.codeWork, owner);
   const actor = async (name: string, role: 'producer' | 'reviewer' | 'operator' = 'producer') => {
-    const issued = await app.ctx.scope.issueActor(owner, { name, role });
+    const issued = await app.ctx.scope.credentials.issueActor(owner, { name, role });
     return {
       projectId: owner.projectId,
       actorId: issued.actor.id,
@@ -312,7 +312,10 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
 });
 test('Reflection entrypoints keep their caller and enforce project access', async (t) => {
   const f = await fixture(t);
-  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other',
+  });
   const foreign = {
     projectId: other.project.id,
     actorId: other.actor.id,
@@ -890,7 +893,10 @@ test('a standalone wave names no lineage, and a digest that does not fit is omit
     content: JSON.stringify({ formatVersion: 1, filler: 'x'.repeat(30000) }),
     mediaType: 'application/json',
   });
-  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other',
+  });
   const foreign = await f.app.ctx.artifacts.create(
     { projectId: other.project.id, actorId: other.actor.id, credentialId: other.credential.id },
     { title: 'Foreign digest', content: '{}', mediaType: 'application/json' },
@@ -1572,7 +1578,7 @@ test('a leased lens reads research added after assignment through existing tools
   // A peer's report is readable too (no read constraints); lens independence is asked of
   // the agent, not enforced here.
   assert.ok(await call('artifact.read', { artifactId: peerReport.id }));
-  const boot = await f.app.ctx.scope.bootstrap({
+  const boot = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other owner',
   });

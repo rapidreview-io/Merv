@@ -18,13 +18,19 @@ async function fixture(t: TestContext) {
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   });
-  const boot = await app.ctx.scope.bootstrap({ projectName: 'Authority', actorName: 'Founder' });
+  const boot = await app.ctx.scope.credentials.bootstrap({
+    projectName: 'Authority',
+    actorName: 'Founder',
+  });
   const founder: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  const issued = await app.ctx.scope.issueActor(founder, { name: 'Tab B', role: 'operator' });
+  const issued = await app.ctx.scope.credentials.issueActor(founder, {
+    name: 'Tab B',
+    role: 'operator',
+  });
   const other: Caller = {
     actorId: issued.actor.id,
     projectId: founder.projectId,
@@ -37,7 +43,7 @@ async function fixture(t: TestContext) {
   });
   let seq = 0;
   const member = async (name: string): Promise<Caller> => {
-    const issued = await app.ctx.scope.issueActor(founder, { name, role: 'operator' });
+    const issued = await app.ctx.scope.credentials.issueActor(founder, { name, role: 'operator' });
     return {
       actorId: issued.actor.id,
       projectId: founder.projectId,

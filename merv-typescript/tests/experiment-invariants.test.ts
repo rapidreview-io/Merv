@@ -41,7 +41,10 @@ async function fixture(t: TestContext) {
   const workflows = await createService(new WorkflowsService(state, scope));
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
-  const boot = await scope.bootstrap({ projectName: 'Invariant probe', actorName: 'Owner' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Invariant probe',
+    actorName: 'Owner',
+  });
   const source: Caller = {
     actorId: boot.actor.id,
     projectId: boot.project.id,
@@ -62,7 +65,10 @@ async function fixture(t: TestContext) {
     ),
   );
   const work = currentWork({ code: managed.code, sessions, events }, { directory, source });
-  const issued = await scope.issueActor(source, { name: 'Independent reviewer', role: 'reviewer' });
+  const issued = await scope.credentials.issueActor(source, {
+    name: 'Independent reviewer',
+    role: 'reviewer',
+  });
   const reviewer: Caller = {
     actorId: issued.actor.id,
     projectId: source.projectId,
@@ -288,7 +294,7 @@ test('draft figures survive a producer handoff as exact readable inputs of the s
 test('figure attachment rejects missing, foreign-project and post-offer images without widening frozen grants', async (t) => {
   const f = await fixture(t),
     experiment = await f.create();
-  const foreign = await f.scope.bootstrap({
+  const foreign = await f.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other owner',
   });

@@ -27,7 +27,7 @@ async function fixture(
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-session-api-'));
   const app = await createApp({ directory, api: true, port: 0 });
-  const boot = await app.ctx.scope.bootstrap({
+  const boot = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Session transport',
     actorName: 'Source',
   });
@@ -175,7 +175,10 @@ test('only the source owner can rotate an agent key, and the old key stops worki
   const agentId = registered.body.agent.id;
   const route = `/sessions/agents/${agentId}/rotate`;
   assert.equal((await f.http(route, token, {})).status, 403);
-  const outsider = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const outsider = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other',
+  });
   assert.equal((await f.http(route, outsider.token, {})).status, 404);
   const rotated = await f.http(route, f.boot.token, {});
   assert.equal(rotated.status, 200, JSON.stringify(rotated.body));
@@ -341,8 +344,14 @@ test('a message queued after tool admission fences the transaction that submits 
 test('only a writer in the project can send, and only the addressed worker can acknowledge', async (t) => {
   const f = await fixture(t);
   const issued = await f.offer();
-  const reader = await f.app.ctx.scope.issueActor(f.source, { name: 'Reader', role: 'reader' });
-  const outsider = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const reader = await f.app.ctx.scope.credentials.issueActor(f.source, {
+    name: 'Reader',
+    role: 'reader',
+  });
+  const outsider = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other',
+  });
   const readerCaller = { actorId: reader.actor.id, projectId: f.source.projectId };
   const outsiderCaller = { actorId: outsider.actor.id, projectId: outsider.project.id };
   const message = {
@@ -988,7 +997,10 @@ test('project observers see real MCP call metadata and failures, without worker 
   await client.callTool({ name: 'checked.echo', arguments: { value: 'fail' } });
   // Invalid input never enters execution and must not look like a dispatched tool call.
   await client.callTool({ name: 'checked.echo', arguments: { value: 42 } });
-  const reader = await f.app.ctx.scope.issueActor(f.source, { name: 'Observer', role: 'reader' });
+  const reader = await f.app.ctx.scope.credentials.issueActor(f.source, {
+    name: 'Observer',
+    role: 'reader',
+  });
   const path = `/sessions/agents/${offer.session.agentId}/observation`;
   const response = await f.http(path, reader.token);
   assert.equal(response.status, 200);
@@ -1029,12 +1041,15 @@ test('project observers see real MCP call metadata and failures, without worker 
     assert.equal(json.includes(privateValue), false);
   assert.equal((await f.http(path, offer.secret)).status, 403);
   assert.equal((await observe(offer.secret)).status, 403);
-  const other = await f.app.ctx.scope.bootstrap({ projectName: 'Other', actorName: 'Other' });
+  const other = await f.app.ctx.scope.credentials.bootstrap({
+    projectName: 'Other',
+    actorName: 'Other',
+  });
   assert.equal((await f.http(path, other.token)).status, 404);
   assert.equal((await observe(other.token)).status, 404);
   assert.equal((await f.http(`${path}?unknown=true`, reader.token)).status, 400);
   assert.equal((await f.http(path, reader.token, {}, undefined, 'POST')).status, 404);
-  await f.app.ctx.scope.revokeActor(f.source, reader.actor.id);
+  await f.app.ctx.scope.credentials.revokeActor(f.source, reader.actor.id);
   assert.notEqual((await f.http(path, reader.token)).status, 200);
   assert.notEqual((await observe(reader.token)).status, 200);
   assert.equal(

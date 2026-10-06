@@ -48,12 +48,14 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
     .setAudience('authenticated')
     .setExpirationTime('1h')
     .sign(new TextEncoder().encode(secret));
-  const human = await app.ctx.scope.acceptVerifiedIdentity(await app.ctx.identity.verify(token));
-  const project = await app.ctx.scope.createProject(human, {
+  const human = await app.ctx.scope.members.acceptVerifiedIdentity(
+    await app.ctx.identity.verify(token),
+  );
+  const project = await app.ctx.scope.members.createProject(human, {
     name: 'Imported research',
     requestId: 'history-ui-project',
   });
-  const another = await app.ctx.scope.createProject(human, {
+  const another = await app.ctx.scope.members.createProject(human, {
     name: 'Other research',
     requestId: 'other-ui-project',
   });
@@ -126,7 +128,7 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
     (await request({ action: 'list', type: 'experiments', sourceId: 'other-snapshot' })).status,
     400,
   );
-  const machine = await app.ctx.scope.bootstrap({
+  const machine = await app.ctx.scope.credentials.bootstrap({
     projectName: 'Machine only',
     actorName: 'Operator',
   });

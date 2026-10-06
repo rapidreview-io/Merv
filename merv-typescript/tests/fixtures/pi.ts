@@ -80,7 +80,10 @@ export async function fixture(
   const directory = mkdtempSync(join(tmpdir(), 'merv-pi-service-'));
   const state = await openState(directory);
   const scope = await createService(new ProjectScope(state));
-  const hostBoot = await scope.bootstrap({ projectName: 'Pi host', actorName: 'Pi host' });
+  const hostBoot = await scope.credentials.bootstrap({
+    projectName: 'Pi host',
+    actorName: 'Pi host',
+  });
   const hostCaller: Caller = {
     projectId: hostBoot.project.id,
     actorId: hostBoot.actor.id,
@@ -88,7 +91,10 @@ export async function fixture(
   };
   const credentialEnv = `MERV_PI_HOST_KEY_${randomUUID().replaceAll('-', '')}`;
   process.env[credentialEnv] = hostBoot.token;
-  const admin = await scope.bootstrap({ projectName: 'Pi integration', actorName: 'Operator' });
+  const admin = await scope.credentials.bootstrap({
+    projectName: 'Pi integration',
+    actorName: 'Operator',
+  });
   const operator: Caller = {
     projectId: admin.project.id,
     actorId: admin.actor.id,
