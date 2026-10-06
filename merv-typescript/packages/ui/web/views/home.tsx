@@ -26,22 +26,14 @@ import { useLive } from './work-map';
  * part one line, never the page.
  */
 
-/** States in which a unit of work has ended well, in the union of the kinds' own words. */
-const SETTLED = ['done', 'complete', 'approved'];
-
 /** The project's name, and the cycle it is on: its state, and how much of its work is done. */
 function Head({ rows, home }: { rows: Row[]; home: HomeData | undefined }) {
   const { project } = useSession();
   const cycle = currentCycle(home?.research ?? undefined);
   const cycles = pathOf(rows, 'research');
   const work = pathOf(rows, 'work');
-  const states = new Map(
-    [...(home?.tasks ?? []), ...(home?.experiments ?? []), ...(home?.reflections ?? [])].map(
-      (item) => [item.id, item.workflow.state],
-    ),
-  );
-  const named = cycle?.researchDependencies ?? [];
-  const done = named.filter((id) => SETTLED.includes(states.get(id) ?? '')).length;
+  // Research counts its selected work and how much of it ended well.
+  const { settled: done, total } = cycle?.progress ?? { settled: 0, total: 0 };
   return (
     <header className="home-head">
       <h1 className="page-title">{project.name}</h1>
@@ -54,12 +46,12 @@ function Head({ rows, home }: { rows: Row[]; home: HomeData | undefined }) {
             <span>{cycle.name}</span>
           )}
           <StatusPill value={cycle.workflow.state} />
-          {named.length > 0 && (
-            <span className="home-progress" title={`${done} of ${named.length} done`}>
+          {total > 0 && (
+            <span className="home-progress" title={`${done} of ${total} done`}>
               <span className="home-meter" aria-hidden="true">
-                <span style={{ width: `${(100 * done) / named.length}%` }} />
+                <span style={{ width: `${(100 * done) / total}%` }} />
               </span>
-              {done} of {named.length} done
+              {done} of {total} done
             </span>
           )}
           {work && (

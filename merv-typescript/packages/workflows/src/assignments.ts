@@ -32,6 +32,7 @@ const content = z
   .object({
     role: text,
     label: text,
+    name: text.optional(),
     brief: text,
     references: z.array(reference),
     handoff: z.object({ instruction: text, tools: z.array(tool) }).strict(),

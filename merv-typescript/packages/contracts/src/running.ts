@@ -23,6 +23,15 @@ export const runningKey = (kind: string, id: string): RunningKey => `${kind}:${i
 export const keyKind = (key: RunningKey): string => key.slice(0, key.indexOf(':'));
 export const keyId = (key: RunningKey): string => key.slice(key.indexOf(':') + 1);
 
+/**
+ * A path on this app's own host, safe to follow or to send a credential to: one leading slash,
+ * never `//` or `/\` (a browser reads `\` as `/`, so either names another host), then only
+ * the characters a path, query or fragment carries, never whitespace or a control character,
+ * which a browser strips, leaving `//host` again. At most 500 characters.
+ */
+export const sameOriginPath = (value: unknown): value is string =>
+  typeof value === 'string' && /^\/(?![/\\])[A-Za-z0-9\-._~%!$&'()*+,;=:@/?#]{0,499}$/.test(value);
+
 /** Money as the services send it: a decimal string, so a sub-cent rate is not rounded away. */
 export interface RunningMoney {
   amount: string;
@@ -360,13 +369,6 @@ export interface RunningPanel extends RunningPanelPart {
 export type WorkRoute = (workflow: string, id: string) => string | undefined;
 
 /** A link to a work record: its key, and its page and its kind's word where a page shows it. */
-/**
- * A lease is labelled for the agent that takes it (`Work: …`, `Review: …`, or a recipe's dotted
- * name) and the role beside it already says which, so a person reads the record's name: the rest.
- */
-const PURPOSE = /^(?:Work|Review|[a-z]+(?:\.\w+)+):\s+/;
-export const workName = (label: string) => label.replace(PURPOSE, '');
-
 export function workLink(route: WorkRoute, workflow: string, id: string) {
   const page = route(workflow, id);
   return {

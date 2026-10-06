@@ -1,4 +1,3 @@
-import { workName } from '@merv/contracts/running';
 import type { AgentSummary, AgentObservation as Observation } from '@merv/contracts/types';
 import { useEffect, useRef, useState } from 'react';
 import { useTool } from '../api';
@@ -33,7 +32,7 @@ function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: C
   return (
     <div className="stack">
       <div className="cluster cluster--between">
-        <strong>{workName(assignment.label)}</strong>
+        <strong>{assignment.name}</strong>
         <Live of={leaseLiveness(assignment, now)} />
       </div>
       {/* The role it holds, then the record's kind and how it stands, as a row says them. */}
@@ -150,14 +149,14 @@ function AgentObservation({ observation, now }: { observation: Observation; now:
             }
           >
             {calls.map((call) => {
-              const under = callScope === 'all' && assignments.get(call.executionId)?.label;
+              const under = callScope === 'all' && assignments.get(call.executionId)?.name;
               return (
                 <li key={call.id} className="agent-call stack">
                   <div className="cluster cluster--between">
                     <code>{call.tool}</code>
                     <StatusPill value={call.status} />
                   </div>
-                  {under && <p className="muted agent-help">{workName(under)}</p>}
+                  {under && <p className="muted agent-help">{under}</p>}
                   <div className="cluster muted agent-help">
                     <Ago at={call.startedAt} />
                     <span>{duration(call.durationMs)}</span>
@@ -194,7 +193,7 @@ function AgentObservation({ observation, now }: { observation: Observation; now:
         {history.map((assignment) => (
           <details className="agent-history" key={assignment.id}>
             <Summary>
-              {workName(assignment.label)} · {words(assignment.status)}
+              {assignment.name} · {words(assignment.status)}
             </Summary>
             <AssignmentDetails assignment={assignment} now={now} />
           </details>

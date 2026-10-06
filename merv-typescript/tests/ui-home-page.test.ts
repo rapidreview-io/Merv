@@ -74,6 +74,7 @@ const home = {
       ownerId: 'actor_1',
       workflow: flow('researching', 5),
       researchDependencies: ['wf_t1', 'wf_t2'],
+      progress: { settled: 1, total: 2 },
       reflectionId: null,
       automation: null,
     },

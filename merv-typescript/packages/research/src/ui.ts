@@ -36,6 +36,7 @@ export const researchUiPlugin = {
             'ownerId',
             'workflow',
             'researchDependencies',
+            'progress',
             'reflectionId',
             'automation',
           ],

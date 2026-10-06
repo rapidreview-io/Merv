@@ -232,6 +232,7 @@ const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
   '@merv/experiments/rules',
   '@merv/reviews/rules',
+  '@merv/reflections/names',
 ]);
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */

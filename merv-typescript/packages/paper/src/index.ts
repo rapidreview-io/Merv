@@ -154,6 +154,25 @@ export class PaperService implements Paper {
       ).map((row) => JSON.parse(row.record));
     });
   }
+  async revision(
+    caller: Caller,
+    documentKind: PaperKind,
+    revision: number,
+    transaction?: Transaction,
+  ): Promise<PaperRevision | null> {
+    caller = this.capture(caller);
+    parse(kind, documentKind);
+    return await inTransaction(this.state, transaction, async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const row = await tx.get<{ record: string }>(
+        'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
+        caller.projectId,
+        documentKind,
+        revision,
+      );
+      return row ? (JSON.parse(row.record) as PaperRevision) : null;
+    });
+  }
   private async command<T>(
     caller: Caller,
     operation: string,
@@ -166,7 +185,7 @@ export class PaperService implements Paper {
       after: async () => await this.scope.require(caller, 'write', tx),
     });
   }
-  private async revision(
+  private async append(
     caller: Caller,
     before: PaperRevision,
     after: PaperRevision,
@@ -304,7 +323,7 @@ export class PaperService implements Paper {
       return await this.command(caller, 'patch', input, tx, async () => {
         const before = await this.current(caller, input.kind, tx);
         const after = await this.edited(caller, input, before, tx);
-        await this.revision(caller, before, after, tx);
+        await this.append(caller, before, after, tx);
         // The Problem is what the project is, and the Introduction says it: Paper is its one
         // writer, rewriting it from each Problem revision, an empty one included.
         if (after.kind === 'problem') {
@@ -440,7 +459,7 @@ export class PaperService implements Paper {
     ).map(({ id, hash }) => ({ id, hash }));
     const publications = await mapAsync(documents, async ({ before, after, edit }) => {
       after.review = { id: input.reviewId, source: input.source, verdict: input.verdict };
-      await this.revision(caller, before, after, tx);
+      await this.append(caller, before, after, tx);
       const publication: PaperPublication = {
         id: newId('paperpub'),
         projectId: caller.projectId,

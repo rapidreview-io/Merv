@@ -6,7 +6,7 @@ import { ApiError, refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
 import { Chips, ListPage, useListFilter } from '../list-filters';
-import { RecordPicker, useWorkPicks } from '../record-picker';
+import { RecordPicker, type Pickable } from '../record-picker';
 import { useSession } from '../session';
 import { OPEN, ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
 import type { ShellData } from '../shell-types';
@@ -138,13 +138,40 @@ export const currentCycle = <T extends MapCycle>(cycles: T[] | undefined) => {
   return all.find((cycle) => isOpen(cycle.workflow.state)) ?? all[0];
 };
 
+interface Listed {
+  id: string;
+  workflow: { state: string };
+}
+/**
+ * The work a new cycle may wait on: every task and experiment of the project, failed ones
+ * too. The server takes any workflow of the project as a prerequisite; these two lists are
+ * the ones this page is made of, and the same two reads it has already made.
+ */
+function useWorkPicks(): { options: Pickable[]; loading: boolean } {
+  const tasks = useTool<(Listed & { title: string })[]>('task.list');
+  const experiments = useTool<(Listed & { name: string })[]>('experiment.list');
+  const pick = (kind: string, item: Listed, name: string): Pickable => ({
+    id: item.id,
+    name,
+    kind,
+    state: item.workflow.state,
+  });
+  return {
+    options: [
+      ...(tasks.data ?? []).map((item) => pick('tasks', item, item.title)),
+      ...(experiments.data ?? []).map((item) => pick('experiments', item, item.name)),
+    ],
+    loading: tasks.loading || experiments.loading,
+  };
+}
+
 export function CreateResearch({ onSaved }: { onSaved: () => void }) {
   const [name, setName] = useState('');
   const [dependencies, setDependencies] = useState<string[]>([]);
   const [automatic, setAutomatic] = useState(false);
   const [maxCycles, setMaxCycles] = useState('10');
   // What a cycle may wait on is the work this page lists, chosen by name.
-  const work = useWorkPicks({ includeFailed: true });
+  const work = useWorkPicks();
   const command = useCommand<ResearchRecord>({
     tool: 'research.create',
     validate: (value) =>

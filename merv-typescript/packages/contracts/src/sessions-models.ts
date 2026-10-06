@@ -204,6 +204,8 @@ export interface SessionSummary {
   role: SessionRole;
   status: SessionStatus;
   label: string;
+  /** The record's own name for a person, or the label where an older lease has none. */
+  name: string;
   runnerRef: string | null;
   hostRef: string | null;
   platform: SessionPlatform | null;
@@ -230,7 +232,7 @@ export interface AgentSummary {
   contextEpoch: number;
   persistent: boolean;
   currentExecutionId: string | null;
-  currentAssignment: { label: string; role: SessionRole } | null;
+  currentAssignment: { label: string; name: string; role: SessionRole } | null;
   createdAt: string;
   runnerId: string;
 }
@@ -251,6 +253,7 @@ export interface AgentObservation {
     id: string;
     instanceId: string;
     label: string;
+    name: string;
     role: SessionRole;
     status: SessionStatus;
     createdAt: string;

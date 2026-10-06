@@ -1,5 +1,4 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
-import { useTool } from './api';
 import { KindLabel, StatusPill, cx, kindOf, words } from './components';
 import { CheckIcon, CloseIcon } from './icons';
 import { matches } from './list-filters';
@@ -255,37 +254,3 @@ export const filePick = (file: { id: string; title: string }): Pickable => ({
   name: file.title,
   kind: 'artifacts',
 });
-
-interface Listed {
-  id: string;
-  workflow: { state: string };
-}
-/** Work that ended without succeeding can never be satisfied, so it is never offered. */
-const LOST = ['failed', 'abandoned'];
-
-/**
- * The work a new record may wait on: every task and experiment of the project that
- * has succeeded or still can. The server takes any workflow of the project as a
- * prerequisite; these two lists are the ones the Work page is made of, and the
- * same two reads it has already made.
- */
-export function useWorkPicks({ includeFailed = false }: { includeFailed?: boolean } = {}): {
-  options: Pickable[];
-  loading: boolean;
-} {
-  const tasks = useTool<(Listed & { title: string })[]>('task.list');
-  const experiments = useTool<(Listed & { name: string })[]>('experiment.list');
-  const pick = (kind: string, item: Listed, name: string): Pickable => ({
-    id: item.id,
-    name,
-    kind,
-    state: item.workflow.state,
-  });
-  return {
-    options: [
-      ...(tasks.data ?? []).map((item) => pick('tasks', item, item.title)),
-      ...(experiments.data ?? []).map((item) => pick('experiments', item, item.name)),
-    ].filter((option) => includeFailed || !LOST.includes(option.state ?? '')),
-    loading: tasks.loading || experiments.loading,
-  };
-}

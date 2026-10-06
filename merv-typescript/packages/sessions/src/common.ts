@@ -44,6 +44,10 @@ export const safeCount =
     return number;
   };
 
+/** In SQL, the name a person reads for the work of session JSON `j`: its record's own, or the
+ * label of a lease offered before owners gave one. */
+export const workNameOf = (j: string) =>
+  `COALESCE(${j} #>> '{assignment,name}',${j} #>> '{assignment,label}')`;
 export const targetKey = (item: { instanceId: string; expectedRevision: number }) =>
   `${item.instanceId}:${item.expectedRevision}`;
 /** The workflow steps of a project that a live session holds, as targetKey values. */

@@ -4,6 +4,7 @@ import {
   mapAsync,
   MervError,
   runningKeyPattern,
+  sameOriginPath,
   visible,
   type Caller,
   type Json,
@@ -89,8 +90,6 @@ const ALIASES = 16;
 const ownerPattern = /^[a-z][a-z0-9-]{0,31}$/;
 const kindPattern = /^[a-z][a-z-]{0,23}$/;
 const toolPattern = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
-/** A page of this app: one leading slash, never two, and only characters a path may carry. */
-const routePattern = /^\/(?![/\\])[A-Za-z0-9\-._~%!$&'()*+,;=:@/?#]{0,499}$/;
 const moneyPattern = /^-?\d{1,15}(\.\d{1,12})?$/;
 /** The shell ends every link with its own arrow, so an owner's trailing one is dropped. */
 const trailingArrow = /\s*[→↗]\s*$/u;
@@ -198,8 +197,6 @@ const flag = (value: unknown): value is boolean | undefined =>
   value === undefined || typeof value === 'boolean';
 const isKey = (value: unknown): value is string =>
   typeof value === 'string' && runningKeyPattern.test(value);
-const route = (value: unknown): value is string =>
-  typeof value === 'string' && routePattern.test(value);
 function https(value: unknown): value is string {
   if (typeof value !== 'string' || value.length > 2000 || !/^https:\/\/\S+$/.test(value))
     return false;
@@ -217,9 +214,9 @@ export function targetOf(value: unknown): RunningTarget | null {
   if ('key' in value) {
     if (!isKey(value.key)) return null;
     if (value.route === undefined) return { key: value.key };
-    return route(value.route) ? { key: value.key, route: value.route } : null;
+    return sameOriginPath(value.route) ? { key: value.key, route: value.route } : null;
   }
-  if ('route' in value) return route(value.route) ? { route: value.route } : null;
+  if ('route' in value) return sameOriginPath(value.route) ? { route: value.route } : null;
   return null;
 }
 
@@ -596,10 +593,7 @@ function agentSessionOf(value: unknown): AgentStreamSession | null {
     return null;
   if (value.endedAt !== undefined && !instant(value.endedAt)) return null;
   if (value.continues !== undefined && !words(value.continues, 200)) return null;
-  // Any same-origin path: printable ASCII with no backslash (a browser strips a tab or a line
-  // break, and reads `\` as `/`, either of which can leave `//host`), resolving on this host.
-  if (!words(value.events, 300) || !/^\/[!-[\]-~]*$/.test(value.events)) return null;
-  if (new URL(value.events, 'http://x').origin !== 'http://x') return null;
+  if (!words(value.events, 300) || !sameOriginPath(value.events)) return null;
   const { sessionId, state, role, live, startedAt, endedAt, continues, events } = value;
   return {
     sessionId,
@@ -1081,7 +1075,7 @@ export async function runningPanel(
     header,
     sections,
     actions: actionsOf(own.actions, await tools()),
-    ...(route(own.route) ? { route: own.route } : {}),
+    ...(sameOriginPath(own.route) ? { route: own.route } : {}),
     live: own.live === true,
     aliases,
   };

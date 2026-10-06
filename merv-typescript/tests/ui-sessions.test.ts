@@ -77,7 +77,8 @@ function status(over: Record<string, unknown> = {}) {
         agentId: 'agent_1',
         instanceId: 'wf_1',
         expectedRevision: 3,
-        label: 'Sweep weight decay',
+        label: 'Work: Sweep weight decay',
+        name: 'Sweep weight decay',
         role: 'producer',
         status: 'active',
         runnerRef: 'runner_1',
@@ -101,7 +102,11 @@ function status(over: Record<string, unknown> = {}) {
         contextEpoch: 1,
         persistent: false,
         currentExecutionId: 'sess_1',
-        currentAssignment: { label: 'Sweep weight decay', role: 'producer' },
+        currentAssignment: {
+          label: 'Work: Sweep weight decay',
+          name: 'Sweep weight decay',
+          role: 'producer',
+        },
         createdAt: at(-3_600_000),
         runnerId: 'local-demo',
       },
@@ -170,7 +175,7 @@ test('state is carried by elements: a pill, one control, counts, and never a sen
       dispatch: { enabled: false, updatedAt: null, updatedBy: null },
       runners: [],
       runnerTotal: 0,
-      sessions: [{ ...status().sessions[0], label: 'Work: Sweep weight decay' }],
+      sessions: status().sessions,
       queue: [
         {
           instanceId: 'wf_2',
@@ -198,7 +203,7 @@ test('state is carried by elements: a pill, one control, counts, and never a sen
   assert.ok(document.querySelector('.act-danger > button')?.textContent === 'Halt all leases');
   // An empty section is its name and a zero.
   assert.ok(shown.includes('Runners 0'), shown.slice(0, 400));
-  // The purpose a lease is labelled with for its agent is dropped: the role says it.
+  // A lease reads as its record's name; the purpose its agent is told is the role's to say.
   assert.ok(shown.includes('Sweep weight decay'), shown);
   for (const gone of [
     'Work: ',
@@ -249,10 +254,10 @@ test('leases open on what is live or recent; the older history is one control aw
   t.after(unmount);
   const now = Date.now();
   const at = (ms: number) => new Date(now + ms).toISOString();
-  const ended = (id: string, label: string, closed: number) => ({
+  const ended = (id: string, name: string, closed: number) => ({
     ...status().sessions[0],
     id,
-    label,
+    name,
     status: 'released',
     closeReason: 'host_failed',
     createdAt: at(closed - 600_000),

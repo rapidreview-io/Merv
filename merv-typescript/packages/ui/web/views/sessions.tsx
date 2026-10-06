@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { workName } from '@merv/contracts/running';
 import type {
   AgentSummary,
   DispatchState,
@@ -147,7 +146,7 @@ function LeaseRow({
 }) {
   const panelId = `lease-${session.id}`;
   const held = holding(session, now);
-  const work = workName(session.label);
+  const work = session.name;
   const halt = useHalt(
     `/sessions/${encodeURIComponent(session.id)}/halt`,
     reload,
@@ -295,7 +294,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
   const assigned = (agent: AgentSummary) => {
     const on = agent.currentAssignment ?? byId.get(agent.currentExecutionId ?? '');
     return agent.currentExecutionId
-      ? `${on ? workName(on.label) : 'Assignment execution'} · ${on?.role ?? ''} · `
+      ? `${on ? on.name : 'Assignment execution'} · ${on?.role ?? ''} · `
       : '';
   };
   const selectedAgent = agents.find((agent) => agent.id === selected);
@@ -430,7 +429,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     <ul className="guard-list">
                       {live.map((session) => (
                         <li key={session.id}>
-                          {workName(session.label)} · {term(session.role)} ·{' '}
+                          {session.name} · {term(session.role)} ·{' '}
                           {agentName.get(session.agentId ?? '') ?? 'no agent yet'}
                         </li>
                       ))}

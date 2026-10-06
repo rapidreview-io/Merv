@@ -1,6 +1,6 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
-import { safeCount } from './common.js';
+import { safeCount, workNameOf } from './common.js';
 import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
@@ -17,6 +17,11 @@ const aggregateNumber = safeCount(
   'observation_overflow',
   'Tool observation totals exceed the supported numeric range',
 );
+
+const named = ({ assignment }: Session) => ({
+  label: assignment.label,
+  name: assignment.name ?? assignment.label,
+});
 
 function summarizeAgent(
   agent: Agent,
@@ -146,9 +151,10 @@ export class AgentObservations {
         agent_json: string;
         execution_id: string | null;
         execution_label: string;
+        execution_name: string;
         execution_role: Session['role'];
       }>(
-        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, (w.session_json::jsonb #>> '{role}') AS execution_role
+        `SELECT a.agent_json, w.id AS execution_id, (w.session_json::jsonb #>> '{assignment,label}') AS execution_label, ${workNameOf('w.session_json::jsonb')} AS execution_name, (w.session_json::jsonb #>> '{role}') AS execution_role
           FROM agents a LEFT JOIN worker_sessions w ON w.actor_id=a.actor_id AND w.status IN ('offered','active') WHERE a.project_id=? ORDER BY a._merv_rowid DESC`,
         projectId,
       )
@@ -156,7 +162,9 @@ export class AgentObservations {
       summarizeAgent(
         JSON.parse(row.agent_json),
         row.execution_id,
-        row.execution_id ? { label: row.execution_label, role: row.execution_role } : null,
+        row.execution_id
+          ? { label: row.execution_label, name: row.execution_name, role: row.execution_role }
+          : null,
       ),
     );
   }
@@ -210,12 +218,12 @@ export class AgentObservations {
         agent: summarizeAgent(
           agent,
           current?.id ?? null,
-          current ? { label: current.assignment.label, role: current.role } : null,
+          current ? { ...named(current), role: current.role } : null,
         ),
         assignments: sessions.map((session) => ({
           id: session.id,
           instanceId: session.instanceId,
-          label: session.assignment.label,
+          ...named(session),
           role: session.role,
           status: session.status,
           createdAt: session.createdAt,
