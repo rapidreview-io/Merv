@@ -980,6 +980,66 @@ test('a proposed call whose tool writes a receipt tells the agent that receipt, 
   assert.match(JSON.stringify(ran.result), /Full Problem/);
 });
 
+test('a call that ran keeps how it came out though writing it down fails at first', async (t) => {
+  const f = await fixture(t);
+  let ran = 0;
+  let failing = 0;
+  t.after(
+    f.tools.register({
+      name: 'probe.once',
+      description: 'Counts its runs',
+      conversation: 'propose',
+      inputSchema: z.object({}).strict(),
+      handler: () => {
+        ran++;
+        // The next two writes after the call fail, as a lost connection would fail them.
+        failing = 2;
+        return { ran };
+      },
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const { proposed } = (await f.pi.tool(turn.token, {
+    ...turn.input,
+    name: 'probe.once',
+    input: {},
+  })) as { proposed: { id: string } };
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  const transaction = f.state.transaction.bind(f.state);
+  t.mock.method(f.state, 'transaction', (...args: Parameters<typeof transaction>) =>
+    failing-- > 0 ? Promise.reject(new Error('connection lost')) : transaction(...args),
+  );
+  const proposal = async () =>
+    (await f.pi.snapshot(human, turn.input.conversationId)).commands[0]!.proposals![0]!;
+  // Claimed as running before the call, so no second Run reaches the tool.
+  const running = f.pi.run(human, {
+    id: turn.input.conversationId,
+    commandId: turn.input.commandId,
+    proposalId: proposed.id,
+  });
+  assert.deepEqual(await running, {
+    result: { ran: 1 },
+    told: 'Ran probe.once: {"ran":1}',
+    whole: true,
+  });
+  assert.equal(ran, 1);
+  assert.equal(failing, -1);
+  const { at, ...outcome } = (await proposal()).ran!;
+  assert.equal(typeof at, 'string');
+  assert.deepEqual(outcome, { ok: true, told: 'Ran probe.once: {"ran":1}', said: '{"ran":1}' });
+  await assert.rejects(
+    f.pi.run(human, {
+      id: turn.input.conversationId,
+      commandId: turn.input.commandId,
+      proposalId: proposed.id,
+    }),
+    code('pi_proposal_ran'),
+  );
+  assert.equal(ran, 1);
+});
+
 test('a call refused when the person runs it tells the agent why, and Pi keeps what it told', async (t) => {
   const f = await fixture(t);
   probes(f, t);

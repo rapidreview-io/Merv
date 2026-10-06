@@ -346,16 +346,18 @@ export function useConversation() {
       },
     );
   };
-  /** Whether the words reached the server. */
-  const send = async (text = draft.trim()): Promise<boolean> => {
+  /** Whether the words reached the server; `commandId` names the turn they start, where it is
+   * theirs before they are sent. */
+  const send = async (text = draft.trim(), commandId?: string): Promise<boolean> => {
     if (busy || blocked || unavailable || active || !text) return false;
     let id = selection.current;
     setBusy(true);
     try {
       // A pick on its way goes first; one that failed keeps the question, and says why.
       if (id && picking.current?.id === id && !(await picking.current.done)) return false;
-      if (pending.current?.text !== text) pending.current = { id: identifier(), text };
-      const commandId = pending.current.id;
+      if (commandId || pending.current?.text !== text)
+        pending.current = { id: commandId ?? identifier(), text };
+      commandId = pending.current.id;
       setError('');
       id ??= await open();
       if (!id) return false;
@@ -385,14 +387,15 @@ export function useConversation() {
       }
     }
   };
-  /** Runs a proposed call as the person, then tells the agent what happened, as their message;
-   * words that could not be sent wait in the composer, ahead of anything typed there. A run Pi
-   * itself refuses ran nothing, and tells the agent nothing. */
+  /** Runs a proposed call as the person, then tells the agent what happened, as their message,
+   * once: that message's turn is named for the call. Words that could not be sent wait in the
+   * composer, ahead of anything typed there. A run Pi itself refuses ran nothing, and tells the
+   * agent nothing; one whose answer was lost may have run, and what Pi kept of it says. */
   const run = async (commandId: string, proposal: PiProposal) => {
     if (!selected || running || busy || active) return;
     setRunning(proposal.id);
     setError('');
-    let told: string;
+    let told: string | undefined;
     try {
       // The server writes what the agent is told, a refusal too; a result it is not told whole
       // is shown here.
@@ -408,13 +411,23 @@ export function useConversation() {
         }));
       told = ran.told;
     } catch (cause) {
-      if (valid()) setError(said(cause, 'Could not run it.'));
-      return;
+      const kept =
+        cause instanceof ApiError && cause.status < 500
+          ? null
+          : await call<PiSnapshot>('pi.snapshot', { id: selected }).catch(() => null);
+      if (kept) replace(kept);
+      told = kept?.commands
+        .find(({ id }) => id === commandId)
+        ?.proposals?.find(({ id }) => id === proposal.id)?.ran?.told;
+      if (told === undefined) {
+        if (valid()) setError(said(cause, 'Could not run it.'));
+        return;
+      }
     } finally {
       if (valid()) setRunning(null);
     }
     const here = () => valid() && selection.current === selected;
-    if (here() && !(await send(told)) && here())
+    if (here() && !(await send(told, `told_${proposal.id}`)) && here())
       setDraft((value) => (value.trim() ? `${told}\n\n${value}` : told));
   };
   /** The picker answers with the machine as it now stands, the same in every conversation here. */

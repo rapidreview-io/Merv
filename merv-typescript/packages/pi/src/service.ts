@@ -57,6 +57,8 @@ import { PiWorkerProtocol } from './worker-protocol.js';
 /** What Run tells the agent, and the part of it that says how the call came out. */
 type Told = Omit<PiRan, 'result'> & { said?: string };
 
+/** How often Run tries to keep a call's outcome, waiting twice as long each time from 200 ms. */
+const SAVE_ATTEMPTS = 5;
 const publicConversation = ({ source: _source, ...value }: PiConversationRecord): PiConversation =>
   value;
 
@@ -514,16 +516,25 @@ export class PiService implements Pi {
       const told: Told = code
         ? { told: `${proposal.name} was refused: ${said}`, said, whole: true }
         : await this.ran(proposal, result);
-      await this.core.state.transaction(async (tx) => {
-        const command = await this.core.command(tx, value.id, value.commandId);
-        Object.assign(find(command)!.ran!, {
-          ok: !code,
-          ...(code && { code }),
-          told: told.told,
-          ...(told.said !== undefined && { said: told.said }),
-        });
-        await this.core.saveCommand(tx, command);
-      });
+      // The call ran, so how it came out is kept even past a failed write: a page that lost this
+      // answer reads it again, and tells the agent from it.
+      for (let attempt = 1; ; attempt++)
+        try {
+          await this.core.state.transaction(async (tx) => {
+            const command = await this.core.command(tx, value.id, value.commandId);
+            Object.assign(find(command)!.ran!, {
+              ok: !code,
+              ...(code && { code }),
+              told: told.told,
+              ...(told.said !== undefined && { said: told.said }),
+            });
+            await this.core.saveCommand(tx, command);
+          });
+          break;
+        } catch (error) {
+          if (attempt === SAVE_ATTEMPTS) throw error;
+          await new Promise((resolve) => setTimeout(resolve, 100 * 2 ** attempt));
+        }
       return { result, told: told.told, whole: told.whole };
     } finally {
       this.core.streams.changed(value.id, value.commandId);
