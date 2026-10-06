@@ -176,6 +176,41 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     );
   }
 
+  async revisions(projectId: string, instanceIds: readonly string[], tx?: Transaction) {
+    this.assertOpen();
+    return await this.read(tx, async (tx) => {
+      const found = new Map<string, Omit<WorkflowSnapshot, 'data'>>();
+      for (const part of batches([...new Set(instanceIds)]))
+        for (const row of await tx.all<Omit<InstanceRow, 'data_json'>>(
+          `SELECT id,project_id,workflow,version,state,revision,created_at,updated_at FROM wf_instances WHERE project_id=? AND id IN (${part.map(() => '?').join(',')})`,
+          projectId,
+          ...part,
+        )) {
+          const { data: _data, ...revision } = this.snapshot({ ...row, data_json: '{}' });
+          found.set(row.id, revision);
+        }
+      return found;
+    });
+  }
+
+  async moves(
+    projectId: string,
+    match: { action: string; keys: readonly string[]; values: readonly string[] },
+    tx?: Transaction,
+  ): Promise<number> {
+    this.assertOpen();
+    // History data is stored canonical, so a recorded string field reads `"key":"value"`.
+    const patterns = match.keys.flatMap((key) =>
+      match.values.map((value) => `%${JSON.stringify(key)}:${JSON.stringify(value)}%`),
+    );
+    if (!patterns.length) return 0;
+    const sql = `SELECT COUNT(*) AS n FROM wf_history WHERE project_id=? AND action=? AND (${patterns.map(() => 'data_json LIKE ?').join(' OR ')})`;
+    return await this.read(
+      tx,
+      async (tx) => (await tx.get<{ n: number }>(sql, projectId, match.action, ...patterns))!.n,
+    );
+  }
+
   async workStarts(
     caller: Caller,
     instanceId: string,
@@ -360,6 +395,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     };
   }
 
+  /** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
   async relations(
     projectId: string,
     instanceId: string,
@@ -367,7 +403,11 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   ): Promise<WorkflowRelations | null> {
     this.assertOpen();
     this.state.assertTransaction(tx);
-    return await instanceRelations(tx, this.contracts, projectId, instanceId);
+    return structuredClone(
+      await this.state.remember(`workflows:relations:${projectId}:${instanceId}`, () =>
+        instanceRelations(tx, this.contracts, projectId, instanceId),
+      ),
+    );
   }
 
   /** Reads only what the instance depends on, never what depends on it. */

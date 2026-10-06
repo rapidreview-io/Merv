@@ -195,14 +195,17 @@ export class WorkflowEngine {
     );
   }
 
+  /** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
   protected async readRow(sql: Sql, projectId: string, instanceId: string): Promise<InstanceRow> {
-    const row = await sql.get<InstanceRow>(
-      'SELECT * FROM wf_instances WHERE id = ? AND project_id = ?',
-      instanceId,
-      projectId,
+    const row = await this.state.remember(`workflows:row:${projectId}:${instanceId}`, () =>
+      sql.get<InstanceRow>(
+        'SELECT * FROM wf_instances WHERE id = ? AND project_id = ?',
+        instanceId,
+        projectId,
+      ),
     );
     check(row, 'not_found', 'Workflow instance not found', 404);
-    return row;
+    return { ...row };
   }
 
   protected async readSnapshot(

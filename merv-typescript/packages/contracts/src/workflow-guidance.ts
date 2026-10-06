@@ -57,13 +57,18 @@ export interface WorkflowProvidedBlocker extends WorkflowBlocker {
   updatedAt: string;
 }
 /**
+ * A dependency, and whether any state of its version declares a workspace: read from the pinned
+ * execution manifests, so it holds with the owning plugin unloaded.
+ */
+export type WorkflowRelation = WorkflowDependency & { declaresWorkspace: boolean };
+/**
  * One instance and both directions of its edges: what a provider derives its own view from.
  * The instance has no edge to judge it by, so its `failed` says it ended outside success.
  */
 export interface WorkflowRelations {
-  instance: WorkflowDependency & { data: Data };
-  dependencies: WorkflowDependency[];
-  dependents: WorkflowDependency[];
+  instance: WorkflowRelation & { data: Data };
+  dependencies: WorkflowRelation[];
+  dependents: WorkflowRelation[];
 }
 export interface WorkflowActionStatus {
   action: string;

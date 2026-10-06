@@ -1,4 +1,4 @@
-import { canonical, check, now } from '@merv/contracts';
+import { canonical, check, mapAsync, now } from '@merv/contracts';
 import type {
   Data,
   Sql,
@@ -203,8 +203,8 @@ export async function relations(
 }
 
 /**
- * One instance, classified against its own pinned contract, with both directions of its edges;
- * null when the project holds no such instance.
+ * One instance, classified against its own pinned contract, with both directions of its edges,
+ * each with its version's workspace fact; null when the project holds no such instance.
  */
 export async function instanceRelations(
   sql: Sql,
@@ -216,13 +216,22 @@ export async function instanceRelations(
   if (!node) return null;
   const pinned = await contracts.get(sql, node.workflow, Number(node.version));
   const instance = classify(node, pinned?.successStates, pinned?.definition.terminal ?? []);
+  // Any manifest of the version counts, and one that names no mode declares none.
+  const relation = async <T extends WorkflowDependency>(item: T) => ({
+    ...item,
+    declaresWorkspace: Object.values(
+      (await contracts.get(sql, item.workflow, item.version))?.execution ?? {},
+    ).some((manifest) => (manifest?.workspace?.mode ?? 'none') !== 'none'),
+  });
+  const { dependencies, dependents } = await relations(sql, contracts, projectId, instanceId);
   return {
-    instance: {
+    instance: await relation({
       ...instance,
       failed: instance.terminal && !instance.settled,
       data: JSON.parse(node.data_json) as Data,
-    },
-    ...(await relations(sql, contracts, projectId, instanceId)),
+    }),
+    dependencies: await mapAsync(dependencies, relation),
+    dependents: await mapAsync(dependents, relation),
   };
 }
 

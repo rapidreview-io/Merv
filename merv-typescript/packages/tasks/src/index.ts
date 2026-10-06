@@ -2247,11 +2247,17 @@ export class TaskService implements Tasks {
             ...(await this.workflows.open('task', caller.projectId, tx)).map((w) => w.id),
             ...held,
           ];
-          const rows = await tx.all<RunningTaskRow>(
-            `SELECT t.id,t.title,t.review_id,w.version,w.state,w.revision FROM tasks t JOIN wf_instances w ON w.id=t.id WHERE t.project_id=? AND t.id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY t.created_at,t.id`,
-            caller.projectId,
-            ...ids,
-          );
+          const at = await this.workflows.revisions(caller.projectId, ids, tx);
+          const rows = (
+            await tx.all<Pick<RunningTaskRow, 'id' | 'title' | 'review_id'>>(
+              `SELECT id,title,review_id FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY created_at,id`,
+              caller.projectId,
+              ...ids,
+            )
+          ).flatMap((row) => {
+            const w = at.get(row.id);
+            return w ? [{ ...row, version: w.version, state: w.state, revision: w.revision }] : [];
+          });
           const leases = await this.liveLeases(caller, tx);
           const blocked = new Set(
             (await this.workflows.blockers(caller, undefined, tx)).map(
@@ -2445,18 +2451,17 @@ export class TaskService implements Tasks {
         ...input.artifactIds,
       );
       check(briefs.length === 0, 'invalid_delivery', 'A task brief cannot serve as a delivery');
-      const rendered = await tx.get<{ n: number }>(
-        `SELECT COUNT(*) AS n FROM wf_history WHERE project_id=? AND action='submit_delivery' AND (${input.artifactIds
-          .map(() => 'data_json LIKE ? OR data_json LIKE ?')
-          .join(' OR ')})`,
+      const rendered = await this.workflows.moves(
         caller.projectId,
-        ...input.artifactIds.flatMap((id) => [
-          `%"deliveryAssessmentId":"${id}"%`,
-          `%"deliveryCodeArtifactId":"${id}"%`,
-        ]),
+        {
+          action: 'submit_delivery',
+          keys: ['deliveryAssessmentId', 'deliveryCodeArtifactId'],
+          values: input.artifactIds,
+        },
+        tx,
       );
       check(
-        !rendered?.n,
+        !rendered,
         'invalid_delivery',
         'A confirmation sheet or commit record Merv rendered for a delivery cannot serve as evidence',
       );

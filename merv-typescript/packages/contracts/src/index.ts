@@ -164,6 +164,7 @@ export type {
   WorkflowReference,
   WorkflowProvidedBlocker,
   WorkflowProvidedBlockerInput,
+  WorkflowRelation,
   WorkflowRelations,
   WorkflowActionStatus,
   WorkflowDecision,
@@ -1790,9 +1791,22 @@ export interface Workflows {
    * System reads for a caller already authorized for what it asks. `open`: the instances of
    * `workflow` in a nonterminal state of their own pinned version, in one project or (null)
    * every project, oldest first. `movedBy`: who moved an instance to `revision`, if anyone.
+   * `revisions`: where each named instance of the project stands, without its data; an id the
+   * project does not hold is left out. `moves`: how many moves by `action` in the project
+   * recorded one of `values` under one of `keys` of their data.
    */
   open(workflow: string, projectId: string | null, tx?: Transaction): Promise<WorkflowSnapshot[]>;
   movedBy(instanceId: string, revision: number, tx?: Transaction): Promise<string | null>;
+  revisions(
+    projectId: string,
+    instanceIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<Map<string, Omit<WorkflowSnapshot, 'data'>>>;
+  moves(
+    projectId: string,
+    match: { action: string; keys: readonly string[]; values: readonly string[] },
+    tx?: Transaction,
+  ): Promise<number>;
   catalog(): WorkflowDefinition[];
   /**
    * The stored contract of a version, loaded or not, or null when none is stored. It never

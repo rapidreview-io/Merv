@@ -276,12 +276,16 @@ export class WorkUnitRecords {
     return this.code.project(sql, projectId);
   }
 
+  /** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
   protected async row(sql: Sql, projectId: string, unitId: string): Promise<UnitRow | undefined> {
-    return await sql.get<UnitRow>(
-      `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND unit_id=?`,
-      projectId,
-      unitId,
+    const row = await this.state.remember(`code-work:unit:${projectId}:${unitId}`, () =>
+      sql.get<UnitRow>(
+        `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND unit_id=?`,
+        projectId,
+        unitId,
+      ),
     );
+    return row && { ...row };
   }
 
   protected async retainAcceptance(
