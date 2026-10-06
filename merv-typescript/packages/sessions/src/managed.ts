@@ -20,6 +20,7 @@ import { sourceCaller, tokenDigest } from './agents.js';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
 import type { CredentialStore } from '@merv/identity/credentials';
 import type { CallerRules } from '@merv/api/types';
+import { personKey } from '@merv/fleet/model-ledger';
 import type { HuggingFaceGrant } from '@merv/secrets/types';
 import type {
   ManagedRunnerBindingIdentity,
@@ -404,9 +405,7 @@ export class ManagedRunnerBindings {
           id: session.id,
           projectId: row.project_id,
           allocationId: row.allocation_id,
-          person: digest(
-            user ? { issuer: user.issuer, subject: user.subject } : { projectId, actorId: id },
-          ),
+          person: personKey(user, { projectId, actorId: id }),
           model: platform.model,
           ...(platform.effort ? { effort: platform.effort } : {}),
           expiresAt: new Date(

@@ -6,7 +6,7 @@ import type {
   WorkflowPinned,
   WorkflowPolicy,
 } from '@merv/contracts';
-import { executionFingerprint } from './execution.js';
+import { executionFingerprint } from './execution-policy.js';
 import { freezeData } from './json.js';
 
 interface Row {

@@ -1,7 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import type { CodeCheckSpec } from '@merv/contracts';
 import type {
   SandboxCheckHandle,
   SandboxCheckCleanup,
@@ -16,6 +15,7 @@ import { resolutionBrief } from '@merv/tasks/resolution-brief';
 import { baseFixture } from './fixtures/code-bases.js';
 import { migrateBases } from '@merv/code-work/base-schema';
 import { openState } from './fixtures/state.js';
+import type { CodeCheckSpec } from '@merv/code-work/models';
 
 /**
  * The project check of a base, end to end against a scripted adapter. Nothing here executes

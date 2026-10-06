@@ -17,7 +17,6 @@ import {
   type Artifact,
   type Artifacts,
   type Caller,
-  type CodeAcceptedSince,
   type Data,
   type DomainEvents,
   type Scope,
@@ -65,6 +64,7 @@ import type {
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
+import type { CodeAcceptedSince } from '@merv/code-work/models';
 export type * from './types.js';
 const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
 type Stage = (typeof stages)[number];

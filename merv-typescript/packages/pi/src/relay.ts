@@ -1,4 +1,4 @@
-import { RESPONSES_URL } from '@merv/contracts';
+import { RESPONSES_URL } from '@merv/fleet/model-ledger';
 import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';

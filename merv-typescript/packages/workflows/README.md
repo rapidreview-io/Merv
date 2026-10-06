@@ -29,12 +29,12 @@ flowchart LR
     postgres[("PostgreSQL")]
   end
   workerAgent -- "calls workflow.begin" --> workflows
-  tasks -- "injects" --> workflows
-  experiments -- "injects" --> workflows
+  tasks -- "injects; draws dependency-rows" --> workflows
+  experiments -- "injects; draws dependency-rows" --> workflows
   reflections -- "injects" --> workflows
   research -- "injects" --> workflows
   knowledge -- "injects" --> workflows
-  sessions -- "injects" --> workflows
+  sessions -- "injects; runs admitDispatch" --> workflows
   codeWork -- "injects" --> workflows
   workflows -- "emits workflow.transition" --> sandboxes
   workflows -- "emits workflow.transition" --> codeWork
@@ -234,7 +234,8 @@ returns that generation's id. Given the execution the lease was offered, it also
 that execution against the lease, its policy by content, and returns the references it
 grants now: the frozen ones, extended only in declared arrays by the lease's own
 `outputs`. Sessions fences each invocation's generation with the id and admits the tool
-call: `admitDispatch` from Contracts applies the declared bindings, and Sessions leaves a
+call: `admitDispatch` from `@merv/workflows/execution` (pure rules) applies the declared
+bindings, and Sessions leaves a
 read open where they do not bind it. A lease step runs the step's `check` and
 `lease.check`, never `references`: the offer froze those, so a refusal that must end a
 live lease belongs in one of the two checks. Sessions owns credentials,

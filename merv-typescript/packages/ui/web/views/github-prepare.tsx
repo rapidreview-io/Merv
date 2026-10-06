@@ -4,11 +4,11 @@ import type {
   CodeRepositoryPreparation,
   CodeRepositoryPrepareInput,
 } from '@merv/contracts/code-store';
-import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 import { accountRequest, call, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Short } from '../components';
+import type { CodeProjectStatus } from '@merv/code-work/models';
 
 /** One repeatable setup operation, with the user's branch and commit frozen before sending. */
 export function GitHubPreparation({ status }: { status: GitHubStatus }) {

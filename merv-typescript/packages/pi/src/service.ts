@@ -2,11 +2,9 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import {
   check,
-  dailyTokens,
   delegationEnd,
   digest,
   newId,
-  personKey,
   plain,
   MervError,
   type Blobs,
@@ -20,6 +18,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
+import { dailyTokens, personKey } from '@merv/fleet/model-ledger';
 import type { Fleet, FleetAllocation, FleetOwner, ModelRelayHandle } from '@merv/fleet/types';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
 import {

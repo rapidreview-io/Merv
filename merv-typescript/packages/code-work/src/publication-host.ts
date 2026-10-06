@@ -11,7 +11,6 @@ import {
   MervError,
   now,
   type Caller,
-  type CodeProjectStatus,
   type CodePublication,
   type Reviews,
   type Scope,
@@ -19,6 +18,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import { z } from 'zod';
+import type { CodeProjectStatus } from './models.js';
 
 export const publicationApproval = {
   context: 'merv/consolidation-approved',

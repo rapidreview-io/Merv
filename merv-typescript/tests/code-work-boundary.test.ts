@@ -43,7 +43,7 @@ test('technical contract modules do not import research policy', () => {
     const source = readFileSync(join(root, 'packages/contracts/src', name), 'utf8');
     assert.doesNotMatch(
       source,
-      /from ['"]\.\/(?:code-work-models|workflow-guidance|code-publication-models)\.js['"]/,
+      /from ['"]\.\/(?:workflow-guidance|code-publication-models)\.js['"]/,
       name,
     );
     assert.doesNotMatch(

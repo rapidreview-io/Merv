@@ -50,7 +50,7 @@ Artifacts is the evidence layer under research work: the research plugins and Re
 
 ## Surface
 
-- Service `ctx.artifacts`: `create`, `get`, `getMany`, `list`, `read`, `download`, `createCollection`, the `upload*` steps and `registerFileProvider`.
+- Service `ctx.artifacts`: `create`, `get`, `getMany`, `getAll` (any number of ids), `list`, `executionOutputs` (what the calling session worker created), `read`, `download`, `createCollection`, the `upload*` steps and `registerFileProvider`.
 - Tools (`@merv/artifacts/tools`): `artifact.create`, `artifact.upload_begin`, `artifact.upload_resume`, `artifact.upload_complete`, `artifact.get`, `artifact.read`, `artifact.list` and `artifact.storage_status`.
 - Row (`@merv/artifacts/ui`): Files, at `/artifacts`.
 - Client (`@merv/artifacts/upload-client`): the `artifact-upload` CLI command's uploader.

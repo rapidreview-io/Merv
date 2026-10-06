@@ -7,18 +7,7 @@ import {
 import { migrateBases } from './base-schema.js';
 import { OperationJournal } from '@merv/code/operation-journal';
 import { canonical, check, digest, newId, MervError } from '@merv/contracts';
-import type {
-  CodeBaseCheck,
-  CodeBaseCheckState,
-  CodeBaseRecord,
-  CodeBaseState,
-  CodeCheckSpec,
-  Caller,
-  Scope,
-  State,
-  Sql,
-  Transaction,
-} from '@merv/contracts';
+import type { Caller, Scope, State, Sql, Transaction } from '@merv/contracts';
 import type { SandboxChecks } from '@merv/sandboxes/types';
 import type { ServiceWork, ServiceWorkInput } from '@merv/sessions/types';
 import { z } from 'zod';
@@ -35,6 +24,13 @@ import {
   type CheckHandle,
 } from './base-check.js';
 import type { CodeRepositories } from '@merv/code/store/repository';
+import type {
+  CodeBaseCheck,
+  CodeBaseCheckState,
+  CodeBaseRecord,
+  CodeBaseState,
+  CodeCheckSpec,
+} from './models.js';
 
 /**
  * One record per distinct set of accepted commits in a project. However many units wait on

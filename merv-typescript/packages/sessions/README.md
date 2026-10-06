@@ -31,6 +31,7 @@ flowchart LR
     blobs["Blobs"]
     fleet["Fleet"]
     sandboxes["Sandboxes"]
+    ui["UI"]
   end
   subgraph externalLayer["External"]
     blobStore[("Blob store")]
@@ -42,11 +43,13 @@ flowchart LR
   workerAgent -- "HTTP /mcp" --> api
   person -- "HTTP /sessions/:id/events" --> sessions
   sessions -- "injects" --> api
-  sessions -- "injects" --> workflows
+  sessions -- "injects; runs admitDispatch" --> workflows
   sessions -- "injects" --> scope
   sessions -- "injects" --> blobs
   blobs -- "reads/writes" --> blobStore
   fleet -- "injects" --> sessions
+  ui -- "imports @merv/sessions/models" --> sessions
+  sessions -- "imports personKey" --> fleet
   sandboxes -- "injects" --> sessions
   sessions -- "emits session.closed" --> tasks
   sessions -- "emits session.closed" --> experiments

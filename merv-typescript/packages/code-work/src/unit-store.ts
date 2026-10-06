@@ -10,15 +10,10 @@ import {
   mapAsync,
   now,
   type Caller,
-  type CodeBasePin,
-  type CodeUnitPublication,
   type GitHubPullRequest,
   type CodeLocalBindInput,
   type CodeProjectBinding,
-  type CodeProjectStatus,
   type CodeStoreWarning,
-  type CodeUnit,
-  type CodeUnitAcceptance,
   type Scope,
   type Sql,
   type State,
@@ -27,6 +22,13 @@ import {
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { CodeWriterService } from '@merv/code/writers';
 import { resultRef, workBranch } from '@merv/code/store/refs';
+import type {
+  CodeBasePin,
+  CodeUnitPublication,
+  CodeProjectStatus,
+  CodeUnit,
+  CodeUnitAcceptance,
+} from './models.js';
 
 export interface ProjectRow {
   project_id: string;

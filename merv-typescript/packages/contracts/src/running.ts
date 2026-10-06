@@ -1,5 +1,5 @@
 import type { Json } from './data.js';
-import type { ProcessGraph, WorkflowDependency } from './workflow-guidance.js';
+import type { ProcessGraph } from './workflow-guidance.js';
 
 /**
  * The Running page shows everything in flight, in three lanes: the work, the agent sessions
@@ -359,7 +359,7 @@ export interface RunningPanel extends RunningPanelPart {
   observedAt: string;
 }
 
-// ─── Two shared readings, so every owner of work draws its relations the same way ─────────
+// ─── A shared reading, so every owner of work links its records the same way ─────────────
 
 /**
  * The page a work record opens on, by its workflow, or undefined where no page shows that
@@ -374,27 +374,5 @@ export function workLink(route: WorkRoute, workflow: string, id: string) {
   return {
     to: { key: runningKey('work', id), ...(page ? { route: page } : {}) },
     ...(page ? { kind: workflow[0]!.toUpperCase() + workflow.slice(1) } : {}),
-  };
-}
-
-/**
- * A record's open relations as rows: what it still waits on (unsettled, or failed and
- * marked red) and the open work that waits on it. A settled prerequisite and an ended
- * dependent are history and are left out.
- */
-export function dependencyRows(
-  dependsOn: readonly WorkflowDependency[],
-  requiredBy: readonly WorkflowDependency[],
-  route: WorkRoute,
-): { waitsOn: RunningLinkRow[]; unblocks: RunningLinkRow[] } {
-  const row = (dependency: WorkflowDependency): RunningLinkRow => ({
-    ...workLink(route, dependency.workflow, dependency.id),
-    name: dependency.name,
-    says: [{ state: dependency.state }],
-    ...(dependency.failed ? { attention: true } : {}),
-  });
-  return {
-    waitsOn: dependsOn.filter((d) => !d.settled || d.failed).map(row),
-    unblocks: requiredBy.filter((d) => !d.settled && !d.failed).map(row),
   };
 }

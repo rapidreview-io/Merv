@@ -1,9 +1,8 @@
 import type { CodeCommandRecord } from '@merv/contracts/code';
-import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
-import type { CodeBaseRecord, CodeUnit } from '@merv/contracts/code-work-models';
 import type { CodePublication } from '@merv/contracts/types';
 import type { RecordNames } from '../markdown';
 import { status as publicationWord } from './github-publications';
+import type { CodeProjectStatus, CodeBaseRecord, CodeUnit } from '@merv/code-work/models';
 
 /**
  * What Git holds for this project, as one object graph: the trunk, one lane per unit

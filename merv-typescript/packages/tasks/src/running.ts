@@ -1,7 +1,6 @@
 import type { TaskRecord } from './types.js';
 import {
   clip,
-  dependencyRows,
   runningKey,
   type ProcessGraph,
   type ReviewRequest,
@@ -14,6 +13,7 @@ import {
   type WorkflowDependency,
   type WorkRoute,
 } from '@merv/contracts';
+import { dependencyRows } from '@merv/workflows/dependency-rows';
 
 /**
  * A task on the Running page: its card in the work lane and its sidebar, composed from facts

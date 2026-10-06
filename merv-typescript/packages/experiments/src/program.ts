@@ -1,13 +1,7 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
-import {
-  itemTitle,
-  releasedLease,
-  mapAsync,
-  getArtifacts,
-  executionOutputs,
-} from '@merv/contracts';
+import { itemTitle, releasedLease, mapAsync } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
@@ -938,7 +932,7 @@ export abstract class ExperimentProgram {
         ...new Set([
           ...(JSON.parse(lease.artifacts) as Artifact[]).map((artifact) => artifact.id),
           ...(experiment.captureArtifactIds ?? []),
-          ...(await executionOutputs(this.artifacts, caller, tx)).map((artifact) => artifact.id),
+          ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
         ]),
       ].sort();
     }
@@ -1194,7 +1188,7 @@ export abstract class ExperimentProgram {
           )?.artifactId
         : undefined;
     const artifactItems = async (ids: string[], priority: number) =>
-      (await getArtifacts(this.artifacts, context.caller, ids, context.tx)).map(
+      (await this.artifacts.getAll(context.caller, ids, context.tx)).map(
         (artifact): ContextItem => {
           const id = artifact.id;
           const record = records.get(id);
@@ -1426,8 +1420,7 @@ export abstract class ExperimentProgram {
           review = await this.reviews.start(context.caller, pinned.id, context.tx);
         }
         const inputs = await this.inputs(context.caller, experiment, context.tx);
-        const artifacts = await getArtifacts(
-          this.artifacts,
+        const artifacts = await this.artifacts.getAll(
           context.source,
           this.inputIds(inputs),
           context.tx,
@@ -1479,7 +1472,7 @@ export abstract class ExperimentProgram {
         return {
           artifacts: [
             ...new Set([
-              ...(await executionOutputs(this.artifacts, context.caller, context.tx)).map(
+              ...(await this.artifacts.executionOutputs(context.caller, context.tx)).map(
                 (artifact) => artifact.id,
               ),
               ...((await this.sandboxes?.captures(

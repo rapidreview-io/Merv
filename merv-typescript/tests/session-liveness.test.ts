@@ -14,13 +14,13 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions, type Session, type SessionsConfig } from '@merv/sessions';
-import type { StuckReport } from '@merv/contracts';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 import { openState } from './fixtures/state.js';
+import type { StuckReport } from '@merv/sessions/types';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
 const request = () => randomBytes(10).toString('hex');

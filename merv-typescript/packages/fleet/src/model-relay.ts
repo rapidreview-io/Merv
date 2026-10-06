@@ -1,6 +1,6 @@
 import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { RESPONSES_URL } from '@merv/contracts';
+import { RESPONSES_URL } from './model-ledger.js';
 import type {
   ModelRelayConfig,
   ModelRelayFailure,

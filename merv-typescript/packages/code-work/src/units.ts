@@ -2,7 +2,6 @@ import { baseKey } from './base-plan.js';
 import { pendingMerge, pinMerge } from '@merv/code/pending-merge';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeUnitStore } from '@merv/code/units';
-import type { CodeBaseRecord } from '@merv/contracts';
 import {
   canonical,
   check,
@@ -12,13 +11,6 @@ import {
   newId,
   now,
   type Caller,
-  type CodeBasePin,
-  type CodeBaseStatus,
-  type CodeProjectStatus,
-  type CodeUnit,
-  type CodeUnitAcceptance,
-  type CodeUnitAcceptInput,
-  type CodeUnitPublication,
   type Scope,
   type Sql,
   type State,
@@ -53,6 +45,16 @@ import {
   type ProjectRow,
   type UnitRow,
 } from './unit-store.js';
+import type {
+  CodeBaseRecord,
+  CodeBasePin,
+  CodeBaseStatus,
+  CodeProjectStatus,
+  CodeUnit,
+  CodeUnitAcceptance,
+  CodeUnitAcceptInput,
+  CodeUnitPublication,
+} from './models.js';
 export { bindsRepository, CODE_DRIVER } from './unit-store.js';
 
 /**

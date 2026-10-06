@@ -1,5 +1,6 @@
-import type { Artifact, CodeUnitPublication, WorkflowSnapshot } from '@merv/contracts/types';
+import type { Artifact, WorkflowSnapshot } from '@merv/contracts/types';
 import type { PaperRevision } from '@merv/paper/models';
+import type { CodeUnitPublication } from '@merv/code-work/models';
 
 export interface ResearchCreate {
   name: string;

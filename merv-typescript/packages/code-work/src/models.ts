@@ -1,17 +1,22 @@
-import type { CodeUnitPublication } from './code-work-publication-models.js';
-export type { CodeUnitPublication } from './code-work-publication-models.js';
-import type { CodeCaptureRef } from './code-models.js';
-import type { WorkflowProvidedBlockerInput, WorkflowProvidedBlocker } from './workflow-guidance.js';
-import type { CodeWriterState } from './code-units.js';
-import type { CodeProjectBinding } from './code.js';
-import type { CodePublication, CodePublicationControls } from './code-publication-models.js';
+/** Portable Code Work read models, shared by the server, research plugins and the browser. */
+import type { CodeCaptureRef } from '@merv/contracts/code-models';
+import type {
+  WorkflowProvidedBlockerInput,
+  WorkflowProvidedBlocker,
+} from '@merv/contracts/workflow-guidance';
+import type { CodeWriterState } from '@merv/contracts/code-units';
+import type { CodeProjectBinding } from '@merv/contracts/code';
+import type {
+  CodePublication,
+  CodePublicationControls,
+} from '@merv/contracts/code-publication-models';
 import type {
   CodeAdmissionLimits,
   CodeStoreOperation,
   CodeStoreStatus,
   CodeMirrorStatus,
   CodeStoreWarning,
-} from './code-store.js';
+} from '@merv/contracts/code-store';
 
 /**
  * The one command a project runs against a merged base, and the machine it runs in. The
@@ -254,4 +259,27 @@ export interface CodeProjectStatus {
   /** The newest 200 units. */
   units: CodeUnit[];
   blockers: WorkflowProvidedBlocker[];
+}
+
+/**
+ * Where a unit that publishes its accepted code to main stands. Null for every unit that
+ * does not publish, and for one that is marked but not accepted yet: publication begins at
+ * acceptance. `pending` is a wait on a signed-in operator, never a failure of the work, and
+ * `unsealed` is the accepted unit whose facts could not open a publication at all.
+ */
+export interface CodeUnitPublication {
+  /** Omitted on historical GitHub publications. */
+  destination?: 'local' | 'github';
+  state:
+    | 'pending'
+    | 'stale'
+    | 'setup_required'
+    | 'disabled'
+    | 'closed'
+    | 'unsealed'
+    | 'incident'
+    | 'published';
+  pull?: { number: number; url: string };
+  /** The verified merge commit on main; present only once `published`. */
+  mergeCommit?: string;
 }

@@ -19,7 +19,6 @@ import {
 } from '@merv/code/store/operations';
 import type {
   Caller,
-  CodeAcceptedSince,
   CodeRepositoryPrepareInput,
   CodeStoreOperation,
   Scope,
@@ -55,6 +54,7 @@ import type {
 } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
 import type { CodeWriterService } from '@merv/code/writers';
+import type { CodeAcceptedSince } from './models.js';
 
 /** How many times verification imports one merge commit before an operator imports it. */
 const PUBLICATION_IMPORT_ATTEMPTS = 3;

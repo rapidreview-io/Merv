@@ -1,5 +1,4 @@
 import type { CodeCommandRecord } from '@merv/contracts/code';
-import type { CodeProjectStatus } from '@merv/contracts/code-work-models';
 import type { GitHubStatus } from '@merv/contracts/types';
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -14,6 +13,7 @@ import { MAIN, chipsOf, gitModel } from './code-model';
 import { GitHubPublications } from './github-publications';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
+import type { CodeProjectStatus } from '@merv/code-work/models';
 
 /**
  * Code: the branches Merv made drawn as one picture, and the pull requests they

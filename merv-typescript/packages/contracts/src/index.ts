@@ -77,7 +77,6 @@ export {
   keyId,
   sameOriginPath,
   workLink,
-  dependencyRows,
 } from './running.js';
 export {
   codexHandoffGraceMs,
@@ -110,24 +109,6 @@ export {
   codeCommandRecordSchema,
   codeLocalBindInputSchema,
 } from './code.js';
-import type { CodeUnit } from './code-work-models.js';
-export type {
-  CodeAcceptedSince,
-  CodeUnitAcceptInput,
-  CodeUnitAcceptance,
-  CodeUnitPublication,
-  CodeBasePin,
-  CodeBaseRecord,
-  CodeBaseCheck,
-  CodeBaseCheckState,
-  CodeBaseControlInput,
-  CodeBaseState,
-  CodeBaseStatus,
-  CodeUnit,
-  CodeProjectStatus,
-  CodeCheckSpec,
-  CodeStoreLimits,
-} from './code-work-models.js';
 export type { CodeWriterState, CodeWriterStatus } from './code-units.js';
 export type {
   CodeLocalBindInput,
@@ -269,6 +250,8 @@ export type Limits = {
   undefined?: 'omit' | 'reject' | 'omit-root';
   nullPrototype?: boolean;
 };
+/** Field names that steer prototypes, refused wherever a name becomes an object key. */
+export const RESERVED_KEYS: readonly string[] = ['__proto__', 'prototype', 'constructor'];
 /**
  * A detached plain-JSON copy of an input, made without calling accessors: no proxies, foreign
  * prototypes, cycles, sparse arrays, symbol keys, non-finite numbers, NUL or lone surrogates;
@@ -336,7 +319,7 @@ export function plain<T = Json>(value: unknown, code = 'invalid_input', limits: 
     } else {
       const record: Data = {};
       for (const [key, field] of Object.entries(descriptors)) {
-        if (limits.keys !== 'any' && ['__proto__', 'prototype', 'constructor'].includes(key))
+        if (limits.keys !== 'any' && RESERVED_KEYS.includes(key))
           refuse('Input contains a reserved field name');
         text(key);
         if (
@@ -559,34 +542,6 @@ export interface Sql {
 export interface Transaction extends Sql {
   readonly transactionId: symbol;
 }
-/** Whose day a model call counts toward: a person's sign-in identity, else the acting actor.
- *  Every feature keys a person alike, so one day counts all their calls. */
-export const personKey = (
-  user: { issuer: string; subject: string } | null | undefined,
-  actor: { projectId: string; actorId: string },
-) =>
-  digest(
-    user
-      ? { issuer: user.issuer, subject: user.subject }
-      : { projectId: actor.projectId, actorId: actor.actorId },
-  );
-/** The provider endpoint model relays call upstream. */
-export const RESPONSES_URL = 'https://api.openai.com/v1/responses';
-/** A daily token ledger, `table(person,day,tokens)`. `charge` adds a call's most to the day unless
- *  the day's total would pass `ceiling` (false then); `settle` corrects that day by `delta`. */
-export const dailyTokens = (table: string) => ({
-  charge: async (sql: Sql, person: string, day: string, tokens: number, ceiling: number) =>
-    tokens <= ceiling &&
-    !!(await sql.get(
-      `INSERT INTO ${table}(person,day,tokens) VALUES(?,?,?) ON CONFLICT(person,day) DO UPDATE SET tokens=${table}.tokens+excluded.tokens WHERE ${table}.tokens+excluded.tokens <= ? RETURNING tokens`,
-      person,
-      day,
-      tokens,
-      ceiling,
-    )),
-  settle: (sql: Sql, person: string, day: string, delta: number) =>
-    sql.run(`UPDATE ${table} SET tokens=tokens+? WHERE person=? AND day=?`, delta, person, day),
-});
 export interface Migration {
   /** A positive integer that fits PostgreSQL INTEGER. */
   version: number;
@@ -1196,7 +1151,7 @@ export interface Scope {
 }
 /** The most bytes an artifact holds inline: created whole, or read whole or in ranges. */
 export const MAX_ARTIFACT_BYTES = 2_000_000;
-/** The most ids one `Artifacts.getMany` call looks up; `getArtifacts` takes any number. */
+/** The most ids one `Artifacts.getMany` call looks up; `getAll` takes any number. */
 export const MAX_ARTIFACT_IDS = 2000;
 export interface ArtifactInput {
   title: string;
@@ -1282,6 +1237,9 @@ export interface Artifacts {
   /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: the artifacts in input
    * order, duplicates kept; `not_found` for the first id that is not in this project. */
   getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
+  /** `getMany` for any number of ids, MAX_ARTIFACT_IDS at a time: the artifacts in input order,
+   * duplicates kept; `not_found` for the first id that is not in this project. */
+  getAll(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
   /** Exactly `artifact.size` bytes whose SHA-256 is `artifact.hash`; `artifact_size` above the
    * inline limit. Bytes kept in the row are read locally; older rows fetch them from storage. */
   bytes(
@@ -1308,51 +1266,10 @@ export interface Artifacts {
     query?: { before?: string; limit?: number; session?: string },
     tx?: Transaction,
   ): Promise<Artifact[]>;
-}
-/**
- * `Artifacts.getMany` for any number of ids, MAX_ARTIFACT_IDS at a time: the artifacts in input
- * order, duplicates kept; `not_found` for the first id that is not in this project.
- */
-export async function getArtifacts(
-  artifacts: Pick<Artifacts, 'getMany'>,
-  caller: Caller,
-  ids: readonly string[],
-  tx?: Transaction,
-): Promise<Artifact[]> {
-  const found: Artifact[] = [];
-  for (let start = 0; start < ids.length; start += MAX_ARTIFACT_IDS)
-    found.push(
-      ...(await artifacts.getMany(caller, ids.slice(start, start + MAX_ARTIFACT_IDS), tx)),
-    );
-  return found;
-}
-/**
- * The outputs of the calling session worker's execution: the artifacts its session created as
- * this actor, oldest first, metadata only. Scope refuses a session caller whose actor is not
- * that session's worker; any other caller is refused here.
- */
-export async function executionOutputs(
-  artifacts: Pick<Artifacts, 'list'>,
-  caller: Caller,
-  tx?: Transaction,
-): Promise<Artifact[]> {
-  // The session and actor are read after awaits.
-  caller = structuredClone(caller);
-  check(
-    caller.session,
-    'forbidden',
-    'Output receipts require an authenticated session worker',
-    403,
-  );
-  const outputs: Artifact[] = [];
-  const limit = 1000;
-  let page: Artifact[] = [];
-  do {
-    const before = page.at(-1)?.id;
-    page = await artifacts.list(caller, { session: caller.session.id, before, limit }, tx);
-    outputs.push(...page.filter((artifact) => artifact.createdBy === caller.actorId));
-  } while (page.length === limit);
-  return outputs.reverse();
+  /** The outputs of the calling session worker's execution: the artifacts its session created
+   * as this actor, oldest first, metadata only. Scope refuses a session caller whose actor is
+   * not that session's worker; any other caller is refused here. */
+  executionOutputs(caller: Caller, tx?: Transaction): Promise<Artifact[]>;
 }
 export interface WorkflowDefinition {
   name: string;
@@ -1588,107 +1505,6 @@ export interface WorkflowExecution {
   registrationId: string;
   policy: WorkflowExecutionPolicy;
   references: WorkflowExecutionReferences;
-}
-export interface WorkflowDispatchAdmission {
-  tool: string;
-  input: Data;
-}
-/** The value a fixed binding gives its argument; a oneOf or subset choice gives none. */
-export function executionArgument(
-  binding: WorkflowExecutionBinding,
-  execution: WorkflowExecution,
-): unknown {
-  if (binding.kind === 'literal') return binding.value;
-  if (binding.kind === 'target') return execution[binding.field];
-  if (binding.kind === 'reference') {
-    const reference = Object.hasOwn(execution.references, binding.name)
-      ? execution.references[binding.name]
-      : undefined;
-    check(
-      typeof reference === 'string',
-      'execution_reference_unavailable',
-      `Execution reference ${binding.name} is unavailable`,
-      409,
-    );
-    return reference;
-  }
-  return undefined;
-}
-/**
- * Admits one tool call under an execution: a declared tool, with arguments its bindings allow
- * and fill in. The input is a detached JSON object its caller has bounded; each alternative
- * binds its own copy.
- */
-export function admitDispatch(
-  execution: WorkflowExecution,
-  tool: string,
-  original: Data,
-): WorkflowDispatchAdmission {
-  const grant = execution.policy.tools.find((grant) => grant.name === tool);
-  check(grant, 'execution_tool_forbidden', 'Tool is not declared for this workflow state', 403);
-  const matches = new Map<string, Data>();
-  const errors: MervError[] = [];
-  for (const alternative of grant.alternatives) {
-    try {
-      const result = structuredClone(original);
-      for (const [field, binding] of Object.entries(alternative)) {
-        if (binding.kind === 'oneOf' || binding.kind === 'subset') {
-          const values = Object.hasOwn(execution.references, binding.name)
-            ? execution.references[binding.name]
-            : undefined;
-          check(
-            Array.isArray(values),
-            'execution_reference_unavailable',
-            `Execution reference ${binding.name} is unavailable`,
-            409,
-          );
-          // Omitting a subset means selecting no resources, never all available resources.
-          if (binding.kind === 'subset' && !Object.hasOwn(result, field)) result[field] = [];
-          // A choice among one reference is no choice: an omitted field takes it.
-          if (binding.kind === 'oneOf' && !Object.hasOwn(result, field) && values.length === 1)
-            result[field] = values[0]!;
-          check(
-            Object.hasOwn(result, field),
-            'execution_arguments_forbidden',
-            `Choose ${field} from the declared execution references`,
-            403,
-          );
-          const actual = result[field];
-          check(
-            binding.kind === 'oneOf'
-              ? typeof actual === 'string' && values.includes(actual)
-              : Array.isArray(actual) &&
-                  actual.every((value) => typeof value === 'string' && values.includes(value)),
-            'execution_arguments_forbidden',
-            `${field} is outside the declared execution references`,
-            403,
-          );
-        } else {
-          const expected = executionArgument(binding, execution);
-          if (Object.hasOwn(result, field))
-            check(
-              canonical(result[field]) === canonical(expected),
-              'execution_arguments_forbidden',
-              `${field} conflicts with this workflow assignment`,
-              403,
-            );
-          else result[field] = structuredClone(expected) as Data[string];
-        }
-      }
-      matches.set(canonical(result), result);
-    } catch (error) {
-      if (!(error instanceof MervError)) throw error;
-      errors.push(error);
-    }
-  }
-  check(
-    matches.size <= 1,
-    'execution_arguments_ambiguous',
-    'Supply the fixed fields needed to select one execution alternative',
-  );
-  if (!matches.size)
-    throw errors.find((error) => error.code === 'execution_arguments_forbidden') ?? errors[0]!;
-  return { tool, input: [...matches.values()][0]! };
 }
 export interface WorkflowAssignmentContent {
   role: string;

@@ -1,4 +1,4 @@
-import { createService, type Caller, type CodeProjectStatus } from '@merv/contracts';
+import { createService, type Caller } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -18,6 +18,7 @@ import { importRepository } from '@merv/code-work/import-client';
 import { boundProject } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { openState } from './fixtures/state.js';
+import type { CodeProjectStatus } from '@merv/code-work/models';
 
 const PART = 4 * 1024 * 1024;
 

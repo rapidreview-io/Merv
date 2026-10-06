@@ -5,8 +5,8 @@
  */
 import test, { beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AgentSummary } from '@merv/contracts/types';
 import { click, jump, mount, requests, serve, settle, text, unmount } from './ui-render.js';
+import type { AgentSummary } from '@merv/sessions/types';
 
 const { createElement, useState } = await import('react');
 const { MemoryRouter } = await import('react-router-dom');

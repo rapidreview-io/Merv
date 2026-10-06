@@ -1,4 +1,4 @@
-import { visible, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
+import { visible, mapAsync } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
@@ -14,7 +14,6 @@ import {
   newId,
   now,
   type Artifact,
-  type CodeUnit,
   type Caller,
   type Data,
   type ProcessGraph,
@@ -93,6 +92,7 @@ import {
   type ExperimentRow,
   type SubmissionRow,
 } from './storage.js';
+import type { CodeUnit } from '@merv/code-work/models';
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
@@ -771,7 +771,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     tx: Transaction,
   ): Promise<boolean> {
     return caller.session
-      ? (await executionOutputs(this.artifacts, caller, tx)).some(
+      ? (await this.artifacts.executionOutputs(caller, tx)).some(
           (output) => output.id === artifact.id,
         )
       : artifact.createdBy === caller.actorId;
@@ -978,7 +978,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         ...new Set([...approved.figureIds, ...(await this.figures(caller, text, experiment, tx))]),
       ];
       // Their bytes were read when the design was submitted, and artifacts never change.
-      await getArtifacts(this.artifacts, caller, approved.figureIds, tx);
+      await this.artifacts.getAll(caller, approved.figureIds, tx);
       exhibit = await this.buildExhibit(
         caller,
         experiment,
@@ -1088,7 +1088,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       );
     }
     const artifactIds = [...new Set([...evidence.map((e) => e.artifactId), ...figureIds])];
-    const pinnedInputIds = (await getArtifacts(this.artifacts, caller, artifactIds, tx))
+    const pinnedInputIds = (await this.artifacts.getAll(caller, artifactIds, tx))
       .filter((artifact) => artifact.createdBy !== caller.actorId)
       .map((artifact) => artifact.id);
     const moved = await this.move(
@@ -1150,7 +1150,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       manifestHash: digest({
         formatVersion: 1,
         evidence,
-        figures: await getArtifacts(this.artifacts, caller, figureIds, tx),
+        figures: await this.artifacts.getAll(caller, figureIds, tx),
         ...(codeCaptureRef ? { codeCaptureRef } : {}),
       }),
       reviewId: review.id,

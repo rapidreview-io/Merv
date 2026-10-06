@@ -11,8 +11,8 @@ import { CredentialStore } from '@merv/identity/credentials';
 import type {} from '@merv/api/types';
 import type { Secrets, HuggingFaceGrant, AccountIdentity } from '@merv/secrets/types';
 import type { ManagedBindingRow } from './managed-types.js';
+import { admitDispatch, type WorkflowDispatchAdmission } from '@merv/workflows/execution';
 import {
-  admitDispatch,
   canonical,
   check,
   delegationEnd,
@@ -34,7 +34,6 @@ import {
   type Scope,
   type State,
   type Transaction,
-  type WorkflowDispatchAdmission,
   type WorkflowExecution,
   type WorkflowExecutionReferences,
   type Workflows,
