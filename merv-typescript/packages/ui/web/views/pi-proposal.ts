@@ -1,6 +1,6 @@
 /**
- * A call the agent proposed, in the product's words: the act it performs, titled from the verb
- * table (docs/UI_DESIGN.md, "Verbs"), and its input as facts a person reads. Then what Run told
+ * A call the agent proposed, in the product's words: the act it performs, titled by the tool's
+ * owner (docs/UI_DESIGN.md, "Verbs"), and its input as facts a person reads. Then what Run told
  * the agent in the person's name, recognised again so the transcript draws it as what came back
  * and never as something the person typed. Pure: names, inputs and messages in, words out.
  */
@@ -21,43 +21,14 @@ const NOUN: Record<string, string> = {
 };
 const noun = (object: string) => NOUN[object] ?? spaced(object);
 
-/** The acts the verb table names, by tool; some read the input to know which act. */
-const ACTS: Record<string, (input: Input) => string> = {
-  'session.dispatch': (input) => (input.enabled === false ? 'Pause dispatch' : 'Start dispatch'),
-  'session.halt': (input) => (input.sessionId ? 'Halt lease' : 'Halt all leases'),
-  'research.advance': () => 'Start next step',
-  'review.start': () => 'Claim review',
-  'review.submit': () => 'Submit verdict',
-  'task.submit_delivery': () => 'Submit delivery',
-  'task.mark_failed': () => 'Mark task failed',
-  'artifact.read': ({ mode }) => (mode === 'download' ? 'Download file' : 'Read file'),
-  'experiment.transition': ({ transition }) =>
-    ({ abandon: 'Abandon experiment', mark_failed: 'Mark experiment failed' })[
-      String(transition)
-    ] ?? sentence(spaced(String(transition))),
-  'code.publication.control': ({ action }) => `${sentence(String(action))} publication`,
-  'code.local.bind': () => 'Bind repository',
-  'fleet.workflow_retry': () => 'Retry on Fleet',
-  'sandbox.extend': () => 'Extend lease',
-  'sandbox.release': () => 'Release machine',
-};
-/** The input an act's own words have said, which its facts do not say again. */
-const SAID: Record<string, string> = {
-  'session.dispatch': 'enabled',
-  'artifact.read': 'mode',
-  'experiment.transition': 'transition',
-  'code.publication.control': 'action',
-};
-
 /**
- * The act a call performs: the table's words where it names the act, `New <object>` for anything
- * that creates one, and otherwise the tool's own words — an action with an underscore says itself
- * (`usage.set_budget` is `Set budget`), any other comes before its object, in the product's word
- * for it (`research.end` is `End cycle`, `artifact.read` is `Read file`).
+ * The act a call performs: its tool's own title where the tool's owner declared one (`act`), `New
+ * <object>` for anything that creates one, and otherwise the tool's own words — an action with an
+ * underscore says itself (`usage.set_budget` is `Set budget`), any other comes before its object,
+ * in the product's word for it (`research.end` is `End cycle`, `fleet.halt` is `Halt machine`).
  */
-export function actOf(name: string, input: unknown): string {
-  const named = ACTS[name];
-  if (named) return named(fields(input));
+export function actOf({ name, act }: Pick<PiProposal, 'name' | 'act'>): string {
+  if (act) return act.title;
   const [action = name, object] = name.split('.').reverse();
   if (object && action === 'create') return `New ${noun(object)}`;
   return sentence(object && !action.includes('_') ? `${action} ${noun(object)}` : spaced(action));
@@ -98,11 +69,11 @@ export function labelOf(name: string, key: string): string {
 }
 
 /** The input as facts in its own order, without its machinery, what the act said, or anything empty. */
-export function factsOf(name: string, input: unknown): Fact[] {
+export function factsOf({ name, input, act }: Pick<PiProposal, 'name' | 'input' | 'act'>): Fact[] {
   return Object.entries(fields(input)).flatMap(([key, value]): Fact[] => {
     if (
       MACHINERY.has(key) ||
-      key === SAID[name] ||
+      key === act?.says ||
       value === null ||
       value === undefined ||
       value === ''

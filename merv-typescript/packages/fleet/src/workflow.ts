@@ -875,6 +875,7 @@ export const fleetWorkflowPlugin = {
       ctx.effect(() =>
         ctx.tools.register({
           name: 'fleet.workflow_retry',
+          act: { title: 'Retry on Fleet' },
           conversation: 'propose' as const,
           description:
             'Project administrator only. After two created but unclaimed Fleet machines exhaust one exact workflow revision, record a reason and open one more bounded two-attempt window. Prior allocations and the grant remain auditable. A stable requestId makes uncertain retries idempotent; active or stale work is refused. Capacity, wallet and model budgets still govern renting.',

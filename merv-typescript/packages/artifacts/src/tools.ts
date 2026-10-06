@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import type {} from '@merv/api/types';
+import type { ToolAct } from '@merv/api/types';
 import { MervError, MAX_ARTIFACT_BYTES, MAX_OBJECT_BYTES, type Caller } from '@merv/contracts';
 import { z } from 'zod';
 
@@ -36,6 +36,7 @@ export const artifactToolsPlugin = {
       readOnly = false,
       conversation?: 'never' | ((input: z.infer<S>) => 'secret' | 'propose' | undefined),
       openWorld = false,
+      act?: ToolAct,
     ) =>
       ctx.effect(() =>
         ctx.tools.register({
@@ -46,6 +47,7 @@ export const artifactToolsPlugin = {
           readOnly,
           conversation,
           openWorld,
+          act,
         }),
       );
     register(
@@ -172,6 +174,7 @@ export const artifactToolsPlugin = {
       // Open world: storage I/O (older rows' bytes, signing, the download mirror) waits holding
       // no reader snapshot, since artifacts runs each database read in a short transaction.
       true,
+      { title: ({ mode }) => (mode === 'download' ? 'Download file' : 'Read file'), says: 'mode' },
     );
     register(
       'artifact.list',

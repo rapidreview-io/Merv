@@ -697,6 +697,8 @@ test('an exact repeated proposal in one turn keeps one Run action and one mutati
       name: 'probe.decision',
       description: 'A proposed decision',
       conversation: 'propose',
+      // The card's words are the owner's, read from the input as the agent proposed it.
+      act: { title: ({ action }) => `Decide to ${String(action)}`, says: 'action' },
       inputSchema: z.object({ action: z.string(), requestId: z.string() }).strict(),
       handler: () => ({ mutations: ++mutations }),
     }),
@@ -730,6 +732,7 @@ test('an exact repeated proposal in one turn keeps one Run action and one mutati
     command.proposals?.map(({ id }) => id),
     [first.proposed.id, changed.proposed.id],
   );
+  assert.deepEqual(command.proposals?.[0]?.act, { title: 'Decide to abandon', says: 'action' });
   assert.equal(mutations, 0);
   await f.pi.complete(turn.token, f.completion(turn.input));
   const run = (proposalId: string) =>

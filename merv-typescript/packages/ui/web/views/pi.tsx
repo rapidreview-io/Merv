@@ -293,7 +293,7 @@ function Outcome({
         <span className={cx('pi-receipt-word', failed && 'pi-refused')}>
           {failed ? 'Refused' : 'Ran'}
         </span>
-        {named && <span className="pi-receipt-act">{actOf(proposal.name, proposal.input)}</span>}
+        {named && <span className="pi-receipt-act">{actOf(proposal)}</span>}
         {refused && (
           <>
             <span className="ghost" aria-hidden="true">
@@ -332,12 +332,12 @@ function Proposal({
   run(): void;
 }) {
   const id = useId();
-  const facts = factsOf(proposal.name, proposal.input);
+  const facts = factsOf(proposal);
   const names = useRecordNames(JSON.stringify(proposal.input) ?? '');
   return (
     <article className="pi-proposal" title={proposal.name}>
       <p className="pi-proposal-act" id={`${id}act`}>
-        {actOf(proposal.name, proposal.input)}
+        {actOf(proposal)}
       </p>
       {facts.length > 0 && (
         <div className="pi-proposal-facts" id={`${id}facts`}>

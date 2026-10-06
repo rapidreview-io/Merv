@@ -50,6 +50,7 @@ export const reviewToolsPlugin = {
       // conversation both are the person's to run.
       {
         name: 'review.start',
+        act: { title: 'Claim review' },
         conversation: 'propose' as const,
         description:
           'Claim an available review as an independent reviewer. Returns the review with a claimId that review.submit and the owning domain’s review steps require, and that domain’s verdict guidance: follow it in review.submit. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.',
@@ -65,6 +66,7 @@ export const reviewToolsPlugin = {
       },
       {
         name: 'review.submit',
+        act: { title: 'Submit verdict' },
         conversation: 'propose' as const,
         description:
           'Apply an independent verdict through the single domain that owns the review, atomically with its state transition. The owning domain determines every verdict’s next state, including whether fail returns for rework or ends work, and which returnTo routes and extra fields it accepts: follow the guidance review.start and review.get return. Optional returnTo selects an explicit return route when that domain requires or permits it. Claim with review.start and include its claimId. Your actor and current directing authority are checked against the pinned contributor provenance again when you submit. Supply a plain single-paragraph synopsis (40–420 characters) and exactly one finding per criterionNumber: met/not_met/not_verified/waived, evidenceIds from the pinned review, and notes explaining verification, required correction or why a waived check is unnecessary for the goal. Met requires evidence; pass requires all criteria met or explicitly waived and the overall goal achieved. Optional evidence stores structured observations; evidence.outcome supplies the passing outcome. expectedRevision is the pinned subject revision. Any other field is passed to the owning domain, which validates it; a domain that does not accept it refuses the verdict.',

@@ -27,6 +27,8 @@ export interface PiProposal {
   id: string;
   name: string;
   input: unknown;
+  /** The act as the tool's owner titles it, and the input field that title says. */
+  act?: { title: string; says?: string };
   secret?: true;
   ran?: { at: string; ok?: boolean; code?: string };
 }
