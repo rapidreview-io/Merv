@@ -1,15 +1,9 @@
 import type { Caller, StoredEvent, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
+import type { FeedPost } from './models.js';
 
-export interface FeedPost {
-  id: string;
-  sequence: number;
-  projectId: string;
-  authorId: string;
-  body: string;
-  artifactIds: string[];
-  createdAt: string;
-}
+export type { FeedPost } from './models.js';
+
 export interface FeedInput {
   body: string;
   artifactIds?: string[];

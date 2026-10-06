@@ -43,6 +43,9 @@ import type {
 import { actOf, decode, equal, hash, parse, publicCommand, roleOf } from './core.js';
 import { PiWorkerProtocol } from './worker-protocol.js';
 
+/** What Run tells the agent, and the part of it that says how the call came out. */
+type Told = Omit<PiRan, 'result'> & { said?: string };
+
 const publicConversation = ({ source: _source, ...value }: PiConversationRecord): PiConversation =>
   value;
 
@@ -450,44 +453,62 @@ export class PiService extends PiWorkerProtocol implements Pi, FleetOwner {
       await this.saveCommand(tx, command);
       return proposal;
     });
-    const settle = (ok: boolean, code?: string) =>
-      this.state.transaction(async (tx) => {
+    try {
+      let result: unknown = null;
+      let code: string | undefined;
+      let said = '';
+      try {
+        result = await this.tools.call(proposal.name, caller, proposal.input);
+      } catch (error) {
+        // A refusal is an answer too, in the tool's own words; a failure the server did not word
+        // for a person says only that it failed.
+        const refused = error instanceof MervError;
+        code = refused ? error.code : 'tool_failed';
+        said = refused && error.status < 500 ? error.message : 'it failed';
+      }
+      const told: Told = code
+        ? { told: `${proposal.name} was refused: ${said}`, said, whole: true }
+        : await this.ran(proposal, result);
+      await this.state.transaction(async (tx) => {
         const command = await this.command(tx, value.id, value.commandId);
-        Object.assign(find(command)!.ran!, { ok, ...(code && { code }) });
+        Object.assign(find(command)!.ran!, {
+          ok: !code,
+          ...(code && { code }),
+          told: told.told,
+          ...(told.said !== undefined && { said: told.said }),
+        });
         await this.saveCommand(tx, command);
       });
-    try {
-      const result = await this.tools.call(proposal.name, caller, proposal.input);
-      await settle(true);
-      return { result, ...(await this.ran(proposal, result)) };
-    } catch (error) {
-      await settle(false, error instanceof MervError ? error.code : 'tool_failed');
-      throw error;
+      return { result, told: told.told, whole: told.whole };
     } finally {
       this.streams.changed(value.id, value.commandId);
     }
   }
 
   /** What Run tells the agent in the person's name: the sentence that stands for a result only the
-   *  person sees, the tool's own receipt, or as much of the result's JSON as Run sends. */
-  private async ran(proposal: PiProposal, result: unknown): Promise<Omit<PiRan, 'result'>> {
+   *  person sees, the tool's own receipt, or as much of the result's JSON as Run sends; `said` is
+   *  the part of it that is the outcome. */
+  private async ran(proposal: PiProposal, result: unknown): Promise<Told> {
     if (proposal.secret)
       return { told: `Ran ${proposal.name}; its result is shown only to me.`, whole: false };
     try {
       const tool = (await this.tools.list()).find(({ name }) => name === proposal.name);
       const receipt =
         tool && 'receipt' in tool ? tool.receipt?.(result, proposal.input) : undefined;
-      if (receipt)
+      if (receipt) {
+        const said = JSON.stringify(receipt.summary);
         return {
-          told: `Ran ${proposal.name}: ${JSON.stringify(receipt.summary)}. Re-read ${receipt.reread.join(' and ')} for current details.`,
+          told: `Ran ${proposal.name}: ${said}. Re-read ${receipt.reread.join(' and ')} for current details.`,
+          said,
           whole: false,
         };
+      }
     } catch {
       // The call ran; a receipt that fails says nothing, and the result stands for it.
     }
     // A cut inside a character would leave half of it, which pi.send refuses.
     const json = (JSON.stringify(result) ?? 'null').slice(0, 4000).replace(/[\uD800-\uDBFF]$/, '');
-    return { told: `Ran ${proposal.name}: ${json}`, whole: true };
+    return { told: `Ran ${proposal.name}: ${json}`, said: json, whole: true };
   }
 
   /** Interrupts this conversation's turn only; the host serves the person's others. */

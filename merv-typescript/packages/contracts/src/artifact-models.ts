@@ -19,3 +19,16 @@ export interface Artifact {
   files?: ArtifactFile[];
   metadata?: Record<string, unknown>;
 }
+/** artifact.get and artifact.list: the record, and whether this deployment can prepare a
+ * download of it. */
+export interface ArtifactListing extends Artifact {
+  downloadAvailable?: boolean;
+}
+/** Artifact bytes as tool text; `offset` and `total` are set for a range. */
+export interface ArtifactContent {
+  artifact: Artifact;
+  content: string;
+  encoding: 'utf8' | 'base64';
+  offset?: number;
+  total?: number;
+}

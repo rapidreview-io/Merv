@@ -6,17 +6,12 @@ import { Icon, type IconName } from '../icons';
 import { ListPage, useListFilter } from '../list-filters';
 import { Markdown, RecordLink, recordNames, type RecordNames } from '../markdown';
 import type { ViewProps } from './index';
-import { fileType, type Artifact } from './artifacts';
+import type { ArtifactListing as Artifact } from '@merv/contracts/artifact-models';
+import type { FeedPost as Post } from '@merv/feed/models';
+import { fileType } from './artifacts';
 import { useHome } from './map-data';
 import { initials, namesOf } from './people';
 
-interface Post {
-  id: string;
-  authorId: string;
-  body: string;
-  artifactIds: string[];
-  createdAt: string;
-}
 interface Event {
   id: number;
   type: string;
