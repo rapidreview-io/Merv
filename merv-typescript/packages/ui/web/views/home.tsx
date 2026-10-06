@@ -27,9 +27,10 @@ import { useLive } from './work-map';
  */
 
 /** The project's name, and the cycle it is on: its state, and how much of its work is done. */
-function Head({ rows, home }: { rows: Row[]; home: HomeData | undefined }) {
+function Head({ shell, home }: { shell: ShellData; home: HomeData | undefined }) {
   const { project } = useSession();
-  const cycle = currentCycle(home?.research ?? undefined);
+  const rows = shell.rows;
+  const cycle = currentCycle(home?.research ?? undefined, shell.workflows);
   const cycles = pathOf(rows, 'research');
   const work = pathOf(rows, 'work');
   // Research counts its selected work and how much of it ended well.
@@ -231,7 +232,7 @@ export function HomeView({ shell }: { shell: ShellData }) {
   const { home, lines } = useNow(shell.rows);
   return (
     <div className="page-stage home">
-      <Head rows={shell.rows} home={home.data} />
+      <Head shell={shell} home={home.data} />
       <div className="home-parts">
         <div className="home-main">
           <NeedsYou rows={shell.rows} lines={lines} load={home} />

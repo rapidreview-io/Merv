@@ -3,7 +3,7 @@
  * identifier, title, authors, year and url, and every answer sized to what an agent is shown of
  * one result.
  */
-import { record } from '@merv/contracts';
+import { cleanText, ellipsis, record } from '@merv/contracts';
 import { canonicalId } from './input.js';
 import type { NisaPaper } from './types.js';
 
@@ -14,18 +14,9 @@ export const MAX_EXCERPT_CHARS = 2_000;
 const LIST_AUTHORS = 12;
 const PAPER_AUTHORS = 100;
 
-/** At most `max` characters, never half of one, and an ellipsis when cut. */
-export function clip(value: string, max: number): string {
-  if (value.length <= max) return value;
-  if (max <= 0) return '';
-  const end = /[\uD800-\uDBFF]/.test(value[max - 1] ?? '') ? max - 1 : max;
-  return `${value.slice(0, end)}…`;
-}
-/** Text as Nisa sent it, without control characters other than line breaks and tabs. */
+/** Text as Nisa sent it, without control characters other than line breaks and tabs: its first `max` characters, then '…' when cut. */
 export const text = (value: unknown, max: number): string =>
-  typeof value === 'string'
-    ? clip(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '').trim(), max)
-    : '';
+  ellipsis(cleanText(value, Number.MAX_SAFE_INTEGER).trim(), max + 1);
 const integer = (value: unknown): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const score = (value: unknown): number | null =>

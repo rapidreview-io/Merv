@@ -3,6 +3,17 @@ export const visible = (text: string) => /[^\s\p{Cf}]/u.test(text);
 /** At most `max` UTF-16 units, never ending in half a surrogate pair. */
 export const clip = (text: string, max: number) =>
   text.length > max ? text.slice(0, max).replace(/\p{Surrogate}$/u, '') : text;
+/** At most `max` UTF-16 units, the last of them '…' when the text was cut. */
+export const ellipsis = (text: string, max: number) =>
+  text.length > max ? `${clip(text, max - 1).trimEnd()}…` : text;
+/**
+ * Text a remote service sent, at most `max` UTF-16 units of it, without control characters
+ * other than line breaks and tabs; anything but a string is ''.
+ */
+export const cleanText = (value: unknown, max: number): string =>
+  typeof value === 'string'
+    ? clip(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ''), max)
+    : '';
 /**
  * An artifact's title as a context item's title, or its ID when the title is only line breaks and
  * white space: the builder folds an item title onto one line and refuses one left empty.

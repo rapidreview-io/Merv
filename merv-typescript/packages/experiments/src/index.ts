@@ -119,6 +119,14 @@ interface StandingContext {
 }
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
+/** Where a rejected design or results review may send the experiment, by the stage it read. */
+const RETURNS: Record<string, { value: string; label: string }[]> = {
+  design: [{ value: 'planned', label: 'Planning, for a new design' }],
+  results: [
+    { value: 'planned', label: 'Planning, for a new design and attempt' },
+    { value: 'running', label: 'Running, to repair under the approved plan' },
+  ],
+};
 /** What review.start and review.get tell the reviewer of an experiment's design or results. */
 const REVIEW_GUIDANCE =
   'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.';
@@ -178,6 +186,13 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           this.handleFor(workflow.version);
         },
         submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+        returns: async (review, tx) => {
+          const row = await tx.get<{ stage: string }>(
+            'SELECT stage FROM experiment_submissions WHERE review_id=?',
+            review.id,
+          );
+          return (row && RETURNS[row.stage]) ?? [];
+        },
         guidance: REVIEW_GUIDANCE,
         fields: ['paperChanges'],
         // An experiment is reviewed twice, so each review is named by the gate it read.

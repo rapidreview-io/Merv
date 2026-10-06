@@ -259,7 +259,7 @@ test('an owner states its verdict guidance and the extra verdict fields it valid
       'Pass rejects returnTo; include ownerInput when it applies.',
     );
   const other = await f.request();
-  assert.equal(await reviews.guidance(f.reviewer.caller, other.id), undefined);
+  assert.deepEqual(await reviews.guide(f.reviewer.caller, other.id), {});
   assert.equal(
     'guidance' in
       ((await f.app.ctx.tools.call('review.get', f.reviewer.caller, {

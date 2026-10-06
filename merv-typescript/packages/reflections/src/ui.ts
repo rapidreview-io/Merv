@@ -29,6 +29,7 @@ export const reflectionUiPlugin = {
       ctx.ui.contribute({
         owner: 'reflections',
         kinds: ['work'],
+        workflows: ['reflection'],
         lanes: ['work'],
         nodes: async (read) => ({ nodes: await reflections.running(read.caller, read.include) }),
         panel: async (read, key) =>

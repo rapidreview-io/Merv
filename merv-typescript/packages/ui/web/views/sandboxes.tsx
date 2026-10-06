@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ApiError, accountRequest, scopeVersion, useScopeVersion } from '../api';
+import { ApiError, accountRequest, useScopeVersion } from '../api';
+import { useCurrent } from '../mutations';
 
 interface SandboxesConnectionStatus {
   available: boolean;
@@ -47,9 +48,8 @@ export function SandboxesConnection({
   const [status, setStatus] = useState<SandboxesConnectionStatus>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const mounted = useRef(false);
   const finishing = useRef<{ epoch: number; result: Promise<SandboxesConnectionStatus> }>();
-  const current = useCallback(() => mounted.current && scopeVersion() === epoch, [epoch]);
+  const current = useCurrent();
   const callback = new URLSearchParams(window.location.search).get('sandboxes') === 'complete';
   const finish = useCallback(() => {
     if (finishing.current?.epoch !== epoch)
@@ -60,7 +60,6 @@ export function SandboxesConnection({
     return finishing.current.result;
   }, [epoch]);
   useEffect(() => {
-    mounted.current = true;
     setStatus(undefined);
     setError(undefined);
     setBusy(true);
@@ -90,10 +89,7 @@ export function SandboxesConnection({
       .finally(() => {
         if (current()) setBusy(false);
       });
-    return () => {
-      mounted.current = false;
-    };
-  }, [epoch, current, finish, onAvailable]);
+  }, [current, finish, onAvailable]);
 
   useEffect(() => {
     if (!status?.connected || status.funding !== 'managed') return;

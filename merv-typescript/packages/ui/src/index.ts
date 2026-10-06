@@ -6,7 +6,13 @@ import { check, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/api/types';
 import type { RunningContribution, Ui, UiRow, UiRowDescription, UiRowStatus } from './types.js';
 import { homeRead, identityOf } from './home.js';
-import { RunningRegistry, runningBoard, runningPanel, type RunningSources } from './running.js';
+import {
+  RunningRegistry,
+  runningBoard,
+  runningPanel,
+  workflowsOf,
+  type RunningSources,
+} from './running.js';
 import { serveBundle } from './static.js';
 
 export type {
@@ -183,6 +189,8 @@ export const uiPlugin = {
             const lanes = owner && ui.running.stood.get(owner);
             return lanes ? [{ owner, lanes }] : [];
           }),
+      // A work key's sidebar is asked of the owner of its record's workflow.
+      workflows: workflowsOf(() => ctx.get('workflows')),
       // A work record opens on the page of the row that lists its workflow.
       route: (workflow, id) => {
         const row = ui.rows().find((entry) => entry.workflow === workflow);

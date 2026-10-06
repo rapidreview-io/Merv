@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { accountRequest, scopeVersion, useScopeVersion } from '../api';
+import { accountRequest, useScopeVersion } from '../api';
+import { useCurrent } from '../mutations';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 
 export function GitHubAutomation({
@@ -10,9 +11,10 @@ export function GitHubAutomation({
   onChanged(): void;
 }) {
   const epoch = useScopeVersion();
+  const scoped = useCurrent();
   const revision = useRef(status.revision);
   revision.current = status.revision;
-  const current = () => epoch === scopeVersion() && revision.current === status.revision;
+  const current = () => scoped() && revision.current === status.revision;
   const [mode, setMode] = useState(status.automation);
   const [base, setBase] = useState(status.baseBranch ?? status.repository?.defaultBranch ?? '');
   const [branches, setBranches] = useState<GitHubBranch[]>();

@@ -10,6 +10,7 @@ import { DelimitedTable, parseDelimited } from '../csv';
 import { languageOf } from '../highlight';
 import { JsonLines, JsonView, readJson } from '../json-view';
 import { MAX_READ, Markdown, useRecordNames } from '../markdown';
+import { useCurrent } from '../mutations';
 import { Mermaid } from '../mermaid';
 import { NotebookView, readNotebook } from '../notebook';
 import { useSession } from '../session';
@@ -223,13 +224,7 @@ function ArtifactDownload({ artifactId, fileName }: { artifactId: string; fileNa
   const [download, setDownload] = useState<{ url: string; expiresAt: string }>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const mounted = useRef(true);
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
+  const current = useCurrent();
   useEffect(() => {
     if (!download) return;
     const timer = setTimeout(
@@ -248,13 +243,13 @@ function ArtifactDownload({ artifactId, fileName }: { artifactId: string; fileNa
         mode: 'download',
         ...(fileName === undefined ? {} : { fileName }),
       });
-      if (mounted.current && Date.parse(result.download.expiresAt) > Date.now())
+      if (current() && Date.parse(result.download.expiresAt) > Date.now())
         setDownload(result.download);
     } catch (failure) {
-      if (mounted.current)
+      if (current())
         setError(failure instanceof Error ? failure.message : 'Download could not be prepared');
     } finally {
-      if (mounted.current) setBusy(false);
+      if (current()) setBusy(false);
     }
   };
   return (

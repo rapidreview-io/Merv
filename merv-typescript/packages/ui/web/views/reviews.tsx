@@ -21,15 +21,15 @@ import type { HomeData } from './map-data';
 import { useActorNames } from './people';
 import type { Task, TaskConfirmation } from '@merv/tasks/models';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
-import type { ReviewRequest } from '@merv/contracts/types';
+import type { ReviewGuide, ReviewRequest } from '@merv/contracts/types';
 
 /** review.submit enumerates exactly these finding words and these verdicts. */
 const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
 const VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
 type Verdict = (typeof VERDICTS)[number];
 
-/** A review as review.get and review.list answer it. */
-export type Review = ReviewRequest;
+/** A review as review.get and review.list answer it; review.get adds its owner's return routes. */
+export type Review = ReviewRequest & Pick<ReviewGuide, 'returns'>;
 /** What a desk has said about one check so far: its word, the sentence, the files it cites. */
 export interface Draft {
   status?: string;
@@ -486,7 +486,9 @@ function Controls({
       <Desk
         review={review}
         action={submit}
-        routes={ROUTES[guidance.data.workflow]?.[guidance.data.state] ?? []}
+        // Return routes are the one part of a verdict no schema enumerates: the owning
+        // domain names them on the review it serves, and a task's review takes none.
+        routes={review.returns ?? []}
         // A Git task passes only from a leased reviewer in a checkout of the delivered commit,
         // which no browser is, unless its owner decides as owner.
         passes={guidance.data.workflow !== 'task' || !!review.override}
@@ -521,29 +523,6 @@ function Controls({
     />
   );
 }
-
-/**
- * Return routes are the one part of a verdict no schema enumerates: review.submit
- * accepts any identifier and the owning domain decides. These are the destinations
- * each gate documents in packages/experiments/src/program.ts and accepts in
- * packages/reflections/src/index.ts; a task review takes none at all, so its choice
- * never appears.
- */
-const ROUTES: Record<string, Record<string, { value: string; label: string }[]>> = {
-  experiment: {
-    design_review: [{ value: 'planned', label: 'Planning, for a new design' }],
-    experiment_review: [
-      { value: 'planned', label: 'Planning, for a new design and attempt' },
-      { value: 'running', label: 'Running, to repair under the approved plan' },
-    ],
-  },
-  reflection: {
-    in_review: [
-      { value: 'synthesizing', label: 'Synthesis, for a revised report' },
-      { value: 'reflecting', label: 'Lenses, for five new reports' },
-    ],
-  },
-};
 
 /** The longest synopsis review.submit takes. */
 const SYNOPSIS_MAX = 420;

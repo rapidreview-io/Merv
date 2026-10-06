@@ -60,6 +60,7 @@ export const experimentsUiPlugin = {
       ctx.ui.contribute({
         owner: 'experiments',
         kinds: ['work'],
+        workflows: ['experiment'],
         lanes: ['work'],
         nodes: async (read) => ({ nodes: await experiments.running(read.caller, read.include) }),
         panel: async (read, key) => await experiments.runningPanel(read.caller, key, read.route),

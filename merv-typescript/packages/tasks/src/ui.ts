@@ -63,6 +63,7 @@ export const taskUiPlugin = {
       ctx.ui.contribute({
         owner: 'tasks',
         kinds: ['work'],
+        workflows: ['task'],
         lanes: ['work'],
         nodes: async (read) => ({ nodes: await tasks.running(read.caller, read.include) }),
         panel: async (read, key) =>

@@ -206,15 +206,20 @@ function StageGlyph({
 
 /** Where a record read from a list stands: the program it names, and its state. */
 type Standing = { workflow?: string; version?: number; state: string };
-/** That program's steps with the record's place marked; none for a program with no shape here. */
-function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[] {
-  const shape = shapes?.find(
+const shapeOf = (shapes: WorkflowShape[] | undefined, workflow: Standing) =>
+  shapes?.find(
     (item) =>
       item.name === workflow.workflow &&
       (workflow.version === undefined || item.version === workflow.version),
   );
+/** That program's steps with the record's place marked; none for a program with no shape here. */
+function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[] {
+  const shape = shapeOf(shapes, workflow);
   return shape ? stagesOfShape(shape, workflow.state) : [];
 }
+/** The record stands in an end state of its program, as the deployed shape declares it. */
+export const ended = (shapes: WorkflowShape[] | undefined, workflow: Standing) =>
+  !!shapeOf(shapes, workflow)?.terminal.includes(workflow.state);
 /**
  * A state said beside a name, the one way everywhere: its mark in the stage's colour, then
  * its word in plain ink. The stages come from the record's own graph where the page holds

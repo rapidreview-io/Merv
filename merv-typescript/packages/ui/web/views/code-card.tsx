@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ellipsis } from '@merv/contracts/text';
 import type { CodePublication } from '@merv/contracts/types';
 import {
   Ago,
@@ -481,9 +482,7 @@ export function CodeCard({
                     from <Short value={entry.repositoryId} /> <Ago at={entry.reboundAt} /> —{' '}
                     {/* The reason is the operator's own, up to 4000 characters: the line keeps
                         its length and the hover keeps the whole of it. */}
-                    <span title={entry.reason}>
-                      {entry.reason.length > 120 ? `${entry.reason.slice(0, 120)}…` : entry.reason}
-                    </span>
+                    <span title={entry.reason}>{ellipsis(entry.reason, 121)}</span>
                   </div>
                 ))}
               </>,

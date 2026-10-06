@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clip, markdownSection, plain } from '@merv/contracts';
+import { cleanText, clip, ellipsis, markdownSection, plain } from '@merv/contracts';
 
 test('plain() detaches bounded JSON and refuses what JSON cannot carry', () => {
   const refused = (value: unknown, limits = {}) =>
@@ -64,4 +64,14 @@ test('clip() never ends in half a surrogate pair', () => {
   assert.equal(clip('aaa😀b', 5), 'aaa😀');
   assert.equal(clip('ab', 5), 'ab');
   assert.equal(clip('😀😀', 3), '😀');
+});
+
+test('ellipsis() ends cut text in one ellipsis within max, and cleanText() keeps only text', () => {
+  assert.equal(ellipsis('abcdef', 6), 'abcdef');
+  assert.equal(ellipsis('abcdefg', 6), 'abcde…');
+  assert.equal(ellipsis('abcd fg', 6), 'abcd…');
+  assert.equal(ellipsis('aaa😀b', 5), 'aaa…');
+  assert.equal(cleanText('a\u0000b\tc\nd\u007f', 100), 'ab\tc\nd');
+  assert.equal(cleanText('aaa😀b', 4), 'aaa');
+  assert.equal(cleanText(42, 10), '');
 });

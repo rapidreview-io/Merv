@@ -1397,6 +1397,11 @@ test('reflection reviewer authors paper edits with the verdict and main-agent ed
   const assignment = await f.app.ctx.workflows.assignment(reviewer, wave.id);
   assert.ok(JSON.stringify(assignment).includes('paperChanges'));
   const review = await f.app.ctx.reviews.start(reviewer, wave.review!.id);
+  // The wave names where a rejection may send it, beside its verdict rules.
+  assert.deepEqual(
+    (await f.app.ctx.reviews.guide(reviewer, review)).returns?.map(({ value }) => value),
+    ['synthesizing', 'reflecting'],
+  );
   const input: ReflectionReview = {
     reviewId: review.id,
     claimId: review.claimId!,

@@ -1,6 +1,7 @@
 import {
   check,
   clip,
+  ellipsis,
   runningKey,
   runningKeyPattern,
   type Json,
@@ -77,9 +78,6 @@ function money(value: unknown): RunningMoney | null {
     ? { amount: figure, currency }
     : null;
 }
-/** Long machine text keeps its head and says it was cut. */
-const cut = (value: string, max: number) =>
-  value.length > max ? `${clip(value, max - 1)}…` : value;
 
 /** One sandbox, as the lane and its sidebar read it. */
 interface Machine {
@@ -406,7 +404,7 @@ export function machinePanel(input: MachinePanelInput): RunningPanelPart | null 
 
   const running: RunningFact[] = [];
   if (live) {
-    if (command) running.push({ label: 'Command', value: [{ mono: cut(command, 400) }] });
+    if (command) running.push({ label: 'Command', value: [{ mono: ellipsis(command, 400) }] });
   } else if (last) {
     const finished = instant(last.finished_at);
     running.push({
@@ -502,7 +500,7 @@ function actionsOf(
   if (!LEASED.has(machine.state)) return actions;
   const where = machine.provider ? ` at ${machine.provider}` : '';
   const stops = command
-    ? `, and ${cut(command, 160)} stops with it`
+    ? `, and ${ellipsis(command, 160)} stops with it`
     : jobRunning(machine)
       ? ', and the job running on it stops with it'
       : '';

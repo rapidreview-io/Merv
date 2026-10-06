@@ -22,7 +22,7 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions, type SessionsConfig } from '@merv/sessions';
 import { UiRegistry } from '@merv/ui';
-import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/running';
+import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import type { SandboxRuntimes } from '@merv/sandboxes';
 import { FleetService } from '../packages/fleet/src/index.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
@@ -203,6 +203,7 @@ async function fixture(
     contributions: () => ui.contributions(),
     tools: async () => ['session.halt', 'session.dispatch'],
     isolated: (read) => state.isolated(read),
+    workflows: workflowsOf(() => workflows),
   };
   // The reads as ui.running and ui.running_panel make them: in one read-only snapshot, where
   // a write is refused, so a part that wrote would name its owner as failed.

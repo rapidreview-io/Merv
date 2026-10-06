@@ -216,6 +216,11 @@ export class ReflectionService implements Reflections {
             review.projectId,
           )),
         submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+        // A rejected report goes back to synthesis, or to the lenses for five new reports.
+        returns: async () => [
+          { value: 'synthesizing', label: 'Synthesis, for a revised report' },
+          { value: 'reflecting', label: 'Lenses, for five new reports' },
+        ],
         guidance: REVIEW_GUIDANCE,
         fields: ['paperChanges'],
       });

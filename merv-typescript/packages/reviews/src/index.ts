@@ -17,6 +17,7 @@ import {
   type Role,
   type ReviewProvenance,
   type ReviewProvenanceResolver,
+  type ReviewGuide,
   type ReviewRequest,
   type Reviews,
   type ReviewSubmit,
@@ -310,7 +311,9 @@ export class ReviewService implements Reviews {
       'Review owner must be a plain object',
     );
     const descriptors = Object.getOwnPropertyDescriptors(owner);
-    const optional = (['claim', 'gates'] as const).filter((key) => Object.hasOwn(owner, key));
+    const optional = (['claim', 'gates', 'returns'] as const).filter((key) =>
+      Object.hasOwn(owner, key),
+    );
     const metadata = (['guidance', 'fields'] as const).filter((key) => Object.hasOwn(owner, key));
     const keys = ['id', 'owns', 'submit', ...optional, ...metadata];
     check(
@@ -319,7 +322,7 @@ export class ReviewService implements Reviews {
           (key) => descriptors[key] && 'value' in descriptors[key] && descriptors[key].enumerable,
         ),
       'invalid_review_owner',
-      'Review owner requires only id, owns and submit, and may add claim, gates, guidance and fields',
+      'Review owner requires only id, owns and submit, and may add claim, gates, returns, guidance and fields',
     );
     check(
       typeof owner.id === 'string' &&
@@ -359,6 +362,7 @@ export class ReviewService implements Reviews {
       submit: owner.submit,
       ...(owner.claim ? { claim: owner.claim } : {}),
       ...(owner.gates ? { gates: owner.gates } : {}),
+      ...(owner.returns ? { returns: owner.returns } : {}),
       ...(owner.guidance === undefined ? {} : { guidance: owner.guidance }),
       ...(fields ? { fields } : {}),
     });
@@ -432,11 +436,11 @@ export class ReviewService implements Reviews {
     });
   }
 
-  async guidance(
+  async guide(
     caller: Caller,
     reviewOrId: string | ReviewRequest,
     transaction?: Transaction,
-  ): Promise<string | undefined> {
+  ): Promise<ReviewGuide> {
     caller = structuredClone(caller);
     const review = freeze(
       typeof reviewOrId === 'string'
@@ -447,7 +451,13 @@ export class ReviewService implements Reviews {
       const matches: Readonly<ReviewSubmitOwner>[] = [];
       for (const owner of [...this.owners.values()])
         if ((await owner.owns(review, tx)) === true) matches.push(owner);
-      return matches.length === 1 ? matches[0].guidance : undefined;
+      if (matches.length !== 1) return {};
+      const [{ guidance, returns }] = matches;
+      const routes = returns ? [...(await returns(review, tx))] : [];
+      return {
+        ...(guidance === undefined ? {} : { guidance }),
+        ...(routes.length ? { returns: routes.map(({ value, label }) => ({ value, label })) } : {}),
+      };
     };
     // Ownership reads in a transaction; a snapshot's is read-only and takes no writer lock.
     const tx = transaction ?? this.state.ambient;

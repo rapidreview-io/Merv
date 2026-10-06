@@ -18,7 +18,8 @@ await import('../packages/ui/web/components.js');
 const { RecordPicker, narrowed, stepped } = await import('../packages/ui/web/record-picker.js');
 const { TaskChecks } = await import('../packages/ui/web/views/tasks.js');
 const { fileInput } = await import('../packages/ui/web/views/artifacts.js');
-const { CreateResearch, CycleMove, chained } = await import('../packages/ui/web/views/work.js');
+const { CreateResearch, CycleMove, chained, currentCycle } =
+  await import('../packages/ui/web/views/work.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { setToken } = await import('../packages/ui/web/api.js');
 
@@ -597,7 +598,7 @@ const cycle = (state: string) => ({
   createdAt: new Date().toISOString(),
   researchDependencies: ['wf_task', 'wf_done'],
   progress: { settled: 1, total: 2 },
-  workflow: { state, revision: 3, updatedAt: new Date().toISOString() },
+  workflow: { workflow: 'research', state, revision: 3, updatedAt: new Date().toISOString() },
   problem: null,
   reflectionId: null,
   integrations: [],
@@ -641,6 +642,14 @@ const cycleGate = (state: string, advance: Record<string, unknown>) => ({
   },
 });
 const sent: Record<string, unknown>[] = [];
+const researchShape = {
+  name: 'research',
+  version: 1,
+  initial: 'researching',
+  states: ['researching', 'consolidating', 'reflecting', 'complete', 'abandoned'],
+  terminal: ['complete', 'abandoned'],
+  edges: [],
+};
 const page = (state: string) => {
   sent.length = 0;
   serve('/tools/research.advance', (_call, body) => {
@@ -653,7 +662,8 @@ const page = (state: string) => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     createElement(CycleMove as any, {
       cycle: cycle(state),
-      shell: { rows: [], plugins: [] },
+      // The deployed shape says where a cycle ends; the page knows no end state of its own.
+      shell: { rows: [], plugins: [], workflows: [researchShape] },
       onSaved() {},
     }),
   );
@@ -736,6 +746,22 @@ test('a ready gate is the one move, and it sends nothing it was not asked for', 
   assert.ok(!text().includes('Sweep weight decay'), 'nothing is waited on while the move is open');
   await click('Start next step');
   assert.deepEqual(Object.keys(sent[0]!).sort(), ['expectedRevision', 'requestId', 'researchId']);
+});
+
+test('the cycle the project is on is the newest one its deployed shape has not ended', () => {
+  const at = (state: string, updatedAt: string) => ({
+    ...cycle(state),
+    id: state,
+    workflow: { workflow: 'research', state, revision: 3, updatedAt },
+  });
+  const cycles = [
+    at('researching', '2026-10-01T00:00:00Z'),
+    at('complete', '2026-10-02T00:00:00Z'),
+  ];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(currentCycle(cycles as any, [researchShape])?.id, 'researching');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  assert.equal(currentCycle([cycles[1]] as any, [researchShape])?.id, 'complete');
 });
 
 test('a cycle that has ended offers no move at all', async (t) => {

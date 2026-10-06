@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
+import { ellipsis } from '@merv/contracts/text';
 import { StatusPill, cx, words } from './components';
 
 /**
@@ -142,7 +143,7 @@ export function firstSentence(text: string | null | undefined, limit = 140): str
   if (!trimmed) return null;
   const stop = trimmed.search(/[.!?](\s|$)|\n/);
   const first = (stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed).trim();
-  return first.length > limit ? `${first.slice(0, limit - 1)}…` : first;
+  return ellipsis(first, limit);
 }
 
 /** What the count beside a row label means, so arriving from it lands on that work. */

@@ -263,6 +263,11 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
   assert.deepEqual(await f.call(producer, 'experiment.create', create), original);
   const grade = async (requestId: string) => {
     const review = await f.call(reviewer, 'review.get', { reviewId: e.reviewId });
+    // The experiment names where a rejection may send it, by the stage the review read.
+    assert.deepEqual(
+      review.returns.map(({ value }: { value: string }) => value),
+      e.workflow.state === 'design_review' ? ['planned'] : ['planned', 'running'],
+    );
     for (const artifactId of review.artifactIds)
       await f.call(reviewer, 'artifact.read', { artifactId });
     const claimed = await f.call(reviewer, 'review.start', { reviewId: review.id });

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { accountRequest, scopeVersion, useScopeVersion } from '../api';
+import { accountRequest, useScopeVersion } from '../api';
+import { useCurrent } from '../mutations';
 import type { GitHubRepository, GitHubStatus } from '@merv/contracts/types';
 import { LoadState } from '../components';
 import { Icon } from '../icons';
@@ -20,17 +21,15 @@ export function GitHubConnection() {
   const [selection, setSelection] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
-  const mounted = useRef(false);
   const finishing = useRef<{ epoch: number; result: Promise<GitHubStatus> }>();
   const callback = new URLSearchParams(window.location.search).get('github') === 'complete';
-  const current = useCallback(() => mounted.current && epoch === scopeVersion(), [epoch]);
+  const current = useCurrent();
   const finish = useCallback(() => {
     if (finishing.current?.epoch !== epoch)
       finishing.current = { epoch, result: request<GitHubStatus>('/finish', {}) };
     return finishing.current.result;
   }, [epoch]);
   useEffect(() => {
-    mounted.current = true;
     setStatus(undefined);
     setRepositories(undefined);
     setSelection('');
@@ -69,10 +68,7 @@ export function GitHubConnection() {
       .finally(() => {
         if (current()) setBusy(false);
       });
-    return () => {
-      mounted.current = false;
-    };
-  }, [epoch, current, finish]);
+  }, [current, finish]);
 
   async function act(action: () => Promise<void>) {
     if (busy || !current()) return;

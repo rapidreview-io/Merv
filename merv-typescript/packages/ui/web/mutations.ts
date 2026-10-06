@@ -1,5 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, call, scopeVersion, useScopeVersion } from './api';
+
+/**
+ * Whether an answer that began in this render may still change the page: the component is
+ * still mounted and the account and project are those it rendered for. Take it once per
+ * render and ask it after every await.
+ */
+export function useCurrent(): () => boolean {
+  const epoch = useScopeVersion();
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  return useCallback(() => mounted.current && epoch === scopeVersion(), [epoch]);
+}
 
 /** Keep the original command through an uncertain response, including refused retries. */
 export function useCommand<T>(options: {
@@ -14,8 +31,7 @@ export function useCommand<T>(options: {
   /** The tool rejects a requestId because retrying it is already safe by identity. */
   idempotent?: boolean;
 }) {
-  const epoch = useScopeVersion();
-  const mounted = useRef(false);
+  const current = useCurrent();
   const pending = useRef<Record<string, unknown> | null>(null);
   const uncertain = useRef(false);
   const inFlight = useRef(false);
@@ -23,15 +39,8 @@ export function useCommand<T>(options: {
   const [retry, setRetry] = useState(false);
   const [error, setError] = useState<string>();
   const [code, setCode] = useState<string>();
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
   const submit = async (input: Record<string, unknown>) => {
-    if (inFlight.current || epoch !== scopeVersion()) return;
-    const current = () => mounted.current && epoch === scopeVersion();
+    if (inFlight.current || !current()) return;
     const command =
       pending.current ??
       Object.freeze(

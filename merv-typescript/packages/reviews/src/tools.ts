@@ -2,19 +2,24 @@ import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
 import { REVIEW_VERDICTS } from './rules.js';
-import type { Caller, ReviewApplication, ReviewRequest, Reviews } from '@merv/contracts';
+import type {
+  Caller,
+  ReviewApplication,
+  ReviewGuide,
+  ReviewRequest,
+  Reviews,
+} from '@merv/contracts';
 
 const requestId = z.string().min(1).max(200);
 const id = z.string().min(1);
 
-/** The owning domain's verdict rules travel with the review the reviewer reads or claims. */
+/** The owning domain's verdict rules and return routes travel with the review read or claimed. */
 async function guided(
   reviews: Reviews,
   caller: Caller,
   review: ReviewRequest,
-): Promise<ReviewRequest & { guidance?: string }> {
-  const guidance = await reviews.guidance(caller, review);
-  return guidance === undefined ? review : { ...review, guidance };
+): Promise<ReviewRequest & ReviewGuide> {
+  return { ...review, ...(await reviews.guide(caller, review)) };
 }
 
 /** Generic review transport; registered target programs apply verdicts transactionally. */

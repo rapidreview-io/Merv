@@ -1,37 +1,27 @@
+import type { z } from 'zod';
 import {
   check,
+  keyId,
   keyKind,
   mapAsync,
   MervError,
   runningKeyPattern,
+  runningSchema,
   sameOriginPath,
-  visible,
   type Caller,
-  type Json,
-  type AgentStreamSession,
   type RunningAction,
   type RunningAttention,
   type RunningBoard,
   type RunningEdge,
-  type RunningFact,
-  type RunningHeader,
   type RunningLane,
   type RunningLaneName,
-  type RunningLinkRow,
   type RunningMark,
-  type RunningMoney,
   type RunningNode,
-  type RunningNodeLink,
   type RunningPanel,
-  type RunningPhrase,
-  type RunningPlace,
-  type RunningRow,
   type RunningSection,
-  type RunningStreamItem,
   type RunningSummary,
-  type RunningTarget,
-  type RunningValue,
   type RunningVerb,
+  type Workflows,
   type WorkRoute,
 } from '@merv/contracts';
 import type { RunningContribution, RunningRead } from './types.js';
@@ -52,47 +42,23 @@ import type { RunningContribution, RunningRead } from './types.js';
  * timer, and says how old they are.
  */
 
-const LANES: readonly RunningLaneName[] = ['work', 'sessions', 'hardware'];
+const { runningAction, runningHeader, runningMark, runningNode, runningSection, runningSummary } =
+  runningSchema;
+const LANES = runningSchema.runningLane.options;
 /** The sidebar's reading order. Live facts come before what the record is. */
-const PLACES: readonly RunningPlace[] = [
-  'progress',
-  'activity',
-  'review',
-  'relations',
-  'code',
-  'content',
-  'machine',
-  'details',
-];
-const VERBS = new Set<RunningVerb>([
-  'waits on',
-  'works on',
-  'reviews',
-  'reads',
-  'rented for',
-  'runs for',
-  'checks',
-]);
+const PLACES = runningSchema.runningPlace.options;
 /** The verbs by which a session lends its dot to the work it is on. */
 const WORKING = new Set<RunningVerb>(['works on', 'reviews']);
 /** Strongest first. */
 const DOTS: readonly NonNullable<RunningNode['dot']>[] = ['moving', 'live', 'starting'];
-const LOOKS = new Set(['solid', 'dashed', 'quiet']);
-const ACTION_VERBS = new Set(['start', 'pause', 'halt', 'extend', 'release']);
-const STREAM_STATES = new Set(['running', 'succeeded', 'failed', 'interrupted']);
 
 /** Nodes drawn per lane; the rest are counted in `more`. */
 export const LANE_CAP = 200;
-const PHRASE_PARTS = 16;
 const PANEL_SECTIONS = 16;
 const ALIASES = 16;
 
 const ownerPattern = /^[a-z][a-z0-9-]{0,31}$/;
 const kindPattern = /^[a-z][a-z-]{0,23}$/;
-const toolPattern = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
-const moneyPattern = /^-?\d{1,15}(\.\d{1,12})?$/;
-/** The shell ends every link with its own arrow, so an owner's trailing one is dropped. */
-const trailingArrow = /\s*[→↗]\s*$/u;
 
 // ─── Registry ─────────────────────────────────────────────────────────────────────────────
 
@@ -124,6 +90,13 @@ export class RunningRegistry {
           kinds.every((kind) => typeof kind === 'string' && kindPattern.test(kind))),
       'invalid_contribution',
       'Contribution kinds must be lowercase key kinds',
+    );
+    check(
+      contribution.workflows === undefined ||
+        (Array.isArray(contribution.workflows) &&
+          contribution.workflows.every((name) => typeof name === 'string' && name.length > 0)),
+      'invalid_contribution',
+      'Contribution workflows must be workflow names',
     );
     check(
       lanes === undefined || (Array.isArray(lanes) && lanes.every((lane) => LANES.includes(lane))),
@@ -178,200 +151,55 @@ export interface RunningSources {
   absent?(): readonly { owner: string; lanes: readonly RunningLaneName[] }[];
   /** The page of a work record, by its workflow; without it, no work record has one. */
   route?: WorkRoute;
+  /** The workflow of each of these work records this caller's project holds, by instance id. */
+  workflows(caller: Caller, ids: readonly string[]): Promise<ReadonlyMap<string, string>>;
 }
 
-// ─── Validation: every part is checked, and what fails is left out ────────────────────────
+/** Each work record's workflow, as Workflows reads it; none while Workflows is not running. */
+export const workflowsOf =
+  (workflows: () => Pick<Workflows, 'revisions'> | undefined) =>
+  async (caller: Caller, ids: readonly string[]): Promise<ReadonlyMap<string, string>> =>
+    new Map(
+      [...((await workflows()?.revisions(caller.projectId, ids)) ?? [])].map(([id, row]) => [
+        id,
+        row.workflow,
+      ]),
+    );
+
+// ─── Validation: every part is parsed by the contract's schemas, and what fails is left out ─
 
 type Loose = Record<string, unknown>;
 const isObject = (value: unknown): value is Loose =>
   !!value && typeof value === 'object' && !Array.isArray(value);
-const words = (value: unknown, max: number): value is string =>
-  typeof value === 'string' && value.length <= max && visible(value);
 const instant = (value: unknown): value is string =>
   typeof value === 'string' && value.length <= 64 && !Number.isNaN(Date.parse(value));
-const count = (value: unknown, max = Number.MAX_SAFE_INTEGER): value is number =>
-  Number.isInteger(value) && (value as number) >= 0 && (value as number) <= max;
-const seconds = (value: unknown): value is number | undefined =>
-  value === undefined || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
-const flag = (value: unknown): value is boolean | undefined =>
-  value === undefined || typeof value === 'boolean';
 const isKey = (value: unknown): value is string =>
   typeof value === 'string' && runningKeyPattern.test(value);
-function https(value: unknown): value is string {
-  if (typeof value !== 'string' || value.length > 2000 || !/^https:\/\/\S+$/.test(value))
-    return false;
-  try {
-    return new URL(value).protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
+
+/** The part as the contract reads it, or null when it breaks the contract. */
+const parsed =
+  <T extends z.ZodTypeAny>(schema: T) =>
+  (value: unknown): z.output<T> | null => {
+    const result = schema.safeParse(value);
+    return result.success ? result.data : null;
+  };
+const kept = <T>(values: unknown[], of: (value: unknown) => T | null): T[] =>
+  values.map(of).filter((value): value is T => value !== null);
 
 /** A key the board can select, a page of this app, or an https page outside it. */
-export function targetOf(value: unknown): RunningTarget | null {
-  if (!isObject(value)) return null;
-  if ('href' in value) return https(value.href) ? { href: value.href } : null;
-  if ('key' in value) {
-    if (!isKey(value.key)) return null;
-    if (value.route === undefined) return { key: value.key };
-    return sameOriginPath(value.route) ? { key: value.key, route: value.route } : null;
-  }
-  if ('route' in value) return sameOriginPath(value.route) ? { route: value.route } : null;
-  return null;
-}
-
-/** Undefined when the value is not money; null is money that is not known. */
-function moneyOf(value: unknown): RunningMoney | null | undefined {
-  if (value === null) return null;
-  if (!isObject(value)) return undefined;
-  return typeof value.amount === 'string' &&
-    moneyPattern.test(value.amount) &&
-    typeof value.currency === 'string' &&
-    /^[A-Z]{3}$/.test(value.currency)
-    ? { amount: value.amount, currency: value.currency }
-    : undefined;
-}
-
-function valueOf(part: unknown): RunningValue | null {
-  if (typeof part === 'string') return part.length <= 1000 ? part : null;
-  if (!isObject(part)) return null;
-  if ('mono' in part) return words(part.mono, 400) ? { mono: part.mono } : null;
-  if ('state' in part) return words(part.state, 64) ? { state: part.state } : null;
-  if ('ago' in part) return instant(part.ago) ? { ago: part.ago } : null;
-  if ('since' in part || 'until' in part) {
-    const at = 'since' in part ? part.since : part.until;
-    if (!instant(at) || !seconds(part.of)) return null;
-    const of = part.of === undefined ? {} : { of: part.of };
-    return 'since' in part ? { since: at, ...of } : { until: at, ...of };
-  }
-  if ('count' in part)
-    return count(part.count) && (part.of === undefined || count(part.of))
-      ? { count: part.count, ...(part.of === undefined ? {} : { of: part.of }) }
-      : null;
-  if ('money' in part) {
-    const money = moneyOf(part.money);
-    const of = part.of === undefined ? null : moneyOf(part.of);
-    const rate = part.rate === undefined ? null : moneyOf(part.rate);
-    if (money === undefined || of === undefined || rate === undefined) return null;
-    return {
-      money,
-      ...(part.of === undefined ? {} : { of }),
-      ...(part.rate === undefined ? {} : { rate }),
-    };
-  }
-  if ('actor' in part) {
-    if (!words(part.actor, 200)) return null;
-    if (part.prefix !== undefined && !(typeof part.prefix === 'string' && part.prefix.length <= 40))
-      return null;
-    if (part.unnamed !== undefined && !words(part.unnamed, 60)) return null;
-    return {
-      actor: part.actor,
-      ...(part.prefix ? { prefix: part.prefix } : {}),
-      ...(part.unnamed ? { unnamed: part.unnamed } : {}),
-    };
-  }
-  if ('link' in part) {
-    if (!words(part.text, 200)) return null;
-    const text = part.text.replace(trailingArrow, '');
-    if (!visible(text)) return null;
-    // A link that goes nowhere this page may send a reader still says its words.
-    const to = targetOf(part.link);
-    return to ? { link: to, text } : text;
-  }
-  return null;
-}
-
+export const targetOf = parsed(runningSchema.runningTarget);
 /** Words and facts in order, at most sixteen of them; null when any part is not one. */
-export function phraseOf(value: unknown): RunningPhrase | null {
-  if (!Array.isArray(value) || value.length > PHRASE_PARTS) return null;
-  const parts = value.map(valueOf);
-  return parts.every((part) => part !== null) ? (parts as RunningPhrase) : null;
-}
-
-export function attentionOf(value: unknown): RunningAttention | null {
-  if (!isObject(value)) return null;
-  const says = phraseOf(value.says);
-  if (!says?.length) return null;
-  if (value.who !== undefined && !words(value.who, 120)) return null;
-  // A way to the move that goes nowhere is left off; the person's need still stands.
-  const to = isObject(value.to) && words(value.to.text, 40) ? targetOf(value.to) : null;
-  const text = to && (value.to as Loose & { text: string }).text.replace(trailingArrow, '');
-  return {
-    says,
-    ...(value.who === undefined ? {} : { who: value.who }),
-    ...(to && text && visible(text) ? { to: { ...to, text } } : {}),
-    ...(value.quiet === true ? { quiet: true as const } : {}),
-  };
-}
-
-export function markOf(value: unknown): RunningMark | null {
-  if (!isObject(value) || !isKey(value.key)) return null;
-  const attention = attentionOf(value);
-  return attention && { key: value.key, ...attention };
-}
-
-function linkOf(value: unknown): RunningNodeLink | null {
-  if (!isObject(value) || !isKey(value.to) || !VERBS.has(value.verb as RunningVerb)) return null;
-  if (!flag(value.waiting)) return null;
-  return {
-    to: value.to,
-    verb: value.verb as RunningVerb,
-    ...(value.waiting ? { waiting: true } : {}),
-  };
-}
-
+export const phraseOf = parsed(runningSchema.runningPhrase);
+export const attentionOf = parsed(runningSchema.runningAttention);
+export const markOf = parsed(runningMark);
 /** A card, as its owner drew it, or null when any of it breaks the contract. */
-export function nodeOf(value: unknown): RunningNode | null {
-  if (!isObject(value)) return null;
-  const { key, lane, title, look } = value;
-  if (!isKey(key) || !LANES.includes(lane as RunningLaneName) || !words(title, 200)) return null;
-  if (!LOOKS.has(look as string)) return null;
-  if (value.kind !== undefined && !words(value.kind, 40)) return null;
-  if (value.name !== undefined && !words(value.name, 200)) return null;
-  if (!Array.isArray(value.lines) || value.lines.length > 2) return null;
-  const lines = value.lines.map(phraseOf);
-  if (lines.some((line) => !line)) return null;
-  if (value.dot !== undefined && !DOTS.includes(value.dot as NonNullable<RunningNode['dot']>))
-    return null;
-  const attention = value.attention === undefined ? undefined : attentionOf(value.attention);
-  if (attention === null) return null;
-  const units = value.units;
-  if (
-    units !== undefined &&
-    !(isObject(units) && count(units.count, 64) && typeof units.busy === 'boolean')
-  )
-    return null;
-  if (value.links !== undefined && !(Array.isArray(value.links) && value.links.length <= 64))
-    return null;
-  const links = ((value.links as unknown[] | undefined) ?? []).map(linkOf);
-  if (links.some((link) => !link)) return null;
-  if (
-    value.aliases !== undefined &&
-    !(Array.isArray(value.aliases) && value.aliases.length <= ALIASES && value.aliases.every(isKey))
-  )
-    return null;
-  if (value.rank !== undefined && !(typeof value.rank === 'number' && Number.isFinite(value.rank)))
-    return null;
-  return {
-    key,
-    lane: lane as RunningLaneName,
-    ...(value.kind === undefined ? {} : { kind: value.kind }),
-    title,
-    ...(value.name === undefined ? {} : { name: value.name }),
-    lines: lines as RunningPhrase[],
-    look: look as RunningNode['look'],
-    ...(value.dot === undefined ? {} : { dot: value.dot as RunningNode['dot'] }),
-    ...(attention ? { attention } : {}),
-    ...(isObject(units)
-      ? { units: { count: units.count as number, busy: units.busy as boolean } }
-      : {}),
-    ...(links.length ? { links: links as RunningNodeLink[] } : {}),
-    ...((value.aliases as string[] | undefined)?.length
-      ? { aliases: [...new Set(value.aliases as string[])] }
-      : {}),
-    ...(value.rank === undefined ? {} : { rank: value.rank as number }),
-  };
-}
+export const nodeOf = parsed(runningNode);
+/**
+ * One sidebar section, or null when it breaks the contract or says nothing. A row that
+ * breaks it is left out and the rest of the section stands.
+ */
+export const sectionOf = parsed(runningSection);
+const headerOf = parsed(runningHeader);
 
 /**
  * A control this caller may use, or null. The owner decides `allowed`; a tool this server
@@ -379,240 +207,15 @@ export function nodeOf(value: unknown): RunningNode | null {
  * goes to the browser as it came and is sent back as it is.
  */
 export function actionOf(value: unknown, tools: ReadonlySet<string>): RunningAction | null {
-  if (!isObject(value) || value.allowed !== true) return null;
-  const { label, verb, tool, input } = value;
-  if (!words(label, 40) || !ACTION_VERBS.has(verb as string)) return null;
-  if (typeof tool !== 'string' || !toolPattern.test(tool) || !tools.has(tool)) return null;
-  if (!isObject(input)) return null;
-  let encoded: string;
-  try {
-    encoded = JSON.stringify(input);
-  } catch {
-    return null;
-  }
-  if (Buffer.byteLength(encoded) > 4096) return null;
-  const guard = value.guard;
-  if (
-    guard !== undefined &&
-    !(isObject(guard) && words(guard.title, 80) && words(guard.consequence, 400))
-  )
-    return null;
-  const expect = value.expect;
-  if (
-    expect !== undefined &&
-    !(
-      isObject(expect) &&
-      typeof expect.field === 'string' &&
-      /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(expect.field) &&
-      typeof expect.min === 'number' &&
-      Number.isFinite(expect.min) &&
-      words(expect.nothing, 120)
-    )
-  )
-    return null;
-  return {
-    label,
-    verb: verb as RunningAction['verb'],
-    tool,
-    input: JSON.parse(encoded) as Record<string, Json>,
-    allowed: true,
-    // Only a start wears the accent; a pause, a halt or a release never does.
-    ...(value.primary === true && verb === 'start' ? { primary: true } : {}),
-    ...(isObject(guard)
-      ? { guard: { title: guard.title as string, consequence: guard.consequence as string } }
-      : {}),
-    ...(isObject(expect)
-      ? {
-          expect: {
-            field: expect.field as string,
-            min: expect.min as number,
-            nothing: expect.nothing as string,
-          },
-        }
-      : {}),
-  };
+  const action = parsed(runningAction)(value);
+  return action && tools.has(action.tool) ? action : null;
 }
-
 const actionsOf = (value: unknown, tools: ReadonlySet<string>): RunningAction[] =>
-  Array.isArray(value)
-    ? value.map((action) => actionOf(action, tools)).filter((action) => action !== null)
-    : [];
+  Array.isArray(value) ? kept(value, (action) => actionOf(action, tools)) : [];
 
 export function summaryOf(value: unknown, tools: ReadonlySet<string>): RunningSummary | null {
-  if (!isObject(value) || !LANES.includes(value.lane as RunningLaneName)) return null;
-  const says = phraseOf(value.says);
-  if (!says) return null;
-  const attention = value.attention === undefined ? undefined : attentionOf(value.attention);
-  if (attention === null) return null;
-  if (!Array.isArray(value.actions) || value.actions.length > 4) return null;
-  return {
-    lane: value.lane as RunningLaneName,
-    says,
-    ...(attention ? { attention } : {}),
-    actions: actionsOf(value.actions, tools),
-  };
-}
-
-function factOf(value: unknown): RunningFact | null {
-  if (!isObject(value) || !words(value.label, 60) || !flag(value.attention)) return null;
-  const phrase = phraseOf(value.value);
-  return (
-    phrase && { label: value.label, value: phrase, ...(value.attention ? { attention: true } : {}) }
-  );
-}
-
-function rowOf(value: unknown, columns: number): RunningRow | null {
-  if (!isObject(value) || !Array.isArray(value.cells) || value.cells.length !== columns)
-    return null;
-  if (!flag(value.attention)) return null;
-  const cells = value.cells.map(phraseOf);
-  if (cells.some((cell) => !cell)) return null;
-  const to = value.to === undefined ? null : targetOf(value.to);
-  return {
-    cells: cells as RunningPhrase[],
-    ...(to ? { to } : {}),
-    ...(value.attention ? { attention: true } : {}),
-  };
-}
-
-function jumpOf(value: unknown): RunningLinkRow | null {
-  if (!isObject(value) || !words(value.name, 200) || !flag(value.attention)) return null;
-  const to = targetOf(value.to);
-  if (!to) return null;
-  if (value.kind !== undefined && !words(value.kind, 40)) return null;
-  const says = value.says === undefined ? undefined : phraseOf(value.says);
-  if (says === null) return null;
-  return {
-    to,
-    ...(value.kind === undefined ? {} : { kind: value.kind }),
-    name: value.name,
-    ...(says ? { says } : {}),
-    ...(value.attention ? { attention: true } : {}),
-  };
-}
-
-function itemOf(value: unknown): RunningStreamItem | null {
-  if (!isObject(value) || !instant(value.at)) return null;
-  if ('mark' in value) {
-    const mark = phraseOf(value.mark);
-    return mark?.length ? { mark, at: value.at } : null;
-  }
-  if (!words(value.call, 200) || !STREAM_STATES.has(value.state as string)) return null;
-  if (!(value.ms === null || (typeof value.ms === 'number' && Number.isFinite(value.ms))))
-    return null;
-  return {
-    call: value.call,
-    state: value.state as 'running' | 'succeeded' | 'failed' | 'interrupted',
-    at: value.at,
-    ms: value.ms as number | null,
-  };
-}
-
-const kept = <T>(values: unknown[], of: (value: unknown) => T | null): T[] =>
-  values.map(of).filter((value): value is T => value !== null);
-
-/**
- * One sidebar section, or null when it breaks the contract or says nothing. A row that
- * breaks it is left out and the rest of the section stands.
- */
-export function sectionOf(value: unknown): RunningSection | null {
-  if (!isObject(value) || !words(value.title, 60)) return null;
-  if (!PLACES.includes(value.place as RunningPlace)) return null;
-  if (!flag(value.attention) || !flag(value.folded)) return null;
-  const aside = value.aside === undefined ? undefined : phraseOf(value.aside);
-  if (aside === null) return null;
-  const frame = {
-    title: value.title,
-    place: value.place as RunningPlace,
-    ...(aside?.length ? { aside } : {}),
-    ...(value.attention ? { attention: true } : {}),
-    ...(value.folded ? { folded: true } : {}),
-  };
-  switch (value.kind) {
-    case 'text': {
-      if (typeof value.text !== 'string' || value.text.length > 16_000 || !visible(value.text))
-        return null;
-      if (!flag(value.markdown) || !flag(value.truncated)) return null;
-      if (value.clamp !== undefined && !(count(value.clamp, 40) && value.clamp > 0)) return null;
-      return {
-        ...frame,
-        kind: 'text',
-        text: value.text,
-        ...(value.markdown ? { markdown: true } : {}),
-        ...(value.clamp === undefined ? {} : { clamp: value.clamp as number }),
-        ...(value.truncated ? { truncated: true } : {}),
-      };
-    }
-    case 'facts': {
-      if (!Array.isArray(value.rows) || value.rows.length > 24) return null;
-      const rows = kept(value.rows, factOf);
-      return rows.length ? { ...frame, kind: 'facts', rows } : null;
-    }
-    case 'table': {
-      const columns = value.columns;
-      if (!Array.isArray(columns) || !columns.length || columns.length > 6) return null;
-      if (!columns.every((column) => words(column, 40))) return null;
-      if (!Array.isArray(value.rows) || value.rows.length > 50) return null;
-      const rows = kept(value.rows, (row) => rowOf(row, columns.length));
-      return rows.length ? { ...frame, kind: 'table', columns: columns as string[], rows } : null;
-    }
-    case 'links': {
-      if (!Array.isArray(value.rows) || value.rows.length > 50) return null;
-      const rows = kept(value.rows, jumpOf);
-      return rows.length ? { ...frame, kind: 'links', rows } : null;
-    }
-    case 'ladder': {
-      const graph = value.graph;
-      if (!isObject(graph) || !Array.isArray(graph.nodes) || !Array.isArray(graph.edges))
-        return null;
-      if (typeof graph.state !== 'string' || !graph.nodes.length) return null;
-      return { ...frame, kind: 'ladder', graph: graph as never };
-    }
-    case 'stream': {
-      if (!Array.isArray(value.items) || value.items.length > 60 || !count(value.total))
-        return null;
-      const items = kept(value.items, itemOf);
-      return items.length || value.total
-        ? { ...frame, kind: 'stream', items, total: value.total }
-        : null;
-    }
-    case 'agent': {
-      if (!Array.isArray(value.sessions) || value.sessions.length > 20) return null;
-      const sessions = kept(value.sessions, agentSessionOf);
-      return sessions.length ? { ...frame, kind: 'agent', sessions } : null;
-    }
-    default:
-      return null;
-  }
-}
-
-/** One session of the live view: its words, its times and the route that reads its stream. */
-function agentSessionOf(value: unknown): AgentStreamSession | null {
-  if (!isObject(value) || !words(value.sessionId, 200) || !words(value.state, 200)) return null;
-  if (!words(value.role, 40) || typeof value.live !== 'boolean' || !instant(value.startedAt))
-    return null;
-  if (value.endedAt !== undefined && !instant(value.endedAt)) return null;
-  if (value.continues !== undefined && !words(value.continues, 200)) return null;
-  if (!words(value.events, 300) || !sameOriginPath(value.events)) return null;
-  const { sessionId, state, role, live, startedAt, endedAt, continues, events } = value;
-  return {
-    sessionId,
-    state,
-    role,
-    live,
-    startedAt,
-    ...(endedAt ? { endedAt } : {}),
-    ...(continues ? { continues } : {}),
-    events,
-  };
-}
-
-function headerOf(value: unknown): RunningHeader | null {
-  if (!isObject(value) || !words(value.kind, 40) || !words(value.title, 200)) return null;
-  const says = phraseOf(value.says);
-  const attention = value.attention === undefined ? undefined : attentionOf(value.attention);
-  if (!says || attention === null) return null;
-  return { kind: value.kind, title: value.title, says, ...(attention ? { attention } : {}) };
+  const summary = parsed(runningSummary)(value);
+  return summary && { ...summary, actions: summary.actions.filter(({ tool }) => tools.has(tool)) };
 }
 
 const keysOf = (value: unknown, except: string): string[] =>
@@ -978,7 +581,7 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
 
 /**
  * ui.running_panel: one key's sidebar. The owner is the first contribution of the key's kind
- * whose panel answers; a 404 or null from a contribution means the key is not its, and any
+ * whose panel answers, and for a work key, of those that declare its record's workflow; a 404 or null from a contribution means the key is not its, and any
  * other refusal or failure is the answer. The owners of what the node absorbed add their
  * sections without their head or controls, and every other owner may add sections about the
  * key or anything it absorbed; a part of theirs that fails is left out. Only the owner's
@@ -999,10 +602,21 @@ export async function runningPanel(
   const read = readers(caller, sources);
   const tools = toolNames(sources);
   const isolated = isolation(sources);
+  // A work key goes to the owners of its record's workflow, read once for every key it needs.
+  const workflows = new Map<string, string>();
+  const learn = async (keys: readonly string[]) => {
+    const ids = keys.filter((key) => keyKind(key) === 'work').map(keyId);
+    if (!ids.length) return;
+    for (const [id, workflow] of await isolated(async () => await sources.workflows(caller, ids)))
+      workflows.set(id, workflow);
+  };
+  const answers = (contribution: RunningContribution, key: string) =>
+    !!contribution.panel &&
+    !!contribution.kinds?.includes(keyKind(key)) &&
+    (keyKind(key) !== 'work' || !!contribution.workflows?.includes(workflows.get(keyId(key))!));
   const ownerOf = async (wanted: string, except?: RunningContribution, absorbedBy?: string) => {
     for (const contribution of contributions) {
-      if (contribution === except || !contribution.panel) continue;
-      if (!contribution.kinds?.includes(keyKind(wanted))) continue;
+      if (contribution === except || !answers(contribution, wanted)) continue;
       try {
         const answer = await isolated(
           async () => await contribution.panel!(read(contribution), wanted, absorbedBy),
@@ -1015,6 +629,7 @@ export async function runningPanel(
     return null;
   };
 
+  await learn([key]);
   const found = await ownerOf(key);
   check(found, 'running_not_found', 'Nothing on the Running page has this key', 404);
   const { contribution: owner } = found;
@@ -1039,12 +654,13 @@ export async function runningPanel(
       visited.add(alias);
       aliases.push(alias);
     });
-    const answers = await mapAsync(
+    await learn(next).catch(() => undefined);
+    const parts = await mapAsync(
       next,
       async (alias) => await ownerOf(alias, owner, key).catch(() => null),
     );
     level = [];
-    for (const answer of answers) {
+    for (const answer of parts) {
       if (!answer || !isObject(answer.part)) continue;
       absorbed.push({ contribution: answer.contribution, sections: answer.part.sections });
       level.push(...keysOf(answer.part.aliases, key));
