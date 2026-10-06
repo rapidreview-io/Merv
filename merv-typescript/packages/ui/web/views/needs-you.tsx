@@ -17,25 +17,22 @@ import {
   words,
 } from '../components';
 import { ArrowRightIcon, CheckIcon } from '../icons';
-import type { RecordNames } from '../markdown';
-import { firstPersonMove } from '@merv/code-work/blockers';
 import { namesOf } from './people';
 // The record shapes the home pages read are declared once, beside the graph they feed.
 import { newest, useHome, type Flow, type HomeData } from './map-data';
 
 /**
- * What needs the reader: Home's first part, Needs you. One column of record
- * cards, each saying its move in one sentence a person reads, made from facts the gate
- * carries — the ready action, a prerequisite that failed, whether a review sent it back. The
+ * What needs the reader: Home's first part, Needs you. One column of record cards, each
+ * saying its move in one sentence a person reads. Whose move a record is comes from its
+ * owners, never from this page: its gate says whether it is the reader's own (`yours`, as its
+ * program describes the record to Workflows) and with which sentence, Reviews says which
+ * subjects are out for review and which a verdict sent back, and Code says the move each of
+ * its blockers asks of a person (`code`) — the one thing that puts ended work here at all: a
+ * publication nobody has merged is a wait on a human and not a record that is running. The
  * server's own instruction is written for the agent holding the tool, so it is never the
- * headline: it stays on the card, folded, for whoever operates the agents. A blocker another
- * plugin published whose next move is this reader's speaks in the same voice, through the one
- * vocabulary `@merv/code-work/blockers` holds, and is the one thing that puts ended work here
- * at all — a publication nobody has merged is a wait on a human and not a record that is
- * running. Whose hands everything else is in, and what it waits on, is the Work page's map.
- * Every card is gated on its owning ui.shell row, so it goes quiet with its plugin, and every
- * fact here comes from the one read the rail shares. An absent value is never rendered as
- * zero and an error is never rendered as empty.
+ * headline: it stays on the card, folded. Every card is gated on its owning ui.shell row, so
+ * it goes quiet with its plugin, and every fact here comes from the one read the rail shares.
+ * An absent value is never rendered as zero and an error is never rendered as empty.
  */
 
 /** An open record that is the reader's move, the sentence it stands on, and the way to act. */
@@ -58,45 +55,23 @@ export interface Line {
 }
 type Named = (id: string | null | undefined) => string | undefined;
 
-/**
- * Whether a record is its owner's move. A gate with no blocker is simply running — unless
- * it holds the owner's own move (`asked`): work sent back for changes, or never begun,
- * reports only `begin` as ready, which no page here sends, while its submission already waits
- * on them. Refused, it is theirs where it asks for their input, or where a prerequisite
- * ended without succeeding and what happens next is theirs to decide.
- */
-const yours = (decision: WorkflowDecision, mine: boolean, asked: boolean) => {
-  const codes = decision.blockers.map((blocker) => blocker.code);
-  return (
-    mine &&
-    (codes.length ? codes.includes('input_required') || codes.includes('dependency_failed') : asked)
-  );
-};
-
 /** The owner's own words for a key of one of its maps, and nothing a map merely inherits. */
 const word = (words: Record<string, string> | undefined, key = '') =>
   words && Object.hasOwn(words, key) ? words[key] : undefined;
-/** The owner's move the gate holds open, by the sentences its row declares. */
-const askOf = (decision: WorkflowDecision, asks?: Record<string, string>) =>
-  decision.actions.find((action) => word(asks, action.action) && action.status !== 'blocked');
 /**
- * The owner's move as a sentence. Every word comes from a fact of the gate — a prerequisite
- * that failed and its state, the action that is ready, whether a review sent the work back —
- * or from the sentence the record's row declares for that action.
+ * The owner's move as a sentence: a prerequisite that failed and its state, else the sentence
+ * the gate says asks it of them, said as changes where a review sent the work back.
  */
 export function recordSentence(
-  gate: {
-    nextAction: { action: string } | null;
-    dependencies: Pick<WorkflowDependency, 'name' | 'state' | 'failed'>[];
-  },
+  gate: { ask?: string; dependencies: Pick<WorkflowDependency, 'name' | 'state' | 'failed'>[] },
   returned = false,
-  asks?: Record<string, string>,
 ): string {
   const ended = gate.dependencies.find((item) => item.failed);
   if (ended) return `Decide what happens next: ${ended.name} ${words(ended.state)}`;
-  const ask = word(asks, gate.nextAction?.action);
-  if (!ask) return 'Needs your input';
-  return returned ? `Changes requested: ${ask[0].toLowerCase()}${ask.slice(1)}` : ask;
+  if (!gate.ask) return 'Needs your input';
+  return returned
+    ? `Changes requested: ${gate.ask[0].toLowerCase()}${gate.ask.slice(1)}`
+    : gate.ask;
 }
 
 /** A review that is the reader's move: one to claim, or one of theirs to finish. */
@@ -139,8 +114,8 @@ const openWork = (rows: Row[], home: HomeData | undefined): Open[] =>
 /**
  * Every open record, and every open review, that is the reader's move, newest first. The
  * gate of each one comes from the same read the page draws, so the list is one answer's and
- * never a race between twenty. Which records there are, and the words for their moves, are
- * what their rows declare (`needs`).
+ * never a race between twenty. Which records there are, and the words for the reviews of
+ * them, are what their rows declare (`needs`).
  */
 export function needsYou(
   rows: Row[],
@@ -152,23 +127,16 @@ export function needsYou(
   const me = viewer.id;
   const gate = new Map((home?.workflows?.workflows ?? []).map((item) => [item.instanceId, item]));
   const work = openWork(rows, home);
-  // A blocker that names another record names it the way this app names it, here as on the
-  // record's own page; the server's label is the fallback and an id names nobody.
-  const recordNames: RecordNames = new Map(work.map((item) => [item.id, { name: item.name }]));
   const subjects = new Map(work.map((item) => [item.id, item]));
   const lines: Line[] = [];
   const reviewsRow = rows.find((row) => row.view.kind === 'reviews');
   const reviews = reviewsRow ? (home?.reviews ?? []) : [];
-  const openReviews = reviews.filter((item) => ['requested', 'started'].includes(item.status));
+  const openReviews = reviews.filter((item) => item.open);
   // A record out for review is its reviewer's move, never its owner's.
   const underReview = new Set(openReviews.map((item) => item.subjectId));
-  // The newest verdict on a record, to tell work that was sent back from work never delivered.
-  const lastVerdict = new Map<string, string | null>();
-  for (const review of newest(
-    reviews.filter((item) => item.status === 'submitted'),
-    (item) => item.createdAt,
-  ))
-    if (!lastVerdict.has(review.subjectId)) lastVerdict.set(review.subjectId, review.verdict);
+  // Work whose newest verdict sent it back, as against work never delivered.
+  const returned = new Set(reviews.filter((item) => item.returned).map((item) => item.subjectId));
+  const moves = new Map((home?.code ?? []).map((item) => [item.instanceId, item]));
   for (const item of work) {
     const { row, needs } = item;
     const kind = row.view.kind;
@@ -180,18 +148,21 @@ export function needsYou(
     // that has ended and waits on somebody to carry its accepted code to main. Whose move
     // it is and whether this app can make it are two questions: a move no page here
     // carries out is still the reader's, with no control at all.
-    const held = firstPersonMove(decision.providerBlockers ?? [], recordNames);
+    const held = moves.get(item.id);
     if (held) {
+      const blocker = decision.providerBlockers.find(
+        (each) => each.provider === held.provider && each.key === held.key,
+      );
       if (held.move.whose !== 'nobody' && viewer.role === 'operator' && viewer.signedIn)
         lines.push({
           id: item.id,
           kind,
           name: item.name,
           to: `${row.path}/${item.id}`,
-          at: held.blocker.since ?? item.workflow.updatedAt,
+          at: blocker?.since ?? item.workflow.updatedAt,
           sentence: held.move.sentence,
           who: held.move.who,
-          says: [...said(decision), held.blocker.next].filter(
+          says: [...said(decision), blocker?.next].filter(
             (text, index, all) =>
               !!text && all.indexOf(text) === index && text !== held.move.sentence,
           ) as string[],
@@ -201,16 +172,7 @@ export function needsYou(
         });
       continue;
     }
-    if (decision.terminal) continue;
-    // Whoever began the step holds it; before anyone has, it is its owner's.
-    const began = decision.workStart?.actorId;
-    const ask = !began || began === me ? askOf(decision, needs.asks) : undefined;
-    const next = ask || decision.nextAction;
-    // A move through a tool only a leased worker calls, such as a task's delivery naming its
-    // worker's own commit, is never the reader's.
-    if (needs.workerOnly?.includes(next?.tool ?? '') || !yours(decision, item.owner === me, !!ask))
-      continue;
-    const verdict = lastVerdict.get(item.id);
+    if (!decision.yours) continue;
     // A record that stops on its own child (a cycle on its wave or its consolidation) is
     // stopped only when its gate refuses on one of the codes its row names, and then by
     // the child declared last; any other prerequisite of it may fail and stop nothing.
@@ -222,9 +184,8 @@ export function needsYou(
       (dependency) => !needs.stops || !dependency.failed || dependency === stop,
     );
     const sentence = recordSentence(
-      { nextAction: next, dependencies },
-      !!verdict && verdict !== 'pass',
-      needs.asks,
+      { ask: decision.yours.ask, dependencies },
+      returned.has(item.id),
     );
     lines.push({
       id: item.id,
@@ -245,13 +206,13 @@ export function needsYou(
       const start = gate
         .get(review.subjectId)
         ?.actions.find((action) => action.tool === 'review.start');
-      // Whether an unclaimed review is this viewer's move is the server's answer, not ours:
-      // the list holds the contributor exclusions, which this page never sees, and the gate
-      // the rest, such as a Git task's review, which only a leased reviewer may claim.
-      const mine =
-        review.status === 'requested'
-          ? !!review.claimable && start?.status !== 'blocked'
-          : review.reviewerId === me;
+      // A held review is its holder's. Whether an unclaimed one is this viewer's move is the
+      // server's answer, not ours: the list holds the contributor exclusions, which this page
+      // never sees, and the gate the rest, such as a Git task's review, which only a leased
+      // reviewer may claim.
+      const mine = review.reviewerId
+        ? review.reviewerId === me
+        : !!review.claimable && start?.status !== 'blocked';
       if (!mine) continue;
       lines.push({
         id: review.id,

@@ -858,6 +858,8 @@ export class TaskService implements Tasks {
           label: row.title,
           gate,
           waiting,
+          // A delivery names its worker's own commit, so only a leased worker ever makes one.
+          owner: { actorId: row.producer_id, leased: ['submit_delivery'] },
           references: [
             ...(dependencies ?? []).map((dependency) => ({
               kind: 'workflow',

@@ -1568,6 +1568,13 @@ export abstract class ExperimentProgram {
         const state = context.snapshot.state as ActiveState;
         return {
           label: experiment.name,
+          owner: {
+            actorId: experiment.ownerId,
+            asks: {
+              submit_design: 'Submit the design for review',
+              submit_results: 'Submit the results for review',
+            },
+          },
           gate:
             state === 'planned'
               ? 'design_required'

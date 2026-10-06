@@ -5,6 +5,7 @@ import { useTool, type Actor, type Project } from '../api';
 import type { ReviewRequest } from '@merv/contracts/types';
 import type { Reflection } from '@merv/reflections/models';
 import type { Task } from '@merv/tasks/models';
+import type { BlockerMove } from '@merv/code-work/models';
 
 /**
  * The data Home and the rail read: the shapes of the records, and the one read that serves
@@ -56,6 +57,8 @@ type MapReview = Pick<
   | 'returnTo'
   | 'findings'
   | 'createdAt'
+  | 'open'
+  | 'returned'
 >;
 type MapReflection = Pick<Reflection, 'id' | 'title' | 'ownerId' | 'workflow' | 'lenses'>;
 /**
@@ -72,6 +75,8 @@ export interface HomeData {
   research: MapCycle[] | null;
   workflows: { workflows: WorkflowDecision[] } | null;
   reflections: MapReflection[] | null;
+  /** Code's word on the blockers it published: per record, the first a person's move ends. */
+  code: BlockerMove[] | null;
 }
 /** One read for the rail and Home; asking twice joins one request. */
 export const useHome = (every = 10000) => useTool<HomeData>('ui.home', {}, { every });

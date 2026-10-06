@@ -16,6 +16,7 @@ import type {
   Transaction,
 } from '@merv/contracts';
 import type { CodeCaptureRef } from '@merv/contracts/types';
+import type { BlockerMove } from './models.js';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
 import type {} from 'cordis';
 import type {
@@ -226,6 +227,8 @@ export interface CodeRunning {
    * the newest first and only so many; the summary counts the rest.
    */
   runningHolds(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary | null }>;
+  /** Home's part: per record, the first of its blockers whose next move is a person's, worded. */
+  homeMoves(caller: Caller): Promise<BlockerMove[]>;
   /**
    * The machines project checks hold, and any a check could not give back, as hardware
    * nodes `check:<baseKey>`.

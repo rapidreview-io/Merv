@@ -62,7 +62,7 @@ export async function homeRead(
         ? [
             [
               row.id,
-              row.home.list ? async () => await row.home!.list!(caller) : call(row.home.tool),
+              row.home.list ? async () => await row.home!.list!(caller) : call(row.home.tool!),
               row.home.keep,
             ] as const,
           ]

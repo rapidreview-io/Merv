@@ -11,11 +11,11 @@ bind to that capability only when present. Reviews and Sandboxes are optional co
 A review-dependent action remains unavailable while its provider is absent; a missing plugin
 never grants acceptance or erases an existing Git obligation.
 
-| Module                  | Dependencies    | Interface                                                    |
-| ----------------------- | --------------- | ------------------------------------------------------------ |
-| `@merv/code-work/tools` | CodeWork, Tools | `code.*` tools                                               |
-| `@merv/code-work/ui`    | CodeWork, UI    | Repository connection, selected base and retained operations |
-| `@merv/code-work/api`   | CodeWork, API   | The `/code/*` machine and GitHub routes                      |
+| Module                  | Dependencies    | Interface                                                                      |
+| ----------------------- | --------------- | ------------------------------------------------------------------------------ |
+| `@merv/code-work/tools` | CodeWork, Tools | `code.*` tools                                                                 |
+| `@merv/code-work/ui`    | CodeWork, UI    | Repository connection, selected base, retained operations, Home's person moves |
+| `@merv/code-work/api`   | CodeWork, API   | The `/code/*` machine and GitHub routes                                        |
 
 The API adapter mounts `/code`, with GitHub's OAuth callback public. Unloading CodeWork withdraws those routes, which then answer 503, without stopping the API.
 

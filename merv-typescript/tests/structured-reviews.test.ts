@@ -152,10 +152,11 @@ test('structured reviews pin versioned evidence and retain canonical per-criteri
           .map((finding) => finding.notes.trim()),
       );
       assert.deepEqual(await f.reviews.get(f.reader, result.id), result);
-      // A listing adds only whose move each review is; the stored review is unchanged.
+      // A listing adds only whose move each review is, and whether its verdict sent the work
+      // back; the stored review is unchanged.
       assert.deepEqual(
         (await f.reviews.list(f.reader)).find((review) => review.id === result.id),
-        { ...result, claimable: false },
+        { ...result, claimable: false, ...(verdict === 'pass' ? {} : { returned: true }) },
       );
       assert.equal((await f.state.events(f.operator.projectId)).at(-1)?.type, 'review.submitted');
     }

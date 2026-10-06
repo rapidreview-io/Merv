@@ -9,6 +9,7 @@ import type {
   WorkflowDefinition,
   WorkflowEvaluationInput,
   WorkflowLimitStatus,
+  WorkflowOwner,
   WorkflowPolicy,
   WorkflowProvidedBlocker,
   WorkflowAssignmentRule,
@@ -24,6 +25,13 @@ const descriptionSchema = z.object({
   label: z.string(),
   gate: z.string().optional(),
   waiting: z.string().optional(),
+  owner: z
+    .object({
+      actorId: z.string(),
+      asks: z.record(z.string()).optional(),
+      leased: z.array(z.string()).optional(),
+    })
+    .optional(),
   references: z.array(
     z.object({ kind: z.string(), id: z.string(), label: z.string() }).passthrough(),
   ),
@@ -324,7 +332,67 @@ export async function decision(
   provided: WorkflowProvidedBlocker[] = [],
   checks = true,
 ): Promise<WorkflowDecision> {
-  const result = await ownDecision(definition, policy, context, query, workStart, limits, checks);
+  const described: { owner?: WorkflowOwner } = {};
+  const result = await ownDecision(
+    definition,
+    policy,
+    context,
+    query,
+    workStart,
+    limits,
+    checks,
+    described,
+  );
+  const decided = gated(result, query, provided);
+  // A person's read only: a leased worker's guidance, which its assignment context embeds, says
+  // nothing of whose move the record is.
+  const yours =
+    query.action || context.caller.session
+      ? undefined
+      : yoursOf(decided, described.owner, context.caller.actorId);
+  return yours ? { ...decided, yours } : decided;
+}
+
+/**
+ * Whether an open record is the reading caller's own move, by its program's word on whose it
+ * is (`describe` → `owner`), and the sentence that asks it of them. Refused, it is theirs where
+ * the gate wants their input or a prerequisite ended without succeeding; with nothing refused,
+ * only where it holds open one of their asks, as work sent back or never begun does: it reports
+ * only `begin` as ready while its submission already waits on them. A step somebody else began
+ * holds no ask of theirs, and a move through an action only a leased worker makes never is.
+ */
+export function yoursOf(
+  decision: Pick<
+    WorkflowDecision,
+    'terminal' | 'workStart' | 'actions' | 'nextAction' | 'blockers'
+  >,
+  owner: WorkflowOwner | undefined,
+  actorId: string,
+): WorkflowDecision['yours'] {
+  if (!owner || owner.actorId !== actorId || decision.terminal) return undefined;
+  const words = (action?: string) =>
+    action && owner.asks && Object.hasOwn(owner.asks, action) ? owner.asks[action] : undefined;
+  const began = decision.workStart?.actorId;
+  const ask =
+    !began || began === actorId
+      ? decision.actions.find((action) => words(action.action) && action.status !== 'blocked')
+      : undefined;
+  const next = ask ?? decision.nextAction;
+  if (next && owner.leased?.includes(next.action)) return undefined;
+  const codes = decision.blockers.map((blocker) => blocker.code);
+  const theirs = codes.length
+    ? codes.includes('input_required') || codes.includes('dependency_failed')
+    : !!ask;
+  if (!theirs) return undefined;
+  const sentence = words(next?.action);
+  return sentence ? { ask: sentence } : {};
+}
+
+function gated(
+  result: WorkflowDecision,
+  query: WorkflowEvaluationInput,
+  provided: WorkflowProvidedBlocker[],
+): WorkflowDecision {
   result.providerBlockers = structuredClone(provided);
   if (
     !provided.length ||
@@ -352,6 +420,8 @@ async function ownDecision(
   workStart: WorkflowWorkStart | null,
   limits: WorkflowLimitStatus[],
   checks: boolean,
+  /** Where the program's word on whose move the record is goes, for the caller's read. */
+  described: { owner?: WorkflowOwner },
 ): Promise<WorkflowDecision> {
   const snapshot = context.snapshot;
   const terminal = definition.terminal.includes(snapshot.state);
@@ -396,6 +466,7 @@ async function ownDecision(
     result.references = description.references;
     gate = description.gate;
     waiting = description.waiting;
+    described.owner = description.owner;
   }
   if (terminal) {
     check(!query.action, 'invalid_action', 'This workflow has ended', 409);

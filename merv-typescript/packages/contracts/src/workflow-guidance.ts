@@ -128,6 +128,11 @@ export interface WorkflowDecision {
   limits: WorkflowLimitStatus[];
   /** First activation at this revision, if recorded. */
   workStart: WorkflowWorkStart | null;
+  /**
+   * Present where the open record is the reader's own move, as its program says whose it is:
+   * with `ask`, the sentence asking it of them; without, no sentence was declared.
+   */
+  yours?: { ask?: string };
 }
 
 /** One recorded crossing of a definition edge, from wf_history and nowhere else. */

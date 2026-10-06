@@ -33,13 +33,7 @@ export const taskUiPlugin = {
             'failed',
           ],
         },
-        // A delivery names its worker's own commit, so only a leased worker ever makes one.
-        needs: {
-          name: 'title',
-          owner: 'producerId',
-          reads: { in_review: 'Review this delivery' },
-          workerOnly: ['task.submit_delivery'],
-        },
+        needs: { name: 'title', owner: 'producerId', reads: { in_review: 'Review this delivery' } },
         // One record, with the gate it stands at: the process graph is derived from the
         // same record, so the page reads both in one answer rather than two.
         read: async (caller: Caller, params) => {

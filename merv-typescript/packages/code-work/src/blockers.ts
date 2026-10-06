@@ -15,6 +15,10 @@
  * the very sentence the Code page writes.
  */
 
+import type { BlockerMove, PersonMove } from './models.js';
+
+export type { BlockerMove, PersonMove };
+
 /** Names records by id. The browser's RecordNames, a ReadonlyMap, is one. */
 export interface NameLookup {
   get(id: string): { name: string } | undefined;
@@ -32,21 +36,6 @@ export interface CodeBlocker {
   related?: readonly { kind: string; id: string; label: string }[];
   /** When this key first took this code, which is how long the person has been owed it. */
   since?: string;
-}
-
-/** What one blocker asks of a person. */
-export interface PersonMove {
-  sentence: string;
-  /** Who ends the wait. */
-  who: string;
-  /**
-   * Which person's move it is, which is a different question from whether this app has a
-   * page that makes it: a move nothing here can carry out is still the reader's, and a
-   * wait on the server is nobody's however well a person may read why it waits.
-   */
-  whose: 'operator' | 'administrator' | 'nobody';
-  /** Where a page of this app makes the move; absent where none of them does. */
-  control?: { label: string; to: string };
 }
 
 /** Where the reviewed merge and the publication controls stand. */
@@ -192,6 +181,24 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
     default:
       return null;
   }
+}
+
+/**
+ * Per instance, the first of its blockers whose next move is a person's, named by its
+ * provider and key, with that move: Code's word on a record's blocker, which Home attaches
+ * to that blocker. Its wait on the server, a move that is nobody's, is one of them: the
+ * record it holds is no move of its owner's either.
+ */
+export function heldMoves(
+  blockers: readonly (CodeBlocker & { instanceId: string; provider: string; key: string })[],
+): BlockerMove[] {
+  const first = new Map<string, BlockerMove>();
+  for (const { instanceId, provider, key, ...blocker } of blockers) {
+    if (first.has(instanceId)) continue;
+    const move = personMove({ ...blocker, key });
+    if (move) first.set(instanceId, { instanceId, provider, key, move });
+  }
+  return [...first.values()];
 }
 
 /** The first blocker of a list whose next move is a person's, with that move. */

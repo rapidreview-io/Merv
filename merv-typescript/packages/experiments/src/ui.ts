@@ -27,10 +27,6 @@ export const experimentsUiPlugin = {
         needs: {
           name: 'name',
           owner: 'ownerId',
-          asks: {
-            submit_design: 'Submit the design for review',
-            submit_results: 'Submit the results for review',
-          },
           reads: { design_review: 'Review this design', experiment_review: 'Review these results' },
         },
         // One record, with the gate it stands at: the process graph is derived from the

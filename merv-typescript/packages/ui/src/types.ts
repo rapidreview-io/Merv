@@ -46,22 +46,22 @@ export interface UiRow {
    * read-only tool that lists its records, and the fields of each record those pages read.
    * `list`, when given, is read in the tool's place: those records with at least those fields.
    */
-  home?: { tool: string; keep: readonly string[]; list?(caller: Caller): Promise<unknown> };
+  home?: { tool?: string; keep: readonly string[]; list?(caller: Caller): Promise<unknown> };
   /** How Needs you says a record of `home` is the reader's move, in the owner's words. */
   needs?: UiRowNeeds;
 }
 
-/** The words Needs you says a row's records in: the shell has none of its own for any workflow. */
+/**
+ * The words Needs you says a row's records in: the shell has none of its own for any workflow.
+ * Whose move a record is, and the sentence asking it, are its gate's (`yours`), as its program
+ * describes the record to Workflows.
+ */
 export interface UiRowNeeds {
   /** The fields of a `home` record that name it and whose it is. */
   name: string;
   owner: string;
-  /** The sentence asking for each ready action that is the owner's own move. */
-  asks?: Record<string, string>;
   /** What a reviewer is asked, by the state the record waits in. */
   reads?: Record<string, string>;
-  /** Tools only a leased worker calls: a move through one is never the reader's. */
-  workerOnly?: string[];
   /** Blocker codes on which the record stopped on its last failed prerequisite; others stop nothing. */
   stops?: string[];
   /** The records only name the reviews of them, and are never a move of their own. */

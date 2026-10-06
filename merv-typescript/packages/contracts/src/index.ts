@@ -1442,19 +1442,25 @@ export interface WorkflowPolicy {
     instanceIds: readonly string[];
     tx: Transaction;
   }): Record<string, string[]> | Promise<Record<string, string[]>>;
-  describe?(context: WorkflowCheckContext):
-    | {
-        label: string;
-        references: WorkflowReference[];
-        gate?: string;
-        waiting?: string;
-      }
-    | Promise<{
-        label: string;
-        references: WorkflowReference[];
-        gate?: string;
-        waiting?: string;
-      }>;
+  describe?(context: WorkflowCheckContext): WorkflowDescription | Promise<WorkflowDescription>;
+}
+export interface WorkflowDescription {
+  label: string;
+  references: WorkflowReference[];
+  gate?: string;
+  waiting?: string;
+  /** Whose own move the record is, which a decision answers for its reader as `yours`. */
+  owner?: WorkflowOwner;
+}
+/**
+ * Whose record an instance is, as its program says: the actor it belongs to; the actions that
+ * are their move even where the gate refuses nothing, each with the sentence asking it of them
+ * (`asks`); and the actions only a leased worker makes, which are never theirs (`leased`).
+ */
+export interface WorkflowOwner {
+  actorId: string;
+  asks?: Record<string, string>;
+  leased?: string[];
 }
 export interface WorkflowAssignmentRule {
   state: string;

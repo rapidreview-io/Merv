@@ -1,4 +1,4 @@
-import { excludedFromReview, directsIndependently, REVIEW_VERDICTS } from './rules.js';
+import { excludedFromReview, directsIndependently, REVIEW_VERDICTS, standings } from './rules.js';
 import { permits } from '@merv/scope/rules';
 import { canonical, visible, sourceCaller, isDirectHuman } from '@merv/contracts';
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
@@ -816,13 +816,15 @@ export class ReviewService implements Reviews {
       async (sql) =>
         await this.claimableBy(
           caller,
-          (
-            await sql.all<ReviewRow>(
-              `SELECT * FROM reviews WHERE project_id = ?${subjectId === undefined ? '' : ' AND subject_id = ?'} ORDER BY created_at, id`,
-              caller.projectId,
-              ...(subjectId === undefined ? [] : [subjectId]),
-            )
-          ).map(hydrate),
+          standings(
+            (
+              await sql.all<ReviewRow>(
+                `SELECT * FROM reviews WHERE project_id = ?${subjectId === undefined ? '' : ' AND subject_id = ?'} ORDER BY created_at, id`,
+                caller.projectId,
+                ...(subjectId === undefined ? [] : [subjectId]),
+              )
+            ).map(hydrate),
+          ),
         ),
     );
   }

@@ -289,3 +289,25 @@ export interface CodeUnitPublication {
   /** What this state holds the unit's work for and who ends the wait; none once published. */
   blockers: WorkflowProvidedBlockerInput[];
 }
+
+/** What one blocker asks of a person. */
+export interface PersonMove {
+  sentence: string;
+  /** Who ends the wait. */
+  who: string;
+  /**
+   * Which person's move it is, which is a different question from whether this app has a
+   * page that makes it: a move nothing here can carry out is still the reader's, and a
+   * wait on the server is nobody's however well a person may read why it waits.
+   */
+  whose: 'operator' | 'administrator' | 'nobody';
+  /** Where a page of this app makes the move; absent where none of them does. */
+  control?: { label: string; to: string };
+}
+/** One record's blocker, by the provider and key that name it, and the move it asks. */
+export interface BlockerMove {
+  instanceId: string;
+  provider: string;
+  key: string;
+  move: PersonMove;
+}

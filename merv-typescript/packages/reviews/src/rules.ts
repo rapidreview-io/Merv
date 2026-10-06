@@ -27,6 +27,29 @@ export const directsIndependently = (
   authorityId: string,
 ) =>
   review.provenance ? !excludedFromReview(review, authorityId) : review.producerId !== authorityId;
+/**
+ * A list of reviews as a reader reads it, in its own order: each open one says so, its subject
+ * being in its reviewer's hands, and the newest decided review of each subject (the first of
+ * the newest, where several share a moment) says whether its verdict sent the work back.
+ */
+export function standings<
+  T extends Pick<ReviewRequest, 'subjectId' | 'status' | 'verdict' | 'createdAt'>,
+>(reviews: T[]): (T & Pick<ReviewRequest, 'open' | 'returned'>)[] {
+  const newest = new Map<string, T>();
+  for (const review of reviews) {
+    const known = newest.get(review.subjectId);
+    if (review.status === 'submitted' && (!known || review.createdAt > known.createdAt))
+      newest.set(review.subjectId, review);
+  }
+  return reviews.map((review) => ({
+    ...review,
+    ...(review.status === 'requested' || review.status === 'started' ? { open: true } : {}),
+    ...(newest.get(review.subjectId) === review && review.verdict && review.verdict !== 'pass'
+      ? { returned: true }
+      : {}),
+  }));
+}
+
 /** The refusal of a lease source that may not direct a reviewer: `check(directsIndependently(…), ...)`. */
 export const NOT_INDEPENDENT = [
   'review_independence',

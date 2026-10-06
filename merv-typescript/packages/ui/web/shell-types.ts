@@ -7,9 +7,7 @@ export interface RowStatus {
 export interface RowNeeds {
   name: string;
   owner: string;
-  asks?: Record<string, string>;
   reads?: Record<string, string>;
-  workerOnly?: string[];
   stops?: string[];
   subjectOnly?: true;
 }
