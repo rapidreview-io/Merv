@@ -29,6 +29,10 @@ export const automaticStatus = (row: AutomaticRow): ResearchAutomation => ({
   blocker: row.blocker_json ? JSON.parse(row.blocker_json) : null,
 });
 
+const CONSUMER = 'research.automatic.v3';
+/** Retries of one event while a provider answers 503: about 25 seconds of backoff in all. */
+const UNAVAILABLE_RETRIES = 8;
+
 /** Existing durable events drive Research. This neither schedules nor launches workers. */
 export async function automaticResearch(
   state: State,
@@ -42,7 +46,7 @@ export async function automaticResearch(
   ) => Promise<ResearchAutomation['blocker']>,
 ): Promise<() => void | Promise<void>> {
   return await events.subscribe({
-    id: 'research.automatic.v3',
+    id: CONSUMER,
     // New subscriptions start here; bindAutomatic's startup wake revisits every open cycle.
     from: 'now',
     types: [
@@ -85,6 +89,12 @@ export async function automaticResearch(
           await tx.run('RELEASE SAVEPOINT research_automatic_cycle');
           if (!(error instanceof MervError) || (error.status >= 500 && error.status !== 503))
             throw error;
+          // A provider that is briefly unavailable is retried with the event, a bounded number
+          // of times the consumer's own durable attempt count keeps, before it shows as a blocker.
+          if (error.status === 503) {
+            const consumer = (await events.status()).find((item) => item.id === CONSUMER);
+            if ((consumer?.attempts ?? UNAVAILABLE_RETRIES) < UNAVAILABLE_RETRIES) throw error;
+          }
           blocker = automaticBlocker(error);
         }
         await recordBlocker(state, tx, row, blocker, { causeEventId: event.id });

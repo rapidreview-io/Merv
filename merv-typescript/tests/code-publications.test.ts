@@ -118,17 +118,19 @@ test('publication reads retain their original reader', async (t) => {
 test('changed PR heads and non-passing checks prevent merge', async (t) => {
   const f = await setup(t);
   await f.sync();
-  f.pulls[0].head.sha = 'e'.repeat(40);
-  await assert.rejects(f.publications.mergePublication(f.caller, f.merge()), {
-    code: 'github_head_changed',
-  });
-  f.pulls[0].head.sha = headOid;
   f.control.checks = [
     { name: 'tests', status: 'completed', conclusion: 'failure', html_url: null },
   ];
   await assert.rejects(f.publications.mergePublication(f.caller, f.merge()), {
     code: 'github_checks_pending',
   });
+  assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 0);
+  // A head nobody reviewed settles the publication stale: a successor takes the work.
+  f.control.checks = [];
+  f.pulls[0].head.sha = 'e'.repeat(40);
+  const stale = await f.publications.mergePublication(f.caller, f.merge());
+  assert.equal(stale.stale, true);
+  assert.equal(stale.lastError, 'github_head_changed');
   assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 0);
 });
 

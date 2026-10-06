@@ -589,7 +589,7 @@ export class ResearchService implements Research {
     checks: BindingChecks = [],
     choice: Choice = {},
     since?: Unpublished | null,
-  ): Promise<{ move: Move; continuing?: Continuing }> {
+  ): Promise<{ move: Move; continuing?: Continuing; abandoned?: true }> {
     const stage = record.workflow.state as Stage;
     check(stage !== 'complete', 'research_complete', 'This research cycle is complete', 409);
     if (stage === 'defining') {
@@ -643,7 +643,8 @@ export class ResearchService implements Research {
         service.approved(caller, record.reflectionId!, tx),
       );
     }
-    const move = await this.move(caller, record, tx, checks, since, choice);
+    const judged = await this.move(caller, record, tx, checks, since, choice);
+    const move = judged === 'abandon' ? 'advance' : judged;
     // A skip reads no plan, so it completes a cycle whose plan can no longer be created, or
     // whose Reflections is gone. Anything else must know whether a plan waits for an answer.
     const continuing =
@@ -655,7 +656,7 @@ export class ResearchService implements Research {
       await this.creatable(caller, continuing.plan, tx, checks);
     }
     checks.forEach((check) => check());
-    return { move, continuing };
+    return { move, continuing, ...(judged === 'abandon' ? { abandoned: true as const } : {}) };
   }
 
   /**
@@ -672,7 +673,7 @@ export class ResearchService implements Research {
     checks: BindingChecks,
     since: Unpublished | null | undefined,
     choice: Choice,
-  ): Promise<Move> {
+  ): Promise<Move | 'abandon'> {
     const stage = record.workflow.state as Stage;
     if (stage !== 'reflecting' && stage !== 'consolidating') return 'advance';
     // A preflight that answers the completion question is read as completing, so a plan that
@@ -706,6 +707,8 @@ export class ResearchService implements Research {
     );
     const { publication } = await this.use('code', checks, (code) => code.unit(caller, taskId, tx));
     if (publication?.state === 'published') return 'advance';
+    // A pull request closed unmerged is a rejection: the cycle moves on without its code.
+    if (publication?.state === 'closed') return 'abandon';
     // Main moved first, or the task ended without acceptance: what main lacks now decides
     // between a successor task and completing, as it did at reflection.
     if (publication?.state === 'stale') return judged('advance', 'reinject');
@@ -1342,7 +1345,14 @@ export class ResearchService implements Research {
           409,
         );
         const handle = this.handle!;
-        const { move, continuing } = await this.ready(caller, record, tx, checks, input, since);
+        const { move, continuing, abandoned } = await this.ready(
+          caller,
+          record,
+          tx,
+          checks,
+          input,
+          since,
+        );
         const injecting = move === 'inject' || move === 'reinject';
         check(
           !continuing || input.nextWave,
@@ -1458,6 +1468,7 @@ export class ResearchService implements Research {
             // Quarantined acceptances are unpublished code the task may not build on.
             ...(injecting && since?.quarantined.length ? { quarantined: since.quarantined } : {}),
             ...(successor ? { successorId: successor.id } : {}),
+            ...(abandoned ? { integration: 'abandoned' } : {}),
             ...(moved.state === 'complete' && input.nextWave === 'skip'
               ? { nextWave: 'skipped' }
               : {}),

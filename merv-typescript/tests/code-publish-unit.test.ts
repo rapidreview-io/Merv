@@ -21,7 +21,7 @@ import { assessment } from './fixtures/review-verdict.js';
  * A project Code hosts, with its own repositories and the GitHub App faked at its seam, where
  * ordinary units of work are accepted and one of them publishes its accepted code to main.
  */
-async function fixture(t: TestContext, connected = false, human = connected) {
+async function fixture(t: TestContext, connected = false, human = connected, importFailures = 0) {
   const f = await resolutionFixture(t, { human });
   const remote = connected ? await githubFixture(t, f.state, f.admin) : undefined;
   if (remote) await remote.enable();
@@ -65,6 +65,16 @@ async function fixture(t: TestContext, connected = false, human = connected) {
       { ...core, github: remote?.github ?? core.github },
       {
         config: { settleMs: 60_000 },
+        // GitHub's history is the source repository; the first `importFailures` fetches fail.
+        remote: {
+          read: async (_caller, use) =>
+            use({
+              url: importFailures-- > 0 ? join(source.directory, 'gone') : source.repository,
+              protocol: 'file',
+              repository: { id: 1, fullName: 'fixture/private' },
+              env: {},
+            }),
+        },
         // The objects are in the real repository already; only the remote refs are played.
         mirror: {
           target: async () => ({ repository: 'fixture/private' }),
@@ -966,3 +976,215 @@ for (const movedMain of [false, true]) {
     assert.deepEqual(await f.blockers(work.id), []);
   });
 }
+
+/** An accepted unit whose pull request is open and waits on a person. */
+async function opened(f: Awaited<ReturnType<typeof fixture>>) {
+  await f.canary();
+  const work = await f.declare('Publishing');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  const [publication] = await f.sync();
+  return { work, publication };
+}
+const staleWakes = async (f: Awaited<ReturnType<typeof fixture>>) =>
+  (await f.state.events(f.admin.projectId))
+    .filter((event) => event.type === 'code.publication_stale')
+    .map((event) => event.data.reason);
+
+test('a pull request whose head changed settles stale on sync, so unreviewed commits never merge', async (t) => {
+  const f = await fixture(t, true);
+  const { work, publication } = await opened(f);
+  // A person clicks "Update branch": GitHub pushes a commit nobody reviewed to the head branch.
+  f.remote!.pulls[0].head.sha = 'e'.repeat(40);
+  const [after] = await f.sync();
+  assert.equal(after.stale, true);
+  assert.equal(after.lastError, 'github_head_changed');
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'stale');
+  assert.equal((await f.blockers(work.id))[0].code, 'code_publication_stale');
+  assert.equal(f.remote!.pulls[0].state, 'closed');
+  assert.deepEqual(await staleWakes(f), ['github_head_changed']);
+  await assert.rejects(
+    f.code.mergePublication(f.admin, {
+      proposalId: publication.proposalId,
+      expectedHead: f.feature,
+      expectedBase: f.root0,
+      requestId: 'after-stale',
+    }),
+    { code: 'code_publication_stale' },
+  );
+});
+
+test('a merge that finds the head changed settles stale instead of refusing forever', async (t) => {
+  const f = await fixture(t, true);
+  const { work, publication } = await opened(f);
+  f.remote!.pulls[0].head.sha = 'e'.repeat(40);
+  const stale = await f.code.mergePublication(f.admin, {
+    proposalId: publication.proposalId,
+    expectedHead: f.feature,
+    expectedBase: f.root0,
+    requestId: 'head-changed',
+  });
+  assert.equal(stale.stale, true);
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'stale');
+  assert.equal(f.remote!.pulls[0].merged, false);
+  assert.deepEqual(await staleWakes(f), ['github_head_changed']);
+});
+
+test('a stale merge commits the stale row before closing its pull request', async (t) => {
+  const f = await fixture(t, true);
+  const { work, publication } = await opened(f);
+  f.branches.set('main', f.moved);
+  // Anything that refuses the stale transaction must leave the pull request as it was.
+  const disabled = (value: boolean) =>
+    f.state.transaction((tx) =>
+      tx.run(
+        `UPDATE code_publication_controls SET record_json=jsonb_set(record_json::jsonb,'{disabled}','${value}')::text`,
+      ),
+    );
+  await disabled(true);
+  const merge = () =>
+    f.code.mergePublication(f.admin, {
+      proposalId: publication.proposalId,
+      expectedHead: f.feature,
+      expectedBase: f.root0,
+      requestId: 'stale',
+    });
+  await assert.rejects(merge(), { code: 'code_publication_disabled' });
+  assert.equal(f.remote!.pulls[0].state, 'open');
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'disabled');
+  await disabled(false);
+  assert.equal((await merge()).stale, true);
+  assert.equal(f.remote!.pulls[0].state, 'closed');
+  assert.deepEqual(await staleWakes(f), ['code_main_changed']);
+});
+
+test("a stale merge moves Merv's main only forward to GitHub's", async (t) => {
+  const f = await fixture(t, true);
+  const { publication } = await opened(f);
+  // GitHub's main was rewritten to a commit that does not hold Merv's main.
+  await f.setMain(f.moved);
+  f.branches.set('main', f.clashing);
+  const stale = await f.code.mergePublication(f.admin, {
+    proposalId: publication.proposalId,
+    expectedHead: f.feature,
+    expectedBase: f.root0,
+    requestId: 'rewritten',
+  });
+  assert.equal(stale.stale, true);
+  assert.equal((await f.code.status(f.admin)).project?.main.oid, f.moved);
+});
+
+test('a pull request closed unmerged wakes whoever waits on its publication', async (t) => {
+  const f = await fixture(t, true);
+  const { work } = await opened(f);
+  f.remote!.pulls[0].state = 'closed';
+  await f.sync();
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'closed');
+  assert.deepEqual(await staleWakes(f), ['closed']);
+  await f.sync();
+  assert.deepEqual(await staleWakes(f), ['closed'], 'a settled publication wakes nobody again');
+});
+
+test('verification retries a failed merge-commit import with a fresh attempt, a bounded number of times', async (t) => {
+  const f = await fixture(t, true, true, 1);
+  const { work, publication } = await opened(f);
+  // GitHub's main holds the merge commit; Code's repository does not have it yet.
+  const merge = f.source.git(
+    'commit-tree',
+    f.source.git('rev-parse', `${f.feature}^{tree}`),
+    '-p',
+    f.root0,
+    '-p',
+    f.feature,
+    '-m',
+    'Publish reviewed work',
+  );
+  f.source.git('update-ref', 'refs/heads/main', merge);
+  f.remote!.control.mergeSha = merge;
+  const input = {
+    proposalId: publication.proposalId,
+    expectedHead: f.feature,
+    expectedBase: f.root0,
+    requestId: 'publish',
+  };
+  // One fetch fails: the import of that commit has failed for good under its request id.
+  await assert.rejects(f.code.mergePublication(f.admin, input), {
+    code: 'code_publication_import_pending',
+  });
+  const merged = await f.code.mergePublication(f.admin, input);
+  assert.equal(merged.verified, true);
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'published');
+});
+
+test('verification stops importing a merge commit after its bounded attempts', async (t) => {
+  const f = await fixture(t, true, true, 99);
+  const { publication } = await opened(f);
+  const merge = f.source.git(
+    'commit-tree',
+    f.source.git('rev-parse', `${f.feature}^{tree}`),
+    '-p',
+    f.root0,
+    '-p',
+    f.feature,
+    '-m',
+    'Publish reviewed work',
+  );
+  f.source.git('update-ref', 'refs/heads/main', merge);
+  f.remote!.control.mergeSha = merge;
+  const input = {
+    proposalId: publication.proposalId,
+    expectedHead: f.feature,
+    expectedBase: f.root0,
+    requestId: 'publish',
+  };
+  for (let attempt = 0; attempt < 3; attempt++)
+    await assert.rejects(f.code.mergePublication(f.admin, input), {
+      code: 'code_publication_import_pending',
+    });
+  await assert.rejects(f.code.mergePublication(f.admin, input), {
+    code: 'code_publication_import_failed',
+  });
+  const imports = await f.state.read((sql) =>
+    sql.all(
+      "SELECT id FROM code_operations WHERE kind='import' AND project_id=?",
+      f.admin.projectId,
+    ),
+  );
+  assert.equal(imports.length, 3);
+});
+
+test('local integration onto a main the reviewed head already holds is not stale', async (t) => {
+  const f = await fixture(t);
+  f.source.git('checkout', '--detach', f.feature);
+  const later = f.source.commit({ 'later.txt': 'later\n' });
+  f.publishGitRef('later', later);
+  const work = await f.declare('Local integration');
+  await f.publishes(work);
+  await f.pin(work);
+  await f.accept(work, later);
+  // Main moved under the reviewed head, to a commit that head already holds.
+  await f.setMain(f.feature);
+  const [integrated] = await f.sync();
+  assert.equal(integrated.stale, false);
+  assert.equal(integrated.verified, true);
+  assert.equal(integrated.merge?.mainParent, f.feature);
+  assert.equal((await f.code.status(f.admin)).project?.main.oid, later);
+});
+
+test('publications list newest first', async (t) => {
+  const f = await fixture(t);
+  const units = [];
+  for (const name of ['First', 'Second', 'Third', 'Fourth']) {
+    const work = await f.declare(name);
+    await f.publishes(work);
+    await f.pin(work);
+    await f.accept(work, f.feature);
+    units.push(work.id);
+  }
+  // A publication id is random, so only its age orders them.
+  assert.deepEqual(
+    (await f.code.publications(f.admin)).map((item) => item.instanceId),
+    [...units].reverse(),
+  );
+});

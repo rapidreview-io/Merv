@@ -21,6 +21,7 @@ import type {
   Caller,
   CodeAcceptedSince,
   CodeRepositoryPrepareInput,
+  CodeStoreOperation,
   Scope,
   State,
   StoredEvent,
@@ -33,6 +34,7 @@ import {
   createService,
   digest,
   MervError,
+  now,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import { CodeBaseService } from './bases.js';
@@ -53,6 +55,9 @@ import type {
 } from './types.js';
 import { CODE_DRIVER, CodeUnitService } from './units.js';
 import type { CodeWriterService } from '@merv/code/writers';
+
+/** How many times verification imports one merge commit before an operator imports it. */
+const PUBLICATION_IMPORT_ATTEMPTS = 3;
 
 /** Work-unit operations over the repositories owned by the core Code service. */
 export interface CodeStoreOptions {
@@ -139,13 +144,26 @@ export class CodeService extends CodeCommandService implements Code {
       async (caller, ref, oid) => {
         const store = this.requireStore();
         if (await store.contains(caller.projectId, oid)) return;
-        const operation = await store.importRepository(caller, {
-          source: 'github',
-          ref,
-          requestId: `publication-import:${oid}`,
-        });
+        // A failed import is final under its request id, so each call past one starts the next
+        // attempt. Code's operation journal holds every attempt, and so the bound.
+        const started = now();
+        let operation: CodeStoreOperation | undefined;
+        for (let attempt = 1; attempt <= PUBLICATION_IMPORT_ATTEMPTS; attempt++) {
+          operation = await store.importRepository(caller, {
+            source: 'github',
+            ref,
+            requestId: `publication-import:${oid}${attempt > 1 ? `:${attempt}` : ''}`,
+          });
+          if (operation.status !== 'failed' || operation.createdAt >= started) break;
+        }
         check(
-          operation.status === 'completed' && (await store.contains(caller.projectId, oid)),
+          operation!.status !== 'failed' || operation!.createdAt >= started,
+          'code_publication_import_failed',
+          `Importing the merge commit failed ${PUBLICATION_IMPORT_ATTEMPTS} times; read code.status and import ${ref} with code-import`,
+          409,
+        );
+        check(
+          operation!.status === 'completed' && (await store.contains(caller.projectId, oid)),
           'code_publication_import_pending',
           'The publication commit must finish Code admission before verification; retry this same request',
           409,

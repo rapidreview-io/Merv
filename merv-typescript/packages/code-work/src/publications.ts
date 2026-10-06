@@ -175,7 +175,8 @@ export class CodePublicationService implements CodePublicationApi {
       await this.scope.require(caller, 'read', tx);
       return (
         await tx.all<Row>(
-          'SELECT * FROM code_publications WHERE project_id=? ORDER BY proposal_id DESC LIMIT 100',
+          // Unsettled first, then newest: a proposal id is random, so it says nothing of age.
+          "SELECT * FROM code_publications WHERE project_id=? ORDER BY settled,record_json::jsonb->>'createdAt' DESC,proposal_id LIMIT 100",
           caller.projectId,
         )
       ).map((r) => this.decode(r));
@@ -228,14 +229,20 @@ export class CodePublicationService implements CodePublicationApi {
       );
     }
   }
+  /** Whether a pull request still carries exactly the reviewed head onto the reviewed base. */
+  private pins(record: CodePublication, pull: GitHubPullRequest) {
+    return (
+      pull.head.sha === record.headOid &&
+      pull.head.ref === record.branch &&
+      pull.head.repositoryId === record.repositoryId &&
+      pull.base.ref === record.baseBranch &&
+      pull.base.repositoryId === record.repositoryId &&
+      (!record.pull || pull.id === record.pull.id)
+    );
+  }
   private pinned(record: CodePublication, pull: GitHubPullRequest) {
     check(
-      pull.head.sha === record.headOid &&
-        pull.head.ref === record.branch &&
-        pull.head.repositoryId === record.repositoryId &&
-        pull.base.ref === record.baseBranch &&
-        pull.base.repositoryId === record.repositoryId &&
-        (!record.pull || pull.id === record.pull.id),
+      this.pins(record, pull),
       'github_head_changed',
       'The pull request no longer matches the reviewed proposal; a new proposal and review are required',
       409,
@@ -251,11 +258,80 @@ export class CodePublicationService implements CodePublicationApi {
     );
     return row;
   }
+  private async mainOf(sql: Pick<Transaction, 'get'>, projectId: string) {
+    const project = await sql.get<{ main_json: string }>(
+      'SELECT main_json FROM code_projects WHERE project_id=?',
+      projectId,
+    );
+    return project ? (JSON.parse(project.main_json).oid as string) : null;
+  }
+  /**
+   * An accepted unit publishes once: a row that can no longer merge as reviewed settles stale,
+   * and whoever waits on it learns, in the same commit, that a successor must take it.
+   */
+  private async markStale(
+    caller: Caller,
+    record: CodePublication,
+    reason: string,
+    pull: GitHubPullRequest | null,
+    tx: Transaction,
+  ) {
+    await tx.run(
+      'UPDATE code_publications SET stale=1,settled=1,error=?,pull_json=COALESCE(?,pull_json) WHERE proposal_id=?',
+      reason,
+      pull && canonical(pull),
+      record.proposalId,
+    );
+    await this.host.reconcile(caller, tx);
+    await recorded(this.state, tx, caller, 'code.publication_stale', record.proposalId, {
+      unitId: record.instanceId,
+      reason,
+    });
+  }
+  /**
+   * Settles a pull request that main overtook, or whose head is no longer the reviewed one, so
+   * unreviewed commits never reach main. Only once that commits is the pull request closed,
+   * best-effort, so nobody merges it against main by hand.
+   */
+  private async settleStale(
+    caller: Caller,
+    row: Row,
+    lock: string,
+    reason: string,
+    pull: GitHubPullRequest,
+    close: () => Promise<GitHubPullRequest>,
+    before: (tx: Transaction) => Promise<void> = async () => {},
+  ) {
+    await this.state.transaction(async (tx) => {
+      const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
+      await before(tx);
+      await this.markStale(caller, current, reason, pull, tx);
+    });
+    if (pull.state === 'open')
+      await close().then(
+        (closed) =>
+          this.state.transaction((tx) =>
+            tx.run(
+              'UPDATE code_publications SET pull_json=? WHERE proposal_id=?',
+              canonical(closed),
+              row.proposal_id,
+            ),
+          ),
+        () => undefined,
+      );
+    return this.decode(await this.state.transaction((tx) => this.row(caller, row.proposal_id, tx)));
+  }
   private async save(caller: Caller, row: Row, lock: string, pull: GitHubPullRequest) {
     const original = this.decode(row);
     let mainParent: string | undefined;
     if (pull.merged && !original.verified) {
       try {
+        check(
+          this.pins(original, pull),
+          'code_publication_incident',
+          'GitHub merged a head other than the reviewed one',
+          409,
+        );
         check(
           !original.incident,
           'code_publication_incident',
@@ -326,11 +402,18 @@ export class CodePublicationService implements CodePublicationApi {
           unitId: record.instanceId,
           commitSha: pull.mergeCommitSha!,
         });
-      } else if (reading(record.pull) !== reading(pull))
+      } else if (reading(record.pull) !== reading(pull)) {
         // A unit's blocker is read back from this row, so it follows the pull request the
         // moment one opens, and again when it closes unmerged: until then the wait said no
         // pull request existed, and named nobody who could end it.
         await this.host.reconcile(caller, tx);
+        // Closed unmerged is a rejection, and whoever waits on it moves on without it.
+        if (pull.state === 'closed' && !pull.merged)
+          await recorded(this.state, tx, caller, 'code.publication_stale', record.proposalId, {
+            unitId: record.instanceId,
+            reason: 'closed',
+          });
+      }
       return this.decode(await this.row(caller, row.proposal_id, tx));
     });
   }
@@ -338,27 +421,20 @@ export class CodePublicationService implements CodePublicationApi {
   private async publishLocal(caller: Caller, row: Row, lock: string) {
     const record = this.decode(row);
     await this.host.verifyLocal(caller, record);
+    // A main the reviewed head already holds moved under it, not past it. Git answers that
+    // before the transaction, which only accepts the main it was asked about.
+    const seen = await this.state.read((sql) => this.mainOf(sql, caller.projectId));
+    const held = !!seen && (await this.host.ancestor(caller.projectId, seen, record.headOid));
     await this.state.transaction(async (tx) => {
       const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
       await this.scope.require(caller, 'write', tx);
       await this.host.check(caller, current, tx);
-      const project = await tx.get<{ main_json: string }>(
-        'SELECT main_json FROM code_projects WHERE project_id=?',
-        caller.projectId,
-      );
-      const main = project && JSON.parse(project.main_json).oid;
+      const main = await this.mainOf(tx, caller.projectId);
       // The checkout base may already merge accepted dependencies with main.
       // CAS the pinned integration main, not that derived checkout commit.
       const expectedMain = current.approval!.integrationBase;
-      if (main !== expectedMain && main !== current.headOid) {
-        await tx.run(
-          "UPDATE code_publications SET stale=1,settled=1,error='code_main_changed' WHERE proposal_id=?",
-          row.proposal_id,
-        );
-        await this.host.reconcile(caller, tx);
-        await recorded(this.state, tx, caller, 'code.publication_stale', row.proposal_id, {
-          unitId: current.instanceId,
-        });
+      if (main !== expectedMain && main !== current.headOid && !(held && main === seen)) {
+        await this.markStale(caller, current, 'code_main_changed', null, tx);
         return;
       }
       await tx.run(
@@ -369,7 +445,7 @@ export class CodePublicationService implements CodePublicationApi {
           expectedBase: expectedMain,
           requestedAt: now(),
           commitSha: record.headOid,
-          mainParent: expectedMain,
+          mainParent: main === record.headOid ? expectedMain : main,
         }),
         row.proposal_id,
       );
@@ -478,7 +554,13 @@ export class CodePublicationService implements CodePublicationApi {
                   }
                 }
               }
-              this.pinned(current, pull);
+              // A merged head that is not the reviewed one is an incident, which saving retains.
+              if (!pull.merged && !this.pins(current, pull)) {
+                await this.settleStale(caller, row, lock, 'github_head_changed', pull, () =>
+                  client.updatePull(token, current.repository, pull.number, { state: 'closed' }),
+                );
+                return;
+              }
               // A unit's publication is opened with its passing review already sealed.
               if (pull.state === 'open' && current.review?.verdict === 'pass') {
                 await client.appStatus(
@@ -636,42 +718,33 @@ export class CodePublicationService implements CodePublicationApi {
         async (client, token) => {
           await this.scope.require(caller, 'admin');
           let pull = await client.pull(token, record.repository, record.pull!.number);
-          this.pinned(record, pull);
           if (pull.merged) return this.save(caller, row, lock, pull);
+          const close = () =>
+            client.updatePull(token, record.repository, pull.number, { state: 'closed' });
+          if (!this.pins(record, pull))
+            return this.settleStale(caller, row, lock, 'github_head_changed', pull, close);
           const main = await client.branch(token, record.repository, record.baseBranch);
           await this.host.import(caller, record, main.sha);
           if (!(await this.host.ancestor(caller.projectId, main.sha, record.headOid))) {
-            const closed =
-              pull.state === 'open'
-                ? await client.updatePull(token, record.repository, pull.number, {
-                    state: 'closed',
-                  })
-                : null;
-            await this.state.transaction(async (tx) => {
-              await this.scope.require(caller, 'admin', tx);
-              await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-              await this.owned(caller, record.proposalId, lock, tx);
-              await this.host.check(caller, record, tx);
-              await this.host.main(caller, main.sha, tx);
-              // An accepted unit publishes once. A stale row settles here.
-              await tx.run(
-                "UPDATE code_publications SET stale=1,settled=1,synced_at='' WHERE proposal_id=?",
-                record.proposalId,
-              );
-              if (closed)
-                await tx.run(
-                  'UPDATE code_publications SET pull_json=? WHERE proposal_id=?',
-                  canonical(closed),
-                  record.proposalId,
-                );
-              await this.host.reconcile(caller, tx);
-              // A consumer waiting on this publication learns that a successor must take it.
-              await recorded(this.state, tx, caller, 'code.publication_stale', record.proposalId, {
-                unitId: record.instanceId,
-              });
-            });
-            return this.decode(
-              await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),
+            // Merv's main follows GitHub's only forward, from the main it was read against.
+            const ours = await this.state.read((sql) => this.mainOf(sql, caller.projectId));
+            const forward =
+              !!ours &&
+              ours !== main.sha &&
+              (await this.host.ancestor(caller.projectId, ours, main.sha));
+            return this.settleStale(
+              caller,
+              row,
+              lock,
+              'code_main_changed',
+              pull,
+              close,
+              async (tx) => {
+                await this.scope.require(caller, 'admin', tx);
+                await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
+                await this.host.check(caller, record, tx);
+                if (forward) await this.host.main(caller, main.sha, tx, ours!);
+              },
             );
           }
           const requiredChecks = await this.host.rules(caller, client, token, record);
