@@ -26,7 +26,7 @@ flowchart LR
   subgraph people["People & agents"]
     worker["Worker agent<br/><small>leased session</small>"]
   end
-  subgraph research["Research logic"]
+  subgraph researchLayer["Research logic"]
     tasks[Tasks]
     experiments[Experiments]
     research[Research]
