@@ -56,7 +56,7 @@ export const taskToolsPlugin = {
       {
         name: 'task.create',
         description:
-          'Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Every new task has a private managed Git checkout, even without GitHub. Record work with code.commit and deliver that operation’s commandId. The independent reviewer inspects that exact commit. Code derives the base from accepted dependsOn prerequisites and project main. Conflicting dependency branches wait for reviewed resolution. Repository initialization or missing Code storage blocks work; it never falls back to scratch. GitHub is optional synchronization and publication. Only a leased reviewer in the pinned checkout can pass a task; an interactive reviewer may return or fail it.',
+          'Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Every new task has a private managed Git checkout, even without GitHub. Record work with code.commit and deliver that operation’s commandId. The independent reviewer inspects that exact commit. Code derives the base from accepted dependsOn prerequisites and project main. Conflicting dependency branches wait for reviewed resolution. Repository initialization or missing Code storage blocks work; it never falls back to scratch. GitHub is optional synchronization and publication. Only a leased reviewer in the pinned checkout can pass a task; a review claimed without a lease, possible only once review_rounds is used up, can only fail it.',
         inputSchema: z
           .object({
             title: z
@@ -91,11 +91,13 @@ export const taskToolsPlugin = {
       {
         name: 'task.get',
         description:
-          'Read task status, workflow revision, pinned evidence, current review ID, live prerequisites and dependents, and caller-specific workflow guidance.',
-        inputSchema: z.object({ taskId: id }).strict(),
+          'Read task status, workflow revision, pinned evidence, current review ID, live prerequisites and dependents, and caller-specific workflow guidance. With checkpointId, read that one saved checkpoint instead, as a context names it.',
+        inputSchema: z.object({ taskId: id, checkpointId: id.optional() }).strict(),
         readOnly: true,
-        handler: async (caller: Caller, input: { taskId: string }) =>
-          await ctx.tasks.get(caller, input.taskId),
+        handler: async (caller: Caller, input: { taskId: string; checkpointId?: string }) =>
+          input.checkpointId === undefined
+            ? await ctx.tasks.get(caller, input.taskId)
+            : await ctx.tasks.savedCheckpoint(caller, input.taskId, input.checkpointId),
       },
       {
         name: 'task.list',
@@ -108,7 +110,7 @@ export const taskToolsPlugin = {
       {
         name: 'task.submit_delivery',
         description:
-          'Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses Git and requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. expectedRevision is the task workflow revision.',
+          'Submit immutable delivery artifacts and enter independent review atomically. Supply one confirmation per numbered acceptance check: checkNumber, met/not_met status, at most 50 evidenceIds from artifactIds, and notes describing verification or the unmet condition. A met claim requires evidence. Merv pins the confirmations alongside the evidence; the reviewer decides whether the goal was achieved. Every new task uses Git and requires commandId: this leased worker’s own code.commit operation, once code.operation reports it succeeded. Its artifactIds may be empty, files are optional alongside the commit, a met claim that cites no evidenceIds is backed by the delivered commit, and Merv pins a rendered record of the commit for the review. expectedRevision is the task workflow revision.',
         inputSchema: z
           .object({
             taskId: id,

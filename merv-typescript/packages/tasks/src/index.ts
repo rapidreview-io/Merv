@@ -23,6 +23,7 @@ import {
   recorded,
   leaseReleaseConsumer,
   releasedLease,
+  sha256Hex,
   visible,
   type Artifact,
   type Artifacts,
@@ -125,7 +126,7 @@ const PINNED_ASSESSMENT_CHARS = 16_000;
 function pinnedAssessment(review: ReviewRequest): string {
   const { id: reviewId, snapshotHash, artifactIds, verdict, notes, criteria } = review;
   const { synopsis, findings, evidence } = review;
-  const whole = JSON.stringify({
+  const assessment = {
     reviewId,
     snapshotHash,
     artifactIds,
@@ -135,18 +136,11 @@ function pinnedAssessment(review: ReviewRequest): string {
     synopsis,
     findings,
     evidence,
-  });
+  };
+  const whole = JSON.stringify(assessment);
   if (whole.length <= PINNED_ASSESSMENT_CHARS) return whole;
   // The notes are the feedback's own text and the criteria the brief's checks.
-  const short = JSON.stringify({
-    reviewId,
-    snapshotHash,
-    artifactIds,
-    verdict,
-    synopsis,
-    findings,
-    evidence,
-  });
+  const short = JSON.stringify({ ...assessment, notes: undefined, criteria: undefined });
   const more = `\n(Abbreviated for room: read review.get ${reviewId} for the whole assessment.)`;
   return clip(short, PINNED_ASSESSMENT_CHARS - more.length) + more;
 }
@@ -330,7 +324,7 @@ const configuration = z
  */
 const PAPER_RECEIPT_BYTES = 384 * 1024;
 /** A context input before it becomes items: one text, or artifacts listed by ID. */
-type Source = { text: string } | { artifactIds: string[] };
+type Source = { text: string } | { artifactIds: string[] } | ContextInput;
 /**
  * How each section's items are embedded. The task, its brief, revision feedback and the review
  * criteria are always embedded; the rest fit while they can, highest priority first. A custom
@@ -1100,7 +1094,7 @@ export class TaskService implements Tasks {
    * attached the read-only checkout at the delivered commit. Sessions fixes that attachment and
    * refuses any other base, and a runner without the objects never attaches, so the attachment is
    * the server-side fact that the reviewer could fetch what it accepts. An actor with no checkout
-   * at all — an interactive reviewer — may return or fail the task but cannot pass it.
+   * at all — an interactive reviewer, admitted only once review_rounds is used up — can only fail it.
    */
   private async checkoutReviewer(
     { caller, snapshot, tx }: WorkflowCheckContext,
@@ -1110,7 +1104,7 @@ export class TaskService implements Tasks {
     check(
       caller.session,
       'task_commit_unfetched',
-      'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task. Return or fail it, or have the review replaced with task.reissue_review so a leased worker can claim it',
+      'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task. Fail it, or have the review replaced with task.reissue_review so a leased worker can claim it',
       409,
     );
     const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
@@ -1518,6 +1512,20 @@ export class TaskService implements Tasks {
       return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
     });
   }
+  async savedCheckpoint(caller: Caller, taskId: string, checkpointId: string) {
+    caller = structuredClone(caller);
+    return await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const row = await tx.get<{ checkpoint: string }>(
+        'SELECT checkpoint FROM task_checkpoints WHERE project_id=? AND task_id=? AND id=?',
+        caller.projectId,
+        taskId,
+        checkpointId,
+      );
+      check(row, 'not_found', 'This task has no checkpoint with that ID', 404);
+      return JSON.parse(row.checkpoint) as TaskCheckpoint;
+    });
+  }
   async process(caller: Caller, taskId: string): Promise<ProcessGraph> {
     caller = structuredClone(caller);
     return await this.workflows.process(caller, taskId);
@@ -1662,11 +1670,22 @@ export class TaskService implements Tasks {
     const type = this.contextType(task, purpose);
     // Reverse links change when downstream work is added, independently of this assignment. The
     // checks reach a worker in the brief and a reviewer in the criteria, the goal in the brief,
-    // and the last round's notes in the feedback: each is embedded once, and task.get has all.
-    const { dependents: _dependents, checks: _checks, acceptanceChecks: _accepted, ...rest } = task;
+    // the last round's notes in the feedback, and the delivery's confirmations in its pinned
+    // sheet: each is embedded once, and task.get has all. A producer's own brief need not number
+    // the checks, so a worker is given them numbered unless Merv rendered the brief.
+    const { dependents: _dependents, checks: _checks, acceptanceChecks, ...record } = task;
+    const { deliveryConfirmations: _confirmations, deliveryIds: _deliveryIds, ...rest } = record;
     const { goal: _goal, workflow, ...work } = rest;
-    const { revisionContext: _feedback, ...data } = workflow.data;
-    const assignmentTask = purpose === 'work' ? { ...work, workflow: { ...workflow, data } } : rest;
+    const { deliveryIds: _ids, ...reviewData } = workflow.data;
+    const { revisionContext: _feedback, ...data } = reviewData;
+    const rendered =
+      purpose === 'work' &&
+      (await this.artifacts.get(caller, task.briefId, tx)).hash ===
+        sha256Hex(renderBrief(task, true));
+    const assignmentTask =
+      purpose === 'work'
+        ? { ...work, ...(rendered ? {} : { acceptanceChecks }), workflow: { ...workflow, data } }
+        : { ...rest, workflow: { ...workflow, data: reviewData } };
     // Worker contexts retain the offer's Introduction even if an operator later changes it.
     const receipt = caller.session
       ? (JSON.parse(
@@ -1762,7 +1781,16 @@ export class TaskService implements Tasks {
       }));
     }
     if (checkpoints.length) {
-      inputs.checkpoints = { text: JSON.stringify(checkpoints) };
+      // One item each, newest first to be embedded, and each read back alone by its ID.
+      inputs.checkpoints = {
+        items: checkpoints.map((checkpoint, index) => ({
+          id: `checkpoints:${checkpoint.id}`,
+          title: `Saved ${checkpoint.createdAt} at revision ${checkpoint.revision}`,
+          body: { text: JSON.stringify(checkpoint) },
+          priority: ITEM_RULES.checkpoints!.priority! + index,
+          refs: [{ tool: 'task.get', input: { taskId: task.id, checkpointId: checkpoint.id } }],
+        })),
+      };
       const artifactIds = [...new Set(checkpoints.flatMap((c) => c.artifactIds))];
       if (artifactIds.length) inputs.checkpointEvidence = { artifactIds };
     }
@@ -1791,6 +1819,10 @@ export class TaskService implements Tasks {
     const result: Record<string, ContextInput> = {};
     for (const [key, input] of Object.entries(inputs)) {
       const rule = ITEM_RULES[key] ?? { priority: 500 };
+      if ('items' in input) {
+        result[key] = input;
+        continue;
+      }
       result[key] = {
         items:
           'text' in input
