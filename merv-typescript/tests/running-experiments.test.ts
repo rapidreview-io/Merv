@@ -561,7 +561,7 @@ test('evidence under a role the domain no longer writes is listed after every kn
       evidence: [file('retired', 1), file('report', 2), file('plan', 3)],
     } as unknown as Experiment,
     graph: { nodes: [{}], edges: [], state: 'planned', dependencies: [] } as never,
-    route: () => null,
+    route: () => undefined,
   });
   const evidence = panel.sections.find((section) => section.title === 'Evidence');
   assert.ok(evidence?.kind === 'links');
