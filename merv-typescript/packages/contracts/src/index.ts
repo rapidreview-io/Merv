@@ -79,6 +79,7 @@ export {
   workLink,
   dependencyRows,
 } from './running.js';
+export * as runningSchema from './running-schema.js';
 export {
   codexHandoffGraceMs,
   hostedCodexCapabilities,
