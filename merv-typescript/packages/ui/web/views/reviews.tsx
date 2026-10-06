@@ -577,6 +577,8 @@ function Desk({
   const objection = drafts.findIndex(
     (draft) => draft.status !== 'met' && draft.status !== 'waived',
   );
+  // A check the requesting domain depends on passes only met: a waiver cannot stand in for it.
+  const required = review.requiredCriteria?.find((number) => drafts[number - 1]?.status !== 'met');
   // The rule still unmet, and the criterion it is about: the sentence under the
   // control is the way there, so nobody counts list items to find number 3.
   const unmet: { text: string; at?: number } | undefined =
@@ -606,9 +608,14 @@ function Desk({
                         text: 'A passing verdict needs every check met or waived.',
                         at: objection + 1,
                       }
-                    : verdict !== 'pass' && routes.length > 0 && !returnTo
-                      ? { text: 'Choose where the work returns.' }
-                      : undefined;
+                    : verdict === 'pass' && required !== undefined
+                      ? {
+                          text: `Check ${required} is required: a passing verdict needs it met, not waived.`,
+                          at: required,
+                        }
+                      : verdict !== 'pass' && routes.length > 0 && !returnTo
+                        ? { text: 'Choose where the work returns.' }
+                        : undefined;
   return (
     // One form's width and one field anatomy with the producer's desk, which stands in
     // this same slot on the task's page: the field keeps its name once something is typed.

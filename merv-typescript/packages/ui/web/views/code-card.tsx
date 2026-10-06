@@ -149,15 +149,19 @@ function Verb({
   return danger ? <span className="act-danger">{control}</span> : control;
 }
 
+/** An operator's verb on a base: each is the tool `code.base.<verb>`. */
+type BaseAction = CodeBaseControlInput['action'] | 'release';
+
 /**
  * What may still be done to a base, which is the server's own rule rather than a guess:
  * only infrastructure work is retried, only a suspended base resumes, and a base that
- * resolved or was cancelled has reached its end. A quarantined base takes nothing at all.
+ * resolved or was cancelled has reached its end. A quarantined base takes one verb, its
+ * release, once someone has verified the alarm was false.
  */
-export function verbsOf(base: CodeBaseRecord): CodeBaseControlInput['action'][] {
-  if (base.quarantined) return [];
+export function verbsOf(base: CodeBaseRecord): BaseAction[] {
+  if (base.quarantined) return ['release'];
   const open = !['resolved', 'cancelled'].includes(base.state);
-  const actions: CodeBaseControlInput['action'][] = [];
+  const actions: BaseAction[] = [];
   if (open && ['blocked_infra', 'retry_wait'].includes(base.state)) actions.push('retry');
   if (open && base.state !== 'suspended') actions.push('suspend');
   if (open && base.state === 'suspended') actions.push('resume');
@@ -166,7 +170,7 @@ export function verbsOf(base: CodeBaseRecord): CodeBaseControlInput['action'][] 
   return actions;
 }
 
-const SAID: Record<CodeBaseControlInput['action'], [string, string, string]> = {
+const SAID: Record<BaseAction, [string, string, string]> = {
   retry: [
     'Retry merge',
     'Retry this merge?',
@@ -191,6 +195,11 @@ const SAID: Record<CodeBaseControlInput['action'], [string, string, string]> = {
     'Quarantine base',
     'Quarantine this base and everything under it?',
     'Nothing may be built on this base or its descendants again, including the pins and acceptances already made from it. Its result stays retained and cannot be reused.',
+  ],
+  release: [
+    'Release quarantine',
+    'Release this base from quarantine?',
+    'Do this only once you have verified the alarm was false, and say how in the reason. Every base and unit that only inherited the quarantine from it is released with it; one quarantined in its own right stays quarantined.',
   ],
 };
 
@@ -257,7 +266,7 @@ function BaseBody({
   manages: boolean;
   onDone(): void;
 }) {
-  const [open, setOpen] = useState<CodeBaseControlInput['action'] | null>(null);
+  const [open, setOpen] = useState<BaseAction | null>(null);
   const of = (commit: string) => units.find((unit) => unit.acceptance?.reference === commit);
   const parents = (base.parents ?? []).flatMap((commit) => (commit ? [commit] : []));
   const waiters = waitersOf(base, units);
