@@ -23,7 +23,8 @@ const resource = fileURLToPath(import.meta.url);
 const PYTHON = '/usr/bin/python3';
 /**
  * Leads the owner's group as a child subreaper (PR_SET_CHILD_SUBREAPER) that runs the owner as
- * its child, forwards it signals, reaps every process it adopts and exits as the owner did.
+ * its child, forwards it signals, reaps every process it adopts and exits as the owner did, on
+ * any Python 3 a host has (os.waitstatus_to_exitcode is 3.9's).
  * Without ctypes or prctl it becomes the owner itself, which then leads its own group.
  */
 const SUBREAPER = `import os, signal, sys
@@ -32,22 +33,31 @@ try:
     if ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) != 0: raise OSError()
 except Exception:
     os.execv(sys.argv[1], sys.argv[1:])
+forwarded = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+# Held until the owner's pid is known, so a stop sent meanwhile is forwarded, not dropped.
+signal.pthread_sigmask(signal.SIG_BLOCK, forwarded)
 owner = 0
 def forward(number, _frame):
     if owner: os.kill(owner, number)
-for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+for number in forwarded:
     signal.signal(number, forward)
 owner = os.fork()
 if owner == 0:
-    try: os.execv(sys.argv[1], sys.argv[1:] + [str(os.getpgrp())])
+    try:
+        for number in forwarded: signal.signal(number, signal.SIG_DFL)
+        signal.pthread_sigmask(signal.SIG_UNBLOCK, forwarded)
+        os.execv(sys.argv[1], sys.argv[1:] + [str(os.getpgrp())])
     finally: os._exit(127)
+signal.pthread_sigmask(signal.SIG_UNBLOCK, forwarded)
 while True:
     pid, status = os.wait()
     if pid != owner: continue
     if os.WIFSIGNALED(status):
-        signal.signal(os.WTERMSIG(status), signal.SIG_DFL)
-        os.kill(os.getpid(), os.WTERMSIG(status))
-    os._exit(os.waitstatus_to_exitcode(status))`;
+        number = os.WTERMSIG(status)
+        if number in forwarded: signal.signal(number, signal.SIG_DFL)
+        os.kill(os.getpid(), number)
+        os._exit(128 + number)
+    os._exit(os.WEXITSTATUS(status))`;
 const mode = process.argv[2];
 if (mode === 'group') groupOwner(Number(process.argv[3]) || process.pid);
 else if (mode === 'guardian') guardian(process.argv[3], process.argv[4]);
