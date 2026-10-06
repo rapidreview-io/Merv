@@ -1009,9 +1009,18 @@ test('a final capture clears an index lock the stopped session left, and repeate
   await f.event('session.workspace_attached', 'ses_1');
   writeFileSync(join(path, 'a.txt'), 'one\n');
   const gitDir = git(path, ['rev-parse', '--absolute-git-dir']);
-  // A killed agent's Git left its locks; the process is confirmed stopped before capture.
+  // A killed agent's Git left its locks, its own branch's among them in the shared refs; the
+  // process is confirmed stopped before capture.
+  const branchLock = git(path, [
+    'rev-parse',
+    '--path-format=absolute',
+    '--git-path',
+    `${git(path, ['symbolic-ref', '-q', 'HEAD'])}.lock`,
+  ]);
+  assert.ok(!branchLock.startsWith(gitDir), 'the branch lives in the shared repository');
   writeFileSync(join(gitDir, 'index.lock'), '');
   writeFileSync(join(gitDir, 'HEAD.lock'), '');
+  writeFileSync(branchLock, '');
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
   m.terminal.add('launch-ses_1');
@@ -1020,6 +1029,7 @@ test('a final capture clears an index lock the stopped session left, and repeate
   assert.equal((await f.unit()).canonicalHead, result!.headOid);
   assert.equal(existsSync(join(gitDir, 'index.lock')), false);
   assert.equal(existsSync(join(gitDir, 'HEAD.lock')), false);
+  assert.equal(existsSync(branchLock), false);
   await driver.close(m.launch('ses_1'));
 
   // The next generation's checkout cannot be captured at all: failures however many keep
@@ -1038,7 +1048,7 @@ test('a final capture clears an index lock the stopped session left, and repeate
   try {
     for (let attempt = 1; attempt <= 8; attempt++)
       await assert.rejects(driver.capture(m.launch('ses_2')), failed('workspace_git_failed'));
-    db.prepare('UPDATE code_v2_capture_failing SET since=since-?').run(10 * 60_000);
+    db.prepare('UPDATE code_v2_capture_attempts SET since=since-?').run(10 * 60_000);
     handed = await driver.capture(m.launch('ses_2'));
   } finally {
     chmodSync(gitDir, 0o700);
@@ -1053,6 +1063,55 @@ test('a final capture clears an index lock the stopped session left, and repeate
     assert.equal(final.error, 'workspace_capture_failed');
   } finally {
     db.close();
+  }
+});
+
+test('the bound on failing captures restarts after the machine stopped trying, and a failed import never counts', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  const m = machine(t, f, undefined, true);
+  const driver = m.start();
+  const launch = m.launch('ses_1');
+  const { path } = await driver.prepare(launch, m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'a.txt'), 'one\n');
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  m.terminal.add(launch.id);
+  const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
+  t.after(() => db.close());
+  const age = (since: number, last: number) =>
+    db
+      .prepare('UPDATE code_v2_capture_attempts SET since=since-?,last=last-?')
+      .run(since * 60_000, last * 60_000);
+  // Moving this checkout's commit into the machine's cache fails: that is the machine, not the
+  // checkout, and however long it lasts the session's work is never given up for it.
+  const imported = t.mock.method(
+    driver as unknown as { importAssignmentCommit(): Promise<void> },
+    'importAssignmentCommit',
+    async () => {
+      throw new WorkspaceError('workspace_transfer_lost');
+    },
+  );
+  await assert.rejects(driver.capture(launch), failed('workspace_transfer_lost'));
+  assert.equal(
+    (db.prepare('SELECT COUNT(*) AS n FROM code_v2_capture_attempts').get() as { n: number }).n,
+    0,
+  );
+  imported.mock.restore();
+  // The checkout itself cannot be captured, and was failing ten minutes ago; but the machine
+  // stopped trying for five of them, so the bound starts again rather than handing over.
+  const gitDir = join(path, '.git');
+  chmodSync(gitDir, 0o500);
+  try {
+    await assert.rejects(driver.capture(launch), failed('workspace_git_failed'));
+    age(10, 5);
+    await assert.rejects(driver.capture(launch), failed('workspace_git_failed'));
+    // Kept failing without a pause for the whole bound: the generation is handed over.
+    age(10, 0);
+    assert.equal((await driver.capture(launch))?.headOid, f.root);
+  } finally {
+    chmodSync(gitDir, 0o700);
   }
 });
 
