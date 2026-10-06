@@ -2,6 +2,47 @@
 
 The runner turns one Sessions lease into exactly one supervised local agent process, in a workspace a named driver prepared. It keeps that process alive while the session is live and settles each ended launch exactly once. It holds no authority beyond its source (or managed control) bearer. `LocalLedger` and `ProcessHost` run on Darwin and Linux and do not depend on the server's State plugin.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph machine["Agent machine"]
+    subgraph machinePeople["People & agents"]
+      workerAgent["Worker agent<br/><small>Codex or Claude Code</small>"]
+    end
+    subgraph machineFoundations["Foundations"]
+      runner["Runner<br/><small>local supervisor</small>"]
+      code["Code<br/><small>workspace driver</small>"]
+    end
+  end
+  subgraph main["Merv Main"]
+    subgraph mainFoundations["Foundations"]
+      api["API<br/><small>/mcp and tools</small>"]
+      sessions["Sessions"]
+      codeWork["Code work"]
+      fleet["Fleet<br/><small>model relay</small>"]
+    end
+  end
+  subgraph externalLayer["External"]
+    blobStore[("Blob store")]
+    sandboxesService["Sandboxes service"]
+    modelProvider["Model provider"]
+  end
+  runner -- "uses driver" --> code
+  runner -- "launches" --> workerAgent
+  runner -- "HTTP /sessions/*" --> sessions
+  runner -- "HTTP /code/commands" --> codeWork
+  runner -- "PUT signed upload" --> blobStore
+  workerAgent -- "HTTP /mcp" --> api
+  workerAgent -- "HTTP /codex-model" --> fleet
+  workerAgent -- "MCP launch connection" --> sandboxesService
+  fleet -- "relays" --> modelProvider
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class runner self
+```
+
+The runner lives on the agent machine, outside Main's plugin graph: it injects no server service and reaches Main only over HTTP, while the agent it launches calls Merv tools at `/mcp` with the session bearer. Transcripts and conversations go straight to the blob store through the signed uploads Sessions grants.
+
 ## Configuration and drivers
 
 For work that does not use Git, set `"workspaceDrivers": []` and omit `workspace`: the CLI loads no Code modules and runs assignments without a checkout in scratch directories without Git installed. [The server configuration without Code](../../config/no-code.example.json) and [the matching runner configuration](../../config/runner-no-code.example.json) show the pair. Omitting `workspaceDrivers` keeps the Code driver (`code.v2`), as does `["code"]`. A `workspace` repository serves policies that name no driver through the [local repository driver](../code/src/driver/local.ts), which the CLI then loads from Code and hands the runner as `repositoryDriver`; the runner itself runs no Git, and refuses `workspace` without that driver. `workspace` and `assignmentWorkspaceDirectory` together are refused.

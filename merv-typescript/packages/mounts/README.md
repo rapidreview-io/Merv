@@ -2,6 +2,37 @@
 
 Mounts publishes an explicit selection of an external MCP server's tools as `_<mountId>.<tool>` and forwards each call over a connection that belongs to the caller and carries that caller's own credential binding. Its only Cordis dependencies are Tools and Scope. Production does not compose it.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    person["Person<br/><small>browser</small>"]
+    workerAgent["Worker agent"]
+    mcpClient["External MCP client"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    api["API<br/><small>/mcp and tool registry</small>"]
+    mounts["Mounts<br/><small>remote MCP tools</small>"]
+    scope["Scope"]
+    ui["UI"]
+  end
+  subgraph externalLayer["External"]
+    upstream["Upstream MCP server<br/><small>such as Nisa or Sandboxes</small>"]
+  end
+  workerAgent -- "calls _mountId.tool" --> api
+  mcpClient -- "calls _mountId.tool" --> api
+  mounts -- "injects" --> api
+  mounts -- "injects" --> scope
+  mounts -- "injects" --> ui
+  person -- "opens Connections page" --> ui
+  mounts -- "forwards over MCP" --> upstream
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class mounts self
+```
+
+Mounts turns selected tools of an upstream MCP server into Merv tools, so agents and MCP clients call them through the ordinary registry under Scope grants, and each call travels on the caller's own connection and credential. Production does not compose it.
+
 ## Configuration
 
 ```json

@@ -3,6 +3,51 @@
 A Cordis service for durable, project-scoped declarative state machines. It depends
 only on `state` and `scope`; it has no artifact, review, or task dependencies.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    workerAgent["Worker agent"]
+  end
+  subgraph researchLayer["Research logic"]
+    tasks["Tasks"]
+    experiments["Experiments"]
+    reflections["Reflections"]
+    research["Research"]
+    knowledge["Knowledge"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    workflows["Workflows<br/><small>durable state machines</small>"]
+    sessions["Sessions"]
+    codeWork["Code work"]
+    sandboxes["Sandboxes"]
+    state["State"]
+    scope["Scope"]
+  end
+  subgraph externalLayer["External"]
+    postgres[("PostgreSQL")]
+  end
+  workerAgent -- "calls workflow.begin" --> workflows
+  tasks -- "injects" --> workflows
+  experiments -- "injects" --> workflows
+  reflections -- "injects" --> workflows
+  research -- "injects" --> workflows
+  knowledge -- "injects" --> workflows
+  sessions -- "injects" --> workflows
+  codeWork -- "injects" --> workflows
+  workflows -- "emits workflow.transition" --> sandboxes
+  workflows -- "emits workflow.transition" --> codeWork
+  workflows -- "emits workflow.transition" --> research
+  workflows -- "injects" --> state
+  workflows -- "injects" --> scope
+  state -- "reads/writes" --> postgres
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class workflows self
+```
+
+Programs such as Tasks, Experiments, Reflections and Research register on Workflows and keep their own commands; Sessions leases the work they offer, and agents reach an instance only through the `workflow.*` tools. Every committed move is recorded as `workflow.transition`, which Sandboxes, Code work and Research follow.
+
 Install `workflowsPlugin` after (or before) its providers. Cordis activates it when
 both services are available. Its tool adapter exposes six tools:
 `workflow.status_and_next` (caller-specific gate guidance, or a project overview),
