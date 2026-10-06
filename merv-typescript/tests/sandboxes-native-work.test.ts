@@ -206,26 +206,6 @@ async function fixture(
       await work.pin('project', workflow, id, tx);
       await work.transitioned(transitionEvent(workflow, id, 1), tx);
     });
-  /** A lease issued before compute became a capability: it names its scope. */
-  const session = (lease = 'lease_one'): Session =>
-    ({
-      id: lease,
-      projectId: 'project',
-      instanceId: id,
-      hardDeadline: new Date(Date.now() + 3_600_000).toISOString(),
-      lease: { leaseId: lease, instanceId: id, projectId: 'project', workflow },
-      execution: {
-        workflow,
-        policy: { readOnly: false },
-        references: {
-          sandboxConnectionId: 'connection',
-          sandboxWorkKind: workflow,
-          sandboxWorkId: id,
-          sandboxAttempt: '1',
-          sandboxProfile: 'execute',
-        },
-      },
-    }) as unknown as Session;
   /** A lease of any workflow now: Sandboxes derives profile and epoch from it. */
   const leased = (
     lease = 'lease_one',
@@ -262,7 +242,6 @@ async function fixture(
     calls,
     assignments,
     tombstones,
-    session,
     leased,
     move,
     readWork,
@@ -313,7 +292,7 @@ test('native work pins one payer and returns only verified capture IDs from the 
 
 test('unknown assignment issuance retries the identical encrypted secret and hash, then handoff revokes only that lease', async (t) => {
   const f = await fixture(t),
-    session = f.session();
+    session = f.leased();
   f.loseReply();
   await assert.rejects(f.work.launchConnections(session), { code: 'sandbox_unavailable' });
   const stored = await f.readAssignment();
@@ -335,7 +314,7 @@ test('unknown assignment issuance retries the identical encrypted secret and has
   const settled = f.calls.length;
   await f.work.reconcile();
   assert.equal(f.calls.length, settled, 'idle open work without a live lease is not polled');
-  const next = await f.work.launchConnections(f.session('lease_two'));
+  const next = await f.work.launchConnections(f.leased('lease_two'));
   assert.notEqual(next[0]!.bearer, first[0]!.bearer);
   assert.equal(f.calls.filter((c) => c.path === '/v1/delegations/works').length, 1);
   assert.equal((await f.readWork())!.closed_at, null);
@@ -343,7 +322,7 @@ test('unknown assignment issuance retries the identical encrypted secret and has
 
 test('open work at rest under a live assignment is reconciled every 30 s, not on every pass', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   await f.work.reconcile();
   assert.equal((await f.readWork())!.transition_pending, false);
   const rested = f.calls.length;
@@ -362,7 +341,7 @@ test('open work at rest under a live assignment is reconciled every 30 s, not on
 test('lease tombstones fence credentials even before any native issuance row exists', async (t) => {
   const f = await fixture(t);
   await f.state.transaction((tx) => f.work.revokeAssignment('lease_one', tx));
-  await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_scope_conflict' });
+  await assert.rejects(f.work.launchConnections(f.leased()), { code: 'sandbox_scope_conflict' });
   assert.equal(f.calls.length, 0);
 });
 
@@ -375,14 +354,14 @@ for (const reason of ['release', 'attempt', 'closed'] as const)
         else await f.move(reason === 'closed' ? { closed: true } : { attempt: '2' }, tx);
       }),
     );
-    await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_scope_conflict' });
+    await assert.rejects(f.work.launchConnections(f.leased()), { code: 'sandbox_scope_conflict' });
     assert.ok(f.tombstones.has('lease_one'));
     assert.ok((await f.readAssignment())!.revoked_at);
   });
 
 test('attempt reconciliation fences old assignments and cancels only old provenance while retaining warm machines', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   await f.state.transaction((tx) => f.move({ attempt: '2' }, tx));
   f.resources(() => ({
     namespace: 'ns_work',
@@ -442,7 +421,7 @@ test('attempt reconciliation fences old assignments and cancels only old provena
 
 test("a workflow that names no attempt is cancelled once its launching assignment's attempt is old", async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   await f.state.transaction((tx) => f.move({ attempt: '2' }, tx));
   f.resources(() => ({
     namespace: 'ns_work',
@@ -479,7 +458,7 @@ test("a workflow that names no attempt is cancelled once its launching assignmen
 
 test('closure pages both streams, preserves finalizers, retries evidence independently, and confirms stopped machines', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   await f.state.transaction((tx) => f.move({ closed: true }, tx));
   let terminal = false,
     stopped = false,
@@ -548,7 +527,7 @@ test('closure pages both streams, preserves finalizers, retries evidence indepen
 
 test('repeated pagination cursors cannot falsely confirm cleanup', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   await f.state.transaction((tx) => f.move({ closed: true }, tx));
   f.resources(() => ({
     namespace: 'ns_work',
@@ -567,13 +546,13 @@ test('a receipt with another scope is never returned and its lease is fenced', a
   f.onIssue(async () => {
     f.assignments.get('lease_one')!.account_id = 'other_account';
   });
-  await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_scope_conflict' });
+  await assert.rejects(f.work.launchConnections(f.leased()), { code: 'sandbox_scope_conflict' });
   assert.ok(f.tombstones.has('lease_one'));
 });
 
 test('a transient database failure after issuance keeps the lease, and a retry reuses it', async (t) => {
   const f = await fixture(t),
-    session = f.session();
+    session = f.leased();
   const transaction = f.state.transaction.bind(f.state);
   let fail = false;
   f.state.transaction = ((fn: never) => {
@@ -599,7 +578,7 @@ test('a transient database failure after issuance keeps the lease, and a retry r
 test('lost issuance followed by release reconciles without ever learning a token ID', async (t) => {
   const f = await fixture(t);
   f.loseReply();
-  await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_unavailable' });
+  await assert.rejects(f.work.launchConnections(f.leased()), { code: 'sandbox_unavailable' });
   assert.equal((await f.readAssignment())!.native_token_id, null);
   await f.state.transaction((tx) => f.work.revokeAssignment('lease_one', tx));
   await f.work.reconcile();
@@ -609,7 +588,7 @@ test('lost issuance followed by release reconciles without ever learning a token
 
 test('connection disconnection during issuance withholds the bearer and expired sessions never issue', async (t) => {
   const f = await fixture(t);
-  const expired = f.session();
+  const expired = f.leased();
   expired.hardDeadline = new Date(Date.now() - 1_000).toISOString();
   await assert.rejects(f.work.launchConnections(expired), { code: 'sandbox_scope_conflict' });
   assert.equal(f.calls.length, 0);
@@ -621,13 +600,13 @@ test('connection disconnection during issuance withholds the bearer and expired 
       );
     }),
   );
-  await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_scope_conflict' });
+  await assert.rejects(f.work.launchConnections(f.leased()), { code: 'sandbox_scope_conflict' });
   assert.ok(f.tombstones.has('lease_one'));
 });
 
 test('a transition during resource enumeration cannot cancel the newly admitted attempt', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   f.onResources(() => f.state.transaction((tx) => f.move({ attempt: '2' }, tx)));
   f.resources(() => ({
     namespace: 'ns_work',
@@ -655,7 +634,7 @@ test('a transition during resource enumeration cannot cancel the newly admitted 
 test('closing after an unknown work-creation reply recovers its stable grant before cleanup', async (t) => {
   const f = await fixture(t);
   f.loseWorkReply();
-  await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_unavailable' });
+  await assert.rejects(f.work.launchConnections(f.leased()), { code: 'sandbox_unavailable' });
   assert.equal((await f.readWork())!.native_grant_id, null);
   await f.state.transaction((tx) => f.move({ closed: true }, tx));
   await f.work.reconcile();
@@ -669,7 +648,7 @@ test('closing after an unknown work-creation reply recovers its stable grant bef
 
 test('resource enumeration advances all three independent bounded cursors', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   f.resources((query) => {
     assert.equal(query.get('limit'), '100');
     const index = Number(query.get('sandboxes_after') ?? 0);
@@ -693,7 +672,7 @@ test('resource enumeration advances all three independent bounded cursors', asyn
 
 test('reconciliation excludes revoked roots without retiring pending cleanup on authorized work', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   await f.state.transaction(async (tx) => {
     await tx.run(`INSERT INTO sandbox_native_connections(id,project_id,root_id,account_id,member_id,credentials,connected_at,revoked_at)
       SELECT 'revoked_connection',project_id,'revoked_root',account_id,member_id,credentials,connected_at,connected_at FROM sandbox_native_connections WHERE id='connection'`);
@@ -724,7 +703,7 @@ test('reconciliation excludes revoked roots without retiring pending cleanup on 
 
 test('pending cleanup takes a bounded reconciliation slot ahead of ordinary evidence polls', async (t) => {
   const f = await fixture(t);
-  await f.work.launchConnections(f.session());
+  await f.work.launchConnections(f.leased());
   await f.state.transaction(async (tx) => {
     for (let i = 0; i < 20; i++)
       await tx.run(
@@ -911,19 +890,23 @@ test('the session.closed consumer revokes that lease, fences one still issuing, 
   );
 });
 
-test('leases issued before the change keep their named scope beside new leases of the same work', async (t) => {
+test('a lease still naming its scope in references is issued from its instance like any other', async (t) => {
   const f = await fixture(t);
-  const [legacy] = await f.work.launchConnections(f.session('lease_old'));
-  const [current] = await f.work.launchConnections(f.leased('lease_new'));
-  assert.ok(legacy && current && legacy.bearer !== current.bearer);
-  assert.equal(f.calls.filter((c) => c.path === '/v1/delegations/works').length, 1);
-  assert.equal((await f.readAssignment('lease_old'))!.attempt_ref, '1');
-  assert.equal((await f.readAssignment('lease_new'))!.attempt_ref, '1');
-  // A legacy lease whose attempt the epoch has left is refused.
-  await f.state.transaction((tx) => f.move({ attempt: '2' }, tx));
-  await assert.rejects(f.work.launchConnections(f.session('lease_late')), {
-    code: 'sandbox_scope_conflict',
-  });
+  // The scope references leases carried before 2026-10-04 are no longer read: the profile,
+  // connection and attempt come from the policy and the pinned work.
+  const references = {
+    sandboxConnectionId: 'another',
+    sandboxWorkKind: 'experiment',
+    sandboxWorkId: 'elsewhere',
+    sandboxAttempt: '9',
+    sandboxProfile: 'check',
+  };
+  const [issued] = await f.work.launchConnections(f.leased('lease_old', { references }));
+  assert.ok(issued);
+  const assignment = (await f.readAssignment('lease_old'))!;
+  assert.equal(assignment.attempt_ref, '1');
+  assert.equal(assignment.profile, 'execute');
+  assert.equal(assignment.work_kind, 'task');
 });
 
 test('migration 3 accepts any workflow name and derives existing epochs from their instances', async (t) => {

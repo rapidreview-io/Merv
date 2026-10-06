@@ -1305,7 +1305,11 @@ test('a lease freezes the Problem, carried once, without changing the registered
   assert.equal(prompt.split('ORIGINAL_PROJECT_INTRO_723').length, 2);
   const worker = await f.sessions.authenticate(offered.secret);
   await problem('CHANGED_PROJECT_INTRO_840', 1);
+  // A leased worker's paper is the one its lease froze: the current paper is not read.
+  const reads = t.mock.method(PaperService.prototype, 'contextInput');
   const refreshed = await f.workflows.assignment(worker, experiment.id);
+  assert.equal(reads.mock.callCount(), 0);
+  reads.mock.restore();
   assert.match(refreshed.context!.prompt, /ORIGINAL_PROJECT_INTRO_723/);
   assert.doesNotMatch(refreshed.context!.prompt, /CHANGED_PROJECT_INTRO_840/);
   await f.reload();

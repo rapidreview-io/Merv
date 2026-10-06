@@ -66,8 +66,7 @@ a workflow that names no attempt records the attempt of the assignment whose tok
 and is cancelled once that attempt is old; one no assignment of the work launched is not evidence).
 The native service is sent `work_kind`
 `experiment` for the `experiment` workflow and `task` for every other one, until it confirms
-other kinds. Leases issued before 2026-10-04 still carry `sandboxConnectionId`/`sandboxAttempt`/
-`sandboxProfile` references and are issued exactly as they name.
+other kinds.
 
 Settings → Integrations enables compute through the same Supabase sign-in used by
 the native Sandboxes console. First sign-in creates one personal backing account;

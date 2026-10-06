@@ -352,11 +352,11 @@ export class NativeWorkService {
       'Native issuance requires an independent connection',
       500,
     );
-    const refs = session.execution.references;
-    // Leases issued before compute became a capability name their scope; honour them as issued.
-    if (refs.sandboxConnectionId !== undefined) return await this.launchIssued(session);
     const workflow = session.execution.workflow;
-    const profile = computeProfile(session.execution.policy, refs.computeProfile);
+    const profile = computeProfile(
+      session.execution.policy,
+      session.execution.references.computeProfile,
+    );
     if (profile === 'none') return [];
     valid(
       workflowName(workflow) &&
@@ -394,31 +394,6 @@ export class NativeWorkService {
       });
     valid(work.desired_attempt !== null);
     return await this.issue(session, work.connection_id, workflow, work.desired_attempt, profile);
-  }
-  private async launchIssued(session: Readonly<Session>): Promise<NativeMcpConnection[]> {
-    const {
-      sandboxConnectionId: connectionId,
-      sandboxWorkKind: kind,
-      sandboxWorkId: workId,
-      sandboxAttempt: attempt,
-      sandboxProfile: profile,
-    } = session.execution.references;
-    valid(
-      identifier(connectionId) &&
-        typeof kind === 'string' &&
-        NATIVE_WORK_KINDS.has(kind) &&
-        workId === session.instanceId &&
-        reference(attempt) &&
-        (profile === 'execute' || profile === 'check') &&
-        identifier(session.lease.leaseId) &&
-        session.lease.instanceId === session.instanceId &&
-        session.lease.projectId === session.projectId &&
-        session.execution.workflow === kind &&
-        session.lease.workflow === kind,
-    );
-    const policy = session.execution.policy;
-    if (policy.readOnly && policy.workspace?.mode !== 'none' && policy.workspace?.retain) return [];
-    return await this.issue(session, connectionId, kind, attempt, profile);
   }
   private async issue(
     session: Readonly<Session>,
