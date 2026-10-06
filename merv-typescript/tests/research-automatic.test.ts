@@ -463,6 +463,14 @@ test('expected handoff failures roll back child creation and recover without poi
     },
   );
   await f.failExperiment(work.id);
+  // An unavailable provider is retried with its event, until the consumer's retries run out.
+  await f.app.ctx.domainEvents.drain();
+  const consumer = async () =>
+    (await f.app.ctx.domainEvents.status()).find((item) => item.id === 'research.automatic.v3')!;
+  assert.equal((await consumer()).error, 'reflection_unavailable');
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run("UPDATE event_consumers SET attempts=8,retry_at=0 WHERE id='research.automatic.v3'"),
+  );
   await f.pump();
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 0);
   const blocked = await f.research.get(f.owner, cycle.id);
@@ -472,6 +480,31 @@ test('expected handoff failures roll back child creation and recover without poi
   await f.research.wakeAutomatic();
   await f.pump();
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+  assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
+});
+
+test('a provider briefly unavailable is retried with its event instead of blocking the cycle', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const work = await f.experiment();
+  const cycle = await f.create([work.id]);
+  await f.pump();
+  const original = f.app.ctx.reflections.create.bind(f.app.ctx.reflections);
+  let failures = 1;
+  t.mock.method(f.app.ctx.reflections, 'create', async (...args: Parameters<typeof original>) => {
+    if (failures-- > 0) throw new MervError('reflection_unavailable', 'Restarting', 503);
+    return await original(...args);
+  });
+  await f.failExperiment(work.id);
+  for (let wait = 0; wait < 40; wait++) {
+    await f.app.ctx.domainEvents.drain();
+    if ((await f.research.get(f.owner, cycle.id)).workflow.state === 'reflecting') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const record = await f.research.get(f.owner, cycle.id);
+  assert.equal(record.workflow.state, 'reflecting');
+  assert.equal(record.automation!.blocker?.code, 'reflection_not_approved');
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
 });
 

@@ -497,11 +497,28 @@ test('an accepted consolidation task whose publication waits on an operator hold
     JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
     /publication_pending/,
   );
-  for (const state of ['closed', 'incident'] as const) {
-    main.publication = { state };
-    await assert.rejects(advance(), { code: 'publication_pending', message: /investigates/ });
-  }
+  main.publication = { state: 'incident' };
+  await assert.rejects(advance(), { code: 'publication_pending', message: /investigates/ });
   assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'consolidating');
+});
+
+test('a consolidation pull request closed unmerged is a rejection the cycle moves on from', async (t) => {
+  const f = await fixture(t);
+  const accepted = await work(f);
+  const main: Main = { unitIds: [accepted.id] };
+  const { record, published, advance } = await hosted(f, main);
+  const [taskId] = (await advance()).integrations;
+  await f.finish(taskId);
+  main.publication = { state: 'closed' };
+  const done = await advance();
+  assert.equal(done.workflow.state, 'complete');
+  assert.deepEqual(done.integrations, [taskId], 'no successor task is injected');
+  assert.deepEqual(published, [taskId]);
+  assert.equal((await advanced(f, record.id)).at(-1).integration, 'abandoned');
+  assert.deepEqual((await digestOf(f, done)).digest.integration, {
+    taskId,
+    publication: 'closed',
+  });
 });
 
 test('a publication main overtook injects a successor task on what main lacks now', async (t) => {
