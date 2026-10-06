@@ -19,6 +19,7 @@ flowchart LR
   subgraph foundations["Foundations"]
     scope["Scope<br/><small>projects</small>"]
     artifacts["Artifacts"]
+    reviews["Reviews"]
     ui["UI"]
     state["State"]
   end
@@ -33,6 +34,7 @@ flowchart LR
   paper -- "emits paper.patched" --> research
   paper -- "writes project Introduction" --> scope
   paper -- "checks cited artifacts" --> artifacts
+  paper -- "imports @merv/reviews/rules" --> reviews
   paper -- "registers /paper page" --> ui
   paper -- "injects" --> state
   state -- "reads/writes" --> postgres
