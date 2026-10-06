@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { closeSync, fsyncSync, lstatSync, openSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import type { CodeCommitCommand, CodeCommitReceipt, SessionWorkspace } from '@merv/contracts';
+import {
+  oidPattern,
+  type CodeCommitCommand,
+  type CodeCommitReceipt,
+  type SessionWorkspace,
+} from '@merv/contracts';
 
 export interface DriverGitResult {
   code: number;
@@ -23,8 +28,7 @@ export class WorkspaceError extends Error {
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 export const oid = (value: string): string => {
   const result = value.trim();
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result))
-    throw new WorkspaceError('workspace_invalid_oid');
+  if (!oidPattern.test(result)) throw new WorkspaceError('workspace_invalid_oid');
   return result;
 };
 export const pathStat = (path: string) => {

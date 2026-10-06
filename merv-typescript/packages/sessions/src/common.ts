@@ -18,7 +18,7 @@ export const refused = (error: unknown) =>
 export async function readFirst<T>(state: State, fn: (tx: Transaction) => Promise<T>): Promise<T> {
   if (state.ambient) return await fn(state.ambient);
   try {
-    return await state.snapshot(() => state.transaction(fn));
+    return await state.snapshotTransaction(fn);
   } catch (error) {
     if (!refused(error)) throw error;
     return await state.transaction(fn);

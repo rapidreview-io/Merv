@@ -1,4 +1,4 @@
-import { check, digest, type Data } from '@merv/contracts';
+import { check, digest, record, type Data } from '@merv/contracts';
 import type { LegacyHistoryType } from './history.js';
 
 type MediaSlot = 'figure' | 'image' | 'embed' | 'link-preview-image';
@@ -37,12 +37,8 @@ function mediaSlots(type: LegacyHistoryType, data: Data) {
   if (type === 'posts') {
     add('image', data.image_sha256, 'Post image');
     add('embed', data.embed_sha256, 'Post embed');
-    const preview = data.link_preview_json;
-    check(
-      preview !== null && typeof preview === 'object' && !Array.isArray(preview),
-      'legacy_media_metadata',
-      'Post preview must be validated structured history',
-    );
+    const preview = record(data.link_preview_json);
+    check(preview, 'legacy_media_metadata', 'Post preview must be validated structured history');
     add('link-preview-image', preview.image_sha256, 'Link preview image');
   }
   return result;

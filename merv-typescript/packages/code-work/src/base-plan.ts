@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { oidPattern } from '@merv/contracts';
 
 /**
  * The plan of a base: how the record for one set of accepted commits is built from two
@@ -7,13 +8,11 @@ import { createHash } from 'node:crypto';
  * record made later never changes how an earlier one is built.
  */
 
-const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-
 /** Full commit ids, once each, in the one order every caller agrees on. */
 export const members = (commits: Iterable<string>): string[] => {
   const sorted = [...new Set(commits)].sort();
   for (const commit of sorted)
-    if (!oid.test(commit)) throw new TypeError(`Not a full commit id: ${commit}`);
+    if (!oidPattern.test(commit)) throw new TypeError(`Not a full commit id: ${commit}`);
   return sorted;
 };
 

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { check, MervError, type Json } from '@merv/contracts';
+import { check, MervError, record, type Json } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import type {
   SandboxConnection,
@@ -37,7 +37,7 @@ const deliveryStates = new Set<SandboxRuntimeLaunch['deliveryState']>([
 
 function object(value: Json): Record<string, Json> {
   check(
-    value !== null && typeof value === 'object' && !Array.isArray(value),
+    record(value),
     'sandbox_runtime_unavailable',
     'The sandbox service returned an invalid runtime record',
     502,

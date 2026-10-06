@@ -1,9 +1,8 @@
 import { z } from 'zod';
+import { idSchema as label, oidSchema as oid } from './schemas.js';
 
 export type { SessionWorkspace, CodePendingMerge } from './sessions-models.js';
 
-const label = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
-const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const count = z.number().int().nonnegative().safe();
 export const gitBranchSchema = (maxLength: number) =>
   z

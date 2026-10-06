@@ -17,6 +17,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  idSchema,
 } from '@merv/contracts';
 import { z } from 'zod';
 
@@ -31,7 +32,7 @@ export const publicationControlSchema = z
     reason: z.string().trim().min(1).max(4000),
     /** The release operator attests the result of the deliberately stale merge attempt. */
     staleMerged: z.boolean().optional(),
-    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    requestId: idSchema,
   })
   .strict()
   .refine((v) => (v.action === 'record_canary') === (v.staleMerged !== undefined));

@@ -1,4 +1,4 @@
-import { check, MervError } from '@merv/contracts';
+import { check, MervError, record as plain } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import type {
   SandboxCheckHandle,
@@ -62,10 +62,7 @@ const ISOLATION: SandboxCheckHandle['isolation'] = {
 };
 
 const object = (id: string) => sandboxRoute('/v1/storage/objects/{id}', id);
-const record = (value: unknown): Record<string, unknown> =>
-  value !== null && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+const record = (value: unknown): Record<string, unknown> => plain(value) ?? {};
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const required = (value: unknown, what: string): string => {
   check(typeof value === 'string' && !!value, 'sandbox_unavailable', what, 502);

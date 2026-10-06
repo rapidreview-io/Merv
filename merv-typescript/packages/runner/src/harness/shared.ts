@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs';
-import type { AgentEvent } from '@merv/contracts';
+import { record, type AgentEvent } from '@merv/contracts';
 import type { SessionUsageReport } from '@merv/sessions/types';
 import { conversationIdPattern, type RunnerProfile } from '../profiles.js';
 
@@ -35,8 +35,7 @@ export type Line = Record<string, any>;
 
 export const read = (line: string): Line | undefined => {
   try {
-    const value = JSON.parse(line);
-    return value && typeof value === 'object' && !Array.isArray(value) ? value : undefined;
+    return record(JSON.parse(line));
   } catch {
     return undefined;
   }

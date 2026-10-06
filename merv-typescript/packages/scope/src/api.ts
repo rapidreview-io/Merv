@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { MervError, pathSegment, ROLES, type Scope } from '@merv/contracts';
 import type { MountHandler } from '@merv/api/types';
+import { unknownEndpoint } from '@merv/api/errors';
 
 const nonblank = z.string().trim().min(1).max(512);
 const role = z.enum(ROLES);
@@ -26,7 +27,6 @@ const createKeyInput = z
   })
   .strict();
 const rotateKeyInput = z.object({ expiresAt: keyExpiry }).strict();
-const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404);
 
 /** A key route takes no query, except that a listing may name one project. */
 function keyQuery(params: URLSearchParams, allowProject = false): string | undefined {

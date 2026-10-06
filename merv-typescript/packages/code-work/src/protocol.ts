@@ -10,6 +10,7 @@ import {
   type Caller,
   type CodeWorkspaceManifest,
   type State,
+  oidPattern,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
 import { pendingMerge } from '@merv/code/pending-merge';
@@ -168,7 +169,7 @@ export class CodeWorkspaceProtocol {
         : '';
       const head = session.execution.references[name];
       check(
-        typeof head === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head),
+        typeof head === 'string' && oidPattern.test(head),
         'code_workspace_required',
         'A read-only checkout from Code’s repository names the commit it reads',
         409,

@@ -398,10 +398,8 @@ export class SessionRunning {
   ): Promise<T> {
     caller = structuredClone(caller);
     check(!caller.session, 'forbidden', 'Leased workers cannot read project dispatch', 403);
-    return await this.state.snapshot(() =>
-      this.state.transaction(async (tx) =>
-        fn(tx, (await this.scope.require(caller, 'read', tx)).role === 'operator'),
-      ),
+    return await this.state.snapshotTransaction(async (tx) =>
+      fn(tx, (await this.scope.require(caller, 'read', tx)).role === 'operator'),
     );
   }
   /** The project's live leases, or those on some instances, oldest first, at most 200. */
@@ -527,12 +525,10 @@ export class SessionRunning {
 
   async marks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }> {
     caller = structuredClone(caller);
-    return await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const reading = await this.dispatcher.running(caller, tx);
-        return { marks: dispatchMarks(reading), summary: laneSummary(reading) };
-      }),
-    );
+    return await this.state.snapshotTransaction(async (tx) => {
+      const reading = await this.dispatcher.running(caller, tx);
+      return { marks: dispatchMarks(reading), summary: laneSummary(reading) };
+    });
   }
 
   /** The leases on some work, as one Sessions section of that work's sidebar. */

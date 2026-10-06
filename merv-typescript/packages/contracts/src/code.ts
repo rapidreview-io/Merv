@@ -1,4 +1,5 @@
 import { visible } from './text.js';
+import { idSchema as id, oidSchema as oid } from './schemas.js';
 import { z } from 'zod';
 import { sessionWorkspaceSchema, type SessionWorkspace } from './workspace.js';
 export interface CodeCommitInput {
@@ -48,8 +49,6 @@ export type CodeCommandCompletion = CodeCommandControl & {
   commandId: string;
 } & ({ receipt: CodeCommitReceipt; error?: never } | { error: string; receipt?: never });
 
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
-const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const count = z.number().int().nonnegative().safe();
 const message = z
   .string()
@@ -171,7 +170,7 @@ export interface CodeProjectBinding {
 }
 export const codeLocalBindInputSchema = z
   .object({
-    repositoryId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    repositoryId: id,
     mainOid: oid,
     expectedMainOid: oid.optional(),
     requestId: id,

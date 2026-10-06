@@ -15,7 +15,7 @@ import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { clip, itemTitle, visible } from './text.js';
-export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
+export { folded, idPattern, idSchema, oidPattern, oidSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export {
   allowedOrigin,
@@ -624,6 +624,8 @@ export interface State {
    * opens the snapshot on that read's connection, as the one transaction the read may have open.
    */
   snapshot<T>(fn: () => T | Promise<T>): Promise<T>;
+  /** A read-only transaction in such a snapshot: `snapshot(() => transaction(fn))`. */
+  snapshotTransaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   /** Whether the current async context is inside such a snapshot, where nothing may write. */
   readonly readScope: boolean;
   /**
@@ -706,9 +708,7 @@ export async function within<T>(
   const ambient = state.ambient;
   if (ambient) return await fn(ambient);
   if (!place) return await state.read(fn);
-  return place === 'read'
-    ? await state.snapshot(() => state.transaction(fn))
-    : await state.transaction(fn);
+  return place === 'read' ? await state.snapshotTransaction(fn) : await state.transaction(fn);
 }
 /** A pure read that needs a transaction: it runs wherever a read decision would run. */
 export async function forRead<T>(state: State, fn: (tx: Transaction) => Promise<T>): Promise<T> {

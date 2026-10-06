@@ -445,26 +445,22 @@ export class FleetService implements Fleet {
       check(a.projectId === caller.projectId, 'fleet_not_found', 'Fleet allocation not found', 404);
       return a;
     };
-    return tx
-      ? inTransaction(this.state, tx, read)
-      : this.state.snapshot(() => this.state.transaction(read));
+    return tx ? inTransaction(this.state, tx, read) : this.state.snapshotTransaction(read);
   }
   async list(caller: Caller, recent?: number): Promise<FleetAllocation[]> {
-    return this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        await this.scope.require(caller, 'read', tx);
-        return (
-          await tx.all<Row>(
-            `SELECT data_json FROM fleet_allocations WHERE project_id=? AND (phase<>'released' OR id IN
+    return this.state.snapshotTransaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      return (
+        await tx.all<Row>(
+          `SELECT data_json FROM fleet_allocations WHERE project_id=? AND (phase<>'released' OR id IN
               (SELECT id FROM fleet_allocations WHERE project_id=? AND phase='released'
                ORDER BY created_at DESC,id DESC LIMIT ?)) ORDER BY created_at,id`,
-            caller.projectId,
-            caller.projectId,
-            recent ?? null,
-          )
-        ).map(decode);
-      }),
-    );
+          caller.projectId,
+          caller.projectId,
+          recent ?? null,
+        )
+      ).map(decode);
+    });
   }
   private async changeIntent(caller: Caller, id: string, intent: FleetIntent, tx?: Transaction) {
     return inTransaction(this.state, tx, async (tx) => {
@@ -510,10 +506,7 @@ export class FleetService implements Fleet {
     ok: (a: FleetAllocation) => boolean,
     asker?: FleetOwner,
   ): Promise<boolean> {
-    if (!tx)
-      return this.state.snapshot(() =>
-        this.state.transaction((tx) => this.fence(tx, id, ok, asker)),
-      );
+    if (!tx) return this.state.snapshotTransaction((tx) => this.fence(tx, id, ok, asker));
     const a = await this.get(tx, id);
     const owner = this.owners.get(a.owner.kind);
     if (
@@ -778,8 +771,8 @@ export class FleetService implements Fleet {
         current.intent = 'stop';
       });
     if (a.intent !== 'stop' && owner) {
-      const valid = await this.state.snapshot(() =>
-        this.state.transaction(async (tx) => this.authorized(await this.get(tx, a.id), owner, tx)),
+      const valid = await this.state.snapshotTransaction(async (tx) =>
+        this.authorized(await this.get(tx, a.id), owner, tx),
       );
       if (!valid)
         a = await this.update(a.id, (current) => {

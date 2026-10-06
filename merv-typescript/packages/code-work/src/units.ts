@@ -28,6 +28,7 @@ import {
   type WorkflowRelation,
   type WorkflowRelations,
   type Workflows,
+  oidPattern,
 } from '@merv/contracts';
 import { checkFailure } from './base-check.js';
 import { INHERITED_QUARANTINE, type CodeBaseService } from './bases.js';
@@ -46,14 +47,14 @@ import type {
 import {
   bindsRepository,
   WorkUnitRecords,
-  oid,
   unitColumns,
   type AcceptanceBody,
   type BaseBody,
   type ProjectRow,
   type UnitRow,
 } from './unit-store.js';
-export { bindsRepository, CODE_DRIVER } from './unit-store.js';
+export { bindsRepository } from './unit-store.js';
+export { CODE_DRIVER } from '@merv/code/store/refs';
 
 /**
  * What an open publication means for the unit that is waiting on it. A done unit carrying one
@@ -573,7 +574,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         capture.provenance.projectId === caller.projectId &&
         capture.provenance.instanceId === unitId &&
         !capture.provenance.readOnly &&
-        oid.test(workspace.headOid),
+        oidPattern.test(workspace.headOid),
       'code_acceptance_unverifiable',
       'The accepted code is not a ready capture of this unit’s own writable session',
       409,

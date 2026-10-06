@@ -7,6 +7,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  idPattern,
 } from '@merv/contracts';
 
 /** The one token digest. Owners store and compare only this. */
@@ -108,8 +109,7 @@ const record = (row: Row): Credential =>
     hardDeadline: row.hard_deadline,
     revokedAt: row.revoked_at,
   });
-const identifier = (value: string) =>
-  typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(value);
+const identifier = (value: string) => typeof value === 'string' && idPattern.test(value);
 const validHash = (value: string) => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 const validToken = (value: string) =>
   typeof value === 'string' && value.length >= 16 && value.length <= 512 && /^[!-~]+$/.test(value);

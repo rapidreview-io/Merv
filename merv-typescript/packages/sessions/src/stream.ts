@@ -162,8 +162,8 @@ export class SessionStreams implements SessionStreamReads {
       'Only a person reads an agent’s stream',
       403,
     );
-    const actor = await this.state.snapshot(() =>
-      this.state.transaction((tx) => this.scope.require(caller, 'read', tx)),
+    const actor = await this.state.snapshotTransaction((tx) =>
+      this.scope.require(caller, 'read', tx),
     );
     check(actor.role === 'operator', 'forbidden', 'Only an operator reads an agent’s stream', 403);
     return { growing: await this.growing(sessionId, caller.projectId) };

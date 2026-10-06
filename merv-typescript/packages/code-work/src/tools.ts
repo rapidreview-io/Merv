@@ -15,6 +15,7 @@ import {
   type CodeRepositoryImportInput,
   type CodeRepositoryRebindInput,
   type CodeUnitFenceInput,
+  idSchema,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -86,9 +87,7 @@ export const codeToolsPlugin = {
         name: 'code.operation',
         description:
           'Inspect a durable code operation and its immutable commit receipt. Leased workers can inspect only their own operations. A succeeded receipt identifies the exact committed tree and parent; it does not authorize central publication.',
-        inputSchema: z
-          .object({ commandId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/) })
-          .strict(),
+        inputSchema: z.object({ commandId: idSchema }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { commandId: string }) =>
           await ctx.codeWork.operation(caller, input.commandId),
@@ -142,9 +141,7 @@ export const codeToolsPlugin = {
         name: 'code.unit.get',
         description:
           'Read what Code holds about one unit of work, named by its work unit id: the base it was pinned to with the accepted dependencies that base came from, and its acceptance with the exact reviewed code, the submission and review it names, and whether the reviewer’s checkout was attached at that code. storage code means Code’s own repository holds the accepted code, and receipt names the operation that made it durable; none means the unit was accepted without code. For a unit that lives in Code’s repository it also gives the writer: generation, the number of leased sessions that have written to it; writerState (reserved, active, closing while the last machine still owes its final capture, closed, or recovery_required); canonicalHead, the newest commit Code admitted, which is what the next session on any machine resumes from; quarantine, the final capture Code refused, whose findings code.status lists and which code.unit.fence resolves; and mirroredHead with mirroredAt, the commit that has reached the published GitHub repository, which lags canonicalHead while publication catches up and never holds any work up.',
-        inputSchema: z
-          .object({ unitId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/) })
-          .strict(),
+        inputSchema: z.object({ unitId: idSchema }).strict(),
         readOnly: true,
         handler: async (caller: Caller, input: { unitId: string }) =>
           await ctx.codeWork.unit(caller, input.unitId),

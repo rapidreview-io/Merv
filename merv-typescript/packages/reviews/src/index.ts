@@ -449,7 +449,7 @@ export class ReviewService implements Reviews {
       this.state.assertTransaction(tx);
       return await read(tx);
     }
-    return await this.state.snapshot(() => this.state.transaction(read));
+    return await this.state.snapshotTransaction(read);
   }
 
   close(): void {

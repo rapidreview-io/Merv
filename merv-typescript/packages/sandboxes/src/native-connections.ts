@@ -153,23 +153,21 @@ export class NativeConnections {
     );
   }
   async status(caller: Caller): Promise<NativeConnectionStatus> {
-    const status = await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        await this.authorize(caller, tx, false);
-        const connection = await this.current(caller.projectId, tx);
-        return {
-          available: true,
-          connected: !!connection,
-          connectionId: connection?.id ?? null,
-          accountId: connection?.account_id ?? null,
-          memberId: connection?.member_id ?? null,
-          connectedAt: connection?.connected_at ?? null,
-          funding: connection?.billing_subject ? ('managed' as const) : ('personal' as const),
-          managedAvailable: !!this.config.managed,
-          url: `${this.client.origin}/ui`,
-        };
-      }),
-    );
+    const status = await this.state.snapshotTransaction(async (tx) => {
+      await this.authorize(caller, tx, false);
+      const connection = await this.current(caller.projectId, tx);
+      return {
+        available: true,
+        connected: !!connection,
+        connectionId: connection?.id ?? null,
+        accountId: connection?.account_id ?? null,
+        memberId: connection?.member_id ?? null,
+        connectedAt: connection?.connected_at ?? null,
+        funding: connection?.billing_subject ? ('managed' as const) : ('personal' as const),
+        managedAvailable: !!this.config.managed,
+        url: `${this.client.origin}/ui`,
+      };
+    });
     if (status.connected && status.funding === 'managed') {
       const connection = await this.get(status.connectionId!);
       return {

@@ -15,6 +15,7 @@ import {
   type RunningSection,
   type RunningSummary,
   type RunningValue,
+  record,
 } from '@merv/contracts';
 import type { SandboxMachines, SandboxRow } from './types.js';
 
@@ -54,8 +55,7 @@ const LOOKS: Record<string, RunningNode['look']> = { provisioning: 'dashed', del
 const JOB_ENDS = new Set(['succeeded', 'failed', 'timed_out', 'cancelled']);
 
 type Loose = Record<string, unknown>;
-const object = (value: unknown): Loose =>
-  value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Loose) : {};
+const object = (value: unknown): Loose => record(value) ?? {};
 const text = (value: unknown, max = 200) =>
   typeof value === 'string' && value.trim() ? clip(value.trim(), max) : undefined;
 const number = (value: unknown) => {

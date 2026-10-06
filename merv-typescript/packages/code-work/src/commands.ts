@@ -21,6 +21,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  idSchema,
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
 import { pendingMerge } from '@merv/code/pending-merge';
@@ -39,7 +40,6 @@ type Row = {
   receipt_json: string | null;
   error: string | null;
 };
-const identifier = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 const terminal = (status: Row['status']) =>
   status === 'succeeded' || status === 'failed' || status === 'cancelled';
 const live = (session: Session) => session.status === 'offered' || session.status === 'active';
@@ -204,7 +204,7 @@ export class CodeCommandService implements CodeCommands {
   }
   async operation(caller: Caller, commandId: string): Promise<CodeCommandRecord> {
     caller = structuredClone(caller);
-    const id = parse(identifier, commandId);
+    const id = parse(idSchema, commandId);
     return await this.transaction(async (tx) => {
       const sessionId = await this.reader(caller, tx);
       const row = await this.row(tx, id);

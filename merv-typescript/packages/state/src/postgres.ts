@@ -523,6 +523,10 @@ END $merv$;`);
     );
   }
 
+  async snapshotTransaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
+    return await this.snapshot(() => this.transaction(fn));
+  }
+
   /**
    * Runs `fn` in a new read-only snapshot scope on `connection`, a child of the plain read
    * `parent` if given. The scope is live on its own: a parent read may retire while its admitted

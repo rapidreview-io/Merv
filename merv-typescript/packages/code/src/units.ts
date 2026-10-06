@@ -15,6 +15,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  oidPattern,
 } from '@merv/contracts';
 import { parseCodeInput } from './input.js';
 import type { CodeWriterService } from './writers.js';
@@ -27,7 +28,6 @@ interface ProjectRow {
   main_json: string;
   store_json: string | null;
 }
-const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 /** Technical workspace identities and retained Git facts; owner policy stays with its caller. */
 export class CodeUnitStore {
   private closed = false;
@@ -86,7 +86,7 @@ export class CodeUnitStore {
     tx: Transaction,
   ): Promise<void> {
     this.assertOpen();
-    check(oid.test(input.reference), 'invalid_base', 'The workspace input must be a commit');
+    check(oidPattern.test(input.reference), 'invalid_base', 'The workspace input must be a commit');
     await this.declareWorkspace(caller, input, tx);
     const existing = await tx.get<{ base_json: string | null }>(
       'SELECT base_json FROM code_workspaces WHERE project_id=? AND unit_id=?',
@@ -125,7 +125,7 @@ export class CodeUnitStore {
     this.assertOpen();
     this.state.assertTransaction(tx);
     const caller = { projectId: input.projectId, actorId: input.actorId ?? 'system:code' };
-    check(oid.test(input.commit), 'invalid_commit', 'Retention requires a commit');
+    check(oidPattern.test(input.commit), 'invalid_commit', 'Retention requires a commit');
     const reference = input.ref ?? retainedRef(input.key);
     check(
       validRetentionRef(reference),
@@ -266,7 +266,7 @@ export class CodeUnitStore {
     this.assertOpen();
     this.state.assertTransaction(tx);
     check(
-      oid.test(input.oid) && oid.test(input.expectedOid),
+      oidPattern.test(input.oid) && oidPattern.test(input.expectedOid),
       'invalid_commit',
       'Main must name a commit',
     );

@@ -27,6 +27,7 @@ import type {
 } from './types.js';
 import { isMountedToolName } from './registry.js';
 import { protocolError } from './protocol.js';
+import { unknownEndpoint } from './errors.js';
 
 export { describeTool } from './registry.js';
 
@@ -178,7 +179,6 @@ async function readJson(req: IncomingMessage, maxBytes: number): Promise<unknown
  *  characters even when it looks namespaced. */
 const namespaced = (token: string) =>
   /^[a-z]+_/.test(token) && !token.startsWith('mk_') && !/^[A-Za-z0-9_-]{43}$/.test(token);
-const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404);
 
 interface Mounted {
   handler: MountHandler;

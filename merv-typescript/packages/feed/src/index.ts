@@ -1,4 +1,4 @@
-import { visible, recorded, createService, plain, receipted } from '@merv/contracts';
+import { visible, recorded, createService, plain, receipted, record } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
 import {
@@ -69,11 +69,7 @@ export class FeedService implements Feed {
         'Readers cannot post to the feed',
         403,
       );
-      check(
-        input && typeof input === 'object' && !Array.isArray(input),
-        'invalid_input',
-        'Feed input must be an object',
-      );
+      check(record(input), 'invalid_input', 'Feed input must be an object');
       check(
         typeof input.requestId === 'string' &&
           visible(input.requestId) &&
@@ -168,11 +164,7 @@ export class FeedService implements Feed {
     caller = structuredClone(caller);
     input = structuredClone(input);
     await this.scope.require(caller, 'read');
-    check(
-      input && typeof input === 'object' && !Array.isArray(input),
-      'invalid_input',
-      'List input must be an object',
-    );
+    check(record(input), 'invalid_input', 'List input must be an object');
     const { after = 0, limit = 50 } = input;
     check(
       Number.isSafeInteger(after) && after >= 0,

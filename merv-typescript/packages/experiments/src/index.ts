@@ -1,4 +1,4 @@
-import { visible, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
+import { visible, mapAsync, getArtifacts, executionOutputs, record } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
@@ -1225,11 +1225,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
-      check(
-        input && typeof input === 'object' && !Array.isArray(input),
-        'invalid_experiment_input',
-        'Review input must be an object',
-      );
+      check(record(input), 'invalid_experiment_input', 'Review input must be an object');
       if (input.paperChanges !== undefined)
         input.paperChanges = this.paper.parseChanges(input.paperChanges);
       check(
