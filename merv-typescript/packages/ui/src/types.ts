@@ -105,6 +105,11 @@ export interface RunningContribution {
   owner: string;
   /** Key kinds whose sidebars this owner answers ('work', 'session', 'compute'). */
   kinds?: readonly string[];
+  /**
+   * The workflows of the work records whose sidebars this owner answers ('task'). A `work:`
+   * key's sidebar is asked only of the owners that declare its record's workflow.
+   */
+  workflows?: readonly string[];
   /** Lanes this owner draws in. A part that fails is reported in these lanes. */
   lanes?: readonly RunningLaneName[];
   /** Attention on keys other owners draw. Read first, so marked keys reach every nodes() as `include`. */

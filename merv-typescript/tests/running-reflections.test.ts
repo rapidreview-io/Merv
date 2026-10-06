@@ -14,7 +14,13 @@ import type {
   RunningSection,
 } from '@merv/contracts';
 import type { RunningContribution } from '@merv/ui';
-import { RunningRegistry, runningBoard, runningPanel, type RunningSources } from '@merv/ui/running';
+import {
+  RunningRegistry,
+  runningBoard,
+  runningPanel,
+  workflowsOf,
+  type RunningSources,
+} from '@merv/ui/running';
 import type { ChangeSpec, Reflection } from '../packages/reflections/src/types.js';
 import { waveNode, wavePanel } from '../packages/reflections/src/running.js';
 import { createApp } from './fixtures/app.js';
@@ -572,6 +578,7 @@ test('on the board a session on a lens lands on its wave, and a mark on a lens c
     contributions: () => registry.contributions(),
     tools: async () => [],
     isolated: async (read) => await f.app.ctx.state.isolated(read),
+    workflows: workflowsOf(() => f.app.ctx.workflows),
   };
   const answer = await f.app.ctx.state.snapshot(async () => await runningBoard(sources, f.owner));
   assert.deepEqual(answer.edges, [

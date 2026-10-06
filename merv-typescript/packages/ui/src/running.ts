@@ -1,5 +1,6 @@
 import {
   check,
+  keyId,
   keyKind,
   mapAsync,
   MervError,
@@ -32,6 +33,7 @@ import {
   type RunningTarget,
   type RunningValue,
   type RunningVerb,
+  type Workflows,
   type WorkRoute,
 } from '@merv/contracts';
 import type { RunningContribution, RunningRead } from './types.js';
@@ -126,6 +128,13 @@ export class RunningRegistry {
       'Contribution kinds must be lowercase key kinds',
     );
     check(
+      contribution.workflows === undefined ||
+        (Array.isArray(contribution.workflows) &&
+          contribution.workflows.every((name) => typeof name === 'string' && name.length > 0)),
+      'invalid_contribution',
+      'Contribution workflows must be workflow names',
+    );
+    check(
       lanes === undefined || (Array.isArray(lanes) && lanes.every((lane) => LANES.includes(lane))),
       'invalid_contribution',
       'Contribution lanes must be work, sessions or hardware',
@@ -178,7 +187,20 @@ export interface RunningSources {
   absent?(): readonly { owner: string; lanes: readonly RunningLaneName[] }[];
   /** The page of a work record, by its workflow; without it, no work record has one. */
   route?: WorkRoute;
+  /** The workflow of each of these work records this caller's project holds, by instance id. */
+  workflows(caller: Caller, ids: readonly string[]): Promise<ReadonlyMap<string, string>>;
 }
+
+/** Each work record's workflow, as Workflows reads it; none while Workflows is not running. */
+export const workflowsOf =
+  (workflows: () => Pick<Workflows, 'revisions'> | undefined) =>
+  async (caller: Caller, ids: readonly string[]): Promise<ReadonlyMap<string, string>> =>
+    new Map(
+      [...((await workflows()?.revisions(caller.projectId, ids)) ?? [])].map(([id, row]) => [
+        id,
+        row.workflow,
+      ]),
+    );
 
 // ─── Validation: every part is checked, and what fails is left out ────────────────────────
 
@@ -978,7 +1000,7 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
 
 /**
  * ui.running_panel: one key's sidebar. The owner is the first contribution of the key's kind
- * whose panel answers; a 404 or null from a contribution means the key is not its, and any
+ * whose panel answers, and for a work key, of those that declare its record's workflow; a 404 or null from a contribution means the key is not its, and any
  * other refusal or failure is the answer. The owners of what the node absorbed add their
  * sections without their head or controls, and every other owner may add sections about the
  * key or anything it absorbed; a part of theirs that fails is left out. Only the owner's
@@ -999,10 +1021,21 @@ export async function runningPanel(
   const read = readers(caller, sources);
   const tools = toolNames(sources);
   const isolated = isolation(sources);
+  // A work key goes to the owners of its record's workflow, read once for every key it needs.
+  const workflows = new Map<string, string>();
+  const learn = async (keys: readonly string[]) => {
+    const ids = keys.filter((key) => keyKind(key) === 'work').map(keyId);
+    if (!ids.length) return;
+    for (const [id, workflow] of await isolated(async () => await sources.workflows(caller, ids)))
+      workflows.set(id, workflow);
+  };
+  const answers = (contribution: RunningContribution, key: string) =>
+    !!contribution.panel &&
+    !!contribution.kinds?.includes(keyKind(key)) &&
+    (keyKind(key) !== 'work' || !!contribution.workflows?.includes(workflows.get(keyId(key))!));
   const ownerOf = async (wanted: string, except?: RunningContribution, absorbedBy?: string) => {
     for (const contribution of contributions) {
-      if (contribution === except || !contribution.panel) continue;
-      if (!contribution.kinds?.includes(keyKind(wanted))) continue;
+      if (contribution === except || !answers(contribution, wanted)) continue;
       try {
         const answer = await isolated(
           async () => await contribution.panel!(read(contribution), wanted, absorbedBy),
@@ -1015,6 +1048,7 @@ export async function runningPanel(
     return null;
   };
 
+  await learn([key]);
   const found = await ownerOf(key);
   check(found, 'running_not_found', 'Nothing on the Running page has this key', 404);
   const { contribution: owner } = found;
@@ -1039,12 +1073,13 @@ export async function runningPanel(
       visited.add(alias);
       aliases.push(alias);
     });
-    const answers = await mapAsync(
+    await learn(next).catch(() => undefined);
+    const parts = await mapAsync(
       next,
       async (alias) => await ownerOf(alias, owner, key).catch(() => null),
     );
     level = [];
-    for (const answer of answers) {
+    for (const answer of parts) {
       if (!answer || !isObject(answer.part)) continue;
       absorbed.push({ contribution: answer.contribution, sections: answer.part.sections });
       level.push(...keysOf(answer.part.aliases, key));

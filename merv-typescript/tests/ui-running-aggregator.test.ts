@@ -48,7 +48,13 @@ const TOOLS = ['session.halt', 'session.dispatch', 'sandbox.extend', 'sandbox.re
 const sources = (contributions: RunningContribution[], tools = TOOLS): RunningSources => {
   const registry = new RunningRegistry();
   for (const contribution of contributions) registry.contribute(contribution);
-  return { contributions: () => registry.contributions(), tools: async () => tools };
+  return {
+    contributions: () => registry.contributions(),
+    tools: async () => tools,
+    // Every work record here is a task, unless its id names its workflow ('experiment:E').
+    workflows: async (_caller, ids) =>
+      new Map(ids.map((id) => [id, id.includes('.') ? id.split('.')[0]! : 'task'])),
+  };
 };
 const board = async (...contributions: RunningContribution[]) =>
   await runningBoard(sources(contributions), caller);
@@ -618,7 +624,11 @@ test('a contribution registered in an effect leaves the board when its adapter u
     },
   });
   await fiber;
-  const running = { contributions: () => ui.contributions(), tools: async () => [] };
+  const running = {
+    contributions: () => ui.contributions(),
+    tools: async () => [],
+    workflows: async () => new Map(),
+  };
   assert.deepEqual(keys(await runningBoard(running, caller), 'work'), ['work:P']);
   await fiber.dispose();
   assert.deepEqual(ui.contributions(), []);
@@ -1035,7 +1045,7 @@ test('a sidebar comes from its owner, the owners of what it absorbed add section
   assert.equal(panel.key, 'session:S');
 });
 
-test('a sidebar belongs to the first owner of its kind that answers; a 404 means not mine, and any other refusal is the answer', async () => {
+test('a sidebar belongs to the first owner of its kind, and of a work record’s workflow, that answers; a 404 means not mine, and any other refusal is the answer', async () => {
   const asked: string[] = [];
   const part = (title: string): RunningPanelPart => ({
     header: { kind: 'Task', title, says: ['Ready'] },
@@ -1043,10 +1053,16 @@ test('a sidebar belongs to the first owner of its kind that answers; a 404 means
     actions: [],
     live: false,
   });
-  const owner = (name: string, kinds: string[], answer: () => Promise<RunningPanelPart | null>) =>
+  const owner = (
+    name: string,
+    kinds: string[],
+    answer: () => Promise<RunningPanelPart | null>,
+    workflows = ['task'],
+  ) =>
     ({
       owner: name,
       kinds,
+      workflows,
       panel: async () => {
         asked.push(name);
         return await answer();
@@ -1059,11 +1075,24 @@ test('a sidebar belongs to the first owner of its kind that answers; a 404 means
       throw refusal(404);
     }),
     owner('sessions', ['session'], async () => part('Never asked')),
+    // Another workflow's owner is never asked for a task's sidebar, and answers for its own.
+    owner('code', ['work'], async () => part('Seed sweep'), ['experiment']),
     tasks,
   ];
   const panel = await runningPanel(sources(walk), caller, 'work:T');
   assert.equal(panel.header.title, 'Clean the held-out set');
   assert.deepEqual(asked, ['experiments', 'reflections', 'tasks']);
+  asked.length = 0;
+  const other = await runningPanel(sources(walk), caller, 'work:experiment.E');
+  assert.equal(other.header.title, 'Seed sweep');
+  assert.deepEqual(asked, ['code']);
+  // A record this project does not hold has no owner to ask.
+  asked.length = 0;
+  await assert.rejects(
+    runningPanel({ ...sources(walk), workflows: async () => new Map() }, caller, 'work:T'),
+    { code: 'running_not_found', status: 404 },
+  );
+  assert.deepEqual(asked, []);
   assert.deepEqual(panel.aliases, []);
   assert.equal(panel.route, undefined);
 

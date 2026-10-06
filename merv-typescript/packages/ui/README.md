@@ -24,7 +24,7 @@ flowchart LR
   end
   person -- "HTTP /ui, /tools" --> api
   ui -- "mounts /ui, registers ui.*" --> api
-  ui -- "reads open gates" --> workflows
+  ui -- "reads open gates, work records' workflows" --> workflows
   tasks -- "row, Running part" --> ui
   experiments -- "row, Running part" --> ui
   sessions -- "row, Running part" --> ui
@@ -40,7 +40,7 @@ UI owns no research or work records: research and foundation plugins inject `ui`
 ## Surface
 
 - `ctx.ui.register(row)`: a sidebar row with an id, group, order, path and view, and an optional live `status` and `read`; disposing it removes the row at once.
-- `ctx.ui.contribute(part)`: one owner's part of the Running page.
+- `ctx.ui.contribute(part)`: one owner's part of the Running page. An owner of work records declares their `workflows`, and a `work:` key's sidebar is asked only of the owner of its record's workflow.
 - Tools: `ui.shell`, `ui.home`, `ui.running` and `ui.running_panel`, which no agent conversation is offered, and `ui.read`, which returns a row's data when the row has no domain tool of its own.
 - Route: `/ui`, public, serving the built bundle.
 - Row: `settings`.

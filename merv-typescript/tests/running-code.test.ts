@@ -18,7 +18,7 @@ import {
   type WorkflowSnapshot,
 } from '@merv/contracts';
 import { UiRegistry, type RunningContribution } from '@merv/ui';
-import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/running';
+import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import type { SandboxCheckHandle, SandboxChecks } from '@merv/sandboxes';
 import { baseFixture } from './fixtures/code-bases.js';
 import { boundProject } from './fixtures/code-binding.js';
@@ -276,6 +276,7 @@ async function fixture(t: TestContext) {
       [...ui.contributions(), ...others].sort((a, b) => a.owner.localeCompare(b.owner)),
     tools: async () => [],
     isolated: (read) => f.state.isolated(read),
+    workflows: workflowsOf(() => f.workflows),
   });
   /** Both reads, as the tools make them: inside one read-only snapshot, where nothing writes. */
   const board = (running: RunningSources, caller: Caller = f.admin) =>
@@ -314,6 +315,7 @@ async function fixture(t: TestContext) {
 const tasks = (drawn: string[] = []): RunningContribution => ({
   owner: 'tasks',
   kinds: ['work'],
+  workflows: ['input'],
   lanes: ['work'],
   nodes: async (read) => ({
     nodes: [...new Set([...drawn, ...read.include])].map((key): RunningNode => ({

@@ -19,7 +19,7 @@ import {
   type RunningPanelPart,
 } from '@merv/contracts';
 import { UiRegistry, type RunningContribution } from '@merv/ui';
-import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/running';
+import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import { SandboxService, sandboxesPlugin, sandboxTools } from '../packages/sandboxes/src/index.js';
 import { sandboxesToolsPlugin } from '../packages/sandboxes/src/tools.js';
 import { sandboxesUiPlugin } from '../packages/sandboxes/src/ui.js';
@@ -280,6 +280,7 @@ async function composed(t: TestContext) {
     contributions: () =>
       [...ui.contributions(), ...more].sort((a, b) => (a.owner < b.owner ? -1 : 1)),
     tools: async () => sandboxTools,
+    workflows: workflowsOf(() => undefined),
   });
   const board = async (caller = operator, ...more: RunningContribution[]) =>
     await runningBoard(sources(...more), caller);

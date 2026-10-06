@@ -5,7 +5,7 @@ import { createService, MervError, type Caller, type RunningNode } from '@merv/c
 import { ProjectScope } from '@merv/scope';
 import type { SandboxRuntimeHandle, SandboxRuntimes } from '@merv/sandboxes';
 import { UiRegistry, type RunningRead } from '@merv/ui';
-import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/running';
+import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import { FleetService, type FleetOwner } from '../packages/fleet/src/index.js';
 import { fleetUiPlugin } from '../packages/fleet/src/ui.js';
 import { openState } from './fixtures/state.js';
@@ -122,6 +122,7 @@ async function fixture(t: TestContext) {
     contributions: () => ui.contributions(),
     tools: async () => ['session.halt', 'fleet.drain', 'fleet.halt'],
     isolated: async (read) => await state.isolated(read),
+    workflows: workflowsOf(() => undefined),
   };
   let requests = 0;
   return {
