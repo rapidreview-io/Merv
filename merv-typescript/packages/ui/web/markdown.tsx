@@ -140,13 +140,15 @@ const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
 };
 
 /**
- * What project.references said of each id, for every text on the page at once: the ids asked
+ * What project.references said of each id, for every text in this tab at once: the ids asked
  * within one tick go as one request (of at most 200, the tool's own bound), and each answer, a
- * record or a miss, is kept while anything on the page reads names. A text that grows asks only
- * for what it newly mentions and keeps every name it had while that is asked; a failed request
- * leaves its ids to be asked again. The page that next opens, or another project, starts afresh.
+ * record or a miss, is kept for the session, so a text that grows or is drawn again asks only for
+ * what it newly mentions and keeps every name it had while that is asked. An answer older than
+ * a few minutes is asked again where a text next mentions it, and shown until the new one comes;
+ * a failed request leaves its ids to be asked again; another project starts afresh.
  */
-const told = new Map<string, Reference>();
+const FRESH_MS = 5 * 60_000;
+const told = new Map<string, { reference: Reference; at: number }>();
 const queued = new Set<string>();
 const asking = new Set<string>();
 const hearing = new Set<() => void>();
@@ -154,16 +156,17 @@ let heard = 0;
 let round = 0;
 let epoch = scopeVersion();
 let timer: ReturnType<typeof setTimeout> | undefined;
-const forget = () => {
-  told.clear();
-  queued.clear();
-  asking.clear();
-  round++;
-  epoch = scopeVersion();
-};
 function askNames(ids: readonly string[]): void {
-  if (epoch !== scopeVersion()) forget();
-  for (const id of ids) if (!told.has(id) && !asking.has(id)) queued.add(id);
+  if (epoch !== scopeVersion() || told.size > 20_000) {
+    told.clear();
+    queued.clear();
+    asking.clear();
+    round++;
+    epoch = scopeVersion();
+  }
+  const stale = Date.now() - FRESH_MS;
+  for (const id of ids)
+    if (!asking.has(id) && !((told.get(id)?.at ?? -Infinity) > stale)) queued.add(id);
   if (!queued.size || timer) return;
   timer = setTimeout(() => {
     timer = undefined;
@@ -177,7 +180,7 @@ function askNames(ids: readonly string[]): void {
         .then(
           (answer) => {
             if (at !== round) return;
-            for (const reference of answer) told.set(reference.ref, reference);
+            for (const reference of answer) told.set(reference.ref, { reference, at: Date.now() });
             heard++;
             for (const listener of hearing) listener();
           },
@@ -191,10 +194,7 @@ function askNames(ids: readonly string[]): void {
 }
 const hear = (listener: () => void) => {
   hearing.add(listener);
-  return () => {
-    hearing.delete(listener);
-    if (!hearing.size) forget();
-  };
+  return () => void hearing.delete(listener);
 };
 
 /**
@@ -217,7 +217,7 @@ export function useRecordNames(text: string): RecordNames {
     const names = new Map(recordNames(null, home.data, rows));
     // What another project's page was told names nothing here.
     if (epoch === scopeVersion())
-      for (const reference of ids.map((id) => told.get(id)))
+      for (const reference of ids.map((id) => told.get(id)?.reference))
         if (reference?.status === 'resolved' && reference.id && reference.label)
           names.set(reference.id, { name: reference.label, to: routeOf(reference, rows) });
     return names;

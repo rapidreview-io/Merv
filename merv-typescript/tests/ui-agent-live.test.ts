@@ -308,3 +308,35 @@ test('incremental SSE parser handles split frames and rejects oversized events',
   parse(`data: ${'x'.repeat(70_000)}\n\n`);
   assert.deepEqual(frames, [{ event: 'delta', data: '{"text":"ok"}' }]);
 });
+
+test('a transcript of many tool calls names their records in one request', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  serve('/tools/ui.home', { body: { result: {} } });
+  serve('/tools/project.references', (_, sent) => ({
+    body: {
+      result: (sent.refs as string[]).map((id) => ({ ref: id, id, status: 'missing', kind: null })),
+    },
+  }));
+  const stream = eventStream();
+  serve('/sessions/ses_names/events', () => ({ stream: stream.stream }));
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(AgentLive, { sessions: [session('ses_names')] } as never),
+    ),
+  );
+  stream.send('snapshot', {
+    events: Array.from({ length: 40 }, (_, at) =>
+      event({
+        kind: 'tool_call',
+        id: `call_${at}`,
+        name: 'workflow.status_and_next',
+        input: JSON.stringify({ instanceId: `wf_${String(at + 1).padStart(32, '0')}` }),
+      }),
+    ),
+  });
+  await settle(50);
+  assert.equal(requests.filter((r) => r === 'POST /tools/project.references').length, 1);
+});

@@ -846,3 +846,31 @@ test('a reference lookup asks once, and never again for what came back missing',
   assert.match(text(), /art_…333333/);
   assert.deepEqual(asked, [refs]);
 });
+
+test('a text drawn again names what it named before without asking again', async (t) => {
+  t.after(async () => await unmount());
+  const named = `art_${'5'.repeat(32)}`;
+  const asked: unknown[] = [];
+  const answer = () => {
+    serve('/tools/project.references', (_, sent) => {
+      asked.push(sent.refs);
+      return {
+        body: {
+          result: [{ ref: named, id: named, status: 'resolved', kind: 'artifact', label: 'Fit' }],
+        },
+      };
+    });
+    serve('/tools/ui.home', { body: { result: {} } });
+    serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  };
+  for (let draw = 0; draw < 2; draw++) {
+    if (draw) await unmount();
+    answer();
+    await mount(
+      createElement(MemoryRouter, null, createElement(RecordText, { text: `See ${named}` })),
+    );
+    await settle(10);
+    assert.equal(text(), 'See Fit');
+  }
+  assert.deepEqual(asked, [[named]]);
+});
