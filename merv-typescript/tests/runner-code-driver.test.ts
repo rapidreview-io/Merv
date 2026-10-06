@@ -759,6 +759,58 @@ test('a quarantined commit leaves the checkout as it was and never rides along i
   assert.equal((await f.unit()).canonicalHead, receipt.headOid);
 });
 
+test("an agent commit during admission is rescued: the receipt names Code's commit and the final capture carries the agent's files", async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  let path = '';
+  let race = true;
+  const m = machine(t, f, (inner) => ({
+    ...inner,
+    call: async (route, body) => {
+      const answer = await inner.call(route, body);
+      if (race && route.endsWith('/complete')) {
+        race = false;
+        // The agent, still running, commits on its own while Code admits; then the answer is lost.
+        writeFileSync(join(path, 'agent.txt'), 'agent\n');
+        const as = ['-c', 'user.name=a', '-c', 'user.email=a@a'];
+        git(path, [...as, 'add', '-A']);
+        git(path, [...as, 'commit', '-q', '-m', 'agent']);
+        throw Object.assign(new Error('control_unavailable'), {
+          code: 'control_unavailable',
+          status: 0,
+        });
+      }
+      return answer;
+    },
+  }));
+  const driver = m.start();
+  ({ path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1')));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'a.txt'), 'one\n');
+  const work = await command(f, driver, 'ses_1', f.root);
+  await assert.rejects(driver.checkpointCommit(m.launch('ses_1'), work), WorkspaceDeferred);
+  const agent = git(path, ['rev-parse', 'HEAD']);
+  // The retry learns Code admitted the journalled commit; the moved head is no conflict.
+  const receipt = await driver.checkpointCommit(m.launch('ses_1'), work);
+  assert.equal((await f.unit()).canonicalHead, receipt.headOid);
+  assert.deepEqual(driver.commitOutcome(work.id), { receipt });
+  assert.equal(git(path, ['rev-parse', 'HEAD']), receipt.headOid);
+  assert.equal(git(path, ['for-each-ref', '--format=%(objectname)', 'refs/merv/rescued']), agent);
+  // A command built on a head the checkout no longer has is still a conflict.
+  const stale = await command(f, driver, 'ses_1', f.root);
+  await assert.rejects(
+    driver.checkpointCommit(m.launch('ses_1'), stale),
+    failed('workspace_head_conflict'),
+  );
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  m.terminal.add('launch-ses_1');
+  const result = await driver.capture(m.launch('ses_1'));
+  assert.equal(git(path, ['rev-parse', 'HEAD^']), receipt.headOid);
+  assert.equal(git(path, ['show', `${result!.headOid}:agent.txt`]), 'agent');
+  assert.equal((await f.unit()).canonicalHead, result!.headOid);
+});
+
 test('an interrupted upload continues where Code stands, and a final capture is replayed and never rebuilt', async (t) => {
   const f = await writerFixture(t);
   await f.open({ config: { partBytes: 1024 } });

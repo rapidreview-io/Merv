@@ -1188,7 +1188,10 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     );
     if (!journal.target_oid || head !== journal.target_oid) {
       if (row.status !== 'ready') throw new WorkspaceError('workspace_commit_fenced');
-      if (head !== command.expectedHead) throw new WorkspaceError('workspace_head_conflict');
+      // Once the commit is journalled it is what Code is told; a head the agent moved since
+      // is rescued when the branch advances, never a reason to stop.
+      if (!journal.target_oid && head !== command.expectedHead)
+        throw new WorkspaceError('workspace_head_conflict');
     }
     if (command.merge === 'start') return await this.startMerge(row, command, journal);
     const pending = command.workspace.pendingMerge;
@@ -1276,9 +1279,15 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       await this.git.ok(['rev-parse', '--verify', 'HEAD^{commit}'], { cwd: row.path }),
     );
     if (head !== target) {
+      // The agent committed while Code admitted: Code's commit is the branch now. The agent's
+      // stays reachable under a rescue ref, and its files stay in the checkout for the next capture.
+      if (head !== journal.expected_head)
+        await this.git.ok(['update-ref', `refs/merv/rescued/${hash(journal.request_id)}`, head], {
+          cwd: row.path,
+        });
       await this.git.ok(['update-ref', '--stdin'], {
         cwd: row.path,
-        stdin: `start\nupdate HEAD ${target} ${journal.expected_head}\nprepare\ncommit\n`,
+        stdin: `start\nupdate HEAD ${target} ${head}\nprepare\ncommit\n`,
       });
       if (this.assignmentRoot) {
         await this.git.ok(['read-tree', target], { cwd: row.path });
