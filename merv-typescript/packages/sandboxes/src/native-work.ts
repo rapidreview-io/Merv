@@ -364,18 +364,7 @@ export class NativeWorkService {
     const workflow = session.execution.workflow;
     const refs = session.execution.references;
     const profile = computeProfile(session.execution.policy, refs.computeProfile);
-    const kind = refs.computeKind;
-    if (profile === 'none' || kind === undefined) return [];
-    valid(
-      typeof kind === 'string' &&
-        identifier(kind) &&
-        workflowName(workflow) &&
-        identifier(session.instanceId) &&
-        identifier(session.lease.leaseId) &&
-        session.lease.instanceId === session.instanceId &&
-        session.lease.projectId === session.projectId &&
-        session.lease.workflow === workflow,
-    );
+    if (profile === 'none') return [];
     const { projectId, instanceId } = session;
     // A project without a funded connection runs its work without compute, read without
     // taking the writer lock.
@@ -386,7 +375,19 @@ export class NativeWorkService {
         instance: await this.instance(tx, projectId, instanceId),
       };
     });
-    if (!current) return [];
+    // A session offered before units declared a kind keeps the kind its work was pinned with.
+    const kind = refs.computeKind ?? current?.row?.native_kind ?? undefined;
+    if (!current || kind === undefined) return [];
+    valid(
+      typeof kind === 'string' &&
+        identifier(kind) &&
+        workflowName(workflow) &&
+        identifier(session.instanceId) &&
+        identifier(session.lease.leaseId) &&
+        session.lease.instanceId === session.instanceId &&
+        session.lease.projectId === session.projectId &&
+        session.lease.workflow === workflow,
+    );
     // The lease names the instance at its current revision, or it is not live.
     const atLease = (instance: Instance | undefined): instance is Instance =>
       !!instance &&

@@ -783,6 +783,20 @@ test('a unit can withhold compute, an unfunded project gets none, and a stale le
   assert.equal(f.calls.length, 0);
 });
 
+test('a session offered before units declared a kind keeps the compute its pinned work has', async (t) => {
+  const f = await fixture(t, { workflow: 'experiment', id: 'old_work' });
+  await f.state.transaction((tx) =>
+    tx.run("UPDATE sandbox_native_work SET native_kind='experiment' WHERE work_id='old_work'"),
+  );
+  const old = f.leased();
+  delete (old.execution.references as Record<string, unknown>).computeKind;
+  const [connection] = await f.work.launchConnections(old);
+  assert.equal(connection!.name, 'sandboxes');
+  const created = f.calls.find((c) => c.path === '/v1/delegations/works')!;
+  assert.deepEqual(created.body, { work_ref: 'old_work', work_kind: 'experiment' });
+  assert.equal((await f.readAssignment())!.work_kind, 'experiment');
+});
+
 test('the compute epoch follows computeEpoch: a retry keeps access, a new epoch fences it, a replay never rolls it back', async (t) => {
   const f = await fixture(t);
   await f.work.launchConnections(f.leased('lease_one'));
