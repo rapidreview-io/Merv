@@ -262,17 +262,43 @@ test('a published list opens on its live work, and what has ended is one chip aw
   assert.equal(document.querySelectorAll('.rows > .row').length, 3);
 });
 
-test('every state a record stands in has a tone, and a review gate never reads as stopped', () => {
-  const tones = (words: string) => words.split(' ').map((word) => toneOf(word));
-  // The states the deployed programs hold, the two ways a claim's references come back,
-  // and how a claim may stand: none of them is the neutral grey of a word nobody knows.
+test('every state a record stands in has a tone, and a review gate never reads as stopped', async () => {
+  const { stateWords } = await import('../packages/ui/web/navigation.js');
+  const program = (name: string, states: string[], terminal: string[]) => ({
+    name,
+    version: 1,
+    initial: states[0]!,
+    states: [...states, ...terminal],
+    terminal,
+    edges: [],
+  });
+  // The deployed programs say which states are work; the shell's own table names none of them.
+  const programs = stateWords({
+    workflows: [
+      program(
+        'experiment',
+        ['planned', 'design_review', 'running', 'experiment_review'],
+        ['complete', 'abandoned', 'failed'],
+      ),
+      program('task', ['in_progress', 'in_review'], ['done', 'failed']),
+      program('reflection', ['reflecting', 'synthesizing', 'in_review'], ['approved', 'abandoned']),
+      program(
+        'research',
+        ['defining', 'researching', 'reflecting', 'consolidating'],
+        ['complete', 'abandoned', 'failed'],
+      ),
+    ],
+  });
+  const tones = (words: string) => words.split(' ').map((word) => toneOf(word, programs));
+  // The states the deployed programs hold, the two ways a reference comes back, and the
+  // shared words a record may stand in: none of them is the neutral grey of a word nobody knows.
   for (const word of (
     'planned design_review running experiment_review complete abandoned failed ' +
     'in_progress in_review done reflecting synthesizing approved consolidating ' +
     'defining researching requested started ' +
-    'resolved missing unsupported unpublished draft active supported weakened contradicted'
+    'resolved missing unsupported unpublished draft active supported'
   ).split(' '))
-    assert.notEqual(toneOf(word), 'neutral', `${word} has no tone`);
+    assert.notEqual(toneOf(word, programs), 'neutral', `${word} has no tone`);
   assert.deepEqual(tones('in_review design_review experiment_review in_progress'), [
     'warn',
     'warn',
@@ -280,6 +306,11 @@ test('every state a record stands in has a tone, and a review gate never reads a
     'warn',
   ]);
   assert.deepEqual(tones('resolved missing unsupported'), ['ok', 'bad', 'bad']);
+  // Without a program that works in it, a research state is a word the shell does not know.
+  assert.deepEqual(
+    'design_review reflecting consolidating'.split(' ').map((word) => toneOf(word)),
+    ['neutral', 'neutral', 'neutral'],
+  );
 });
 
 test('an open review adds to the state pill beside it and never repeats it', () => {

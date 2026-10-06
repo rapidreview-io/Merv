@@ -17,6 +17,7 @@ export const taskUiPlugin = {
         order: 15,
         path: '/tasks',
         workflow: 'task',
+        states: { in_review: { submitted: 'Delivered' } },
         view: { kind: 'tasks' },
         home: {
           tool: 'task.list',

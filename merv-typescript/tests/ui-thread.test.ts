@@ -14,6 +14,34 @@ const { MemoryRouter } = await import('react-router-dom');
 // only this order has every module evaluated before another one calls into it.
 await import('../packages/ui/web/components.js');
 const { Thread, threadOf } = await import('../packages/ui/web/thread.js');
+const { stateWords } = await import('../packages/ui/web/navigation.js');
+/**
+ * The gates as the shell reads them: the states each deployed program leaves through
+ * review.submit, and what its owner says crossing into each means.
+ */
+const shape = (name: string, gates: string[]) => ({
+  name,
+  version: 1,
+  initial: '',
+  states: [],
+  terminal: [],
+  edges: gates.map((from) => ({ from, action: 'verdict', to: 'next', tool: 'review.submit' })),
+});
+const states = stateWords({
+  rows: [
+    { states: { in_review: { submitted: 'Delivered' } } },
+    {
+      states: {
+        design_review: { submitted: 'Submitted the design' },
+        experiment_review: { submitted: 'Submitted the results' },
+      },
+    },
+  ] as never,
+  workflows: [
+    shape('task', ['in_review']),
+    shape('experiment', ['design_review', 'experiment_review']),
+  ],
+});
 
 const BRIEF = 'art_00000000000000000000000000000001';
 const FIRST = 'art_00000000000000000000000000000002';
@@ -117,6 +145,7 @@ test('a design sent back and resubmitted reads as one conversation, the return b
     ],
   });
   const entries = threadOf({
+    states,
     graph: graph('complete', EXPERIMENT, [
       edge('planned', 'design_review', [crossing(1, 'actor_ada', 0), crossing(3, 'actor_ada', 20)]),
       edge('design_review', 'planned', [crossing(2, 'actor_rex', 10)]),
@@ -172,6 +201,7 @@ const sentBack = review('review_1', 1, 1, {
 test('a delivery still in review ends the thread on the review open at its gate', () => {
   const open = (over: Record<string, unknown>) =>
     threadOf({
+      states,
       graph: delivered('in_review'),
       reviews: [
         sentBack,
@@ -203,6 +233,7 @@ test('a delivery still in review ends the thread on the review open at its gate'
 
 test('a review reissued at its gate replaces the one it superseded', () => {
   const entries = threadOf({
+    states,
     graph: delivered('in_review', [edge('in_review', 'in_review', [crossing(4, 'actor_ada', 25)])]),
     reviews: [
       sentBack,
@@ -221,6 +252,7 @@ test('a review reissued at its gate replaces the one it superseded', () => {
 
 test('without a process graph the reviews alone are the thread', () => {
   const entries = threadOf({
+    states,
     reviews: [review('review_2', 3, 21, { verdict: null, status: 'requested' }), sentBack],
     subject: 'wf_unit',
     nameOf,
@@ -258,6 +290,7 @@ test('a thread is read in words: the role alone for a stranger, files to open, n
     actorId: 'actor_stranger',
   }));
   const entries = threadOf({
+    states,
     graph: graphed,
     reviews: [sentBack, review('review_2', 3, 21, { verdict: null, status: 'requested' })],
     subject: 'wf_unit',

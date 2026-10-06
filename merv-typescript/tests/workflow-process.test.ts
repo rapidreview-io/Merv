@@ -249,7 +249,21 @@ test('one derivation serves an experiment instance and a reflection instance', a
     assert.equal(graph.nodes[0].state, pinned.initial);
     assert.deepEqual(
       graph.edges.map((item) => ({ from: item.from, action: item.action, to: item.to })),
-      pinned.edges,
+      pinned.edges.map(({ tool: _, ...edge }) => edge),
+    );
+    // The catalog names the tool each edge is taken through, live or not: a review gate is a
+    // state left through review.submit.
+    assert.deepEqual(
+      [
+        ...new Set(
+          pinned.edges.filter((edge) => edge.tool === 'review.submit').map((edge) => edge.from),
+        ),
+      ].sort(),
+      workflow === 'experiment' ? ['design_review', 'experiment_review'] : ['in_review'],
+    );
+    assert.deepEqual(
+      pinned.edges.filter((edge) => edge.from === graph.state).map((edge) => edge.tool),
+      graph.edges.filter((edge) => edge.from === graph.state).map((edge) => edge.tool),
     );
     assert.equal(graph.nodes.filter((item) => item.current).length, 1);
     assert.ok(graph.edges.every((item) => !item.traversals.length));

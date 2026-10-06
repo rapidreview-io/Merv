@@ -18,6 +18,12 @@ export const experimentsUiPlugin = {
         order: 16,
         path: '/experiments',
         workflow: 'experiment',
+        // Planning is before any of the experiment's work; each review answers a submission.
+        states: {
+          planned: { idle: true },
+          design_review: { submitted: 'Submitted the design' },
+          experiment_review: { submitted: 'Submitted the results' },
+        },
         view: { kind: 'experiments' },
         home: {
           tool: 'experiment.list',

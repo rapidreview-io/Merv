@@ -16,6 +16,7 @@ import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
 import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
 import { shortId } from './markdown';
 import { useCommand } from './mutations';
+import { useStateWords, type StateWords } from './navigation';
 import { ArtifactBody, bytes, fileType, type Artifact } from './views/artifacts';
 
 export { term, words };
@@ -105,9 +106,10 @@ export function relativeTime(iso: string): string {
 
 /**
  * Semantic tone for status text. Tones map to the status--ok/warn/bad/dim
- * classes in the stylesheet; any status this table does not know stays neutral.
- * Every state a deployed program can stand in is here, a review gate included, so
- * work that is with a reviewer never reads as the grey of work that has stopped.
+ * classes in the stylesheet. The table holds the words every plugin shares; a
+ * state a deployed program works in that it does not name is work under way,
+ * so work that is with a reviewer never reads as the grey of work that has
+ * stopped, and any other word stays neutral.
  */
 type Tone = 'ok' | 'warn' | 'bad' | 'dim';
 const TONES: [Tone, string][] = [
@@ -122,14 +124,12 @@ const TONES: [Tone, string][] = [
     'degraded pending waiting requested started in_progress in-progress review reviewing ' +
       'claimed assigned queued stale retrying partial needs_changes needs_review deprecated ' +
       'attempting planning provisioning starting deleting cancelling needs_reconnect refreshing ' +
-      'in_review design_review experiment_review planned defining ' +
-      'researching reflecting synthesizing consolidating weakened ' +
       'held waiting_inputs retry_wait awaiting_resolution',
   ],
   [
     'bad',
     'unavailable unreachable failed failure fail error rejected blocked denied dead offline disconnected ' +
-      'timed_out timeout invalid broken abandoned refuted contradicted missing unsupported ' +
+      'timed_out timeout invalid broken abandoned missing unsupported ' +
       'quarantined conflicted blocked_infra',
   ],
   [
@@ -143,7 +143,8 @@ const TONES: [Tone, string][] = [
 const TONE_OF = new Map(
   TONES.flatMap(([tone, words]) => words.split(' ').map((word) => [word, tone] as const)),
 );
-export const toneOf = (value: string) => TONE_OF.get(value) ?? 'neutral';
+export const toneOf = (value: string, states?: StateWords) =>
+  TONE_OF.get(value) ?? (states?.working(value) ? 'warn' : 'neutral');
 
 /** A state reads as its dot and one small-caps word: ● COMPLETED. */
 const Word = ({ tone, value }: { tone: string; value: string }) => (
@@ -152,8 +153,10 @@ const Word = ({ tone, value }: { tone: string; value: string }) => (
     {words(value)}
   </span>
 );
-export const StatusPill = ({ value }: { value: string | null | undefined }) =>
-  value ? <Word tone={toneOf(value.toLowerCase())} value={value} /> : null;
+export function StatusPill({ value }: { value: string | null | undefined }) {
+  const states = useStateWords();
+  return value ? <Word tone={toneOf(value.toLowerCase(), states)} value={value} /> : null;
+}
 
 /**
  * The liveness line: one phrase from the one module that composes them, with

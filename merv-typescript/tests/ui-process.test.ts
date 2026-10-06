@@ -5,9 +5,36 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mount, styled, unmount } from './ui-render.js';
+import { mount as render, serve, styled, unmount } from './ui-render.js';
 
 const { createElement } = await import('react');
+/**
+ * Every page is drawn under the shell's read: the deployed program, whose reviews are left
+ * through review.submit, and its owner's word that planning is work not yet begun.
+ */
+const mount = async (element: Parameters<typeof render>[0]) => {
+  serve('/tools/ui.shell', {
+    body: {
+      result: {
+        rows: [{ id: 'experiments', workflow: 'experiment', states: { planned: { idle: true } } }],
+        plugins: [],
+        workflows: [
+          {
+            name: 'experiment',
+            version: 3,
+            initial: 'planned',
+            states: ['planned', 'design_review', 'running', 'complete'],
+            terminal: ['complete'],
+            edges: [
+              { from: 'design_review', action: 'approve', to: 'running', tool: 'review.submit' },
+            ],
+          },
+        ],
+      },
+    },
+  });
+  await render(element);
+};
 const { Gate, StageList, StageMark, stagesOfGraph, stagesOfShape, stageTimes } =
   await import('../packages/ui/web/process.js');
 

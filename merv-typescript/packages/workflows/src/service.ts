@@ -3,6 +3,7 @@ import { postgresMigrations } from './index.postgres.js';
 import type {
   Caller,
   Transaction,
+  WorkflowCatalogEntry,
   WorkflowDefinition,
   Workflows,
   WorkflowSnapshot,
@@ -101,10 +102,18 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     };
   }
 
-  catalog(): WorkflowDefinition[] {
+  catalog(): WorkflowCatalogEntry[] {
     this.assertOpen();
     return [...this.registrations.values()]
-      .map(({ definition }) => JSON.parse(canonical(definition)) as WorkflowDefinition)
+      .map(({ definition, policy }) => {
+        const copy = JSON.parse(canonical(definition)) as WorkflowDefinition;
+        // The tool an edge is taken through: the one rule that owns its from:action pair.
+        const tool = ({ from, action }: WorkflowDefinition['edges'][number]) =>
+          policy?.actions.find(
+            (rule) => rule.states.includes(from) && (rule.transitions ?? []).includes(action),
+          )?.tool ?? null;
+        return { ...copy, edges: copy.edges.map((edge) => ({ ...edge, tool: tool(edge) })) };
+      })
       .sort((a, b) => a.name.localeCompare(b.name) || a.version - b.version);
   }
 

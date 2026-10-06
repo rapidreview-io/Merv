@@ -13,6 +13,11 @@ export interface RowNeeds {
   stops?: string[];
   subjectOnly?: true;
 }
+/** What a row's owner says of one state of its workflow (UiStateWords). */
+export interface RowStateWords {
+  idle?: true;
+  submitted?: string;
+}
 export interface Row {
   id: string;
   label: string;
@@ -24,6 +29,7 @@ export interface Row {
   rooms?: true;
   whenCounted?: true;
   needs?: RowNeeds;
+  states?: Record<string, RowStateWords>;
   status: RowStatus;
   readable: boolean;
 }
@@ -39,7 +45,8 @@ export interface WorkflowShape {
   initial: string;
   states: string[];
   terminal: string[];
-  edges: { from: string; action: string; to: string }[];
+  /** `tool` is the tool the edge is taken through, where a rule owns it. */
+  edges: { from: string; action: string; to: string; tool?: string | null }[];
 }
 export interface ShellData {
   rows: Row[];
