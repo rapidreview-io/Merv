@@ -16,6 +16,7 @@ interface BlockerRow {
   status: number;
   next: string;
   related_json: string;
+  cause: string | null;
   since: string;
   updated_at: string;
 }
@@ -69,6 +70,7 @@ export async function replaceBlockers(
         text(item.code, 100) &&
         text(item.message, 4000) &&
         text(item.next, 4000) &&
+        (item.cause === undefined || text(item.cause, 100)) &&
         Number.isInteger(item.status) &&
         item.status >= 400 &&
         item.status <= 599,
@@ -96,7 +98,7 @@ export async function replaceBlockers(
     const links = canonical(related(item.related));
     if (!previous) {
       await tx.run(
-        'INSERT INTO wf_blockers (project_id,instance_id,provider,blocker_key,code,message,status,next,related_json,since,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO wf_blockers (project_id,instance_id,provider,blocker_key,code,message,status,next,related_json,cause,since,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
         input.projectId,
         input.instanceId,
         input.provider,
@@ -106,6 +108,7 @@ export async function replaceBlockers(
         item.status,
         item.next,
         links,
+        item.cause ?? null,
         at,
         at,
       );
@@ -118,16 +121,18 @@ export async function replaceBlockers(
       previous.message === item.message &&
       Number(previous.status) === item.status &&
       previous.next === item.next &&
-      previous.related_json === links
+      previous.related_json === links &&
+      previous.cause === (item.cause ?? null)
     )
       continue;
     await tx.run(
-      'UPDATE wf_blockers SET code=?,message=?,status=?,next=?,related_json=?,since=?,updated_at=? WHERE instance_id=? AND provider=? AND blocker_key=?',
+      'UPDATE wf_blockers SET code=?,message=?,status=?,next=?,related_json=?,cause=?,since=?,updated_at=? WHERE instance_id=? AND provider=? AND blocker_key=?',
       item.code,
       item.message,
       item.status,
       item.next,
       links,
+      item.cause ?? null,
       previous.code === item.code ? previous.since : at,
       at,
       input.instanceId,
@@ -162,6 +167,7 @@ export async function readBlockers(
     status: Number(row.status),
     next: row.next,
     related: JSON.parse(row.related_json) as WorkflowReference[],
+    ...(row.cause === null ? {} : { cause: row.cause }),
     since: row.since,
     updatedAt: row.updated_at,
   }));

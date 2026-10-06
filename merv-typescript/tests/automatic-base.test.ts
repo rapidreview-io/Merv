@@ -575,28 +575,9 @@ test('units waiting on the same two accepted commits get one merged base, and a 
   });
   const [left, right, other] = [await f.succeeded(a), await f.succeeded(b), await f.succeeded(c)];
 
-  // A deployment may still disable the switch; the same hosted work stays visibly blocked.
-  const disabled = new CodeBaseService(
-    f.state,
-    repositories,
-    {
-      changed: (tx, id) => units.imported(tx, id),
-      sponsors: (tx, id, members) => units.baseSponsors(tx, id, members),
-      serviceWork: f.sessions.serviceWork,
-    },
-    false,
-  );
-  units.bases = disabled;
-  const paused = await f.declare([left.work, right.work], 'kept');
-  assert.deepEqual(await f.published(paused), [['code', 'code_merge_required', 'merge']]);
-  await assert.rejects(f.pin(paused), { code: 'code_merge_required' });
-  units.bases = bases;
-  await f.state.transaction((tx) => units.imported(tx, f.project.id));
-  await disabled.close();
-
   // Three units on the same two dependencies: one record, one merge, one base for all.
-  const waiters = [paused];
-  for (let index = 1; index < 3; index++)
+  const waiters: Awaited<ReturnType<typeof f.declare>>[] = [];
+  for (let index = 0; index < 3; index++)
     waiters.push(await f.declare([left.work, right.work], 'kept'));
   for (const waiter of waiters)
     assert.deepEqual(await f.published(waiter), [['code', 'code_base_wait', 'merge']]);

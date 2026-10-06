@@ -41,8 +41,10 @@ export interface NameLookup {
 /** The facts of one blocker, in the shape every reading of one carries. */
 export interface CodeBlocker {
   code: string;
-  /** The server's words to the agent; read here only for the state word inside them. */
+  /** The server's words to the agent; never read here. */
   message?: string;
+  /** Which kind of its code this blocker is, in the server's machine word. */
+  cause?: string;
   /** Stable within a provider and instance. On a base, only `main` waits on a person. */
   key?: string;
   /** The recovery action, in the server's own words; folded, and never the sentence. */
@@ -56,17 +58,19 @@ export interface CodeBlocker {
 const CANVAS = '/code';
 
 /**
- * The five refusals the server groups under one admission code. Each is a cap or a budget
- * somebody set, and the word itself is the server's own machine name for which one, so
- * reading it out of the message names a fact rather than parsing prose.
+ * The five refusals the server groups under one admission code, by the cause it names. Each is
+ * a cap or a budget somebody set.
  */
-const CAP: [string, string][] = [
-  ['budget_exceeded', 'The budget set for this project is spent'],
-  ['capacity_full', 'The service is at the capacity set for it'],
-  ['dispatch_disabled', 'Dispatch is paused for this project'],
-  ['sessions_unavailable', 'Sessions are unavailable, so this merge cannot run'],
-  ['usage_unavailable', 'The budget cannot be read, so this merge cannot be admitted'],
-];
+const CAP: Record<string, string> = {
+  budget_exceeded: 'The budget set for this project is spent',
+  capacity_full: 'The service is at the capacity set for it',
+  dispatch_disabled: 'Dispatch is paused for this project',
+  sessions_unavailable: 'Sessions are unavailable, so this merge cannot run',
+  usage_unavailable: 'The budget cannot be read, so this merge cannot be admitted',
+};
+/** Whether service admission's refusal is one of those, which Code publishes as the cause. */
+export const admissionCause = (word: string | null | undefined): word is string =>
+  !!word && Object.hasOwn(CAP, word);
 
 /** The record a blocker is about, by the name this app knows it by, then the server's. */
 const subject = (blocker: CodeBlocker, names?: NameLookup) => {
@@ -80,7 +84,6 @@ const subject = (blocker: CodeBlocker, names?: NameLookup) => {
  * instead.
  */
 export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove | null {
-  const message = blocker.message ?? '';
   switch (blocker.code) {
     case 'code_publication_local_pending':
       return {
@@ -150,7 +153,7 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
     case 'code_base_admission':
       return {
         sentence:
-          CAP.find(([word]) => message.includes(word))?.[1] ??
+          (admissionCause(blocker.cause) && CAP[blocker.cause]) ||
           'A limit somebody set is holding this merge',
         who: 'An administrator',
         whose: 'administrator',
@@ -158,7 +161,7 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
     case 'code_merge_conflict': {
       // A conflict waits on the resolution task, which is work already in flight and
       // nobody's to make; only a resolution its review budget suspended waits on a person.
-      if (!/\bis suspended\b/.test(message)) return null;
+      if (blocker.cause !== 'suspended') return null;
       const task = subject(blocker, names);
       return {
         sentence: `The resolution ${task ? `“${task}” ` : ''}is suspended; an administrator extends its review limit`,

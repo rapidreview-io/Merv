@@ -6,28 +6,17 @@ Runner prepares a private Git checkout for a frozen workflow step, preserves its
 
 ## Configuration and responsibility
 
-Start from [config/runner.git.example.json](../config/runner.git.example.json). Its machine configuration adds:
+A runner has no repository of its own. Every Git checkout comes from a workspace driver that a policy names; Code's `code.v2` driver is the only one, and it needs only `/usr/bin/git`, no local source repository and no GitHub credential. Work that names no driver gets a scratch directory.
 
-```json
-{
-  "workspace": {
-    "repository": "/absolute/path/to/source-repository",
-    "baseRef": "HEAD"
-  }
-}
-```
+The runner's former local repository (its `workspace` configuration, Code's legacy-local driver and the `git.local` capability) was removed on 2026-10-06; no production or staging runner used it. A runner configuration that still names `workspace` is refused, and work whose Git policy names no driver (`task@3`/`task@4`, `experiment@6`/`experiment@7`) is offered to no runner. The sections below that describe the `central` base and the private bare repository document those older versions.
 
-The source must be an existing local repository. The CLI resolves relative repository paths against the configuration file. `baseRef` selects the initial commit when the private copy is first created. A changed `repository` or `baseRef` for an existing ledger refuses new checkouts until it is restored; launches already running finish on the repository they started with. The source credential remains in the environment variable named by `credentialEnv`.
-
-Machine configuration supplies the repository. A workflow's immutable execution policy selects how to use it. Existing workflows that omit `workspace` continue to receive scratch directories; repository configuration alone does not change their policy.
-
-| Component     | Responsibility                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Workflows     | Persist the versioned workspace policy and freeze named commit references with the assignment.                                  |
-| Sessions      | Bind source, worker, target, policy and runner; accept the attachment and one final workspace result.                           |
-| Code          | Persist commit requests, their immutable runner receipts and caller-scoped operation status.                                    |
-| Runner        | Own the private repository, checkout reservation, process, fixed commit execution, local capture and retryable result delivery. |
-| Native worker | Read or edit assigned files under the declared sandbox, request allowed commits and perform its allowed MCP handoff.            |
+| Component     | Responsibility                                                                                                           |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Workflows     | Persist the versioned workspace policy and freeze named commit references with the assignment.                           |
+| Sessions      | Bind source, worker, target, policy and runner; accept the attachment and one final workspace result.                    |
+| Code          | Persist commit requests, their immutable runner receipts and caller-scoped operation status.                             |
+| Runner        | Own scratch directories, the process and retryable result delivery; the named driver owns checkout, commits and capture. |
+| Native worker | Read or edit assigned files under the declared sandbox, request allowed commits and perform its allowed MCP handoff.     |
 
 The workspace manager is an internal Runner component, not another Cordis plugin or a server State dependency.
 
@@ -83,7 +72,7 @@ A workspace belongs to a workflow **version**, because a published execution pol
 - a prerequisite accepted with code contributes exactly its reviewed commit, and nothing beneath it is looked at;
 - a prerequisite that succeeded without code is looked through, to what it depended on;
 - a prerequisite on a workspace version that has no verifiable acceptance (it succeeded before acceptances existed, while Code was unloaded, or in another repository) blocks, as does a code-less success whose own prerequisites are unfinished: `code_base_pending`;
-- no commit at all gives the project's imported main; one commit, reached by however many paths, is the base; several commits share a retained merge plan. Conflicts create one reviewed `task@6` per base. `code_merge_required` means automatic merging is disabled.
+- no commit at all gives the project's imported main; one commit, reached by however many paths, is the base; several commits share a retained merge plan. Conflicts create one reviewed `task@6` per base.
 
 The base is pinned inside the transaction that acquires the first lease — a task's first producer, an experiment's first planner or, if the design was written by hand, its first running worker — and is immutable: a returned task, a revised plan and a main that has moved since all reuse it. The frozen `references.base` is read from that pin and from nothing else, so reading an assignment never derives or writes. Work whose base cannot be derived is refused at lease admission, so it is never a dispatch candidate, never launched and never counted as a launch failure; Code publishes why as a blocker, which `workflow.status_and_next` gates on, the overview lists under `blocked` and `session.stuck` reports as `work_blocked`. An interactive producer has no checkout and therefore no `base`.
 
@@ -97,19 +86,16 @@ The delivered objects exist only in the private repository of the runner machine
 
 `advancesCentral` is retained in the versioned declaration but causes no publication in this implementation. Even `true` supplies no central-update authority or receipt. Programs must not treat captured code as published code.
 
-The source is cloned once into a private bare repository without local hardlinks, alternates, or a retained source remote. The original repository is not changed. No fetch or network clone runs. The configured local source must remain available for current manager validation; importing newer source commits and transferring objects between machines remain open work.
-
 Persistent branches start with `codex/merv/`. Shared persistent, per-base persistent and ephemeral checkouts occupy separate directory roots, so valid policy changes cannot nest one checkout inside another. Git-unsafe namespace components are encoded without collisions; full base OIDs distinguish per-base lineages.
 
 ## The `code.v2` driver
 
-A workspace policy may name a `driver`. The key is opaque to Workflows and Sessions: a policy without it is byte-identical to what it always was, and one that names a driver is offered only to a runner whose heartbeat lists that name among its `capabilities` (`runner_incompatible` otherwise, for the automatic lease and for a hand offer at attach). `task@5`, service-owned `task@6` and `experiment@8` name `code.v2`, whose checkouts come from the repository Code keeps on the server rather than from a repository on the machine. Policies that name none use the runner's legacy manager.
+A workspace policy may name a `driver`. The key is opaque to Workflows and Sessions: a policy without it is byte-identical to what it always was, and one that names a driver is offered only to a runner whose heartbeat lists that name among its `capabilities` (`runner_incompatible` otherwise, for the automatic lease and for a hand offer at attach). `task@5`, service-owned `task@6` and `experiment@8` name `code.v2`, whose checkouts come from the repository Code keeps on the server rather than from a repository on the machine. Policies that name none are offered to no runner.
 
 What a runner advertises:
 
 - each driver it composed, by name (`code.v2`);
-- `git.local` exactly when it has a repository of its own (`workspace` in its configuration) for policies that name no driver. The automatic lease offers such work to a non-managed `runner.2` only when it names `git.local` (`runner_incompatible` otherwise); a runner that does not advertise `runner.2` is still offered it, and one without a repository fails it counted (`workspace_repository_required`);
-- `runner.N`, what its protocol tolerates: `runner.1` ignores fields a server adds to lease, settings and session replies; `runner.2` also advertises `git.local` as above. Sessions reads it from the stored presence before relying on `git.local`.
+- `runner.N`, what its protocol tolerates: `runner.1` ignores fields a server adds to lease, settings and session replies; `runner.2` also says it has no repository of its own. Older runners advertised `git.local` for one; nothing offers work for it any more.
 
 A managed (hosted) runner advertises only its drivers, because its capabilities must equal its enrolment; its image release is the proof of what it tolerates.
 
@@ -214,10 +200,10 @@ There is no standalone `code.propose` or automatic retention pruning. Legacy ass
 
 The historical workspace-capture checkpoint passed all **490 repository tests**, including 12 focused local Git workspace tests and synthetic HTTP/MCP workspace integration. Backend and UI typechecks/builds passed. This count predates Code operations; later integrated checks are recorded separately.
 
-Native acceptance also passed on 2026-09-15: `scripts/live-runner-workspace.ts` launched exactly two fresh Codex agents through a synthetic managed workflow, `work → capture → verify → done`. The writer edited its sandboxed file, Runner captured the commit, and the read-only verifier inspected that exact frozen commit. The source repository stayed unchanged; both process groups stopped and both workspace records closed. The local report is `/private/tmp/merv-native-git-live-20260915-02/report.json`.
+Native acceptance also passed on 2026-09-15 on the since-removed local repository driver: `scripts/live-runner-workspace.ts` (removed with it) launched exactly two fresh Codex agents through a synthetic managed workflow, `work → capture → verify → done`. The writer edited its sandboxed file, Runner captured the commit, and the read-only verifier inspected that exact frozen commit. The source repository stayed unchanged; both process groups stopped and both workspace records closed. The local report is `/private/tmp/merv-native-git-live-20260915-02/report.json`.
 
 This proves the native file-edit/capture/verification path on one machine with one private object store. It does not exercise the actual Reviews plugin, research consolidation, central publication or cross-machine object transfer.
 
 The Code foundation separately passed 20 local Git tests and two synthetic HTTP/MCP integration tests, covering deterministic crash recovery, delayed ownership/ref transactions, live-worker receipts, actual Reviews attribution and lost dispatch/acknowledgment recovery. Those tests use synthetic executable workers. The historical native capture run above is not evidence for the new native Code path; see [Code verification](CODE_OPERATIONS.md) for its own acceptance status.
 
-Run `npm run test:runner` for the Runner suite, or `node --import tsx --test tests/runner-workspaces.test.ts` for local Git lifecycle tests. Native acceptance launches real agents and is a separate, explicit operation.
+Run `npm run test:runner` for the Runner suite, `tests/runner-workspaces.test.ts` for scratch and work-host directories, or `tests/runner-code-driver.test.ts` for `code.v2` checkouts. Native acceptance launches real agents and is a separate, explicit operation.

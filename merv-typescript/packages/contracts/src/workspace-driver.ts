@@ -1,6 +1,6 @@
 import type { CodeCommitCommand, CodeCommitReceipt } from './code.js';
 import type { SessionWorkspace } from './sessions-models.js';
-import type { WorkflowExecution, WorkflowWorkspacePolicy } from './index.js';
+import type { WorkflowExecution } from './index.js';
 
 /**
  * What a machine runner asks of whatever prepares its checkouts. The runner schedules,
@@ -42,52 +42,6 @@ export interface WorkspaceDriver {
   pendingCommits?(launchId: string): CodeCommitCommand[];
   commitOutcome?(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null;
   acknowledgeCommit?(commandId: string): void;
-}
-/** One launch's claim of a checkout path, with the workspace row it opens. */
-export interface CheckoutSlotClaim {
-  launchId: string;
-  slotId: string;
-  path: string;
-  branch: string | null;
-  base: string;
-  policy: WorkflowWorkspacePolicy;
-  readOnly: boolean;
-  repositoryId: string | null;
-}
-type SlotOwner = { launch_id: string; slot_id: string; epoch: number };
-/** A launch's workspace row in a runner's slot ledger. */
-export interface CheckoutWorkspaceRow extends SlotOwner {
-  path: string;
-  policy_json: string;
-  read_only: number;
-  base_oid: string;
-  branch: string | null;
-  repository_id: string | null;
-  status: WorkspaceHandle['status'];
-  attachment_json: string | null;
-  result_json: string | null;
-  canceled: number;
-}
-/** What moves a workspace row on; an attachment and a result are each written once. */
-export interface CheckoutWorkspaceChange {
-  status?: WorkspaceHandle['status'];
-  attachment?: SessionWorkspace;
-  result?: SessionWorkspace;
-  canceled?: true;
-}
-/** A runner's checkout-slot ledger, lent to the driver of the runner's own repository. */
-export interface CheckoutSlotLedger {
-  /** The base a slot was first claimed at, if it ever was. */
-  base(slotId: string): string | undefined;
-  claim(claim: CheckoutSlotClaim): void;
-  /** The launch's workspace row, if it claimed a slot. */
-  workspace(launchId: string): CheckoutWorkspaceRow | undefined;
-  update(launchId: string, change: CheckoutWorkspaceChange): void;
-  /** Cancels the launch's row; a capture in progress counts as captured. */
-  abandon(launchId: string): void;
-  requireOwnership(row: SlotOwner): void;
-  /** Frees the slot its owner still holds and closes the launch's workspace row. */
-  release(row: SlotOwner): void;
 }
 /** What a runner lends a driver: its ledger's place on disk and what it knows of a launch. */
 export interface WorkspaceDriverHost {

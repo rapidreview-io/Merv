@@ -167,9 +167,7 @@ test('one hosted work unit reuses its cwd across writer and review while Code fr
   });
   const scratch = new RunnerWorkspaces(
     ledger,
-    undefined,
-    m.assignmentWorkspaceDirectory,
-    f.unitId,
+    { directory: m.assignmentWorkspaceDirectory!, workInstanceId: f.unitId },
     () => driver.get(reviewLaunch.id),
   );
   t.after(() => {
@@ -314,7 +312,10 @@ test('a closed scratch plan and scratch review hand their data to the first Code
     directory: m.directory,
     binding: { baseUrl: 'http://127.0.0.1:7000', projectId: f.admin.projectId, sourceId: 'source' },
   });
-  const scratch = new RunnerWorkspaces(ledger, undefined, m.assignmentWorkspaceDirectory, f.unitId);
+  const scratch = new RunnerWorkspaces(ledger, {
+    directory: m.assignmentWorkspaceDirectory!,
+    workInstanceId: f.unitId,
+  });
   t.after(() => {
     scratch.dispose();
     ledger.close();
@@ -393,9 +394,7 @@ test('a replacement host that first reviews discards edits before writer or scra
   });
   const scratch = new RunnerWorkspaces(
     ledger,
-    undefined,
-    m.assignmentWorkspaceDirectory,
-    f.unitId,
+    { directory: m.assignmentWorkspaceDirectory!, workInstanceId: f.unitId },
     () => driver.get(reviewLaunch.id),
   );
   t.after(() => {
@@ -690,13 +689,13 @@ test('a checkout is exactly the head Code names, its cache knows no remote, and 
 test('hosted Code checkout has independent Git metadata and its edits pass through Code capture', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_hosted');
-  const m = machine(t, f, undefined, true);
+  const m = machine(t, f, undefined, true, f.unitId);
   const driver = m.start();
   const launch = m.launch('ses_hosted');
   const handle = await driver.prepare(launch, m.session('ses_hosted'));
   assert.equal(
     handle.path,
-    join(m.assignmentWorkspaceDirectory!, createHash('sha256').update(launch.id).digest('hex')),
+    join(m.assignmentWorkspaceDirectory!, createHash('sha256').update(f.unitId).digest('hex')),
   );
   assert.ok(lstatSync(join(handle.path, '.git')).isDirectory());
   assert.equal(existsSync(join(handle.path, '.git/objects/info/alternates')), false);
@@ -737,7 +736,9 @@ test('hosted Code checkout has independent Git metadata and its edits pass throu
   m.terminal.add(reviewLaunch.id);
   assert.equal((await driver.capture(reviewLaunch))?.headOid, receipt.headOid);
   await driver.close(reviewLaunch);
-  assert.equal(existsSync(review.path), false);
+  // The work item keeps its one cwd: the review read it in place and it stays.
+  assert.equal(review.path, handle.path);
+  assert.ok(existsSync(review.path));
 });
 
 test('a quarantined commit leaves the checkout as it was and never rides along in the next bundle', async (t) => {
@@ -1069,7 +1070,7 @@ test('a final capture clears an index lock the stopped session left, and repeate
 test('the bound on failing captures restarts after the machine stopped trying, and a failed import counts too', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_1');
-  const m = machine(t, f, undefined, true);
+  const m = machine(t, f, undefined, true, f.unitId);
   const driver = m.start();
   const launch = m.launch('ses_1');
   const { path } = await driver.prepare(launch, m.session('ses_1'));
@@ -1120,7 +1121,7 @@ test('the bound on failing captures restarts after the machine stopped trying, a
 test('slow failing captures, each longer than the pause that restarts the bound, still end in a handover', async (t) => {
   const f = await writerFixture(t);
   await f.lease('ses_1');
-  const m = machine(t, f, undefined, true);
+  const m = machine(t, f, undefined, true, f.unitId);
   const driver = m.start();
   const launch = m.launch('ses_1');
   const { path } = await driver.prepare(launch, m.session('ses_1'));

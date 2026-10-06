@@ -58,14 +58,6 @@ async function runMachine(configPath: string) {
   const config = {
     ...parsed,
     directory: resolve(base, parsed.directory),
-    ...(parsed.workspace && 'repository' in parsed.workspace
-      ? {
-          workspace: {
-            ...parsed.workspace,
-            repository: resolve(base, parsed.workspace.repository),
-          },
-        }
-      : {}),
     profiles: parsed.profiles.map((profile) => ({
       ...profile,
       executable: profile.executable.includes('/')
@@ -96,10 +88,7 @@ async function runMachine(configPath: string) {
       parsed.workspaceDrivers?.length === 0
         ? []
         : [(await import('@merv/code/driver/index')).codeWorkspaceDriver];
-    const repositoryDriver = config.workspace
-      ? (await import('@merv/code/driver/local')).localWorkspaceDriver
-      : undefined;
-    const fiber = ctx.plugin(runnerWith(drivers, repositoryDriver), config);
+    const fiber = ctx.plugin(runnerWith(drivers), config);
     await fiber.await();
     if (stopping) return;
     const runner = ctx.get('runner');

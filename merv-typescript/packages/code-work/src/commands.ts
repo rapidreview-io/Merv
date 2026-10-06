@@ -25,7 +25,7 @@ import {
 } from '@merv/contracts';
 import type { Session, Sessions } from '@merv/sessions/types';
 import { pendingMerge } from '@merv/code/pending-merge';
-import { postgresMigrations } from './commands.postgres.js';
+import { migrateCommands } from './receipts.js';
 import type { CodeCommands } from './types.js';
 
 type Row = {
@@ -67,7 +67,7 @@ export class CodeCommandService implements CodeCommands {
 
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate('code_commands', postgresMigrations);
+    await migrateCommands(this.state);
   }
 
   private async transaction<T>(fn: (tx: Transaction) => T): Promise<T> {

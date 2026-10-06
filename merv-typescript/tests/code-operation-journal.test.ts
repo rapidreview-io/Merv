@@ -18,7 +18,7 @@ test('Code receipts survive concurrent replay, isolate principals and roll back 
   const receipts = () =>
     f.state.read((sql) =>
       sql.all<{ id: string; principal_scope: string; result_json: string }>(
-        'SELECT id,principal_scope,result_json FROM code_operations WHERE request_id=?',
+        'SELECT id,principal_scope,result_json FROM code_work_receipts WHERE request_id=?',
         request.requestId,
       ),
     );
@@ -42,9 +42,10 @@ test('Code receipts survive concurrent replay, isolate principals and roll back 
     first,
     'replay returns the retained answer even after current configuration changes',
   );
+  // Code Work's receipts are its own: Code's operations keep a request namespace of their own.
   await assert.rejects(
     f.code.fenceUnit(human, { unitId: 'missing-unit', requestId: request.requestId }),
-    { code: 'request_conflict' },
+    (error: { code?: string }) => error.code !== 'request_conflict',
   );
 
   const producer = await f.scope.credentials.issueActor(f.admin, {
@@ -75,7 +76,7 @@ test('Code receipts survive concurrent replay, isolate principals and roll back 
   }
   const rolledBack = await f.state.read(async (sql) => ({
     operation: await sql.get(
-      'SELECT id FROM code_operations WHERE request_id=?',
+      'SELECT id FROM code_work_receipts WHERE request_id=?',
       retried.requestId,
     ),
     project: await sql.get<{ limits_json: string }>(

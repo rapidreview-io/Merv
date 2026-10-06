@@ -20,6 +20,7 @@ import type { CodeCapture } from '@merv/code-work/types';
 import type { SandboxCheckHandle } from '@merv/sandboxes';
 import { enqueueMirror, CodeMirrorService } from '@merv/code/store/mirror';
 import { CodeBaseService } from '../packages/code-work/src/bases.js';
+import { personMove } from '../packages/code-work/src/blockers.js';
 import type { CodeUnitService } from '../packages/code-work/src/units.js';
 import { git, seededSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
@@ -1939,7 +1940,7 @@ test('base operator controls retain history, deny workers, and explain each disp
   assert.equal(blocker.code, 'code_quarantined');
   const history = await f.state.read((sql) =>
     sql.all<{ payload_json: string }>(
-      "SELECT payload_json FROM code_operations WHERE project_id=? AND kind='base-control' ORDER BY created_at,id",
+      "SELECT payload_json FROM code_work_receipts WHERE project_id=? AND kind='base-control' ORDER BY created_at,id",
       f.admin.projectId,
     ),
   );
@@ -2098,7 +2099,12 @@ test('budget admission reaches the stuck report and consumes neither launch hold
   assert.equal(base.resolutionTaskId, null);
   assert.equal(base.blocker, 'budget_exceeded');
   const blockers = await f.workflows.blockers(f.admin, waiter.id);
-  assert.equal(blockers[0]!.code, 'code_base_admission');
+  // Stored with the cause readers word it by, so none of them reads the message.
+  assert.deepEqual(
+    [blockers[0]!.code, blockers[0]!.cause],
+    ['code_base_admission', 'budget_exceeded'],
+  );
+  assert.equal(personMove(blockers[0]!)?.sentence, 'The budget set for this project is spent');
   const stuck = await f.sessions.dispatch.stuck(f.admin);
   assert.ok(
     stuck.items.some(

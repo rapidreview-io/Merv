@@ -1,7 +1,10 @@
-import { postgresGuard } from './postgres-guard.js';
+import { postgresGuard } from '../../packages/code-work/src/postgres-guard.js';
 
-/** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
-export const postgresMigrations: Record<number, string> = {
+/**
+ * The retired `code_units` component exactly as production applied it (v1–v4). Nothing registers
+ * it any more; tests seed it to prove an existing database upgrades to the fresh shape.
+ */
+export const legacyCodeUnitsMigrations: Record<number, string> = {
   1: `
 CREATE TABLE code_projects (
   project_id TEXT PRIMARY KEY,

@@ -11,7 +11,6 @@
     "./github": "./src/github.ts",
     "./github-client": "./src/github-client.ts",
     "./input": "./src/input.ts",
-    "./operation-journal": "./src/operation-journal.ts",
     "./pending-merge": "./src/pending-merge.ts",
     "./units": "./src/units.ts",
     "./writers": "./src/writers.ts",
@@ -20,8 +19,7 @@
     "./store/protocol": "./src/store/protocol.ts",
     "./store/refs": "./src/store/refs.ts",
     "./store/repository": "./src/store/repository.ts",
-    "./driver/index": "./src/driver/index.ts",
-    "./driver/local": "./src/driver/local.ts"
+    "./driver/index": "./src/driver/index.ts"
   },
   "dependencies": {
     "cordis": "4.0.0-rc.10",

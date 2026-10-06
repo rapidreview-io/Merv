@@ -5,7 +5,7 @@ import {
   projectCheck,
 } from './check-configuration.js';
 import { migrateBases } from './base-schema.js';
-import { OperationJournal } from '@merv/code/operation-journal';
+import { OperatorReceipt } from './receipts.js';
 import { canonical, check, digest, newId, MervError } from '@merv/contracts';
 import type { Caller, Scope, State, Sql, Transaction } from '@merv/contracts';
 import type { SandboxChecks } from '@merv/sandboxes/types';
@@ -233,8 +233,6 @@ export class CodeBaseService {
     private readonly state: State,
     private readonly repositories: CodeRepositories,
     private readonly hooks: CodeBaseHooks,
-    /** A deployment may pause automatic merges while keeping their records readable. */
-    readonly enabled: boolean = true,
     private readonly clock: () => number = Date.now,
     private readonly deadlineMs = 120_000,
   ) {}
@@ -251,7 +249,7 @@ export class CodeBaseService {
    * here; a transaction that queues work also asks once it has committed.
    */
   start(everyMs = 5000): void {
-    if (!this.enabled || this.timer) return;
+    if (this.timer) return;
     const tick = () =>
       void this.due()
         .then(async (projects) => {
@@ -265,7 +263,7 @@ export class CodeBaseService {
 
   /** Asked from inside a transaction that queued work: it runs once that has committed. */
   soon(projectId: string): void {
-    if (!this.enabled || this.closed) return;
+    if (this.closed) return;
     setTimeout(() => void this.work(projectId).catch(() => undefined), 50).unref();
   }
 
@@ -538,7 +536,7 @@ export class CodeBaseService {
    * that may have queued work and at start-up; calling it again while it runs only waits.
    */
   async work(projectId: string): Promise<void> {
-    if (this.closed || !this.enabled) return;
+    if (this.closed) return;
     const running = this.busy.get(projectId);
     if (running) return await running;
     const job = this.drain(projectId).finally(() => this.busy.delete(projectId));
@@ -1333,7 +1331,7 @@ export class CodeBaseService {
         403,
       );
       const { requestId, ...body } = input;
-      return await new OperationJournal(
+      return await new OperatorReceipt(
         tx,
         caller.projectId,
         principal,
@@ -1378,13 +1376,7 @@ export class CodeBaseService {
       );
       const { requestId, ...body } = input;
       const principal = `actor:${caller.actorId}`;
-      const journal = new OperationJournal(
-        tx,
-        caller.projectId,
-        principal,
-        requestId,
-        digest(body),
-      );
+      const journal = new OperatorReceipt(tx, caller.projectId, principal, requestId, digest(body));
       const previous = await journal.previous();
       if (previous) {
         // A receipt kept before records carried their verbs gets them from what it records.

@@ -188,6 +188,24 @@ test('a published blocker gates the read and the overview, and leaves a named ac
   await f.publish(work.id, [{ ...merge, code: 'probe_other' }]);
   assert.notEqual((await f.workflows.blockers(f.owner, work.id))[0].since, shown.since);
 
+  // A cause is stored unread and read back as given; changing it alone is a new opinion, and
+  // an opinion that names none has none.
+  assert.equal(shown.cause, undefined);
+  await f.publish(work.id, [{ ...merge, cause: 'budget_exceeded' }]);
+  const [caused] = await f.workflows.blockers(f.owner, work.id);
+  assert.equal(caused.cause, 'budget_exceeded');
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await f.publish(work.id, [{ ...merge, cause: 'capacity_full' }]);
+  const [recaused] = await f.workflows.blockers(f.owner, work.id);
+  assert.deepEqual([recaused.cause, recaused.since], ['capacity_full', caused.since]);
+  assert.notEqual(recaused.updatedAt, caused.updatedAt);
+  await f.publish(work.id, [merge]);
+  assert.equal('cause' in (await f.workflows.blockers(f.owner, work.id))[0], false);
+  await assert.rejects(
+    f.publish(work.id, [{ ...merge, cause: '' }]),
+    refused('invalid_blocker', 500),
+  );
+
   // One provider replaces only its own opinion.
   await f.publish(work.id, [{ ...merge, key: 'other' }], 'second');
   await f.publish(work.id, []);

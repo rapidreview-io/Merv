@@ -68,8 +68,6 @@ async function fixture(t: TestContext) {
           },
         },
         mirrorConfig: { mirrorSeconds: 0 },
-        // Nothing merges or steps a check behind the test's back: a row written here stays.
-        autoMerge: false,
       },
     ),
   );

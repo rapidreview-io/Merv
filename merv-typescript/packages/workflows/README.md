@@ -315,6 +315,8 @@ data names a value: each runs in the caller's `tx` and authorizes no caller.
 
 **Blockers.** A provider's blockers stay on an instance across non-terminal moves until
 the provider replaces them; they are cleared when the instance reaches a terminal state.
+A blocker's optional `cause` is the provider's machine word for which kind of its code it is;
+Workflows stores and returns it unread, so readers never parse the message.
 
 **`dependencyClosure`** walks level by level, with a fixed number of reads per level and
 one `children` call per declaring version and 1,000 of its instances, at most 5,000

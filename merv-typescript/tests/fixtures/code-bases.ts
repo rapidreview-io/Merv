@@ -56,7 +56,7 @@ function seeded() {
 }
 
 /** A project repository holding four accepted commits off one main: a and c collide, b and d do not. */
-export async function baseFixture(t: TestContext, enabled = true) {
+export async function baseFixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'merv-bases-'));
   const state = await openState();
   let time = Date.now();
@@ -103,14 +103,13 @@ export async function baseFixture(t: TestContext, enabled = true) {
       state,
       repositories,
       { ...hooks, serviceWork: admission ? sessions.serviceWork : undefined },
-      true,
       () => time,
       deadlineMs,
     );
     workers.push(base);
     return base;
   };
-  const bases = new CodeBaseService(state, repositories, hooks, enabled, () => time);
+  const bases = new CodeBaseService(state, repositories, hooks, () => time);
   await bases.initialize();
   t.after(async () => {
     await bases.close();

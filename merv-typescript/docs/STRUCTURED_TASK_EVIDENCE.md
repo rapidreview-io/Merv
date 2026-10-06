@@ -129,7 +129,6 @@ building later work on the delivered commit.
 | `invalid_workspace_base` | The base is not a non-failed Git task of this project, or is not among `dependsOn`.        |
 | `code_unavailable` (503) | Code is unloaded: a Git task cannot be created, assigned, delivered or reviewed.           |
 | `code_base_pending`      | Code does not hold main, or a prerequisite's accepted code is unverified or not imported.  |
-| `code_merge_required`    | The prerequisites were accepted with different commits and automatic merging is disabled.  |
 | `task_commit_required`   | A Git delivery without its worker's `commandId`, or a `commandId` on a scratch task.       |
 | `task_commit_pending`    | The operation has no receipt yet; wait for `code.operation` to report `succeeded`.         |
 | `task_commit_failed`     | The operation failed or was cancelled; commit again and deliver that operation.            |

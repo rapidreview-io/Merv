@@ -47,10 +47,9 @@ Bare executable names use `PATH`; command arguments remain literal strings.
 The CLI installs only the runner plugin and handles SIGINT/SIGTERM through its
 Cordis disposer. Readiness includes an offline state if the server is unavailable.
 
-For code work, use [the Git configuration example](../config/runner.git.example.json).
-Its optional `workspace` object supplies a local `repository` and initial `baseRef`.
-Repository paths also resolve relative to the config file. Workflows must declare
-their Git policy; assignments without one still use scratch.
+A runner has no repository of its own: Git work comes through Code's `code.v2`
+driver, which `merv runner` composes unless `workspaceDrivers` is `[]`. Workflows
+must declare their Git policy; assignments without one still use scratch.
 
 Enable dispatch from the server's Sessions page. Default dispatch is off. Pause
 prevents new assignments while preserving current workers. Halt closes leases;
@@ -163,7 +162,7 @@ closed or invalid assignments even when the child makes no further MCP calls.
 
 ## Workspace drivers and capabilities
 
-The runner schedules, launches and reports through one generic driver interface and never learns how a checkout is made. Its own local repository serves policies that name no driver, including new `task@3` / `experiment@6` work in unhosted projects and the explicit-base `task@4` / `experiment@7` versions. After binding and import, new automatic-base work uses `task@5` / `experiment@8`; service resolution uses `task@6`. `merv runner` also composes the runner with Code's `code.v2` driver, which needs only `/usr/bin/git`: no `workspace` configuration, no local source repository and no GitHub credential. Each driver the machine can run is advertised in the heartbeat as a capability, and the server offers work whose policy names a driver only to runners that list it; a runner without the capability keeps receiving everything else. A launch records the driver it was reserved for, so a restart finishes it with the same one. The server must be deployed before such a runner: an older server refuses a heartbeat that carries `capabilities`.
+The runner schedules, launches and reports through one generic driver interface and never learns how a checkout is made. Policies that name no driver (`task@3`/`task@4`, `experiment@6`/`experiment@7`) were served by the runner's own repository, which was removed; no runner is offered them. After binding and import, new automatic-base work uses `task@5` / `experiment@8`; service resolution uses `task@6`. `merv runner` also composes the runner with Code's `code.v2` driver, which needs only `/usr/bin/git`: no local source repository and no GitHub credential. Each driver the machine can run is advertised in the heartbeat as a capability, and the server offers work whose policy names a driver only to runners that list it; a runner without the capability keeps receiving everything else. A launch records the driver it was reserved for, so a restart finishes it with the same one. The server must be deployed before such a runner: an older server refuses a heartbeat that carries `capabilities`.
 
 When a driver cannot prepare a checkout because the place that work's history lives is away, busy or full, the lease goes back as `preparation_deferred` with the cause rather than as a failure of the launch: nothing counts it, no hold forms, and the target is simply offered again after the usual backoff. Everything else — a bad launch, a checkout that could not be made, a process that would not stay up — is reported exactly as before.
 
@@ -229,8 +228,8 @@ uses two fresh Codex agents and a disposable arithmetic task; it exercises nativ
 shell execution, scoped MCP evidence, independent review and final cleanup.
 
 The historical workspace-capture checkpoint passed all 490 repository tests, backend/UI typechecks
-and builds. Native Git acceptance also passed on 2026-09-15 using
-`scripts/live-runner-workspace.ts`: exactly two fresh Codex agents completed a
+and builds. Native Git acceptance also passed on 2026-09-15 using the since-removed
+local repository driver and `scripts/live-runner-workspace.ts`: exactly two fresh Codex agents completed a
 synthetic managed `work → capture → verify → done` workflow on one machine. The
 writer edited files, Runner captured the commit, and the read-only verifier
 checked that frozen commit. The source stayed unchanged, both processes stopped,

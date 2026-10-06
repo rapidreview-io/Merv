@@ -65,5 +65,4 @@ test('a no-Code compatibility server can read history but refuses new work', asy
     ),
   );
   assert.deepEqual(runner.workspaceDrivers, []);
-  assert.equal(runner.workspace, undefined);
 });

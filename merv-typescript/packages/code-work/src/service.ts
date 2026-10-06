@@ -1,10 +1,7 @@
 import { configureWorkRepository, projectCheck } from './check-configuration.js';
 import type { CodeGitHubService, GitHubBinding } from '@merv/code/github';
 import { parseCodeInput } from '@merv/code/input';
-import type {
-  CodeService as CodeUtility,
-  CodeStoreOptions as CodeStorageOptions,
-} from '@merv/code/service';
+import type { CodeService as CodeUtility, CodeStoreOptions } from '@merv/code/service';
 import {
   enqueueMirror,
   type CodeMirrorService,
@@ -48,11 +45,7 @@ import type { CodeAcceptedSince } from './models.js';
 /** How many times verification imports one merge commit before an operator imports it. */
 const PUBLICATION_IMPORT_ATTEMPTS = 3;
 
-/** Work-unit operations over the repositories owned by the core Code service. */
-export interface CodeStoreOptions extends CodeStorageOptions {
-  /** Merge several accepted commits into one base on the server. On unless disabled. */
-  autoMerge?: boolean;
-}
+export type { CodeStoreOptions };
 
 /**
  * Refusals at a lease that only mean "not yet": a base still pending, contested, merging or
@@ -61,7 +54,6 @@ export interface CodeStoreOptions extends CodeStorageOptions {
  */
 const waits = new Set([
   'code_base_pending',
-  'code_merge_required',
   'code_base_wait',
   'code_base_admission',
   'code_merge_conflict',
@@ -211,21 +203,15 @@ export class CodeService implements Code {
         this.mirrorStore = opened.mirror;
         this.transport = opened.transport;
         this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, store);
-        const bases = new CodeBaseService(
-          state,
-          store.repositories,
-          {
-            changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
-            sponsors: (tx, projectId, members) =>
-              this.unitStore.baseSponsors(tx, projectId, members),
-            serviceWork: sessions.serviceWork,
-            resolved: async (tx, projectId, key, commit) => {
-              await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
-              await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
-            },
+        const bases = new CodeBaseService(state, store.repositories, {
+          changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
+          sponsors: (tx, projectId, members) => this.unitStore.baseSponsors(tx, projectId, members),
+          serviceWork: sessions.serviceWork,
+          resolved: async (tx, projectId, key, commit) => {
+            await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
+            await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
           },
-          repositories.autoMerge !== false,
-        );
+        });
         await bases.initialize();
         this.unitStore.bases = bases;
         this.baseStore = bases;

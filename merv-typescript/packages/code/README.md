@@ -82,9 +82,8 @@ own bodies and the repository preparation belong to Code work.
 
 The machine [Code workspace driver](src/driver/index.ts) supports isolated checkouts and
 cross-machine handoff. The [Runner](../runner/README.md) loads it only when enabled;
-`workspaceDrivers: []` supports execution without Code or Git. The
-[local repository driver](src/driver/local.ts) serves a runner configured with a `workspace`
-repository of its own: a private bare copy of it, checkouts, captures and `code.commit` receipts.
+`workspaceDrivers: []` supports execution without Code or Git. It is the only driver: the
+former local repository driver, for a runner with a repository of its own, was removed.
 
 See [Code operations](../../docs/CODE_OPERATIONS.md),
 [GitHub connections](../../docs/GITHUB_REPOSITORIES.md), and the

@@ -14,7 +14,7 @@ import {
 } from '@merv/contracts';
 import { codeAdmissionLimitsSchema } from '@merv/code/store/protocol';
 import { parseCodeInput } from '@merv/code/input';
-import { OperationJournal } from '@merv/code/operation-journal';
+import { migrateCommands, OperatorReceipt } from './receipts.js';
 import type { CodeStore } from '@merv/code/store/operations';
 import type { CodeRepositoryConfigureInput } from './types.js';
 import type { CodeCheckSpec, CodeStoreLimits } from './models.js';
@@ -63,6 +63,7 @@ export const codeRepositoryConfigureInputSchema = z
   .strict() satisfies z.ZodType<CodeRepositoryConfigureInput>;
 
 export async function initializeCheckConfiguration(state: State): Promise<void> {
+  await migrateCommands(state);
   await state.migrate('code_research_check_configuration', [
     {
       version: 1,
@@ -98,7 +99,7 @@ export async function configureWorkRepository(
       'A leased worker cannot configure this repository',
       403,
     );
-    const journal = new OperationJournal(
+    const journal = new OperatorReceipt(
       tx,
       caller.projectId,
       `actor:${caller.actorId}`,

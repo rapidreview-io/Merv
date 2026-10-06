@@ -324,7 +324,7 @@ test('five infrastructure failures block one retained record and an idempotent o
   await f.state.transaction(async (tx) => {
     await tx.run('SET LOCAL session_replication_role = replica');
     await tx.run(
-      "UPDATE code_operations SET result_json=(result_json::jsonb - 'actions')::text WHERE kind='base-control' AND request_id='retry'",
+      "UPDATE code_work_receipts SET result_json=(result_json::jsonb - 'actions')::text WHERE kind='base-control' AND request_id='retry'",
     );
   });
   assert.deepEqual(await f.bases.control(f.scope, f.admin, input), receipt);
@@ -338,7 +338,9 @@ test('five infrastructure failures block one retained record and an idempotent o
     'resolved',
   );
   const count = await f.state.read((sql) =>
-    sql.get<{ n: number }>("SELECT COUNT(*) AS n FROM code_operations WHERE kind='base-control'"),
+    sql.get<{ n: number }>(
+      "SELECT COUNT(*) AS n FROM code_work_receipts WHERE kind='base-control'",
+    ),
   );
   assert.equal(count!.n, 3);
 });
@@ -380,7 +382,7 @@ test('a base ref an interrupted execution left behind stops the base until an op
   assert.deepEqual(f.parents(settled.result!.commit).sort(), [a, b].sort());
   const receipt = await f.state.read((sql) =>
     sql.get<{ payload_json: string }>(
-      "SELECT payload_json FROM code_operations WHERE project_id=? AND request_id='repair'",
+      "SELECT payload_json FROM code_work_receipts WHERE project_id=? AND request_id='repair'",
       f.projectId,
     ),
   );

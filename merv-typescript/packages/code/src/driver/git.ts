@@ -15,7 +15,7 @@ export interface DriverGitResult {
   stderr: string;
   timedOut: boolean;
 }
-/** A local Git failure, named the way the runner's own workspace errors are. */
+/** A local Git failure, named the way the runner's workspace errors are. */
 export class WorkspaceError extends Error {
   constructor(
     readonly code: string,

@@ -59,4 +59,30 @@ BEGIN
   END IF;
 END $code_legacy$;
 `,
+  // An administrator's replayable requests to Code Work were kept in Code's operation journal;
+  // they are Code Work's own receipts, so they move here with every one already answered.
+  3: `
+CREATE TABLE code_work_receipts (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  principal_scope TEXT NOT NULL,
+  request_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (project_id,principal_scope,request_id)
+);
+${postgresGuard('code_work_receipts', 'no_update', 'UPDATE', 'Code Work receipts are immutable')}
+${postgresGuard('code_work_receipts', 'no_delete', 'DELETE', 'Code Work receipts are retained')}
+DO $code_receipts$
+BEGIN
+  IF to_regclass('code_operations') IS NOT NULL THEN
+    INSERT INTO code_work_receipts
+    SELECT id,project_id,principal_scope,request_id,kind,input_hash,payload_json,result_json,created_at
+    FROM code_operations WHERE kind IN ('configure','base-control') AND status='completed';
+  END IF;
+END $code_receipts$;
+`,
 };

@@ -6,29 +6,15 @@ import type {} from '@merv/code/service';
 import { z } from 'zod';
 import { CodeService } from './service.js';
 
-const configuration = z
-  .object({
-    repositories: z
-      .object({
-        /** Merge several accepted commits into one base on the server; on unless disabled. */
-        autoMerge: z.boolean().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict()
-  .default({});
-
 export const codePlugin = {
   name: 'merv-code-work',
-  Config: configuration,
+  /** No settings: several accepted commits are always merged into one base on the server. */
+  Config: z.object({}).strict().default({}),
   inject: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
-  async apply(ctx: Context, config: z.infer<typeof configuration> = {}) {
+  async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.workflows, ctx.code, {
-          autoMerge: config.repositories?.autoMerge,
-        }),
+        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.workflows, ctx.code),
       );
       yield () => service.close();
       ctx.inject(['reviews'], (ctx) => {

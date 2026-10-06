@@ -317,7 +317,7 @@ test('a work host replays the request of its own launch first, then asks for its
   assert.ok(requests.slice(1).every((id) => id !== pending.requestId));
 });
 
-test('presence names runner.2 (and git.local) on a source runner and only the enrolled drivers on a managed one', async (t) => {
+test('presence names runner.2 on a source runner and only the enrolled drivers on a managed one', async (t) => {
   const driver: WorkspaceDriverFactory = {
     name: 'code.v2',
     create: () => ({ get: () => undefined, dispose: () => {} }) as unknown as WorkspaceDriver,
@@ -333,9 +333,6 @@ test('presence names runner.2 (and git.local) on a source runner and only the en
   };
   assert.deepEqual(await capabilities({}, []), ['runner.2']);
   assert.deepEqual(await capabilities({}, [driver]), ['code.v2', 'runner.2']);
-  // A runner with a repository of its own says so, for work that names no driver.
-  const workspace = { repository: '/nonexistent/source', baseRef: 'main' };
-  assert.deepEqual(await capabilities({ workspace }, []), ['git.local', 'runner.2']);
   const managed = { workInstanceId: 'instance_managed' };
   assert.deepEqual(await capabilities(managed, [driver]), ['code.v2', 'workflow.workhost.1']);
   assert.deepEqual(await capabilities(managed, []), ['workflow.workhost.1']);
