@@ -76,7 +76,9 @@ function refuse(error: unknown): never {
   throw error;
 }
 
-export class CodeService extends CodeCommandService implements Code {
+export class CodeService implements Code {
+  /** The durable runner commands; this service adds Code's admission to their completion. */
+  private readonly commands: CodeCommandService;
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
   private readonly writerStore: CodeWriterService;
@@ -104,9 +106,9 @@ export class CodeService extends CodeCommandService implements Code {
     return pending;
   }
   constructor(
-    state: State,
-    scope: Scope,
-    sessions: Sessions,
+    private readonly state: State,
+    private readonly scope: Scope,
+    private readonly sessions: Sessions,
     private readonly workflows: Workflows,
     private readonly utility: Pick<
       CodeUtility,
@@ -114,7 +116,7 @@ export class CodeService extends CodeCommandService implements Code {
     >,
     private readonly repositories: CodeStoreOptions = {},
   ) {
-    super(state, scope, sessions);
+    this.commands = new CodeCommandService(state, scope, sessions);
     this.github = utility.github;
     this.writerStore = utility.writers;
     this.publicationHost = new PublicationHost(
@@ -152,7 +154,8 @@ export class CodeService extends CodeCommandService implements Code {
       },
       (caller, tx) => this.github.publicationBinding(caller, tx),
       this.writerStore,
-      (caller, oid, tx, expectedOid) => this.unitStore.moveMain(caller, oid, tx, expectedOid),
+      (caller, oid, tx, expectedOid) =>
+        this.unitStore.records.moveMain(caller, oid, tx, expectedOid),
       (projectId, tx) => this.unitStore.imported(tx, projectId),
     );
     this.publicationStore = new CodePublicationService(
@@ -163,13 +166,14 @@ export class CodeService extends CodeCommandService implements Code {
       this.publicationHost,
     );
     this.board = new CodeRunningReader(state, scope, workflows, {
-      unit: (caller, unitId, tx) => this.unitStore.unit(caller, unitId, tx),
+      unit: (caller, unitId, tx) => this.unitStore.records.unit(caller, unitId, tx),
       bases: () => this.baseStore,
-      receipt: (sql, projectId, instanceId) => this.newestReceipt(sql, projectId, instanceId),
+      receipt: (sql, projectId, instanceId) =>
+        this.commands.newestReceipt(sql, projectId, instanceId),
     });
   }
-  override async initialize(): Promise<void> {
-    await super.initialize();
+  async initialize(): Promise<void> {
+    await this.commands.initialize();
     const { state, scope, sessions, utility, repositories } = this;
     this.captureReader = new CodeCaptureReader(state, scope, sessions, this.writerStore);
     try {
@@ -208,7 +212,7 @@ export class CodeService extends CodeCommandService implements Code {
               this.unitStore.baseSponsors(tx, projectId, members),
             serviceWork: sessions.serviceWork,
             resolved: async (tx, projectId, key, commit) => {
-              await this.unitStore.retainBaseResult(tx, projectId, key, commit);
+              await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
               await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
             },
           },
@@ -244,7 +248,12 @@ export class CodeService extends CodeCommandService implements Code {
   ): Promise<CheckedCodeCapture> {
     return checkedCapture(await this.capture(caller, ref, tx), caller.projectId, origin);
   }
-  override async completeCommand(caller: Caller, value: unknown) {
+  list: Code['list'] = (...args) => this.commands.list(...args);
+  operation: Code['operation'] = (...args) => this.commands.operation(...args);
+  commit: Code['commit'] = (...args) => this.commands.commit(...args);
+  merge: Code['merge'] = (...args) => this.commands.merge(...args);
+  nextCommand: Code['nextCommand'] = (...args) => this.commands.nextCommand(...args);
+  async completeCommand(caller: Caller, value: unknown) {
     caller = structuredClone(caller);
     const input = parseCodeInput(codeCommandCompletionSchema, value);
     const complete = async (tx: Transaction) => {
@@ -254,7 +263,7 @@ export class CodeService extends CodeCommandService implements Code {
         caller.projectId,
       );
       // Replay still checks controller ownership and the exact retained receipt.
-      if (command?.status === 'succeeded') return super.completeCommand(caller, input);
+      if (command?.status === 'succeeded') return this.commands.completeCommand(caller, input);
       const binding = command
         ? (JSON.parse(command.command_json) as { projectId: string; instanceId: string })
         : null;
@@ -272,7 +281,7 @@ export class CodeService extends CodeCommandService implements Code {
         409,
       );
       if (binding) await this.writerStore.requireAdmitted(input, binding, tx);
-      return super.completeCommand(caller, input);
+      return this.commands.completeCommand(caller, input);
     };
     const tx = this.state.ambient;
     return tx ? complete(tx) : this.state.transaction(complete);
@@ -334,7 +343,7 @@ export class CodeService extends CodeCommandService implements Code {
    */
   async acceptedSince(caller: Caller): Promise<CodeAcceptedSince> {
     caller = structuredClone(caller);
-    const { main, candidates } = await this.unitStore.acceptedCandidates(caller);
+    const { main, candidates } = await this.unitStore.records.acceptedCandidates(caller);
     const repositories = this.requireStore().repositories;
     const commits = [...new Set(candidates.map((item) => item.commit))];
     const beyond = new Set<string>();
@@ -366,7 +375,7 @@ export class CodeService extends CodeCommandService implements Code {
   }
   baseStatus: Code['baseStatus'] = (...args) => this.unitStore.baseStatus(...args);
   pinBase: Code['pinBase'] = (...args) => this.unitStore.pinBase(...args).catch(refuse);
-  basePin: Code['basePin'] = (...args) => this.unitStore.basePin(...args);
+  basePin: Code['basePin'] = (...args) => this.unitStore.records.basePin(...args);
   /** Plugin wiring, not part of the Code contract: no other plugin reconciles Code's view. */
   reconcileAll = () => this.unitStore.reconcileAll();
   async transitioned(...args: Parameters<CodeUnitService['transitioned']>) {
@@ -436,7 +445,7 @@ export class CodeService extends CodeCommandService implements Code {
   }
   async bindLocal(
     caller: Caller,
-    input: Parameters<CodeUnitService['bindLocal']>[1],
+    input: Parameters<CodeUtility['units']['bindLocal']>[1],
     binding?: GitHubBinding,
   ) {
     // Whether Code's repository holds the named commit is asked of Git before the transaction.
@@ -446,10 +455,10 @@ export class CodeService extends CodeCommandService implements Code {
       typeof named === 'string' &&
       /^[0-9a-f]{40,64}$/.test(named) &&
       (await this.store.contains(caller.projectId, named));
-    if (!binding) return await this.unitStore.bindLocal(caller, input, stored);
+    if (!binding) return await this.utility.units.bindLocal(caller, input, stored);
     return await this.state.transaction(async (tx) => {
       await this.github.assertBinding(caller, binding, tx, 'read');
-      return await this.unitStore.bindLocal(caller, input, stored, tx);
+      return await this.utility.units.bindLocal(caller, input, stored, tx);
     });
   }
   /** The Running page's reads, each on the page's snapshot (running.ts). */
@@ -457,10 +466,10 @@ export class CodeService extends CodeCommandService implements Code {
   runningChecks: Code['runningChecks'] = (caller) => this.board.checks(caller);
   runningPanel: Code['runningPanel'] = (caller, key) => this.board.panel(caller, key);
   runningCode: Code['runningCode'] = (caller, keys) => this.board.sections(caller, keys);
-  hosted: Code['hosted'] = (...args) => this.unitStore.hosted(...args);
+  hosted: Code['hosted'] = (...args) => this.utility.units.hosted(...args);
   async ensureRepository(caller: Caller, tx: Transaction): Promise<void> {
     await this.scope.require(caller, 'write', tx);
-    if (await this.unitStore.hosted(caller, tx)) return;
+    if (await this.utility.units.hosted(caller, tx)) return;
     const store = this.requireStore();
     await this.utility.declareManaged(tx, caller.projectId);
     store.wake();
@@ -470,7 +479,7 @@ export class CodeService extends CodeCommandService implements Code {
     await this.utility.declareManaged(tx, projectId);
     this.store.wake();
   }
-  unit: Code['unit'] = (...args) => this.unitStore.unit(...args);
+  unit: Code['unit'] = (...args) => this.unitStore.records.unit(...args);
   async status(caller: Caller) {
     const status = await this.unitStore.status(caller);
     const publication =
@@ -525,7 +534,7 @@ export class CodeService extends CodeCommandService implements Code {
     const store = this.requireStore();
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const project = await this.unitStore.project(tx, caller.projectId);
+      const project = await this.utility.units.project(tx, caller.projectId);
       return { project, store: { hosted: !!(await store.stored(tx, caller.projectId)) } };
     });
   }
@@ -540,7 +549,7 @@ export class CodeService extends CodeCommandService implements Code {
   get v2() {
     return this.publicationClosed ? undefined : this.protocol;
   }
-  override async close(): Promise<void> {
+  async close(): Promise<void> {
     this.publicationClosed = true;
     clearInterval(this.publicationTimer);
     // Stop scheduling immediately, then join the whole pass, including its final journal write.
@@ -550,7 +559,7 @@ export class CodeService extends CodeCommandService implements Code {
     const merging = this.baseStore?.close();
     this.captureReader?.close();
     this.unitStore?.close();
-    super.close();
+    this.commands.close();
     // Every read is refused from here on. Running admissions and GitHub calls still reach the
     // database, which outlives Code, and are waited for before the writer lock is given up.
     await Promise.all([merging, mirroring, Promise.allSettled([...this.networkOperations])]);

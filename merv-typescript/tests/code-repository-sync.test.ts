@@ -155,7 +155,7 @@ async function acceptedIntegration(t: TestContext) {
   };
   // The independent task-review contract is covered by code-publish-unit. This seam tests
   // reconciliation of that immutable verdict against real Git histories and moving heads.
-  t.mock.method(internal.unitStore, 'unit', async () => accepted);
+  t.mock.method(internal.unitStore.records, 'unit', async () => accepted);
   return { ...f, head };
 }
 

@@ -69,6 +69,7 @@ async function fixture(t: TestContext) {
     root,
     scope,
     state,
+    units,
     caller,
     body,
     get store() {
@@ -165,7 +166,7 @@ test('Code storage imports and rebinds while research retains unfinished bases a
     ),
   );
   try {
-    await f.store.bindLocal(f.caller, {
+    await f.units.bindLocal(f.caller, {
       repositoryId: 'original',
       mainOid: head,
       requestId: 'bind',
