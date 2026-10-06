@@ -776,7 +776,12 @@ export class ProjectScope implements Scope {
     // call, so a read decision runs on a snapshot, which outside any scope takes no writer lock. A
     // managed runner only ever succeeds with 'read', so its refusal never waits for the lock either.
     const place = !provided ? undefined : caller.managed ? 'read' : permission;
-    const value = await within(this.state, tx, lookup, place);
+    const decide = () => within(this.state, tx, lookup, place);
+    // A direct caller's decision rests only on rows, so one snapshot makes it once. A provider's
+    // also rests on that provider's own memory (a worker's invocation, say), so it never is.
+    const value = provided
+      ? await decide()
+      : structuredClone(await this.state.remember(`scope:${JSON.stringify(caller)}`, decide));
     // An in-flight decision cannot survive provider removal, even if the same object
     // is installed again before it returns. The caller must make a fresh request.
     if (value.actor.sessionId) this.sessions.fence(registration);

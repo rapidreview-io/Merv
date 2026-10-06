@@ -1118,57 +1118,78 @@ export class TaskService implements Tasks {
   }
 
   private async row(sql: Sql, caller: Caller, taskId: string): Promise<TaskRow> {
-    const row = await sql.get<TaskRow>(
-      'SELECT * FROM tasks WHERE id = ? AND project_id = ?',
-      taskId,
-      caller.projectId,
+    // Guidance's callbacks each read the row; one snapshot reads it once.
+    const row = await this.state.remember(`tasks:row:${caller.projectId}:${taskId}`, () =>
+      sql.get<TaskRow>(
+        'SELECT * FROM tasks WHERE id = ? AND project_id = ?',
+        taskId,
+        caller.projectId,
+      ),
     );
     check(row, 'not_found', 'Task not found in this project', 404);
-    return row;
+    return { ...row };
   }
   private async projectRecord(caller: Caller, row: TaskRow, tx?: Transaction): Promise<TaskRecord> {
-    const workflow = await this.workflows.get(caller, row.id, tx);
-    // The instance data repeats the brief the record already carries; it is not sent twice.
-    const {
-      title: _title,
-      goal: _goal,
-      checks: _checks,
-      deliveryConfirmations: _confirmations,
-      workspace: _workspace,
-      baseTaskId,
-      deliveryCode,
-      deliveryCodeArtifactId,
-      ...data
-    } = workflow.data;
-    return {
-      id: row.id,
-      projectId: row.project_id,
-      title: row.title,
-      goal: row.goal,
-      checks: JSON.parse(row.checks),
-      evidenceVersion: row.evidence_version,
-      acceptanceChecks: acceptanceChecks(JSON.parse(row.checks)),
-      deliveryConfirmations:
-        (workflow.data.deliveryConfirmations as unknown as TaskConfirmation[] | undefined) ?? [],
-      deliveryAssessmentId: (workflow.data.deliveryAssessmentId as string | undefined) ?? null,
-      producerId: row.producer_id,
-      briefId: row.brief_id,
-      deliveryIds: JSON.parse(row.delivery_ids),
-      reviewId: row.review_id,
-      workflow: { ...workflow, data },
-      workStarts: await this.workflows.workStarts(caller, row.id, tx),
-      failure: (workflow.data.failure as unknown as TaskFailure | undefined) ?? null,
-      ...(await this.workflows.dependencies(caller, row.id, tx)),
-      createdAt: row.created_at,
-      type: row.type_name,
-      typeVersion: row.type_version,
-      contextInputs: JSON.parse(row.context_inputs),
-      ...(workflow.data.workspace === 'git' ? { workspace: 'git' as const } : {}),
-      ...(typeof baseTaskId === 'string' ? { baseTaskId } : {}),
-      ...(deliveryCode && typeof deliveryCodeArtifactId === 'string'
-        ? { deliveryCode: deliveryCode as unknown as TaskDeliveryCode, deliveryCodeArtifactId }
-        : {}),
-    };
+    return (await this.projectRecords(caller, [row], tx))[0];
+  }
+  /** Each row's record; the workflow facts of all of them are read at once. */
+  private async projectRecords(
+    caller: Caller,
+    rows: TaskRow[],
+    tx?: Transaction,
+  ): Promise<TaskRecord[]> {
+    const facts = await this.workflows.records(
+      caller,
+      rows.map((row) => row.id),
+      tx,
+    );
+    return rows.map((row) => {
+      const found = facts.get(row.id);
+      check(found, 'not_found', 'Workflow instance not found', 404);
+      const { snapshot: workflow, workStarts, dependencies, dependents } = found;
+      // The instance data repeats the brief the record already carries; it is not sent twice.
+      const {
+        title: _title,
+        goal: _goal,
+        checks: _checks,
+        deliveryConfirmations: _confirmations,
+        workspace: _workspace,
+        baseTaskId,
+        deliveryCode,
+        deliveryCodeArtifactId,
+        ...data
+      } = workflow.data;
+      return {
+        id: row.id,
+        projectId: row.project_id,
+        title: row.title,
+        goal: row.goal,
+        checks: JSON.parse(row.checks),
+        evidenceVersion: row.evidence_version,
+        acceptanceChecks: acceptanceChecks(JSON.parse(row.checks)),
+        deliveryConfirmations:
+          (workflow.data.deliveryConfirmations as unknown as TaskConfirmation[] | undefined) ?? [],
+        deliveryAssessmentId: (workflow.data.deliveryAssessmentId as string | undefined) ?? null,
+        producerId: row.producer_id,
+        briefId: row.brief_id,
+        deliveryIds: JSON.parse(row.delivery_ids),
+        reviewId: row.review_id,
+        workflow: { ...workflow, data },
+        workStarts,
+        failure: (workflow.data.failure as unknown as TaskFailure | undefined) ?? null,
+        dependencies,
+        dependents,
+        createdAt: row.created_at,
+        type: row.type_name,
+        typeVersion: row.type_version,
+        contextInputs: JSON.parse(row.context_inputs),
+        ...(workflow.data.workspace === 'git' ? { workspace: 'git' as const } : {}),
+        ...(typeof baseTaskId === 'string' ? { baseTaskId } : {}),
+        ...(deliveryCode && typeof deliveryCodeArtifactId === 'string'
+          ? { deliveryCode: deliveryCode as unknown as TaskDeliveryCode, deliveryCodeArtifactId }
+          : {}),
+      };
+    });
   }
   private async hydrate(caller: Caller, row: TaskRow, tx?: Transaction): Promise<Task> {
     return {
@@ -1453,12 +1474,13 @@ export class TaskService implements Tasks {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      return await mapAsync(
+      return await this.projectRecords(
+        caller,
         await tx.all<TaskRow>(
           'SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at, id',
           caller.projectId,
         ),
-        async (row) => await this.projectRecord(caller, row, tx),
+        tx,
       );
     });
   }

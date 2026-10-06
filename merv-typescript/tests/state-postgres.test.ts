@@ -1177,3 +1177,37 @@ test('State schemaEnv names the schema when set, and a bad name is refused', asy
     [],
   );
 });
+
+test('State.remember keeps an answer for one snapshot only, and never a failure', async (t) => {
+  const { state } = await fixture(t);
+  let computed = 0;
+  const compute = async () => ++computed;
+  // Outside a snapshot, and in a write transaction, every call computes.
+  assert.equal(await state.remember('k', compute), 1);
+  await state.transaction(async () => assert.equal(await state.remember('k', compute), 2));
+  // One snapshot answers once, across its sibling transactions; the next snapshot afresh.
+  await state.snapshot(async () => {
+    const [a, b] = await Promise.all([
+      state.transaction(() => state.remember('k', compute)),
+      state.transaction(() => state.remember('k', compute)),
+    ]);
+    assert.deepEqual([a, b, await state.remember('k', compute)], [3, 3, 3]);
+    assert.equal(await state.remember('other', compute), 4);
+  });
+  await state.snapshot(async () => assert.equal(await state.remember('k', compute), 5));
+  // A failure is not kept: a sibling that shared it, and the next caller, decide afresh.
+  await state.snapshot(async () => {
+    let failing = true;
+    const flaky = async () => {
+      computed++;
+      if (failing) throw new MervError('flaky', 'flaky');
+      return computed;
+    };
+    const first = state.remember('f', flaky);
+    failing = false;
+    const second = state.remember('f', flaky);
+    await assert.rejects(first, { code: 'flaky' });
+    assert.equal(await second, 7);
+    assert.equal(await state.remember('f', flaky), 7);
+  });
+});
