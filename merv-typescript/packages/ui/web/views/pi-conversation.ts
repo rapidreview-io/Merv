@@ -412,7 +412,7 @@ export function useConversation() {
       told = ran.told;
     } catch (cause) {
       const kept =
-        cause instanceof ApiError && cause.status < 500
+        cause instanceof ApiError && cause.status >= 400 && cause.status < 500
           ? null
           : await call<PiSnapshot>('pi.snapshot', { id: selected }).catch(() => null);
       if (kept) replace(kept);

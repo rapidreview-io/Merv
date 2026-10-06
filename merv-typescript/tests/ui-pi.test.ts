@@ -2040,37 +2040,48 @@ test('what Run as me tells the agent is kept in the composer when it cannot be s
 
 test('a Run whose answer is lost reads how the call came out, shows it, and tells the agent once', async (t) => {
   t.after(cleanup);
-  setProject('p1');
   const halt = { id: 'pip_halt', name: 'fleet.halt', input: { id: 'flt_1' }, at: 'later' };
   const told = 'Ran fleet.halt: {"halted":true}';
   let state = snapshot(conversation(), [{ ...command('c1', 'completed'), proposals: [halt] }]);
-  boot(
-    () => state,
-    () => [conversation()],
-  );
-  // The call ran and Pi kept how it came out, but its answer never reached the page.
-  serve('/tools/pi.run', () => {
-    state = snapshot(conversation(), [
-      {
-        ...command('c1', 'completed'),
-        proposals: [{ ...halt, ran: { at: 'now', ok: true, told, said: '{"halted":true}' } }],
-      },
-    ]);
-    return { status: 502, body: { error: { code: 'bad_gateway', message: 'Bad gateway' } } };
-  });
-  const sent: Record<string, unknown>[] = [];
-  serve('/tools/pi.send', (_count, input) => {
-    sent.push(input);
-    return { body: { result: command(input.commandId as string, 'waiting') } };
-  });
-  await open();
-  await act(async () => document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click());
-  await settle(10);
-  assert.equal(document.querySelector('[role="alert"]'), null);
-  assert.equal(document.querySelector('.pi-proposal .pi-receipt-word')?.textContent, 'Ran');
-  // The agent is told as if the answer had come, under a turn named for the call, so a page that
-  // tells it again starts no second turn.
-  assert.deepEqual(sent, [{ id: 'conversation_1', commandId: 'told_pip_halt', text: told }]);
+  let sent: Record<string, unknown>[] = [];
+  // The answer is lost to a failing gateway, or to a connection dropped before any status.
+  for (const lost of [
+    { status: 502, body: { error: { code: 'bad_gateway', message: 'Bad gateway' } } },
+    { network: true as const },
+  ]) {
+    await cleanup();
+    setProject('p1');
+    state = snapshot(conversation(), [{ ...command('c1', 'completed'), proposals: [halt] }]);
+    boot(
+      () => state,
+      () => [conversation()],
+    );
+    // The call ran and Pi kept how it came out, but its answer never reached the page.
+    serve('/tools/pi.run', () => {
+      state = snapshot(conversation(), [
+        {
+          ...command('c1', 'completed'),
+          proposals: [{ ...halt, ran: { at: 'now', ok: true, told, said: '{"halted":true}' } }],
+        },
+      ]);
+      return lost;
+    });
+    sent = [];
+    serve('/tools/pi.send', (_count, input) => {
+      sent.push(input);
+      return { body: { result: command(input.commandId as string, 'waiting') } };
+    });
+    await open();
+    await act(async () =>
+      document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click(),
+    );
+    await settle(10);
+    assert.equal(document.querySelector('[role="alert"]'), null);
+    assert.equal(document.querySelector('.pi-proposal .pi-receipt-word')?.textContent, 'Ran');
+    // The agent is told as if the answer had come, under a turn named for the call, so a page
+    // that tells it again starts no second turn.
+    assert.deepEqual(sent, [{ id: 'conversation_1', commandId: 'told_pip_halt', text: told }]);
+  }
 
   // A run Pi refused ran nothing: nothing is read again, and the agent is told nothing.
   await cleanup();
