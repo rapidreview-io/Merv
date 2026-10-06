@@ -222,7 +222,11 @@ export class KnowledgeService implements Knowledge {
       // unavailable rather than missing.
       let skipped: Found | undefined;
       for (const source of Object.values(this.sources)) {
-        const found = await source.read(caller, id, tx);
+        // A source that is shutting down holds nothing it can show now, not nothing at all.
+        const found = await source.read(caller, id, tx).catch((error: unknown) => {
+          if ((error as { status?: unknown })?.status !== 503) throw error;
+          return { status: 'unavailable', kind: source.kind } as Found;
+        });
         if (found?.status === 'unavailable') skipped ??= found;
         else if (found) return { ref, id, ...found };
       }

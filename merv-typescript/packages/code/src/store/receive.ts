@@ -385,11 +385,12 @@ export class CodeReceiver {
     return await this.owned(() =>
       diffStats(
         async (args) =>
+          // A commit the repository does not hold fails rather than counting as no change.
           (
-            await this.repositories.git.run(args, {
+            await this.repositories.git.ok(args, {
               env: this.repositories.environment(projectId),
             })
-          ).stdout.toString('utf8'),
+          ).toString('utf8'),
         base,
         head,
       ),

@@ -189,8 +189,11 @@ export class PiService extends PiWorkerProtocol implements Pi, FleetOwner {
     if (untitled.length) {
       const tools = new Map((await this.tools.list()).map((tool) => [tool.name, tool]));
       for (const proposal of untitled) {
-        const act = actOf(tools.get(proposal.name), proposal.input as Record<string, unknown>);
-        if (act) proposal.act = act;
+        // An act its tool cannot word for this input leaves the card's generic wording.
+        try {
+          const act = actOf(tools.get(proposal.name), proposal.input as Record<string, unknown>);
+          if (act) proposal.act = act;
+        } catch {}
       }
     }
     const turn = commands.find((command) => command.id === conversation.activeCommandId);

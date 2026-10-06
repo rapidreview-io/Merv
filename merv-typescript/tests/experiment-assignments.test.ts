@@ -1785,6 +1785,9 @@ test("a final capture Code admitted is the review's, though the machine died bef
     deletions: numstat.reduce((sum, [, removed]) => sum + removed!, 0),
   });
   assert.notEqual(capture.workspace?.stats.filesChanged, 0);
+  // A base the repository does not hold is an error, never a capture with no changes.
+  const store = (f.code as unknown as { store: { stats: Function } }).store;
+  await assert.rejects(store.stats(f.source.projectId, 'a'.repeat(40), head), /git/);
   const offered = await f.offer(pending, await f.issue('operator'));
   assert.equal(offered.session.execution.references.code, unit.canonicalHead);
 });
