@@ -264,7 +264,7 @@ test('an admin chooses own machines or Fleet apart from the switch, and is recor
     [true, false],
   ]);
   // Switched on by a key, the project is still served as its owner's sign-in, not the key.
-  const { source } = (await f.app.ctx.sessions.servedSources()).find(
+  const { source } = (await f.app.ctx.sessions.dispatch.servedSources()).find(
     (row) => row.projectId === f.project.id,
   )!;
   assert.deepEqual(
@@ -274,7 +274,7 @@ test('an admin chooses own machines or Fleet apart from the switch, and is recor
   // A person's agent chooses with exactly that person's authority and is recorded as them.
   t.after(f.app.ctx.scope.registerConversationAuthority({ require: async () => source }));
   const conversation = { id: 'conversation', epoch: 1, commandId: 'command', runtimeId: 'pi' };
-  const byAgent = await f.app.ctx.sessions.setDispatch(
+  const byAgent = await f.app.ctx.sessions.dispatch.setDispatch(
     { actorId: source.actorId, projectId: f.project.id, conversation },
     { ownMachines: true },
   );

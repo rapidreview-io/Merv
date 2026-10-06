@@ -186,10 +186,10 @@ function machine(
     },
     /** Whether this machine asks for new work; what it already runs is finished either way. */
     async accepting(enabled: boolean) {
-      const presence = (await app.ctx.sessions.projectStatus(owner)).runners.find(
+      const presence = (await app.ctx.sessions.dispatch.projectStatus(owner)).runners.find(
         (item) => item.runnerId === runner.snapshot().runnerId,
       )!;
-      await app.ctx.sessions.setRunnerSettings(owner, {
+      await app.ctx.sessions.dispatch.setRunnerSettings(owner, {
         runnerId: presence.id,
         settings: { platforms: [{ name: 'worker', enabled, parallelism: 1 }] },
       });
@@ -268,7 +268,7 @@ test(
     // Work is independent of the agent that made it, not of its machine, so the test says
     // which machine asks for work: otherwise whichever ticks first takes the next lease.
     await b.accepting(false);
-    await sessions.setDispatch(owner, { enabled: true });
+    await sessions.dispatch.setDispatch(owner, { enabled: true });
     const unit = async () => await code.unit(owner, task.id);
     const commit = async (worker: Worker, requestId: string) => {
       const expectedHead = await worker.git('rev-parse', 'HEAD');

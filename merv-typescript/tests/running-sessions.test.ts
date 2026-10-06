@@ -229,22 +229,25 @@ async function fixture(
     instance: async () =>
       await handle.start(source, { workflow: definition.name, requestId: request() }),
     heartbeat: async (runnerId = 'machine', hostname = 'mac-studio') =>
-      await sessions.heartbeatRunner(source, presence(runnerId, hostname)),
+      await sessions.dispatch.heartbeatRunner(source, presence(runnerId, hostname)),
     /** One automatic lease, taken up by its worker's first authentication. */
     async active(runnerId = 'machine') {
       const input = auto(runnerId);
-      const leased = await sessions.lease(source, input);
+      const leased = await sessions.dispatch.lease(source, input);
       assert.ok(leased.session, leased.reason);
       return { session: leased.session, worker: await sessions.authenticate(input.secret) };
     },
     /** One recorded Merv call, held open until `until` settles. */
     async call(worker: Caller, until?: Promise<void>) {
-      await sessions.run(await sessions.prepare(worker, 'finish', {}), async () => {
-        await until;
-      });
+      await sessions.invocations.run(
+        await sessions.invocations.prepare(worker, 'finish', {}),
+        async () => {
+          await until;
+        },
+      );
     },
     async fail(outcome: 'launch_failed' | 'preparation_deferred' = 'launch_failed') {
-      const leased = await sessions.lease(source, auto());
+      const leased = await sessions.dispatch.lease(source, auto());
       assert.ok(leased.session, leased.reason);
       await sessions.release(source, {
         sessionId: leased.session.id,
@@ -255,7 +258,7 @@ async function fixture(
           : {}),
       });
       clock += 30_001;
-      await sessions.heartbeatRunner(source, presence());
+      await sessions.dispatch.heartbeatRunner(source, presence());
     },
     board,
     panel: async (caller: Caller, key: string) =>
@@ -302,7 +305,7 @@ test('an offered lease is dashed and starting, on the machine that took it, even
   assert.deepEqual(board.lanes.sessions.failed, []);
   assert.equal(board.lanes.sessions.needsYou, 0);
   noIds(board);
-  const [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+  const [summary] = (await f.sessions.dispatch.projectStatus(f.owner)).sessions;
   assert.deepEqual(
     [summary?.label, summary?.name],
     ['Work: Rebuild citation index', 'Rebuild citation index'],
@@ -324,7 +327,7 @@ test('a lease offered before owners named their records reads its label without 
     node(await f.board(f.owner), `session:${offered.id}`)?.name,
     'Rebuild citation index',
   );
-  const [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+  const [summary] = (await f.sessions.dispatch.projectStatus(f.owner)).sessions;
   assert.equal(summary?.name, 'Rebuild citation index');
 });
 
@@ -349,7 +352,7 @@ test('a lease nobody runs says nothing of a machine, and never turns red for one
 
 test('an active lease names its call in flight, breathes once the call outlasts a read, then says its last call', async (t) => {
   const f = await fixture(t);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   await f.instance();
   const { session, worker } = await f.active();
@@ -398,7 +401,7 @@ test('an active lease names its call in flight, breathes once the call outlasts 
 
 test('a lease quiet past the idle notice needs a person, and so does one whose machine stopped reporting', async (t) => {
   const f = await fixture(t, { config: { idleNoticeSeconds: 60 } });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   await f.instance();
   const { session } = await f.active();
@@ -431,7 +434,7 @@ test('a lease quiet past the idle notice needs a person, and so does one whose m
   assert.ok(facts(panel, 'Lease')['Lapses'], 'a lease nothing renews says when it lapses');
 
   // Its row on the work it is on says what its node says.
-  const [rows] = await f.sessions.runningWork(f.reader, [session.instanceId]);
+  const [rows] = await f.sessions.running.work(f.reader, [session.instanceId]);
   assert.deepEqual(rows, {
     title: 'Sessions',
     place: 'activity',
@@ -513,7 +516,7 @@ test('the lane says how dispatch stands to everyone, and to an operator only how
     assert.equal((await f.board(viewer)).lanes.sessions.needsYou, 0);
   }
 
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   f.advance(1000);
   own = await summary(f.owner);
   assert.deepEqual(own.attention, {
@@ -540,11 +543,11 @@ test('the lane says how dispatch stands to everyone, and to an operator only how
 
   // A machine that keeps refusing work names itself once it has refused for refusalSeconds.
   await f.instance();
-  await f.sessions.setRunnerSettings(f.owner, {
+  await f.sessions.dispatch.setRunnerSettings(f.owner, {
     runnerId: runner.id,
     settings: { platforms: [{ name: 'codex', enabled: false, parallelism: 2 }] },
   });
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'platform_disabled');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'platform_disabled');
   f.advance(31_000);
   await f.heartbeat();
   own = await summary(f.owner);
@@ -554,11 +557,11 @@ test('the lane says how dispatch stands to everyone, and to an operator only how
 
 test('dispatch marks what it holds for everyone, and tells only an operator what resumes by itself and what nobody took', async (t) => {
   const f = await fixture(t, { config: { maxLaunchFailures: 2, quietReadySeconds: 60 } });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   const held = await f.instance();
   await f.fail();
-  let { marks } = await f.sessions.runningMarks(f.owner);
+  let { marks } = await f.sessions.running.marks(f.owner);
   assert.deepEqual(marks, [
     {
       key: `work:${held.id}`,
@@ -566,7 +569,7 @@ test('dispatch marks what it holds for everyone, and tells only an operator what
       quiet: true,
     },
   ]);
-  ({ marks } = await f.sessions.runningMarks(f.reader));
+  ({ marks } = await f.sessions.running.marks(f.reader));
   assert.deepEqual(marks, [], 'what is still retried comes from the queue, an operator’s read');
   await f.fail();
   const put = await f.instance();
@@ -587,9 +590,9 @@ test('dispatch marks what it holds for everyone, and tells only an operator what
     says: ['Ready · ', { count: 3 }, ' machines could not prepare it'],
     quiet: true,
   };
-  ({ marks } = await f.sessions.runningMarks(f.reader));
+  ({ marks } = await f.sessions.running.marks(f.reader));
   assert.deepEqual(marks, [heldMark], 'a hold is red for every reader');
-  ({ marks } = await f.sessions.runningMarks(f.owner));
+  ({ marks } = await f.sessions.running.marks(f.owner));
   assert.deepEqual(marks, [
     heldMark,
     {
@@ -624,11 +627,11 @@ test('dispatch marks what it holds for everyone, and tells only an operator what
 
 test('work its domain stops offering at the same revision is not said to be retried or put off', async (t) => {
   const f = await fixture(t);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   const put = await f.instance();
   for (let attempt = 0; attempt < 3; attempt++) await f.fail('preparation_deferred');
-  const marks = async () => (await f.sessions.runningMarks(f.owner)).marks;
+  const marks = async () => (await f.sessions.running.marks(f.owner)).marks;
   assert.deepEqual(await marks(), [
     {
       key: `work:${put.id}`,
@@ -652,7 +655,7 @@ test('work its domain stops offering at the same revision is not said to be retr
 test('a lease’s sidebar streams its Merv calls, running first, with its terms, its work, its machine and a guarded halt', async (t) => {
   const long = Array.from({ length: 400 }, (_, n) => `Line ${n}: ${'x'.repeat(60)}`).join('\n');
   const f = await fixture(t, { brief: long });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   await f.instance();
   const { session, worker } = await f.active();
@@ -748,7 +751,7 @@ test('a lease’s sidebar streams its Merv calls, running first, with its terms,
   await running;
 
   // The action's input halts this lease and no other, and an open sidebar still reads it.
-  assert.deepEqual(await f.sessions.halt(f.owner, halt.input as never), { halted: 1 });
+  assert.deepEqual(await f.sessions.dispatch.halt(f.owner, halt.input as never), { halted: 1 });
   const closed = await f.panel(f.reader, key);
   assert.equal(closed.live, false);
   assert.deepEqual(closed.actions, []);
@@ -769,11 +772,11 @@ test('a lease’s sidebar streams its Merv calls, running first, with its terms,
 
 test('a short stream carries the lease’s own moments, and a lease is offered or refused as the Sessions page reads it', async (t) => {
   const f = await fixture(t);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   await f.instance();
   const input = auto();
-  const leased = (await f.sessions.lease(f.source, input)).session!;
+  const leased = (await f.sessions.dispatch.lease(f.source, input)).session!;
   const offeredAt = new Date(f.now()).toISOString();
   let panel = await f.panel(f.owner, `session:${leased.id}`);
   assert.deepEqual(panel.header.says, ['Offered ', { since: offeredAt }, ' · Producer']);
@@ -795,15 +798,15 @@ test('a short stream carries the lease’s own moments, and a lease is offered o
   );
 
   // Not this project's lease, not a leased worker's read, and never a managed runner's.
-  assert.equal(await f.sessions.runningPanel(f.owner, 'session_elsewhere'), null);
+  assert.equal(await f.sessions.running.panel(f.owner, 'session_elsewhere'), null);
   await assert.rejects(f.panel(f.owner, 'session:session_elsewhere'), {
     code: 'running_not_found',
   });
   for (const read of [
-    () => f.sessions.running(worker),
-    () => f.sessions.runningMarks(worker),
-    () => f.sessions.runningPanel(worker, leased.id),
-    () => f.sessions.runningWork(worker, [leased.instanceId]),
+    () => f.sessions.running.nodes(worker),
+    () => f.sessions.running.marks(worker),
+    () => f.sessions.running.panel(worker, leased.id),
+    () => f.sessions.running.work(worker, [leased.instanceId]),
   ])
     await assert.rejects(read(), { status: 403 });
   await assert.rejects(f.board(worker), { code: 'running_forbidden' });
@@ -811,7 +814,7 @@ test('a short stream carries the lease’s own moments, and a lease is offered o
 
 test('a lease names the others on its machine by their work and role word', async (t) => {
   const f = await fixture(t);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   await f.instance();
   await f.instance();
@@ -863,7 +866,7 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
   f.ctx.provide('fleet', fleet);
   await f.ctx.plugin(fleetUiPlugin);
   f.closing.push(async () => await fleet.close());
-  f.sessions.registerManagedValidator({ current: async () => true, admits: async () => true });
+  f.sessions.managed.registerValidator({ current: async () => true, admits: async () => true });
 
   const work = await f.instance();
   const allocation = await fleet.request(f.owner, {
@@ -871,7 +874,7 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
     owner: { kind: 'workflow', id: `${work.id}:${work.revision}` },
   });
   const profile = { ...platform, parallelism: 1 };
-  const { enrollmentToken } = await f.sessions.ensureManagedEnrollment({
+  const { enrollmentToken } = await f.sessions.managed.ensure({
     allocationId: allocation.id,
     epoch: allocation.epoch,
     source: await f.scope.delegationSource(f.source),
@@ -880,12 +883,12 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
     capabilities: [],
     expiresAt: new Date(f.now() + 3_600_000).toISOString(),
   });
-  const enrolled = await f.sessions.enrollManaged(enrollmentToken, {
+  const enrolled = await f.sessions.managed.enroll(enrollmentToken, {
     workerNonce: randomBytes(32).toString('hex'),
   });
-  const machine = await f.sessions.authenticateManaged(enrolled.controlToken);
+  const machine = await f.sessions.managed.authenticate(enrolled.controlToken);
   const runnerId = `managed-${allocation.id}`;
-  const runner = await f.sessions.heartbeatRunner(machine, {
+  const runner = await f.sessions.dispatch.heartbeatRunner(machine, {
     runnerId,
     machine: { hostname: 'ip-10-0-0-7', system: 'linux', architecture: 'x64' },
     platforms: [profile],
@@ -902,8 +905,8 @@ test('a lease bound to a Fleet machine takes that machine in, and Fleet describe
   // Fleet draws on this page, so the machine is a node of its own until a lease takes it in.
   assert.ok(f.ui.contributions().some(({ owner }) => owner === 'fleet'));
   assert.equal(node(await f.board(f.owner), alias)?.owner, 'fleet');
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  const bound = (await f.sessions.lease(machine, { ...auto(runnerId) })).session!;
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const bound = (await f.sessions.dispatch.lease(machine, { ...auto(runnerId) })).session!;
   assert.ok(bound);
   const key = `session:${bound.id}`;
 
@@ -939,12 +942,15 @@ test('a lease bound to a Fleet machine takes that machine in, and Fleet describe
 test('a Fleet machine that refuses work is named as one, never by its hostname', async (t) => {
   const f = await fixture(t, { config: { refusalSeconds: 30 } });
   const { machine, runnerId, runner } = await rent(f);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.setRunnerSettings(f.owner, {
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setRunnerSettings(f.owner, {
     runnerId: runner.id,
     settings: { platforms: [{ name: 'codex', enabled: false, parallelism: 1 }] },
   });
-  assert.equal((await f.sessions.lease(machine, auto(runnerId))).reason, 'platform_disabled');
+  assert.equal(
+    (await f.sessions.dispatch.lease(machine, auto(runnerId))).reason,
+    'platform_disabled',
+  );
   f.advance(31_000);
   const summary = (await f.board(f.owner)).lanes.sessions.summaries.find(
     ({ owner }) => owner === 'sessions',
@@ -998,7 +1004,7 @@ test('through ui.running and ui.running_panel, operators and readers see a lease
     requestId: 'running-sessions',
   });
 
-  await app.ctx.sessions.heartbeatRunner(operator, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(operator, {
     ...presence('desk', 'mac-studio'),
     capabilities: ['code.v2'],
   });
@@ -1103,7 +1109,7 @@ test('the Sessions lane words its states as the Sessions page does', () => {
 
 test('an agent’s live stream is kept 30 days after its session ended, then the sweep deletes it', async (t) => {
   const f = await fixture(t);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   await f.instance();
   await f.instance();
@@ -1123,7 +1129,7 @@ test('an agent’s live stream is kept 30 days after its session ended, then the
         sql.get<{ n: string }>('SELECT COUNT(*) AS n FROM session_events WHERE session_id=?', id),
       ))!.n,
     );
-  await f.sessions.halt(f.owner, { sessionId: session.id, reason: 'halted_by_operator' });
+  await f.sessions.dispatch.halt(f.owner, { sessionId: session.id, reason: 'halted_by_operator' });
   // Closed: a page still waits for the agent's last words for ten minutes, then is told the end.
   assert.deepEqual(await f.sessions.streams.authorize(f.owner, session.id), { growing: true });
   f.advance(10 * 60_000 + 1);

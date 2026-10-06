@@ -637,7 +637,7 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  await sessions.heartbeatRunner(operator, {
+  await sessions.dispatch.heartbeatRunner(operator, {
     runnerId: 'test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
@@ -672,19 +672,20 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
   const work = await offer(task);
   const producer = work.worker;
   for (const tool of ['workflow.begin', 'task.create'])
-    await assert.rejects(async () => await sessions.prepare(producer, tool, {}), {
+    await assert.rejects(async () => await sessions.invocations.prepare(producer, tool, {}), {
       code: 'execution_tool_forbidden',
     });
   await assert.rejects(
     async () =>
-      await sessions.prepare(producer, 'task.checkpoint', {
+      await sessions.invocations.prepare(producer, 'task.checkpoint', {
         notes: 'Attach',
         artifactIds: [unrelated.id],
       }),
     { code: 'execution_arguments_forbidden' },
   );
   assert.deepEqual(
-    (await sessions.prepare(producer, 'task.checkpoint', { notes: 'Text only' })).input.artifactIds,
+    (await sessions.invocations.prepare(producer, 'task.checkpoint', { notes: 'Text only' })).input
+      .artifactIds,
     [],
   );
   // Ordinary credentials remain broad, and what they attach later grants the session nothing.
@@ -697,19 +698,23 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     requestId: 'checkpoint',
   });
   await assert.rejects(
-    async () => await sessions.prepare(producer, 'artifact.read', { artifactId: unrelated.id }),
+    async () =>
+      await sessions.invocations.prepare(producer, 'artifact.read', { artifactId: unrelated.id }),
     { code: 'execution_arguments_forbidden' },
   );
-  const proof = await sessions.run(
-    await sessions.prepare(producer, 'artifact.create', { title: 'Proof', content: 'It passed.' }),
+  const proof = await sessions.invocations.run(
+    await sessions.invocations.prepare(producer, 'artifact.create', {
+      title: 'Proof',
+      content: 'It passed.',
+    }),
     async (caller, input) =>
       await artifacts.create(caller, input as unknown as { title: string; content: string }),
   );
   const held = work.held;
   held.worker = producer;
   const commandId = await codeWork.commit(held);
-  const pending = await sessions.run(
-    await sessions.prepare(
+  const pending = await sessions.invocations.run(
+    await sessions.invocations.prepare(
       producer,
       'task.submit_delivery',
       confirmedDelivery({ artifactIds: [proof.id], requestId: 'delivery', commandId }),
@@ -730,14 +735,21 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
   };
   const claimId = (await app.ctx.reviews.get(operator, pending.reviewId!)).claimId;
   assert.ok(claimId);
-  assert.equal((await sessions.prepare(reviewer, 'review.submit', {})).input.claimId, claimId);
   assert.equal(
-    (await sessions.prepare(reviewer, 'artifact.read', { artifactId: proof.id })).input.artifactId,
+    (await sessions.invocations.prepare(reviewer, 'review.submit', {})).input.claimId,
+    claimId,
+  );
+  assert.equal(
+    (await sessions.invocations.prepare(reviewer, 'artifact.read', { artifactId: proof.id })).input
+      .artifactId,
     proof.id,
   );
-  await assert.rejects(async () => await sessions.prepare(reviewer, 'task.submit_delivery', {}), {
-    code: 'execution_tool_forbidden',
-  });
+  await assert.rejects(
+    async () => await sessions.invocations.prepare(reviewer, 'task.submit_delivery', {}),
+    {
+      code: 'execution_tool_forbidden',
+    },
+  );
   artifacts.read = read;
   workflows.evaluate = evaluate;
   await codeWork.release(review.held);

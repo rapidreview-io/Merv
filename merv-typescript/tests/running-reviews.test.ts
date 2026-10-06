@@ -512,7 +512,7 @@ test('an experiment names the gate each review read, in the standing and in ever
 test('an agent that took the review with its lease reads as an agent, and the sidebar carries the section inside the tool snapshot', async (t) => {
   const f = await fixture(t);
   const token = `ms_${randomBytes(32).toString('base64url')}`;
-  await f.app.ctx.sessions.heartbeatRunner(f.operator, {
+  await f.app.ctx.sessions.dispatch.heartbeatRunner(f.operator, {
     runnerId: 'external',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],

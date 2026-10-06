@@ -134,7 +134,7 @@ async function fixture(t: TestContext) {
     tool: string,
     input: Data,
     handler: (caller: Caller, input: Data) => T,
-  ) => sessions.run(await sessions.prepare(worker, tool, input), handler);
+  ) => sessions.invocations.run(await sessions.invocations.prepare(worker, tool, input), handler);
   const workerAttach = async (
     worker: Caller,
     experiment: Experiment,
@@ -349,7 +349,8 @@ test('figure attachment rejects missing, foreign-project and post-offer images w
   assert.equal(await f.state.eventHead(), before);
   assert.ok(reads.mock.calls.every((call) => call.arguments[1] !== lateImage.id));
   await assert.rejects(
-    async () => await f.sessions.prepare(worker, 'artifact.read', { artifactId: lateImage.id }),
+    async () =>
+      await f.sessions.invocations.prepare(worker, 'artifact.read', { artifactId: lateImage.id }),
     {
       code: 'execution_arguments_forbidden',
     },

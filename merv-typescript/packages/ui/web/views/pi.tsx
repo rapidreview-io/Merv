@@ -102,28 +102,6 @@ const UNAVAILABLE = 'Agent isn’t available right now.';
 /** What the server calls a conversation until Pi names it; until then its first question does. */
 const UNNAMED = 'New conversation';
 const clip = (text: string) => (text.length > 48 ? `${text.slice(0, 47).trimEnd()}…` : text);
-/** Keep a research transition's identity and new children in the next turn, not its full Problem. */
-const researchAdvanceReceipt = (result: unknown, input: unknown): string => {
-  const record = result && typeof result === 'object' ? (result as Record<string, unknown>) : {};
-  const proposal = input && typeof input === 'object' ? (input as Record<string, unknown>) : {};
-  const workflow =
-    record.workflow && typeof record.workflow === 'object'
-      ? (record.workflow as Record<string, unknown>)
-      : {};
-  const id = typeof record.id === 'string' ? record.id : proposal.researchId;
-  const receipt = {
-    ...(typeof id === 'string' ? { id } : {}),
-    ...(typeof workflow.state === 'string' ? { state: workflow.state } : {}),
-    ...(typeof workflow.revision === 'number' ? { revision: workflow.revision } : {}),
-    ...(typeof record.reflectionId === 'string' ? { reflectionId: record.reflectionId } : {}),
-    ...(Array.isArray(record.integrations) &&
-    record.integrations.every((value) => typeof value === 'string')
-      ? { integrations: record.integrations }
-      : {}),
-    ...(typeof record.successorId === 'string' ? { successorId: record.successorId } : {}),
-  };
-  return `Ran research.advance: ${JSON.stringify(receipt)}. Re-read research.get and workflow.status_and_next for current details.`;
-};
 const RECONNECTING = 'Reconnecting…';
 /** A refusal in the server's own words where it wrote them for a person, otherwise one sentence. */
 const said = (cause: unknown, fallback: string): string => {
@@ -982,20 +960,18 @@ function useConversation() {
     setError('');
     let told: string;
     try {
-      const { result } = await call<{ result: unknown }>('pi.run', {
+      // The server writes what the agent is told; a result it is not told whole is shown here.
+      const ran = await call<{ result: unknown; told: string; whole: boolean }>('pi.run', {
         id: selected,
         commandId,
         proposalId: proposal.id,
       });
-      const json = JSON.stringify(result, null, 2) ?? 'null';
-      if (proposal.secret || proposal.name === 'research.advance')
-        setLocalResults((value) => ({ ...value, [proposal.id]: json }));
-      const clipped = (JSON.stringify(result) ?? 'null').slice(0, 4000);
-      told = proposal.secret
-        ? `Ran ${proposal.name}; its result is shown only to me.`
-        : proposal.name === 'research.advance'
-          ? researchAdvanceReceipt(result, proposal.input)
-          : `Ran ${proposal.name}: ${clipped}`;
+      if (!ran.whole)
+        setLocalResults((value) => ({
+          ...value,
+          [proposal.id]: JSON.stringify(ran.result, null, 2) ?? 'null',
+        }));
+      told = ran.told;
     } catch (cause) {
       told = `${proposal.name} was refused: ${said(cause, 'it failed')}`;
     } finally {

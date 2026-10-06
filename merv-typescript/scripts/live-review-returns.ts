@@ -432,7 +432,7 @@ try {
     ],
   });
   await runner.start();
-  await app.ctx.sessions.setDispatch(source, { enabled: true });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
   const deadline = Date.now() + 12 * 60_000;
   let previousLine = '';
   for (;;) {
@@ -464,7 +464,7 @@ try {
     );
     await delay(1000);
   }
-  await app.ctx.sessions.setDispatch(source, { enabled: false });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
   await runner.stop();
   const sessions = await app.ctx.sessions.list(source);
   assert.equal(sessions.length, 2);
@@ -589,7 +589,7 @@ try {
 } finally {
   const failures: unknown[] = [];
   try {
-    if (source) await app.ctx.sessions.setDispatch(source, { enabled: false });
+    if (source) await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
   } catch (error) {
     failures.push(error);
   }

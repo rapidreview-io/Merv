@@ -189,8 +189,8 @@ test('a close writes one usage row, a report lands once, and the row is then sea
   const { token, session } = await f.offer(target.id);
   const worker = await f.sessions.authenticate(token);
   f.advance(90_000);
-  const prepared = await f.sessions.prepare(worker, 'finish', {});
-  await f.sessions.run(
+  const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+  await f.sessions.invocations.run(
     prepared,
     async (caller) =>
       await f.handle.transition(caller, {
@@ -328,51 +328,61 @@ test('a budget is set by an admin who is not a leased worker, and setting it aga
   const f = await fixture(t);
   const { token } = await f.offer((await f.instance()).id);
   const worker = await f.sessions.authenticate(token);
-  await assert.rejects(async () => await f.sessions.setBudget(worker, { maxWallMinutes: 1 }), {
-    status: 403,
-  });
-  await assert.rejects(async () => await f.sessions.setBudget(f.source, { maxWallMinutes: 1 }), {
-    status: 403,
-  });
+  await assert.rejects(
+    async () => await f.sessions.dispatch.setBudget(worker, { maxWallMinutes: 1 }),
+    {
+      status: 403,
+    },
+  );
+  await assert.rejects(
+    async () => await f.sessions.dispatch.setBudget(f.source, { maxWallMinutes: 1 }),
+    {
+      status: 403,
+    },
+  );
   for (const input of [{}, { maxCostUsd: 1 } as never])
-    await assert.rejects(async () => await f.sessions.setBudget(f.owner, input), {
+    await assert.rejects(async () => await f.sessions.dispatch.setBudget(f.owner, input), {
       code: 'invalid_budget',
     });
-  await assert.rejects(async () => await f.sessions.setBudget(f.owner, { maxTokens: null }), {
-    code: 'budget_not_found',
-  });
   await assert.rejects(
-    async () => await f.sessions.setBudget(f.owner, { instanceId: 'missing', maxTokens: 5 }),
+    async () => await f.sessions.dispatch.setBudget(f.owner, { maxTokens: null }),
+    {
+      code: 'budget_not_found',
+    },
+  );
+  await assert.rejects(
+    async () =>
+      await f.sessions.dispatch.setBudget(f.owner, { instanceId: 'missing', maxTokens: 5 }),
     { status: 404 },
   );
-  const set = await f.sessions.setBudget(f.owner, { maxWallMinutes: 2, maxTokens: 500 });
+  const set = await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: 2, maxTokens: 500 });
   assert.deepEqual(
     [set.kind, set.scopeId, set.maxWallMs, set.maxTokens, set.exceeded],
     ['project', f.owner.projectId, 120_000, 500, []],
   );
   f.advance(1000);
-  const again = await f.sessions.setBudget(f.owner, { maxWallMinutes: 2 });
+  const again = await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: 2 });
   assert.equal(again.updatedAt, set.updatedAt);
   assert.equal((await f.events('session.budget_changed')).length, 1);
-  const cleared = await f.sessions.setBudget(f.owner, { maxTokens: null });
+  const cleared = await f.sessions.dispatch.setBudget(f.owner, { maxTokens: null });
   assert.deepEqual([cleared.maxWallMs, cleared.maxTokens], [120_000, null]);
   assert.equal((await f.events('session.budget_changed')).length, 2);
 });
 
 test('a reached project budget pauses automatic offers, stops nothing, and lifts when raised', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.setBudget(f.owner, { maxWallMinutes: 1 });
+  await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: 1 });
   await f.instance();
   await f.instance();
-  const running = (await f.sessions.lease(f.source, auto())).session!;
+  const running = (await f.sessions.dispatch.lease(f.source, auto())).session!;
   await f.spend((await f.instance()).id, 60_000);
-  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
 
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'budget_exceeded');
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'budget_exceeded');
-  const status = await f.sessions.projectStatus(f.owner);
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'budget_exceeded');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'budget_exceeded');
+  const status = await f.sessions.dispatch.projectStatus(f.owner);
   assert.deepEqual(status.budgets[0]!.exceeded, ['wall']);
   assert.equal(status.budgets[0]!.used.wallMs, 60_000);
   assert.equal(status.runners[0]!.lastDecision, 'budget_exceeded');
@@ -384,21 +394,21 @@ test('a reached project budget pauses automatic offers, stops nothing, and lifts
   const read = await f.sessions.usage(f.owner);
   assert.deepEqual(read.budgets[0]!.exceeded, ['wall']);
 
-  await f.sessions.setBudget(f.owner, { maxWallMinutes: 5 });
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+  await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: 5 });
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'offered');
 });
 
 test('a token budget is judged only on complete accounting: an unreported session withholds offers until its usage arrives', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.setBudget(f.owner, { maxTokens: 1000 });
+  await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setBudget(f.owner, { maxTokens: 1000 });
   await f.instance();
   // A session closes and its runner says nothing of what it used.
   const silent = await f.spend((await f.instance()).id, 1000);
 
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
-  const paused = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'usage_unavailable');
+  const paused = (await f.sessions.dispatch.projectStatus(f.owner)).budgets[0]!;
   assert.deepEqual(
     [paused.exceeded, paused.unavailable, paused.unreportedSessions, paused.used.tokens],
     [[], ['tokens'], 1, null],
@@ -412,19 +422,19 @@ test('a token budget is judged only on complete accounting: an unreported sessio
     runnerId: 'machine',
     usage: { inputTokens: 10, outputTokens: 5 },
   });
-  const judged = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+  const judged = (await f.sessions.dispatch.projectStatus(f.owner)).budgets[0]!;
   assert.deepEqual(
     [judged.exceeded, judged.unavailable, judged.unreportedSessions, judged.used.tokens],
     [[], [], 0, 15],
   );
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'offered');
 });
 
 test('a close that was never activated leaves a token budget judged; an activated silent one does not', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.setBudget(f.owner, { maxTokens: 1000 });
+  await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setBudget(f.owner, { maxTokens: 1000 });
   const lost = await f.offer((await f.instance()).id);
   await f.sessions.release(f.source, { sessionId: lost.session.id, runnerId: 'machine' });
   let read = await f.sessions.usage(f.owner);
@@ -435,7 +445,7 @@ test('a close that was never activated leaves a token budget judged; an activate
   );
   assert.deepEqual([read.totals.sessions, read.totals.reportedSessions], [1, 0]);
   assert.ok(!('unreported' in read), 'the count stays off the usage reply');
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'offered');
 
   await f.spend((await f.instance()).id, 1000);
   read = await f.sessions.usage(f.owner);
@@ -447,25 +457,25 @@ test('a close that was never activated leaves a token budget judged; an activate
 
 test('a wall-clock budget never waits on a report, and clearing a token bound lifts its wait', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.setBudget(f.owner, { maxWallMinutes: 60, maxTokens: 1000 });
+  await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: 60, maxTokens: 1000 });
   await f.instance();
   await f.spend((await f.instance()).id, 1000);
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
-  await f.sessions.setBudget(f.owner, { maxTokens: null });
-  const status = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'usage_unavailable');
+  await f.sessions.dispatch.setBudget(f.owner, { maxTokens: null });
+  const status = (await f.sessions.dispatch.projectStatus(f.owner)).budgets[0]!;
   assert.deepEqual([status.exceeded, status.unavailable], [[], []]);
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'offered');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'offered');
 });
 
 test('an instance budget withholds only the work inside its closure', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   const child = await f.instance();
   const cycle = await f.instance([child.id]);
-  await f.sessions.setBudget(f.owner, { instanceId: cycle.id, maxTokens: 100 });
+  await f.sessions.dispatch.setBudget(f.owner, { instanceId: cycle.id, maxTokens: 100 });
   const spent = await f.spend(child.id, 1000);
   await f.sessions.release(f.source, {
     sessionId: spent.id,
@@ -473,13 +483,13 @@ test('an instance budget withholds only the work inside its closure', async (t) 
     usage: { inputTokens: 60, outputTokens: 40 },
   });
   assert.equal(
-    (await f.sessions.lease(f.source, auto())).reason,
+    (await f.sessions.dispatch.lease(f.source, auto())).reason,
     'budget_exceeded',
     'Everything left in the queue is inside the spent closure',
   );
-  assert.equal((await f.sessions.projectStatus(f.owner)).queueTotal, 0);
+  assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).queueTotal, 0);
   const other = await f.instance();
-  const leased = await f.sessions.lease(f.source, auto());
+  const leased = await f.sessions.dispatch.lease(f.source, auto());
   assert.equal(leased.session?.instanceId, other.id);
   const read = await f.sessions.usage(f.owner, { instanceId: cycle.id });
   assert.deepEqual(
@@ -490,8 +500,8 @@ test('an instance budget withholds only the work inside its closure', async (t) 
 
 test('a closure too large to walk is refused, and its budget cannot be judged', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, { ...presence, capacity: 4 });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.source, { ...presence, capacity: 4 });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   const root = await f.instance();
   // A descendant with ready work, and 4,999 finished ones: one past the walk's bound.
   const live = await f.instance();
@@ -514,34 +524,37 @@ test('a closure too large to walk is refused, and its budget cannot be judged', 
   await assert.rejects(async () => await f.sessions.usage(f.owner, { instanceId: root.id }), {
     code: 'closure_too_large',
   });
-  const set = await f.sessions.setBudget(f.owner, { instanceId: root.id, maxWallMinutes: 60 });
+  const set = await f.sessions.dispatch.setBudget(f.owner, {
+    instanceId: root.id,
+    maxWallMinutes: 60,
+  });
   assert.deepEqual([set.exceeded, set.unavailable], [[], ['wall']]);
   // Which instances the budget covers is unknown, so it withholds all of them, the live
   // descendant included.
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'usage_unavailable');
-  assert.equal((await f.sessions.projectStatus(f.owner)).queueTotal, 0);
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'usage_unavailable');
+  assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).queueTotal, 0);
 
   // Exactly at the bound the walk is whole, and the budget judged on it. A name with no
   // instance behind it, walked last, is not counted.
   f.fanOut.set(root.id, ['gone', live.id, ...children.slice(1)]);
   assert.equal((await f.workflows.dependencyClosure(f.owner, root.id)).length, 5000);
-  const judged = (await f.sessions.projectStatus(f.owner)).budgets[0]!;
+  const judged = (await f.sessions.dispatch.projectStatus(f.owner)).budgets[0]!;
   assert.deepEqual([judged.exceeded, judged.unavailable], [[], []]);
   const offered = [
-    (await f.sessions.lease(f.source, auto())).session?.instanceId,
-    (await f.sessions.lease(f.source, auto())).session?.instanceId,
+    (await f.sessions.dispatch.lease(f.source, auto())).session?.instanceId,
+    (await f.sessions.dispatch.lease(f.source, auto())).session?.instanceId,
   ];
   assert.deepEqual(offered.sort(), [root.id, live.id].sort());
 });
 
 test('launches that keep failing on one revision stop being offered until dispatch is switched off and on', async (t) => {
   const f = await fixture(t, 2);
-  await f.sessions.heartbeatRunner(f.source, presence);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   const target = await f.instance();
   f.advance(1);
   const fail = async () => {
-    const leased = (await f.sessions.lease(f.source, auto())).session!;
+    const leased = (await f.sessions.dispatch.lease(f.source, auto())).session!;
     assert.equal(leased.instanceId, target.id);
     await f.sessions.release(f.source, {
       sessionId: leased.id,
@@ -550,34 +563,34 @@ test('launches that keep failing on one revision stop being offered until dispat
     });
   };
   await fail();
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retry_backoff');
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'retry_backoff');
   f.advance(30_001);
   await fail();
   f.advance(30_001);
-  await f.sessions.heartbeatRunner(f.source, presence);
-  assert.equal((await f.sessions.lease(f.source, auto())).reason, 'retries_exhausted');
-  const status = await f.sessions.projectStatus(f.owner);
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence);
+  assert.equal((await f.sessions.dispatch.lease(f.source, auto())).reason, 'retries_exhausted');
+  const status = await f.sessions.dispatch.projectStatus(f.owner);
   assert.deepEqual([status.retriesExhausted, status.queueTotal], [1, 0]);
 
   // Other work is still offered, and names no withheld cause while it is.
   const other = await f.instance();
-  const leased = (await f.sessions.lease(f.source, auto())).session!;
+  const leased = (await f.sessions.dispatch.lease(f.source, auto())).session!;
   assert.equal(leased.instanceId, other.id);
   await f.sessions.release(f.source, { sessionId: leased.id, runnerId: 'machine' });
-  await f.sessions.halt(f.owner, {});
+  await f.sessions.dispatch.halt(f.owner, {});
 
   f.advance(1000);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  assert.equal((await f.sessions.projectStatus(f.owner)).retriesExhausted, 0);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).retriesExhausted, 0);
 });
 
 test('the launch backoff reads only the closes inside its window, not a runnerâ€™s whole history', async (t) => {
   const f = await fixture(t, 2);
-  await f.sessions.heartbeatRunner(f.source, presence);
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   const target = await f.instance();
   f.advance(1);
-  const leased = (await f.sessions.lease(f.source, auto())).session!;
+  const leased = (await f.sessions.dispatch.lease(f.source, auto())).session!;
   assert.equal(leased.instanceId, target.id);
   await f.sessions.release(f.source, {
     sessionId: leased.id,
@@ -603,7 +616,10 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
       return run(tx);
     }),
   );
-  assert.ok((await f.sessions.lease(f.source, auto())).session, 'the target is offered again');
+  assert.ok(
+    (await f.sessions.dispatch.lease(f.source, auto())).session,
+    'the target is offered again',
+  );
   assert.deepEqual(read, [0, 0], 'the backoff read no close from outside its window');
 });
 

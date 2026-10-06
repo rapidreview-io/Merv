@@ -138,7 +138,7 @@ test('Sessions registers its tool policy with the current registry and withdraws
   const registered = () =>
     (app.ctx.tools as unknown as { sessions?: { provider: unknown } }).sessions?.provider;
   try {
-    assert.equal(registered(), app.ctx.sessions);
+    assert.equal(registered(), app.ctx.sessions.invocations);
     const sessions = app.ctx.sessions as LeasedSessions;
     const close = sessions.close.bind(sessions);
     let atClose: unknown = 'close not called';
@@ -154,17 +154,55 @@ test('Sessions registers its tool policy with the current registry and withdraws
     });
     await app.setEnabled('sessions', true);
     assert.notEqual(app.ctx.sessions, sessions);
-    assert.equal(registered(), app.ctx.sessions);
+    assert.equal(registered(), app.ctx.sessions.invocations);
     const tools = app.ctx.tools;
     await app.setEnabled('tools', false);
     await app.setEnabled('tools', true);
     assert.notEqual(app.ctx.tools, tools);
     assert.equal(
       registered(),
-      app.ctx.sessions,
+      app.ctx.sessions.invocations,
       'A reloaded registry receives a fresh registration',
     );
   } finally {
     await app.stop();
   }
+});
+
+test('each part Sessions exposes keeps its entry checks: no managed runner, nothing once closed', async () => {
+  const state = await openState(':memory:');
+  const scope = await createService(new ProjectScope(state));
+  const workflows = await createService(new WorkflowsService(state, scope));
+  const events = await createService(new DurableEvents(state));
+  const sessions = await createService(new LeasedSessions(state, scope, workflows, events));
+  const managed: Caller = {
+    projectId: 'project',
+    actorId: 'runner',
+    managed: { allocationId: 'flt_1', epoch: 1, credentialHash: 'hash' },
+  } as Caller;
+  const forbidden = { code: 'forbidden', status: 403 };
+  try {
+    await assert.rejects(sessions.dispatch.stuck(managed), forbidden);
+    await assert.rejects(sessions.dispatch.setDispatch(managed, { enabled: true }), forbidden);
+    await assert.rejects(sessions.running.nodes(managed), forbidden);
+    await assert.rejects(sessions.running.panel(managed, 'session_x'), forbidden);
+    await assert.rejects(sessions.observations.read(managed, 'agent_x'), forbidden);
+    const caller: Caller = { projectId: 'project', actorId: 'person' };
+    await assert.rejects(sessions.running.work(caller, [7 as never]), {
+      code: 'invalid_instance',
+    });
+    await assert.rejects(sessions.observations.read(caller, ''), { code: 'invalid_agent' });
+  } finally {
+    await sessions.close();
+  }
+  const unavailable = { code: 'session_unavailable', status: 503 };
+  const caller: Caller = { projectId: 'project', actorId: 'person' };
+  await assert.rejects(sessions.dispatch.servedSources(), unavailable);
+  await assert.rejects(sessions.dispatch.projectStatus(caller), unavailable);
+  await assert.rejects(sessions.running.marks(caller), unavailable);
+  await assert.rejects(sessions.managed.authenticate('mr_x'), unavailable);
+  await assert.rejects(sessions.streams.append(caller, {}), unavailable);
+  assert.throws(() => sessions.conversations.register('w', () => null), unavailable);
+  assert.throws(() => sessions.managed.registerValidator({} as never), unavailable);
+  await state.close();
 });

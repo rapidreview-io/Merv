@@ -6,6 +6,7 @@ import type {
   TaskContext,
   TaskCheckpointInput,
 } from './types.js';
+import type { Task } from './models.js';
 import { visible } from '@merv/contracts';
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
@@ -136,6 +137,15 @@ export const taskToolsPlugin = {
           .strict(),
         handler: async (caller: Caller, input: TaskDelivery) =>
           await ctx.tasks.submitDelivery(caller, input),
+        receipt: (task: Task) => ({
+          summary: {
+            id: task.id,
+            state: task.workflow.state,
+            revision: task.workflow.revision,
+            reviewId: task.reviewId,
+          },
+          reread: ['task.get', 'workflow.status_and_next'],
+        }),
       },
       {
         name: 'task.mark_failed',
@@ -152,6 +162,10 @@ export const taskToolsPlugin = {
           .strict(),
         handler: async (caller: Caller, input: TaskMarkFailed) =>
           await ctx.tasks.markFailed(caller, input),
+        receipt: (task: Task) => ({
+          summary: { id: task.id, state: task.workflow.state, revision: task.workflow.revision },
+          reread: ['task.get', 'workflow.status_and_next'],
+        }),
       },
       {
         name: 'task.reissue_review',

@@ -46,12 +46,12 @@ test('with dispatch on by default, Fleet serves each project nobody switched und
   const untouched = await project('Untouched');
   const off = await project('Off');
   const own = await project('Own machines');
-  await sessions.setDispatch(off, { enabled: false });
-  await sessions.setDispatch(own, { ownMachines: true });
-  assert.equal((await sessions.projectStatus(untouched)).dispatch.enabled, true);
+  await sessions.dispatch.setDispatch(off, { enabled: false });
+  await sessions.dispatch.setDispatch(own, { ownMachines: true });
+  assert.equal((await sessions.dispatch.projectStatus(untouched)).dispatch.enabled, true);
   // A project made by bootstrap has no signed-in operator to direct it, so it is not served.
   await scope.bootstrap({ projectName: 'Actors only', actorName: 'Owner' });
-  assert.deepEqual(await sessions.servedSources(), [
+  assert.deepEqual(await sessions.dispatch.servedSources(), [
     { projectId: untouched.projectId, source: await scope.delegationSource(untouched) },
   ]);
 });
@@ -173,7 +173,7 @@ async function fixture(t: TestContext, maxLaunchFailures = 3) {
       rejectBuild = value;
     },
     async runner() {
-      await sessions.heartbeatRunner(source, {
+      await sessions.dispatch.heartbeatRunner(source, {
         runnerId: 'machine',
         machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
         platforms: [platform],
@@ -181,7 +181,7 @@ async function fixture(t: TestContext, maxLaunchFailures = 3) {
       });
     },
     lease() {
-      return sessions.lease(source, {
+      return sessions.dispatch.lease(source, {
         runnerId: 'machine',
         requestId: randomBytes(10).toString('hex'),
         secret: secret(),
@@ -204,16 +204,16 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
   const first = await plain.start();
   const blocked = await plain.start({}, [first.id]);
   const driven = await checkout.start();
-  const demand = () => f.sessions.dispatchDemand(f.source, profile);
+  const demand = () => f.sessions.dispatch.dispatchDemand(f.source, profile);
   assert.deepEqual(await demand(), { candidates: [] });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.events.drain();
   const writes = countWrites(f.state);
   const before = writes();
   assert.deepEqual(await demand(), { candidates: [{ instanceId: first.id, expectedRevision: 0 }] });
   assert.equal(writes(), before, 'prospective demand does not reserve or write');
   assert.deepEqual(
-    await f.sessions.dispatchDemand(f.source, { ...profile, capabilities: ['code.v2'] }),
+    await f.sessions.dispatch.dispatchDemand(f.source, { ...profile, capabilities: ['code.v2'] }),
     {
       candidates: [
         { instanceId: first.id, expectedRevision: 0 },
@@ -223,7 +223,7 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
   );
   const reader = await f.scope.issueActor(f.owner, { name: 'Reader', role: 'reader' });
   assert.deepEqual(
-    await f.sessions.dispatchDemand(
+    await f.sessions.dispatch.dispatchDemand(
       { ...f.source, actorId: reader.actor.id, credentialId: reader.credential.id },
       profile,
     ),
@@ -250,10 +250,10 @@ test('Fleet rents no machine for a checkout only a runner with its own repositor
   });
   await local.start();
   const plain = await (await f.register('plain')).start();
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.events.drain();
   assert.deepEqual(
-    await f.sessions.dispatchDemand(f.source, { ...profile, capabilities: ['code.v2'] }),
+    await f.sessions.dispatch.dispatchDemand(f.source, { ...profile, capabilities: ['code.v2'] }),
     { candidates: [{ instanceId: plain.id, expectedRevision: 0 }] },
   );
 });
@@ -262,14 +262,14 @@ test('prospective demand respects offer failure backoff without a runner-specifi
   const f = await fixture(t);
   const work = await f.register('failing-offer');
   const target = await work.start();
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.runner();
   f.rejectBuild(true);
   assert.equal((await f.lease()).reason, 'retry_backoff');
   f.rejectBuild(false);
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
   f.advance(30_001);
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
     candidates: [{ instanceId: target.id, expectedRevision: 0 }],
   });
 });
@@ -278,42 +278,42 @@ test('prospective demand applies budgets, live leases, and durable holds', async
   const f = await fixture(t, 1);
   const work = await f.register('work');
   const first = await work.start();
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.setBudget(f.owner, { instanceId: first.id, maxTokens: 1 });
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setBudget(f.owner, { instanceId: first.id, maxTokens: 1 });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
     candidates: [{ instanceId: first.id, expectedRevision: 0 }],
   });
-  await f.sessions.setBudget(f.owner, { instanceId: first.id, maxTokens: null });
-  await f.sessions.setBudget(f.owner, { maxWallMinutes: 1 });
+  await f.sessions.dispatch.setBudget(f.owner, { instanceId: first.id, maxTokens: null });
+  await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: 1 });
   await f.runner();
   const offered = (await f.lease()).session!;
   assert.ok(offered);
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
   await f.sessions.release(f.source, {
     sessionId: offered.id,
     runnerId: 'machine',
     outcome: 'host_failed',
   });
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
   // Choosing the hardware is not the go-ahead that clears a hold; only the switch is.
-  await f.sessions.setDispatch(f.owner, { ownMachines: true });
-  await f.sessions.setDispatch(f.owner, { ownMachines: false });
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
-  await f.sessions.releaseHold(f.owner, {
+  await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: false });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
+  await f.sessions.dispatch.releaseHold(f.owner, {
     instanceId: first.id,
     expectedRevision: 0,
     reason: 'Fixed',
     requestId: 'release-hold',
   });
   // Its host failed moments ago: Fleet waits out the backoff before renting for it again.
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
   f.advance(30_001);
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
     candidates: [{ instanceId: first.id, expectedRevision: 0 }],
   });
-  await f.sessions.setBudget(f.owner, { maxWallMinutes: null, maxTokens: 1 });
+  await f.sessions.dispatch.setBudget(f.owner, { maxWallMinutes: null, maxTokens: 1 });
   // The only close never ran a process, so it has no usage to report: the bound is judged.
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
     candidates: [{ instanceId: first.id, expectedRevision: 0 }],
   });
 });
@@ -321,13 +321,13 @@ test('prospective demand applies budgets, live leases, and durable holds', async
 test('a project on its own machines shows Fleet no demand, and its own runner still leases', async (t) => {
   const f = await fixture(t);
   const target = await (await f.register('own')).start();
-  await f.sessions.setDispatch(f.owner, { enabled: true, ownMachines: true });
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), { candidates: [] });
-  await f.sessions.setDispatch(f.owner, { ownMachines: false });
-  assert.deepEqual(await f.sessions.dispatchDemand(f.source, profile), {
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true, ownMachines: true });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), { candidates: [] });
+  await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: false });
+  assert.deepEqual(await f.sessions.dispatch.dispatchDemand(f.source, profile), {
     candidates: [{ instanceId: target.id, expectedRevision: 0 }],
   });
-  await f.sessions.setDispatch(f.owner, { ownMachines: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: true });
   await f.runner();
   const leased = await f.lease();
   assert.equal(leased.session?.instanceId, target.id, leased.reason);
@@ -354,16 +354,19 @@ test('Fleet serves each project turned on for it as its earliest operator, whoev
   f.advance(1000);
   await f.scope.addMember(founder, main.projectId, { subject: 'colleague', role: 'operator' });
   const colleague = await f.scope.caller(await login('colleague'), main.projectId);
-  await f.sessions.setDispatch(colleague, { enabled: true });
-  await f.sessions.setDispatch(own, { enabled: true, ownMachines: true });
-  await f.sessions.setDispatch(halted, { enabled: true });
-  await f.sessions.halt(halted);
+  await f.sessions.dispatch.setDispatch(colleague, { enabled: true });
+  await f.sessions.dispatch.setDispatch(own, { enabled: true, ownMachines: true });
+  await f.sessions.dispatch.setDispatch(halted, { enabled: true });
+  await f.sessions.dispatch.halt(halted);
   // A project with no signed-in operator has no owner: switched on, it is still not served.
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  assert.deepEqual(await f.sessions.servedSources(), [
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  assert.deepEqual(await f.sessions.dispatch.servedSources(), [
     { projectId: main.projectId, source: await f.scope.delegationSource(main) },
   ]);
-  assert.equal((await f.sessions.projectStatus(main)).dispatch.updatedBy, colleague.actorId);
+  assert.equal(
+    (await f.sessions.dispatch.projectStatus(main)).dispatch.updatedBy,
+    colleague.actorId,
+  );
 });
 
 test('every project runs its work on Fleet’s machines after the upgrade, whatever it was before', async (t) => {
@@ -411,7 +414,7 @@ test('every project runs its work on Fleet’s machines after the upgrade, whate
     Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
   );
   const read = async (caller: Caller) => {
-    const { enabled, ownMachines } = (await sessions.projectStatus(caller)).dispatch;
+    const { enabled, ownMachines } = (await sessions.dispatch.projectStatus(caller)).dispatch;
     return [enabled, ownMachines];
   };
   assert.deepEqual(await Promise.all(projects.map(read)), [

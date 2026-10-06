@@ -1,7 +1,12 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { ExperimentAttach, ExperimentCreate, ExperimentTransition } from './types.js';
+import type {
+  Experiment,
+  ExperimentAttach,
+  ExperimentCreate,
+  ExperimentTransition,
+} from './types.js';
 import {
   experimentAttachSchema,
   experimentCreateSchema,
@@ -60,6 +65,15 @@ export const experimentsToolsPlugin = {
           ['abandon', 'mark_failed'].includes(input.transition) ? 'propose' : undefined,
         handler: async (caller: Caller, input: ExperimentTransition) =>
           await experiments.transition(caller, input),
+        receipt: (experiment: Experiment) => ({
+          summary: {
+            id: experiment.id,
+            state: experiment.workflow.state,
+            revision: experiment.workflow.revision,
+            reviewId: experiment.reviewId,
+          },
+          reread: ['experiment.get_state', 'workflow.status_and_next'],
+        }),
       },
       {
         name: 'experiment.exhibit',

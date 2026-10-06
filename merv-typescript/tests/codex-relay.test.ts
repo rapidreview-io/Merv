@@ -73,11 +73,13 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   process.stderr.write = ((chunk: string) => logs.push(String(chunk)) > 0) as never;
   t.after(() => void (process.stderr.write = write));
   const sessions = {
-    async managedModelGrant(presented: string) {
-      if (down) throw new MervError('database_unavailable', 'The database is unavailable', 503);
-      if (!live || ![bearer, grant.id].includes(presented))
-        throw new MervError('unauthorized', 'No live managed session', 401);
-      return grant;
+    managed: {
+      async modelGrant(presented: string) {
+        if (down) throw new MervError('database_unavailable', 'The database is unavailable', 503);
+        if (!live || ![bearer, grant.id].includes(presented))
+          throw new MervError('unauthorized', 'No live managed session', 401);
+        return grant;
+      },
     },
   } as unknown as Sessions;
   const start = async () => {

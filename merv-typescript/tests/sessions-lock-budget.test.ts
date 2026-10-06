@@ -170,15 +170,15 @@ async function sourced(t: TestContext) {
     ],
     capacity: 2,
   };
-  await sessions.heartbeatRunner(source, presence);
-  await sessions.setDispatch(owner, { enabled: true });
+  await sessions.dispatch.heartbeatRunner(source, presence);
+  await sessions.dispatch.setDispatch(owner, { enabled: true });
   const auto = () => ({
     runnerId: 'machine',
     requestId: request(),
     secret: secret(),
     platform: { name: 'codex', harness: 'codex' as const, model: 'm' },
   });
-  const poll = async () => await sessions.lease(source, auto());
+  const poll = async () => await sessions.dispatch.lease(source, auto());
   return {
     ...f,
     sessions,
@@ -190,7 +190,7 @@ async function sourced(t: TestContext) {
     async leased() {
       await handle.start(source, { workflow: 'budget', requestId: request() });
       const input = auto();
-      assert.ok((await sessions.lease(source, input)).session);
+      assert.ok((await sessions.dispatch.lease(source, input)).session);
       return input.secret;
     },
     advance: (ms: number) => (clock += ms),
@@ -209,13 +209,13 @@ test('a source runner’s idle poll, presence and sweep stay within their lock b
   );
   await f.costs(
     { writers: 0, checks: 0 },
-    () => f.sessions.heartbeatRunner(f.source, f.presence),
+    () => f.sessions.dispatch.heartbeatRunner(f.source, f.presence),
     'an unchanged presence',
   );
   await f.costs(
     { writers: 1, checks: 0 },
     () =>
-      f.sessions.heartbeatRunner(f.source, {
+      f.sessions.dispatch.heartbeatRunner(f.source, {
         ...f.presence,
         machine: { ...f.presence.machine, hostname: 'renamed' },
       }),
@@ -274,9 +274,9 @@ test('a worker’s authentication, heartbeat and tool call stay within their loc
   await f.costs(
     { writers: 2, checks: 6 },
     async () => {
-      const invocation = await f.sessions.prepare(worker, 'finish', input);
-      await f.sessions.validate(invocation.caller, 'finish', input);
-      await f.sessions.run(invocation, () => undefined);
+      const invocation = await f.sessions.invocations.prepare(worker, 'finish', input);
+      await f.sessions.invocations.validate(invocation.caller, 'finish', input);
+      await f.sessions.invocations.run(invocation, () => undefined);
     },
     'a tool call: prepare, the registry’s validate and run',
   );
@@ -397,7 +397,7 @@ async function rented(t: TestContext) {
     () => fleet.close(),
     () => adapter.close(),
   );
-  await sessions.setDispatch(caller, { enabled: true });
+  await sessions.dispatch.setDispatch(caller, { enabled: true });
   const target = await handle.start(caller, { workflow: 'hosted', requestId: request() });
   await adapter.start();
   const [allocation] = await fleet.listOwned(adapter, []);
@@ -406,13 +406,13 @@ async function rented(t: TestContext) {
   await fleet.tick(); // Launch.
   const current = await fleet.inspectOwned(adapter, allocation.id);
   const { enrollmentToken } = JSON.parse(bootstraps.get(current.runtime!.sandboxId)!);
-  const enrolled = await sessions.enrollManaged(enrollmentToken, {
+  const enrolled = await sessions.managed.enroll(enrollmentToken, {
     workerNonce: randomBytes(32).toString('hex'),
   });
-  const managed = await sessions.authenticateManaged(enrolled.controlToken);
+  const managed = await sessions.managed.authenticate(enrolled.controlToken);
   const runnerId = `managed-${allocation.id}`;
   const beat = async (hostname = runnerId) =>
-    await sessions.heartbeatRunner(managed, {
+    await sessions.dispatch.heartbeatRunner(managed, {
       runnerId,
       machine: { hostname, system: 'Linux', architecture: 'x64' },
       platforms: [hostedCodexPlatform],
@@ -428,7 +428,7 @@ async function rented(t: TestContext) {
     handle,
     beat,
     poll: async () =>
-      await sessions.lease(managed, {
+      await sessions.dispatch.lease(managed, {
         runnerId,
         requestId: request(),
         secret: secret(),

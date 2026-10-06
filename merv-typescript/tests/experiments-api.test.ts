@@ -306,7 +306,7 @@ test('Current Experiment MCP completes both reviews, pins exact evidence and sur
     approved.evidence.find((item: any) => item.role === 'feasibility').artifactId,
     statement.id,
   );
-  await f.app.ctx.sessions.heartbeatRunner(f.source, {
+  await f.app.ctx.sessions.dispatch.heartbeatRunner(f.source, {
     runnerId: 'mcp-current',
     machine: { hostname: 'test', system: process.platform, architecture: process.arch },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],

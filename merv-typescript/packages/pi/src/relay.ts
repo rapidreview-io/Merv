@@ -1,4 +1,5 @@
-import { RESPONSES_URL } from '@merv/fleet/model-ledger';
+import { check, type State } from '@merv/contracts';
+import { dailyTokens, RESPONSES_URL } from '@merv/fleet/model-ledger';
 import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
@@ -21,6 +22,34 @@ export type PiRelayConfig = Omit<
     /** MERV_PI_MODELS: a grant names one of these, and the relay alone sets each call's effort. */
     models: readonly { id: string; effort: 'none' | 'low' }[];
   };
+
+const piLedger = dailyTokens('pi_model_usage');
+/**
+ * A person's Agent tokens today: a call is charged at its most (its request and its output)
+ * before it goes out and settled to its usage when that arrives; one cut off keeps its charge.
+ * The day's total refuses any call that would pass the ceiling.
+ */
+export const piTokens = (state: State, now: () => string, ceiling: number) => ({
+  async reserve(grant: { userId: string }, body: Record<string, unknown>): Promise<PiModelCharge> {
+    const most =
+      Math.ceil(JSON.stringify(body).length / 4) + (Number(body.max_output_tokens) || 128_000);
+    const day = now().slice(0, 10);
+    const charged = await state.transaction((tx) =>
+      piLedger.charge(tx, grant.userId, day, most, ceiling),
+    );
+    check(charged, 'pi_model_ceiling', "Today's Agent tokens are used up", 403);
+    return { day, tokens: most };
+  },
+  async settle(
+    usage: { inputTokens: number; outputTokens: number },
+    grant: { userId: string },
+    reserved: PiModelCharge,
+  ): Promise<void> {
+    // Settles the day the call was charged to, even past midnight.
+    const delta = usage.inputTokens + usage.outputTokens - reserved.tokens;
+    await state.transaction((tx) => piLedger.settle(tx, grant.userId, reserved.day, delta));
+  },
+});
 
 /** Pi's relay: one model call at a time per conversation, as a person's conversations share one
  *  machine, in the Pi-shaped request its worker sends. */

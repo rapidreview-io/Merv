@@ -196,7 +196,7 @@ export interface SessionSummary {
   outcome?: SessionOutcome | null;
   /** An active session's activation or latest tool call, whichever is later; null otherwise. */
   lastActivityAt: string | null;
-  /** When the sweep found the session alive without progressing; null while it moves. */
+  /** When an active session's idle clock passed `idleNoticeSeconds`; null while it moves. */
   quietSince: string | null;
   /** Frozen execution intent remains known before preparation or after a preparation failure. */
   workspaceMode: 'none' | 'ephemeral' | 'persistent';

@@ -88,6 +88,8 @@ export class SessionStreams implements SessionStreamReads {
       runnerId: string,
       tx: Transaction,
     ) => Promise<Session>,
+    /** Refuses once Sessions has closed. */
+    private readonly available: () => void,
   ) {}
   async initialize() {
     await this.state.migrate('session_events', [{ version: 1, sql: postgresMigrations[1]! }]);
@@ -100,6 +102,8 @@ export class SessionStreams implements SessionStreamReads {
    * Authority and what is held are read on a snapshot; only a batch to add takes the writer.
    */
   async append(caller: Caller, input: unknown): Promise<{ until: number; seq: number }> {
+    this.available();
+    caller = structuredClone(caller);
     const parsed = batchSchema.safeParse(input);
     check(
       parsed.success,

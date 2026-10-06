@@ -115,6 +115,7 @@ function fixture(t: TestContext, rotateMs?: number) {
     streams,
     async authenticateWorker(token: string) {
       if (token !== workerToken) throw new MervError('pi_unauthorized', 'Invalid worker', 401);
+      return { projectId: 'pi-host', actorId: 'pi-worker:flt_1' };
     },
     async authorizeStream(selected: Caller, id: string) {
       if (!permitted || selected.projectId !== caller.projectId || id !== conversationId)
@@ -137,13 +138,15 @@ function fixture(t: TestContext, rotateMs?: number) {
   } as unknown as PiService;
   const http = new PiHttp(pi, rotateMs);
   const api = new ApiServer(scope, {} as Tools);
-  const unmountWorker = api.mount('/pi-worker', http.worker, { public: true });
+  const withdrawWorker = api.credential('piw_', http.credential);
+  const unmountWorker = api.mount('/pi-worker', http.worker);
   const unregister = api.mount('/pi', http.events);
   t.after(async () => {
     for (const dispose of cleanup) dispose();
     http.close();
     unregister();
     unmountWorker();
+    withdrawWorker();
     streams.close();
     await api.stop();
   });
@@ -199,8 +202,15 @@ test('optional Pi routes require a provider and human source authentication', as
   const events = `${base}/pi/${conversationId}/events`;
   const headers = { authorization: 'Bearer actor-http-token' };
   assert.equal((await fetch(events)).status, 401);
+  // A worker's bearer reaches the worker routes alone, and never Scope.
+  const elsewhere = await fetch(events, { headers: { authorization: `Bearer ${workerToken}` } });
+  assert.equal(elsewhere.status, 403);
+  assert.deepEqual((await json(elsewhere)).error, {
+    code: 'pi_forbidden',
+    message: 'Worker credentials only reach the worker routes',
+  });
   // A namespaced bearer no registered credential claims never reaches Scope.
-  const unclaimed = await fetch(events, { headers: { authorization: `Bearer ${workerToken}` } });
+  const unclaimed = await fetch(events, { headers: { authorization: 'Bearer zzz_unclaimed' } });
   assert.equal(unclaimed.status, 503);
   assert.deepEqual((await json(unclaimed)).error, {
     code: 'credential_unavailable',
@@ -251,6 +261,7 @@ test('worker mount enforces exact method, path, origin, bearer and bounded JSON 
     [path, { headers: { ...headers, origin: base } }, 403],
     [path, { headers: { 'content-type': 'application/json' } }, 401],
     [path, { headers: { ...headers, authorization: 'Bearer piw_invalid' } }, 401],
+    [path, { headers: { ...headers, authorization: 'Bearer actor-http-token' } }, 401],
     [path, { headers: { ...headers, 'content-type': 'text/plain' } }, 415],
   ] as const) {
     const response = await post(url, options);

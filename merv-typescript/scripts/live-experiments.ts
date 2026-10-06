@@ -139,7 +139,7 @@ try {
     },
   );
   await runner.start();
-  await app.ctx.sessions.setDispatch(source, { enabled: true });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
   const deadline = Date.now() + 20 * 60_000;
   let last = '';
   const observations: { state: string; revision: number; startedAt: string | null }[] = [];
@@ -185,7 +185,7 @@ try {
     );
     await delay(1000);
   }
-  await app.ctx.sessions.setDispatch(source, { enabled: false });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
   await runner.stop();
   const final = await app.ctx.experiments.get(source, created.id);
   const guidance = await app.ctx.workflows.evaluate(source, created.id);
@@ -635,7 +635,7 @@ try {
 } finally {
   const failures: unknown[] = [];
   try {
-    if (app && source) await app.ctx.sessions.setDispatch(source, { enabled: false });
+    if (app && source) await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
   } catch (error) {
     failures.push(error);
   }

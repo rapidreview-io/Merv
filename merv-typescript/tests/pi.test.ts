@@ -16,6 +16,7 @@ import {
   type Role,
   type State,
 } from '@merv/contracts';
+import { ApiServer } from '../packages/api/src/http.js';
 import { PiHttp } from '../packages/pi/src/api.js';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
@@ -33,20 +34,22 @@ const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 test('Pi offers and runs system.status in a conversation', async (t) => {
   const f = await fixture(t);
   const sessions = {
-    projectStatus: async (caller: Caller) => {
-      assert.equal(caller.projectId, f.operator.projectId);
-      return {
-        observedAt: '2026-09-26T00:00:00Z',
-        dispatch: { enabled: false, ownMachines: true, fleet: false },
-        runnerTotal: 0,
-        runners: [],
-        liveSessionCount: 0,
-        sessionTotal: 0,
-        sessions: [],
-        queueTotal: 0,
-        queue: [],
-        stuck: { total: 0, counts: {}, items: [], truncated: false },
-      };
+    dispatch: {
+      projectStatus: async (caller: Caller) => {
+        assert.equal(caller.projectId, f.operator.projectId);
+        return {
+          observedAt: '2026-09-26T00:00:00Z',
+          dispatch: { enabled: false, ownMachines: true, fleet: false },
+          runnerTotal: 0,
+          runners: [],
+          liveSessionCount: 0,
+          sessionTotal: 0,
+          sessions: [],
+          queueTotal: 0,
+          queue: [],
+          stuck: { total: 0, counts: {}, items: [], truncated: false },
+        };
+      },
     },
     statusSections: async () => ({}),
   } as unknown as Sessions;
@@ -734,10 +737,10 @@ test('an exact repeated proposal in one turn keeps one Run action and one mutati
       commandId: turn.input.commandId,
       proposalId,
     });
-  assert.deepEqual(await run(first.proposed.id), { result: { mutations: 1 } });
+  assert.deepEqual((await run(first.proposed.id)).result, { mutations: 1 });
   await assert.rejects(run(first.proposed.id), code('pi_proposal_ran'));
   assert.equal(mutations, 1);
-  assert.deepEqual(await run(changed.proposed.id), { result: { mutations: 2 } });
+  assert.deepEqual((await run(changed.proposed.id)).result, { mutations: 2 });
 });
 
 test('the hand-off: the agent proposes, the person runs it once as themselves, and a secret stays theirs', async (t) => {
@@ -799,13 +802,22 @@ test('the hand-off: the agent proposes, the person runs it once as themselves, a
     { callId: 'propose_1', name: 'probe.secret', input: {}, output: { proposed: {} } },
   ];
   await f.pi.complete(turn.token, result);
-  assert.deepEqual(await run(human, ids[0]), { result: { token: 'secret' } });
+  // What Run tells the agent never holds a secret result.
+  assert.deepEqual(await run(human, ids[0]), {
+    result: { token: 'secret' },
+    told: 'Ran probe.secret; its result is shown only to me.',
+    whole: false,
+  });
   assert.equal(runs['probe.secret'], 1);
   await assert.rejects(run(human, ids[0]), code('pi_proposal_ran'));
   assert.equal(runs['probe.secret'], 1);
   await assert.rejects(run(human, 'pip_missing'), code('pi_not_found'));
   // The signed-in gate passes when the person presses Run, and fails through their key.
-  assert.deepEqual(await run(human, ids[1]), { result: { signed: true } });
+  assert.deepEqual(await run(human, ids[1]), {
+    result: { signed: true },
+    told: 'Ran probe.signed: {"signed":true}',
+    whole: true,
+  });
   const keyTurn = await f.begun(key);
   await f.pi.tool(keyTurn.token, { ...keyTurn.input, name: 'probe.signed', input: {} });
   await f.pi.complete(keyTurn.token, f.completion(keyTurn.input));
@@ -877,6 +889,43 @@ test('a Fleet halt the person runs from a proposal is recorded as theirs', async
   );
   assert.equal(halted.at(-1)?.actorId, human.actorId);
   assert.equal(halted.at(-1)?.data.intent, 'stop');
+});
+
+test('a proposed call whose tool writes a receipt tells the agent that receipt, not its result', async (t) => {
+  const f = await fixture(t);
+  t.after(
+    f.tools.register({
+      name: 'probe.advance',
+      description: 'Advance a probe',
+      conversation: 'propose',
+      inputSchema: z.object({}).strict(),
+      handler: () => ({ id: 'probe_1', problem: 'Full Problem '.repeat(500) }),
+      receipt: (result) => ({
+        summary: { id: (result as { id: string }).id },
+        reread: ['probe.get', 'workflow.status_and_next'],
+      }),
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const { proposed } = (await f.pi.tool(turn.token, {
+    ...turn.input,
+    name: 'probe.advance',
+    input: {},
+  })) as { proposed: { id: string } };
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  const ran = await f.pi.run(human, {
+    id: turn.input.conversationId,
+    commandId: turn.input.commandId,
+    proposalId: proposed.id,
+  });
+  assert.equal(
+    ran.told,
+    'Ran probe.advance: {"id":"probe_1"}. Re-read probe.get and workflow.status_and_next for current details.',
+  );
+  assert.equal(ran.whole, false);
+  assert.match(JSON.stringify(ran.result), /Full Problem/);
 });
 
 test('each turn says whom the agent serves, where, on what, what the project holds now, and what a stopped answer made; its person can read it back', async (t) => {
@@ -1999,11 +2048,13 @@ test(
   { timeout: 20_000 },
   async (t) => {
     const { runPiWorker } = await import('../packages/pi/src/worker.js');
-    const server = createServer();
-    server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
-    const address = server.address();
+    // A free port, for the API server the worker reaches.
+    const probe = createServer();
+    probe.listen(0, '127.0.0.1');
+    await once(probe, 'listening');
+    const address = probe.address();
     assert.ok(address && typeof address === 'object');
+    await new Promise((resolve) => probe.close(resolve));
     const origin = `http://127.0.0.1:${address.port}`;
     const f = await fixture(t, { baseUrl: origin, startTime: Date.now() });
     let http = new PiHttp(f.pi);
@@ -2071,14 +2122,19 @@ test(
         });
       },
     });
-    server.on('request', (req, res) => {
-      void (req.url?.startsWith('/pi-model/') ? relay.handle(req, res) : http.worker(req, res));
+    // As Pi's API adapter mounts them, on the PiHttp of the running service.
+    const api = new ApiServer(f.scope, f.tools, { host: '127.0.0.1', port: address.port });
+    api.credential('piw_', {
+      ...http.credential,
+      authenticate: (token) => http.credential.authenticate!(token),
     });
-    t.after(() => {
+    api.mount('/pi-worker', (req, res, r) => http.worker(req, res, r));
+    api.mount('/pi-model', relay.handle, { public: true });
+    await api.start();
+    t.after(async () => {
       http.close();
       relay.close();
-      server.closeAllConnections();
-      server.close();
+      await api.stop();
     });
     const conversation = await f.create();
     async function runTurn(text: string) {
@@ -2236,14 +2292,14 @@ test('a person’s Agent tokens are charged before each call and settled after, 
   await f.pi.begin(bound.token, bound.input);
   const grant = await f.pi.authorizeModel(bound.work.modelToken);
   const body = { model: grant.model, input: [], max_output_tokens: 600 };
-  const charged = await f.pi.reserveModel(grant, body);
+  const charged = await f.pi.tokens.reserve(grant, body);
   assert.equal(charged.tokens, Math.ceil(JSON.stringify(body).length / 4) + 600);
   assert.match(charged.day, /^\d{4}-\d{2}-\d{2}$/);
   // A second call at its most would pass the ceiling while the first is still out.
-  await assert.rejects(f.pi.reserveModel(grant, body), code('pi_model_ceiling'));
+  await assert.rejects(f.pi.tokens.reserve(grant, body), code('pi_model_ceiling'));
   // Settled to what it used, the day has room again.
-  await f.pi.settleModel({ inputTokens: 40, outputTokens: 10 }, grant, charged);
-  assert.deepEqual(await f.pi.reserveModel(grant, body), charged);
+  await f.pi.tokens.settle({ inputTokens: 40, outputTokens: 10 }, grant, charged);
+  assert.deepEqual(await f.pi.tokens.reserve(grant, body), charged);
   // A call settles to the day it was charged to, whatever the day is when it finishes.
   await f.state.transaction((tx) =>
     tx.run(
@@ -2253,7 +2309,7 @@ test('a person’s Agent tokens are charged before each call and settled after, 
       10,
     ),
   );
-  await f.pi.settleModel({ inputTokens: 1, outputTokens: 2 }, grant, {
+  await f.pi.tokens.settle({ inputTokens: 1, outputTokens: 2 }, grant, {
     day: '2000-01-01',
     tokens: 10,
   });

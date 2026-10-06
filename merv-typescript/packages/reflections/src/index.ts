@@ -1776,7 +1776,7 @@ export const reflectionsPlugin = {
     // A restart makes new lens instances: each perspective's author still takes its own up again.
     ctx.inject(['sessions'], (ctx) => {
       ctx.effect(() =>
-        ctx.sessions.registerContinuity(LENS_WORKFLOW.name, ({ data, role }) =>
+        ctx.sessions.conversations.register(LENS_WORKFLOW.name, ({ data, role }) =>
           JSON.stringify([LENS_WORKFLOW.name, data.reflectionId, data.perspective, role]),
         ),
       );

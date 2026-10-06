@@ -447,11 +447,11 @@ test('a conversation declared but not yet stamped as delivered is still resumed 
 test('a provider keys a workflow: across instances, or never', async (t) => {
   const f = await fixture(t);
   const keys: (string | null)[] = ['shared', null];
-  const dispose = f.sessions.registerContinuity('continuity-test', ({ role }) =>
+  const dispose = f.sessions.conversations.register('continuity-test', ({ role }) =>
     keys.length ? keys.shift()! : `${role}:last`,
   );
   t.after(dispose);
-  assert.throws(() => f.sessions.registerContinuity('continuity-test', () => null), {
+  assert.throws(() => f.sessions.conversations.register('continuity-test', () => null), {
     code: 'continuity_registered',
   });
   const a = await f.offer((await f.start()).id);
@@ -593,7 +593,7 @@ test('real runners: a hosted machine that cannot resume puts it off once; a fres
   await f.release(first.session);
   seen.add(first.session.id);
   const { facts } = await f.keep(first.session, first.control, undefined, 'claude');
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
 
   // A harness that crashes before it starts, for some other reason, is an ordinary failure:
   // counted, and the conversation is kept for the next offer.

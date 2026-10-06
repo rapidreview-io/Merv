@@ -25,7 +25,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
   const f = await resolutionFixture(t, { human });
   const remote = connected ? await githubFixture(t, f.state, f.admin) : undefined;
   if (remote) await remote.enable();
-  await f.sessions.setDispatch(f.admin, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.admin, { enabled: true });
   const root = join(f.directory, 'code');
   mkdirSync(join(root, 'tmp'), { recursive: true });
   mkdirSync(join(root, 'empty-template'));
@@ -641,7 +641,7 @@ test('an accepted publishing unit waits on one pull request and then carries mai
   assert.equal(waiting.code, 'code_publication_pending');
   assert.match(waiting.message, /waiting on publication/);
   assert.ok(
-    (await f.sessions.stuck(f.admin)).items.some(
+    (await f.sessions.dispatch.stuck(f.admin)).items.some(
       (item) => item.instanceId === work.id && item.kind === 'work_blocked',
     ),
   );

@@ -45,7 +45,11 @@ async function fixture(t: TestContext, api = false) {
     tool: string,
     input: Data,
     handler: (caller: Caller, input: Data) => T | Promise<T>,
-  ) => await sessions.run(await sessions.prepare(worker, tool, input), handler);
+  ) =>
+    await sessions.invocations.run(
+      await sessions.invocations.prepare(worker, tool, input),
+      handler,
+    );
   const create = async (requestId: string) =>
     await currentTask(app.ctx, operator, {
       title: 'Verify execution boundaries',
@@ -147,7 +151,7 @@ test('a review session binds the claim its lease took, and a successor binds onl
   const claim = (await app.ctx.reviews.get(operator, task.reviewId!)).claimId!;
   assert.ok(claim);
   assert.equal(
-    (await app.ctx.sessions.prepare(first.worker, 'review.submit', {})).input.claimId,
+    (await app.ctx.sessions.invocations.prepare(first.worker, 'review.submit', {})).input.claimId,
     claim,
   );
   await release(first.session.id);
@@ -155,11 +159,12 @@ test('a review session binds the claim its lease took, and a successor binds onl
   const current = (await app.ctx.reviews.get(operator, task.reviewId!)).claimId!;
   assert.notEqual(current, claim);
   await assert.rejects(
-    async () => await app.ctx.sessions.prepare(next.worker, 'review.submit', { claimId: claim }),
+    async () =>
+      await app.ctx.sessions.invocations.prepare(next.worker, 'review.submit', { claimId: claim }),
     { code: 'execution_arguments_forbidden' },
   );
   assert.equal(
-    (await app.ctx.sessions.prepare(next.worker, 'review.submit', {})).input.claimId,
+    (await app.ctx.sessions.invocations.prepare(next.worker, 'review.submit', {})).input.claimId,
     current,
   );
 });
@@ -179,9 +184,12 @@ test('metadata admission avoids rendering, binds each session to its own record 
     assert.fail('Execution admission must not evaluate exit guidance or hydrate context');
   });
   // As the tool registry calls it, which marks a read tool.
-  const policy: SessionToolPolicy = app.ctx.sessions;
+  const policy: SessionToolPolicy = app.ctx.sessions.invocations;
   for (const { task, worker } of sessions) {
-    assert.equal((await app.ctx.sessions.prepare(worker, 'task.get', {})).input.taskId, task.id);
+    assert.equal(
+      (await app.ctx.sessions.invocations.prepare(worker, 'task.get', {})).input.taskId,
+      task.id,
+    );
     // Leaving the instance out asks what the whole project is doing. Filling it in from the
     // binding would answer for this worker's own record — a different question.
     assert.deepEqual(
@@ -195,7 +203,7 @@ test('metadata admission avoids rendering, binds each session to its own record 
     );
     // Without the read mark the published binding holds, and fills in what was left out.
     assert.deepEqual(
-      (await app.ctx.sessions.prepare(worker, 'workflow.status_and_next', {})).input,
+      (await app.ctx.sessions.invocations.prepare(worker, 'workflow.status_and_next', {})).input,
       { instanceId: task.id },
     );
     // Every session reads whatever the project holds; only a read marked as one opens.
@@ -205,7 +213,7 @@ test('metadata admission avoids rendering, binds each session to its own record 
       'art_outside_the_packet',
     );
     await assert.rejects(
-      async () => await app.ctx.sessions.prepare(worker, 'artifact.read', outside),
+      async () => await app.ctx.sessions.invocations.prepare(worker, 'artifact.read', outside),
       { code: 'execution_arguments_forbidden' },
     );
   }

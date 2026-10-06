@@ -275,7 +275,7 @@ test(
       };
       const path = join(directory, `${signal}.json`);
       writeFileSync(path, JSON.stringify(config));
-      await app.ctx.sessions.setDispatch(caller, { enabled: true });
+      await app.ctx.sessions.dispatch.setDispatch(caller, { enabled: true });
       const child = launch(t, ['--config', path], boot.token);
       const ready = await bounded(child.ready, 'Runner-only Cordis provider did not become ready');
       assert.equal(ready.mode, 'runner');
@@ -300,12 +300,12 @@ test(
         (session) => session.runnerId === ready.runner.runnerId,
       )!;
       assert.equal(active.status, 'active');
-      const presence = (await app.ctx.sessions.projectStatus(caller)).runners.find(
+      const presence = (await app.ctx.sessions.dispatch.projectStatus(caller)).runners.find(
         (runner) => runner.runnerId === ready.runner.runnerId,
       );
       assert.ok(presence);
       assert.ok(presence.capabilities?.includes('code.v2'));
-      await app.ctx.sessions.setDispatch(caller, { enabled: false });
+      await app.ctx.sessions.dispatch.setDispatch(caller, { enabled: false });
       assert.equal(await child.stop(signal), 0, child.stderr);
       const closed = await app.ctx.sessions.get(caller, active.id);
       assert.equal(closed.status, 'released');

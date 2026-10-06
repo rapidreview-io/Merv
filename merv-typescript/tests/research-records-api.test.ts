@@ -305,7 +305,7 @@ test('A real Task worker cannot edit project intent through HTTP or MCP, even by
     checks: ['The input is checked.'],
     requestId: 'task',
   });
-  await f.app.ctx.sessions.heartbeatRunner(f.caller, {
+  await f.app.ctx.sessions.dispatch.heartbeatRunner(f.caller, {
     runnerId: 'acceptance-runner',
     capacity: 1,
     capabilities: ['code.v2'],

@@ -270,7 +270,7 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   );
   await f.restart();
   const before = await f.snapshot();
-  for (const method of ['get', 'list', 'describe'] as const)
+  for (const method of ['get', 'list', 'session'] as const)
     f.app.ctx.sessions[method] = (() => {
       throw new Error('Historical read must not reconcile a session');
     }) as never;
@@ -426,7 +426,7 @@ test('A final capture of a session halted before any host attached is failed, no
     false,
     'A session no runner attached worked from no commit',
   );
-  await f.app.ctx.sessions.halt(f.source, { sessionId: session.id });
+  await f.app.ctx.sessions.dispatch.halt(f.source, { sessionId: session.id });
   assert.equal((await f.app.ctx.codeWork.capture(f.reader, ref)).status, 'failed');
 });
 

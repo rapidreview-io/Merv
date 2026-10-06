@@ -55,7 +55,7 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
     source = options.source,
   ) {
     const runnerId = request();
-    await host.sessions.heartbeatRunner(source, {
+    await host.sessions.dispatch.heartbeatRunner(source, {
       runnerId,
       machine: {
         hostname: 'current-work-test',
@@ -147,7 +147,10 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
     handler: (caller: Caller, bound: Data) => T | Promise<T>,
   ): Promise<T> {
     assert.ok(lease.worker, 'Authenticate the attached worker before invoking its tools');
-    return host.sessions.run(await host.sessions.prepare(lease.worker, tool, input), handler);
+    return host.sessions.invocations.run(
+      await host.sessions.invocations.prepare(lease.worker, tool, input),
+      handler,
+    );
   }
 
   async function commit(

@@ -54,6 +54,8 @@ export class SessionConversations {
     ) => Promise<Session>,
     /** Retires a dormant agent; one in use or persistent is left as it is. */
     private retire: (agentId: string, reason: string, tx: Transaction) => Promise<void>,
+    /** Refuses once Sessions has closed. */
+    private available: () => void,
   ) {}
   async initialize() {
     await this.state.migrate('session_conversations', [
@@ -61,6 +63,7 @@ export class SessionConversations {
     ]);
   }
   register(workflow: string, provider: ContinuityProvider): () => void {
+    this.available();
     check(
       !this.providers.has(workflow),
       'continuity_registered',

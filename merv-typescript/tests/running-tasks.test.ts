@@ -156,7 +156,7 @@ async function fixture(t: TestContext) {
   /** A new agent of the operator's takes the task's current step on a lease. */
   const lease = async (task: { id: string }, name: string) => {
     const secret = `ms_${randomBytes(32).toString('base64url')}`;
-    await app.ctx.sessions.heartbeatRunner(operator, {
+    await app.ctx.sessions.dispatch.heartbeatRunner(operator, {
       runnerId: `external-${sequence + 1}`,
       machine: { hostname: 'running-test', system: 'darwin', architecture: 'arm64' },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],

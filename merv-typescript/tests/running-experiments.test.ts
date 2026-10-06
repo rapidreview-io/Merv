@@ -57,7 +57,7 @@ async function assembled(t: TestContext) {
     credentialId: boot.credential.id,
   };
   await waitForManagedCode(app.ctx.codeWork, operator);
-  await app.ctx.sessions.heartbeatRunner(operator, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(operator, {
     runnerId: 'running-test',
     machine: { hostname: 'test', system: 'linux', architecture: 'x64' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -282,7 +282,7 @@ test('an open experiment is a work card that says where it stands and what it wa
   assert.equal(node(board, work(idle.id))?.rank, 1);
 
   // Once its lease ends without a move, it has waited since the lease ended.
-  await f.app.ctx.sessions.halt(f.operator, { sessionId: agent.session!.id });
+  await f.app.ctx.sessions.dispatch.halt(f.operator, { sessionId: agent.session!.id });
   const [lease] = await f.app.ctx.state.transaction(
     async (tx) =>
       await tx.all<{ released_at: string }>(
@@ -426,7 +426,7 @@ test('a review state says who holds the review, and rounds used up need a person
   assert.deepEqual(node(await f.board(), work(experiment.id))?.lines, [['Running']]);
 
   // Retried after an interruption, it runs again.
-  await f.app.ctx.sessions.halt(f.operator, { sessionId: runner.session!.id });
+  await f.app.ctx.sessions.dispatch.halt(f.operator, { sessionId: runner.session!.id });
   experiment = await f.app.ctx.experiments.transition(f.operator, {
     experimentId: experiment.id,
     expectedRevision: experiment.workflow.revision,

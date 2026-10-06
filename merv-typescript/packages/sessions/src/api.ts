@@ -1,60 +1,46 @@
-import type { HuggingFaceAccess } from '@merv/secrets/types';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { z } from 'zod';
-import { check, MervError, pathSegment, type Caller } from '@merv/contracts';
+import { check, MervError, pathSegment } from '@merv/contracts';
 import { serveEvents } from '@merv/api/event-stream';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
-import type { NativeMcpConnection, Sessions } from './types.js';
+import type { Sessions } from './types.js';
 import { unknownEndpoint } from '@merv/api/errors';
 
 /**
  * What Sessions' HTTP routes and credentials use of Sessions. Each body, and the enrollment's
  * selected project, is handed on as it came: Sessions parses and checks it.
  */
-export interface SessionRoutes {
-  authenticate(token: string): Promise<Caller>;
-  authenticateManaged(token: string): Promise<Caller>;
-  enrollManaged(
-    token: string,
-    input: unknown,
-    projectId?: unknown,
-  ): Promise<{ controlToken: string }>;
-  registerAgent(caller: Caller, input: unknown): Promise<unknown>;
-  agents(caller: Caller): Promise<unknown[]>;
-  agent(caller: Caller, agentId: string): Promise<unknown>;
-  agentObservation(caller: Caller, agentId: string): Promise<unknown>;
-  retireAgent(caller: Caller, agentId: string): Promise<unknown>;
-  rotateAgent(caller: Caller, agentId: string): Promise<unknown>;
-  agentSelf(token: string): Promise<unknown>;
-  assignAgent(token: string, input: unknown): Promise<unknown>;
-  releaseAgentAssignment(token: string, executionId: string): Promise<unknown>;
-  resetAgentContext(token: string, reason: string): Promise<unknown>;
-  projectStatus(caller: Caller): Promise<unknown>;
-  setDispatch(caller: Caller, input: unknown): Promise<unknown>;
-  halt(caller: Caller, input: { sessionId?: string; reason?: string }): Promise<unknown>;
-  lease(caller: Caller, input: unknown): Promise<unknown>;
-  heartbeatRunner(caller: Caller, input: unknown): Promise<unknown>;
-  setRunnerSettings(caller: Caller, input: unknown): Promise<unknown>;
-  offer(caller: Caller, input: unknown): Promise<unknown>;
-  list(caller: Caller): Promise<unknown[]>;
-  get(caller: Caller, sessionId: string): Promise<unknown>;
-  attach(caller: Caller, input: unknown): Promise<unknown>;
-  launchConnections(
-    caller: Caller,
-    input: unknown,
-  ): Promise<{ connections: NativeMcpConnection[] }>;
-  huggingfaceAccess(caller: Caller, input: unknown): Promise<{ access: HuggingFaceAccess | null }>;
-  huggingface(caller: Caller, input: unknown): Promise<{ hfToken: string | null }>;
-  workspaceResult(caller: Caller, input: unknown): Promise<unknown>;
-  transcript(caller: Caller, input: unknown): Promise<unknown>;
-  stream(caller: Caller, input: unknown): Promise<unknown>;
-  readonly streams: Sessions['streams'];
-  conversation(caller: Caller, input: unknown): Promise<unknown>;
-  resume(caller: Caller, input: unknown): Promise<unknown>;
-  heartbeat(caller: Caller, input: unknown): Promise<unknown>;
-  release(caller: Caller, input: unknown): Promise<unknown>;
-}
+export type SessionRoutes = Pick<
+  Sessions,
+  | 'authenticate'
+  | 'managed'
+  | 'registerAgent'
+  | 'agents'
+  | 'agent'
+  | 'observations'
+  | 'retireAgent'
+  | 'rotateAgent'
+  | 'agentSelf'
+  | 'assignAgent'
+  | 'releaseAgentAssignment'
+  | 'resetAgentContext'
+  | 'dispatch'
+  | 'offer'
+  | 'list'
+  | 'get'
+  | 'attach'
+  | 'launchConnections'
+  | 'huggingfaceAccess'
+  | 'huggingface'
+  | 'workspaceResult'
+  | 'transcript'
+  | 'streams'
+  | 'conversation'
+  | 'resume'
+  | 'heartbeat'
+  | 'release'
+>;
 /** Runs a read-only route in a snapshot scope: no writer lock, writes refused. */
 type SnapshotRead = <T>(fn: () => Promise<T>) => Promise<T>;
 
@@ -99,11 +85,12 @@ const managedRoute = (method: string, path: string): boolean =>
   (method === 'PUT' &&
     /^\/code\/v2\/uploads\/[A-Za-z0-9_]{1,80}\/parts\/(0|[1-9][0-9]{0,14})$/.test(path));
 
-/** The path's identifier is bound over the body's. */
-function bound(body: unknown, key: string, value: string): unknown {
-  if (body === null || typeof body !== 'object' || Array.isArray(body)) return body;
+/** The path's identifier is bound over the body's. The result is typed as the input of the method
+ *  it is handed to (`never` fits any), unchecked: Sessions parses and checks each body. */
+function bound<T = never>(body: unknown, key: string, value: string): T {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return body as T;
   if (Object.hasOwn(body, key)) throw new MervError('invalid_input', `${key} is bound by the path`);
-  return { ...body, [key]: value };
+  return { ...body, [key]: value } as T;
 }
 
 /** A continuing agent's own routes: matched first, so an unknown one costs no authentication,
@@ -147,7 +134,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   }
   const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
   if (observationRoute && req.method === 'GET')
-    return await sessions.agentObservation(caller, pathSegment(observationRoute[1]!));
+    return await sessions.observations.read(caller, pathSegment(observationRoute[1]!));
   const rotateAgentRoute = /^\/sessions\/agents\/([^/]+)\/rotate$/.exec(path);
   if (rotateAgentRoute && req.method === 'POST')
     return await sessions.rotateAgent(caller, pathSegment(rotateAgentRoute[1]!));
@@ -158,19 +145,19 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
     if (req.method === 'DELETE') return { agent: await sessions.retireAgent(caller, agentId) };
   }
   if (path === '/sessions/status' && req.method === 'GET')
-    return await sessions.projectStatus(caller);
+    return await sessions.dispatch.projectStatus(caller);
   if (path === '/sessions/dispatch' && req.method === 'PUT')
-    return { dispatch: await sessions.setDispatch(caller, await r.json()) };
+    return { dispatch: await sessions.dispatch.setDispatch(caller, await r.json()) };
   if (path === '/sessions/halt' && req.method === 'POST')
-    return await sessions.halt(caller, await r.json(haltInput));
+    return await sessions.dispatch.halt(caller, await r.json(haltInput));
   if (path === '/sessions/lease' && req.method === 'POST')
-    return await sessions.lease(caller, await r.json());
+    return await sessions.dispatch.lease(caller, await r.json());
   if (path === '/sessions/runners/heartbeat' && req.method === 'POST')
-    return { runner: await sessions.heartbeatRunner(caller, await r.json()) };
+    return { runner: await sessions.dispatch.heartbeatRunner(caller, await r.json()) };
   const settingsRoute = /^\/sessions\/runners\/([^/]+)\/settings$/.exec(path);
   if (settingsRoute && req.method === 'PUT') {
     const body = bound(await r.json(), 'runnerId', pathSegment(settingsRoute[1]!));
-    return { runner: await sessions.setRunnerSettings(caller, body) };
+    return { runner: await sessions.dispatch.setRunnerSettings(caller, body) };
   }
   if (path === '/sessions' && req.method === 'GET')
     return { sessions: await sessions.list(caller) };
@@ -185,7 +172,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
     if (!route[2] && req.method === 'GET')
       return { session: await sessions.get(caller, sessionId) };
     if (req.method === 'POST' && route[2] === 'halt')
-      return await sessions.halt(caller, { ...(await r.json(haltInput)), sessionId });
+      return await sessions.dispatch.halt(caller, { ...(await r.json(haltInput)), sessionId });
     if (
       req.method === 'POST' &&
       (route[2] === 'huggingface' || route[2] === 'huggingface-access')
@@ -205,7 +192,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
     if (req.method === 'POST' && route[2] === 'stream') {
       // A runner's batch is under a megabyte; this leaves it room.
       const input = bound(await r.json(undefined, 2 << 20), 'sessionId', sessionId);
-      return { stream: await sessions.stream(caller, input) };
+      return { stream: await sessions.streams.append(caller, input) };
     }
     if (req.method === 'POST' && route[2] === 'transcript') {
       const input = bound(await r.json(undefined, 4096), 'sessionId', sessionId);
@@ -318,7 +305,7 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
       if (!/^me_[0-9a-f]{64}$/.test(token))
         throw new MervError('unauthorized', 'Invalid managed enrollment', 401);
       const body = await r.json(undefined, 4096);
-      const enrolled = await sessions.enrollManaged(token, body, req.headers['x-merv-project-id']);
+      const enrolled = await sessions.managed.enroll(token, body, req.headers['x-merv-project-id']);
       return { controlToken: enrolled.controlToken };
     }
     const events = /^\/sessions\/(session_[^/]+)\/events$/.exec(path);
@@ -364,7 +351,7 @@ export function mountSessions(
           403,
         ),
         routes: (method, path, query) => !query && managedRoute(method, path),
-        authenticate: (token) => sessions.authenticateManaged(token),
+        authenticate: (token) => sessions.managed.authenticate(token),
       }),
     () =>
       api.credential('me_', {

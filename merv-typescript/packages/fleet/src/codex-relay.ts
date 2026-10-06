@@ -238,8 +238,8 @@ export function codexModelRelay(
     enabled: true,
     providerKey: options.providerKey,
     authority: {
-      authorize: options.authorize ?? ((token) => sessions.managedModelGrant(token)),
-      validate: async (grant) => void (await sessions.managedModelGrant(grant.id)),
+      authorize: options.authorize ?? ((token) => sessions.managed.modelGrant(token)),
+      validate: async (grant) => void (await sessions.managed.modelGrant(grant.id)),
     },
     reserve: async (grant, body) => {
       const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;

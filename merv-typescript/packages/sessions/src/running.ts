@@ -26,7 +26,7 @@ import {
 import type { AgentEvent, AgentStreamSession } from '@merv/contracts';
 import { freshForMs, type DispatchReading, type SessionDispatch } from './dispatch.js';
 import { lastActivity } from './observations.js';
-import { workNameOf } from './common.js';
+import { ordinary as unmanaged, text, workNameOf } from './common.js';
 import type {
   Agent,
   SessionPlatform,
@@ -381,7 +381,7 @@ interface PanelRow extends LeaseRow {
   result_json: string | null;
 }
 
-/** Sessions' reads for the Running page. LeasedSessions guards and delegates each one. */
+/** Sessions' reads for the Running page. */
 export class SessionRunning {
   constructor(
     private readonly state: State,
@@ -389,7 +389,14 @@ export class SessionRunning {
     private readonly dispatcher: SessionDispatch,
     private readonly clock: () => number,
     private readonly thresholds: StuckReport['thresholds'],
+    /** Refuses once Sessions has closed. */
+    private readonly available: () => void,
   ) {}
+  /** Every read's first checks: Sessions is open, and the caller is no managed runner. */
+  private enter(caller: Caller): void {
+    unmanaged(caller);
+    this.available();
+  }
   /** A person's read of one project, never a leased worker's: the Sessions page's own rule. */
   private async read<T>(
     caller: Caller,
@@ -507,6 +514,7 @@ export class SessionRunning {
   }
 
   async nodes(caller: Caller): Promise<RunningNodes> {
+    this.enter(caller);
     return await this.read(caller, async (tx, operator) => {
       const leases = await this.leases(tx, caller.projectId, operator);
       const now = this.clock();
@@ -523,6 +531,7 @@ export class SessionRunning {
   }
 
   async marks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }> {
+    this.enter(caller);
     caller = structuredClone(caller);
     return await this.state.snapshotTransaction(async (tx) => {
       const reading = await this.dispatcher.running(caller, tx);
@@ -532,6 +541,12 @@ export class SessionRunning {
 
   /** The leases on some work, as one Sessions section of that work's sidebar. */
   async work(caller: Caller, instanceIds: readonly string[]): Promise<RunningSection[]> {
+    this.enter(caller);
+    check(
+      Array.isArray(instanceIds) && instanceIds.every((id) => text(id)),
+      'invalid_instance',
+      'Instance identifiers are required',
+    );
     const ids = [...new Set(instanceIds)].slice(0, 64);
     if (!ids.length) return [];
     return await this.read(caller, async (tx, operator) => {
@@ -607,6 +622,8 @@ export class SessionRunning {
     sessionId: string,
     route: WorkRoute = () => undefined,
   ): Promise<RunningPanelPart | null> {
+    this.enter(caller);
+    check(text(sessionId), 'invalid_session', 'A session identifier is required');
     return await this.read(caller, async (tx, operator) => {
       const row = await tx.get<PanelRow>(
         `SELECT ${LEASE},x.j #>> '{closedAt}' AS closed_at,

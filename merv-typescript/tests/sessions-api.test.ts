@@ -350,15 +350,20 @@ test('only a writer in the project can send, and only the addressed worker can a
     body: 'Bounded instruction',
     requestId: 'auth-1',
   };
-  await assert.rejects(f.app.ctx.sessions.message(readerCaller, message), { code: 'forbidden' });
-  await assert.rejects(f.app.ctx.sessions.message(outsiderCaller, message), {
+  await assert.rejects(f.app.ctx.sessions.messaging.message(readerCaller, message), {
+    code: 'forbidden',
+  });
+  await assert.rejects(f.app.ctx.sessions.messaging.message(outsiderCaller, message), {
     code: 'session_not_found',
   });
   await assert.rejects(
-    f.app.ctx.sessions.message({ ...f.source, session: { id: issued.session.id } }, message),
+    f.app.ctx.sessions.messaging.message(
+      { ...f.source, session: { id: issued.session.id } },
+      message,
+    ),
     { code: 'forbidden' },
   );
-  const sent = await f.app.ctx.sessions.message(f.source, message);
+  const sent = await f.app.ctx.sessions.messaging.message(f.source, message);
   const otherWork = await f.program.start(f.source, {
     workflow: f.instance.workflow,
     requestId: 'other-work',
@@ -382,14 +387,14 @@ test('only a writer in the project can send, and only the addressed worker can a
     'session_message_not_found',
   );
   await assert.rejects(
-    f.app.ctx.sessions.acknowledgeMessage(f.source, {
+    f.app.ctx.sessions.messaging.acknowledgeMessage(f.source, {
       messageId: sent.id,
       requestId: 'fake-ack',
     }),
     { code: 'session_required' },
   );
   await assert.rejects(
-    f.app.ctx.sessions.acknowledgeMessage(
+    f.app.ctx.sessions.messaging.acknowledgeMessage(
       { ...f.source, session: { id: 'another_session' } },
       { messageId: sent.id, requestId: 'fake-worker-ack' },
     ),
@@ -624,8 +629,8 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
   );
   // An admission is the lease check that carries the frozen execution.
   const admissions = () => leaseChecks.mock.calls.filter((call) => call.arguments[3]).length;
-  // The session's liveness is its read decision; the transport does not also describe it.
-  const described = t.mock.method(f.app.ctx.sessions, 'describe');
+  // The session's liveness is its read decision; the transport does not also read it alone.
+  const described = t.mock.method(f.app.ctx.sessions, 'session');
   // Preparation, the check after parsing, and the check after the observation is stored;
   // a read is admitted once more after its handler releases the read snapshot. Each extra
   // layer that re-admits would show here.
@@ -639,7 +644,7 @@ test('a session tool call admits its lease a fixed number of times', async (t) =
     assert.equal(admissions(), expected, name);
   }
   await client.listTools();
-  assert.equal(described.mock.callCount(), 0);
+  assert.equal(described.mock.calls.filter((call) => !call.arguments[1]).length, 0);
 });
 
 test('session route and credential namespaces stay reserved when the Sessions provider is unloaded', async (t) => {
@@ -1072,7 +1077,7 @@ test('mounted tool errors and invalid output envelopes are recorded as failed ca
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
   malformed = true;
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
-  const result = await f.app.ctx.sessions.agentObservation(f.source, offered.session.agentId!);
+  const result = await f.app.ctx.sessions.observations.read(f.source, offered.session.agentId!);
   assert.deepEqual(
     result.toolCalls.map((call) => call.status),
     ['failed', 'failed'],

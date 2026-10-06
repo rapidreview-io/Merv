@@ -130,7 +130,7 @@ async function fixture(t: TestContext) {
       platforms: [profile],
       capacity: 4,
     });
-    await app.ctx.sessions.setDispatch(owner, { enabled: true });
+    await app.ctx.sessions.dispatch.setDispatch(owner, { enabled: true });
     const instance = await handle.start(owner, {
       workflow: 'stream-test',
       requestId: randomUUID(),
@@ -375,7 +375,7 @@ test('a unitâ€™s sidebar lists its sessions for an operator alone, and a leaseâ€
     projectId: f.owner.projectId,
     credentialId: reader.credential.id,
   };
-  const operatorSections = await f.app.ctx.sessions.runningWork(f.owner, [instance.id]);
+  const operatorSections = await f.app.ctx.sessions.running.work(f.owner, [instance.id]);
   const agent = operatorSections.find((section) => section.kind === 'agent');
   assert.ok(agent && agent.kind === 'agent');
   assert.deepEqual(
@@ -391,7 +391,7 @@ test('a unitâ€™s sidebar lists its sessions for an operator alone, and a leaseâ€
       },
     ],
   );
-  const readerSections = await f.app.ctx.sessions.runningWork(readerCaller, [instance.id]);
+  const readerSections = await f.app.ctx.sessions.running.work(readerCaller, [instance.id]);
   assert.equal(
     readerSections.find((section) => section.kind === 'agent'),
     undefined,
@@ -400,7 +400,7 @@ test('a unitâ€™s sidebar lists its sessions for an operator alone, and a leaseâ€
 
   // The lease's node says what its agent does now, from the newest event.
   const line = async () =>
-    (await f.app.ctx.sessions.running(f.owner)).nodes.find(
+    (await f.app.ctx.sessions.running.nodes(f.owner)).nodes.find(
       (node) => node.key === `session:${session.id}`,
     )!.lines[0];
   await f.ok('POST', `/sessions/${session.id}/stream`, f.token, {
@@ -425,7 +425,7 @@ test('a unitâ€™s sidebar lists its sessions for an operator alone, and a leaseâ€
     events: [{ kind: 'status', id: 'st', text: 'Turn failed Â· /home/agent/notes.txt' }],
   });
   assert.equal((await line())![0], 'Turn failed Â· /home/agent/notes.txt');
-  const readerLine = (await f.app.ctx.sessions.running(readerCaller)).nodes.find(
+  const readerLine = (await f.app.ctx.sessions.running.nodes(readerCaller)).nodes.find(
     (node) => node.key === `session:${session.id}`,
   )!.lines[0];
   assert.ok(!JSON.stringify(readerLine).includes('Turn failed'), JSON.stringify(readerLine));

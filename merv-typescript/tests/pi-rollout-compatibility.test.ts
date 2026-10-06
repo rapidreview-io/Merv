@@ -117,7 +117,7 @@ test('sessions v8 keeps v7 data; exact migration-only rollback boots while the v
       expiresAt,
       hardDeadline: expiresAt,
     });
-    const bindings = new ManagedRunnerBindings(state, scope, Date.now, env, credentials);
+    const bindings = new ManagedRunnerBindings(state, scope, Date.now, env, credentials, () => {});
     bindings.registerValidator({
       current: async () => true,
       admits: async () => true,

@@ -7,7 +7,43 @@ import {
   type Scope,
   type State,
   type Transaction,
+  visible,
 } from '@merv/contracts';
+import type { Session } from './types.js';
+
+/** Offered or active: a session that still holds its lease. */
+export const live = (session: Session) =>
+  session.status === 'offered' || session.status === 'active';
+/** Visible text of at most `max` characters and no NUL. */
+export const text = (value: unknown, max = 200) =>
+  typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');
+export const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
+/** Managed runners use only their bound controls, never an ordinary Sessions entry point. */
+export function ordinary(caller: Caller): void {
+  check(
+    !caller.managed,
+    'forbidden',
+    'Managed runners may only use their bound session controls',
+    403,
+  );
+}
+/** A worker_sessions row with its workspace capture. */
+export interface Row {
+  id: string;
+  project_id: string;
+  owner_hash: string;
+  token_hash: string;
+  fingerprint: string;
+  session_json: string;
+  attachment_json: string | null;
+  result_json: string | null;
+}
+
+/** A refusal as it is, anything else as Sessions being unavailable. */
+export const safeError = (error: unknown): MervError =>
+  error instanceof MervError
+    ? error
+    : new MervError('session_unavailable', 'Session validation is unavailable', 503);
 
 export const isoNow = (clock: () => number) => new Date(clock()).toISOString();
 

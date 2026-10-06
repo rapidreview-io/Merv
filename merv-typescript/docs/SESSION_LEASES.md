@@ -106,12 +106,10 @@ silence. Heartbeat is unchanged: it renews `expiresAt` and says nothing about pr
 | ------------------- | ------- | ------------ | ------------------------------------------------------------------------ |
 | `idleNoticeSeconds` | 1800    | 60 to 604800 | Time without a Merv tool call after which the session is reported quiet. |
 
-Only the sweep's full pass marks or clears, every 30 seconds of clock time. A poll can run on
-a read snapshot, so no read path computes a mark. The mark is `quietSince` on the session, set once per episode
-with one `session.quiet` event (`lastActivityAt`, `idleSeconds`); the next tool call clears
-it on the following pass without an event. `GET /sessions/status` carries `lastActivityAt`
-and `quietSince` on every session, and `session.stuck` reports a quiet session from the same
-clock at the moment of the read, whether or not the sweep has run.
+Quiet is computed when it is read and never stored. `GET /sessions/status` carries
+`lastActivityAt` and `quietSince` on every session: `quietSince` is the moment the idle clock
+passed `idleNoticeSeconds`, and null again once a tool call moves it. `session.stuck` reports
+a quiet session from the same clock at the moment of the read.
 
 **Nothing is closed for silence.** A tool call is the only activity the server can see, and
 a worker with none may be training locally for hours, waiting on a sandbox job or using

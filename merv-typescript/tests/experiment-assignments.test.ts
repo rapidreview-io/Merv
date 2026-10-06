@@ -92,7 +92,7 @@ async function fixture(t: TestContext) {
   const issue = async (role: 'operator' | 'producer' | 'reviewer' | 'reader'): Promise<Caller> => {
     const issued = await scope.issueActor(source, { name: role, role });
     if (role === 'operator')
-      await sessions.heartbeatRunner(
+      await sessions.dispatch.heartbeatRunner(
         {
           projectId: source.projectId,
           actorId: issued.actor.id,
@@ -271,7 +271,7 @@ async function fixture(t: TestContext) {
     return next;
   };
   const heartbeat = (caller: Caller) =>
-    sessions.heartbeatRunner(caller, {
+    sessions.dispatch.heartbeatRunner(caller, {
       runnerId: 'assignment-test',
       machine: { hostname: 'test', system: process.platform, architecture: process.arch },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -300,7 +300,7 @@ async function fixture(t: TestContext) {
     tool: string,
     input: Data,
     handler: (worker: Caller, bound: Data) => T | Promise<T>,
-  ) => sessions.run(await sessions.prepare(caller, tool, input), handler);
+  ) => sessions.invocations.run(await sessions.invocations.prepare(caller, tool, input), handler);
   const release = async (sessionId: string, caller = source) => {
     if (held.has(sessionId)) {
       await work.release(held.get(sessionId)!);
@@ -608,7 +608,7 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
   });
   assert.equal(
     (
-      await f.sessions.prepare(worker, 'experiment.transition', {
+      await f.sessions.invocations.prepare(worker, 'experiment.transition', {
         transition: 'submit_design',
       })
     ).input.expectedRevision,
@@ -616,12 +616,17 @@ test('dispatch and activation read metadata only; fixed grants do not depend on 
   );
   await assert.rejects(
     async () =>
-      await f.sessions.prepare(worker, 'experiment.transition', { transition: 'submit_results' }),
+      await f.sessions.invocations.prepare(worker, 'experiment.transition', {
+        transition: 'submit_results',
+      }),
     { code: 'execution_arguments_forbidden' },
   );
-  await assert.rejects(async () => await f.sessions.prepare(worker, 'workflow.begin', {}), {
-    code: 'execution_tool_forbidden',
-  });
+  await assert.rejects(
+    async () => await f.sessions.invocations.prepare(worker, 'workflow.begin', {}),
+    {
+      code: 'execution_tool_forbidden',
+    },
+  );
 });
 
 test('project evidence can be saved without an experiment worker, while a lease fences association', async (t) => {
@@ -698,14 +703,15 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
     { code: 'experiment_leased' },
   );
   await assert.rejects(
-    async () => await f.sessions.prepare(worker, 'artifact.read', { artifactId: foreign.id }),
+    async () =>
+      await f.sessions.invocations.prepare(worker, 'artifact.read', { artifactId: foreign.id }),
     {
       code: 'execution_arguments_forbidden',
     },
   );
   await assert.rejects(
     async () =>
-      await f.sessions.prepare(worker, 'experiment.attach', {
+      await f.sessions.invocations.prepare(worker, 'experiment.attach', {
         artifactId: foreign.id,
         role: 'plan',
         path: 'late.md',
@@ -764,7 +770,8 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
   );
   const noForeignReads = t.mock.method(f.artifacts, 'bytes');
   await assert.rejects(
-    async () => await f.sessions.prepare(worker, 'artifact.read', { artifactId: lateReport.id }),
+    async () =>
+      await f.sessions.invocations.prepare(worker, 'artifact.read', { artifactId: lateReport.id }),
     { code: 'execution_arguments_forbidden' },
     'A late association must not enlarge an already issued lease',
   );
@@ -805,7 +812,8 @@ test('offer freezes recovery inputs, fences interactive writes and permits only 
       await f.experiments.attach(caller, input as unknown as ExperimentAttach),
   );
   assert.equal(
-    (await f.sessions.prepare(worker, 'artifact.read', { artifactId: own.id })).input.artifactId,
+    (await f.sessions.invocations.prepare(worker, 'artifact.read', { artifactId: own.id })).input
+      .artifactId,
     own.id,
   );
   assert.match(
@@ -883,7 +891,10 @@ test('review leases claim before freezing, recover exactly once, and claim as th
   assert.match(offered.session.assignment.context!.prompt, new RegExp(claimed.claimId!));
   await assert.rejects(
     async () =>
-      await f.sessions.prepare(worker, 'artifact.create', { title: 'Forbidden', content: 'No' }),
+      await f.sessions.invocations.prepare(worker, 'artifact.create', {
+        title: 'Forbidden',
+        content: 'No',
+      }),
     { code: 'execution_tool_forbidden' },
   );
   await f.release(offered.session.id, lead);
@@ -899,7 +910,9 @@ test('review leases claim before freezing, recover exactly once, and claim as th
   assert.equal((await f.reviews.get(replacement, pending.reviewId!)).claimId, current.claimId);
   await assert.rejects(
     async () =>
-      await f.sessions.prepare(replacement, 'review.submit', { claimId: claimed.claimId! }),
+      await f.sessions.invocations.prepare(replacement, 'review.submit', {
+        claimId: claimed.claimId!,
+      }),
     { code: 'execution_arguments_forbidden' },
   );
 });
@@ -929,7 +942,7 @@ test('context failure rolls back worker reservation and review claim; reload pre
   read.mock.restore();
   const offered = await f.offer(pending, lead);
   const worker = await f.sessions.authenticate(offered.secret);
-  const stale = await f.sessions.prepare(worker, 'experiment.get_state', {});
+  const stale = await f.sessions.invocations.prepare(worker, 'experiment.get_state', {});
   const generation = offered.session.execution.registrationId;
   await f.reload();
   const again = await f.sessions.authenticate(offered.secret);
@@ -939,7 +952,10 @@ test('context failure rolls back worker reservation and review claim; reload pre
   assert.notEqual(current.registrationId, generation);
   await assert.rejects(
     async () =>
-      f.sessions.run(stale, async (caller) => await f.experiments.get(caller, pending.id)),
+      f.sessions.invocations.run(
+        stale,
+        async (caller) => await f.experiments.get(caller, pending.id),
+      ),
     { code: 'execution_replaced' },
   );
   await f.release(offered.session.id, lead);
@@ -998,9 +1014,12 @@ test('revoking the source fences its live reviewer before recovery and an author
   const worker = await f.sessions.authenticate(offered.secret);
   const claim = await f.reviews.get(worker, pending.reviewId!);
   await f.scope.revokeActor(replacementSource, reviewSource.actorId);
-  await assert.rejects(async () => await f.sessions.prepare(worker, 'review.submit', {}), {
-    code: 'forbidden',
-  });
+  await assert.rejects(
+    async () => await f.sessions.invocations.prepare(worker, 'review.submit', {}),
+    {
+      code: 'forbidden',
+    },
+  );
   await f.sessions.sweep();
   await f.events.drain();
   const reopened = await f.reviews.get(replacementSource, pending.reviewId!);
@@ -1106,7 +1125,8 @@ test('successors receive exact rejected findings and manifests across both retur
       ),
     );
     assert.equal(
-      (await f.sessions.prepare(worker, 'review.get', { reviewId: review.id })).input.reviewId,
+      (await f.sessions.invocations.prepare(worker, 'review.get', { reviewId: review.id })).input
+        .reviewId,
       review.id,
     );
     if (destination === 'planned') {
@@ -1177,8 +1197,11 @@ test('a returned execution references prior result bodies while retaining the pi
   assert.ok((offer.session.execution.references.artifacts as string[]).includes(prior.artifact.id));
   const worker = await f.sessions.authenticate(offer.secret);
   assert.equal(
-    (await f.sessions.prepare(worker, 'artifact.read', { artifactId: prior.artifact.id })).input
-      .artifactId,
+    (
+      await f.sessions.invocations.prepare(worker, 'artifact.read', {
+        artifactId: prior.artifact.id,
+      })
+    ).input.artifactId,
     prior.artifact.id,
   );
   assert.equal((await f.artifacts.read(worker, prior.artifact.id)).content, oldBody);
@@ -1205,8 +1228,11 @@ test('a new planning round and its next design review reference earlier plan bod
     /PRIOR_ROUND_PLAN_BODY_73982/,
   );
   assert.equal(
-    (await f.sessions.prepare(worker, 'artifact.read', { artifactId: prior.artifact.id })).input
-      .artifactId,
+    (
+      await f.sessions.invocations.prepare(worker, 'artifact.read', {
+        artifactId: prior.artifact.id,
+      })
+    ).input.artifactId,
     prior.artifact.id,
   );
   await f.release(offered.session.id);
@@ -1325,7 +1351,7 @@ test('historical observations stay project-scoped and pure after source revocati
   await f.events.close();
   await f.scope.revokeCredential(operator, f.source.credentialId!);
   await assert.rejects(async () => await f.code.capture(f.source, ref), { code: 'forbidden' });
-  for (const method of ['get', 'list', 'describe'] as const)
+  for (const method of ['get', 'list', 'session'] as const)
     t.mock.method(f.sessions, method, () => {
       assert.fail('Historical reads must not reconcile or impersonate source authority');
     });
@@ -1385,7 +1411,8 @@ test('a continuing agent can acquire successive experiment leases without inheri
   assert.equal(b.actorId, agent.actorId);
   assert.equal(a.agentSessionId, b.agentSessionId);
   await assert.rejects(
-    async () => await f.sessions.prepare(callerB, 'artifact.read', { artifactId: artifact.id }),
+    async () =>
+      await f.sessions.invocations.prepare(callerB, 'artifact.read', { artifactId: artifact.id }),
   );
   assert.equal(
     (
@@ -1410,7 +1437,7 @@ test('an assigned reviewer updates the paper through its scoped verdict only', a
   const paper = await createService(new PaperService(f.state, f.scope, f.artifacts));
   assert.match(offered.session.assignment.context!.prompt, /You are responsible for updating/);
   await assert.rejects(
-    f.sessions.prepare(worker, 'paper.patch', {
+    f.sessions.invocations.prepare(worker, 'paper.patch', {
       kind: 'methods',
       expectedRevision: 0,
       requestId: 'direct-review-edit',

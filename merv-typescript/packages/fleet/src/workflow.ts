@@ -169,7 +169,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     try {
       this.disposers.push(this.fleet.registerOwner(ownerKind, this));
       this.disposers.push(
-        this.sessions.registerManagedValidator({
+        this.sessions.managed.registerValidator({
           current: async (binding, tx) => await this.current(binding, tx),
           admits: async (allocationId, epoch, tx) =>
             await this.fleet.admits(allocationId, epoch, tx),
@@ -230,7 +230,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** A hosted session's model grant, charged to the person its machine was rented for. */
   async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
-    const grant = await this.sessions.managedModelGrant(tokenOrSessionId);
+    const grant = await this.sessions.managed.modelGrant(tokenOrSessionId);
     const { person } = await this.fleet.inspectOwned(this, grant.allocationId);
     return { ...grant, person: person ?? grant.person };
   }
@@ -247,7 +247,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         throw error;
       }
     } else {
-      const selected = (await this.sessions.servedSources()).find(
+      const selected = (await this.sessions.dispatch.servedSources()).find(
         (entry) => entry.projectId === caller.projectId,
       );
       if (!selected) return null;
@@ -302,7 +302,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const sources = new Map<string, DelegationSource>();
     const add = (source: DelegationSource) => sources.set(digest(source), source);
     for (const source of historical) add(source);
-    for (const { source } of (await this.sessions.servedSources()).filter(
+    for (const { source } of (await this.sessions.dispatch.servedSources()).filter(
       (entry) => entry.projectId === projectId,
     )) {
       add(source);
@@ -314,7 +314,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     for (const source of sources.values()) {
       try {
         for (const candidate of (
-          await this.sessions.dispatchDemand(sourceCaller(source), demandInput)
+          await this.sessions.dispatch.dispatchDemand(sourceCaller(source), demandInput)
         ).candidates)
           current.add(targetId(candidate));
       } catch (error) {
@@ -357,7 +357,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     let newest = 0;
     for (const a of attempts.slice(prior).toReversed()) {
       if (a.phase !== 'released' || !a.runtime) continue;
-      if ((await this.sessions.inspectManaged(a.id, a.epoch))?.session) break;
+      if ((await this.sessions.managed.inspect(a.id, a.epoch))?.session) break;
       unclaimed++;
       newest ||= Date.parse(a.updatedAt);
       if (unclaimed === unclaimedAttemptLimit) break;
@@ -388,7 +388,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const active = new Set<string>();
     for (const a of allocations.filter(occupied)) {
       active.add(a.owner.id);
-      const session = (await this.sessions.inspectManaged(a.id, a.epoch))?.session;
+      const session = (await this.sessions.managed.inspect(a.id, a.epoch))?.session;
       if (session) active.add(targetId(session));
     }
     return await Promise.all(
@@ -577,7 +577,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Fleet workflow allocation is unavailable',
       403,
     );
-    const { enrollmentToken } = await this.sessions.ensureManagedEnrollment({
+    const { enrollmentToken } = await this.sessions.managed.ensure({
       allocationId: a.id,
       epoch: a.epoch,
       source: a.source,
@@ -603,7 +603,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Fleet workflow allocation is unavailable',
       403,
     );
-    const observed = await this.sessions.inspectManaged(a.id, a.epoch);
+    const observed = await this.sessions.managed.inspect(a.id, a.epoch);
     if (observed?.session) {
       const session = observed.session;
       if (workId(a)) {
@@ -635,7 +635,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     let wanted = false;
     for (const director of workId(a) ? [a.source, await this.reviewer(a.source)] : [a.source])
       wanted ||= (
-        await this.sessions.dispatchDemand(sourceCaller(director), demandInput)
+        await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput)
       ).candidates.some((c) => !workId(a) || c.instanceId === workId(a));
     // Counted from the launch, or the runner's enrollment. Work claimed after the first read
     // keeps its machine; a claim after the second is refused once the stop commits.
@@ -643,7 +643,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     if (
       !wanted &&
       this.clock() - Date.parse(a.updatedAt) >= grace &&
-      !(await this.sessions.inspectManaged(a.id, a.epoch))?.session
+      !(await this.sessions.managed.inspect(a.id, a.epoch))?.session
     )
       return 'finished';
     return observed?.runnerId ? 'running' : 'starting';
@@ -676,7 +676,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     const served = new Map<string, Map<string, DelegationSource>>();
     // Projects passed over this pass: their reads failed, or Fleet refused one of their requests.
     const failed = new Set<string>();
-    for (const { projectId, source } of await this.sessions.servedSources()) {
+    for (const { projectId, source } of await this.sessions.dispatch.servedSources()) {
       try {
         const { who, key } = await person(source);
         if (!who || !(everyone || this.config.people.includes(who))) continue;
@@ -687,7 +687,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         }
         for (const director of [source, await this.reviewer(source)])
           for (const target of (
-            await this.sessions.dispatchDemand(sourceCaller(director), demandInput)
+            await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput)
           ).candidates)
             if (!wanted.has(targetId(target))) wanted.set(targetId(target), director);
         served.set(projectId, wanted);
@@ -733,7 +733,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     for (const a of active.filter((a) => a.intent === 'run')) {
       // The allocation names why Fleet rented the runner, but Sessions may assign it another
       // ready step. Once bound, that actual step consumes the coverage; the intended one waits.
-      const session = (await this.sessions.inspectManaged(a.id, a.epoch))?.session;
+      const session = (await this.sessions.managed.inspect(a.id, a.epoch))?.session;
       if (workId(a)) {
         for (const id of served.get(a.projectId)?.keys() ?? [])
           if (id.startsWith(`${workId(a)}:`)) covered.add(id);

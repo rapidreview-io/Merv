@@ -169,33 +169,37 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
   const ensureInputs: unknown[] = [];
   const fakeSessions = {
     contributeStatus: () => () => undefined,
-    registerManagedValidator(value: ManagedRunnerValidator) {
-      validator = value;
-      return () => {
-        if (validator === value) validator = undefined;
-      };
+    managed: {
+      registerValidator(value: ManagedRunnerValidator) {
+        validator = value;
+        return () => {
+          if (validator === value) validator = undefined;
+        };
+      },
+      async ensure(input: unknown) {
+        ensureInputs.push(input);
+        return { enrollmentToken: `me_${'a'.repeat(64)}` };
+      },
+      async inspect(id: string) {
+        return inspections.get(id) ?? null;
+      },
     },
-    async ensureManagedEnrollment(input: unknown) {
-      ensureInputs.push(input);
-      return { enrollmentToken: `me_${'a'.repeat(64)}` };
-    },
-    async inspectManaged(id: string) {
-      return inspections.get(id) ?? null;
-    },
-    async servedSources() {
-      await held;
-      return structuredClone(served);
-    },
-    async dispatchDemand(caller: Caller, input: unknown) {
-      assert.deepEqual(input, {
-        platform: hostedCodexPlatform,
-        capabilities: [...hostedCodexCapabilities],
-      });
-      await scope.require(caller, 'read');
-      const demand =
-        demands.get(caller.service ? `review:${caller.projectId}` : caller.projectId) ?? [];
-      if (demand instanceof Error) throw demand;
-      return { candidates: demand };
+    dispatch: {
+      async servedSources() {
+        await held;
+        return structuredClone(served);
+      },
+      async dispatchDemand(caller: Caller, input: unknown) {
+        assert.deepEqual(input, {
+          platform: hostedCodexPlatform,
+          capabilities: [...hostedCodexCapabilities],
+        });
+        await scope.require(caller, 'read');
+        const demand =
+          demands.get(caller.service ? `review:${caller.projectId}` : caller.projectId) ?? [];
+        if (demand instanceof Error) throw demand;
+        return { candidates: demand };
+      },
     },
   } as unknown as Sessions;
   const makeAdapter = (extra: FleetWorkflowConfig) =>
@@ -844,19 +848,23 @@ test('a relay call in flight when the adapter unloads gets 503, never 401: its r
   });
   ctx.provide('sessions', {
     contributeStatus: () => () => undefined,
-    registerManagedValidator: (value: ManagedRunnerValidator) => {
-      validator = value;
-      return () => {
-        order.push('validator');
-        validator = undefined;
-      };
+    managed: {
+      registerValidator: (value: ManagedRunnerValidator) => {
+        validator = value;
+        return () => {
+          order.push('validator');
+          validator = undefined;
+        };
+      },
+      // Sessions refuses the session once its owner has gone.
+      modelGrant: async () => {
+        asked();
+        await answering;
+        throw new MervError('unauthorized', 'No live managed session', 401);
+      },
     },
-    servedSources: async () => [],
-    // Sessions refuses the session once its owner has gone.
-    managedModelGrant: async () => {
-      asked();
-      await answering;
-      throw new MervError('unauthorized', 'No live managed session', 401);
+    dispatch: {
+      servedSources: async () => [],
     },
   });
   const fiber = ctx.plugin(fleetWorkflowPlugin, {
@@ -919,9 +927,13 @@ test('the mounted relay reads a grant through the adapter, charged to the alloca
   const grant = { id: 'session', projectId: 'p', allocationId: 'flt_1', person: 'actor' };
   ctx.provide('sessions', {
     contributeStatus: () => () => undefined,
-    registerManagedValidator: () => () => undefined,
-    servedSources: async () => [],
-    managedModelGrant: async () => ({ ...grant, model: 'm', expiresAt: '2099-01-01T00:00:00Z' }),
+    managed: {
+      registerValidator: () => () => undefined,
+      modelGrant: async () => ({ ...grant, model: 'm', expiresAt: '2099-01-01T00:00:00Z' }),
+    },
+    dispatch: {
+      servedSources: async () => [],
+    },
   });
   const fiber = ctx.plugin(fleetWorkflowPlugin, {
     enabled: true,
@@ -1215,8 +1227,8 @@ test('an idle machine gets its grace from its launch, and work claimed while dem
   f.advance(30_000);
   assert.equal(await f.owner().observe(a), 'running', 'counted from the launch, not the request');
   f.advance(30_000);
-  const dispatch = f.sessions.dispatchDemand;
-  f.sessions.dispatchDemand = async (...args) => {
+  const dispatch = f.sessions.dispatch.dispatchDemand;
+  f.sessions.dispatch.dispatchDemand = async (...args) => {
     const demand = await dispatch(...args);
     f.inspections.get(a.id)!.session = {
       id: 'session_a',
@@ -1230,7 +1242,7 @@ test('an idle machine gets its grace from its launch, and work claimed while dem
     return demand;
   };
   assert.equal(await f.owner().observe(a), 'running');
-  f.sessions.dispatchDemand = dispatch;
+  f.sessions.dispatch.dispatchDemand = dispatch;
   f.inspections.get(a.id)!.session = null;
   assert.equal(await f.owner().observe(a), 'finished');
 });
@@ -1492,7 +1504,7 @@ test(
   async (t) => {
     const h = await hosted(t, 1);
     const caller = await h.project('Retry integration');
-    await h.sessions.setDispatch(caller, { enabled: true });
+    await h.sessions.dispatch.setDispatch(caller, { enabled: true });
     const work = await h.start(caller);
     const target = { instanceId: work.id, expectedRevision: work.revision };
     const id = `${work.id}:${work.revision}`;
@@ -1564,16 +1576,16 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
     projectId: first.projectId,
     credentialId: issued.credential.id,
   };
-  await sessions.setDispatch(first, { enabled: true });
-  await sessions.setDispatch(second, { enabled: true });
+  await sessions.dispatch.setDispatch(first, { enabled: true });
+  await sessions.dispatch.setDispatch(second, { enabled: true });
   const targets = [
     ...(await Promise.all(Array.from({ length: workerCount }, () => h.start(first)))),
     await h.start(second),
   ];
   // An ordinary runner claims through the existing path before Fleet reads demand.
-  await sessions.heartbeatRunner(caller, heartbeat('external'));
+  await sessions.dispatch.heartbeatRunner(caller, heartbeat('external'));
   const externalClaim = claim('external');
-  const external = await sessions.lease(caller, externalClaim);
+  const external = await sessions.dispatch.lease(caller, externalClaim);
   assert.ok(external.session, external.reason);
   await sessions.authenticate(externalClaim.secret);
   await adapter.start();
@@ -1609,24 +1621,24 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
       assert.match(bootstrap.enrollmentToken, /^me_[0-9a-f]{64}$/);
       assert.equal(bootstrap.projectId, allocation.projectId);
       assert.equal(JSON.stringify(bootstrap).includes('test-model-key'), false);
-      const unclaimed = await sessions.inspectManaged(allocation.id, allocation.epoch);
+      const unclaimed = await sessions.managed.inspect(allocation.id, allocation.epoch);
       assert.equal(unclaimed?.runnerId, null);
       assert.equal(unclaimed?.session, null);
-      const enrolled = await sessions.enrollManaged(bootstrap.enrollmentToken, {
+      const enrolled = await sessions.managed.enroll(bootstrap.enrollmentToken, {
         workerNonce: randomBytes(32).toString('hex'),
       });
-      const managed = await sessions.authenticateManaged(enrolled.controlToken);
+      const managed = await sessions.managed.authenticate(enrolled.controlToken);
       const runnerId = `managed-${allocation.id}`;
-      await sessions.heartbeatRunner(managed, heartbeat(runnerId));
+      await sessions.dispatch.heartbeatRunner(managed, heartbeat(runnerId));
       const managedClaim = claim(runnerId);
-      const leased = await sessions.lease(managed, managedClaim);
+      const leased = await sessions.dispatch.lease(managed, managedClaim);
       assert.ok(leased.session, leased.reason);
       const worker = await sessions.authenticate(managedClaim.secret);
       return { allocation, managed, runnerId, session: leased.session, worker };
     }),
   );
   const tools = new ToolRegistry(h.scope);
-  tools.registerSessionPolicy(sessions);
+  tools.registerSessionPolicy(sessions.invocations);
   sessionsToolsPlugin.apply({
     tools,
     sessions,
@@ -1647,7 +1659,7 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
     workers.map(async ({ allocation, managed, runnerId, session }) => {
       await sessions.release(managed, { sessionId: session.id, runnerId });
       assert.equal(
-        (await sessions.inspectManaged(allocation.id, 1))?.session?.releaseAcknowledged,
+        (await sessions.managed.inspect(allocation.id, 1))?.session?.releaseAcknowledged,
         true,
       );
     }),
@@ -1673,7 +1685,7 @@ test('real Fleet acts as and bills the project owner, whoever switched it on, an
   const founder = await h.project('Owned');
   await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
   const signedIn = await h.login('colleague');
-  await h.sessions.setDispatch(await h.scope.caller(signedIn, founder.projectId), {
+  await h.sessions.dispatch.setDispatch(await h.scope.caller(signedIn, founder.projectId), {
     enabled: true,
   });
   await h.start(founder);
@@ -1686,7 +1698,8 @@ test('real Fleet acts as and bills the project owner, whoever switched it on, an
   assert.equal(allocation.person, digest({ issuer, subject: 'founder' }));
   await h.fleet.tick(); // Reserve and provision.
   await h.fleet.tick(); // Launch.
-  const kinds = async () => (await h.sessions.stuck(founder)).items.map((item) => item.kind);
+  const kinds = async () =>
+    (await h.sessions.dispatch.stuck(founder)).items.map((item) => item.kind);
   assert.deepEqual(await kinds(), [], 'Fleet serves the work, so no runner is missing');
   // Demoted, the founder directs nothing: their machine stops, and the colleague owns what follows.
   await h.scope.changeMemberRole(signedIn, founder.projectId, {
@@ -1713,7 +1726,7 @@ test('a target that returns after more than 200 released allocations gets a new 
       h.adapter,
       (await h.fleet.request(caller, { requestId: requestId(generation), owner })).id,
     );
-  await h.sessions.setDispatch(caller, { enabled: true });
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
   await h.adapter.reconcile();
   assert.deepEqual(
     (await h.fleet.listOwned(h.adapter, [])).map((a) => a.requestId),
@@ -1760,14 +1773,14 @@ async function delivered(h: Hosted, by: Caller, requestId: string) {
 async function boot(h: Hosted, allocation: FleetAllocation) {
   const current = await h.fleet.inspectOwned(h.adapter, allocation.id);
   const { enrollmentToken } = JSON.parse(h.bootstraps.get(current.runtime!.sandboxId)!);
-  const enrolled = await h.sessions.enrollManaged(enrollmentToken, {
+  const enrolled = await h.sessions.managed.enroll(enrollmentToken, {
     workerNonce: randomBytes(32).toString('hex'),
   });
-  const managed = await h.sessions.authenticateManaged(enrolled.controlToken);
+  const managed = await h.sessions.managed.authenticate(enrolled.controlToken);
   const runnerId = `managed-${allocation.id}`;
-  await h.sessions.heartbeatRunner(managed, heartbeat(runnerId));
+  await h.sessions.dispatch.heartbeatRunner(managed, heartbeat(runnerId));
   const request = claim(runnerId);
-  const { session } = await h.sessions.lease(managed, request);
+  const { session } = await h.sessions.dispatch.lease(managed, request);
   assert.ok(session);
   return { runnerId, session, secret: request.secret };
 }
@@ -1775,7 +1788,7 @@ async function boot(h: Hosted, allocation: FleetAllocation) {
 test('a Fleet machine’s hosted Codex launch is given web and literature search, and its session calls both', async (t) => {
   const h = await hosted(t, 1);
   const caller = await h.project('Searching');
-  await h.sessions.setDispatch(caller, { enabled: true });
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
   const target = await h.start(caller);
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
@@ -1838,7 +1851,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
     papers.close();
   });
   for (const tool of [...webTools(web), ...nisaTools(papers)]) tools.register(tool);
-  tools.registerSessionPolicy(h.sessions);
+  tools.registerSessionPolicy(h.sessions.invocations);
   const worker = await h.sessions.authenticate(machine.secret);
   const offered = (await tools.describe(worker)).map(({ name }) => name);
   for (const name of [
@@ -1869,7 +1882,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
 test('Fleet produces Pi-directed work and leases an independent current Git reviewer', async (t) => {
   const h = await hosted(t, 2);
   const caller = await h.project('Reviewed');
-  await h.sessions.setDispatch(caller, { enabled: true });
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
   // Pi acts with the person's source to direct work, but cannot produce its delivery.
   const source = await h.scope.delegationSource(caller);
   h.scope.registerConversationAuthority({ require: async () => source });
@@ -1933,7 +1946,7 @@ test('Fleet’s current review worker and its machine stop when its owner may no
   const h = await hosted(t, 1);
   const founder = await h.project('Vouched');
   await h.scope.addMember(h.founder, founder.projectId, { subject: 'colleague', role: 'operator' });
-  await h.sessions.setDispatch(founder, { enabled: true });
+  await h.sessions.dispatch.setDispatch(founder, { enabled: true });
   await delivered(h, founder, 'founder');
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
@@ -1960,7 +1973,7 @@ test('Fleet’s current review worker and its machine stop when its owner may no
 test('a current review step’s model calls count toward the project owner', async (t) => {
   const h = await hosted(t, 1);
   const caller = await h.project('Charged');
-  await h.sessions.setDispatch(caller, { enabled: true });
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
   await delivered(h, caller, 'charged');
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
@@ -1971,7 +1984,7 @@ test('a current review step’s model calls count toward the project owner', asy
   await h.fleet.tick(); // Launch.
   const machine = await boot(h, allocation);
   // Sessions names the review director itself; Fleet rented its machine for the voucher.
-  assert.equal((await h.sessions.managedModelGrant(machine.secret)).person, voucher);
+  assert.equal((await h.sessions.managed.modelGrant(machine.secret)).person, voucher);
   const relay = codexModelRelay(h.sessions, h.state, {
     providerKey: () => 'test-model-key',
     dailyTokensPerPerson: 20_000_000,
@@ -2094,7 +2107,7 @@ test('a fresh work host rented for a review is kept while the review waits for i
 test('a halted allocation relays no model calls while its stop stalls', async (t) => {
   const h = await hosted(t, 1);
   const caller = await h.project('Halted');
-  await h.sessions.setDispatch(caller, { enabled: true });
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
   await delivered(h, caller, 'halted');
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);

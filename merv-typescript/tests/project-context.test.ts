@@ -519,7 +519,7 @@ test('Task contexts freeze the Problem at lease offer, carry it once, and retain
     credentialId: boot.credential.id,
   };
   await waitForManagedCode(app.ctx.codeWork, source);
-  await app.ctx.sessions.heartbeatRunner(source, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(source, {
     runnerId: 'context-test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -572,8 +572,10 @@ test('Task contexts freeze the Problem at lease offer, carry it once, and retain
   });
   async function workerContext(requestId: string) {
     const worker = await app.ctx.sessions.authenticate(secret);
-    const invocation = await app.ctx.sessions.prepare(worker, 'task.context', { requestId });
-    return app.ctx.sessions.run(
+    const invocation = await app.ctx.sessions.invocations.prepare(worker, 'task.context', {
+      requestId,
+    });
+    return app.ctx.sessions.invocations.run(
       invocation,
       async (caller, input: Data) =>
         await app.ctx.tasks.context(caller, input as unknown as TaskContext),
