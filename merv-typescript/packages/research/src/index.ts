@@ -7,9 +7,6 @@ import {
   createService,
   inTransaction,
   mapAsync,
-  MervError,
-  now,
-  ordered,
   recorded,
   childRequest,
   replayed,
@@ -17,65 +14,64 @@ import {
   type Artifacts,
   type Caller,
   type Data,
-  type DelegationSource,
-  type DomainEvents,
   type Scope,
   type State,
   type Transaction,
-  type WorkflowCheckContext,
-  type WorkflowDefinition,
-  type WorkflowDependency,
-  type WorkflowPolicy,
   type Workflows,
-  type WorkflowSnapshot,
 } from '@merv/contracts';
-import { sourceCaller } from '@merv/scope/rules';
 import { CheckedTransitions } from '@merv/workflows/rules';
 import type { Experiments } from '@merv/experiments/types';
 import { problemDefined } from '@merv/paper/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';
-import type { ApprovedReflection, ChangeSpec, Reflections } from '@merv/reflections/types';
+import type { Reflections } from '@merv/reflections/types';
 import type { Context } from 'cordis';
 import {
   AUTOMATIC_PROVIDER,
-  automaticBlocker,
-  automaticRequest,
-  automaticResearch,
+  bindAutomatic,
+  closeBlockedWork,
   publishBlocker,
-  unavailableSince,
-  type AutomaticBlocker,
+  reconcileAutomatic,
+  retryUnavailable,
+  soon,
+  wakeAutomatic,
   type AutomaticRow,
 } from './automatic.js';
+import { compose, digested } from './compose.js';
 import { postgresMigrations } from './index.postgres.js';
+import { advanceSchema, createSchema, endSchema, getSchema, parse, replanSchema } from './input.js';
 import {
-  advanceSchema,
-  createSchema,
-  endChoiceSchema,
-  endSchema,
-  getSchema,
-  nextWaveChoiceSchema,
-  parse,
-  replanSchema,
-} from './input.js';
+  asked,
+  begin,
+  checkAutomaticContinuation,
+  continuing,
+  creatable,
+  follow,
+  inject,
+  materialise,
+  move,
+  ready,
+  retainedCode,
+  selectedCode,
+  unpublished,
+  type Choice,
+} from './integration.js';
+import { definition, policy, type Stage } from './policy.js';
 import type {
   Research,
   ResearchAdvance,
   ResearchAutomation,
   ResearchCreate,
-  ResearchDigest,
   ResearchEnd,
   ResearchLineage,
   ResearchOrigin,
   ResearchRecord,
   ResearchReplan,
 } from './types.js';
-import type { CodeAcceptedSince } from '@merv/code-work/models';
+export { definition } from './policy.js';
 export type * from './types.js';
-const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
-type Stage = (typeof stages)[number];
 /** What Research asks of Code; a test may bind exactly this much. */
 type ResearchCode = Pick<Code, 'acceptedSince' | 'hosted' | 'publishOnAcceptance' | 'unit'>;
-interface Capabilities {
+export interface Capabilities {
   paper: Paper;
   reflections: Reflections;
   tasks: Tasks;
@@ -84,17 +80,8 @@ interface Capabilities {
   artifacts: Artifacts;
   code: ResearchCode;
 }
-/** An approved reflection whose plan says the project continues. */
-type Continuing = ApprovedReflection & {
-  plan: ChangeSpec & { next: { decision: 'continue' } };
-};
-/** The accepted units main does not hold, read outside the transaction that acts on them. */
-type Unpublished = Pick<CodeAcceptedSince, 'unitIds' | 'quarantined'>;
-/** What an advance does from where the cycle stands; see `move`. */
-type Move = 'advance' | 'complete' | 'inject' | 'reinject';
-type Choice = ReturnType<typeof parse<typeof nextWaveChoiceSchema>>;
 type Binding<T> = { value: T };
-type BindingChecks = (() => void)[];
+export type BindingChecks = (() => void)[];
 const unavailable = {
   paper: 'This stage needs Paper; enable it to continue',
   reflections: 'This stage needs Reflections; enable it to continue',
@@ -106,58 +93,9 @@ const unavailable = {
   artifacts: "Artifacts are unavailable, so the predecessor cycle's digest cannot be retained",
   code: 'This stage needs Code; enable it to continue',
 };
-const nextWaveGuidance =
-  'When the approved reflection carries a structured plan that continues, completing the cycle requires nextWave: "create" opens the plan\'s tasks, experiments and the next research cycle in the same transaction, and "skip" completes without them. When Code hosts the project, the cycle also waits for accepted code to reach main before the next wave starts. A text change specification creates nothing; follow-on work is then the owner\'s to create.';
-const integrationGoal =
-  "Integrate this cycle's accepted work onto one branch. Account for every experiment in this cycle as kept, adapted or dropped, with reasons; a drop is a reverting commit visible in the diff. Main is part of your base; the branch you deliver is what reaches main.";
-const integrationChecks = [
-  'Every experiment in this cycle is accounted for as kept, adapted or dropped, with a reason each.',
-  'The report names what was dropped and why.',
-  'The delivered branch passes the checks the project defines.',
-];
-/** Where text an agent wrote and an owner accepted came from, for the record that carries it. */
-const origin = (approved: ApprovedReflection, ...named: string[]) =>
-  `\n\nOrigin: reflection ${approved.id}, ${named.join(', ')}.`;
-const pinned = (kind: string, { id, hash }: Artifact) => `${kind} ${id} (${hash})`;
-/**
- * A digest rides inside a 24000-character reflection context, behind the assignment and any
- * rework feedback. At this bound it still fits beside them instead of being omitted whole.
- */
-const DIGEST_MAX_CHARS = 12000;
-const DIGEST_TEXT_CHARS = 300;
 const ENDING_REASON_CHARS = 2000;
-const DIGEST_LIST_LIMIT = 100;
 /** How far research.lineage walks back before it says the chain goes on. */
 const LINEAGE_LIMIT = 20;
-const instructions: Record<Stage, string> = {
-  defining:
-    'Complete the living paper’s problem, scope, goals and constraints, then advance to research.',
-  researching:
-    'Reflect once all selected work has finished. Failed and abandoned work are outcomes to examine.',
-  reflecting: `Complete all reflection lenses and independent synthesis review, then finish the cycle or start its consolidation: accepted code that main does not hold yet is integrated by one task and published to main. ${nextWaveGuidance}`,
-  consolidating: `Wait for the consolidation task to be accepted and its publication to reach main, then complete the research cycle. A publication main overtook injects a successor task. Paper changes are reviewed within the experiment and reflection workflows. ${nextWaveGuidance}`,
-  complete:
-    'The selected research, reflection and any required code integration are complete. Paper changes were handled by their scientific reviews. If the owner chose to create an approved plan, the next research cycle is referenced here.',
-};
-/** The one research version: array order is part of its published fingerprint. */
-export const definition: WorkflowDefinition = {
-  name: 'research',
-  version: 6,
-  initial: 'defining',
-  states: [...stages, 'abandoned', 'failed'],
-  terminal: ['complete', 'abandoned', 'failed'],
-  edges: [
-    ...stages
-      .slice(0, -1)
-      .map((from, index) => ({ from, action: 'advance', to: stages[index + 1] })),
-    { from: 'reflecting', action: 'complete', to: 'complete' },
-    ...stages.slice(0, -1).flatMap((from) => [
-      { from, action: 'abandon', to: 'abandoned' },
-      { from, action: 'mark_failed', to: 'failed' },
-    ]),
-    { from: 'consolidating', action: 'reinject', to: 'consolidating' },
-  ],
-};
 interface Row {
   id: string;
   record: string;
@@ -169,30 +107,54 @@ interface Row {
   code_required: number | null;
 }
 /** The immutable inputs as stored; which cycle it follows lives in predecessor_id alone. */
-type StoredRecord = Pick<
+export type StoredRecord = Pick<
   ResearchRecord,
   'id' | 'projectId' | 'ownerId' | 'name' | 'createdAt' | 'researchDependencies'
 > & { origin?: Omit<ResearchOrigin, 'researchId'> };
 
 /** A small coordinator over existing workflows; child programs own their actual assignments. */
 export class ResearchService implements Research {
-  private closed = false;
-  private automaticBound = false;
+  // The gate's policy (policy.ts), how a cycle moves (integration.ts), its digest (compose.ts)
+  // and automatic progress (automatic.ts) are this service's own methods, kept by concept.
+  readonly policy = policy;
+  readonly follow = follow;
+  readonly begin = begin;
+  readonly ready = ready;
+  readonly move = move;
+  readonly asked: typeof asked = asked;
+  readonly continuing = continuing;
+  readonly creatable = creatable;
+  readonly checkAutomaticContinuation = checkAutomaticContinuation;
+  readonly materialise = materialise;
+  readonly inject = inject;
+  readonly selectedCode = selectedCode;
+  readonly retainedCode = retainedCode;
+  readonly unpublished = unpublished;
+  readonly digested = digested;
+  readonly compose = compose;
+  readonly bindAutomatic = bindAutomatic;
+  readonly retryUnavailable = retryUnavailable;
+  readonly wakeAutomatic = wakeAutomatic;
+  readonly reconcileAutomatic = reconcileAutomatic;
+  readonly soon = soon;
+  readonly closeBlockedWork = closeBlockedWork;
+  closed = false;
+  automaticBound = false;
   /** How long a cycle an outage refused waits before it is tried again. */
   retryAfterMs = 30_000;
   /** How long an outage keeps a cycle being tried again before only an event or a bind wakes it. */
   unavailableForMs = 10 * 60_000;
   /** Projects with a retry already waiting: one resume reconciles every cycle there. */
-  private readonly retrying = new Set<string>();
+  readonly retrying = new Set<string>();
   /** Runs a callback in the context this service was made in, outside every transaction. */
-  private readonly detached = AsyncResource.bind((fn: () => void) => fn());
-  private bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
-  private handle?: Awaited<ReturnType<Workflows['register']>>;
-  private checked = new CheckedTransitions();
+  readonly detached = AsyncResource.bind((fn: () => void) => fn());
+  bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
+  handle?: Awaited<ReturnType<Workflows['register']>>;
+  readonly checked = new CheckedTransitions();
   constructor(
-    private state: State,
-    private scope: Scope,
-    private workflows: Workflows,
+    readonly state: State,
+    readonly scope: Scope,
+    readonly workflows: Workflows,
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
@@ -204,122 +166,7 @@ export class ResearchService implements Research {
     this.handle = await this.workflows.register(definition, this.policy());
   }
 
-  private policy(): WorkflowPolicy {
-    return {
-      successStates: ['complete'],
-      dependencyFailureAction: 'end',
-      describe: async (context) => {
-        const record = await this.get(context.caller, context.snapshot.id, context.tx);
-        const previous = record.previousCycleId
-          ? await this.row(context.caller, record.previousCycleId, context.tx)
-          : null;
-        return {
-          label: record.name,
-          owner: { actorId: record.ownerId },
-          gate: context.snapshot.state,
-          waiting:
-            context.snapshot.state === 'researching'
-              ? 'Wait for the selected work to finish, including failed and abandoned work, then open reflection.'
-              : instructions[context.snapshot.state as Stage],
-          references: [
-            ...this.children(record).map((id) => ({
-              kind: 'workflow',
-              id,
-              label: 'Child workflow',
-            })),
-            ...(record.successorId
-              ? [{ kind: 'workflow', id: record.successorId, label: 'Next research cycle' }]
-              : []),
-            ...(record.digest
-              ? [{ kind: 'artifact', id: record.digest.id, label: 'Cycle digest' }]
-              : []),
-            ...(previous?.digest
-              ? [
-                  {
-                    kind: 'artifact',
-                    id: (JSON.parse(previous.digest) as Artifact).id,
-                    label: 'Predecessor cycle digest',
-                  },
-                ]
-              : []),
-          ],
-        };
-      },
-      actions: [
-        {
-          name: 'end',
-          states: [...stages.slice(0, -1)],
-          transitions: ['abandon', 'mark_failed'],
-          // Never the suggested move: ending is what you reach for when the work cannot
-          // go on, and the engine offers it by name when a prerequisite has died.
-          suggested: false,
-          tool: 'research.end',
-          instruction:
-            'End this research cycle when it cannot reach an answer: abandoned when the question is no longer worth pursuing, failed when it was pursued and cannot be completed. Its children keep their own records. Requires a specific reason. This is terminal. While the cycle is still defining or researching, research.replan reselects its work instead.',
-          requiredInput: ['outcome', 'reason'],
-          arguments: (context: WorkflowCheckContext) => ({
-            researchId: context.snapshot.id,
-            expectedRevision: context.snapshot.revision,
-          }),
-          check: async (context: WorkflowCheckContext) => {
-            if (this.checked.found(context)) return;
-            const record = await this.get(context.caller, context.snapshot.id, context.tx);
-            await this.authorize(context.caller, record, context.tx);
-            if (context.input) parse(endChoiceSchema, context.input);
-          },
-        },
-        ...stages.slice(0, -1).map((stage) => ({
-          name: `advance_${stage}`,
-          states: [stage],
-          transitions: [
-            'advance',
-            ...(stage === 'reflecting' ? ['complete'] : []),
-            ...(stage === 'consolidating' ? ['reinject'] : []),
-          ],
-          tool: 'research.advance',
-          instruction: instructions[stage],
-          arguments: (context: WorkflowCheckContext) => ({
-            researchId: context.snapshot.id,
-            expectedRevision: context.snapshot.revision,
-          }),
-          check: async (context: WorkflowCheckContext) => {
-            if (this.checked.found(context)) return;
-            const record = await this.get(context.caller, context.snapshot.id, context.tx);
-            await this.authorize(context.caller, record, context.tx);
-            await this.ready(
-              context.caller,
-              record,
-              context.tx,
-              [],
-              parse(nextWaveChoiceSchema, context.input ?? {}),
-            );
-          },
-          // Creating a plan's work is never implied by an advance: a caller that does not know
-          // about the plan is asked, rather than launching work an agent wrote.
-          ...(stage === 'reflecting' || stage === 'consolidating'
-            ? {
-                requiredInput: async (context: WorkflowCheckContext) => {
-                  const { caller, snapshot, tx, input } = context;
-                  // A choice made, or asked by the advance taking this, was judged by the check;
-                  // a skip must not need Reflections.
-                  const choice = parse(nextWaveChoiceSchema, input ?? {});
-                  if (choice.nextWave || this.checked.found(context)) return [];
-                  // Without Git's answer a preflight reads the cycle as completing: the choice
-                  // is asked whenever the plan continues, and honoured only when it completes. The
-                  // transition carries that answer, so an advance that injects is not asked.
-                  const record = await this.get(caller, snapshot.id, tx);
-                  return (await this.continuing(caller, record, tx, [], choice.move ?? 'complete'))
-                    ? ['nextWave']
-                    : [];
-                },
-              }
-            : {}),
-        })),
-      ],
-    };
-  }
-
-  private open() {
+  open() {
     check(!this.closed, 'research_unavailable', 'Research is unavailable', 503);
   }
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<ResearchRecord> {
@@ -424,7 +271,7 @@ export class ResearchService implements Research {
       integrations,
     };
   }
-  private async row(caller: Caller, id: string, tx: Transaction): Promise<Row> {
+  async row(caller: Caller, id: string, tx: Transaction): Promise<Row> {
     const row = await tx.get<Row>(
       'SELECT * FROM research_cycles WHERE id=? AND project_id=?',
       id,
@@ -474,141 +321,7 @@ export class ResearchService implements Research {
       return result;
     });
   }
-  /**
-   * What naming a predecessor requires: it is over, nothing follows it yet, and it has a digest.
-   * A predecessor that ended before digests existed, or while a capability was unbound, is
-   * digested here. Any writer may cause that, not only the predecessor's owner or an admin:
-   * the digest is composed by the server from records the caller can already read, it can be
-   * written once, and nothing the caller supplies reaches it. Here a missing capability is
-   * refused, because the caller asked for the digest to be carried forward.
-   */
-  private async follow(
-    caller: Caller,
-    previousCycleId: string,
-    tx: Transaction,
-    checks: BindingChecks,
-  ): Promise<void> {
-    const previous = await this.get(caller, previousCycleId, tx);
-    check(
-      definition.terminal.includes(previous.workflow.state),
-      'previous_cycle_open',
-      'The predecessor cycle is still open; complete or end it before starting its successor',
-      409,
-    );
-    check(
-      !previous.successorId,
-      'previous_cycle_followed',
-      `The predecessor cycle is already followed by ${previous.successorId}; follow that cycle instead, or read the chain with research.lineage`,
-      409,
-    );
-    await this.digested(caller, previous, tx, checks, { late: true, required: true });
-  }
-  /**
-   * Opens a cycle inside a command its caller already recorded. research_commands has one row
-   * per request, so the cycle an advance opens must not record a second one under the same ID.
-   */
-  private async begin(
-    caller: Caller,
-    input: ReturnType<typeof parse<typeof createSchema>>,
-    step: 'create' | 'successor',
-    origin: ResearchOrigin | null,
-    tx: Transaction,
-  ): Promise<ResearchRecord> {
-    check(
-      !caller.session,
-      'forbidden',
-      'Assigned workers cannot create an outer research cycle',
-      403,
-    );
-    for (const id of input.dependsOn) await this.workflows.get(caller, id, tx);
-    check(
-      input.automatic || input.maxCycles === undefined,
-      'invalid_research_input',
-      'maxCycles requires automatic mode',
-    );
-    if (input.automatic) {
-      check(
-        input.dependsOn.length > 0,
-        'research_work_required',
-        'Select at least one task or experiment for automatic research',
-      );
-      for (const id of input.dependsOn) {
-        const work = await this.workflows.get(caller, id, tx);
-        check(
-          ['task', 'experiment'].includes(work.workflow),
-          'invalid_research_input',
-          'Automatic research selects tasks and experiments',
-        );
-      }
-    }
-    const workflow = await this.handle!.start(
-      caller,
-      {
-        workflow: 'research',
-        version: 6,
-        requestId: childRequest(caller, 'research', step, input.requestId),
-        dependsOn: input.dependsOn,
-        data: { name: input.name },
-      },
-      tx,
-    );
-    let predecessorId = input.previousCycleId ?? null;
-    let from: StoredRecord['origin'];
-    if (origin) ({ researchId: predecessorId, ...from } = origin);
-    const record: StoredRecord = {
-      id: workflow.id,
-      projectId: caller.projectId,
-      ownerId: caller.actorId,
-      name: input.name,
-      createdAt: now(),
-      researchDependencies: [...new Set(input.dependsOn)],
-      ...(from ? { origin: from } : {}),
-    };
-    await tx.run(
-      'INSERT INTO research_cycles(id,project_id,record,predecessor_id,code_required) VALUES(?,?,?,?,?)',
-      workflow.id,
-      caller.projectId,
-      JSON.stringify(record),
-      predecessorId,
-      (await this.selectedCode(caller, input.dependsOn, tx)) ||
-        (this.bindings.code
-          ? await this.use('code', [], (code) => code.hosted(caller, tx))
-          : await this.retainedCode(caller, tx))
-        ? 1
-        : 0,
-    );
-    const inherited = origin
-      ? await tx.get<AutomaticRow>(
-          'SELECT * FROM research_automation WHERE research_id=?',
-          origin.researchId,
-        )
-      : undefined;
-    if (input.automatic || inherited) {
-      const source =
-        inherited?.source_json ?? JSON.stringify(await this.scope.delegationSource(caller, tx));
-      await tx.run(
-        'INSERT INTO research_automation(research_id,project_id,source_json,root_id,cycle_index,max_cycles) VALUES(?,?,?,?,?,?)',
-        workflow.id,
-        caller.projectId,
-        source,
-        inherited?.root_id ?? workflow.id,
-        inherited ? inherited.cycle_index + 1 : 1,
-        inherited?.max_cycles ?? input.maxCycles ?? 10,
-      );
-    }
-    await this.event(
-      caller,
-      'created',
-      workflow.id,
-      {
-        dependsOn: record.researchDependencies,
-        ...(input.previousCycleId ? { previousCycleId: input.previousCycleId } : {}),
-      },
-      tx,
-    );
-    return await this.get(caller, workflow.id, tx);
-  }
-  private async authorize(caller: Caller, record: ResearchRecord, tx: Transaction) {
+  async authorize(caller: Caller, record: ResearchRecord, tx: Transaction) {
     await this.scope.require(caller, 'write', tx);
     check(
       !caller.session,
@@ -618,11 +331,7 @@ export class ResearchService implements Research {
     );
     if (caller.actorId !== record.ownerId) await this.scope.require(caller, 'admin', tx);
   }
-  private async definition(
-    caller: Caller,
-    tx: Transaction,
-    checks: BindingChecks,
-  ): Promise<PaperRevision> {
+  async definition(caller: Caller, tx: Transaction, checks: BindingChecks): Promise<PaperRevision> {
     const problem = (await this.use('paper', checks, (service) => service.documents(caller, tx)))
       .problem.current;
     check(
@@ -633,617 +342,6 @@ export class ResearchService implements Research {
     );
     return problem;
   }
-  /**
-   * Refuses what the stage cannot pass and answers with the move the advance makes. `since` is
-   * what main lacks, which only an advance has asked; the guard reads the move it chose instead.
-   */
-  private async ready(
-    caller: Caller,
-    record: ResearchRecord,
-    tx: Transaction,
-    checks: BindingChecks = [],
-    choice: Choice = {},
-    since?: Unpublished | null,
-  ): Promise<{ move: Move; continuing?: Continuing; abandoned?: true }> {
-    const stage = record.workflow.state as Stage;
-    check(stage !== 'complete', 'research_complete', 'This research cycle is complete', 409);
-    if (stage === 'defining') {
-      await this.definition(caller, tx, checks);
-      return { move: 'advance' };
-    }
-    if (stage === 'researching' || stage === 'reflecting')
-      this.requireCapability('reflections', checks);
-    if (
-      (stage === 'reflecting' || stage === 'consolidating') &&
-      ((await this.row(caller, record.id, tx)).code_required !== 0 || record.integrations.length)
-    )
-      this.requireCapability('code', checks);
-    // Only one wave reflects at a time; the cycle's own, just started, is not another.
-    if (stage === 'researching') {
-      const open = await this.use('reflections', checks, (service) => service.open(caller, tx));
-      check(
-        !open || open === record.reflectionId,
-        'reflection_open',
-        'Complete the current reflection before starting another',
-        409,
-      );
-    }
-    if (stage === 'researching') {
-      const selection = new Set(record.researchDependencies);
-      const pending = (await this.workflows.prerequisites(caller, [record.id], tx))
-        .get(record.id)!
-        .filter((item) => selection.has(item.id) && !item.settled && !item.failed);
-      check(
-        !pending.length,
-        'dependencies_pending',
-        `Waiting for research outcomes: ${pending.map((item) => `${item.name} (${item.state})`).join(', ')}`,
-        409,
-      );
-    }
-    if (stage === 'reflecting') {
-      check(
-        record.reflectionId,
-        'research_child_missing',
-        'The reflection workflow is missing',
-        409,
-      );
-      // An abandoned wave is never approved; the engine then offers this cycle's end.
-      check(
-        (await this.workflows.get(caller, record.reflectionId, tx)).state !== 'abandoned',
-        'dependency_failed',
-        `The reflection ${record.reflectionId} was abandoned. End this cycle with research.end; a cycle that follows it can reflect on the same work.`,
-        409,
-      );
-      await this.use('reflections', checks, (service) =>
-        service.approved(caller, record.reflectionId!, tx),
-      );
-    }
-    const judged = await this.move(caller, record, tx, checks, since, choice);
-    const move = judged === 'abandon' ? 'advance' : judged;
-    // A skip reads no plan, so it completes a cycle whose plan can no longer be created, or
-    // whose Reflections is gone. Anything else must know whether a plan waits for an answer.
-    const continuing =
-      choice.nextWave === 'skip'
-        ? undefined
-        : await this.continuing(caller, record, tx, checks, move);
-    if (continuing && choice.nextWave === 'create') {
-      this.checkAutomaticContinuation(caller, record);
-      await this.creatable(caller, continuing.plan, tx, checks);
-    }
-    checks.forEach((check) => check());
-    return { move, continuing, ...(judged === 'abandon' ? { abandoned: true as const } : {}) };
-  }
-
-  /**
-   * The transition an advance makes; `inject` and `reinject` first inject a consolidation task.
-   * A cycle consolidates through that task: an unfinished one, one that ended without
-   * acceptance and one not on main yet are refused here, so a preflight reports the same wait.
-   * Whether main lacks accepted code is Git's answer: an advance reads it as `since` and hands
-   * the guard the move it chose; a preflight has neither and reads the move main lacking makes.
-   */
-  private async move(
-    caller: Caller,
-    record: ResearchRecord,
-    tx: Transaction,
-    checks: BindingChecks,
-    since: Unpublished | null | undefined,
-    choice: Choice,
-  ): Promise<Move | 'abandon'> {
-    const stage = record.workflow.state as Stage;
-    if (stage !== 'reflecting' && stage !== 'consolidating') return 'advance';
-    // A preflight that answers the completion question is read as completing, so a plan that
-    // would refuse is reported before the advance, as it always was.
-    const judged = (holds: Move, lacks: Move): Move => {
-      if (since !== undefined) {
-        this.asked(since);
-        return since.unitIds.length ? lacks : holds;
-      }
-      return (choice.move ?? (choice.nextWave ? holds : lacks)) === holds ? holds : lacks;
-    };
-    if (stage === 'reflecting') return judged('complete', 'inject');
-    const taskId = record.integrations.at(-1)!;
-    const task = (await this.workflows.prerequisites(caller, [record.id], tx))
-      .get(record.id)!
-      .find((item) => item.id === taskId)!;
-    if (task.failed) {
-      check(
-        choice.retryIntegration,
-        'integration_failed',
-        `The consolidation task ${taskId} ended ${task.state}. Retry with research.advance { retryIntegration: true } to inject a fresh task, or end the cycle with research.end.`,
-        409,
-      );
-      return judged('advance', 'reinject');
-    }
-    check(
-      task.settled,
-      'dependencies_pending',
-      `Waiting for the consolidation task: ${task.name} (${task.state})`,
-      409,
-    );
-    const { publication } = await this.use('code', checks, (code) => code.unit(caller, taskId, tx));
-    if (publication?.state === 'published') return 'advance';
-    // A pull request closed unmerged is a rejection: the cycle moves on without its code.
-    if (publication?.state === 'closed') return 'abandon';
-    // Main moved first, or the task ended without acceptance: what main lacks now decides
-    // between a successor task and completing, as it did at reflection.
-    if (publication?.state === 'stale') return judged('advance', 'reinject');
-    // Code says what holds its publication and who ends the wait, in its own code and words.
-    const said = publication?.blockers[0];
-    throw said
-      ? new MervError(
-          said.code,
-          `The consolidation task ${taskId} is accepted; ${said.message}. ${said.next}`,
-          409,
-        )
-      : new MervError(
-          'publication_pending',
-          `The consolidation task ${taskId} is accepted, but Code holds no publication for it`,
-          409,
-        );
-  }
-
-  /** Git answers what main lacks outside every transaction; null says it could not be asked. */
-  private asked(since: Unpublished | null): asserts since is Unpublished {
-    check(
-      since !== null,
-      'integration_candidates_unavailable',
-      'What main lacks is asked of Git outside a transaction; this advance runs again on its own',
-      409,
-    );
-  }
-
-  /** The approved reflection, when this advance completes the cycle and its plan continues. */
-  private async continuing(
-    caller: Caller,
-    record: ResearchRecord,
-    tx: Transaction,
-    checks: BindingChecks,
-    move: Move,
-  ): Promise<Continuing | undefined> {
-    const completing =
-      move === 'complete' || (record.workflow.state === 'consolidating' && move === 'advance');
-    if (!completing || !record.reflectionId) return undefined;
-    const approved = await this.use('reflections', checks, (service) =>
-      service.approved(caller, record.reflectionId!, tx),
-    );
-    return approved.plan?.next.decision === 'continue' ? (approved as Continuing) : undefined;
-  }
-
-  /**
-   * Everything about the project that can refuse the plan, judged before the cycle moves. A
-   * plan reported ready and refused on every attempt would leave skipping as the only way on,
-   * and skipping discards the reviewed plan.
-   *
-   * A workspace declaration is also admitted by the item's owner at creation, not pre-checked
-   * here: a refusal while Code is unloaded rolls the whole advance back and leaves the
-   * approved plan to retry.
-   */
-  private async creatable(
-    caller: Caller,
-    plan: ChangeSpec,
-    tx: Transaction,
-    checks: BindingChecks,
-  ): Promise<void> {
-    this.requireCapability('tasks', checks);
-    const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
-    if (planned.length)
-      await this.use('experiments', checks, (service) => service.admits(caller, planned, tx)).catch(
-        (error: unknown) => {
-          // Experiments' refusal, with this cycle's way past it.
-          throw error instanceof MervError && error.status === 409
-            ? new MervError(
-                error.code,
-                `${error.message}. Complete this cycle with nextWave: "skip" to go on without the plan`,
-                409,
-              )
-            : error;
-        },
-      );
-    // The engine refuses the starts anyway; said here, the owner reads it before trying.
-    check(
-      !(await this.use('reflections', checks, (service) => service.open(caller, tx))),
-      'reflection_open',
-      'Another reflection wave pauses task and experiment creation; finish it, or complete this cycle with nextWave: "skip"',
-      409,
-    );
-    for (const { workflowId } of plan.carriedOver) {
-      const carried = await this.workflows.get(caller, workflowId, tx);
-      check(
-        ['task', 'experiment'].includes(carried.workflow),
-        'next_wave_inapplicable',
-        `Carried-over work ${workflowId} is neither a task nor an experiment; complete this cycle with nextWave: "skip"`,
-        409,
-      );
-    }
-  }
-
-  private checkAutomaticContinuation(caller: Caller, record: ResearchRecord) {
-    if (record.automation) {
-      check(
-        caller.actorId === record.ownerId,
-        'automatic_owner_required',
-        'Only the authorizing owner creates an automatic successor',
-        403,
-      );
-      check(
-        record.automation.cycle < record.automation.maxCycles,
-        'research_cycle_limit',
-        'The automatic research run has reached its cycle limit; complete with nextWave: skip',
-        409,
-      );
-    }
-  }
-
-  /**
-   * Creates the approved plan's work under the advancing owner and opens the cycle that waits
-   * on it. Runs inside the advance's transaction, so a refusal anywhere leaves nothing behind.
-   * Every request ID derives from the advance's, so a retry names the same records.
-   */
-  private async materialise(
-    caller: Caller,
-    record: ResearchRecord,
-    approved: Continuing,
-    requestId: string,
-    tx: Transaction,
-    checks: BindingChecks,
-  ): Promise<ResearchRecord> {
-    const { plan } = approved;
-    this.checkAutomaticContinuation(caller, record);
-    const created = new Map<string, string>();
-    for (const item of ordered<ChangeSpec['items'][number]>(plan.items)!) {
-      // The text was written by a leased agent and is filed under the owner who accepted it;
-      // this line is what lets a reader of the record trace it back to the reviewed plan.
-      const provenance = `\n\nWhy: ${item.rationale}${origin(approved, pinned('change specification', approved.changeSpec), `item ${item.key}`)}`;
-      const dependsOn = item.dependsOn.map((key) => created.get(key)!);
-      const itemRequestId = childRequest(caller, 'research', `item:${item.key}`, requestId);
-      // Storage is platform policy, including new work generated from retained older plans.
-      const work =
-        item.kind === 'task'
-          ? await this.use('tasks', checks, (service) =>
-              service.create(
-                caller,
-                {
-                  title: item.title,
-                  goal: `${item.goal}${provenance}`,
-                  checks: item.checks,
-                  dependsOn,
-                  workspace: 'git',
-                  requestId: itemRequestId,
-                },
-                tx,
-              ),
-            )
-          : await this.use('experiments', checks, (service) =>
-              service.create(
-                caller,
-                {
-                  name: item.name,
-                  intent: item.question,
-                  details: `${item.details}${provenance}`.trimStart(),
-                  dependsOn,
-                  workspace: 'git',
-                  requestId: itemRequestId,
-                },
-                tx,
-              ),
-            );
-      created.set(item.key, work.id);
-    }
-    const carriedOver = plan.carriedOver.map((entry) => entry.workflowId);
-    return await this.begin(
-      caller,
-      parse(createSchema, {
-        name: plan.next.name,
-        dependsOn: [...created.values(), ...carriedOver],
-        requestId,
-      }),
-      'successor',
-      {
-        researchId: record.id,
-        reflectionId: approved.id,
-        reviewId: approved.reviewId,
-        changeSpec: { id: approved.changeSpec.id, hash: approved.changeSpec.hash },
-        items: plan.items.map((item) => ({
-          key: item.key,
-          kind: item.kind,
-          id: created.get(item.key)!,
-        })),
-        carriedOver,
-      },
-      tx,
-    );
-  }
-
-  /**
-   * One ordinary Git task that integrates the accepted units main lacks and publishes the
-   * result: it stands on them, so its base holds them and main, and its acceptance seals the
-   * publication. The advance records it after the move, so the guard judges the task before it.
-   */
-  private async inject(
-    caller: Caller,
-    record: ResearchRecord,
-    units: Unpublished,
-    requestId: string,
-    tx: Transaction,
-    checks: BindingChecks,
-  ): Promise<string> {
-    const approved = await this.use('reflections', checks, (service) =>
-      service.approved(caller, record.reflectionId!, tx),
-    );
-    const count = record.integrations.length + 1;
-    const step = count === 1 ? 'integration' : `integration:${count}`;
-    const task = await this.use('integrations', checks, (service) =>
-      service.create(
-        {
-          projectId: caller.projectId,
-          requestId: childRequest(caller, 'research', step, requestId),
-          title: `${clip(record.name, 180)}: consolidation`,
-          goal: `${integrationGoal}${origin(approved, pinned('report', approved.report), pinned('change specification', approved.changeSpec))}`,
-          checks: integrationChecks,
-          dependsOn: units.unitIds,
-        },
-        tx,
-      ),
-    );
-    await this.use('code', checks, (code) =>
-      code.publishOnAcceptance(caller, { unitId: task.id }, tx),
-    );
-    return task.id;
-  }
-
-  /** Every task and experiment works in Git, so selecting one, directly or not, selects code. */
-  private async selectedCode(
-    caller: Caller,
-    ids: string[] | undefined,
-    tx: Transaction,
-  ): Promise<boolean> {
-    const selected = new Set(ids);
-    for (const id of ids ?? [])
-      for (const dependency of await this.workflows.dependencyClosure(caller, id, tx))
-        selected.add(dependency);
-    const work =
-      ids === undefined
-        ? await this.workflows.list(caller, tx)
-        : await Promise.all([...selected].map((id) => this.workflows.get(caller, id, tx)));
-    return work.some((item) => item.workflow === 'task' || item.workflow === 'experiment');
-  }
-
-  /** Integration considers the whole project; provider absence cannot erase earlier Git work. */
-  private async retainedCode(caller: Caller, tx: Transaction): Promise<boolean> {
-    return (
-      !!(await tx.get(
-        'SELECT id FROM research_cycles WHERE project_id=? AND (code_required=1 OR code_required IS NULL) LIMIT 1',
-        caller.projectId,
-      )) || (await this.selectedCode(caller, undefined, tx))
-    );
-  }
-
-  /**
-   * Absence is safe only for a cycle known to have no Git obligations. Remember observing a
-   * hosted project even when a later advance fails: unloading its provider cannot erase that
-   * obligation. Git itself is still read outside the transaction that advances the cycle.
-   */
-  private async unpublished(
-    caller: Caller,
-    researchId: string,
-    tx?: Transaction,
-  ): Promise<Unpublished | null> {
-    const binding = this.bindings.code;
-    const checks: BindingChecks = [];
-    const asks = await inTransaction(this.state, tx, async (tx) => {
-      const record = await this.get(caller, researchId, tx);
-      if (!['reflecting', 'consolidating'].includes(record.workflow.state)) return false;
-      await this.authorize(caller, record, tx);
-      const row = await this.row(caller, researchId, tx);
-      const hosted = binding
-        ? await this.use('code', checks, (code) => code.hosted(caller, tx))
-        : false;
-      const required =
-        row.code_required === 1 ||
-        !!record.integrations.length ||
-        hosted ||
-        (await this.selectedCode(caller, record.researchDependencies, tx)) ||
-        (!binding && (await this.retainedCode(caller, tx)));
-      if (required || (binding && row.code_required === null))
-        await tx.run(
-          'UPDATE research_cycles SET code_required=? WHERE id=?',
-          required ? 1 : 0,
-          researchId,
-        );
-      checks.forEach((check) => check());
-      return hosted;
-    });
-    if (!asks) return { unitIds: [], quarantined: [] };
-    if (tx) return null;
-    const since = await this.use('code', checks, (code) => code.acceptedSince(caller));
-    // Code keeps the acceptance of an instance the 2026-09-22 retirement deleted as history, but
-    // no task can depend on an instance that no longer exists, so no cycle integrates that code.
-    const live = new Set(
-      since.unitIds.length ? (await this.workflows.list(caller)).map(({ id }) => id) : [],
-    );
-    return { unitIds: since.unitIds.filter((id) => live.has(id)), quarantined: since.quarantined };
-  }
-
-  /**
-   * The cycle's digest, composed and stored if it has none. Completing and ending a cycle must
-   * never wait on it, so there a missing capability leaves the column empty and whoever names
-   * the cycle as a predecessor composes it late; `required` refuses instead.
-   *
-   * Two creators naming one undigested predecessor may both compose. The guarded update keeps
-   * one: writers are serialised, so the second waits for the first and then matches no row or
-   * fails its transaction. Either way the stored digest is re-read and returned, and the
-   * loser's artifact stays unreferenced.
-   */
-  private async digested(
-    caller: Caller,
-    record: ResearchRecord,
-    tx: Transaction,
-    checks: BindingChecks,
-    options: { late: boolean; required: boolean },
-  ): Promise<Artifact | null> {
-    if (record.digest) return record.digest;
-    const children = this.children(record);
-    const selected = (await this.workflows.prerequisites(caller, [record.id], tx))
-      .get(record.id)!
-      .filter((item) => !children.includes(item.id));
-    const needed: (keyof Capabilities)[] = [
-      'artifacts',
-      ...(selected.some((item) => item.workflow === 'task') ? (['tasks'] as const) : []),
-      ...(selected.some((item) => item.workflow === 'experiment')
-        ? (['experiments'] as const)
-        : []),
-      ...(record.reflectionId ? (['reflections'] as const) : []),
-      ...(record.integrations.length ? (['code'] as const) : []),
-    ];
-    if (!options.required && needed.some((name) => !this.bindings[name])) return null;
-    const content = JSON.stringify(
-      await this.compose(caller, record, selected, tx, checks, options.late),
-    );
-    const artifact = await this.use('artifacts', checks, (service) =>
-      service.create(
-        caller,
-        {
-          title: `Cycle digest: ${clip(record.name, 180)}`,
-          content,
-          mediaType: 'application/json',
-        },
-        tx,
-      ),
-    );
-    await tx.run(
-      'UPDATE research_cycles SET digest=? WHERE id=? AND digest IS NULL',
-      JSON.stringify(artifact),
-      record.id,
-    );
-    const stored = JSON.parse((await this.row(caller, record.id, tx)).digest!) as Artifact;
-    if (stored.id === artifact.id)
-      await this.event(
-        caller,
-        'digested',
-        record.id,
-        { artifactId: artifact.id, late: options.late },
-        tx,
-      );
-    return stored;
-  }
-
-  /** Derived from records only, and naming no actor: see ResearchDigest. */
-  private async compose(
-    caller: Caller,
-    record: ResearchRecord,
-    selected: WorkflowDependency[],
-    tx: Transaction,
-    checks: BindingChecks,
-    late: boolean,
-  ): Promise<ResearchDigest> {
-    const text = (value: string) => clip(value, DIGEST_TEXT_CHARS);
-    const ref = ({ id, title, hash }: Artifact) => ({ id, title: text(title), hash });
-    // A cycle ended while reflecting has a child with nothing approved in it.
-    const reflection = record.reflectionId
-      ? await this.use('reflections', checks, async (service) =>
-          (await service.get(caller, record.reflectionId!, tx)).workflow.state === 'approved'
-            ? await service.approved(caller, record.reflectionId!, tx)
-            : null,
-        )
-      : null;
-    const taskId = record.integrations.at(-1);
-    const integration = taskId
-      ? {
-          taskId,
-          publication:
-            (await this.use('code', checks, (code) => code.unit(caller, taskId, tx))).publication
-              ?.state ?? null,
-        }
-      : null;
-    // A cycle reads only its selected work, directly from the providers that own it.
-    // Keep the existing record order so digest truncation remains stable.
-    const byCreated = (
-      a: { createdAt: string; id: string },
-      b: { createdAt: string; id: string },
-    ) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id);
-    const ids = (workflow: string) => [
-      ...new Set(selected.filter((item) => item.workflow === workflow).map((item) => item.id)),
-    ];
-    const experiments = (
-      await mapAsync(ids('experiment'), (id) =>
-        this.use('experiments', checks, (service) => service.get(caller, id, tx)),
-      )
-    ).sort(byCreated);
-    const tasks = (
-      await mapAsync(ids('task'), (id) =>
-        this.use('tasks', checks, (service) => service.record(caller, id, tx)),
-      )
-    ).sort(byCreated);
-    const lists = {
-      experiments: experiments.map((entry) => ({
-        id: entry.id,
-        name: text(entry.name),
-        state: entry.workflow.state,
-        attempts: entry.attempts.length,
-        submissions: entry.submissions.length,
-        conclusion: entry.conclusion === null ? null : text(entry.conclusion),
-      })),
-      tasks: tasks.map((task) => ({
-        id: task.id,
-        title: text(task.title),
-        state: task.workflow.state,
-      })),
-      dropped: selected.filter((item) => item.failed).map((item) => item.id),
-      carriedOver: selected.filter((item) => !item.settled).map((item) => item.id),
-      rejected: (reflection?.plan?.rejected ?? []).map((entry) => ({
-        title: text(entry.title),
-        reason: text(entry.reason),
-      })),
-    };
-    const composedAt = now();
-    let omitted = 0;
-    for (const list of Object.values(lists)) omitted += list.splice(DIGEST_LIST_LIMIT).length;
-    const reason = record.workflow.data.reason;
-    const composed = (): ResearchDigest => ({
-      formatVersion: 1,
-      cycle: {
-        id: record.id,
-        name: text(record.name),
-        outcome: record.workflow.state as ResearchDigest['cycle']['outcome'],
-        reason: typeof reason === 'string' ? text(reason) : null,
-        createdAt: record.createdAt,
-        composedAt,
-        late,
-      },
-      previousCycleId: record.previousCycleId,
-      reflection: reflection && {
-        id: reflection.id,
-        reviewId: reflection.reviewId,
-        approvedAt: reflection.approvedAt,
-        report: ref(reflection.report),
-        changeSpec: ref(reflection.changeSpec),
-        // The decision is the one line of the plan every later wave needs; the items that
-        // became work are records, which the successor's origin names.
-        next: reflection.plan
-          ? {
-              decision: reflection.plan.next.decision,
-              reason: reflection.plan.next.decision === 'stop' ? reflection.plan.next.reason : null,
-              rationale: text(reflection.plan.next.rationale),
-            }
-          : null,
-      },
-      integration,
-      ...lists,
-      omitted,
-    });
-    // The bound is a promise to every later context, so entries go, longest list first, until
-    // it holds; what is left out is counted, and the records themselves remain readable.
-    let digest = composed();
-    while (JSON.stringify(digest).length > DIGEST_MAX_CHARS) {
-      const longest = Object.values(lists).reduce((a, b) => (b.length > a.length ? b : a));
-      if (!longest.length) break;
-      longest.pop();
-      omitted++;
-      digest = composed();
-    }
-    return digest;
-  }
-
   async lineage(caller: Caller, id: string, transaction?: Transaction): Promise<ResearchLineage> {
     this.open();
     caller = structuredClone(caller);
@@ -1538,284 +636,6 @@ export class ResearchService implements Research {
       return result;
     });
   }
-  /** Subscribe through the existing engine's durable events; workers keep their fixed grants. */
-  async bindAutomatic(events: DomainEvents): Promise<() => Promise<void>> {
-    this.open();
-    const release = await automaticResearch(
-      this.state,
-      this.scope,
-      this.workflows,
-      events,
-      async (caller, row, tx) => await this.reconcileAutomatic(caller, row, tx),
-      (row) => this.retryUnavailable(row),
-    );
-    this.automaticBound = true;
-    try {
-      await this.wakeAutomatic();
-    } catch (error) {
-      this.automaticBound = false;
-      await release();
-      throw error;
-    }
-    return async () => {
-      this.automaticBound = false;
-      await release();
-    };
-  }
-
-  /**
-   * Wakes a project whose cycle an outage refused once `retryAfterMs` has passed, while one of
-   * its cycles reports an outage first seen less than `unavailableForMs` ago: an idle project
-   * has no other event to wake it. The bound is the outage's first sighting, kept beside the
-   * cycle, so outages that alternate their codes cannot extend it. One retry waits per project.
-   * A retry that cannot even be read or written is tried again, within the bound from `since`,
-   * when this retry was first asked for.
-   */
-  private retryUnavailable(row: AutomaticRow, since = Date.now()): void {
-    if (this.retrying.has(row.project_id)) return;
-    this.retrying.add(row.project_id);
-    const wake = async () => {
-      this.retrying.delete(row.project_id);
-      if (this.closed || !this.automaticBound) return;
-      const source = JSON.parse(row.source_json) as DelegationSource;
-      await this.state.transaction(async (tx) => {
-        const out = await tx.all<{ blocker_json: string | null }>(
-          'SELECT blocker_json FROM research_automation WHERE project_id=? AND blocker_json IS NOT NULL',
-          row.project_id,
-        );
-        if (
-          !out.some(
-            (item) => Date.now() - unavailableSince(item.blocker_json) <= this.unavailableForMs,
-          )
-        )
-          return;
-        await this.state.appendEvent(tx, {
-          projectId: row.project_id,
-          actorId: source.actorId,
-          type: 'research.resume',
-          subjectId: row.research_id,
-          data: { performedBy: 'system:research' },
-        });
-      });
-    };
-    // Outside the consumer's transaction context, which ends before this runs.
-    const retry = () =>
-      void wake().catch(() => {
-        if (Date.now() - since < this.unavailableForMs) this.retryUnavailable(row, since);
-      });
-    this.detached(() => setTimeout(retry, this.retryAfterMs).unref());
-  }
-
-  /** Startup and provider restoration must also revisit events previously consumed while blocked. */
-  async wakeAutomatic(): Promise<void> {
-    if (!this.automaticBound || this.closed) return;
-    await this.state.transaction(async (tx) => {
-      // One resume per project: its consumer reconciles every open cycle there.
-      const cycles = await this.workflows.open('research', null, tx);
-      const rows = await tx.all<{ project_id: string; source_json: string; research_id: string }>(
-        'SELECT DISTINCT ON (project_id) project_id,source_json,research_id FROM research_automation WHERE research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY project_id,cycle_index,research_id',
-        JSON.stringify(cycles.map((cycle) => cycle.id)),
-      );
-      for (const row of rows)
-        await this.state.appendEvent(tx, {
-          projectId: row.project_id,
-          actorId: JSON.parse(row.source_json).actorId,
-          type: 'research.resume',
-          subjectId: row.research_id,
-          data: { performedBy: 'system:research' },
-        });
-    });
-  }
-
-  private async reconcileAutomatic(
-    caller: Caller,
-    automatic: AutomaticRow,
-    tx: Transaction,
-  ): Promise<AutomaticBlocker> {
-    this.open();
-    const record = await this.get(caller, automatic.research_id, tx);
-    await this.authorize(caller, record, tx);
-    if (definition.terminal.includes(record.workflow.state)) return null;
-    if (record.workflow.state === 'defining' && record.previousCycleId) {
-      const previous = await this.get(caller, record.previousCycleId, tx);
-      const current = await this.definition(caller, tx, []);
-      check(
-        !previous.problem || current.revision === previous.problem.revision,
-        'research_definition_changed',
-        'The project definition changed; explicitly accept it before continuing this automatic run',
-        409,
-      );
-    }
-    if (record.workflow.state === 'researching') await this.closeBlockedWork(caller, record, tx);
-    const atLimit = automatic.cycle_index >= automatic.max_cycles;
-    const nextWave = atLimit ? 'skip' : 'create';
-    const guidance = await this.workflows.evaluate(
-      caller,
-      record.id,
-      {
-        action: `advance_${record.workflow.state}`,
-        input: { nextWave },
-      },
-      tx,
-    );
-    const action = guidance.nextAction;
-    if (!action || action.status !== 'ready') {
-      const blocker = guidance.blockers[0] ?? guidance.actions.flatMap((item) => item.blockers)[0];
-      return blocker
-        ? { code: blocker.code, message: clip(blocker.message, 2000), status: blocker.status }
-        : { code: 'research_waiting', message: guidance.instruction, status: 409 };
-    }
-    const input: ResearchAdvance = {
-      researchId: record.id,
-      expectedRevision: record.workflow.revision,
-      nextWave,
-      requestId: automaticRequest(record.id, record.workflow.revision, 'advance'),
-    };
-    let advanced: ResearchRecord;
-    try {
-      advanced = await this.advance(caller, input, tx);
-    } catch (error) {
-      // Git is asked outside every transaction, so the same advance runs again on its own.
-      if (error instanceof MervError && error.code === 'integration_candidates_unavailable')
-        this.soon(caller, automatic, input, automaticBlocker(error));
-      throw error;
-    }
-    await this.event(
-      caller,
-      'automatically_advanced',
-      record.id,
-      {
-        performedBy: 'system:research',
-        from: record.workflow.state,
-        to: advanced.workflow.state,
-        ...(advanced.successorId ? { successorId: advanced.successorId } : {}),
-      },
-      tx,
-    );
-    return null;
-  }
-
-  /**
-   * The advance the consumer could not make, run on its own after its transaction, outside
-   * every transaction's context. Success is a transition event the consumer answers; a
-   * refusal is written only over the marker the consumer left, so a reconcile since is never
-   * overwritten and nothing loops: the marker returns on the next event, today's retry cadence.
-   */
-  private soon(
-    caller: Caller,
-    row: AutomaticRow,
-    input: ResearchAdvance,
-    marker: AutomaticBlocker,
-  ): void {
-    if (this.closed) return;
-    const run = async () => {
-      try {
-        await this.advance(caller, input);
-      } catch (error) {
-        if (
-          this.closed ||
-          !(error instanceof MervError) ||
-          (error.status >= 500 && error.status !== 503)
-        )
-          return;
-        await this.state.transaction(async (tx) => {
-          const left = (await this.workflows.blockers(caller, row.research_id, tx)).find(
-            (item) => item.provider === AUTOMATIC_PROVIDER,
-          );
-          if (left?.code === marker?.code && left?.message === marker?.message)
-            await publishBlocker(this.workflows, row, automaticBlocker(error), tx);
-        });
-      }
-    };
-    // Outside the consumer's transaction, whose commit its own transaction waits for.
-    this.detached(() => queueMicrotask(() => void run().catch(() => undefined)));
-  }
-
-  /**
-   * A permanently failed input cannot strand never-started work in this selected wave, or the
-   * work between it and that input.
-   */
-  private async closeBlockedWork(caller: Caller, record: ResearchRecord, tx: Transaction) {
-    const remaining = new Set<string>();
-    for (const id of record.researchDependencies)
-      for (const item of await this.workflows.dependencyClosure(caller, id, tx))
-        remaining.add(item);
-    for (let pass = 0, passes = remaining.size; remaining.size && pass < passes; pass++) {
-      let changed = false;
-      for (const id of [...remaining]) {
-        const work = await this.workflows.get(caller, id, tx);
-        if (
-          !['task', 'experiment'].includes(work.workflow) ||
-          !['in_progress', 'planned'].includes(work.state)
-        ) {
-          remaining.delete(id);
-          continue;
-        }
-        // Never cancel a running producer or review to close a wave.
-        if ((await this.workflows.workStarts(caller, id, tx)).length) {
-          remaining.delete(id);
-          continue;
-        }
-        const failed = (await this.workflows.prerequisites(caller, [id], tx))
-          .get(id)!
-          .filter((item) => item.failed);
-        if (!failed.length) continue;
-        // Work between the selection and the failed input is not the cycle's own to reflect on.
-        const after = record.researchDependencies.includes(id)
-          ? `Retained for reflection in ${record.name}.`
-          : `Closed because work selected by ${record.name} waits on it.`;
-        const reason = clip(
-          `Not run: required input ended without success: ${failed.map((item) => `${item.name} (${item.id}, ${item.state})`).join(', ')}. ${after}`,
-          16000,
-        );
-        const requestId = automaticRequest(record.id, work.revision, `close:${id}`);
-        if (work.workflow === 'task') {
-          await this.use('tasks', [], (service) =>
-            service.markFailed(
-              caller,
-              {
-                taskId: id,
-                expectedRevision: work.revision,
-                reason,
-                requestId,
-              },
-              tx,
-            ),
-          );
-        } else {
-          await this.use('experiments', [], (service) =>
-            service.transition(
-              caller,
-              {
-                experimentId: id,
-                expectedRevision: work.revision,
-                transition: 'abandon',
-                evidence: { reason },
-                requestId,
-              },
-              tx,
-            ),
-          );
-        }
-        await this.event(
-          caller,
-          'blocked_work_closed',
-          record.id,
-          {
-            performedBy: 'system:research',
-            workflowId: id,
-            failedInputs: failed.map((item) => item.id),
-            reason,
-          },
-          tx,
-        );
-        remaining.delete(id);
-        changed = true;
-      }
-      if (!changed) break;
-    }
-  }
-
   private bind<K extends keyof Capabilities>(name: K, value: Capabilities[K]): () => void {
     this.open();
     const binding = { value };
@@ -1846,7 +666,7 @@ export class ResearchService implements Research {
   bindArtifacts(artifacts: Artifacts): () => void {
     return this.bind('artifacts', artifacts);
   }
-  private requireCapability<K extends keyof Capabilities>(name: K, checks: BindingChecks) {
+  requireCapability<K extends keyof Capabilities>(name: K, checks: BindingChecks) {
     this.open();
     checks.forEach((check) => check());
     const binding = this.bindings[name];
@@ -1857,7 +677,7 @@ export class ResearchService implements Research {
     });
     return binding.value;
   }
-  private async use<K extends keyof Capabilities, T>(
+  async use<K extends keyof Capabilities, T>(
     name: K,
     checks: BindingChecks,
     action: (service: Capabilities[K]) => Promise<T>,
@@ -1867,7 +687,7 @@ export class ResearchService implements Research {
     checks.forEach((check) => check());
     return result;
   }
-  private children(record: ResearchRecord): string[] {
+  children(record: ResearchRecord): string[] {
     return [record.reflectionId, ...record.integrations].filter((id): id is string => !!id);
   }
   private async command<T>(
@@ -1879,7 +699,7 @@ export class ResearchService implements Research {
   ): Promise<T> {
     return await replayed(tx, 'research_commands', caller, operation, input, execute);
   }
-  private async event(caller: Caller, type: string, id: string, data: Data, tx: Transaction) {
+  async event(caller: Caller, type: string, id: string, data: Data, tx: Transaction) {
     await recorded(this.state, tx, caller, `research.${type}`, id, data);
   }
   close() {
