@@ -1,6 +1,5 @@
 /**
- * The experiment page's retained files, grouped by the part each plays. Every role the
- * domain writes has a group of its own; only a role it no longer writes is "other".
+ * The experiment page's retained files, grouped by the part each plays, in the domain's order.
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -29,9 +28,9 @@ const retained = (role: string, n: number) => ({
   current: true,
 });
 
-test('a feasibility statement is its own group beside the plan, never an other retained file', async (t) => {
+test('a feasibility statement is its own group beside the plan', async (t) => {
   t.after(async () => await unmount());
-  const evidence = ['report', 'feasibility', 'plan', 'result', 'legacy'].map(retained);
+  const evidence = ['report', 'feasibility', 'plan', 'result'].map(retained);
   await mount(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     createElement(
@@ -43,6 +42,6 @@ test('a feasibility statement is its own group beside the plan, never an other r
   await settle(10);
   assert.deepEqual(
     [...document.querySelectorAll('.ev-role')].map((node) => node.textContent),
-    ['plan', 'feasibility', 'result', 'report', 'other retained files'],
+    ['plan', 'feasibility', 'result', 'report'],
   );
 });

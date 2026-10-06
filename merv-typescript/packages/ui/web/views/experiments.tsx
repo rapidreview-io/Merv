@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
+import { EXPERIMENT_ROLES } from '@merv/experiments/rules';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { CodeBlock } from '../code-block';
@@ -27,8 +28,6 @@ import { useActorNames } from './people';
 import type { ViewProps } from './index';
 import type { CodeUnit } from '@merv/code-work/models';
 
-/** The domain's own order; a role with nothing retained under it is left out. */
-const ROLES = ['plan', 'feasibility', 'result', 'report', 'exhibit'] as const;
 const STAGE = { design: 'Design review', results: 'Results review' };
 
 /** Retained files grouped by the part they play, each opening where it is listed. */
@@ -40,13 +39,11 @@ export function EvidenceFiles({
   figures: string[];
 }) {
   const artifacts = useArtifacts();
-  const bands: [string, ExperimentEvidence[]][] = ROLES.map((role) => [
+  // In the domain's own order; a role with nothing retained under it is left out.
+  const bands: [string, ExperimentEvidence[]][] = EXPERIMENT_ROLES.map((role) => [
     role,
     evidence.filter((item) => item.role === role),
   ]);
-  // A role the domain no longer writes is still on the record, so it keeps a band of its own.
-  const retained = evidence.filter((item) => !ROLES.some((role) => role === item.role));
-  if (retained.length) bands.push(['other retained files', retained]);
   return (
     <div className="stack">
       {bands

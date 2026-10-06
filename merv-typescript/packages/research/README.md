@@ -28,7 +28,7 @@ flowchart LR
     postgres[("PostgreSQL")]
   end
   owner -- "calls research.advance" --> research
-  research -- "registers research workflow" --> workflows
+  research -- "registers research workflow, publishes automation blockers" --> workflows
   research -. "reads Problem" .-> paper
   research -. "waits on, creates tasks" .-> tasks
   research -. "waits on, creates experiments" .-> experiments

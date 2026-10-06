@@ -253,8 +253,8 @@ evidence, interruption feedback and retained rejected assessments.
 The current versions (`experiment.design`, `experiment.design_review` and
 `experiment.execute` at 11, `experiment.attempt_review` at 12) are format 2,
 the item renderer. The experiment record and the pinned review are always
-embedded; the paper, section by section from `paper.contextSections`, the
-approved plan (priority 900), the evidence (800) and the feedback (700) are
+embedded; the paper, as the items `paper.contextInput` chooses for the
+recipe's budget, the approved plan (priority 900), the evidence (800) and the feedback (700) are
 embedded whole while they fit and are otherwise listed by one line with its
 retrieval tool. Figures and the generated metrics exhibit are only listed, so
 their bytes are never read into a packet. These versions render every packet.

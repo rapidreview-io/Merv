@@ -726,6 +726,13 @@ test('Active cap, name uniqueness and same-project dependencies fail atomically'
   for (let i = 0; i < 6; i++) await create(`Active-${i}`);
   await assert.rejects(async () => await create('Eighth'), code('experiment_limit'));
   await f.transition(initial, 'abandon', { evidence: { reason: 'Stop this line of work.' } });
+  // Creating several at once is admitted as creating each would be, all or none.
+  await assert.rejects(f.experiments.admits(f.producer, ['One', 'Two']), code('experiment_limit'));
+  await assert.rejects(
+    f.experiments.admits(f.producer, ['ACTIVE-0']),
+    code('experiment_name_conflict'),
+  );
+  await f.experiments.admits(f.producer, ['Replacement']);
   assert.ok(await create('Replacement'));
   assert.equal((await f.experiments.list(caller)).length, 0);
 });

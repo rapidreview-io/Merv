@@ -4,9 +4,9 @@ import {
   releasedLease,
   visible,
   everyAsync,
-  itemTitle,
   sha256Hex,
 } from '@merv/contracts';
+import { artifactItem } from '@merv/context-builder/artifact-item';
 import { mapAsync, checkReceipt, grant, reference, target } from '@merv/contracts';
 import { childRequest, createService, markdownSection, recorded, replayed } from '@merv/contracts';
 import { keyId, keyKind } from '@merv/contracts';
@@ -678,14 +678,12 @@ export class ReflectionService implements Reflections {
       note,
       refs: [{ tool, input }],
     });
-    const artifactItem = (artifact: Artifact, priority: number, note: string): ContextItem => ({
-      id: `artifact:${artifact.id}:${sha256Hex(Buffer.from(note)).slice(0, 12)}`,
-      title: itemTitle(artifact),
-      priority,
-      body: { artifactId: artifact.id },
-      note,
-      refs: [{ tool: 'artifact.read', input: { artifactId: artifact.id } }],
-    });
+    const noted = (artifact: Artifact, priority: number, note: string): ContextItem =>
+      artifactItem(artifact, {
+        id: `artifact:${artifact.id}:${sha256Hex(Buffer.from(note)).slice(0, 12)}`,
+        priority,
+        note,
+      });
     const assignment = JSON.stringify({
       reflectionId: wave.id,
       title: wave.title,
@@ -699,32 +697,12 @@ export class ReflectionService implements Reflections {
         : {}),
       ...(lens ? { perspective: lens.perspective, instructions: lens.instructions } : {}),
     });
-    const documents = await this.paper.documents(context.caller, context.tx);
     // A published section that repeats a current one says so itself: the builder names the copy.
-    const paperItems = this.paper
-      .contextSections(documents)
-      .map(({ id, title, priority, text, note, refs }): ContextItem => ({
-        id,
-        title,
-        priority,
-        body: { text },
-        note,
-        refs,
-      }));
-    if (!paperItems.length)
-      paperItems.push(
-        item(
-          `paper:workspace:${wave.id}`,
-          'Project paper workspace',
-          500,
-          JSON.stringify(documents),
-          `reflection ${wave.id}; paper workspace without sections`,
-          'paper.read',
-          {},
-        ),
-      );
+    const stage = lens ? 'lens' : context.snapshot.state === 'in_review' ? 'review' : 'synthesis';
+    const { maxChars } = ITEM_RECIPES.find((entry) => entry.name === `reflection.${stage}`)!.recipe;
+    const paper = await this.paper.contextInput(context.caller, maxChars, context.tx);
     const lensItems = lensRows.map((entry) =>
-      artifactItem(
+      noted(
         JSON.parse(entry.artifact!) as Artifact,
         800,
         `reflection ${wave.id}; ${entry.perspective} lens ${entry.id}; attempt ${entry.attempt}`,
@@ -786,18 +764,14 @@ export class ReflectionService implements Reflections {
           lens ? { lensId: lens.id } : { reflectionId: wave.id },
         ),
       ],
-      projectPaper: paperItems,
+      projectPaper: paper.items,
       research: [],
       lenses: lens ? [] : lensItems,
       submission:
         review && submission
           ? [
-              artifactItem(submission.report, 780, `reflection ${wave.id}; synthesis report`),
-              artifactItem(
-                submission.changeSpec,
-                780,
-                `reflection ${wave.id}; change specification`,
-              ),
+              noted(submission.report, 780, `reflection ${wave.id}; synthesis report`),
+              noted(submission.changeSpec, 780, `reflection ${wave.id}; change specification`),
             ]
           : [],
       assessment: review
@@ -816,7 +790,7 @@ export class ReflectionService implements Reflections {
       feedback: review ? reviewerFeedback : reviewItems.slice(-1),
       ...(!review ? { history: reviewItems.slice(0, -1) } : {}),
       previousCycle: previousArtifact
-        ? [artifactItem(previousArtifact, 300, `predecessor cycle of reflection ${wave.id}`)]
+        ? [noted(previousArtifact, 300, `predecessor cycle of reflection ${wave.id}`)]
         : [],
     });
   }

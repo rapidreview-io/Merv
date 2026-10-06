@@ -28,7 +28,7 @@ flowchart LR
   agent -- "calls paper.patch" --> paper
   experiments -- "applies paper changes" --> paper
   reflections -- "applies paper changes" --> paper
-  tasks -- "reads paper sections" --> paper
+  tasks -- "reads paper context" --> paper
   research -. "reads Problem" .-> paper
   paper -- "emits paper.patched" --> research
   paper -- "writes project Introduction" --> scope
@@ -44,6 +44,7 @@ Paper is the one document the research cycle reads and writes: reviewers in Expe
 
 ## Surface
 
-- `@merv/paper`: the `paper` service. It requires State, Scope and Artifacts, and records `paper.patched`, `paper.cited` and `paper.reviewed` events.
+- `@merv/paper`: the `paper` service. It requires State, Scope and Artifacts, and records `paper.patched`, `paper.cited` and `paper.reviewed` events. `contextInput` is the paper as one context section's items, which Tasks, Experiments and Reflections put in their assignments.
+- `@merv/paper/rules`: the Problem's four sections and `problemDefined`, which Research checks before a cycle starts.
 - `@merv/paper/tools`: `paper.read`, `paper.patch` and `paper.cite`.
 - `@merv/paper/ui`: the `/paper` page.

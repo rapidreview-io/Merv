@@ -275,14 +275,10 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
   assert.ok(synthesis.prompt.length <= 32_000);
   assert.ok(synthesis.prompt.includes(`\n### reflection:${wave.id}:wave:`));
   assert.ok(synthesis.prompt.includes(`"reflectionId":"${wave.id}"`));
-  // A paper this size cannot all be listed: the lowest-ranked sections are cut and counted, and
-  // omitted names them beside the listed sections whose bodies did not fit.
-  const cut = synthesis.omitted.filter((id) => !synthesis.prompt.includes(id));
-  assert.ok(cut.length > 0 && cut.every((id) => id.startsWith('paper:')));
-  assert.match(
-    synthesis.prompt,
-    /lower-priority items are not listed for lack of room; retrieve them through paper\.read\.\)/,
-  );
+  // A paper this size cannot all be embedded: the sections past the budget are named by one item,
+  // which says how to read them.
+  assert.match(synthesis.prompt, /paper:not-included — \d+ more paper sections, not included/);
+  assert.match(synthesis.prompt, /paper:problem:current:1:0:problem/);
   assert.ok(reports.every((id) => synthesis.sources.some((source) => source.id === id)));
 
   // A leased worker's grants still cover every lens report its items name.

@@ -15,7 +15,6 @@ import {
   digest,
   folded,
   inTransaction,
-  itemTitle,
   keyId,
   keyKind,
   mapAsync,
@@ -70,7 +69,8 @@ import { postgresMigrations } from './index.postgres.js';
 import type { Code } from '@merv/code-work/types';
 import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
-import type { Paper, PaperContextSection } from '@merv/paper/types';
+import type { Paper } from '@merv/paper/types';
+import { artifactItem } from '@merv/context-builder/artifact-item';
 import { RESERVED_CONTEXT_INPUTS, TASK_TYPES } from './definitions.js';
 import {
   acceptanceChecks,
@@ -312,6 +312,8 @@ const SOURCE_VERIFICATION =
  * and not part of the published graph, so it covers every live task of every version.
  */
 export const TASK_LIMITS = { reviewRounds: 3 };
+/** At most this many Done-when checks, so a delivery's confirmations always fit a workflow move. */
+const MAX_CHECKS = 200;
 const configuration = z
   .object({
     limits: z
@@ -322,11 +324,6 @@ const configuration = z
   .strict()
   .default({});
 
-/**
- * The most a lease receipt's paper may take, in UTF-8 bytes of its JSON. A session packet holds
- * 512 KiB, and the rest of the receipt, the project Introduction included, is far smaller.
- */
-const PAPER_RECEIPT_BYTES = 384 * 1024;
 /** A context input before it becomes items: one text, or artifacts listed by ID. */
 type Source = { text: string } | { artifactIds: string[] } | ContextInput;
 /**
@@ -368,8 +365,8 @@ export class TaskService implements Tasks {
     private workflows: Workflows,
     private reviews: Reviews,
     private contextBuilder: ContextBuilder,
+    private paper: Paper,
     private limits = TASK_LIMITS,
-    private paper?: Paper,
   ) {
     this.initialize = async () => {
       await state.migrate(
@@ -618,7 +615,11 @@ export class TaskService implements Tasks {
       reviewId: review?.id ?? null,
       claimId: review?.claimId ?? null,
       project: await this.projectContext(source, tx),
-      ...(this.paper ? { paper: await this.paperSections(source, type, tx) } : {}),
+      paper: (await this.paper.contextInput(
+        source,
+        type.definition.recipe.maxChars,
+        tx,
+      )) as unknown as Data,
     };
     await tx.run(
       'INSERT INTO task_leases(id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
@@ -1407,6 +1408,11 @@ export class TaskService implements Tasks {
           'Task requires at least one nonempty single-line Done-when check',
         );
         check(
+          input.checks.length <= MAX_CHECKS,
+          'invalid_checks',
+          `A task has at most ${MAX_CHECKS} Done-when checks`,
+        );
+        check(
           new Set(input.checks.map(folded)).size === input.checks.length,
           'invalid_checks',
           'Done-when checks must be distinct',
@@ -1544,36 +1550,49 @@ export class TaskService implements Tasks {
       return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
     });
   }
-  /** One saved checkpoint, read back only by a caller whose own context or assignment lists it. */
+  /**
+   * One saved checkpoint. A work checkpoint reads back for anyone who may read the project,
+   * whatever the task's state; a leased worker, and anyone reading a review's checkpoint, reads
+   * only what their own current context lists, filtered as it filters it. Any other is not found.
+   */
   async savedCheckpoint(caller: Caller, taskId: string, checkpointId: string) {
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const saved = await tx.get<{ purpose: 'work' | 'review' }>(
-        'SELECT purpose FROM task_checkpoints WHERE project_id=? AND task_id=? AND id=?',
+      const saved = await tx.get<{ purpose: 'work' | 'review'; checkpoint: string }>(
+        'SELECT purpose,checkpoint FROM task_checkpoints WHERE project_id=? AND task_id=? AND id=?',
         caller.projectId,
         taskId,
         checkpointId,
       );
       check(saved, 'not_found', 'This task has no checkpoint with that ID', 404);
-      const workflow = await this.workflows.get(caller, taskId, tx);
-      const { row } = await this.assignmentFacts(
-        caller,
-        { taskId, purpose: saved.purpose, expectedRevision: workflow.revision },
-        tx,
-        true,
-        workflow,
-      );
-      const found = (
-        await this.visibleCheckpoints(
+      if (!caller.session && saved.purpose === 'work')
+        return JSON.parse(saved.checkpoint) as TaskCheckpoint;
+      const listed = async () => {
+        const workflow = await this.workflows.get(caller, taskId, tx);
+        const { row } = await this.assignmentFacts(
           caller,
-          taskId,
-          saved.purpose,
-          row.review_id,
-          workflow.revision,
+          { taskId, purpose: saved.purpose, expectedRevision: workflow.revision },
           tx,
-        )
-      ).find((checkpoint) => checkpoint.id === checkpointId);
+          true,
+          workflow,
+        );
+        return (
+          await this.visibleCheckpoints(
+            caller,
+            taskId,
+            saved.purpose,
+            row.review_id,
+            workflow.revision,
+            tx,
+          )
+        ).find((checkpoint) => checkpoint.id === checkpointId);
+      };
+      const found = await listed().catch((error: unknown) => {
+        // A caller without the assignment is shown no more than a missing checkpoint shows.
+        if (error instanceof MervError && error.status < 500) return undefined;
+        throw error;
+      });
       check(found, 'not_found', 'Your context lists no checkpoint with that ID', 404);
       return found;
     });
@@ -1655,60 +1674,11 @@ export class TaskService implements Tasks {
     return type;
   }
 
-  /** The project, with its Introduction only without Paper: Paper writes it from the Problem,
-   * whose sections the paper's own items carry. */
+  /** The project, without its Introduction: Paper writes it from the Problem, whose sections
+   * the paper's own items carry. */
   private async projectContext(caller: Caller, tx: Transaction): Promise<Data> {
     const project = await this.scope.project(caller, tx);
-    return {
-      id: project.id,
-      name: project.name,
-      ...(this.paper ? {} : { summary: project.summary ?? '' }),
-      contextRevision: project.contextRevision ?? 0,
-    };
-  }
-
-  /**
-   * The paper as the recipe's items use it: whole sections, highest priority first, while
-   * their distinct text fits the recipe budget, since no more could ever be embedded, and while
-   * their JSON fits PAPER_RECEIPT_BYTES, since a lease freezes them in its receipt. `left` names
-   * the sections past that by ID and title while those fit too, and `more` counts the rest; both
-   * lists keep the paper's order.
-   */
-  private async paperSections(
-    caller: Caller,
-    type: { definition: ContextRecipeDefinition },
-    tx: Transaction,
-  ): Promise<Data> {
-    check(this.paper, 'paper_unavailable', 'Project paper is required for task assignments', 503);
-    const sections = this.paper.contextSections(await this.paper.documents(caller, tx));
-    // Each entry's JSON and the comma after it.
-    const size = (entry: object) => Buffer.byteLength(JSON.stringify(entry)) + 1;
-    let room = type.definition.recipe.maxChars,
-      bytes = PAPER_RECEIPT_BYTES;
-    const texts = new Set<string>(),
-      kept = new Set<PaperContextSection>();
-    for (const section of [...sections].sort((a, b) => b.priority - a.priority)) {
-      const copy = texts.has(section.text);
-      if ((!copy && section.text.length > room) || size(section) > bytes) continue;
-      if (!copy) room -= section.text.length;
-      bytes -= size(section);
-      texts.add(section.text);
-      kept.add(section);
-    }
-    const left: { id: string; title: string }[] = [],
-      rest = sections.filter((section) => !kept.has(section));
-    for (const { id, title } of rest) {
-      if (size({ id, title }) > bytes) break;
-      bytes -= size({ id, title });
-      left.push({ id, title });
-    }
-    return JSON.parse(
-      JSON.stringify({
-        sections: sections.filter((section) => kept.has(section)),
-        left,
-        more: rest.length - left.length,
-      }),
-    ) as Data;
+    return { id: project.id, name: project.name, contextRevision: project.contextRevision ?? 0 };
   }
 
   /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */
@@ -1745,22 +1715,20 @@ export class TaskService implements Tasks {
         ) as Data)
       : null;
     const project = receipt?.project ?? (await this.projectContext(caller, tx));
-    const paper =
-      receipt?.paper ?? (this.paper ? await this.paperSections(caller, type, tx) : null);
-    const hasProjectPaper = type.definition.recipe.sections.some(
-      (section) => section.key === 'projectPaper',
-    );
+    // A lease taken before 2026-10-06 froze the paper's sections, not its items: read it now.
+    const frozen = receipt?.paper as ContextInput | undefined;
+    const projectPaper = frozen?.items
+      ? frozen
+      : await this.paper.contextInput(caller, type.definition.recipe.maxChars, tx);
     const taskMetadata =
       JSON.stringify(assignmentTask) +
-      `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}` +
-      (!hasProjectPaper && paper
-        ? `\n\nProject paper (captured document revisions; read paper.read for abbreviated sections):\n${JSON.stringify(paper)}`
-        : '');
+      `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}`;
     let inputs: Record<string, Source>;
     if (purpose === 'review') {
       check(review, 'invalid_context', 'Missing review assignment');
       inputs = {
         task: { text: taskMetadata },
+        projectPaper,
         assessment: { text: JSON.stringify(review) },
         evidence: { artifactIds: review.artifactIds },
         taskBackground: Object.values(task.contextInputs).flat().length
@@ -1774,6 +1742,7 @@ export class TaskService implements Tasks {
           Object.entries(task.contextInputs).map(([key, artifactIds]) => [key, { artifactIds }]),
         ),
         task: { text: taskMetadata },
+        projectPaper,
         brief: { artifactIds: [task.briefId] },
       };
       if (typeof task.workflow.data.revisionContext === 'string') {
@@ -1836,19 +1805,17 @@ export class TaskService implements Tasks {
         type.definition.recipe.sections.some((section) => section.key === key),
       ),
     );
-    return await this.contextItems(caller, task, inputs, paper, type, tx);
+    return await this.contextItems(caller, task, inputs, type, tx);
   }
 
   /**
    * The inputs as the recipe takes them: each text becomes one item and each artifact one
-   * item named by its title, embedded as ITEM_RULES says, and the paper becomes its sections.
+   * item named by its title, embedded as ITEM_RULES says.
    */
   private async contextItems(
     caller: Caller,
     task: Task,
     inputs: Record<string, Source>,
-    /** What paperSections gave, frozen in a lease's receipt or read now; null without Paper. */
-    paper: unknown,
     type: { definition: ContextRecipeDefinition },
     tx: Transaction,
   ): Promise<Record<string, ContextInput>> {
@@ -1876,69 +1843,12 @@ export class TaskService implements Tasks {
                   ],
                 },
               ]
-            : await mapAsync(input.artifactIds, async (id): Promise<ContextItem> => ({
-                id: `${key}:${id}`,
-                title: itemTitle(await this.artifacts.get(caller, id, tx)),
-                body: { artifactId: id },
-                ...rule,
-                refs: [{ tool: 'artifact.read', input: { artifactId: id } }],
-              })),
-      };
-    }
-    if (type.definition.recipe.sections.some((section) => section.key === 'projectPaper')) {
-      const {
-        sections = [],
-        left = [],
-        more = 0,
-        documents,
-      } = (paper ?? {}) as {
-        documents?: unknown;
-        sections?: PaperContextSection[];
-        left?: { id: string; title: string }[];
-        more?: number;
-      };
-      const missing = left.length + more;
-      const read = { tool: 'paper.read', input: {} };
-      result.projectPaper = {
-        items: [
-          ...sections.map(({ id, title, text, priority, note, refs }): ContextItem => ({
-            id,
-            title,
-            body: { text },
-            priority,
-            note,
-            refs,
-          })),
-          ...(missing
-            ? [
-                {
-                  id: 'paper:not-included',
-                  title: `${missing} more paper section${missing === 1 ? '' : 's'}, not included in this assignment`,
-                  body: { text: JSON.stringify(left) },
-                  priority: 0,
-                  ...(more ? { note: `${more} of them not named here for lack of room` } : {}),
-                  refs: [read],
-                },
-              ]
-            : []),
-          ...(!sections.length && !missing
-            ? [
-                {
-                  id: 'paper:none',
-                  title: 'Project paper',
-                  body: {
-                    // A lease taken under a retired recipe froze the paper as capped documents.
-                    text: !paper
-                      ? 'Project paper unavailable in this assignment; read paper.read before work.'
-                      : documents
-                        ? JSON.stringify(paper)
-                        : 'The project paper has no written sections yet.',
-                  },
-                  refs: [read],
-                },
-              ]
-            : []),
-        ],
+            : await mapAsync(input.artifactIds, async (id) =>
+                artifactItem(await this.artifacts.get(caller, id, tx), {
+                  id: `${key}:${id}`,
+                  ...rule,
+                }),
+              ),
       };
     }
     return result;
@@ -3109,8 +3019,8 @@ export const tasksPlugin = {
         ctx.workflows,
         ctx.reviews,
         ctx.contextBuilder,
-        config.limits,
         ctx.paper,
+        config.limits,
       ),
     );
     ctx.inject(['codeWork'], (ctx) => {

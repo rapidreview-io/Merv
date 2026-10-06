@@ -1,3 +1,4 @@
+import { AsyncResource } from 'node:async_hooks';
 import type { ServiceTaskCreator, Tasks } from '@merv/tasks/types';
 import type { Code } from '@merv/code-work/types';
 import {
@@ -13,11 +14,12 @@ import {
   recorded,
   childRequest,
   replayed,
-  visible,
+  sourceCaller,
   type Artifact,
   type Artifacts,
   type Caller,
   type Data,
+  type DelegationSource,
   type DomainEvents,
   type Scope,
   type State,
@@ -27,18 +29,20 @@ import {
   type WorkflowDependency,
   type WorkflowPolicy,
   type Workflows,
+  type WorkflowSnapshot,
 } from '@merv/contracts';
 import type { Experiments } from '@merv/experiments/types';
-import { MAX_ACTIVE_EXPERIMENTS } from '@merv/experiments/rules';
+import { problemDefined } from '@merv/paper/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';
 import type { ApprovedReflection, ChangeSpec, Reflections } from '@merv/reflections/types';
 import type { Context } from 'cordis';
 import {
+  AUTOMATIC_PROVIDER,
   automaticBlocker,
   automaticRequest,
   automaticResearch,
-  automaticStatus,
-  recordBlocker,
+  publishBlocker,
+  type AutomaticBlocker,
   type AutomaticRow,
 } from './automatic.js';
 import { postgresMigrations } from './index.postgres.js';
@@ -116,6 +120,8 @@ const origin = (approved: ApprovedReflection, ...named: string[]) =>
 const pinned = (kind: string, { id, hash }: Artifact) => `${kind} ${id} (${hash})`;
 /** A cycle in one of these states is over: it may be digested and it may be followed. */
 const over = new Set(['complete', 'abandoned', 'failed']);
+/** How long an outage keeps a cycle being tried again before only an event or a bind wakes it. */
+const UNAVAILABLE_FOR = 10 * 60_000;
 /**
  * A digest rides inside a 24000-character reflection context, behind the assignment and any
  * rework feedback. At this bound it still fits beside them instead of being omitted whole.
@@ -175,6 +181,10 @@ type StoredRecord = Pick<
 export class ResearchService implements Research {
   private closed = false;
   private automaticBound = false;
+  /** How long a cycle an outage refused waits before it is tried again. */
+  retryAfterMs = 30_000;
+  /** Runs a callback in the context this service was made in, outside every transaction. */
+  private readonly detached = AsyncResource.bind((fn: () => void) => fn());
   private bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
   private handle?: Awaited<ReturnType<Workflows['register']>>;
   private checked = new CheckedTransitions();
@@ -321,6 +331,45 @@ export class ResearchService implements Research {
       return await this.record(caller, await this.row(caller, id, tx), tx);
     });
   }
+  /**
+   * Where an automatic run stands: the blocker Research published for the cycle, unless its
+   * event consumer is not bound, or the run finished its authorized cycles here.
+   */
+  private async automation(
+    caller: Caller,
+    row: AutomaticRow,
+    workflow: WorkflowSnapshot,
+    successorId: string | null,
+    tx: Transaction,
+  ): Promise<ResearchAutomation> {
+    const status = { rootId: row.root_id, cycle: row.cycle_index, maxCycles: row.max_cycles };
+    if (over.has(workflow.state))
+      return {
+        ...status,
+        blocker:
+          workflow.state === 'complete' && !successorId && row.cycle_index >= row.max_cycles
+            ? {
+                code: 'research_cycle_limit',
+                message: `Finished the authorized ${row.max_cycles} research cycles; no further wave was created`,
+              }
+            : null,
+      };
+    if (!this.automaticBound)
+      return {
+        ...status,
+        blocker: {
+          code: 'research_automatic_unavailable',
+          message: 'Automatic research is waiting for its durable event consumer to be available',
+        },
+      };
+    const published = (await this.workflows.blockers(caller, row.research_id, tx)).find(
+      (item) => item.provider === AUTOMATIC_PROVIDER,
+    );
+    return {
+      ...status,
+      blocker: published ? { code: published.code, message: published.message } : null,
+    };
+  }
   /** The cycle a row describes, for a caller already authorized to read it. */
   private async record(caller: Caller, row: Row, tx: Transaction): Promise<ResearchRecord> {
     const integrations: string[] = row.integrations ? JSON.parse(row.integrations) : [];
@@ -343,18 +392,7 @@ export class ResearchService implements Research {
     return {
       ...record,
       automation: automatic
-        ? {
-            ...automaticStatus(automatic),
-            ...(!this.automaticBound && !over.has(workflow.state)
-              ? {
-                  blocker: {
-                    code: 'research_automatic_unavailable',
-                    message:
-                      'Automatic research is waiting for its durable event consumer to be available',
-                  },
-                }
-              : {}),
-          }
+        ? await this.automation(caller, automatic, workflow, successor?.id ?? null, tx)
         : null,
       // The column is the one statement of which cycle this follows; the record pins the rest.
       origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,
@@ -574,9 +612,7 @@ export class ResearchService implements Research {
     const problem = (await this.use('paper', checks, (service) => service.documents(caller, tx)))
       .problem.current;
     check(
-      ['problem', 'scope', 'goals', 'constraints'].every((id) =>
-        problem.sections.some((section) => section.id === id && visible(section.content)),
-      ),
+      problemDefined(problem),
       'research_definition_required',
       'Fill the problem, scope, goals and constraints before starting research',
       409,
@@ -775,24 +811,19 @@ export class ResearchService implements Research {
   ): Promise<void> {
     this.requireCapability('tasks', checks);
     const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
-    if (planned.length) {
-      const { names, active } = await this.use('experiments', checks, (service) =>
-        service.occupancy(caller, tx),
+    if (planned.length)
+      await this.use('experiments', checks, (service) => service.admits(caller, planned, tx)).catch(
+        (error: unknown) => {
+          // Experiments' refusal, with this cycle's way past it.
+          throw error instanceof MervError && error.status === 409
+            ? new MervError(
+                error.code,
+                `${error.message}. Complete this cycle with nextWave: "skip" to go on without the plan`,
+                409,
+              )
+            : error;
+        },
       );
-      for (const name of planned)
-        check(
-          !names.includes(name.toLowerCase()),
-          'experiment_name_conflict',
-          `An experiment already uses the planned name ${name}. Complete this cycle with nextWave: "skip" and create the work under another name`,
-          409,
-        );
-      check(
-        active + planned.length <= MAX_ACTIVE_EXPERIMENTS,
-        'experiment_limit',
-        `The plan adds ${planned.length} experiments to ${active} active ones, and at most ${MAX_ACTIVE_EXPERIMENTS} may be active in this project. Finish or end active experiments first, or complete this cycle with nextWave: "skip"`,
-        409,
-      );
-    }
     // The engine refuses the starts anyway; said here, the owner reads it before trying.
     check(
       !(await this.use('reflections', checks, (service) => service.open(caller, tx))),
@@ -1305,10 +1336,6 @@ export class ResearchService implements Research {
               tx,
             ),
         );
-        await tx.run(
-          'UPDATE research_automation SET blocker_json=NULL WHERE research_id=?',
-          record.id,
-        );
         await this.event(
           caller,
           'ended',
@@ -1458,10 +1485,14 @@ export class ResearchService implements Research {
             },
             tx,
           );
-        await tx.run(
-          'UPDATE research_automation SET blocker_json=NULL WHERE research_id=?',
-          record.id,
-        );
+        // A cycle that moved is no longer held by what its automation said before.
+        if (record.automation)
+          await publishBlocker(
+            this.workflows,
+            { project_id: caller.projectId, research_id: record.id },
+            null,
+            tx,
+          );
         await this.event(
           caller,
           'advanced',
@@ -1501,6 +1532,7 @@ export class ResearchService implements Research {
       this.workflows,
       events,
       async (caller, row, tx) => await this.reconcileAutomatic(caller, row, tx),
+      (row) => this.retryUnavailable(row),
     );
     this.automaticBound = true;
     try {
@@ -1514,6 +1546,35 @@ export class ResearchService implements Research {
       this.automaticBound = false;
       await release();
     };
+  }
+
+  /**
+   * Wakes a cycle an outage refused once `retryAfterMs` has passed, while the refusal it
+   * published is an outage first seen less than UNAVAILABLE_FOR ago: an idle project has no
+   * other event to wake it, and the bound is the published blocker's own `since`.
+   */
+  private retryUnavailable(row: AutomaticRow): void {
+    const wake = async () => {
+      if (this.closed || !this.automaticBound) return;
+      const source = JSON.parse(row.source_json) as DelegationSource;
+      await this.state.transaction(async (tx) => {
+        const held = (
+          await this.workflows.blockers(sourceCaller(source), row.research_id, tx)
+        ).find((item) => item.provider === AUTOMATIC_PROVIDER);
+        if (held?.status !== 503 || Date.now() - Date.parse(held.since) > UNAVAILABLE_FOR) return;
+        await this.state.appendEvent(tx, {
+          projectId: row.project_id,
+          actorId: source.actorId,
+          type: 'research.resume',
+          subjectId: row.research_id,
+          data: { performedBy: 'system:research' },
+        });
+      });
+    };
+    // Outside the consumer's transaction context, which ends before this runs.
+    this.detached(() =>
+      setTimeout(() => void wake().catch(() => undefined), this.retryAfterMs).unref(),
+    );
   }
 
   /** Startup and provider restoration must also revisit events previously consumed while blocked. */
@@ -1541,7 +1602,7 @@ export class ResearchService implements Research {
     caller: Caller,
     automatic: AutomaticRow,
     tx: Transaction,
-  ): Promise<ResearchAutomation['blocker']> {
+  ): Promise<AutomaticBlocker> {
     this.open();
     const record = await this.get(caller, automatic.research_id, tx);
     await this.authorize(caller, record, tx);
@@ -1572,10 +1633,9 @@ export class ResearchService implements Research {
     if (!action || action.status !== 'ready') {
       const blocker = guidance.blockers[0] ?? guidance.actions.flatMap((item) => item.blockers)[0];
       return blocker
-        ? { code: blocker.code, message: clip(blocker.message, 2000) }
-        : { code: 'research_waiting', message: guidance.instruction };
+        ? { code: blocker.code, message: clip(blocker.message, 2000), status: blocker.status }
+        : { code: 'research_waiting', message: guidance.instruction, status: 409 };
     }
-    const stoppedByLimit = atLimit && !!(await this.continuing(caller, record, tx, [], 'complete'));
     const input: ResearchAdvance = {
       researchId: record.id,
       expectedRevision: record.workflow.revision,
@@ -1588,7 +1648,7 @@ export class ResearchService implements Research {
     } catch (error) {
       // Git is asked outside every transaction, so the same advance runs again on its own.
       if (error instanceof MervError && error.code === 'integration_candidates_unavailable')
-        this.soon(caller, automatic, input, automaticBlocker(error), stoppedByLimit);
+        this.soon(caller, automatic, input, automaticBlocker(error));
       throw error;
     }
     await this.event(
@@ -1603,17 +1663,12 @@ export class ResearchService implements Research {
       },
       tx,
     );
-    return stoppedByLimit && advanced.workflow.state === 'complete'
-      ? {
-          code: 'research_cycle_limit',
-          message: `Finished the authorized ${automatic.max_cycles} research cycles; no further wave was created`,
-        }
-      : null;
+    return null;
   }
 
   /**
-   * The advance the consumer could not make, run on its own once its transaction has committed,
-   * outside every transaction's context. Success is a transition event the consumer answers; a
+   * The advance the consumer could not make, run on its own after its transaction, outside
+   * every transaction's context. Success is a transition event the consumer answers; a
    * refusal is written only over the marker the consumer left, so a reconcile since is never
    * overwritten and nothing loops: the marker returns on the next event, today's retry cadence.
    */
@@ -1621,27 +1676,12 @@ export class ResearchService implements Research {
     caller: Caller,
     row: AutomaticRow,
     input: ResearchAdvance,
-    marker: ResearchAutomation['blocker'],
-    stoppedByLimit: boolean,
+    marker: AutomaticBlocker,
   ): void {
     if (this.closed) return;
     const run = async () => {
       try {
-        const advanced = await this.advance(caller, input);
-        // The out-of-transaction Git retry bypasses reconcileAutomatic's return
-        // value. Preserve its terminal limit explanation on this path as well.
-        if (stoppedByLimit && advanced.workflow.state === 'complete')
-          await this.state.transaction(async (tx) => {
-            const current = await tx.get<AutomaticRow>(
-              'SELECT * FROM research_automation WHERE research_id=?',
-              row.research_id,
-            );
-            if (!current || current.blocker_json !== null) return;
-            await recordBlocker(this.state, tx, current, {
-              code: 'research_cycle_limit',
-              message: `Finished the authorized ${current.max_cycles} research cycles; no further wave was created`,
-            });
-          });
+        await this.advance(caller, input);
       } catch (error) {
         if (
           this.closed ||
@@ -1649,18 +1689,17 @@ export class ResearchService implements Research {
           (error.status >= 500 && error.status !== 503)
         )
           return;
-        const left = JSON.stringify(marker);
-        await this.state.transaction((tx) =>
-          recordBlocker(this.state, tx, { ...row, blocker_json: left }, automaticBlocker(error), {
-            onlyOver: left,
-          }),
-        );
+        await this.state.transaction(async (tx) => {
+          const left = (await this.workflows.blockers(caller, row.research_id, tx)).find(
+            (item) => item.provider === AUTOMATIC_PROVIDER,
+          );
+          if (left?.code === marker?.code && left?.message === marker?.message)
+            await publishBlocker(this.workflows, row, automaticBlocker(error), tx);
+        });
       }
     };
-    const release = this.state.onEventsCommitted(() => {
-      release();
-      void run().catch(() => undefined);
-    });
+    // Outside the consumer's transaction, whose commit its own transaction waits for.
+    this.detached(() => queueMicrotask(() => void run().catch(() => undefined)));
   }
 
   /**

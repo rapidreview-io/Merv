@@ -23,6 +23,7 @@ import { TaskService } from '@merv/tasks';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { ExperimentService } from '@merv/experiments';
+import { captureEpochs } from '@merv/experiments/program';
 import { CodeService } from '@merv/code-work/service';
 import type {
   Experiment,
@@ -33,6 +34,7 @@ import type {
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
+import { blankPaper } from './fixtures/blank-paper.js';
 
 const plan =
   '# Summary\nCompare two methods.\n# Objective & hypothesis\nA improves held-out accuracy.\n# Evaluation\nUse the same held-out examples, baseline, metric and denominator.\n';
@@ -49,7 +51,7 @@ async function fixture(t: TestContext) {
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder),
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, blankPaper),
   );
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -1529,6 +1531,44 @@ test('every experiment lease admits verified captures and leaves compute to Sand
   assert.equal(next.session.execution.references.sandboxConnectionId, undefined);
   assert.ok((next.session.execution.references.artifacts as string[]).includes(capture.id));
   await f.release(next.session.id);
+});
+
+test('a lease admits the captures of its own attempt only', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  f.experiments.bindSandboxes(native.service);
+  const experiment = await f.create();
+  const first = await f.offer(experiment);
+  const worker = await f.sessions.authenticate(first.secret);
+  const service = await f.scope.serviceActor('sandboxes', f.source.projectId);
+  const capture = async (sourceKey: string) =>
+    await f.artifacts.createCollection(service, {
+      title: sourceKey,
+      sourceKey,
+      files: [
+        { name: 'r.txt', size: 1, hash: 'a'.repeat(64), provider: 'sandboxes', reference: 'x' },
+      ],
+    });
+  const own = await capture('own-attempt');
+  const other = await capture('other-attempt');
+  native.verified.set(experiment.id, [own.id, other.id]);
+  native.attempts.set(own.id, '1:planned');
+  native.attempts.set(other.id, '2:planned');
+  const get = (id: string) =>
+    f.run(worker, 'artifact.get', { artifactId: id }, (caller) => f.artifacts.get(caller, id));
+  assert.equal((await get(own.id)).id, own.id);
+  await assert.rejects(get(other.id), { code: 'execution_arguments_forbidden' });
+  await f.release(first.session.id);
+});
+
+test('work pinned before Experiments recorded an epoch keeps the one Sandboxes derived', () => {
+  // Sandboxes derived the epoch of such work from its revision.
+  assert.ok(captureEpochs(2, { data: {}, revision: 7 }).includes('7'));
+  assert.ok(captureEpochs(2, { data: {}, revision: 7 }).includes('2:running'));
+  assert.deepEqual(
+    captureEpochs(2, { data: { computeEpoch: '2:running' }, revision: 7 }),
+    captureEpochs(2, { data: {}, revision: 7 }).filter((epoch) => epoch !== '7'),
+  );
 });
 
 test('a context embeds only the newest interruptions, each clipped, and counts the earlier ones', async (t) => {

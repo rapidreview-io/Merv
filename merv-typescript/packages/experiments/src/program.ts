@@ -1,5 +1,5 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
-import { computeGuidance } from '@merv/sandboxes/compute-capability';
+import { computeEpoch, computeGuidance } from '@merv/sandboxes/compute-capability';
 import { requireDependencies } from '@merv/workflows/rules';
 import {
   excludedFromReview,
@@ -8,7 +8,7 @@ import {
   REVIEW_SUBMIT_INPUT,
   REVIEW_VERDICTS,
 } from '@merv/reviews/rules';
-import { itemTitle, releasedLease, mapAsync } from '@merv/contracts';
+import { releasedLease, mapAsync } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { postgresMigrations } from './program.postgres.js';
@@ -38,10 +38,12 @@ import {
   type WorkflowExecutionReferences,
   type WorkflowLease,
   type WorkflowPolicy,
+  type WorkflowSnapshot,
   type Workflows,
   type WorkflowTransition,
 } from '@merv/contracts';
-import type { Paper, PaperContextSection } from '@merv/paper/types';
+import type { Paper } from '@merv/paper/types';
+import { artifactItem } from '@merv/context-builder/artifact-item';
 import type { Code, CodeCapture } from '@merv/code-work/types';
 import type {
   Experiment,
@@ -131,6 +133,19 @@ export function reviewedSubmission(
  * cancels compute started under an older epoch, so a retry in the same state keeps it.
  */
 export const experimentEpoch = (attemptIndex: number, state: string) => `${attemptIndex}:${state}`;
+/**
+ * The epochs an attempt's compute runs under: one per state, and for work Sandboxes pinned
+ * before Experiments recorded one, the epoch Sandboxes derived from the instance as it stands.
+ */
+export const captureEpochs = (
+  attemptIndex: number,
+  workflow: Pick<WorkflowSnapshot, 'data' | 'revision'>,
+): string[] => [
+  ...new Set([
+    ...EXPERIMENT_WORKFLOW.states.map((state) => experimentEpoch(attemptIndex, state)),
+    computeEpoch(workflow.data, workflow.revision),
+  ]),
+];
 /** The workflow data that sets the epoch the move `action` leads to. */
 export function epochAfter(
   experiment: Pick<Experiment, 'workflow'>,
@@ -254,6 +269,8 @@ const verifying =
 
 /** Current format-2 recipes, constructed directly without retired intermediate versions.
  * Published versions and recipe bytes are immutable; only their construction is shared. */
+/** Every recipe's budget, which the paper's items are chosen within too. */
+const CONTEXT_CHARS = 160_000;
 export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
   version: state === 'experiment_review' ? 12 : 11,
@@ -269,7 +286,7 @@ export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((s
       (gatedHandoffs[state]
         ? ` When ${state === 'planned' ? 'the experiment below carries feasibilityFormat' : 'the pinned review names requiredCriteria'}: ${gatedHandoffs[state]}`
         : ''),
-    maxChars: 160_000,
+    maxChars: CONTEXT_CHARS,
     sections: [
       { key: 'experiment', title: 'Experiment and exact assignment', required: true },
       { key: 'projectPaper', title: 'Project paper and document revisions', required: false },
@@ -327,8 +344,8 @@ export const resultsCriteria = [
 
 interface FrozenInputs {
   experiment: Data;
-  /** The paper, section by section. */
-  paper: PaperContextSection[];
+  /** The paper's items. */
+  paper: ContextInput;
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
   /** Earlier feedback and selected recovery: readable by reference, never auto-inlined. */
@@ -1016,7 +1033,7 @@ export abstract class ExperimentProgram {
           selected.includes(evidence.artifactId),
         ),
       }),
-      paper: this.paper.contextSections(await this.paper.documents(caller, tx)),
+      paper: await this.paper.contextInput(caller, CONTEXT_CHARS, tx),
       approvedArtifacts,
       evidenceArtifacts,
       historicalArtifacts,
@@ -1187,10 +1204,7 @@ export abstract class ExperimentProgram {
         (artifact): ContextItem => {
           const id = artifact.id;
           const record = records.get(id);
-          return {
-            id: `artifact:${id}`,
-            title: itemTitle(artifact),
-            body: { artifactId: id },
+          return artifactItem(artifact, {
             priority,
             ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
             ...(record
@@ -1198,8 +1212,7 @@ export abstract class ExperimentProgram {
               : figures.has(id)
                 ? { note: 'figure' }
                 : {}),
-            refs: [{ tool: 'artifact.read', input: { artifactId: id } }],
-          };
+          });
         },
       );
     const stateRef = { tool: 'experiment.get_state', input: { experimentId: experiment.id } };
@@ -1216,20 +1229,10 @@ export abstract class ExperimentProgram {
           },
         ],
       },
-      ...(inputs.paper.length
-        ? {
-            projectPaper: {
-              items: inputs.paper.map(({ id, title, text, priority, note, refs }): ContextItem => ({
-                id,
-                title,
-                body: { text },
-                priority,
-                note,
-                refs,
-              })),
-            },
-          }
-        : {}),
+      // A lease taken before 2026-10-06 froze the paper's sections, not its items: read it now.
+      projectPaper: inputs.paper.items
+        ? inputs.paper
+        : await this.paper.contextInput(context.caller, CONTEXT_CHARS, context.tx),
       feedback: {
         items: [
           {
@@ -1459,7 +1462,7 @@ export abstract class ExperimentProgram {
       outputs: async (context) => {
         // `check`, the whole admission, ran on this revision just before, in this transaction.
         const { id, revision, state } = context.snapshot;
-        await this.lease(
+        const lease = await this.lease(
           context.caller,
           { id, projectId: context.caller.projectId, workflow: { revision, state } },
           context.tx,
@@ -1474,6 +1477,7 @@ export abstract class ExperimentProgram {
                 context.caller.projectId,
                 context.snapshot.id,
                 context.tx,
+                captureEpochs(lease.attempt_index, context.snapshot),
               )) ?? []),
             ]),
           ],

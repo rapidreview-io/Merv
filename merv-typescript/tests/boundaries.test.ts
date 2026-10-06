@@ -227,7 +227,8 @@ const sharedContract = (specifier: string) =>
     contractsRuntimeExports.has(specifier.slice('@merv/contracts/'.length)));
 
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
- * limits, review independence and history, and the prerequisite guard. */
+ * limits, review independence and history, the prerequisite guard, the paper's Problem, and
+ * an artifact as a context item. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
   '@merv/workflows/rules',
@@ -239,6 +240,8 @@ const pureRules = new Set([
   '@merv/fleet/model-ledger',
   '@merv/workflows/dependency-rows',
   '@merv/code-work/workspace',
+  '@merv/paper/rules',
+  '@merv/context-builder/artifact-item',
 ]);
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */

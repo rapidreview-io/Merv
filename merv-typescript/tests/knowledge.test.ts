@@ -26,6 +26,7 @@ import { KnowledgeService } from '../packages/knowledge/src/index.js';
 import type { Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 import type { PostgresState } from '@merv/state';
+import { blankPaper } from './fixtures/blank-paper.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-knowledge-'));
@@ -53,7 +54,7 @@ async function fixture(t: TestContext) {
     reviews = await createService(new ReviewService(state, scope, artifacts));
     builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
     tasks = await createService(
-      new TaskService(state, scope, artifacts, workflows, reviews, builder),
+      new TaskService(state, scope, artifacts, workflows, reviews, builder, blankPaper),
     );
     events = await createService(new DurableEvents(state));
     sessions = await createService(new LeasedSessions(state, scope, workflows, events));

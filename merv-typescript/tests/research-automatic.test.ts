@@ -510,6 +510,41 @@ test('expected handoff failures roll back child creation and recover without poi
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
 });
 
+test('a cycle a passing outage refused is tried again without another event', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  f.research.retryAfterMs = 50;
+  const work = await f.experiment();
+  const cycle = await f.create([work.id]);
+  await f.pump();
+  const original = f.app.ctx.reflections.create.bind(f.app.ctx.reflections);
+  let failures = 1;
+  t.mock.method(f.app.ctx.reflections, 'create', async (...args: Parameters<typeof original>) => {
+    if (failures-- > 0) throw new MervError('code_git_timeout', 'Git did not answer in time', 503);
+    return await original(...args);
+  });
+  await f.failExperiment(work.id);
+  await f.pump();
+  const blocked = await f.research.get(f.owner, cycle.id);
+  assert.equal(blocked.automation!.blocker!.code, 'code_git_timeout');
+  // Published where every reader of the cycle's gate sees it.
+  assert.deepEqual(
+    (await f.app.ctx.workflows.blockers(f.owner, cycle.id)).map((item) => [
+      item.provider,
+      item.code,
+      item.status,
+    ]),
+    [['research', 'code_git_timeout', 503]],
+  );
+  for (let wait = 0; wait < 40; wait++) {
+    await f.app.ctx.domainEvents.drain();
+    if ((await f.research.get(f.owner, cycle.id)).workflow.state === 'reflecting') break;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+});
+
 test('a database briefly unavailable is retried with its event instead of blocking the cycle', async (t) => {
   const f = await fixture(t);
   await f.define();
@@ -790,12 +825,17 @@ test('a publication main overtook wakes an automatic cycle to inject its success
       unitId: taskId,
     }),
   );
-  // The cycle's deferred advance commits after the delivery that woke it, so its successor's
-  // start is delivered in a later pass.
+  // The advance asks Git outside the consumer's transaction and commits on its own, after the
+  // delivery that woke it, so its successor's start is delivered in a later pass.
   const deadline = Date.now() + 5000;
   do {
     await f.pump();
-    if ((await f.research.get(f.owner, cycle.id)).automation!.blocker) break;
+    const woken = await f.research.get(f.owner, cycle.id);
+    if (
+      woken.integrations.length === 2 &&
+      woken.automation?.blocker?.code === 'dependencies_pending'
+    )
+      break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   } while (Date.now() < deadline);
   const record = await f.research.get(f.owner, cycle.id);

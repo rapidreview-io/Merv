@@ -12,6 +12,7 @@ import { PaperService } from '@merv/paper';
 import { introductionFrom } from '@merv/paper/introduction';
 import { MervError, type Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
+import { contextSections } from '@merv/paper/context';
 const hasCode = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
 async function fixture(t: TestContext) {
@@ -431,7 +432,7 @@ test('context sections list every written current and published section whole, i
     ),
   );
   const documents = (await f.paper.read(f.reader)).documents;
-  const sections = f.paper.contextSections(documents);
+  const sections = contextSections(documents);
   // The problem's other sections are still empty, so there is nothing of theirs to list.
   assert.deepEqual(
     sections.map((s) => s.id),
@@ -465,8 +466,43 @@ test('context sections list every written current and published section whole, i
   ]);
   // It reads nothing: the documents it was given are all it sees, and it leaves them unchanged.
   const copy = structuredClone(documents);
-  f.paper.contextSections(documents);
+  contextSections(documents);
   assert.deepEqual(documents, copy);
+});
+
+test('the paper as context items keeps whole sections within the budget and names the rest', async (t) => {
+  const f = await fixture(t);
+  const items = async (maxChars: number) =>
+    (await f.state.transaction((tx) => f.paper.contextInput(f.reader, maxChars, tx))).items;
+  // Nothing written is one item that says so.
+  assert.deepEqual(
+    (await items(1000)).map((item) => [item.id, 'text' in item.body && item.body.text]),
+    [['paper:none', 'The project paper has no written sections yet.']],
+  );
+  await f.paper.patch(f.producer, {
+    kind: 'problem',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [
+      { id: 'problem', content: 'p'.repeat(40) },
+      { id: 'goals', content: 'g'.repeat(30) },
+    ],
+  });
+  // Both fit whole, in the paper's order.
+  assert.deepEqual(
+    (await items(70)).map((item) => item.id),
+    ['paper:problem:current:1:0:problem', 'paper:problem:current:1:2:goals'],
+  );
+  // The budget keeps the first that fits by priority and names the other, which stays readable.
+  const [kept, rest] = await items(50);
+  assert.equal(kept!.id, 'paper:problem:current:1:0:problem');
+  assert.deepEqual(kept!.body, { text: 'p'.repeat(40) });
+  assert.equal(rest!.id, 'paper:not-included');
+  assert.equal(rest!.title, '1 more paper section, not included in this assignment');
+  assert.deepEqual(JSON.parse('text' in rest!.body ? rest!.body.text : ''), [
+    { id: 'paper:problem:current:1:2:goals', title: 'problem current: Goals' },
+  ]);
+  assert.deepEqual(rest!.refs, [{ tool: 'paper.read', input: {} }]);
 });
 
 test('a Problem patch writes the Introduction from it, replacing what was there, an empty Problem included', async (t) => {

@@ -1,4 +1,12 @@
+import type { ContextInput, ContextItem } from '@merv/contracts';
 import type { PaperContextSection, PaperKind, PaperWorkspace } from './types.js';
+
+/**
+ * The most a paper context input takes, in UTF-8 bytes of its sections' JSON: a lease may
+ * freeze the input in its receipt, a session packet holds 512 KiB, and the rest of a receipt is
+ * far smaller.
+ */
+const INPUT_BYTES = 384 * 1024;
 
 /**
  * The paper as context sections: each document's current revision, section by section, then its
@@ -46,6 +54,76 @@ export function contextSections(documents: PaperWorkspace['documents']): PaperCo
     }
   }
   return sections;
+}
+
+/**
+ * The paper as one context section's items: whole sections, highest priority first, while
+ * their distinct text fits `maxChars`, since no more could ever be embedded, and while their
+ * JSON fits INPUT_BYTES. One more item names the sections past that by ID and title while those
+ * fit too, and counts the rest; both keep the paper's order. A paper with nothing written is one
+ * item that says so.
+ */
+export function paperInput(documents: PaperWorkspace['documents'], maxChars: number): ContextInput {
+  const sections = contextSections(documents);
+  // Each entry's JSON and the comma after it.
+  const size = (entry: object) => Buffer.byteLength(JSON.stringify(entry)) + 1;
+  let room = maxChars,
+    bytes = INPUT_BYTES;
+  const texts = new Set<string>(),
+    kept = new Set<PaperContextSection>();
+  for (const section of [...sections].sort((a, b) => b.priority - a.priority)) {
+    const copy = texts.has(section.text);
+    if ((!copy && section.text.length > room) || size(section) > bytes) continue;
+    if (!copy) room -= section.text.length;
+    bytes -= size(section);
+    texts.add(section.text);
+    kept.add(section);
+  }
+  const left: { id: string; title: string }[] = [],
+    rest = sections.filter((section) => !kept.has(section));
+  for (const { id, title } of rest) {
+    if (size({ id, title }) > bytes) break;
+    bytes -= size({ id, title });
+    left.push({ id, title });
+  }
+  const more = rest.length - left.length;
+  const read = { tool: 'paper.read', input: {} };
+  return {
+    items: [
+      ...sections
+        .filter((section) => kept.has(section))
+        .map(({ id, title, text, priority, note, refs }): ContextItem => ({
+          id,
+          title,
+          body: { text },
+          priority,
+          note,
+          refs,
+        })),
+      ...(rest.length
+        ? [
+            {
+              id: 'paper:not-included',
+              title: `${rest.length} more paper section${rest.length === 1 ? '' : 's'}, not included in this assignment`,
+              body: { text: JSON.stringify(left) },
+              priority: 0,
+              ...(more ? { note: `${more} of them not named here for lack of room` } : {}),
+              refs: [read],
+            },
+          ]
+        : []),
+      ...(!sections.length
+        ? [
+            {
+              id: 'paper:none',
+              title: 'Project paper',
+              body: { text: 'The project paper has no written sections yet.' },
+              refs: [read],
+            },
+          ]
+        : []),
+    ],
+  };
 }
 
 /** At most about this many characters of snapshot. */

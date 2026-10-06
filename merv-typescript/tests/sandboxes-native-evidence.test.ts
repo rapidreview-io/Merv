@@ -417,6 +417,22 @@ test('capture evidence freezes only after workflow cleanup recovers committed fi
   assert.equal(f.byteWrites(), 0);
 });
 
+test('a capture whose workflow names no attempt is registered under the work epoch of the time', async (t) => {
+  const f = await fixture(t);
+  f.objects.set('obj', file('obj'));
+  f.captures.push({
+    id: 'capture',
+    state: 'succeeded',
+    result: { outputs: { outputs: 'obj' }, output_state: 'committed' },
+  });
+  f.receipts.set('capture', [{ name: 'outputs/obj', object_id: 'obj' }]);
+  await f.evidence.publish(f.work, f.connection, { ...f.workflow, attempt_ref: null });
+  assert.deepEqual(
+    await f.state.read((sql) => sql.all('SELECT attempt_ref FROM sandbox_native_captures')),
+    [{ attempt_ref: '1' }],
+  );
+});
+
 test('nondelegated admin workflows do not publish Merv evidence or stall closure', async (t) => {
   const f = await fixture(t);
   f.captures.push({

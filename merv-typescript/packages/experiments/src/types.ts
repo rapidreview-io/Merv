@@ -38,6 +38,12 @@ export interface Experiments {
   ): Promise<Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId' | 'workflow'>[]>;
   /** Every experiment's name, lowercased, and how many are not yet complete, abandoned or failed. */
   occupancy(caller: Caller, tx?: Transaction): Promise<ExperimentOccupancy>;
+  /**
+   * Refuses creating experiments of these names as creating each would: a name an experiment
+   * already uses (experiment_name_conflict), or more active experiments than a project may have
+   * (experiment_limit). Reads only.
+   */
+  admits(caller: Caller, names: readonly string[], tx?: Transaction): Promise<void>;
   attach(caller: Caller, input: ExperimentAttach, tx?: Transaction): Promise<ExperimentEvidence>;
   transition(caller: Caller, input: ExperimentTransition, tx?: Transaction): Promise<Experiment>;
   exhibit(caller: Caller, experimentId: string, tx?: Transaction): Promise<ExperimentExhibit>;

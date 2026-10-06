@@ -16,6 +16,7 @@ import { TaskService } from '@merv/tasks';
 import type { Caller, Transaction } from '@merv/contracts';
 import type { TaskRecord, Task } from '@merv/tasks/types';
 import { openState } from './fixtures/state.js';
+import { blankPaper } from './fixtures/blank-paper.js';
 
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-task-records-'));
@@ -44,7 +45,7 @@ async function fixture(t: TestContext) {
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder),
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, blankPaper),
   );
   const managed = await managedServices(
     { state, scope, artifacts, workflows },
