@@ -162,3 +162,14 @@ export interface ResearchLineage {
   truncated: boolean;
   successor: { id: string; name: string; state: string } | null;
 }
+/**
+ * A choice a cycle's gate asks of its owner, as Research names it on its Cycles row
+ * (`view.answers`): where research.advance `asks` for the input `name`, or is `refused` with the
+ * code `name`, the page offers these advances, each sending its own input, in place of the plain
+ * one. The first that applies is the one drawn.
+ */
+export type ResearchAnswer = {
+  when: 'asks' | 'refused';
+  name: string;
+  moves: { label: string; input: { [field: string]: string | boolean } }[];
+};

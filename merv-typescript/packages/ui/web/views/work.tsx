@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import type { ResearchRecord } from '@merv/research/models';
+import type { ResearchAnswer, ResearchRecord } from '@merv/research/models';
 import type { WorkflowDecision } from '@merv/contracts/workflow-guidance';
 import { ApiError, refreshTools, useTool } from '../api';
 import { useCommand } from '../mutations';
@@ -539,8 +539,8 @@ const UNDEFINED = 'research_definition_required';
  * gate refuses is not offered as a button that can only fail: for want of the definition it
  * is the way to the paper, where that is written, and otherwise it stands disabled over the
  * records it waits on — unless the page already `listed` them.
- * An answer the gate asks for, the approved plan's next wave or a fresh consolidation
- * task, is a move of its own.
+ * An answer the gate asks for, such as the approved plan's next wave or a fresh consolidation
+ * task, is drawn as the moves Research names for it on its Cycles row.
  */
 export function CycleMove({
   cycle,
@@ -565,6 +565,7 @@ export function CycleMove({
   const advance = gate?.actions.find((action) => action.tool === 'research.advance');
   const refused = (code: string) => !!advance?.blockers.some((item) => item.code === code);
   const paper = shell.rows.find((row) => row.view.kind === 'paper');
+  const cycles = shell.rows.find((row) => row.view.kind === 'research');
   const move = (
     label: string,
     choice: Record<string, unknown> = {},
@@ -603,14 +604,14 @@ export function CycleMove({
         {end('Stop automatic research', 'The owner stopped automatic research from the Work page.')}
       </div>
     );
-  if (advance?.requiredInput.includes('nextWave'))
+  // A choice the gate asks for is drawn as Research names it, each answer a move of its own.
+  const answer = (cycles?.view.answers as ResearchAnswer[] | undefined)?.find((item) =>
+    item.when === 'asks' ? advance?.requiredInput.includes(item.name) : refused(item.name),
+  );
+  if (answer)
     return (
-      <div className="cluster">
-        {move('Create next wave', { nextWave: 'create' })}
-        {move('Skip next wave', { nextWave: 'skip' })}
-      </div>
+      <div className="cluster">{answer.moves.map((item) => move(item.label, item.input))}</div>
     );
-  if (refused('integration_failed')) return move('Retry consolidation', { retryIntegration: true });
   // A wave that ended unapproved stops its cycle, though work it reflects on may fail and still be
   // read: the wave where it stands, unless the page lists it, and the end the gate offers instead.
   const ends = gate?.actions.some(

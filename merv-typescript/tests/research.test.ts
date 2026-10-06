@@ -15,6 +15,7 @@ import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { gitSource, importBundle } from './fixtures/code-store.js';
 import { hostedCode, type Main } from './fixtures/research.js';
+import { publicationBlockers, type PublicationStanding } from '@merv/code-work/unit-store';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 async function fixture(t: TestContext, store = false) {
@@ -483,30 +484,37 @@ test('accepted code main lacks injects one consolidation task marked to publish,
   await assert.rejects(advance(), { code: 'dependencies_pending' });
 });
 
-test('an accepted consolidation task whose publication waits on an operator holds the cycle', async (t) => {
+test('an accepted consolidation task whose publication waits is refused in Code’s code and words', async (t) => {
   const f = await fixture(t);
   const accepted = await work(f);
   const main: Main = { unitIds: [accepted.id] };
   const { record, advance } = await hosted(f, main);
   const moved = await advance();
-  await f.finish(moved.integrations[0]);
+  const taskId = moved.integrations[0]!;
+  await f.finish(taskId);
   const pull = { number: 7, url: 'https://github.com/org/repo/pull/7' };
-  main.publication = { blockers: [], state: 'pending', pull };
-  await assert.rejects(advance(), {
-    code: 'publication_pending',
-    message: new RegExp(`merges its pull request ${pull.url}`),
-  });
-  main.publication = { blockers: [], state: 'setup_required', pull };
-  await assert.rejects(advance(), {
-    code: 'publication_pending',
-    message: /operator completes publication setup before its pull request can be merged/,
-  });
+  const standings: PublicationStanding[] = [
+    { destination: 'local', state: 'pending' },
+    { destination: 'github', state: 'pending', pull },
+    { state: 'setup_required', pull },
+    { state: 'disabled', pull },
+    { state: 'incident', pull },
+    { destination: 'github', state: 'unsealed' },
+  ];
+  for (const standing of standings) {
+    const blockers = publicationBlockers(standing);
+    main.publication = { ...standing, blockers };
+    const [said] = blockers;
+    // Research neither words the wait itself nor keys it differently from Code.
+    await assert.rejects(advance(), {
+      code: said!.code,
+      message: `The consolidation task ${taskId} is accepted; ${said!.message}. ${said!.next}`,
+    });
+  }
   assert.match(
     JSON.stringify(await f.app.ctx.workflows.evaluate(f.owner, record.id)),
-    /publication_pending/,
+    /code_publish_unverifiable/,
   );
-  main.publication = { blockers: [], state: 'incident' };
-  await assert.rejects(advance(), { code: 'publication_pending', message: /investigates/ });
   assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'consolidating');
 });
 
