@@ -3,6 +3,7 @@ import {
   canonical,
   check,
   digest,
+  idSchema,
   newId,
   now,
   recorded,
@@ -11,7 +12,7 @@ import {
   type Sql,
   type State,
 } from '@merv/contracts';
-import { codeAdmissionConfigureInputSchema } from '@merv/code/store/protocol';
+import { codeAdmissionLimitsSchema } from '@merv/code/store/protocol';
 import { parseCodeInput } from '@merv/code/input';
 import { OperationJournal } from '@merv/code/operation-journal';
 import type { CodeStore } from '@merv/code/store/operations';
@@ -46,7 +47,7 @@ export const codeCheckSpecSchema = z
   })
   .strict() satisfies z.ZodType<CodeCheckSpec>;
 
-const { denyGlobs, secretExemptGlobs, requestId } = codeAdmissionConfigureInputSchema.shape;
+const { denyGlobs, secretExemptGlobs } = codeAdmissionLimitsSchema.shape;
 export const codeRepositoryConfigureInputSchema = z
   .object({
     denyGlobs,
@@ -57,7 +58,7 @@ export const codeRepositoryConfigureInputSchema = z
      * and have every later base seal unchecked without anybody having typed that.
      */
     check: codeCheckSpecSchema.nullable(),
-    requestId,
+    requestId: idSchema,
   })
   .strict() satisfies z.ZodType<CodeRepositoryConfigureInput>;
 

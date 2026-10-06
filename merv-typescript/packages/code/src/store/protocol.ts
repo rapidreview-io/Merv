@@ -44,10 +44,6 @@ export const codeAdmissionLimitsSchema = z
   })
   .strict();
 export type CodeAdmissionLimits = z.infer<typeof codeAdmissionLimitsSchema>;
-export const codeAdmissionConfigureInputSchema = codeAdmissionLimitsSchema
-  .omit({ format: true })
-  .extend({ requestId: id })
-  .strict();
 
 /** One object rather than a union, because a tool's input is described as a single object. */
 export const codeRepositoryImportInputSchema = z
@@ -91,23 +87,6 @@ export const codeRepositoryImportInputSchema = z
     'A bundle import names tip and bundle; a GitHub import names ref',
   );
 export type CodeRepositoryImportInput = z.infer<typeof codeRepositoryImportInputSchema>;
-
-/** The branch and exact commit selected by a repository administrator before preparation. */
-export interface CodeRepositoryPrepareInput {
-  expectedRevision: number;
-  baseBranch: string;
-  headOid: string;
-  expectedMainOid?: string;
-  requestId: string;
-}
-export interface CodeRepositoryPreparation {
-  state: 'ready' | 'importing' | 'review_required' | 'failed';
-  mainOid?: string;
-  taskId?: string;
-  baseBranch: string;
-  headOid: string;
-  operation: CodeStoreOperation;
-}
 
 /**
  * Bind a hosted project to another repository identity. `repositoryId` is the same opaque
@@ -198,10 +177,6 @@ export interface CodeMirrorStatus {
   }[];
 }
 
-const control = z.object({ sessionId: id, runnerId: id, hostRef: id }).strict();
-export const codeWorkspaceManifestInputSchema = z
-  .object({ sessionId: id, runnerId: id, hostRef: id.optional() })
-  .strict();
 export const codeWorkspaceManifestSchema = z
   .object({
     projectRef: id,
@@ -219,50 +194,28 @@ export const codeWorkspaceManifestSchema = z
   .strict();
 export type CodeWorkspaceManifest = z.infer<typeof codeWorkspaceManifestSchema>;
 
-const fence = control.extend({
-  unitId: id,
-  generation: z.number().int().positive().safe(),
-  leaseId: id,
-  expectedHead: oid,
-  proposedHead: oid,
-  treeOid: oid,
-  /** Null when the proposed head is the expected head and nothing needs to move. */
-  bundle: bundle.nullable(),
-});
-export const codeUploadBeginSchema = fence
-  .extend({ kind: z.literal('checkpoint'), commandId: id, requestId: id })
-  .strict();
-export type CodeUploadBegin = z.infer<typeof codeUploadBeginSchema>;
-/** The one capture a machine may hand over after its session closed; the server names the request. */
-export const codeUploadFinalizeSchema = fence.extend({ kind: z.literal('final') }).strict();
-export type CodeUploadFinalize = z.infer<typeof codeUploadFinalizeSchema>;
-
-export const codeDownloadBeginSchema = z
-  .object({
-    sessionId: id,
-    runnerId: id,
-    hostRef: id.optional(),
-    /** Commits the machine says it holds. A wrong claim only breaks that machine's import. */
-    haves: z.array(oid).max(256),
-  })
-  .strict();
-export const codeDownloadReadSchema = z
-  .object({
-    /** An export is read only by the machine that runs the session it was made for. */
-    sessionId: id,
-    runnerId: id,
-    hostRef: id.optional(),
-    offset: z.number().int().nonnegative().safe(),
-    length: z.number().int().positive().max(CODE_PART_MAX_BYTES),
-  })
-  .strict();
+/** The writer fence an upload is made under; Code checks all of it, whatever carried it here. */
+export const codeUploadFenceSchema = z
+  .object({ sessionId: id, runnerId: id, hostRef: id })
+  .strict()
+  .extend({
+    unitId: id,
+    generation: z.number().int().positive().safe(),
+    leaseId: id,
+    expectedHead: oid,
+    proposedHead: oid,
+    treeOid: oid,
+    /** Null when the proposed head is the expected head and nothing needs to move. */
+    bundle: bundle.nullable(),
+  });
+/** One upload as Code begins it: a checkpoint under its command, or a unit's final capture. */
+export type CodeUpload = z.infer<typeof codeUploadFenceSchema> &
+  ({ kind: 'checkpoint'; commandId: string; requestId: string } | { kind: 'final' });
 
 export const codeUnitFenceInputSchema = z.object({ unitId: id, requestId: id }).strict();
-export type CodeUnitFenceInput = z.infer<typeof codeUnitFenceInputSchema>;
 export const codeMirrorRetryInputSchema = z
   .object({ operationId: id, acknowledgeRemote: oid.optional(), requestId: id })
   .strict();
-export type CodeMirrorRetryInput = z.infer<typeof codeMirrorRetryInputSchema>;
 
 /**
  * Who may advance a unit's branch in Code's repository. A generation belongs to one leased

@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import {
   check,
   effectiveWorkspace,
@@ -6,12 +7,10 @@ import {
   type State,
   oidPattern,
 } from '@merv/contracts';
+import { idSchema as id, oidSchema as oid } from '@merv/contracts/schemas';
 import {
-  codeDownloadBeginSchema,
-  codeDownloadReadSchema,
-  codeUploadBeginSchema,
-  codeUploadFinalizeSchema,
-  codeWorkspaceManifestInputSchema,
+  CODE_PART_MAX_BYTES,
+  codeUploadFenceSchema,
   type CodeWorkspaceManifest,
 } from '@merv/code/store/protocol';
 import type { Session, Sessions } from '@merv/sessions/types';
@@ -21,6 +20,36 @@ import type { CodeStore } from '@merv/code/store/operations';
 import { workBranch } from '@merv/code/store/refs';
 import { CODE_DRIVER } from './workspace.js';
 import type { CodeWriterService } from '@merv/code/writers';
+
+const codeWorkspaceManifestInputSchema = z
+  .object({ sessionId: id, runnerId: id, hostRef: id.optional() })
+  .strict();
+const codeUploadBeginSchema = codeUploadFenceSchema
+  .extend({ kind: z.literal('checkpoint'), commandId: id, requestId: id })
+  .strict();
+/** The one capture a machine may hand over after its session closed; the server names the request. */
+const codeUploadFinalizeSchema = codeUploadFenceSchema
+  .extend({ kind: z.literal('final') })
+  .strict();
+const codeDownloadBeginSchema = z
+  .object({
+    sessionId: id,
+    runnerId: id,
+    hostRef: id.optional(),
+    /** Commits the machine says it holds. A wrong claim only breaks that machine's import. */
+    haves: z.array(oid).max(256),
+  })
+  .strict();
+const codeDownloadReadSchema = z
+  .object({
+    /** An export is read only by the machine that runs the session it was made for. */
+    sessionId: id,
+    runnerId: id,
+    hostRef: id.optional(),
+    offset: z.number().int().nonnegative().safe(),
+    length: z.number().int().positive().max(CODE_PART_MAX_BYTES),
+  })
+  .strict();
 
 /**
  * The second workspace protocol, as machines speak it. The API forwards a route and an opaque

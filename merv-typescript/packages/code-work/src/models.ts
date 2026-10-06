@@ -5,14 +5,37 @@ import type {
 } from '@merv/contracts/workflow-guidance';
 import type { CodeProjectBinding } from '@merv/contracts/code';
 import type { GitHubPullRequest } from '@merv/contracts/github-models';
+import type { z } from 'zod';
 import type {
   CodeAdmissionLimits,
+  codeMirrorRetryInputSchema,
   CodeStoreOperation,
   CodeStoreStatus,
   CodeMirrorStatus,
   CodeStoreWarning,
+  codeUnitFenceInputSchema,
   CodeWriterState,
 } from '@merv/code/store/protocol';
+
+/** The branch and exact commit selected by a repository administrator before preparation. */
+export interface CodeRepositoryPrepareInput {
+  expectedRevision: number;
+  baseBranch: string;
+  headOid: string;
+  expectedMainOid?: string;
+  requestId: string;
+}
+export interface CodeRepositoryPreparation {
+  state: 'ready' | 'importing' | 'review_required' | 'failed';
+  mainOid?: string;
+  taskId?: string;
+  baseBranch: string;
+  headOid: string;
+  operation: CodeStoreOperation;
+}
+/** The inputs of `code.unit.fence` and `code.mirror.retry`, which Code parses again itself. */
+export type CodeUnitFenceInput = z.infer<typeof codeUnitFenceInputSchema>;
+export type CodeMirrorRetryInput = z.infer<typeof codeMirrorRetryInputSchema>;
 
 /** Portable immutable code observation identities, without server runtime dependencies. */
 export type CodeCaptureRef =

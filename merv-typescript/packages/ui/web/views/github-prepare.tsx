@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import type {
-  CodeRepositoryPreparation,
-  CodeRepositoryPrepareInput,
-} from '@merv/code/store/protocol';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 import { accountRequest, call, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Short } from '../components';
-import type { CodeProjectStatus } from '@merv/code-work/models';
+import type {
+  CodeProjectStatus,
+  CodeRepositoryPreparation,
+  CodeRepositoryPrepareInput,
+} from '@merv/code-work/models';
 
 /** One repeatable setup operation, with the user's branch and commit frozen before sending. */
 export function GitHubPreparation({ status }: { status: GitHubStatus }) {

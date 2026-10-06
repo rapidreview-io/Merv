@@ -1,11 +1,8 @@
 import { z } from 'zod';
 import { check, githubBranchSchema, oidSchema } from '@merv/contracts';
 import type { Caller } from '@merv/contracts';
-import type {
-  CodeRepositoryPreparation,
-  CodeRepositoryPrepareInput,
-  CodeStoreOperation,
-} from '@merv/code/store/protocol';
+import type { CodeStoreOperation } from '@merv/code/store/protocol';
+import type { CodeRepositoryPreparation, CodeRepositoryPrepareInput } from './models.js';
 import type { Code } from './types.js';
 import type { CodeService } from './service.js';
 

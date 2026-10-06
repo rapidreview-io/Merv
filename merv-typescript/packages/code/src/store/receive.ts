@@ -21,8 +21,7 @@ import {
   type CodeRepositoryImportInput,
   type CodeAdmissionLimits,
   type CodeStoreOperation,
-  type CodeUploadBegin,
-  type CodeUploadFinalize,
+  type CodeUpload,
 } from './protocol.js';
 import { appendFile, chmod, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -424,10 +423,7 @@ export class CodeReceiver {
    * name. An upload that moves nothing completes here; one that carries a bundle first ends
    * every transfer of the unit that was only receiving, because nobody will complete it.
    */
-  async beginUpload(
-    caller: Caller,
-    input: CodeUploadBegin | CodeUploadFinalize,
-  ): Promise<CodeStoreOperation> {
+  async beginUpload(caller: Caller, input: CodeUpload): Promise<CodeStoreOperation> {
     this.assertOpen();
     caller = structuredClone(caller);
     await this.managedRead(caller, input.sessionId);
