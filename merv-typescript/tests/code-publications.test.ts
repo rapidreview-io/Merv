@@ -106,6 +106,17 @@ test('pull request creation recovers a lost response and readies exactly that pu
   assert.equal(f.calls.filter((c) => c.path.endsWith('/merge')).length, 1);
 });
 
+test('publication details say where the pull request they just read stands', async (t) => {
+  const f = await setup(t);
+  await f.sync();
+  // Merged on GitHub since Merv last synced.
+  f.pulls[0].merged = true;
+  f.pulls[0].state = 'closed';
+  const { publication } = await f.publications.publicationDetails(f.caller, 'codeprop_fixture');
+  assert.equal(publication.pull?.merged, true);
+  assert.equal(publication.state, 'merged');
+});
+
 test('publication reads retain their original reader', async (t) => {
   const f = await setup(t);
   for (const method of ['publications', 'publicationDetails'] as const) {

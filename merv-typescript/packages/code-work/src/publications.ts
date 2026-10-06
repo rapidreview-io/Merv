@@ -646,7 +646,8 @@ export class CodePublicationService implements CodePublicationApi {
         return details;
       },
     );
-    return { publication: { ...publication, pull: details.pull }, details };
+    const { state: _stored, ...fresh } = { ...publication, pull: details.pull };
+    return { publication: { ...fresh, state: publicationState(fresh) }, details };
   }
   async mergePublication(caller: Caller, value: CodePublicationMerge) {
     caller = structuredClone(caller);
