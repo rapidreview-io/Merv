@@ -224,6 +224,7 @@ export function ConfirmAction({
   busy,
   note,
   danger = true,
+  ready = true,
   onToggle,
   onConfirm,
   children,
@@ -240,6 +241,8 @@ export function ConfirmAction({
    * page's one cue for that, so a reversible verb's confirm does not wear it.
    */
   danger?: boolean;
+  /** Whether what the guard asks for is given: until it is, the act cannot be confirmed. */
+  ready?: boolean;
   /** Said as the guard opens and closes, so a caller can draw only the open one. */
   onToggle?(open: boolean): void;
   onConfirm(): void | Promise<boolean | void>;
@@ -274,7 +277,7 @@ export function ConfirmAction({
       <div className="cluster">
         <button
           className={danger ? 'btn btn--danger' : 'btn btn--primary'}
-          disabled={!!busy}
+          disabled={!!busy || !ready}
           onClick={() => void Promise.resolve(onConfirm()).then((done) => done && show(false))}
         >
           {busy ?? confirm}

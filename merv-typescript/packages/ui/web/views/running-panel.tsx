@@ -86,6 +86,7 @@ export function Act({ action }: { action: RunningAction }) {
         busy={busy}
         note={note}
         danger={ends}
+        ready={!ask || !!said.trim()}
         onConfirm={run}
       >
         {action.guard && <p>{action.guard.consequence}</p>}
@@ -96,7 +97,6 @@ export function Act({ action }: { action: RunningAction }) {
               className="input"
               value={said}
               maxLength={500}
-              required
               disabled={command.locked}
               onChange={(event) => setSaid(event.target.value)}
             />
@@ -514,7 +514,12 @@ export function RunningSidebar({
         {missing && onMissing ? <LoadState loading /> : <LoadState {...panel} />}
       </div>
     );
-  const standing = data.header.attention ?? attention;
+  // The owner's own line wins, keeping a control the board's mark offers where it has none.
+  const own = data.header.attention;
+  const standing =
+    own && !own.action && attention?.action
+      ? { ...own, action: attention.action }
+      : (own ?? attention);
   return (
     <Reading.Provider value={{ now, nameOf, open }}>
       <div className="running-sidebar">

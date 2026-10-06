@@ -197,6 +197,36 @@ test('a quiet mark replaces the line without the red, needs nobody, sorts by ran
   assert.equal(answer.lanes.work.needsYou, 1);
 });
 
+test('a mark’s control stays offered when another line wins the card', async () => {
+  const release = {
+    label: 'Release hold',
+    verb: 'start' as const,
+    tool: 'session.dispatch',
+    input: { instanceId: 'H' },
+    allowed: true,
+  };
+  const answer = await board(
+    {
+      owner: 'sessions',
+      marks: async () => [
+        { key: 'work:H', says: ['Held after 3 failed launches'], who: 'An admin', action: release },
+        { key: 'work:Q', says: ['Held'], action: { ...release, tool: 'session.unknown' } },
+      ],
+    },
+    draws('tasks', [
+      node('work:H', 'work', { attention: red('No independent reviewer can take it') }),
+      node('work:Q', 'work', { attention: red('Suspended') }),
+    ]),
+  );
+  // The owner's own red line wins the card, and the hold's release is still there to press.
+  assert.deepEqual(find(answer, 'work:H')!.attention, {
+    ...red('No independent reviewer can take it'),
+    action: release,
+  });
+  // A control for a tool this server lacks is carried nowhere.
+  assert.deepEqual(find(answer, 'work:Q')!.attention, red('Suspended'));
+});
+
 test('edges keep only links between drawn nodes, once each, and never a node to itself', async () => {
   const drawn = [
     node('work:A', 'work', {
