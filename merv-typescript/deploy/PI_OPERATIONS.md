@@ -443,6 +443,13 @@ one-machine-per-step machine still running; release in a quiet window.
   catalog, and each machine's release id (Standard's also in
   `MERV_FLEET_RUNTIME_RELEASE_ID`). It refuses while any of them differs from
   what it recorded, and `release.mjs` checks the same before releasing Main.
+- Once production passed its canary, the same run brings staging along: the
+  release's copy for `cloudflare-fleet-staging` and `-large` in production's
+  Sandboxes catalog (only for those Sandboxes serves), the image and Worker on
+  `merv-fleet-staging` and `merv-fleet-staging-large`, then staging Main
+  (`--staging-host`) names those releases. A staging failure never rolls
+  production back; the ledger row says `STAGING NOT UPDATED` and why, and
+  staging launches are refused until a later run (or a hand switch) agrees.
 - An open hosted run blocks every Main release, emergencies included. When it
   can neither finish nor roll back, `node deploy/hosted-release.mjs --abandon`
   closes it once production agrees on one of its releases: every live Cloudflare
