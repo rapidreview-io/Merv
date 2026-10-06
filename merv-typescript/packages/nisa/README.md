@@ -13,6 +13,37 @@ composes it only where the key is configured (see
 | `@merv/nisa`       | nothing     | `nisa` service                           |
 | `@merv/nisa/tools` | Nisa, Tools | the five `nisa.*` tools below, all reads |
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph people["People & agents"]
+    pi["Pi<br/><small>in-UI agent</small>"]
+    worker["Worker agent<br/><small>leased session</small>"]
+    mcpClient[MCP client]
+  end
+  subgraph foundations["Foundations"]
+    api["API<br/><small>HTTP, MCP and tool registry</small>"]
+    nisa["Nisa<br/><small>literature search tools</small>"]
+  end
+  subgraph external["External"]
+    nisaApi["Nisa<br/><small>RapidReview /api/sdk</small>"]
+  end
+  pi -- "calls nisa.*" --> api
+  worker -- "MCP /mcp" --> api
+  mcpClient -- "MCP /mcp" --> api
+  nisa -- "registers nisa.* tools" --> api
+  api -- "dispatches nisa.*" --> nisa
+  nisa -- "HTTP /api/sdk" --> nisaApi
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class nisa self
+```
+
+Nisa is a leaf: it depends on no other Merv service, and the tool registry is
+its only way in. Pi, leased workers and MCP clients all reach the same five
+reads there, run as the caller, and the service sends each one to Nisa's
+`/api/sdk` with the deployment's one key.
+
 ## Tools
 
 Every tool is a read (`readOnly`) of another service (`openWorld`): the
