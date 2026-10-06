@@ -15,6 +15,8 @@ interface Summary {
   fingerprint: string;
   importedAt: string;
   counts: Record<string, number>;
+  /** The categories a person reads, in tab order, with their labels. */
+  tabs: { type: string; label: string }[];
 }
 interface RecordSummary {
   type: string;
@@ -39,6 +41,8 @@ interface RecordDetail {
   fileRetention?: RecordSummary['fileRetention'];
   data: Record<string, unknown>;
   files?: { artifactId: string; label: string; slot: string }[];
+  /** The fields read first, each under its heading. */
+  reading: { field: string; label: string }[];
 }
 
 interface HistoryNavigation {
@@ -46,29 +50,6 @@ interface HistoryNavigation {
   pages: string[];
   selected?: { type: string; id: string };
 }
-const RESEARCH_TYPES = [
-  ['experiments', 'Experiments'],
-  ['tasks', 'Tasks'],
-  ['reflections', 'Reflections'],
-  ['claims', 'Claims'],
-  ['litreview_sections', 'Literature'],
-  ['papers', 'Papers'],
-  ['posts', 'Feed'],
-] as const;
-
-const READING_FIELDS: Record<string, string[]> = {
-  experiments: ['intent', 'conclusion', 'details', 'revision_context'],
-  tasks: ['goal', 'outcome', 'deliverables_json', 'revision_context'],
-  reflections: ['revision_context'],
-  claims: ['statement', 'scope', 'confidence'],
-  litreview_sections: ['tldr', 'body'],
-  papers: ['description', 'authors_json', 'year', 'url'],
-  posts: ['text'],
-  reviews: ['synopsis', 'verdict', 'notes', 'findings_json', 'evidence_json'],
-  consolidation_proposals: ['summary'],
-  consolidation_decisions: ['disposition', 'rationale'],
-};
-
 function ResearchContent({ value, depth = 0 }: { value: unknown; depth?: number }) {
   if (value === null || value === undefined || value === '') return null;
   if (depth >= 4 && typeof value === 'object') return null;
@@ -198,18 +179,16 @@ function Detail({
             {typeof record?.created_at === 'string' && <Stamp at={record.created_at} />}
             <span>Imported</span>
           </div>
-          {(READING_FIELDS[detail.data.type] ?? ['summary', 'description', 'notes']).map(
-            (field) => {
-              const value = detail.data!.data[field];
-              if (value === null || value === undefined || value === '') return null;
-              return (
-                <section key={field} className="history-reading-section">
-                  <h3>{field === 'tldr' ? 'Summary' : words(field.replace(/_json$/, ''))}</h3>
-                  <ResearchContent value={value} />
-                </section>
-              );
-            },
-          )}
+          {detail.data.reading.map(({ field, label }) => {
+            const value = detail.data!.data[field];
+            if (value === null || value === undefined || value === '') return null;
+            return (
+              <section key={field} className="history-reading-section">
+                <h3>{label}</h3>
+                <ResearchContent value={value} />
+              </section>
+            );
+          })}
           {detail.data.fileRetention?.status === 'verified' && (
             <Link
               className="btn"
@@ -253,7 +232,7 @@ function History({ row }: ViewProps) {
   const owner = { actorId: actor.id, projectId: project.id, rowId: row.id };
   const counts = summary.data?.counts ?? {};
   const fallbackType =
-    RESEARCH_TYPES.find(([name]) => counts[name] > 0)?.[0] ??
+    summary.data?.tabs.find(({ type }) => counts[type] > 0)?.type ??
     Object.keys(counts).find((name) => counts[name] > 0) ??
     'experiments';
   const { type, pages, selected } = restoreNavigation(location.state, owner, fallbackType);
@@ -299,13 +278,13 @@ function History({ row }: ViewProps) {
           <nav className="history-tabs" aria-label="Research categories">
             <Tabs
               label="Research categories"
-              options={RESEARCH_TYPES.filter(([name]) => (counts[name] ?? 0) > 0).map(
-                ([name, label]) => ({
-                  value: name,
+              options={summary.data.tabs
+                .filter(({ type }) => (counts[type] ?? 0) > 0)
+                .map(({ type, label }) => ({
+                  value: type,
                   label,
-                  count: counts[name]!.toLocaleString(),
-                }),
-              )}
+                  count: counts[type]!.toLocaleString(),
+                }))}
               value={type}
               onChange={(name) => update({ type: name, pages: [] })}
             />

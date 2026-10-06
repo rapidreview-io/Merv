@@ -474,6 +474,10 @@ test('the archive narrows by the app’s own tabs, turns pages only where there 
             fingerprint: 'f'.repeat(64),
             importedAt: '2026-08-01T12:00:00Z',
             counts: { experiments: 2, claims: 1, reviews: 4 },
+            tabs: [
+              { type: 'experiments', label: 'Experiments' },
+              { type: 'claims', label: 'Claims' },
+            ],
           },
         },
       };
@@ -500,6 +504,7 @@ test('the archive narrows by the app’s own tabs, turns pages only where there 
           id: 'old_1',
           hash: 'a'.repeat(64),
           data: { name: 'Seed sweep', status: 'complete', intent: 'Does it **grok**?' },
+          reading: [{ field: 'intent', label: 'intent' }],
         },
       },
     };

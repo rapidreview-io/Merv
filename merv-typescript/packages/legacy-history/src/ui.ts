@@ -2,7 +2,7 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { check, idSchema, MervError, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
-import { legacyHistoryTypes } from './history.js';
+import { legacyHistoryTypes, type LegacyHistoryType } from './history.js';
 import { historyMediaLinks } from './media-links.js';
 import type {} from './types.js';
 
@@ -21,6 +21,35 @@ const request = z.discriminatedUnion('action', [
     .object({ action: z.literal('detail'), type: recordType, id: z.string().min(1).max(4096) })
     .strict(),
 ]);
+
+/** The categories a person reads, as the page's tabs name them, in tab order. */
+const TABS: { type: LegacyHistoryType; label: string }[] = [
+  { type: 'experiments', label: 'Experiments' },
+  { type: 'tasks', label: 'Tasks' },
+  { type: 'reflections', label: 'Reflections' },
+  { type: 'claims', label: 'Claims' },
+  { type: 'litreview_sections', label: 'Literature' },
+  { type: 'papers', label: 'Papers' },
+  { type: 'posts', label: 'Feed' },
+];
+/** What a record's page reads first, by type, each field under its heading; the whole record stays one fold away. */
+const READING: Partial<Record<LegacyHistoryType, string[]>> = {
+  experiments: ['intent', 'conclusion', 'details', 'revision_context'],
+  tasks: ['goal', 'outcome', 'deliverables_json', 'revision_context'],
+  reflections: ['revision_context'],
+  claims: ['statement', 'scope', 'confidence'],
+  litreview_sections: ['tldr', 'body'],
+  papers: ['description', 'authors_json', 'year', 'url'],
+  posts: ['text'],
+  reviews: ['synopsis', 'verdict', 'notes', 'findings_json', 'evidence_json'],
+  consolidation_proposals: ['summary'],
+  consolidation_decisions: ['disposition', 'rationale'],
+};
+const readingOf = (type: LegacyHistoryType) =>
+  (READING[type] ?? ['summary', 'description', 'notes']).map((field) => ({
+    field,
+    label: field === 'tldr' ? 'Summary' : field.replace(/_json$/, '').replaceAll('_', ' '),
+  }));
 
 /** The archive's page for one imported source; no agent tool or live workflow adapter. */
 export const legacyHistoryUiPlugin = {
@@ -53,7 +82,7 @@ export const legacyHistoryUiPlugin = {
           check(parsed.success, 'invalid_input', 'History query is invalid');
           const input = parsed.data;
           if (input.action === 'summary')
-            return (await history.summary(caller, config)) as unknown as Json;
+            return { ...(await history.summary(caller, config)), tabs: TABS } as unknown as Json;
           if (input.action === 'list') {
             const { action: _action, ...query } = input;
             return (await history.list(caller, { ...query, ...config })) as unknown as Json;
@@ -63,6 +92,7 @@ export const legacyHistoryUiPlugin = {
           return {
             ...record,
             files: historyMediaLinks(record.type, record.id, record.data, caller.projectId),
+            reading: readingOf(record.type),
           } as unknown as Json;
         },
       }),

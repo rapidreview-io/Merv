@@ -98,6 +98,8 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
   const summary = await request({ action: 'summary' });
   assert.equal(summary.status, 200);
   assert.equal(summary.body.result.counts.experiments, 2);
+  // The archive names its tabs and what a record's page reads; the page only draws them.
+  assert.deepEqual(summary.body.result.tabs[0], { type: 'experiments', label: 'Experiments' });
   const first = await request({ action: 'list', type: 'experiments', limit: 1 });
   assert.equal(first.status, 200);
   assert.equal(first.body.result.records.length, 1);
@@ -111,6 +113,10 @@ test('history UI paginates through authenticated ui.read and withdraws cleanly',
   assert.equal(second.body.result.records[0].id, 'exp-b');
   const detail = await request({ action: 'detail', type: 'experiments', id: 'exp-b' });
   assert.equal(detail.body.result.data.conclusion, 'Completed in the previous backend');
+  assert.deepEqual(
+    detail.body.result.reading.map(({ label }: { label: string }) => label),
+    ['intent', 'conclusion', 'details', 'revision context'],
+  );
   assert.equal(
     (await request({ action: 'detail', type: 'experiments', id: 'exp-b' }, another.id)).status,
     404,
