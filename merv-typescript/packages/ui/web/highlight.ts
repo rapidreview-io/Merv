@@ -91,6 +91,13 @@ const MAX_HIGHLIGHT_LINES = 5_000;
 export const highlightable = (code: string) =>
   code.length <= MAX_HIGHLIGHT &&
   code.split('\n', MAX_HIGHLIGHT_LINES + 1).length <= MAX_HIGHLIGHT_LINES;
+/**
+ * A grammar's time on one line grows far faster than the line: a minified line would hold the
+ * page for a minute. A block with a line past this is left uncoloured.
+ */
+const MAX_HIGHLIGHT_LINE = 1_000;
+const colourable = (code: string) =>
+  highlightable(code) && code.split('\n').every((line) => line.length <= MAX_HIGHLIGHT_LINE);
 
 let core: Promise<HighlighterCore> | undefined;
 /** The highlighter once it has loaded, so code in a language it already holds is coloured as it is drawn. */
@@ -116,7 +123,7 @@ function tokens(highlighter: HighlighterCore, code: string, lang: string): Piece
       defaultColor: false,
       // Shiki stops a line after 500 ms and colours its rest as one token. A grammar compiles as
       // it first reads, so a busy machine could cut the first theme's line and not the second's:
-      // the colours would hang on the clock. highlightable() bounds the work instead.
+      // the colours would hang on the clock. colourable() bounds the work instead.
       tokenizeTimeLimit: 0,
     })
     .tokens.map((line) =>
@@ -129,7 +136,7 @@ function tokens(highlighter: HighlighterCore, code: string, lang: string): Piece
 
 /** The lines of `code` coloured now, where its grammar has already loaded; otherwise nothing. */
 export function highlightNow(code: string, language: Language | undefined): Piece[][] | undefined {
-  if (!ready || !language || !highlightable(code)) return undefined;
+  if (!ready || !language || !colourable(code)) return undefined;
   if (!ready.getLoadedLanguages().includes(language.id)) return undefined;
   try {
     return tokens(ready, code, language.id);
@@ -147,7 +154,7 @@ export async function highlight(
   language: Language | undefined,
   wanted: () => boolean = () => true,
 ): Promise<Piece[][] | undefined> {
-  if (!language || !highlightable(code)) return undefined;
+  if (!language || !colourable(code)) return undefined;
   try {
     const shiki = await highlighter();
     let grammar = grammars.get(language.id);

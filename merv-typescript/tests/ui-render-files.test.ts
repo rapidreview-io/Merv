@@ -601,6 +601,19 @@ test('a line is coloured whole however long its grammar takes to read it', async
   }
 });
 
+test('a line too long to colour quickly leaves its block plain, at once', async () => {
+  const { highlight, highlightNow, languageOf } = await import('../packages/ui/web/highlight.js');
+  const ts = languageOf('ts')!;
+  assert.ok(await highlight('const a = 1;', ts), 'the grammar is loaded');
+  // One minified line: the grammar's time grows with a line's length far faster than linearly.
+  const line = `const data = [${'1, '.repeat(6_700)}];`;
+  assert.ok(line.length >= 20_000);
+  const start = performance.now();
+  assert.equal(await highlight(line, ts), undefined);
+  assert.equal(highlightNow(`// a short line\n${line}`, ts), undefined);
+  assert.ok(performance.now() - start < 200, `${performance.now() - start} ms`);
+});
+
 test('code still streaming in is drawn plain and coloured once it stands still; a long file never is', async (t) => {
   t.after(async () => await unmount());
   const { CodeBlock } = await import('../packages/ui/web/code-block.js');
