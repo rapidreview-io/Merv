@@ -45,7 +45,7 @@ import {
 import type { Paper } from '@merv/paper/types';
 import type {} from '@merv/sessions/types';
 import { parseChangeSpec } from './change-spec.js';
-import { lensName } from './models.js';
+import { lensName } from './names.js';
 import { waveNode, wavePanel, type WaveFacts } from './running.js';
 import {
   CHANGE_SPEC_CRITERION,

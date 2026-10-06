@@ -11,7 +11,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from './types.js';
-import { lensName } from './models.js';
+import { lensName } from './names.js';
 
 /**
  * A reflection wave on the Running page. The open wave is one node at the head of the work
