@@ -1,7 +1,18 @@
 // Runtime resource: copied alongside process-host.js by the build. No loader or dependencies.
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
-import { spawn } from 'node:child_process';
-import { chmodSync, closeSync, lstatSync, mkdirSync, openSync, rmSync, writeSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import {
+  chmodSync,
+  closeSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -9,10 +20,63 @@ import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 
 const resource = fileURLToPath(import.meta.url);
+const PYTHON = '/usr/bin/python3';
+const SUBREAPER = `import ctypes, os, sys
+try: ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)
+except Exception: pass
+os.execv(sys.argv[1], sys.argv[1:])`;
 const mode = process.argv[2];
 if (mode === 'group') groupOwner();
 else if (mode === 'guardian') guardian(process.argv[3], process.argv[4]);
 else process.exit(64);
+
+/**
+ * The live processes of process group `group` and everything descended from them, by parent
+ * links: /proc on Linux, `ps` elsewhere. An agent's shell starts jobs in sessions of their own,
+ * which a group signal misses; found here while their parents live, they end with the launch.
+ */
+function tree(group) {
+  const rows = [];
+  try {
+    if (process.platform === 'linux')
+      for (const name of readdirSync('/proc').filter((name) => /^\d+$/.test(name)))
+        try {
+          const stat = readFileSync(`/proc/${name}/stat`, 'utf8');
+          rows.push([
+            Number(name),
+            ...stat
+              .slice(stat.lastIndexOf(')') + 4)
+              .split(' ', 2)
+              .map(Number),
+          ]);
+        } catch {
+          /* Gone since the listing. */
+        }
+    else
+      for (const line of execFileSync('/bin/ps', ['-A', '-o', 'pid=,ppid=,pgid='], {
+        encoding: 'utf8',
+        timeout: 5000,
+      }).split('\n'))
+        if (line.trim()) rows.push(line.trim().split(/\s+/).map(Number));
+  } catch {
+    /* Best effort: the group signal still reaches the group. */
+  }
+  const found = new Set(rows.filter((row) => row[2] === group).map(([pid]) => pid));
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const [pid, parent] of rows)
+      if (!found.has(pid) && found.has(parent)) grew = found.add(pid);
+  }
+  return found;
+}
+const signalAll = (pids, signal) => {
+  for (const pid of pids)
+    try {
+      process.kill(pid, signal);
+    } catch {
+      /* Gone, or not ours to signal. */
+    }
+};
 
 function groupOwner() {
   let started = false,
@@ -29,9 +93,15 @@ function groupOwner() {
     stopping = true;
     clearTimeout(deadlineTimer);
     send({ type: 'shutdown', reason, exitCode: code, exitSignal: signal });
-    // This process is the live group leader. No recorded PID is used to signal anything.
+    // This process is the live group leader, and the agent's jobs are found while it lives.
+    const jobs = tree(process.pid);
+    jobs.delete(process.pid);
+    signalAll(jobs, 'SIGTERM');
     process.kill(-process.pid, 'SIGTERM');
     killTimer = setTimeout(() => {
+      // Before the group, so before the guardian records how the launch ended.
+      for (const pid of tree(process.pid)) if (pid !== process.pid) jobs.add(pid);
+      signalAll(jobs, 'SIGKILL');
       const killSelfGroup = () => process.kill(-process.pid, 'SIGKILL');
       if (process.connected) {
         send({ type: 'kill_ready' });
@@ -367,12 +437,19 @@ function guardian(path, id) {
           id,
         );
         clearTimeout(startupTimer);
+        // On Linux the owner adopts what its agent leaves behind (PR_SET_CHILD_SUBREAPER, which
+        // an exec keeps), so the jobs of an agent that already ended are still its tree.
+        const python = process.platform === 'linux' && existsSync(PYTHON) ? [PYTHON] : [];
         try {
-          owner = spawn(process.execPath, [resource, 'group'], {
-            detached: true,
-            stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
-            env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
-          });
+          owner = spawn(
+            python[0] ?? process.execPath,
+            [...(python.length ? ['-c', SUBREAPER, process.execPath] : []), resource, 'group'],
+            {
+              detached: true,
+              stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+              env: { PATH: process.env.PATH ?? '/usr/bin:/bin' },
+            },
+          );
         } catch {
           finish('exited', 'launch_failed', 127); // nothing was spawned
           reply({ ok: true });
@@ -398,7 +475,18 @@ function guardian(path, id) {
               shutdown.exitCode,
               shutdown.exitSignal,
             );
-          } else finish('uncertain', 'owner_lost');
+          } else {
+            // An owner lost on its own leaves its agent unsupervised: the agent's group and what
+            // descends from it end now, found before the group is signalled.
+            const left = tree(owner.pid);
+            try {
+              process.kill(-owner.pid, 'SIGKILL');
+            } catch {
+              /* The group had already ended. */
+            }
+            signalAll(left, 'SIGKILL');
+            finish('uncertain', 'owner_lost');
+          }
         });
         owner.send({
           type: 'start',

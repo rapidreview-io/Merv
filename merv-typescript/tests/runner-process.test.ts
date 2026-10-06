@@ -207,6 +207,66 @@ test('group owner enforces the deadline without controller polling and honours a
   assert.equal(ledger.get(record.id)?.reason, 'deadline');
 });
 
+/** An agent that starts a job in a session and group of its own, as a harness's shell does. */
+const jobAgent = (ticks: string, after = `setInterval(()=>{},1000)`) =>
+  `const {spawn}=require('child_process');spawn(process.execPath,['-e',${JSON.stringify(
+    `setInterval(()=>require('fs').appendFileSync(${JSON.stringify(ticks)},'x'),15)`,
+  )}],{detached:true,stdio:'ignore'}).unref();require('fs').writeFileSync('agent.pid',String(process.pid));process.on('SIGTERM',()=>{});${after}`;
+const stillTicking = async (path: string) => {
+  const size = statSync(path).size;
+  await delay(150);
+  return statSync(path).size !== size;
+};
+
+test('a stop and the deadline end the jobs the agent started in groups of their own', async (t) => {
+  const { directory, ledger, host, reserve, token, command } = setup(t);
+  for (const [id, end] of [
+    ['job-stop', 'stop'],
+    ['job-deadline', 'deadline'],
+    // Only Linux's subreaper keeps the jobs of an agent that already ended in the owner's tree.
+    ...(process.platform === 'linux' ? [['job-exit', 'exit']] : []),
+  ] as const) {
+    const record = reserve(id, end === 'deadline' ? 1500 : 15000);
+    const ticks = join(directory, `${id}-ticks`);
+    await host.launch({
+      launchId: record.id,
+      sessionToken: token,
+      deadline: record.deadline,
+      // The agent that exits leaves its job behind, as a harness's background shell may.
+      command: command(
+        jobAgent(ticks, end === 'exit' ? 'setTimeout(()=>process.exit(0),400)' : undefined),
+      ),
+    });
+    await until(() => existsSync(ticks));
+    if (end === 'stop') await host.stop(record.id);
+    await until(() => terminalLaunch(ledger.get(record.id)!));
+    assert.equal(ledger.get(record.id)?.reason, end === 'stop' ? 'controller_stop' : end);
+    // Ended before the launch's end was written: the job prints nothing more.
+    assert.equal(await stillTicking(ticks), false, id);
+  }
+});
+
+test("an owner lost on its own ends its agent and the agent's jobs, and stays uncertain", async (t) => {
+  const { directory, ledger, host, reserve, token, command } = setup(t);
+  const record = reserve('owner-lost');
+  const ticks = join(directory, 'owner-lost-ticks');
+  await host.launch({
+    launchId: record.id,
+    sessionToken: token,
+    deadline: record.deadline,
+    command: command(jobAgent(ticks)),
+  });
+  await until(() => ledger.get(record.id)?.status === 'running' && existsSync(ticks));
+  // The owner alone dies, as to the OOM killer: the agent's group is the owner's.
+  const agent = readFileSync(join(directory, 'agent.pid'), 'utf8');
+  const group = Number(spawnSync('ps', ['-o', 'pgid=', '-p', agent], { encoding: 'utf8' }).stdout);
+  process.kill(group, 'SIGKILL');
+  await until(() => ledger.get(record.id)?.status === 'uncertain');
+  assert.equal(ledger.get(record.id)?.reason, 'owner_lost');
+  assert.equal(spawnSync('kill', ['-0', agent]).status !== 0, true, 'the agent is gone');
+  assert.equal(await stillTicking(ticks), false);
+});
+
 test('claimed intent without a reachable guardian stays uncertain and cannot be restarted or freed by remote status', async (t) => {
   const { ledger, host, reserve, token, command } = setup(t);
   const record = reserve('unknown');
@@ -298,6 +358,9 @@ test('a user key standing alone is refused, but mk_ inside another token is not'
     );
   assert.throws(() => validate(`mk_${'a'.repeat(43)}`), /source credentials/);
   assert.throws(() => validate(`key=mk_${'a'.repeat(43)}\n`), /source credentials/);
+  // After a URL escape or a JSON escape, or a separator.
+  for (const before of ['Bearer%20', '{"a":"x\\n', '{"a":"\\u0022', 'x-', 'x_'])
+    assert.throws(() => validate(`${before}mk_${'a'.repeat(43)}`), /source credentials/, before);
   // An HF grant (a JWE) or a session token can hold "mk_" by chance.
   validate(`eyJhbGciOiJkaXIifQ..abc.Xmk_${'b'.repeat(40)}.tag`);
   validate(`ms_${'c'.repeat(5)}mk_${'d'.repeat(35)}`);

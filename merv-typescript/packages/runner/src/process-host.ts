@@ -25,7 +25,7 @@ export interface ProcessLaunch {
 /**
  * Where a launched process, or the wrapper a profile runs it under, may leave what the run
  * cost. The convention is vendor-neutral: only a profile reads its own harness's output (see
- * harnessUsage), and whoever can write the file is trusted no further than a self-report.
+ * its `usage`), and whoever can write the file is trusted no further than a self-report.
  */
 export const usageFileVariable = 'MERV_USAGE_FILE';
 export const usageFile = (record: LaunchRecord) => join(record.runDirectory, 'usage.json');
@@ -212,7 +212,10 @@ export class ProcessHost {
         typeof value !== 'string' ||
         value.includes('\0') ||
         /^MERV_.*(?:API_KEY|SOURCE|BEARER|RUNNER_KEY|AUTH_TOKEN)$/i.test(key) ||
-        /(?<![A-Za-z0-9_-])mk_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/.test(value) ||
+        // A user key standing alone, also right after a separator or a URL or JSON escape.
+        /(?:(?<![A-Za-z0-9])|(?<=%[0-9A-Fa-f]{2}|\\[nrtbf]|\\u[0-9A-Fa-f]{4}))mk_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/.test(
+          value,
+        ) ||
         (value.includes(token) && key !== 'MERV_AGENT_SESSION_TOKEN')
       ) {
         throw new Error('Process environment must not contain source credentials');
