@@ -358,6 +358,13 @@ test('a conversation its harness could not take up is dropped: the next offer, o
   const release = deferred(third.session, 'resume_failed');
   // A retry racing the first release changes nothing more.
   await Promise.all([release, deferred(third.session, 'resume_failed')]);
+  // The first runner's confirming call, arriving late, cannot declare it again.
+  const late = await f.http('POST', `/sessions/${first.session.id}/conversation`, f.token, {
+    ...first.control,
+    ...facts,
+    deliver: true,
+  });
+  assert.deepEqual([late.status, late.body.error?.code], [409, 'conversation_superseded']);
   const fourth = await f.offer(unit.id, 'runner-d');
   assert.equal(fourth.session.continuity?.key, first.session.continuity!.key);
   assert.equal(fourth.session.continuity?.resume, undefined);
