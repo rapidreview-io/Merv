@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import { hostedCodexPlatform } from '@merv/contracts';
+import { hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { MachineRunner } from '@merv/runner';
 import { codeWorkspaceDriver } from '@merv/code/driver/index';
 

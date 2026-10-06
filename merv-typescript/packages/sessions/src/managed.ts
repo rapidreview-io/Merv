@@ -6,7 +6,6 @@ import {
   digest,
   MervError,
   effectiveWorkspace,
-  codexHandoffGraceMs,
   sessionSecretPattern,
   type Actor,
   type Caller,
@@ -19,13 +18,12 @@ import { sourceCaller, tokenDigest } from './agents.js';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
 import type { CredentialStore } from '@merv/identity/credentials';
 import type { CallerRules } from '@merv/api/types';
-import { personKey } from '@merv/fleet/model-ledger';
 import type { HuggingFaceGrant } from '@merv/secrets/types';
 import type {
   ManagedRunnerBindingIdentity,
   ManagedRunnerValidator,
   ManagedEnrollmentInput,
-  ManagedModelGrant,
+  ManagedBoundSession,
   ManagedRunnerInspection,
   ManagedBindingRow,
 } from './managed-types.js';
@@ -349,10 +347,10 @@ export class ManagedRunnerBindings {
       return this.caller({ ...row, bound_session_id: await this.currentSessionId(row, tx) });
     });
   }
-  /** The model authority of a bound session, by its bearer or, when the relay checks again, its
-   *  id: live, or closed by its own handoff within the runner's grace so Codex finishes its
-   *  closing turn. Reading it never activates an offered session. */
-  async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
+  /** The session a managed runner holds, by its bearer or, when a relay checks again, its id:
+   *  live, or closed by its own handoff, which says when so Fleet may honour a closing turn.
+   *  Reading it never activates an offered session. */
+  async boundSession(tokenOrSessionId: string): Promise<ManagedBoundSession> {
     this.available();
     return await this.state.snapshotTransaction(async (tx) => {
       const bearer = sessionSecretPattern.test(tokenOrSessionId);
@@ -365,8 +363,6 @@ export class ManagedRunnerBindings {
       );
       const session: Session | undefined = found && JSON.parse(found.session_json);
       const row = session && (await tx.get<ManagedBindingRow>(boundTo, session.id, session.id));
-      const platform: RunnerPlatform | undefined = row && JSON.parse(row.platform_json);
-      const now = this.clock();
       check(
         !credential || credential.subject === session?.id,
         'unauthorized',
@@ -376,29 +372,25 @@ export class ManagedRunnerBindings {
       check(
         session &&
           row &&
-          platform?.model &&
           (session.status === 'offered' || session.status === 'active'
-            ? Date.parse(session.expiresAt) > now
-            : session.closeReason === 'handoff' &&
-              now - Date.parse(session.closedAt!) < codexHandoffGraceMs),
+            ? Date.parse(session.expiresAt) > this.clock()
+            : session.closeReason === 'handoff'),
         'unauthorized',
         'No live managed session holds this credential',
         401,
       );
       if (!bearer)
         await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
-      const { user, projectId, id } = await this.current(row, tx);
+      await this.current(row, tx);
       await this.scope.requireDelegation(session.source, 'read', tx);
       return {
-        id: session.id,
+        sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,
-        person: personKey(user, { projectId, actorId: id }),
-        model: platform.model,
-        ...(platform.effort ? { effort: platform.effort } : {}),
         expiresAt: new Date(
           Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
         ).toISOString(),
+        ...(session.closeReason === 'handoff' ? { handedOffAt: session.closedAt! } : {}),
       };
     });
   }

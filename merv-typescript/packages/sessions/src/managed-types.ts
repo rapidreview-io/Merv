@@ -31,18 +31,16 @@ export type ManagedRunnerValidator = {
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];
 };
-/** A hosted session's authority to call the model through Main's relay. */
-export interface ManagedModelGrant {
-  /** The session. */
-  id: string;
+/** A session a managed runner holds: live, or closed by its own handoff. */
+export interface ManagedBoundSession {
+  sessionId: string;
   projectId: string;
   /** The Fleet allocation whose machine runs it. */
   allocationId: string;
-  /** Whose spend it is: the directing member, keyed as Pi keys a person, or else its actor. */
-  person: string;
-  model: string;
-  effort?: string;
+  /** Its hard deadline, or its allocation's end when that comes first. */
   expiresAt: string;
+  /** When it closed by its own handoff; absent while it is live. */
+  handedOffAt?: string;
 }
 export interface ManagedRunnerInspection {
   workInstanceId?: string;

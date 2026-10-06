@@ -10,11 +10,12 @@ import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
+import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { createApp } from '../../src/app.js';
 import { loadConfiguration } from '../../src/config.js';
 import { useRunSchema } from '../database.js';
-import { codexModelRelay, modelMigrations } from '../../packages/fleet/src/codex-relay.js';
+import { codexModelRelay, hostedGrant } from '../../packages/fleet/src/codex-relay.js';
+import { modelMigrations } from '../../packages/fleet/src/schema.js';
 
 async function command(executable: string, args: string[], input?: string): Promise<string> {
   return new Promise((done, fail) => {
@@ -135,9 +136,12 @@ try {
   await app.ctx.sessions.dispatch.setDispatch(caller, { enabled: true });
   // This app's Fleet workflow owner is off, so nothing else makes the relay's tables.
   await app.ctx.state.migrate('fleet_workflow', modelMigrations);
-  const relay = codexModelRelay(app.ctx.sessions, app.ctx.state, {
+  const relay = codexModelRelay(app.ctx.state, {
     providerKey: () => modelApiKey,
     dailyTokensPerPerson: 5_000_000,
+    // No Fleet allocation stands behind this machine: its calls count toward the smoke itself.
+    authorize: async (token) =>
+      hostedGrant(await app.ctx.sessions.managed.boundSession(token), 'local-smoke', Date.now()),
   });
   app.ctx.api.mount('/codex-model', app.ctx.fleet.modelRelay(relay).handle, { public: true });
   const port = new URL(app.ctx.api.url!).port;

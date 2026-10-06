@@ -18,7 +18,7 @@ import {
 } from '@merv/contracts';
 import { ApiServer } from '../packages/api/src/http.js';
 import { PiHttp } from '../packages/pi/src/api.js';
-import { ModelRelay } from '../packages/fleet/src/model-relay.js';
+import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { PiService, type PiConfig } from '../packages/pi/src/index.js';
 import { CredentialStore, tokenDigest } from '../packages/identity/src/credentials.js';
@@ -30,7 +30,8 @@ import { countWrites } from './fixtures/state.js';
 import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fixtures/pi.js';
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */
-const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
+const piRelay = (config: PiRelayConfig & RelayTuning) =>
+  new ModelRelay(piModelRelay(config), config);
 
 test('Pi offers and runs system.status in a conversation', async (t) => {
   const f = await fixture(t);

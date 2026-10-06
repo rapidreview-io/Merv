@@ -221,8 +221,8 @@ const sharedContract = (specifier: string) => specifier === '@merv/contracts';
 
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
  * limits, review independence and history, the prerequisite guard, the paper's Problem, an
- * artifact as a context item, the retirement ledger text every retirement migration embeds, and
- * what a runner advertises. */
+ * artifact as a context item, the retirement ledger text every retirement migration embeds, what
+ * a runner advertises, and hosted Codex's profile and handoff grace. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
   '@merv/workflows/rules',
@@ -233,6 +233,7 @@ const pureRules = new Set([
   '@merv/reflections/names',
   '@merv/workflows/execution',
   '@merv/fleet/model-ledger',
+  '@merv/fleet/hosted-codex',
   '@merv/workflows/dependency-rows',
   '@merv/code-work/workspace',
   '@merv/paper/rules',

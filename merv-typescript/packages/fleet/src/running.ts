@@ -14,7 +14,7 @@ import {
   type RunningSection,
 } from '@merv/contracts';
 import type { RunningContribution } from '@merv/ui/types';
-import type { Fleet, FleetAllocation, FleetPhase } from './types.js';
+import type { Fleet, FleetAllocation, FleetIntent, FleetPhase } from './types.js';
 
 /**
  * Fleet's one view: its words and the redacted allocation its page and tools show, and Fleet's
@@ -23,6 +23,36 @@ import type { Fleet, FleetAllocation, FleetPhase } from './types.js';
  * session's sidebar. Fleet adds no controls there, where halting the lease releases the machine,
  * and no size or price; a machine in hand by itself can be finished or stopped from its sidebar.
  */
+
+/** What a machine can be told, on its page and in its Running sidebar alike, under the intents
+ *  listed: finish what it runs, or stop at once. */
+export const fleetActions: {
+  id: string;
+  label: string;
+  verb: 'release' | 'halt';
+  tool: string;
+  intents: FleetIntent[];
+  guard?: { title: string; consequence: string };
+}[] = [
+  {
+    id: 'drain',
+    label: 'Finish and release',
+    verb: 'release',
+    tool: 'fleet.drain',
+    intents: ['run'],
+  },
+  {
+    id: 'halt',
+    label: 'Stop now',
+    verb: 'halt',
+    tool: 'fleet.halt',
+    intents: ['run', 'drain'],
+    guard: {
+      title: 'Stop this agent?',
+      consequence: 'Any machine it holds is deleted. Work that has not been saved may be lost.',
+    },
+  },
+];
 
 /** A person's word for a phase: waiting has no machine yet; starting is preparing one. */
 const words: Partial<Record<FleetPhase, string>> = {
@@ -159,36 +189,20 @@ export function fleetPanel(
   allowed = false,
 ): RunningPanelPart {
   const status = statusOf(a);
-  const input = { id: a.id };
-  // What its own page offers, for the same intents: finish what it runs, or stop at once.
+  // What its own page offers, for the same intents.
   const actions: RunningAction[] =
-    absorbedBy || !open(a) || a.intent === 'stop'
+    absorbedBy || !open(a)
       ? []
-      : [
-          ...(a.intent === 'run'
-            ? [
-                {
-                  label: 'Finish and release',
-                  verb: 'release' as const,
-                  tool: 'fleet.drain',
-                  input,
-                  allowed,
-                },
-              ]
-            : []),
-          {
-            label: 'Stop now',
-            verb: 'halt',
-            tool: 'fleet.halt',
-            input,
+      : fleetActions
+          .filter(({ intents }) => intents.includes(a.intent))
+          .map(({ label, verb, tool, guard }) => ({
+            label,
+            verb,
+            tool,
+            input: { id: a.id },
             allowed,
-            guard: {
-              title: 'Stop this agent?',
-              consequence:
-                'Any machine it holds is deleted. Work that has not been saved may be lost.',
-            },
-          },
-        ];
+            ...(guard && { guard }),
+          }));
   const need = attention(a);
   const red = need?.quiet ? undefined : need;
   const rows: RunningFact[] = [];

@@ -4,15 +4,17 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createService, MervError } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
+import type { ManagedModelGrant } from '@merv/fleet/types';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
   codexModelRelay,
   codexPayload,
+  hostedGrant,
   modelBudgetStatus,
-  modelMigrations,
   setDailyTokens,
 } from '../packages/fleet/src/codex-relay.js';
+import { modelMigrations } from '../packages/fleet/src/schema.js';
+import { hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { openState } from './fixtures/state.js';
 
 const key = 'private-provider-key';
@@ -72,45 +74,45 @@ async function fixture(t: TestContext, dailyTokensPerPerson = 1_000_000) {
   const write = process.stderr.write;
   process.stderr.write = ((chunk: string) => logs.push(String(chunk)) > 0) as never;
   t.after(() => void (process.stderr.write = write));
-  const sessions = {
-    managed: {
-      async modelGrant(presented: string) {
-        if (down) throw new MervError('database_unavailable', 'The database is unavailable', 503);
-        if (!live || ![bearer, grant.id].includes(presented))
-          throw new MervError('unauthorized', 'No live managed session', 401);
-        return grant;
-      },
-    },
-  } as unknown as Sessions;
+  const authorize = async (presented: string) => {
+    if (down) throw new MervError('database_unavailable', 'The database is unavailable', 503);
+    if (!live || ![bearer, grant.id].includes(presented))
+      throw new MervError('unauthorized', 'No live managed session', 401);
+    return grant;
+  };
   const start = async () => {
-    const relay = new ModelRelay({
-      ...codexModelRelay(sessions, state, { providerKey: () => key, dailyTokensPerPerson }),
-      fetchImpl: async (_url, init) => {
-        upstream.push({
-          body: JSON.parse(String(init!.body)),
-          authorization: new Headers(init!.headers).get('authorization')!,
-        });
-        if (upstreamStatus !== 200) return new Response('{}', { status: upstreamStatus });
-        const held = hold;
-        const finish = afterCompleted;
-        return new Response(
-          new ReadableStream({
-            async start(controller) {
-              controller.enqueue(new TextEncoder().encode('event: response.created\ndata: {}\n\n'));
-              await held;
-              controller.enqueue(new TextEncoder().encode(terminalFrame));
-              await finish;
-              try {
-                controller.close();
-              } catch {
-                /* The client may have closed after completion. */
-              }
-            },
-          }),
-          { headers: { 'content-type': 'text/event-stream' } },
-        );
+    const relay = new ModelRelay(
+      codexModelRelay(state, { providerKey: () => key, dailyTokensPerPerson, authorize }),
+      {
+        fetchImpl: async (_url, init) => {
+          upstream.push({
+            body: JSON.parse(String(init!.body)),
+            authorization: new Headers(init!.headers).get('authorization')!,
+          });
+          if (upstreamStatus !== 200) return new Response('{}', { status: upstreamStatus });
+          const held = hold;
+          const finish = afterCompleted;
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('event: response.created\ndata: {}\n\n'),
+                );
+                await held;
+                controller.enqueue(new TextEncoder().encode(terminalFrame));
+                await finish;
+                try {
+                  controller.close();
+                } catch {
+                  /* The client may have closed after completion. */
+                }
+              },
+            }),
+            { headers: { 'content-type': 'text/event-stream' } },
+          );
+        },
       },
-    });
+    );
     const server = createServer((req, res) => void relay.handle(req, res));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     t.after(() => {
@@ -337,9 +339,10 @@ test('a call is charged at its most before it goes out and settled when it finis
 
 test('a call settles to the day it was charged to, even past midnight', async (t) => {
   const f = await fixture(t);
-  const relay = codexModelRelay({} as Sessions, f.state, {
+  const relay = codexModelRelay(f.state, {
     providerKey: () => key,
     dailyTokensPerPerson: 1_000_000,
+    authorize: async () => grant,
   });
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-09-28T23:59:59.500Z') });
   const charge = await relay.reserve!(grant, codexPayload(codex, grant)!);
@@ -466,4 +469,32 @@ test('a person’s own daily limit governs their calls, above or below the deplo
   );
   await setDailyTokens(f.state, grant.person, 100);
   assert.equal((await f.call()).status, 403);
+});
+
+test('Fleet grants hosted Codex the model while its session is live or a minute past its handoff', () => {
+  const bound = {
+    sessionId: 'session_hosted',
+    projectId: 'project_hosted',
+    allocationId: 'flt_hosted',
+    expiresAt: '2099-01-01T00:00:00.000Z',
+  };
+  const handedOffAt = '2026-10-06T00:00:00.000Z';
+  const at = Date.parse(handedOffAt);
+  assert.deepEqual(hostedGrant(bound, 'person_hosted', at), {
+    id: 'session_hosted',
+    projectId: 'project_hosted',
+    allocationId: 'flt_hosted',
+    person: 'person_hosted',
+    model: hostedCodexPlatform.model,
+    effort: hostedCodexPlatform.effort,
+    expiresAt: bound.expiresAt,
+  });
+  // Codex writes its closing turn after the handoff: the runner's minute of grace.
+  const closed = { ...bound, handedOffAt };
+  assert.equal(hostedGrant(closed, 'person_hosted', at + 59_999).id, 'session_hosted');
+  assert.throws(() => hostedGrant(closed, 'person_hosted', at + 60_000), {
+    code: 'unauthorized',
+  });
+  // A machine Fleet rented for nobody grants nothing.
+  assert.throws(() => hostedGrant(bound, undefined, at), { code: 'unauthorized' });
 });

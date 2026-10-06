@@ -4,13 +4,8 @@ import { lstatSync, opendirSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
-import {
-  check,
-  codexHandoffGraceMs,
-  effectiveWorkspace,
-  MervError,
-  sessionSecretPattern,
-} from '@merv/contracts';
+import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
+import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { label, platformName } from '@merv/sessions/rules';
 

@@ -115,6 +115,19 @@ export interface ModelRelayTerminal<E extends string = string> {
   incompleteReason: 'max_output_tokens' | 'content_filter' | 'other' | null;
   elapsedMs: number;
 }
+/** A hosted session's authority to call the model through Main's relay, which Fleet grants. */
+export interface ManagedModelGrant {
+  /** The session. */
+  id: string;
+  projectId: string;
+  /** The Fleet allocation whose machine runs it. */
+  allocationId: string;
+  /** Whose spend it is: the person Fleet rented its machine for. */
+  person: string;
+  model: string;
+  effort?: string;
+  expiresAt: string;
+}
 /**
  * A relay that holds the provider key for the workers Fleet launches, which hold none
  * (model-relay.ts). A feature
@@ -141,16 +154,9 @@ export interface ModelRelayConfig<
   /** The body sent upstream, with the relay's own settings, or null to refuse the request. */
   payload(raw: unknown, grant: G): Record<string, unknown> | null;
   lane(grant: G): string;
-  fetchImpl?: typeof fetch;
   maxRequestBytes: number;
-  maxResponseBytes?: number;
   totalTimeoutMs: number;
-  idleTimeoutMs?: number;
-  /** For calls whose effort is not `none`, which may reason in silence. */
-  reasoningIdleTimeoutMs?: number;
-  maxConcurrent?: number;
   maxRequestsPerGrant?: number;
-  maxGrantEntries?: number;
   onFailure?: (record: ModelRelayFailure<`${N}_relay_failure`>) => void | Promise<void>;
   onTerminal?: (record: ModelRelayTerminal<`${N}_relay_terminal`>) => void | Promise<void>;
   /** Charges a call just before its last authority read and the upstream send, and returns the

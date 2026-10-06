@@ -28,7 +28,6 @@ flowchart LR
   end
   person -- "calls fleet.drain" --> fleet
   pi -- "injects; imports model-ledger" --> fleet
-  sessions -- "imports personKey" --> fleet
   fleet -- "injects" --> sandboxes
   fleet -- "injects" --> sessions
   fleet -- "injects" --> api
@@ -37,6 +36,7 @@ flowchart LR
   sandboxes -- "HTTP /v1/sandboxes" --> sandboxesService
   fleet -- "bootstraps" --> runner
   runner -- "HTTP /sessions/runners/enroll" --> sessions
+  runner -- "imports hosted-codex" --> fleet
   runner -- "launches" --> workerAgent
   workerAgent -- "HTTP /codex-model" --> fleet
   fleet -- "relays" --> modelProvider
@@ -48,7 +48,9 @@ Fleet decides how many machines may run and keeps their leases: it rents them th
 
 An allocation uses one immutable runtime profile and one stable create and launch key. Global and per-project limits count every allocation that has left the queue until the sandbox provider reports `stopped`, Fleet can prove no machine is left, or the lease of a stopped machine has passed. A queued request gives up at its deadline; once reserved, the machine gets the full allocation timeout. `drain` prevents new admission and launch while renewing a running sandbox until its owner finishes or the deadline expires. One failed call keeps a launched machine's phase, and its worker's admission, while its lease lasts.
 
-The workers Fleet launches hold no model provider key. `fleet.modelRelay(config)` builds the relay that holds it for them (`src/model-relay.ts`): a feature supplies its route, bearer, grant, accepted bodies and spend hooks, then mounts the relay's handler public on the API and closes it with the mount. Pi does this for `/pi-model`, and the workflow adapter for hosted Codex at `/codex-model`. The model ledger (`@merv/fleet/model-ledger`, pure rules) holds the upstream endpoint, `personKey` (whose day a call counts toward) and `dailyTokens`; Pi and Fleet each keep their own daily table with it, and Sessions keys a hosted session's grant with `personKey`.
+The workers Fleet launches hold no model provider key. `fleet.modelRelay(config)` builds the relay that holds it for them (`src/model-relay.ts`): a feature supplies its route, bearer, grant, accepted bodies and spend hooks, then mounts the relay's handler public on the API and closes it with the mount. Pi does this for `/pi-model`, and the workflow adapter for hosted Codex at `/codex-model`. The model ledger (`@merv/fleet/model-ledger`, pure rules) holds the upstream endpoint, `personKey` (whose day a call counts toward) and `dailyTokens`; Pi and Fleet each keep their own daily table with it.
+
+The workflow adapter is the one grant authority for hosted Codex's model. Sessions only says which session a bearer or session id holds (`managed.boundSession`: live, or closed by its own handoff and when). Fleet grants that session the model and effort of `hostedCodexPlatform`, which its runner enrolled with, while the session is live or within `codexHandoffGraceMs` of its own handoff, and charges it to the person the allocation was rented for. `@merv/fleet/hosted-codex` (pure rules) holds that profile, its capabilities and the grace; the runner imports the grace from it.
 
 Fleet writes a `createAttempted` marker before contacting the provider. A request from a project without a connection or grant is refused, and a stopped allocation with no attempt is released without renting a machine. A refusal of the first create (a 4xx other than 408, 409 or 429) proves no machine exists, so the allocation is released with `runtime_refused`. Other create failures retry the same idempotency key. Once stopped, an allocation with no machine handle makes one last same-key create to recover and delete a machine made before a lost reply (never under a changed profile), then waits out the lease: Fleet renews nothing after stop, so when `releaseBy` passes the provider has reaped any such machine and the slot is freed. The same bound frees every stopped machine: its first stop sets `releaseBy`, a machine the provider reports as deleting is not stopped again, one it still reports up is asked again at most once a pass until `releaseBy`, and its slot is freed when the provider reports it stopped or when `releaseBy` passes, whichever is first. This also frees a stopped allocation whose provider keeps refusing to inspect or delete its machine. Fleet checks its machines each poll interval, and every second only while one is starting, stopping or due for a retry.
 

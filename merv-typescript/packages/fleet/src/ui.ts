@@ -1,7 +1,7 @@
 import type { Context } from 'cordis';
 import { check, type Json, type UiCollectionSpec, type UiRecordSpec } from '@merv/contracts';
 import type {} from '@merv/ui/types';
-import { fleetRunning, live, present } from './running.js';
+import { fleetActions, fleetRunning, live, present } from './running.js';
 
 const collection: UiCollectionSpec = {
   noun: { singular: 'agent', plural: 'agents' },
@@ -28,26 +28,10 @@ const record: UiRecordSpec = {
   title: 'title',
   state: 'status',
   standing: { verdict: 'status', clause: 'attention', clock: 'updatedAt' },
-  act: [
-    {
-      id: 'drain',
-      label: 'Finish and release',
-      verb: 'release',
-      tool: 'fleet.drain',
-      when: { field: 'intent', in: ['run'] },
-    },
-    {
-      id: 'halt',
-      label: 'Stop now',
-      verb: 'halt',
-      tool: 'fleet.halt',
-      when: { field: 'intent', in: ['run', 'drain'] },
-      guard: {
-        title: 'Stop this agent?',
-        consequence: 'Any machine it holds is deleted. Work that has not been saved may be lost.',
-      },
-    },
-  ],
+  act: fleetActions.map(({ intents, ...action }) => ({
+    ...action,
+    when: { field: 'intent', in: intents },
+  })),
   details: [
     { label: 'Allocation', field: 'id', mono: true },
     { label: 'Owner', field: 'owner.id', mono: true },

@@ -34,6 +34,7 @@ flowchart LR
   runner -- "imports @merv/sessions/rules" --> sessions
   runner -- "HTTP /code/commands" --> codeWork
   runner -- "PUT signed upload" --> blobStore
+  runner -- "imports hosted-codex" --> fleet
   workerAgent -- "HTTP /mcp" --> api
   workerAgent -- "HTTP /codex-model" --> fleet
   workerAgent -- "MCP launch connection" --> sandboxesService

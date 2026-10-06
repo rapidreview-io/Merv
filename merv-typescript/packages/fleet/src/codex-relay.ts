@@ -1,74 +1,28 @@
 import { z } from 'zod';
 import { check, sessionSecretPattern, type Sql, type State } from '@merv/contracts';
 import { dailyTokens } from './model-ledger.js';
-import type { ManagedModelGrant, Sessions } from '@merv/sessions/types';
-import type { ModelRelayConfig } from './types.js';
+import type { ManagedBoundSession } from '@merv/sessions/types';
+import { codexHandoffGraceMs, hostedCodexPlatform } from './hosted-codex.js';
+import type { ManagedModelGrant, ModelRelayConfig } from './types.js';
 
-/** Published migration text is immutable after release. */
-export const usageMigration = {
-  version: 1,
-  sql: `CREATE TABLE fleet_model_usage (
-    person TEXT NOT NULL,
-    day TEXT NOT NULL,
-    tokens BIGINT NOT NULL,
-    PRIMARY KEY(person, day)
-  );`,
-};
-
-/** A person's own daily limit, where they set one (founder ruling 2026-09-25). */
-export const limitsMigration = {
-  version: 2,
-  sql: `CREATE TABLE fleet_model_limits (
-    person TEXT PRIMARY KEY,
-    tokens BIGINT NOT NULL
-  );`,
-};
-
-/** The latest unaffordable reservation, separate from charged usage and personal limits. */
-export const blockerMigration = {
-  version: 3,
-  sql: `CREATE TABLE fleet_model_blockers (
-    person TEXT NOT NULL,
-    day TEXT NOT NULL,
-    required_tokens BIGINT NOT NULL,
-    PRIMARY KEY(person, day)
-  );`,
-};
-/** Operator-authorized retry windows; old rentals remain immutable Fleet history. */
-export const workflowRetryMigration = {
-  version: 4,
-  sql: `CREATE TABLE fleet_workflow_retry_grants (
-    id BIGSERIAL PRIMARY KEY,
-    project_id TEXT NOT NULL REFERENCES projects(id),
-    instance_id TEXT NOT NULL,
-    expected_revision INTEGER NOT NULL,
-    prior_allocations INTEGER NOT NULL,
-    request_id TEXT NOT NULL,
-    input_hash TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    actor_id TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    UNIQUE(project_id, request_id),
-    UNIQUE(project_id, instance_id, expected_revision, prior_allocations)
+/** Hosted Codex's grant of the model for a session its runner holds: while the session is live,
+ *  or within Codex's grace after its own handoff, charged to `person`. Sessions held the machine
+ *  to the hosted profile, so the model is that profile's. */
+export function hostedGrant(
+  bound: ManagedBoundSession,
+  person: string | undefined,
+  now: number,
+): ManagedModelGrant {
+  check(
+    person && (!bound.handedOffAt || now - Date.parse(bound.handedOffAt) < codexHandoffGraceMs),
+    'unauthorized',
+    'No live managed session holds this credential',
+    401,
   );
-  CREATE INDEX fleet_workflow_retry_target ON fleet_workflow_retry_grants
-    (project_id, instance_id, expected_revision, id DESC);
-  CREATE OR REPLACE FUNCTION fleet_workflow_retry_immutable() RETURNS trigger LANGUAGE plpgsql AS $merv$
-  BEGIN
-    RAISE EXCEPTION 'Fleet workflow retry grants are retained';
-  END;
-  $merv$;
-  CREATE TRIGGER fleet_workflow_retry_no_update BEFORE UPDATE ON fleet_workflow_retry_grants
-    FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();
-  CREATE TRIGGER fleet_workflow_retry_no_delete BEFORE DELETE ON fleet_workflow_retry_grants
-    FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();`,
-};
-export const modelMigrations = [
-  usageMigration,
-  limitsMigration,
-  blockerMigration,
-  workflowRetryMigration,
-];
+  const { model, effort } = hostedCodexPlatform;
+  const { sessionId: id, projectId, allocationId, expiresAt } = bound;
+  return { id, projectId, allocationId, person, model, effort, expiresAt };
+}
 
 const maxRequestBytes = 16 * 1024 * 1024;
 /** One call's output, reasoning included: well above a step's longest answer, and a bound on a
@@ -222,13 +176,13 @@ const log = (record: object) => void process.stderr.write(`${JSON.stringify(reco
  * the workflow adapter runs when it starts.
  */
 export function codexModelRelay(
-  sessions: Sessions,
   state: State,
   options: {
     providerKey: () => string;
     dailyTokensPerPerson: number;
-    /** Reads a bearer's grant; Sessions' by default, the workflow adapter's in Main. */
-    authorize?: (token: string) => Promise<ManagedModelGrant>;
+    /** The grant of a bearer or, when the relay checks again, of its session id: the one grant
+     *  authority, the workflow adapter's in Main. */
+    authorize: (tokenOrSessionId: string) => Promise<ManagedModelGrant>;
   },
 ): ModelRelayConfig<ManagedModelGrant, 'codex', { day: string; tokens: number }> {
   return {
@@ -238,8 +192,8 @@ export function codexModelRelay(
     enabled: true,
     providerKey: options.providerKey,
     authority: {
-      authorize: options.authorize ?? ((token) => sessions.managed.modelGrant(token)),
-      validate: async (grant) => void (await sessions.managed.modelGrant(grant.id)),
+      authorize: options.authorize,
+      validate: async (grant) => void (await options.authorize(grant.id)),
     },
     reserve: async (grant, body) => {
       const most = Math.ceil(JSON.stringify(body).length / 4) + maxOutputTokens;

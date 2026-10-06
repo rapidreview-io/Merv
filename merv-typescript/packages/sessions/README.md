@@ -62,7 +62,6 @@ flowchart LR
   blobs -- "reads/writes" --> blobStore
   fleet -- "injects" --> sessions
   ui -- "imports @merv/sessions/models" --> sessions
-  sessions -- "imports personKey" --> fleet
   sandboxes -- "injects" --> sessions
   sessions -- "emits session.closed" --> tasks
   sessions -- "emits session.closed" --> experiments
@@ -72,7 +71,7 @@ flowchart LR
   class sessions self
 ```
 
-Sessions is Main's side of every agent machine: the runner leases work, streams the agent's events and declares its conversation over `/sessions`, while the agent calls tools at `/mcp` under the session's policy. A person's page reads the same live stream, and `session.closed` releases the domain leases and compute that named the session.
+Sessions is Main's side of every agent machine: the runner leases work, streams the agent's events and declares its conversation over `/sessions`, while the agent calls tools at `/mcp` under the session's policy. A person's page reads the same live stream, and `session.closed` releases the domain leases and compute that named the session. For hosted Codex's model calls, `managed.boundSession` says which session a bearer or session id holds, live or closed by its own handoff; Fleet grants the model, and names the person the calls count toward ([Fleet README](../fleet/README.md)).
 
 The UI adapter's `ui.read` row returns project status without parameters, or agent
 activity with `{rowId: 'sessions', params: {agentId}}`. The inspector uses the shared

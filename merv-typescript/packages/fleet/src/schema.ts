@@ -38,3 +38,70 @@ export const migrationV2 = {
   CREATE INDEX fleet_allocations_owner ON fleet_allocations((data_json::jsonb #>> '{owner,id}'));
   CREATE INDEX fleet_allocations_person ON fleet_allocations((data_json::jsonb ->> 'person'), created_at);`,
 };
+
+/** Fleet workflow's own tables (component `fleet_workflow`): its model ledger and retry grants.
+ *  Published migration text is immutable after release. */
+export const usageMigration = {
+  version: 1,
+  sql: `CREATE TABLE fleet_model_usage (
+    person TEXT NOT NULL,
+    day TEXT NOT NULL,
+    tokens BIGINT NOT NULL,
+    PRIMARY KEY(person, day)
+  );`,
+};
+
+/** A person's own daily limit, where they set one (founder ruling 2026-09-25). */
+export const limitsMigration = {
+  version: 2,
+  sql: `CREATE TABLE fleet_model_limits (
+    person TEXT PRIMARY KEY,
+    tokens BIGINT NOT NULL
+  );`,
+};
+
+/** The latest unaffordable reservation, separate from charged usage and personal limits. */
+export const blockerMigration = {
+  version: 3,
+  sql: `CREATE TABLE fleet_model_blockers (
+    person TEXT NOT NULL,
+    day TEXT NOT NULL,
+    required_tokens BIGINT NOT NULL,
+    PRIMARY KEY(person, day)
+  );`,
+};
+/** Operator-authorized retry windows; old rentals remain immutable Fleet history. */
+export const workflowRetryMigration = {
+  version: 4,
+  sql: `CREATE TABLE fleet_workflow_retry_grants (
+    id BIGSERIAL PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id),
+    instance_id TEXT NOT NULL,
+    expected_revision INTEGER NOT NULL,
+    prior_allocations INTEGER NOT NULL,
+    request_id TEXT NOT NULL,
+    input_hash TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    actor_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(project_id, request_id),
+    UNIQUE(project_id, instance_id, expected_revision, prior_allocations)
+  );
+  CREATE INDEX fleet_workflow_retry_target ON fleet_workflow_retry_grants
+    (project_id, instance_id, expected_revision, id DESC);
+  CREATE OR REPLACE FUNCTION fleet_workflow_retry_immutable() RETURNS trigger LANGUAGE plpgsql AS $merv$
+  BEGIN
+    RAISE EXCEPTION 'Fleet workflow retry grants are retained';
+  END;
+  $merv$;
+  CREATE TRIGGER fleet_workflow_retry_no_update BEFORE UPDATE ON fleet_workflow_retry_grants
+    FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();
+  CREATE TRIGGER fleet_workflow_retry_no_delete BEFORE DELETE ON fleet_workflow_retry_grants
+    FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();`,
+};
+export const modelMigrations = [
+  usageMigration,
+  limitsMigration,
+  blockerMigration,
+  workflowRetryMigration,
+];

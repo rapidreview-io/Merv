@@ -30,14 +30,19 @@ import { RecipeContextBuilder } from '@merv/context-builder';
 import { ReviewService } from '@merv/reviews';
 import { TaskService } from '@merv/tasks';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
-import type { Fleet, FleetAllocation, FleetOwner, ModelRelayConfig } from '@merv/fleet/types';
+import type {
+  Fleet,
+  FleetAllocation,
+  FleetOwner,
+  ManagedModelGrant,
+  ModelRelayConfig,
+} from '@merv/fleet/types';
 import type {
   Sessions,
-  ManagedModelGrant,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
 } from '@merv/sessions/types';
-import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
+import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { ModelRelay } from '../packages/fleet/src/model-relay.js';
 import {
   fleetWorkflowPlugin,
@@ -860,7 +865,7 @@ test('a relay call in flight when the adapter unloads gets 503, never 401: its r
         };
       },
       // Sessions refuses the session once its owner has gone.
-      modelGrant: async () => {
+      boundSession: async () => {
         asked();
         await answering;
         throw new MervError('unauthorized', 'No live managed session', 401);
@@ -927,12 +932,17 @@ test('the mounted relay reads a grant through the adapter, charged to the alloca
     },
     modelRelay: (config: typeof relay) => ((relay = config), new ModelRelay(config!)),
   });
-  const grant = { id: 'session', projectId: 'p', allocationId: 'flt_1', person: 'actor' };
+  const bound = {
+    sessionId: 'session',
+    projectId: 'p',
+    allocationId: 'flt_1',
+    expiresAt: '2099-01-01T00:00:00.000Z',
+  };
   ctx.provide('sessions', {
     contributeStatus: () => () => undefined,
     managed: {
       registerValidator: () => () => undefined,
-      modelGrant: async () => ({ ...grant, model: 'm', expiresAt: '2099-01-01T00:00:00Z' }),
+      boundSession: async () => bound,
     },
     dispatch: {
       servedSources: async () => [],
@@ -951,10 +961,15 @@ test('the mounted relay reads a grant through the adapter, charged to the alloca
     await state.close();
     delete process.env[modelEnv];
   });
-  assert.equal(
-    ((await relay!.authority!.authorize(`ms_${'b'.repeat(43)}`)) as ManagedModelGrant).person,
-    'voucher',
-  );
+  assert.deepEqual(await relay!.authority!.authorize(`ms_${'b'.repeat(43)}`), {
+    id: 'session',
+    projectId: 'p',
+    allocationId: 'flt_1',
+    person: 'voucher',
+    model: hostedCodexPlatform.model,
+    effort: hostedCodexPlatform.effort,
+    expiresAt: bound.expiresAt,
+  });
 });
 
 test('owner waits for closed-session capture and retires a runner that never claims', async (t) => {
@@ -1998,9 +2013,7 @@ test('a current review step’s model calls count toward the project owner', asy
   await h.fleet.tick(); // Reserve and provision.
   await h.fleet.tick(); // Launch.
   const machine = await boot(h, allocation);
-  // Sessions names the review director itself; Fleet rented its machine for the voucher.
-  assert.equal((await h.sessions.managed.modelGrant(machine.secret)).person, voucher);
-  const relay = codexModelRelay(h.sessions, h.state, {
+  const relay = codexModelRelay(h.state, {
     providerKey: () => 'test-model-key',
     dailyTokensPerPerson: 20_000_000,
     authorize: (token) => h.adapter.modelGrant(token),
@@ -2129,7 +2142,7 @@ test('a halted allocation relays no model calls while its stop stalls', async (t
   await h.fleet.tick();
   await h.fleet.tick();
   const machine = await boot(h, allocation!);
-  const relay = codexModelRelay(h.sessions, h.state, {
+  const relay = codexModelRelay(h.state, {
     providerKey: () => 'k',
     dailyTokensPerPerson: 20_000_000,
     authorize: (token) => h.adapter.modelGrant(token),

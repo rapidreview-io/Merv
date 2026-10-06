@@ -9,7 +9,7 @@ import { createApp } from './fixtures/app.js';
 import { legacyFoundationImportMigrations } from './fixtures/legacy-foundation-import.js';
 import { initializeLegacyHistory } from '@merv/legacy-history/history';
 import { FleetService } from '../packages/fleet/src/index.js';
-import { modelMigrations } from '../packages/fleet/src/codex-relay.js';
+import { modelMigrations } from '../packages/fleet/src/schema.js';
 import { nativeMigrations } from '../packages/sandboxes/src/native-schema.js';
 import { computeLedgers } from '../packages/sandboxes/src/compute-ledgers.js';
 import { initializeLegacyCodeRecords } from '../packages/code-work/src/work-schema.js';

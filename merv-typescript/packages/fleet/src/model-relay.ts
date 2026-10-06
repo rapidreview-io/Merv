@@ -131,45 +131,52 @@ async function writeChunk(
   });
 }
 
+/** The relay's fixed limits and its upstream fetch, which only tests change. */
+export interface RelayTuning {
+  fetchImpl?: typeof fetch;
+  maxResponseBytes?: number;
+  idleTimeoutMs?: number;
+  /** For calls whose effort is not `none`, which may reason in silence. */
+  reasoningIdleTimeoutMs?: number;
+  maxConcurrent?: number;
+  maxGrantEntries?: number;
+}
+
 /** Streams a worker's Responses call upstream under the provider key the worker never holds. */
 export class ModelRelay<
   G extends ModelRelayGrant,
   N extends string = string,
   R = unknown,
 > implements ModelRelayHandle {
-  private readonly options: Required<
-    Pick<
-      ModelRelayConfig<G, N, R>,
-      | 'maxRequestBytes'
-      | 'maxResponseBytes'
-      | 'totalTimeoutMs'
-      | 'idleTimeoutMs'
-      | 'reasoningIdleTimeoutMs'
-      | 'maxConcurrent'
-      | 'maxRequestsPerGrant'
-      | 'maxGrantEntries'
-    >
-  >;
+  private readonly fetchImpl?: typeof fetch;
+  private readonly options: Required<Omit<RelayTuning, 'fetchImpl'>> &
+    Required<
+      Pick<ModelRelayConfig<G>, 'maxRequestBytes' | 'totalTimeoutMs' | 'maxRequestsPerGrant'>
+    >;
   private readonly active = new Set<AbortController>();
   private readonly lanes = new Set<string>();
   private readonly grants = new Map<string, { count: number; expiry: number; binding: string }>();
   private stopped = false;
 
-  constructor(private readonly config: ModelRelayConfig<G, N, R>) {
+  constructor(
+    private readonly config: ModelRelayConfig<G, N, R>,
+    tuning: RelayTuning = {},
+  ) {
     if (typeof config.providerKey !== 'function')
       throw new Error('Model relay requires a provider key source');
     // No output cap is added here: a feature's payload sets one where it wants it. A maximal
     // answer streams about 40 MB of events, and ends with frames that each repeat its whole
     // text; a call that falls silent for idleTimeoutMs ends at once.
+    this.fetchImpl = tuning.fetchImpl;
     this.options = {
       maxRequestBytes: limit(config.maxRequestBytes),
-      maxResponseBytes: limit(config.maxResponseBytes, 256 * 1024 * 1024),
+      maxResponseBytes: limit(tuning.maxResponseBytes, 256 * 1024 * 1024),
       totalTimeoutMs: limit(config.totalTimeoutMs),
-      idleTimeoutMs: limit(config.idleTimeoutMs, 20_000),
-      reasoningIdleTimeoutMs: limit(config.reasoningIdleTimeoutMs, 120_000),
-      maxConcurrent: limit(config.maxConcurrent, 200),
+      idleTimeoutMs: limit(tuning.idleTimeoutMs, 20_000),
+      reasoningIdleTimeoutMs: limit(tuning.reasoningIdleTimeoutMs, 120_000),
+      maxConcurrent: limit(tuning.maxConcurrent, 200),
       maxRequestsPerGrant: limit(config.maxRequestsPerGrant, 72),
-      maxGrantEntries: limit(config.maxGrantEntries, 4096),
+      maxGrantEntries: limit(tuning.maxGrantEntries, 4096),
     };
   }
 
@@ -308,7 +315,7 @@ export class ModelRelay<
       await validate();
       phase = 'upstream';
       const upstream = await interruptible(
-        (this.config.fetchImpl ?? fetch)(RESPONSES_URL, {
+        (this.fetchImpl ?? fetch)(RESPONSES_URL, {
           method: 'POST',
           redirect: 'error',
           signal,

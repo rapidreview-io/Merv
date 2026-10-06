@@ -21,8 +21,8 @@ import type {
 } from '@merv/contracts';
 import type {} from 'cordis';
 import type {
+  ManagedBoundSession,
   ManagedEnrollmentInput,
-  ManagedModelGrant,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
@@ -73,8 +73,8 @@ export type {
   UsageTotals,
 } from './models.js';
 export type {
+  ManagedBoundSession,
   ManagedEnrollmentInput,
-  ManagedModelGrant,
   ManagedRunnerBindingIdentity,
   ManagedRunnerInspection,
   ManagedRunnerValidator,
@@ -508,8 +508,9 @@ export interface ManagedRunners {
   /** `projectId`: the runner's selected project, refused unless it is the binding's. */
   enroll(token: string, input: unknown, projectId?: unknown): Promise<{ controlToken: string }>;
   authenticate(token: string): Promise<Caller>;
-  /** Server-only: a hosted session's model authority for Main's relay, by bearer or session id. */
-  modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant>;
+  /** Server-only: the session a managed runner holds, live or handed off, by bearer or session
+   *  id, from which Fleet grants hosted Codex the model. */
+  boundSession(tokenOrSessionId: string): Promise<ManagedBoundSession>;
   /** Server-only allocation observation for Fleet; never an agent endpoint or tool. */
   inspect(
     allocationId: string,
