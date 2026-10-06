@@ -1,5 +1,6 @@
 import {
   check,
+  ellipsis,
   mapAsync,
   runningKey,
   workLink,
@@ -64,8 +65,6 @@ const VERBS: Record<SessionRole, RunningVerb> = {
   reader: 'reads',
 };
 const machineWho = 'An operator checks the machine or halts the lease';
-const clip = (text: string, max: number) =>
-  text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 
 /** The lease fields a face reads, each row's JSON parsed once rather than once per field. */
 const LEASE = `s.id,s.instance_id,s.status,s.owner_hash,s.runner_id,x.j #>> '{role}' AS role,
@@ -172,9 +171,9 @@ function needs(lease: Lease, now: number, idleNoticeSeconds: number): RunningAtt
 /** What its agent is doing now, from the newest event of its live stream. */
 function doingLine({ kind, name, text, at }: NonNullable<Lease['doing']>): RunningPhrase {
   if (kind === 'tool_call')
-    return ['Calling ', { mono: clip(name ?? '', 80) }, ' · ', { since: at }];
+    return ['Calling ', { mono: ellipsis(name ?? '', 80) }, ' · ', { since: at }];
   if (kind === 'text') return ['Writing · ', { since: at }];
-  if (kind === 'status') return [clip(text ?? '', 80), ' · ', { ago: at }];
+  if (kind === 'status') return [ellipsis(text ?? '', 80), ' · ', { ago: at }];
   // A tool's answer is read by the model, which thinks about it next.
   return ['Thinking · ', { since: at }];
 }
@@ -222,7 +221,7 @@ export function leaseNode(
       harness && lease.platform
         ? `${ROLES[lease.role]} · ${lease.platform.harness}`
         : ROLES[lease.role],
-    name: clip(lease.name, 200),
+    name: ellipsis(lease.name, 200),
     lines: on ? [line, on] : [line],
     look,
     ...(dot ? { dot } : {}),
@@ -239,7 +238,7 @@ function leaseRow(lease: Lease, now: number, idleNoticeSeconds: number): Running
   return {
     to: { key: runningKey('session', lease.id) },
     kind: ROLES[lease.role],
-    name: lease.fleet ? 'a Fleet VM' : clip(lease.machine?.hostname ?? 'an agent', 200),
+    name: lease.fleet ? 'a Fleet VM' : ellipsis(lease.machine?.hostname ?? 'an agent', 200),
     says: attention?.says ?? line,
     ...(attention ? { attention: true } : {}),
   };
@@ -257,7 +256,7 @@ const STALLS: Record<Stall['code'], (waiting: number, stall: Stall) => RunningAt
   }),
   // A machine Fleet rents is 'a Fleet VM' wherever the page names it.
   runner_refusing: (_waiting, { machine, rented }) => ({
-    says: [rented ? 'A Fleet VM' : clip(machine ?? 'A machine', 200), ' refuses work'],
+    says: [rented ? 'A Fleet VM' : ellipsis(machine ?? 'A machine', 200), ' refuses work'],
     who: 'Whoever runs it restarts it, or an operator changes its settings',
   }),
 };
@@ -716,7 +715,7 @@ export class SessionRunning {
         title: 'Work',
         place: 'relations',
         kind: 'links',
-        rows: [{ ...workLink(route, row.workflow, row.instance_id), name: clip(work, 200) }],
+        rows: [{ ...workLink(route, row.workflow, row.instance_id), name: ellipsis(work, 200) }],
       });
 
       const mode = row.workspace_mode ?? 'none';
@@ -770,7 +769,7 @@ export class SessionRunning {
         ];
         // A machine Fleet rents is Fleet's to describe; its section follows through the alias.
         if (!lease.fleet) {
-          rows.unshift({ label: 'Machine', value: [clip(machine.hostname, 200)] });
+          rows.unshift({ label: 'Machine', value: [ellipsis(machine.hostname, 200)] });
           if (lease.platform)
             rows.push({ label: 'Platform', value: [platformPhrase(lease.platform)] });
           if (live) {
@@ -794,7 +793,7 @@ export class SessionRunning {
                   ...(at ? [', '] : []),
                   {
                     link: { key: runningKey('session', other.id) },
-                    text: clip(`${other.name} · ${ROLES[other.role]}`, 200),
+                    text: ellipsis(`${other.name} · ${ROLES[other.role]}`, 200),
                   },
                 ]),
               });
@@ -826,7 +825,7 @@ export class SessionRunning {
           place: 'details',
           kind: 'facts',
           rows: [
-            { label: 'Name', value: [clip(continuing.name, 200)] },
+            { label: 'Name', value: [ellipsis(continuing.name, 200)] },
             ...(continuing.contextEpoch > 0
               ? [{ label: 'Context resets', value: [{ count: continuing.contextEpoch }] }]
               : []),
@@ -836,11 +835,11 @@ export class SessionRunning {
 
       // The guard names who holds it and on what, in the Sessions page's own sentences.
       const who = continuing?.persistent
-        ? clip(continuing.name, 24)
+        ? ellipsis(continuing.name, 24)
         : lease.fleet
           ? 'The agent on a Fleet VM'
           : machine
-            ? `The agent on ${clip(machine.hostname, 24)}`
+            ? `The agent on ${ellipsis(machine.hostname, 24)}`
             : 'An agent';
       const halt: RunningAction = {
         label: 'Halt lease',
@@ -850,7 +849,7 @@ export class SessionRunning {
         allowed: operator && holding,
         guard: {
           title: 'Halt this lease?',
-          consequence: `${who} holds this lease on ${clip(work, 90)} as ${row.role}. Halting closes it now and returns the work to the queue; its runner must stop the worker itself. The work’s state does not change. A remote job it started keeps running.${lease.fleet ? ' Its Fleet machine is then released.' : ''}`,
+          consequence: `${who} holds this lease on ${ellipsis(work, 90)} as ${row.role}. Halting closes it now and returns the work to the queue; its runner must stop the worker itself. The work’s state does not change. A remote job it started keeps running.${lease.fleet ? ' Its Fleet machine is then released.' : ''}`,
         },
         expect: { field: 'halted', min: 1, nothing: 'Nothing was halted.' },
       };
@@ -871,7 +870,7 @@ export class SessionRunning {
       return {
         header: {
           kind: 'Agent',
-          title: clip(work, 200),
+          title: ellipsis(work, 200),
           says,
           ...(shown?.attention ? { attention: shown.attention } : {}),
         },

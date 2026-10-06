@@ -1,3 +1,4 @@
+import { ellipsis } from '@merv/contracts';
 import type { ResolutionWork, ResolutionWorkCreator } from '@merv/code-work/types';
 import type { ServiceTaskCreator } from './types.js';
 
@@ -36,7 +37,7 @@ export function resolutionBrief(work: ResolutionWork): {
         : ['Accepted work'],
     );
     const first = items[0] ?? 'Accepted work';
-    const label = first.length > 80 ? `${first.slice(0, 79)}…` : first;
+    const label = ellipsis(first, 80);
     return `‘${label}’${items.length > 1 ? ` and ${items.length - 1} more` : ''}`;
   };
   const [from, to] = [titleSide(left.inputs), titleSide(right.inputs)];

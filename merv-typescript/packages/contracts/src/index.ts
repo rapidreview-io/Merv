@@ -14,7 +14,7 @@ import { z } from 'zod';
 import 'cordis';
 
 export type { Json, Data } from './data.js';
-export { clip, itemTitle, visible } from './text.js';
+export { cleanText, clip, ellipsis, itemTitle, visible } from './text.js';
 export { folded, idPattern, idSchema, sha256Hex } from './schemas.js';
 export { ordered } from './order.js';
 export {

@@ -1,4 +1,5 @@
 import {
+  ellipsis,
   filterAsync,
   keyId,
   keyKind,
@@ -133,7 +134,7 @@ export function holdsOf(
 /** A command's first line, which is all a card has room for. */
 const commandLine = (command: string) => {
   const line = command.trim().split(/\r?\n/)[0].trim();
-  return line.length > 120 ? `${line.slice(0, 119)}…` : line;
+  return ellipsis(line, 120);
 };
 
 /**

@@ -1,6 +1,6 @@
 import type { TaskRecord } from './types.js';
 import {
-  clip,
+  ellipsis,
   dependencyRows,
   runningKey,
   type ProcessGraph,
@@ -169,8 +169,7 @@ const more = (names: string[]): RunningPhrase => [
 ];
 
 /** A name as long as the page holds one. */
-const short = (name: string, max = 200) =>
-  name.length > max ? `${clip(name, max - 1).trimEnd()}…` : name;
+const short = (name: string, max = 200) => ellipsis(name, max);
 
 /** Needs a person, then held by a lease, then ready, then waiting; an ended task last. */
 const RANK: Record<Holding['at'], number> = {

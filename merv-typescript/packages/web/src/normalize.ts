@@ -3,7 +3,7 @@
  * input fix-ups it reports in normalization_note, its caps, and its section markers. Everything
  * a provider sends is read defensively and only allowlisted fields leave.
  */
-import { record } from '@merv/contracts';
+import { cleanText, clip, record } from '@merv/contracts';
 import type { WebExtractInput, WebPage, WebResult, WebSearch, WebSearchInput } from './types.js';
 
 const MAX_RESULT_CHARS = 6_000;
@@ -124,16 +124,6 @@ export function planSearch(input: WebSearchInput): SearchPlan {
   };
 }
 
-/** The first `max` characters, never half of one. */
-const cut = (value: string, max: number) =>
-  value.length <= max
-    ? value
-    : value.slice(0, /[\uD800-\uDBFF]/.test(value[max - 1] ?? '') ? max - 1 : max);
-/** Text as a provider sent it, without control characters other than line breaks and tabs. */
-const text = (value: unknown, max: number): string =>
-  typeof value === 'string'
-    ? cut(value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ''), max)
-    : '';
 /** An http(s) address a person may follow, or undefined. */
 function webUrl(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 2048) return undefined;
@@ -165,15 +155,15 @@ export function tavilyResults(
     const result = record(entry);
     const url = webUrl(result?.url);
     if (!result || !url) continue;
-    let content = text(result.content, Number.MAX_SAFE_INTEGER);
+    let content = cleanText(result.content, Number.MAX_SAFE_INTEGER);
     const limit = Math.min(MAX_RESULT_CHARS, Math.max(0, remaining));
     if (content.length > limit) {
       const suffix = '\n... [truncated]';
-      content = limit >= suffix.length ? cut(content, limit - suffix.length) + suffix : '';
+      content = limit >= suffix.length ? clip(content, limit - suffix.length) + suffix : '';
       truncated = true;
     }
     remaining -= content.length;
-    kept.push({ title: text(result.title, 500), url, content, score: score(result.score) });
+    kept.push({ title: cleanText(result.title, 500), url, content, score: score(result.score) });
     if (kept.length === max) break;
   }
   return { results: kept, truncated };
@@ -192,7 +182,10 @@ function openaiAnswer(response: Record<string, unknown>): {
     if (item?.type === 'web_search_call') {
       const sources = record(item.action)?.sources;
       for (const source of Array.isArray(sources) ? sources : [])
-        found.push({ title: text(record(source)?.title, 500), url: String(record(source)?.url) });
+        found.push({
+          title: cleanText(record(source)?.title, 500),
+          url: String(record(source)?.url),
+        });
     }
     if (item?.type === 'message')
       for (const part of Array.isArray(item.content) ? item.content : []) {
@@ -201,7 +194,10 @@ function openaiAnswer(response: Record<string, unknown>): {
         if (typeof content.text === 'string') texts.push(content.text);
         for (const note of Array.isArray(content.annotations) ? content.annotations : [])
           if (record(note)?.url)
-            found.push({ title: text(record(note)?.title, 500), url: String(record(note)?.url) });
+            found.push({
+              title: cleanText(record(note)?.title, 500),
+              url: String(record(note)?.url),
+            });
       }
   }
   const seen = new Set<string>();
@@ -212,7 +208,7 @@ function openaiAnswer(response: Record<string, unknown>): {
     seen.add(url);
     sources.push({ title: source.title.trim() || new URL(url).host, url });
   }
-  return { answer: text(texts.join(''), Number.MAX_SAFE_INTEGER).trim(), sources };
+  return { answer: cleanText(texts.join(''), Number.MAX_SAFE_INTEGER).trim(), sources };
 }
 
 /** The fallback's result: its answer (at most `total`, 24,000, characters) and its sources as
@@ -224,7 +220,7 @@ export function fallbackSearch(
 ): Pick<WebSearch, 'answer' | 'results' | 'result_count'> {
   const { answer: whole, sources } = openaiAnswer(response);
   const answer =
-    whole.length > total ? cut(whole, total) + '\n... [OpenAI web answer truncated]' : whole;
+    whole.length > total ? clip(whole, total) + '\n... [OpenAI web answer truncated]' : whole;
   const results = sources.slice(0, max).map((source, index) => ({
     ...source,
     content: '',
@@ -308,7 +304,7 @@ export function pageText(
   end: string,
   limit = MAX_EXTRACT_CHARS,
 ): { content: string; section: boolean } {
-  let content = text(raw, Number.MAX_SAFE_INTEGER);
+  let content = cleanText(raw, Number.MAX_SAFE_INTEGER);
   let applied = false;
   if (start && end) {
     const from = content.indexOf(start);
@@ -316,9 +312,9 @@ export function pageText(
     content = section(content, start, end);
   }
   if (content.length > limit)
-    content = `${cut(content, limit)}\n\n... [truncated at ${limit.toLocaleString('en-US')} characters]`;
+    content = `${clip(content, limit)}\n\n... [truncated at ${limit.toLocaleString('en-US')} characters]`;
   return { content, section: applied };
 }
 
 /** Tavily's reason a page failed, as short plain text. */
-export const pageError = (value: unknown) => text(value, 300).trim() || 'No content returned';
+export const pageError = (value: unknown) => cleanText(value, 300).trim() || 'No content returned';

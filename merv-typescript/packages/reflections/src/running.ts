@@ -1,4 +1,5 @@
 import {
+  ellipsis,
   runningKey,
   type ProcessGraph,
   type RunningAttention,
@@ -60,7 +61,6 @@ function stepOf(leases: readonly WaveLease[], workflow: WorkflowSnapshot): Step 
 }
 
 /** The board draws at most 200 characters of a name, and a wave's title may run to 300. */
-const clip = (text: string, max = 200) => (text.length > max ? `${text.slice(0, max - 1)}…` : text);
 const counted = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
 const OPEN = new Set(['reflecting', 'synthesizing', 'in_review']);
 const lensKeys = (wave: Reflection) => wave.lenses.map((lens) => runningKey('work', lens.id));
@@ -143,7 +143,7 @@ export function waveNode(facts: WaveFacts): RunningNode {
     key: runningKey('work', facts.wave.id),
     lane: 'work',
     kind: 'Reflection',
-    title: clip(facts.wave.title),
+    title: ellipsis(facts.wave.title, 200),
     lines: [says],
     look,
     ...(red ? { attention: red } : {}),
@@ -211,7 +211,7 @@ export function wavePanel(
           value: [
             {
               link: { route: `/artifacts/${encodeURIComponent(wave.report.id)}` },
-              text: clip(wave.report.title),
+              text: ellipsis(wave.report.title, 200),
             },
           ],
         },
@@ -229,7 +229,7 @@ export function wavePanel(
   return {
     header: {
       kind: 'Reflection',
-      title: clip(wave.title),
+      title: ellipsis(wave.title, 200),
       says: face(facts).says,
       ...(red ? { attention: red } : {}),
     },

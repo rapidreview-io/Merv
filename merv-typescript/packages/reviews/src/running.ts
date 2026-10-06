@@ -1,3 +1,4 @@
+import { ellipsis } from '@merv/contracts';
 import type {
   ReviewRequest,
   RunningFact,
@@ -44,7 +45,7 @@ function firstSentence(text: string | null | undefined, limit = 140): string | n
   if (!trimmed) return null;
   const stop = trimmed.search(/[.!?](\s|$)|\n/);
   const first = (stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed).trim();
-  return first.length > limit ? `${first.slice(0, limit - 1)}…` : first;
+  return ellipsis(first, limit);
 }
 
 /** After a gate the clause runs on in lower case, as 'Design · with Ada' reads. */

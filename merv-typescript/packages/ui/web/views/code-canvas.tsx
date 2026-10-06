@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { ellipsis } from '@merv/contracts/text';
 import { KindLabel, StatusPill, cx, kindOf, kindStyle, toneOf, words } from '../components';
 import { ArrowRightIcon } from '../icons';
 import { MAIN, relationsOf, type GitModel } from './code-model';
@@ -128,7 +129,7 @@ const tone = (state: string | undefined) => {
 const CHAR = 7.3;
 const clip = (text: string) => {
   const most = Math.max(6, Math.floor((LABEL - 16) / CHAR));
-  return text.length > most ? `${text.slice(0, most - 1)}…` : text;
+  return ellipsis(text, most);
 };
 
 /** What the reader is looking at, and what the page hangs off it. */
