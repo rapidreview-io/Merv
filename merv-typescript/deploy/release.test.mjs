@@ -54,17 +54,18 @@ IMG=merv-typescript:test; IMAGE_ID=sha256:123456789abc
 PREV=merv-typescript:old; PREV_DIR="$PWD/previous"
 COMMANDS="$PWD/commands.txt"; RESTORED="$PWD/restored"
 docker() {
-  if [ "$1" = logs ]; then echo ${JSON.stringify(logs)}; return; fi
+  # \`return 0\`, not a bare return: in a trap handler bash 5 returns the status that fired it.
+  if [ "$1" = logs ]; then echo ${JSON.stringify(logs)}; return 0; fi
   if [ "$1" = inspect ]; then
     if [ "$3" = '{{.RestartCount}}' ]; then echo 3;
     elif [ -f "$RESTORED" ]; then echo healthy; else echo unhealthy; fi
-    return
+    return 0
   fi
   if [ "$1" = compose ]; then
     printf '%s %s\\n' "$(basename "$PWD")" "$*" >> "$COMMANDS"
     if [ "$4" = up ] && [ "$PWD" = "$PREV_DIR" ]; then touch "$RESTORED";
     elif [ "$4" = up ] && ${composeFails ? 'true' : 'false'}; then return 1; fi
-    return
+    return 0
   fi
   return 1
 }

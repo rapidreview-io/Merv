@@ -140,7 +140,7 @@ rollback() {
   [ -n "$PREV" ] && (cd "$PREV_DIR" && MERV_TS_IMAGE="$PREV" docker compose -f compose.yml up -d) > rollback.log 2>&1
   P=starting
   for i in $(seq 1 24); do
-    P=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null || echo starting)
+    P=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null) || P=starting
     [ "$P" = healthy ] && break; sleep 5
   done
   printf '{"release":"%s","image":"%s","imageId":"%s","rolledBack":true,"containerHealth":"%s","restarts":"%s","previousImage":"%s","previousHealth":"%s","log":"%s"}\\n' \\
@@ -151,8 +151,8 @@ H=not-started; R=0
 trap rollback EXIT
 (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml up -d) > deploy.log 2>&1
 for i in $(seq 1 60); do
-  H=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null || echo starting)
-  R=$(docker inspect --format '{{.RestartCount}}' merv-typescript-control-1 2>/dev/null || echo 0)
+  H=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null) || H=starting
+  R=$(docker inspect --format '{{.RestartCount}}' merv-typescript-control-1 2>/dev/null) || R=0
   [ "$H" = healthy ] && break
   [ "$R" -ge 3 ] && break
   sleep 5
