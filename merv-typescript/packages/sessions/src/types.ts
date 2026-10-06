@@ -374,6 +374,12 @@ export interface Sessions {
     sessionId: string,
     tx?: Transaction,
   ): Promise<SessionWorkspaceObservation>;
+  /** workspaceObservation() for several sessions; one the project does not hold is left out. */
+  workspaceObservations(
+    caller: Caller,
+    sessionIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<Map<string, SessionWorkspaceObservation>>;
   /**
    * The live sessions of a project whose execution policy holds a workspace on `driver`,
    * whoever offered them. It is scoped by the project rather than by a caller's delegation

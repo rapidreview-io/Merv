@@ -90,7 +90,7 @@ export class CodeUnitService {
     private readonly state: State,
     private readonly scope: Scope,
     private readonly workflows: Workflows,
-    private readonly captures: CodeCaptures,
+    private readonly captures: Pick<CodeCaptures, 'capture'>,
     private readonly writers: CodeWriterService,
     /** Code's own unit store, already initialized; it outlives this owner. */
     readonly code: CodeUnitStore,

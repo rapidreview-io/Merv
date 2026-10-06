@@ -1237,6 +1237,8 @@ export interface Artifacts {
    * a transaction of its own. No network I/O. Not idempotent. */
   create(caller: Caller, input: ArtifactInput, tx?: Transaction): Promise<Artifact>;
   get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact>;
+  /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: those this project holds. */
+  find(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Map<string, Artifact>>;
   /** One authorisation and one query for up to MAX_ARTIFACT_IDS ids: the artifacts in input
    * order, duplicates kept; `not_found` for the first id that is not in this project. */
   getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]>;
@@ -1599,6 +1601,12 @@ export interface Workflows {
     ): Promise<WorkflowSnapshot>;
   }>;
   get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot>;
+  /** get() for several instances in one read; an id the project does not hold is left out. */
+  find(
+    caller: Caller,
+    instanceIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<Map<string, WorkflowSnapshot>>;
   /** The project's instances, oldest first; with `workflow`, only that workflow's. */
   list(caller: Caller, tx?: Transaction, workflow?: string): Promise<WorkflowSnapshot[]>;
   history(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowHistoryEntry[]>;
@@ -1870,6 +1878,15 @@ export interface Reviews {
     tx: Transaction,
   ): Promise<void>;
   get(caller: Caller, reviewId: string, tx?: Transaction): Promise<ReviewRequest>;
+  /**
+   * Several reviews in one read, without what get() adds for an operator; an id the project
+   * does not hold is left out.
+   */
+  find(
+    caller: Caller,
+    ids: readonly string[],
+    tx?: Transaction,
+  ): Promise<Map<string, ReviewRequest>>;
   /** With `subjectId`, only the reviews of that record. */
   list(caller: Caller, filter?: { subjectId?: string }): Promise<ReviewRequest[]>;
   /** How many of the project's reviews are requested or started. */

@@ -46,7 +46,7 @@ flowchart LR
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Tasks, experiments, reflection waves and research cycles resolve through their workflow records, named the way Workflows names an instance (`instanceName` from `@merv/workflows/rules`), so references need neither Reflections nor Research; the dotted arrow is an optional binding.
+Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Tasks, experiments, reflection waves and research cycles resolve through their workflow records, named the way Workflows names an instance (`instanceName` from `@merv/workflows/rules`), so references need neither Reflections nor Research; the dotted arrow is an optional binding. A request asks each owner once for every id it might hold (`find` on Workflows, Artifacts and Reviews, `captures` on Code Work), so its reads do not grow with the number of refs.
 
 | Entrypoint              | Requires                                                                            | Provides                                |
 | ----------------------- | ----------------------------------------------------------------------------------- | --------------------------------------- |

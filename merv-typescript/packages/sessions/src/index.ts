@@ -1,7 +1,7 @@
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { nativeMcpConnectionsSchema, oidPattern } from '@merv/contracts';
 import { delegationEnd } from '@merv/scope/rules';
-import { visible, createService } from '@merv/contracts';
+import { visible, createService, mapAsync } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
@@ -1405,57 +1405,80 @@ export class LeasedSessions implements Sessions {
     sessionId: string,
     transaction?: Transaction,
   ): Promise<SessionWorkspaceObservation> {
+    const found = await this.workspaceObservations(caller, [sessionId], transaction);
+    check(found.size, 'session_not_found', 'Session not found in this project', 404);
+    return found.get(sessionId)!;
+  }
+  async workspaceObservations(
+    caller: Caller,
+    sessionIds: readonly string[],
+    transaction?: Transaction,
+  ): Promise<Map<string, SessionWorkspaceObservation>> {
     ordinary(caller);
     caller = structuredClone(caller);
     this.ensureOpen();
-    check(text(sessionId), 'invalid_session', 'A session identifier is required');
+    check(
+      sessionIds.every((id) => text(id)),
+      'invalid_session',
+      'A session identifier is required',
+    );
     if (transaction) this.state.assertTransaction(transaction);
-    const read = async (sql: Transaction): Promise<SessionWorkspaceObservation> => {
+    const read = async (sql: Transaction) => {
       await this.scope.require(caller, 'read', sql);
-      const row = await sql.get<Row>(
-        `${SESSION} WHERE id=? AND project_id=?`,
-        sessionId,
+      const rows = await sql.all<Row>(
+        `${SESSION} WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
         caller.projectId,
+        JSON.stringify([...new Set(sessionIds)]),
       );
-      check(row, 'session_not_found', 'Session not found in this project', 404);
-      const session = this.decode(row);
-      const [event] = session.workspace?.result
-        ? await this.state.findEvents(
-            { projectId: caller.projectId, subjectId: sessionId, type: 'session.workspace_result' },
-            1,
-            sql,
-          )
-        : [];
-      // Provenance names who delegated the work, not the credential they held.
-      const { kind, actorId, projectId } = session.source;
-      return {
-        provenance: {
-          projectId: session.projectId,
-          sessionId: session.id,
-          actorId: session.actorId,
-          source: { kind, actorId, projectId },
-          instanceId: session.instanceId,
-          revision: session.expectedRevision,
-          workflow: {
-            name: session.execution.workflow,
-            version: session.execution.version,
-            state: session.execution.state,
-            policyHash: session.execution.policyHash,
-            registrationId: session.execution.registrationId,
-          },
-          runnerId: session.runnerId,
-          hostRef: session.hostRef,
-          readOnly: session.execution.policy.readOnly,
-        },
-        workspaceMode: effectiveWorkspace(session.execution.policy).mode,
-        live: live(session),
-        workspace: session.workspace ?? null,
-        observedAt: event?.createdAt ?? null,
-        eventId: event?.id ?? null,
-      };
+      return new Map(
+        await mapAsync(rows, async (row) => {
+          const session = this.decode(row);
+          return [session.id, await this.observation(caller, session, sql)] as const;
+        }),
+      );
     };
     // A pure read: a capture reaches it inside a plain read, which must not wait on the writer lock.
     return transaction ? await read(transaction) : await this.reading(read);
+  }
+  private async observation(
+    caller: Caller,
+    session: Session,
+    sql: Transaction,
+  ): Promise<SessionWorkspaceObservation> {
+    const [event] = session.workspace?.result
+      ? await this.state.findEvents(
+          { projectId: caller.projectId, subjectId: session.id, type: 'session.workspace_result' },
+          1,
+          sql,
+        )
+      : [];
+    // Provenance names who delegated the work, not the credential they held.
+    const { kind, actorId, projectId } = session.source;
+    return {
+      provenance: {
+        projectId: session.projectId,
+        sessionId: session.id,
+        actorId: session.actorId,
+        source: { kind, actorId, projectId },
+        instanceId: session.instanceId,
+        revision: session.expectedRevision,
+        workflow: {
+          name: session.execution.workflow,
+          version: session.execution.version,
+          state: session.execution.state,
+          policyHash: session.execution.policyHash,
+          registrationId: session.execution.registrationId,
+        },
+        runnerId: session.runnerId,
+        hostRef: session.hostRef,
+        readOnly: session.execution.policy.readOnly,
+      },
+      workspaceMode: effectiveWorkspace(session.execution.policy).mode,
+      live: live(session),
+      workspace: session.workspace ?? null,
+      observedAt: event?.createdAt ?? null,
+      eventId: event?.id ?? null,
+    };
   }
   async list(caller: Caller): Promise<Session[]> {
     ordinary(caller);

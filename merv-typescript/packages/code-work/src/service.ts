@@ -248,6 +248,7 @@ export class CodeService implements Code {
     }
   }
   capture: Code['capture'] = (...args) => this.captureReader.capture(...args);
+  captures: Code['captures'] = (...args) => this.captureReader.captures(...args);
   async checkCapture(
     caller: Caller,
     ref: CodeCaptureRef,

@@ -8,6 +8,7 @@ import {
   type Transaction,
   type Sql,
   idSchema,
+  mapAsync,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type { SessionWorkspace } from '@merv/contracts';
@@ -62,6 +63,44 @@ export class CodeCaptureReader {
       head: string,
     ) => Promise<SessionWorkspace['stats'] | undefined>,
   ) {}
+  /**
+   * capture() for each ref this project holds, else null: one read of the sessions and one of
+   * the commands, however many refs, and capture() again only for those it holds.
+   */
+  async captures(
+    caller: Caller,
+    values: readonly CodeCaptureRef[],
+    tx?: Transaction,
+  ): Promise<(CodeCapture | null)[]> {
+    check(!this.closed, 'code_unavailable', 'Code capture reader is unavailable', 503);
+    caller = structuredClone(caller);
+    const refs = values.map((value) => parseCodeInput(codeCaptureRefSchema, value));
+    if (tx) this.state.assertTransaction(tx);
+    await this.scope.require(caller, 'read', tx);
+    const ids = (kind: CodeCaptureRef['kind']) =>
+      refs.flatMap((ref) =>
+        ref.kind !== kind ? [] : 'sessionId' in ref ? ref.sessionId : ref.commandId,
+      );
+    const finals = ids('session-final').length
+      ? await this.sessions.workspaceObservations(caller, ids('session-final'), tx)
+      : new Map();
+    const read = async (sql: Sql) =>
+      await sql.all<{ id: string }>(
+        'SELECT id FROM code_commands WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+        caller.projectId,
+        JSON.stringify(ids('code-commit')),
+      );
+    const commits = new Set(
+      ids('code-commit').length
+        ? (await (tx ? read(tx) : this.state.read(read))).map(({ id }) => id)
+        : [],
+    );
+    return await mapAsync(refs, async (ref) =>
+      ('sessionId' in ref ? finals.has(ref.sessionId) : commits.has(ref.commandId))
+        ? await this.capture(caller, ref, tx)
+        : null,
+    );
+  }
   async capture(caller: Caller, value: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture> {
     check(!this.closed, 'code_unavailable', 'Code capture reader is unavailable', 503);
     caller = structuredClone(caller);

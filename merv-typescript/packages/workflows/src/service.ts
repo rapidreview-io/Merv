@@ -146,6 +146,24 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     );
   }
 
+  async find(caller: Caller, instanceIds: readonly string[], tx?: Transaction) {
+    return await this.reading(caller, tx, (tx, caller) =>
+      this.snapshots(tx, caller.projectId, instanceIds),
+    );
+  }
+
+  private async snapshots(tx: Transaction, projectId: string, instanceIds: readonly string[]) {
+    const found = new Map<string, WorkflowSnapshot>();
+    for (const part of batches([...new Set(instanceIds)]))
+      for (const row of await tx.all<InstanceRow>(
+        `SELECT * FROM wf_instances WHERE project_id=? AND id IN (${part.map(() => '?').join(',')})`,
+        projectId,
+        ...part,
+      ))
+        found.set(row.id, this.snapshot(row));
+    return found;
+  }
+
   async list(caller: Caller, tx?: Transaction, workflow?: string): Promise<WorkflowSnapshot[]> {
     return await this.reading(caller, tx, async (tx, caller) =>
       (
@@ -274,26 +292,21 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     instanceIds: readonly string[],
     tx?: Transaction,
   ): ReturnType<Workflows['records']> {
-    const ids = [...new Set(instanceIds)];
     return await this.reading(caller, tx, async (tx, caller) => {
-      if (!ids.length) return new Map();
-      const rows = await tx.all<InstanceRow>(
-        `SELECT * FROM wf_instances WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
-        caller.projectId,
-        ...ids,
-      );
-      const held = rows.map((row) => row.id);
+      const snapshots = await this.snapshots(tx, caller.projectId, instanceIds);
+      if (!snapshots.size) return new Map();
+      const held = [...snapshots.keys()];
       const starts = await readWorkStarts(tx, caller.projectId, held);
       const before = await prerequisites(tx, caller.projectId, held);
       const after = await dependents(tx, this.contracts, caller.projectId, held);
       return new Map(
-        rows.map((row) => [
-          row.id,
+        held.map((id) => [
+          id,
           {
-            snapshot: this.snapshot(row),
-            workStarts: starts.get(row.id)!,
-            dependencies: before.get(row.id)!,
-            dependents: after.get(row.id)!,
+            snapshot: snapshots.get(id)!,
+            workStarts: starts.get(id)!,
+            dependencies: before.get(id)!,
+            dependents: after.get(id)!,
           },
         ]),
       );
