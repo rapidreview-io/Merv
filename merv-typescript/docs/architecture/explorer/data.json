@@ -1720,11 +1720,10 @@
         "paper",
         "workflows",
         "reviews",
-        "contextBuilder"
-      ],
-      "optional": [
+        "contextBuilder",
         "sessions"
       ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -3490,7 +3489,7 @@
     {
       "from": "reflections",
       "to": "sessions",
-      "optional": true
+      "optional": false
     },
     {
       "from": "research",

@@ -4,11 +4,12 @@ import type {
   WorkflowDefinition,
   WorkflowPolicy,
 } from '@merv/contracts';
-import type { ResearchService } from './index.js';
+import type { ResearchContext } from './index.js';
 import { endChoiceSchema, nextWaveChoiceSchema, parse } from './input.js';
+import { continuing, ready } from './integration.js';
 
 // The research workflow and the policy its gate judges by. The policy is Lean-sensitive and
-// moved here verbatim; ResearchService (index.ts) runs it as its own method.
+// moved here verbatim; it runs on ResearchService (index.ts) as its ResearchContext.
 const stages = ['defining', 'researching', 'reflecting', 'consolidating', 'complete'] as const;
 export type Stage = (typeof stages)[number];
 const nextWaveGuidance =
@@ -43,14 +44,14 @@ export const definition: WorkflowDefinition = {
   ],
 };
 
-export function policy(this: ResearchService): WorkflowPolicy {
+export function policy(ctx: ResearchContext): WorkflowPolicy {
   return {
     successStates: ['complete'],
     dependencyFailureAction: 'end',
     describe: async (context) => {
-      const record = await this.get(context.caller, context.snapshot.id, context.tx);
+      const record = await ctx.get(context.caller, context.snapshot.id, context.tx);
       const previous = record.previousCycleId
-        ? await this.row(context.caller, record.previousCycleId, context.tx)
+        ? await ctx.row(context.caller, record.previousCycleId, context.tx)
         : null;
       return {
         label: record.name,
@@ -61,7 +62,7 @@ export function policy(this: ResearchService): WorkflowPolicy {
             ? 'Wait for the selected work to finish, including failed and abandoned work, then open reflection.'
             : instructions[context.snapshot.state as Stage],
         references: [
-          ...this.children(record).map((id) => ({
+          ...ctx.children(record).map((id) => ({
             kind: 'workflow',
             id,
             label: 'Child workflow',
@@ -101,9 +102,9 @@ export function policy(this: ResearchService): WorkflowPolicy {
           expectedRevision: context.snapshot.revision,
         }),
         check: async (context: WorkflowCheckContext) => {
-          if (this.checked.found(context)) return;
-          const record = await this.get(context.caller, context.snapshot.id, context.tx);
-          await this.authorize(context.caller, record, context.tx);
+          if (ctx.checked.found(context)) return;
+          const record = await ctx.get(context.caller, context.snapshot.id, context.tx);
+          await ctx.authorize(context.caller, record, context.tx);
           if (context.input) parse(endChoiceSchema, context.input);
         },
       },
@@ -122,10 +123,11 @@ export function policy(this: ResearchService): WorkflowPolicy {
           expectedRevision: context.snapshot.revision,
         }),
         check: async (context: WorkflowCheckContext) => {
-          if (this.checked.found(context)) return;
-          const record = await this.get(context.caller, context.snapshot.id, context.tx);
-          await this.authorize(context.caller, record, context.tx);
-          await this.ready(
+          if (ctx.checked.found(context)) return;
+          const record = await ctx.get(context.caller, context.snapshot.id, context.tx);
+          await ctx.authorize(context.caller, record, context.tx);
+          await ready(
+            ctx,
             context.caller,
             record,
             context.tx,
@@ -141,12 +143,12 @@ export function policy(this: ResearchService): WorkflowPolicy {
                 // A choice made, or asked by the advance taking this, was judged by the check;
                 // a skip reads no plan.
                 const choice = parse(nextWaveChoiceSchema, input ?? {});
-                if (choice.nextWave || this.checked.found(context)) return [];
+                if (choice.nextWave || ctx.checked.found(context)) return [];
                 // Without Git's answer a preflight reads the cycle as completing: the choice
                 // is asked whenever the plan continues, and honoured only when it completes. The
                 // transition carries that answer, so an advance that injects is not asked.
-                const record = await this.get(caller, snapshot.id, tx);
-                return (await this.continuing(caller, record, tx, choice.move ?? 'complete'))
+                const record = await ctx.get(caller, snapshot.id, tx);
+                return (await continuing(ctx, caller, record, tx, choice.move ?? 'complete'))
                   ? ['nextWave']
                   : [];
               },

@@ -2,7 +2,7 @@ import { visible, mapAsync, record } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
-import { requireDependencies } from '@merv/workflows/rules';
+import { CheckedTransitions, requireDependencies } from '@merv/workflows/rules';
 import { latestReleases, leaseRows } from '@merv/workflows/lease-rows';
 import { z } from 'zod';
 import {
@@ -15,15 +15,22 @@ import {
   newId,
   now,
   type Artifact,
+  type Artifacts,
   type Caller,
+  type ContextBuilder,
+  type ContextRegistration,
   type Data,
   type ProcessGraph,
   type RunningNode,
   type RunningPanelPart,
+  type Reviews,
+  type Scope,
+  type State,
   type Transaction,
   type WorkflowCheckContext,
   type WorkflowDependency,
   type WorkflowSnapshot,
+  type Workflows,
   type WorkRoute,
 } from '@merv/contracts';
 import type { Code, CodeCaptureRef } from '@merv/code-work/types';
@@ -73,9 +80,21 @@ import {
   epochAfter,
   EXPERIMENT_LIMITS,
   EXPERIMENT_WORKFLOW,
+  type ActiveState,
   experimentEpoch,
   captureEpochs,
-  ExperimentProgram,
+  register,
+  unregister,
+  handleFor,
+  move,
+  revision,
+  route,
+  current,
+  assertProducer,
+  assertAdministration,
+  pinnedRecovery,
+  holds,
+  allowedArtifacts,
   feasibilityCriterion,
   programVersion,
   currentExperiment,
@@ -96,6 +115,7 @@ import {
 } from './storage.js';
 import type { CodeUnit } from '@merv/code-work/models';
 import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
+import type { Paper } from '@merv/paper/types';
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
@@ -164,14 +184,51 @@ const configuration = z
   .strict()
   .default({});
 
+/** What the experiment program (program.ts) reads of the service. */
+export type ExperimentsContext = Pick<
+  ExperimentService,
+  | 'artifacts'
+  | 'checkAction'
+  | 'checked'
+  | 'closed'
+  | 'code'
+  | 'contextBuilder'
+  | 'contexts'
+  | 'get'
+  | 'handles'
+  | 'limits'
+  | 'paper'
+  | 'reviews'
+  | 'sandboxes'
+  | 'scope'
+  | 'state'
+  | 'workflows'
+>;
 /** Owns the research experiment lifecycle; Workflows owns workflow execution and Reviews owns verdicts. */
-export class ExperimentService extends ExperimentProgram implements Experiments {
+export class ExperimentService implements Experiments {
+  closed = false;
+  sandboxes?: Pick<Sandboxes, 'captures'>;
+  readonly handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
+  readonly contexts = new Map<ActiveState, ContextRegistration>();
+  /** The owner edge each transaction's command is taking after running its exit checks itself. */
+  readonly checked = new CheckedTransitions();
+  constructor(
+    readonly state: State,
+    readonly scope: Scope,
+    readonly artifacts: Artifacts,
+    readonly workflows: Workflows,
+    readonly reviews: Reviews,
+    readonly contextBuilder: ContextBuilder,
+    public code: Code | undefined,
+    readonly paper: Paper,
+    readonly limits = EXPERIMENT_LIMITS,
+  ) {}
   private codeBinding?: symbol;
   private releaseReviewOwner?: () => void;
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await migrateExperiments(this.state);
-    await this.register();
+    await register(this);
     try {
       this.releaseReviewOwner = this.reviews.registerSubmitOwner({
         id: 'experiments',
@@ -183,7 +240,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           )),
         claim: async (caller, review, tx) => {
           const workflow = await this.workflows.get(caller, review.subjectId, tx);
-          this.handleFor(workflow.version);
+          handleFor(this, workflow.version);
         },
         submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
         returns: async (review, tx) => {
@@ -210,7 +267,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         },
       });
     } catch (error) {
-      this.unregister();
+      unregister(this);
       throw error;
     }
   }
@@ -446,6 +503,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     check(row, 'experiment_not_found', 'Experiment not found in this project', 404);
     return row;
   }
+  /** Domain records only. Never evaluate guidance or render context in this read. */
   async get(caller: Caller, id: string, transaction?: Transaction): Promise<Experiment> {
     this.open();
     caller = structuredClone(caller);
@@ -650,7 +708,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           'Import the existing project repository into Code before creating work',
           409,
         );
-        const workflow = await this.handleFor(
+        const workflow = await handleFor(
+          this,
           programVersion(this.artifacts.largeUploadAvailable),
         ).start(
           caller,
@@ -705,15 +764,15 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'attach', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
-        this.handleFor(experiment.workflow.version);
-        this.revision(experiment, input.expectedRevision);
+        handleFor(this, experiment.workflow.version);
+        revision(this, experiment, input.expectedRevision);
         check(
           experiment.attempt.index === input.attemptIndex,
           'attempt_conflict',
           `Expected attempt ${input.attemptIndex}, the current attempt is ${experiment.attempt.index}`,
           409,
         );
-        await this.assertProducer(caller, experiment, tx);
+        await assertProducer(this, caller, experiment, tx);
         check(
           rolesFor(experiment.workflow.state).includes(input.role),
           'invalid_experiment_role',
@@ -725,7 +784,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           (await this.workflows.prerequisites(caller, [experiment.id], tx)).get(experiment.id)!,
         );
         const artifact = await this.artifacts.get(caller, input.artifactId, tx);
-        const inherited = await this.pinnedRecovery(caller, experiment, tx);
+        const inherited = await pinnedRecovery(this, caller, experiment, tx);
         check(
           (await this.authoredInExecution(caller, artifact, tx)) ||
             experiment.captureArtifactIds?.includes(artifact.id) ||
@@ -804,8 +863,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     const evidence = currentEvidence(experiment, roles);
     // The worker holding this experiment sees the evidence it was offered plus its own;
     // anyone else, another record's worker included, reads what the record holds.
-    if (!caller.session || !(await this.holds(caller, experiment, tx))) return evidence;
-    const allowed = new Set(await this.allowedArtifacts(caller, experiment, tx));
+    if (!caller.session || !(await holds(this, caller, experiment, tx))) return evidence;
+    const allowed = new Set(await allowedArtifacts(this, caller, experiment, tx));
     return evidence.filter((e) => allowed.has(e.artifactId));
   }
   private one(evidence: ExperimentEvidence[], role: string): ExperimentEvidence {
@@ -840,7 +899,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
   ): Promise<string[]> {
     const ids = [...new Set(markdownImageTargets(text))];
     const allowed = caller.session
-      ? new Set(await this.allowedArtifacts(caller, experiment, tx))
+      ? new Set(await allowedArtifacts(this, caller, experiment, tx))
       : null;
     for (const id of ids) {
       check(
@@ -931,8 +990,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'transition', input, tx, async () => {
         const experiment = await this.get(caller, input.experimentId, tx);
-        this.handleFor(experiment.workflow.version);
-        this.revision(experiment, input.expectedRevision);
+        handleFor(this, experiment.workflow.version);
+        revision(this, experiment, input.expectedRevision);
         const prepared = await this.checkAction({
           caller,
           snapshot: experiment.workflow,
@@ -944,7 +1003,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           return await this.submit(caller, experiment, input, prepared!, tx);
         if (experiment.reviewId && reviewing(experiment.workflow.state))
           await this.reviews.supersede(caller, experiment.reviewId, tx);
-        const moved = await this.move(
+        const moved = await move(
+          this,
           caller,
           experiment,
           {
@@ -1044,7 +1104,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       });
     }
     const inherited = [
-      ...(await this.pinnedRecovery(caller, experiment, tx)),
+      ...(await pinnedRecovery(this, caller, experiment, tx)),
       ...(approved?.evidence ?? []),
     ];
     for (const item of evidence) {
@@ -1144,7 +1204,8 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     const pinnedInputIds = (await this.artifacts.getAll(caller, artifactIds, tx))
       .filter((artifact) => artifact.createdBy !== caller.actorId)
       .map((artifact) => artifact.id);
-    const moved = await this.move(
+    const moved = await move(
+      this,
       caller,
       experiment,
       {
@@ -1263,7 +1324,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       const experiment = await this.get(caller, review.subjectId, tx);
       const submission = experiment.submissions.find((s) => s.reviewId === review.id);
       check(submission, 'stale_review', 'Review is not an experiment submission', 409);
-      const action = this.route(submission.stage, input);
+      const action = route(this, submission.stage, input);
       return await this.command(caller, 'submit_review', input, tx, async () => {
         // The transition's guard runs checkReview before anything below is written.
         let conclusion: string | null = null;
@@ -1276,7 +1337,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
               ? input.evidence.conclusion.trim()
               : section || input.notes;
         }
-        const moved = await this.handleFor(experiment.workflow.version).transition(
+        const moved = await handleFor(this, experiment.workflow.version).transition(
           caller,
           {
             instanceId: experiment.id,
@@ -1398,12 +1459,12 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
    * Exit readiness of an owner transition, shared by guidance and the command writer. For a
    * submission, it answers with what would be submitted.
    */
-  protected async checkAction(context: WorkflowCheckContext): Promise<Submission | undefined> {
+  async checkAction(context: WorkflowCheckContext): Promise<Submission | undefined> {
     const { caller, tx } = context,
-      experiment = await this.current(context);
+      experiment = await current(this, context);
     const action = context.transition;
     if (context.input?.expectedRevision !== undefined)
-      this.revision(experiment, context.input.expectedRevision as number);
+      revision(this, experiment, context.input.expectedRevision as number);
     if (action === 'abandon' || action === 'mark_failed') {
       await this.scope.require(caller, 'write', tx);
       check(
@@ -1412,12 +1473,12 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         'The experiment is already terminal',
         409,
       );
-      await this.assertAdministration(caller, experiment, tx);
+      await assertAdministration(this, caller, experiment, tx);
       reasoned(context.input, 'Ending an experiment requires a reason');
       return;
     }
     // Running work's approved plan and prerequisites are checked here as well.
-    await this.assertProducer(caller, experiment, tx);
+    await assertProducer(this, caller, experiment, tx);
     if (action === 'submit_design' || action === 'submit_results') {
       check(
         experiment.workflow.state === (action === 'submit_design' ? 'planned' : 'running'),
@@ -1596,7 +1657,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     this.codeBinding = undefined;
     this.code = undefined;
     this.withdrawReviewOwner();
-    this.unregister();
+    unregister(this);
   }
 }
 export const experimentsPlugin = {

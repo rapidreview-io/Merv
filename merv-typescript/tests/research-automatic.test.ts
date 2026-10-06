@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { ResearchService } from '../packages/research/src/index.js';
+import { bindAutomatic, wakeAutomatic } from '../packages/research/src/automatic.js';
 import { createApp } from './fixtures/app.js';
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { hostedCode, providersOf, type Main } from './fixtures/research.js';
@@ -253,7 +254,7 @@ async function fixture(t: TestContext, plugin = false) {
     await pump();
   };
   const enable = async () => {
-    if (!plugin && !release) release = await research.bindAutomatic(app.ctx.domainEvents);
+    if (!plugin && !release) release = await bindAutomatic(research, app.ctx.domainEvents);
   };
   const disable = async () => {
     await release?.();
@@ -494,8 +495,8 @@ test('restart and repeated wakeups recover a missed completion without duplicate
   await f.pump();
   const record = await f.research.get(f.owner, cycle.id);
   assert.equal(record.workflow.state, 'reflecting');
-  await f.research.wakeAutomatic();
-  await f.research.wakeAutomatic();
+  await wakeAutomatic(f.research);
+  await wakeAutomatic(f.research);
   await f.pump();
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
   assert.equal((await f.research.get(f.owner, cycle.id)).reflectionId, record.reflectionId);
@@ -526,7 +527,7 @@ test('expected handoff failures roll back child creation and recover without poi
   assert.equal(blocked.workflow.state, 'researching');
   assert.equal(blocked.automation!.blocker!.code, 'reflection_unavailable');
   broken.mock.restore();
-  await f.research.wakeAutomatic();
+  await wakeAutomatic(f.research);
   await f.pump();
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);

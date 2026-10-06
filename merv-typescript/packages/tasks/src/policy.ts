@@ -13,7 +13,7 @@ import {
 } from '@merv/contracts';
 import { taskExecutionPolicy } from './execution-policy.js';
 import type { TaskDeliveryCode, TaskReview } from './types.js';
-import type { TaskService } from './index.js';
+import type { TasksContext } from './index.js';
 import {
   GIT_CLAIM,
   producing,
@@ -22,9 +22,16 @@ import {
   taskContract,
   taskWorkspace,
 } from './workflow.js';
+import { checkDelivery, checkFailure, checkReissue } from './commands.js';
+import {
+  workflowAssignment,
+  workflowAssignmentFacts,
+  workflowExecutionReferences,
+} from './context.js';
+import { currentLease, leaseHooks, leasedClaim, prepareTasks, unleased } from './lease.js';
 
-// The task workflow's policy and the checks its review actions run. TaskService (index.ts) runs
-// these as its own methods.
+// The task workflow's policy and the checks its review actions run. Each runs on TaskService
+// (index.ts) as its TasksContext.
 
 /** Tasks have fixed routes; inspect only an ordinary optional data property. */
 export function rejectReviewReturn(input: object): void {
@@ -44,7 +51,7 @@ export function rejectReviewReturn(input: object): void {
   );
 }
 
-export function workflowPolicy(this: TaskService, version: number): WorkflowPolicy {
+export function workflowPolicy(ctx: TasksContext, version: number): WorkflowPolicy {
   const taskArguments = ({ snapshot }: WorkflowCheckContext): Data => ({
     taskId: snapshot.id,
     expectedRevision: snapshot.revision,
@@ -57,14 +64,14 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
         name: 'review_rounds',
         from: roundsFrom(version),
         actions: serviceOwned(version) ? ['submit_delivery', 'mark_failed'] : ['revise'],
-        max: this.limits.reviewRounds,
+        max: ctx.limits.reviewRounds,
       },
     ],
     ...(serviceOwned(version)
       ? {
           limitExtended: async (context: WorkflowCheckContext) => {
             if (context.snapshot.state !== 'suspended') return;
-            await this.registration(version).transition(
+            await ctx.registration(version).transition(
               context.caller,
               {
                 instanceId: context.snapshot.id,
@@ -85,42 +92,42 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
         state: 'in_progress',
         requiresDependencies: true,
         check: async (context) => {
-          await this.workflowAssignmentFacts(context);
+          await workflowAssignmentFacts(ctx, context);
           const { caller, snapshot, tx } = context;
-          await this.unleased(caller, snapshot.id, snapshot.revision, tx);
+          await unleased(ctx, caller, snapshot.id, snapshot.revision, tx);
         },
-        build: async (context) => await this.workflowAssignment(context),
+        build: async (context) => await workflowAssignment(ctx, context),
         execution: taskExecutionPolicy(
           'work',
           taskWorkspace(version),
           taskContract(version).largeUploads,
         ),
-        references: async (context) => await this.workflowExecutionReferences(context),
-        lease: this.leaseHooks(),
+        references: async (context) => await workflowExecutionReferences(ctx, context),
+        lease: leaseHooks(ctx),
       },
       {
         state: 'in_review',
         check: async (context) => {
-          await this.workflowAssignmentFacts(context);
+          await workflowAssignmentFacts(ctx, context);
         },
-        build: async (context) => await this.workflowAssignment(context),
+        build: async (context) => await workflowAssignment(ctx, context),
         execution: taskExecutionPolicy(
           'review',
           taskWorkspace(version),
           taskContract(version).largeUploads,
         ),
-        references: async (context) => await this.workflowExecutionReferences(context),
-        lease: this.leaseHooks(),
+        references: async (context) => await workflowExecutionReferences(ctx, context),
+        lease: leaseHooks(ctx),
       },
     ],
-    prepare: async (context) => await this.prepareTasks(context),
+    prepare: async (context) => await prepareTasks(ctx, context),
     describe: async ({ caller, snapshot, tx, dependencies }) => {
-      const row = await this.row(tx, caller, snapshot.id);
-      const review = row.review_id ? await this.reviews.get(caller, row.review_id, tx) : null;
+      const row = await ctx.row(tx, caller, snapshot.id);
+      const review = row.review_id ? await ctx.reviews.get(caller, row.review_id, tx) : null;
       const recovering =
         review?.status === 'started' &&
         review.reviewerId &&
-        !(await this.scope.eligible(caller.projectId, review.reviewerId, 'review', tx));
+        !(await ctx.scope.eligible(caller.projectId, review.reviewerId, 'review', tx));
       const [gate, waiting] =
         snapshot.state === 'suspended'
           ? [
@@ -189,9 +196,9 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
                   'forbidden',
                   'Only a signed-in human operator resumes service work',
                 );
-                await this.scope.require(caller, 'admin', tx);
+                await ctx.scope.require(caller, 'admin', tx);
                 const limit = (
-                  await this.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
+                  await ctx.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
                 ).get(snapshot.id)!;
                 check(
                   !limit.exhausted,
@@ -216,7 +223,7 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
         requiredInput: ['artifactIds', 'commandId', 'confirmations'],
         arguments: taskArguments,
         check: async (context) => {
-          if (!this.checked.found(context)) await this.checkDelivery(context);
+          if (!ctx.checked.found(context)) await checkDelivery(ctx, context);
         },
       },
       ...reviewActions<WorkflowCheckContext>({
@@ -235,11 +242,11 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
             'Claim this independent review, then refresh its guidance and read the context for your new assignment.' +
             ` ${GIT_CLAIM}`,
         },
-        reviews: this.reviews,
+        reviews: ctx.reviews,
         // Refuses a named reviewId that is not the current submission's.
-        current: async (context) => await this.currentReview(context),
-        submit: async (context) => await this.checkTaskReview(context),
-        start: async ({ caller, snapshot, tx }) => await this.leasedClaim(caller, snapshot, tx),
+        current: async (context) => await currentReview(ctx, context),
+        submit: async (context) => await checkTaskReview(ctx, context),
+        start: async ({ caller, snapshot, tx }) => await leasedClaim(ctx, caller, snapshot, tx),
       }),
       {
         name: 'reissue_review',
@@ -252,7 +259,7 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
         instruction:
           'Only if the current review needs replacement: give a reason to supersede it while preserving the evidence. Normal progress waits for the reviewer.',
         check: async (context) => {
-          await this.checkReissue(context);
+          await checkReissue(ctx, context);
         },
       },
       {
@@ -267,7 +274,7 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
           ? 'Suspend this service task with a specific reason. Its evidence and waiters are retained; a human operator can extend review_rounds to resume the same task.'
           : 'Only when this task cannot or should not continue: record a specific reason to end it as failed. Any unfinished review is closed and its evidence is retained. This is a terminal decision.',
         check: async (context) => {
-          if (!this.checked.found(context)) await this.checkFailure(context);
+          if (!ctx.checked.found(context)) await checkFailure(ctx, context);
         },
       },
     ],
@@ -275,14 +282,14 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
 }
 
 export async function reviewAction(
-  this: TaskService,
+  ctx: TasksContext,
   context: WorkflowCheckContext,
   verdict: 'pass' | 'needs_changes' | 'fail',
 ): Promise<string> {
   if (verdict === 'needs_changes' && serviceOwned(context.snapshot.version)) {
     const { caller, snapshot, tx } = context;
     const limit = (
-      await this.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
+      await ctx.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
     ).get(snapshot.id)!;
     if (limit.exhausted) return 'revise_suspended';
   }
@@ -290,10 +297,10 @@ export async function reviewAction(
 }
 
 export async function currentReview(
-  this: TaskService,
+  ctx: TasksContext,
   { caller, snapshot, tx, input }: WorkflowCheckContext,
 ): Promise<ReviewRequest> {
-  const row = await this.row(tx, caller, snapshot.id);
+  const row = await ctx.row(tx, caller, snapshot.id);
   check(
     snapshot.state === 'in_review' &&
       row.review_id &&
@@ -302,7 +309,7 @@ export async function currentReview(
     'This review no longer belongs to the current task submission',
     409,
   );
-  const review = await this.reviews.get(caller, row.review_id, tx);
+  const review = await ctx.reviews.get(caller, row.review_id, tx);
   check(
     review.subjectRevision === snapshot.revision,
     'revision_conflict',
@@ -313,17 +320,17 @@ export async function currentReview(
 }
 
 export async function checkTaskReview(
-  this: TaskService,
+  ctx: TasksContext,
   context: WorkflowCheckContext,
 ): Promise<void> {
   // The command making this transition has checked the review and routed the verdict itself.
-  const checked = this.checked.found<ReviewRequest>(context)?.value;
+  const checked = ctx.checked.found<ReviewRequest>(context)?.value;
   let review = checked;
   if (!review) {
-    await this.scope.require(context.caller, 'review', context.tx);
+    await ctx.scope.require(context.caller, 'review', context.tx);
     if (context.input) rejectReviewReturn(context.input);
-    review = await this.currentReview(context);
-    await this.reviews.checkSubmit(
+    review = await currentReview(ctx, context);
+    await ctx.reviews.checkSubmit(
       context.caller,
       review.id,
       context.input as unknown as Omit<TaskReview, 'requestId'> | undefined,
@@ -333,13 +340,14 @@ export async function checkTaskReview(
   // Only a proposed verdict asks Code: the committing transition always carries its input, so
   // this is re-checked there, while guidance read with Code unloaded still answers.
   if (context.input) {
-    const headOid = await this.reviewCommit(context.caller, context.snapshot, review, context.tx);
+    const headOid = await reviewCommit(ctx, context.caller, context.snapshot, review, context.tx);
     // The owner deciding as owner answers for having read the commit; its receipt still holds.
     if (context.input.verdict === 'pass' && !review.override)
-      await this.checkoutReviewer(context, review, headOid);
+      await checkoutReviewer(ctx, context, review, headOid);
   }
   if (!checked && context.input && context.transition) {
-    const action = await this.reviewAction(
+    const action = await reviewAction(
+      ctx,
       context,
       context.input.verdict as 'pass' | 'needs_changes' | 'fail',
     );
@@ -358,7 +366,7 @@ export async function checkTaskReview(
  * reissued review advances the task's revision without a new delivery.
  */
 export async function reviewCommit(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   snapshot: WorkflowSnapshot,
   review: ReviewRequest,
@@ -374,7 +382,7 @@ export async function reviewCommit(
     'This Git task’s review does not pin a delivered commit',
     409,
   );
-  const checked = await this.requireCode().checkCapture(
+  const checked = await ctx.requireCode().checkCapture(
     caller,
     delivered.ref,
     {
@@ -402,7 +410,7 @@ export async function reviewCommit(
  * at all — an interactive reviewer, admitted only once review_rounds is used up — can only fail it.
  */
 export async function checkoutReviewer(
-  this: TaskService,
+  ctx: TasksContext,
   { caller, snapshot, tx }: WorkflowCheckContext,
   review: ReviewRequest,
   headOid: string,
@@ -413,18 +421,16 @@ export async function checkoutReviewer(
     'Only a leased reviewer, working in the checkout pinned to the delivered commit, can pass a Git task. Fail it, or have the review replaced with task.reissue_review so a leased worker can claim it',
     409,
   );
-  const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
+  const lease = await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx);
   check(
     lease.details.purpose === 'review' && lease.review_id === review.id,
     'stale_lease',
     'This worker does not hold the lease of the current review',
     409,
   );
-  const own = await this.requireCode().capture(
-    caller,
-    { kind: 'session-final', sessionId: caller.session.id },
-    tx,
-  );
+  const own = await ctx
+    .requireCode()
+    .capture(caller, { kind: 'session-final', sessionId: caller.session.id }, tx);
   check(
     own.attachedBaseOid === headOid,
     'task_commit_unfetched',

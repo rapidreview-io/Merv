@@ -14,12 +14,12 @@ import {
 } from '@merv/contracts';
 import { permits } from '@merv/scope/rules';
 import { evidenceFrom, ownField, validateAssessment } from './findings.js';
-import type { ReviewService } from './index.js';
+import type { ReviewsContext } from './index.js';
 import { REVIEW_VERDICTS } from './rules.js';
 import { freeze, hydrate, type ReviewRow } from './rows.js';
 
 // Claiming a review, submitting its verdict and releasing a claim: the reviewer's side of a
-// review. ReviewService (index.ts) runs these as its own methods.
+// review. Each runs on ReviewService (index.ts) as its ReviewsContext.
 /** Route shape is generic; allowed destinations and verdict rules belong to the owner. */
 export function validateReturnTo(input: { returnTo?: unknown }): string | undefined {
   const value = ownField(input, 'returnTo', 'invalid_return_to', 'Review return input');
@@ -33,21 +33,21 @@ export function validateReturnTo(input: { returnTo?: unknown }): string | undefi
 }
 
 export async function checkStart(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   reviewId: string,
   transaction?: Transaction,
   override = false,
 ): Promise<ReviewRequest> {
   caller = structuredClone(caller);
-  return await inTransaction(this.state, transaction, async (tx) => {
-    const actor = await this.scope.require(caller, 'review', tx);
-    const row = await this.row(tx, caller, reviewId);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    const actor = await ctx.scope.require(caller, 'review', tx);
+    const row = await ctx.row(tx, caller, reviewId);
     const current = hydrate(row);
     // The override is taken with the claim; a retried claim keeps the one it has.
     if (override && row.status === 'requested') current.override = true;
     check(
-      await this.independent(caller, actor, current, tx),
+      await ctx.independent(caller, actor, current, tx),
       'review_independence',
       override
         ? 'Only the project owner, acting as themself, may decide a review as owner'
@@ -61,25 +61,25 @@ export async function checkStart(
       'Review is already claimed or closed',
       409,
     );
-    if (row.status === 'started') await this.requireLiveClaim(row, tx);
+    if (row.status === 'started') await requireLiveClaim(ctx, row, tx);
     return current;
   });
 }
 
 export async function start(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   reviewId: string,
   transaction?: Transaction,
   override = false,
 ): Promise<ReviewRequest> {
   caller = structuredClone(caller);
-  return await inTransaction(this.state, transaction, async (tx) => {
-    const current = await this.checkStart(caller, reviewId, tx, override);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    const current = await checkStart(ctx, caller, reviewId, tx, override);
     if (current.status === 'started') return current;
     // Only a review one domain can apply a verdict to is claimed, and that domain may refuse
     // a claim its rules could never let finish.
-    const { owner, current: unchanged } = await this.ownerOf(freeze(current), tx);
+    const { owner, current: unchanged } = await ctx.ownerOf(freeze(current), tx);
     await owner.claim?.(caller, current, tx);
     unchanged();
     const claimId = newId('claim');
@@ -96,7 +96,7 @@ export async function start(
       'Another reviewer already claimed this review',
       409,
     );
-    const event = await recorded(this.state, tx, caller, 'review.started', reviewId, {
+    const event = await recorded(ctx.state, tx, caller, 'review.started', reviewId, {
       claimId,
       claimGeneration: current.claimGeneration + 1,
       ...(current.override && { override: true }),
@@ -107,12 +107,12 @@ export async function start(
       event.createdAt,
       reviewId,
     );
-    return hydrate(await this.row(tx, caller, reviewId));
+    return hydrate(await ctx.row(tx, caller, reviewId));
   });
 }
 
 export async function checkSubmit(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   reviewId: string,
   input?: Omit<ReviewSubmit, 'requestId'>,
@@ -124,9 +124,9 @@ export async function checkSubmit(
     evidenceFrom(input);
     input = plain(input);
   }
-  return await inTransaction(this.state, transaction, async (tx) => {
-    const actor = await this.scope.require(caller, 'review', tx);
-    const row = await this.row(tx, caller, reviewId);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    const actor = await ctx.scope.require(caller, 'review', tx);
+    const row = await ctx.row(tx, caller, reviewId);
     check(
       row.status === 'started',
       'review_closed',
@@ -135,12 +135,12 @@ export async function checkSubmit(
     );
     const current = hydrate(row);
     check(
-      row.reviewer_id === caller.actorId && (await this.independent(caller, actor, current, tx)),
+      row.reviewer_id === caller.actorId && (await ctx.independent(caller, actor, current, tx)),
       'review_independence',
       'Only the independent reviewer who claimed this review may submit',
       403,
     );
-    await this.requireLiveClaim(row, tx);
+    await requireLiveClaim(ctx, row, tx);
     if (input) {
       check(
         typeof input.claimId === 'string' && input.claimId === row.claim_id,
@@ -165,7 +165,7 @@ export async function checkSubmit(
 }
 
 export async function submit(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   input: ReviewSubmit,
   transaction?: Transaction,
@@ -174,10 +174,10 @@ export async function submit(
   const returnTo = validateReturnTo(input);
   evidenceFrom(input);
   input = plain<ReviewSubmit>(input);
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'review', tx);
-    return await this.command(tx, caller, input.requestId, 'submit', input, async () => {
-      const current = await this.checkSubmit(caller, input.reviewId, input, tx);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'review', tx);
+    return await ctx.command(tx, caller, input.requestId, 'submit', input, async () => {
+      const current = await checkSubmit(ctx, caller, input.reviewId, input, tx);
       const assessment = validateAssessment(current, input);
       await tx.run(
         "UPDATE reviews SET status = 'submitted', verdict = ?, return_to = ?, notes = ?, synopsis = ?, findings_json = ?, evidence_json = ? WHERE id = ?",
@@ -189,21 +189,21 @@ export async function submit(
         JSON.stringify(assessment.evidence),
         input.reviewId,
       );
-      await recorded(this.state, tx, caller, 'review.submitted', input.reviewId, {
+      await recorded(ctx.state, tx, caller, 'review.submitted', input.reviewId, {
         verdict: input.verdict,
         ...(returnTo === undefined ? {} : { returnTo }),
         subjectId: current.subjectId,
         subjectRevision: current.subjectRevision,
         ...(current.override && { override: true }),
       });
-      return hydrate(await this.row(tx, caller, input.reviewId));
+      return hydrate(await ctx.row(tx, caller, input.reviewId));
     });
   });
 }
 
 /** Trusted event reactions; neither restored access nor an inactive initiator cancels cleanup. */
 export async function releaseClaim(
-  this: ReviewService,
+  ctx: ReviewsContext,
   input: {
     projectId: string;
     reviewId: string;
@@ -213,7 +213,7 @@ export async function releaseClaim(
   },
   tx: Transaction,
 ): Promise<void> {
-  this.state.assertTransaction(tx);
+  ctx.state.assertTransaction(tx);
   const row = await tx.get<ReviewRow>(
     "SELECT * FROM reviews WHERE project_id=? AND id=? AND reviewer_id=? AND claim_id=? AND status='started'",
     input.projectId,
@@ -222,7 +222,7 @@ export async function releaseClaim(
     input.claimId,
   );
   if (!row) return;
-  const event = await this.state.appendEvent(tx, {
+  const event = await ctx.state.appendEvent(tx, {
     projectId: input.projectId,
     actorId: input.actorId,
     type: 'review.claim_released',
@@ -250,36 +250,36 @@ export async function releaseClaim(
 }
 
 export async function actorRevoked(
-  this: ReviewService,
+  ctx: ReviewsContext,
   event: StoredEvent,
   tx: Transaction,
 ): Promise<void> {
-  this.state.assertTransaction(tx);
+  ctx.state.assertTransaction(tx);
   if (event.type !== 'actor.revoked') return;
-  await this.releaseClaims(event, 'reviewer_revoked', tx);
+  await releaseClaims(ctx, event, 'reviewer_revoked', tx);
 }
 
 export async function actorPermissionsChanged(
-  this: ReviewService,
+  ctx: ReviewsContext,
   event: StoredEvent,
   tx: Transaction,
 ): Promise<void> {
-  this.state.assertTransaction(tx);
+  ctx.state.assertTransaction(tx);
   if (event.type !== 'actor.permissions_changed') return;
   const review = (role: unknown) => permits(role as Role, 'review');
   if (!review(event.data.beforeRole) || review(event.data.role)) return;
-  await this.releaseClaims(event, 'review_permission_lost', tx);
+  await releaseClaims(ctx, event, 'review_permission_lost', tx);
 }
 
 export async function requireLiveClaim(
-  this: ReviewService,
+  ctx: ReviewsContext,
   row: ReviewRow,
   tx: Transaction,
 ): Promise<void> {
   // A restored membership authorizes new work, but cannot revive a claim whose
   // permission was lost. Check the committed log before eventual recovery runs.
   check(
-    !(await this.scope.permissionLost(
+    !(await ctx.scope.permissionLost(
       row.project_id,
       row.reviewer_id!,
       'review',
@@ -293,7 +293,7 @@ export async function requireLiveClaim(
 }
 
 export async function releaseClaims(
-  this: ReviewService,
+  ctx: ReviewsContext,
   event: StoredEvent,
   reason: string,
   tx: Transaction,
@@ -318,7 +318,7 @@ export async function releaseClaims(
       JSON.stringify(recovery),
       row.id,
     );
-    await this.state.appendEvent(tx, {
+    await ctx.state.appendEvent(tx, {
       projectId: event.projectId,
       actorId: event.actorId,
       type: 'review.claim_released',

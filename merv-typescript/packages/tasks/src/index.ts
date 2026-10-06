@@ -1,6 +1,7 @@
 import { CheckedTransitions } from '@merv/workflows/rules';
 import type { LeaseRow } from '@merv/workflows/lease-rows';
 import {
+  bound,
   check,
   createService,
   digest,
@@ -53,57 +54,11 @@ import {
   taskContract,
   taskVersions,
 } from './workflow.js';
-import {
-  acquireLease,
-  checkpoint,
-  checkpointRows,
-  currentLease,
-  prepareTasks,
-  isProducer,
-  leaseArtifactIds,
-  leasedClaim,
-  leaseHooks,
-  leaseRole,
-  producerOrAdmin,
-  unleased,
-  visibleCheckpoints,
-} from './lease.js';
-import {
-  checkoutReviewer,
-  checkTaskReview,
-  currentReview,
-  reviewAction,
-  reviewCommit,
-  workflowPolicy,
-} from './policy.js';
-import {
-  assignment,
-  assignmentFacts,
-  context,
-  contextInputs,
-  contextItems,
-  contextType,
-  newestType,
-  pinnedBase,
-  projectContext,
-  workflowAssignment,
-  workflowAssignmentFacts,
-  workflowExecutionReferences,
-} from './context.js';
-import { liveLeases, running, runningPanel, standing } from './running.js';
-import {
-  advance,
-  checkDelivery,
-  checkFailure,
-  checkReissue,
-  createTask,
-  deliveredCommit,
-  markFailed,
-  reissueReview,
-  submitDelivery,
-  submitReview,
-  taskCommand,
-} from './commands.js';
+import { checkpoint, leasedClaim, visibleCheckpoints } from './lease.js';
+import { workflowPolicy } from './policy.js';
+import { assignmentFacts, context } from './context.js';
+import { running, runningPanel } from './running.js';
+import { createTask, markFailed, reissueReview, submitDelivery, submitReview } from './commands.js';
 
 export type {
   Task,
@@ -150,62 +105,46 @@ const configuration = z
   .strict()
   .default({});
 
+/** What the modules (lease.ts, policy.ts, context.ts, running.ts, commands.ts) read of the service. */
+export type TasksContext = Pick<
+  TaskService,
+  | 'artifacts'
+  | 'captureArtifactIds'
+  | 'checked'
+  | 'code'
+  | 'command'
+  | 'hydrate'
+  | 'limits'
+  | 'paper'
+  | 'process'
+  | 'projectRecord'
+  | 'registration'
+  | 'requireCode'
+  | 'reviews'
+  | 'row'
+  | 'scope'
+  | 'state'
+  | 'types'
+  | 'workflows'
+>;
 export class TaskService implements Tasks {
   // Lease hooks and checkpoints (lease.ts), the workflow policy (policy.ts), contexts and
-  // assignments (context.ts), the Running page (running.ts) and the commands (commands.ts).
-  // Only the Tasks contract is public; the rest are theirs.
-  readonly leaseHooks = leaseHooks;
-  readonly leasedClaim = leasedClaim;
-  readonly leaseRole = leaseRole;
-  readonly currentLease = currentLease;
-  readonly acquireLease = acquireLease;
-  readonly leaseArtifactIds = leaseArtifactIds;
-  readonly unleased = unleased;
-  readonly prepareTasks = prepareTasks;
-  readonly isProducer = isProducer;
-  readonly producerOrAdmin = producerOrAdmin;
-  readonly checkpointRows = checkpointRows;
-  readonly visibleCheckpoints = visibleCheckpoints;
-  readonly checkpoint = checkpoint;
-  readonly workflowPolicy = workflowPolicy;
-  readonly reviewAction = reviewAction;
-  readonly currentReview = currentReview;
-  readonly checkTaskReview = checkTaskReview;
-  readonly reviewCommit = reviewCommit;
-  readonly checkoutReviewer = checkoutReviewer;
-  readonly context = context;
-  readonly newestType = newestType;
-  readonly contextType = contextType;
-  readonly projectContext = projectContext;
-  readonly contextInputs = contextInputs;
-  readonly contextItems = contextItems;
-  readonly workflowAssignmentFacts = workflowAssignmentFacts;
-  readonly workflowAssignment = workflowAssignment;
-  readonly workflowExecutionReferences = workflowExecutionReferences;
-  readonly pinnedBase = pinnedBase;
-  readonly assignmentFacts = assignmentFacts;
-  readonly assignment = assignment;
-  readonly running = running;
-  readonly runningPanel = runningPanel;
-  readonly liveLeases = liveLeases;
-  readonly standing = standing;
-  readonly createTask = createTask;
-  readonly checkDelivery = checkDelivery;
-  readonly deliveredCommit = deliveredCommit;
-  readonly checkReissue = checkReissue;
-  readonly checkFailure = checkFailure;
-  readonly taskCommand = taskCommand;
-  readonly advance = advance;
-  readonly markFailed = markFailed;
-  readonly submitDelivery = submitDelivery;
-  readonly reissueReview = reissueReview;
-  readonly submitReview = submitReview;
-  closed = false;
+  // assignments (context.ts), the Running page (running.ts) and the commands (commands.ts) run
+  // on this service as their TasksContext; the Tasks contract's share of them is bound here.
+  readonly checkpoint = bound(this, checkpoint);
+  readonly context = bound(this, context);
+  readonly running = bound(this, running);
+  readonly runningPanel = bound(this, runningPanel);
+  readonly markFailed = bound(this, markFailed);
+  readonly submitDelivery = bound(this, submitDelivery);
+  readonly reissueReview = bound(this, reissueReview);
+  readonly submitReview = bound(this, submitReview);
+  private closed = false;
   code?: Code;
-  sandboxes?: Pick<Sandboxes, 'captures'>;
-  codeBinding?: symbol;
-  releaseReviewOwner?: () => void;
-  readonly registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
+  private sandboxes?: Pick<Sandboxes, 'captures'>;
+  private codeBinding?: symbol;
+  private releaseReviewOwner?: () => void;
+  private readonly registrations = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
   /** Guards a command has run itself, by the transition it is making in that transaction. */
   readonly checked = new CheckedTransitions();
   readonly types = new Map<
@@ -218,7 +157,7 @@ export class TaskService implements Tasks {
     readonly artifacts: Artifacts,
     readonly workflows: Workflows,
     readonly reviews: Reviews,
-    readonly contextBuilder: ContextBuilder,
+    private readonly contextBuilder: ContextBuilder,
     readonly paper: Paper,
     readonly limits = TASK_LIMITS,
   ) {}
@@ -232,7 +171,7 @@ export class TaskService implements Tasks {
           version,
           await this.workflows.register(
             { ...(serviceOwned(version) ? serviceWorkflow : TASK_WORKFLOW), version },
-            this.workflowPolicy(version),
+            workflowPolicy(this, version),
           ),
         );
       }
@@ -255,7 +194,7 @@ export class TaskService implements Tasks {
           const snapshot = await this.workflows.get(caller, row.id, tx);
           this.registration(snapshot.version);
           if (row.review_id === review.id && !review.override)
-            await this.leasedClaim(caller, snapshot, tx);
+            await leasedClaim(this, caller, snapshot, tx);
         },
         // A task carries the claims of its newest delivery only, so they stand beside the
         // review of that delivery and beside no earlier one.
@@ -354,7 +293,11 @@ export class TaskService implements Tasks {
     return (await this.projectRecords(caller, [row], tx))[0];
   }
   /** Each row's record; the workflow facts of all of them are read at once. */
-  async projectRecords(caller: Caller, rows: TaskRow[], tx?: Transaction): Promise<TaskRecord[]> {
+  private async projectRecords(
+    caller: Caller,
+    rows: TaskRow[],
+    tx?: Transaction,
+  ): Promise<TaskRecord[]> {
     const facts = await this.workflows.records(
       caller,
       rows.map((row) => row.id),
@@ -470,7 +413,8 @@ export class TaskService implements Tasks {
           'A service task names its base commit or the prerequisites it derives one from',
         );
         const caller = await this.scope.serviceActor(provider, input.projectId, tx);
-        return await this.createTask(
+        return await createTask(
+          this,
           caller,
           {
             title: input.title,
@@ -488,7 +432,7 @@ export class TaskService implements Tasks {
   }
 
   async create(caller: Caller, input: TaskCreate, transaction?: Transaction): Promise<Task> {
-    return await this.createTask(caller, input, transaction);
+    return await createTask(this, caller, input, transaction);
   }
 
   /**
@@ -533,7 +477,8 @@ export class TaskService implements Tasks {
         return JSON.parse(saved.checkpoint) as TaskCheckpoint;
       const listed = async () => {
         const workflow = await this.workflows.get(caller, taskId, tx);
-        const { row } = await this.assignmentFacts(
+        const { row } = await assignmentFacts(
+          this,
           caller,
           { taskId, purpose: saved.purpose, expectedRevision: workflow.revision },
           tx,
@@ -541,7 +486,8 @@ export class TaskService implements Tasks {
           workflow,
         );
         return (
-          await this.visibleCheckpoints(
+          await visibleCheckpoints(
+            this,
             caller,
             taskId,
             saved.purpose,

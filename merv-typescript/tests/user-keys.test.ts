@@ -11,6 +11,7 @@ import { Memberships } from '@merv/scope/memberships';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
+import { actorPermissionsChanged, actorRevoked } from '@merv/reviews/claims';
 import type { Principal } from '@merv/contracts';
 import { openState, schemaFor } from './fixtures/state.js';
 import { raceWriters, scopeWriter } from './fixtures/writer-race.js';
@@ -665,8 +666,8 @@ test('key rotation and revocation are not actor death; owner permission-loss eve
     )!;
     await f.state.transaction(async (tx) =>
       mode === 'role'
-        ? await reviews.actorPermissionsChanged(event, tx)
-        : await reviews.actorRevoked(event, tx),
+        ? await actorPermissionsChanged(reviews, event, tx)
+        : await actorRevoked(reviews, event, tx),
     );
     claim = await reviews.start(restored, request.id);
     reviewer = restored;

@@ -10,6 +10,7 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
+import { actorPermissionsChanged, actorRevoked } from '@merv/reviews/claims';
 import type { Role, StoredEvent } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
@@ -68,8 +69,8 @@ async function fixture() {
     });
   const deliver = async (event: StoredEvent) =>
     await state.transaction(async (tx) => {
-      if (event.type === 'actor.revoked') await reviews.actorRevoked(event, tx);
-      else await reviews.actorPermissionsChanged(event, tx);
+      if (event.type === 'actor.revoked') await actorRevoked(reviews, event, tx);
+      else await actorPermissionsChanged(reviews, event, tx);
     });
   const releases = async () =>
     (await state.events(operator.projectId)).filter(
@@ -216,7 +217,7 @@ test('permission-loss recovery preserves submitted verdicts and rolls back its e
     await assert.rejects(
       async () =>
         await f.state.transaction(async (tx) => {
-          await f.reviews.actorPermissionsChanged(event, tx);
+          await actorPermissionsChanged(f.reviews, event, tx);
           throw new Error('Consumer failed');
         }),
       /Consumer failed/,

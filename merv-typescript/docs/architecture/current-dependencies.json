@@ -11,7 +11,7 @@
   "serverPlugins": 69,
   "machinePlugins": 1,
   "directDependencyCount": 193,
-  "optionalDependencyCount": 19,
+  "optionalDependencyCount": 18,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -642,11 +642,10 @@
         "paper",
         "workflows",
         "reviews",
-        "contextBuilder"
-      ],
-      "optional": [
+        "contextBuilder",
         "sessions"
       ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true

@@ -7,11 +7,11 @@ import {
   type Transaction,
   type WorkflowDependency,
 } from '@merv/contracts';
-import type { ResearchService } from './index.js';
+import type { ResearchContext } from './index.js';
 import type { ResearchDigest, ResearchRecord } from './types.js';
 
 // A cycle's digest: what it decided, composed from records once it is over and kept as an
-// artifact. ResearchService (index.ts) runs these as its own methods.
+// artifact. Each runs on ResearchService (index.ts) as its ResearchContext.
 /**
  * A digest rides inside a 24000-character reflection context, behind the assignment and any
  * rework feedback. At this bound it still fits beside them instead of being omitted whole.
@@ -30,22 +30,22 @@ const DIGEST_LIST_LIMIT = 100;
  * loser's artifact stays unreferenced.
  */
 export async function digested(
-  this: ResearchService,
+  ctx: ResearchContext,
   caller: Caller,
   record: ResearchRecord,
   tx: Transaction,
   late: boolean,
 ): Promise<Artifact> {
   if (record.digest) return record.digest;
-  const children = this.children(record);
-  const selected = (await this.workflows.prerequisites(caller, [record.id], tx))
+  const children = ctx.children(record);
+  const selected = (await ctx.workflows.prerequisites(caller, [record.id], tx))
     .get(record.id)!
     .filter((item) => !children.includes(item.id));
-  const artifact = await this.providers.artifacts.create(
+  const artifact = await ctx.providers.artifacts.create(
     caller,
     {
       title: `Cycle digest: ${clip(record.name, 180)}`,
-      content: JSON.stringify(await this.compose(caller, record, selected, tx, late)),
+      content: JSON.stringify(await compose(ctx, caller, record, selected, tx, late)),
       mediaType: 'application/json',
     },
     tx,
@@ -55,22 +55,22 @@ export async function digested(
     JSON.stringify(artifact),
     record.id,
   );
-  const stored = JSON.parse((await this.row(caller, record.id, tx)).digest!) as Artifact;
+  const stored = JSON.parse((await ctx.row(caller, record.id, tx)).digest!) as Artifact;
   if (stored.id === artifact.id)
-    await this.event(caller, 'digested', record.id, { artifactId: artifact.id, late }, tx);
+    await ctx.event(caller, 'digested', record.id, { artifactId: artifact.id, late }, tx);
   return stored;
 }
 
 /** Derived from records only, and naming no actor: see ResearchDigest. */
 export async function compose(
-  this: ResearchService,
+  ctx: ResearchContext,
   caller: Caller,
   record: ResearchRecord,
   selected: WorkflowDependency[],
   tx: Transaction,
   late: boolean,
 ): Promise<ResearchDigest> {
-  const { reflections, code } = this.providers;
+  const { reflections, code } = ctx.providers;
   const text = (value: string) => clip(value, DIGEST_TEXT_CHARS);
   const ref = ({ id, title, hash }: Artifact) => ({ id, title: text(title), hash });
   // A cycle ended while reflecting has a child with nothing approved in it.
@@ -94,10 +94,10 @@ export async function compose(
     ...new Set(selected.filter((item) => item.workflow === workflow).map((item) => item.id)),
   ];
   const experiments = (
-    await mapAsync(ids('experiment'), (id) => this.providers.experiments.get(caller, id, tx))
+    await mapAsync(ids('experiment'), (id) => ctx.providers.experiments.get(caller, id, tx))
   ).sort(byCreated);
   const tasks = (
-    await mapAsync(ids('task'), (id) => this.providers.tasks.record(caller, id, tx))
+    await mapAsync(ids('task'), (id) => ctx.providers.tasks.record(caller, id, tx))
   ).sort(byCreated);
   const lists = {
     experiments: experiments.map((entry) => ({

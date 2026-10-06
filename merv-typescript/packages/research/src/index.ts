@@ -28,27 +28,18 @@ import type { Context } from 'cordis';
 import {
   AUTOMATIC_PROVIDER,
   bindAutomatic,
-  closeBlockedWork,
   publishBlocker,
-  reconcileAutomatic,
-  retryUnavailable,
-  soon,
-  wakeAutomatic,
   type AutomaticRow,
 } from './automatic.js';
-import { compose, digested } from './compose.js';
+import { digested } from './compose.js';
 import { postgresMigrations } from './index.postgres.js';
 import { advanceSchema, createSchema, endSchema, getSchema, parse, replanSchema } from './input.js';
 import {
-  asked,
   begin,
-  checkAutomaticContinuation,
   continuing,
-  creatable,
   follow,
   inject,
   materialise,
-  move,
   ready,
   unpublished,
   type Choice,
@@ -96,30 +87,34 @@ export type StoredRecord = Pick<
   'id' | 'projectId' | 'ownerId' | 'name' | 'createdAt' | 'researchDependencies'
 > & { origin?: Omit<ResearchOrigin, 'researchId'> };
 
+/**
+ * What the modules read of the service: the gate's policy (policy.ts), how a cycle moves
+ * (integration.ts), its digest (compose.ts) and automatic progress (automatic.ts).
+ */
+export type ResearchContext = Pick<
+  ResearchService,
+  | 'advance'
+  | 'authorize'
+  | 'checked'
+  | 'children'
+  | 'closed'
+  | 'definition'
+  | 'detached'
+  | 'event'
+  | 'get'
+  | 'handle'
+  | 'open'
+  | 'providers'
+  | 'retryAfterMs'
+  | 'retrying'
+  | 'row'
+  | 'scope'
+  | 'state'
+  | 'unavailableForMs'
+  | 'workflows'
+>;
 /** A small coordinator over existing workflows; child programs own their actual assignments. */
 export class ResearchService implements Research {
-  // The gate's policy (policy.ts), how a cycle moves (integration.ts), its digest (compose.ts)
-  // and automatic progress (automatic.ts) are this service's own methods, kept by concept.
-  readonly policy = policy;
-  readonly follow = follow;
-  readonly begin = begin;
-  readonly ready = ready;
-  readonly move = move;
-  readonly asked: typeof asked = asked;
-  readonly continuing = continuing;
-  readonly creatable = creatable;
-  readonly checkAutomaticContinuation = checkAutomaticContinuation;
-  readonly materialise = materialise;
-  readonly inject = inject;
-  readonly unpublished = unpublished;
-  readonly digested = digested;
-  readonly compose = compose;
-  readonly bindAutomatic = bindAutomatic;
-  readonly retryUnavailable = retryUnavailable;
-  readonly wakeAutomatic = wakeAutomatic;
-  readonly reconcileAutomatic = reconcileAutomatic;
-  readonly soon = soon;
-  readonly closeBlockedWork = closeBlockedWork;
   closed = false;
   /** How long a cycle an outage refused waits before it is tried again. */
   retryAfterMs = 30_000;
@@ -140,7 +135,7 @@ export class ResearchService implements Research {
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
     await this.state.migrate('research', postgresMigrations);
-    this.handle = await this.workflows.register(definition, this.policy());
+    this.handle = await this.workflows.register(definition, policy(this));
   }
 
   open() {
@@ -177,7 +172,7 @@ export class ResearchService implements Research {
           !successorId &&
           row.cycle_index >= row.max_cycles &&
           // A reflection that cannot be read leaves the limit as what it may have been.
-          !!(await this.continuing(caller, record as ResearchRecord, tx, 'complete').catch(
+          !!(await continuing(this, caller, record as ResearchRecord, tx, 'complete').catch(
             () => true,
           ))
             ? {
@@ -282,8 +277,8 @@ export class ResearchService implements Research {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'write', tx);
       return await this.command(caller, 'create', input, tx, async () => {
-        if (input.previousCycleId) await this.follow(caller, input.previousCycleId, tx);
-        return await this.begin(caller, input, 'create', null, tx);
+        if (input.previousCycleId) await follow(this, caller, input.previousCycleId, tx);
+        return await begin(this, caller, input, 'create', null, tx);
       });
     });
   }
@@ -419,7 +414,7 @@ export class ResearchService implements Research {
           tx,
         );
         const ended = await this.get(caller, record.id, tx);
-        ended.digest = await this.digested(caller, ended, tx, false);
+        ended.digest = await digested(this, caller, ended, tx, false);
         return ended;
       });
     });
@@ -434,7 +429,7 @@ export class ResearchService implements Research {
     caller = structuredClone(caller);
     const input = parse(advanceSchema, value);
     // Git answers what main lacks outside every transaction, so it is asked before this opens.
-    const since = await this.unpublished(caller, input.researchId, transaction);
+    const since = await unpublished(this, caller, input.researchId, transaction);
     return await inTransaction(this.state, transaction, async (tx) => {
       const record = await this.get(caller, input.researchId, tx);
       await this.authorize(caller, record, tx);
@@ -446,7 +441,7 @@ export class ResearchService implements Research {
           409,
         );
         const handle = this.handle!;
-        const { move, continuing, abandoned } = await this.ready(caller, record, tx, input, since);
+        const { move, continuing, abandoned } = await ready(this, caller, record, tx, input, since);
         const injecting = move === 'inject' || move === 'reinject';
         check(
           !continuing || input.nextWave,
@@ -456,7 +451,7 @@ export class ResearchService implements Research {
         );
         const childIds: string[] = [];
         if (injecting)
-          childIds.push(await this.inject(caller, record, since!, input.requestId, tx));
+          childIds.push(await inject(this, caller, record, since!, input.requestId, tx));
         switch (record.workflow.state as Stage) {
           case 'defining': {
             const problem = await this.definition(caller, tx);
@@ -471,7 +466,8 @@ export class ResearchService implements Research {
             // A predecessor a plan opened this cycle from may have no digest yet; it is
             // composed now, late.
             const carried = record.previousCycleId
-              ? await this.digested(
+              ? await digested(
+                  this,
                   caller,
                   await this.get(caller, record.previousCycleId, tx),
                   tx,
@@ -525,7 +521,7 @@ export class ResearchService implements Research {
         // After the move, so every guard judged the project as it was before the plan's work
         // existed: seven planned experiments would otherwise refuse themselves.
         const successor = continuing
-          ? await this.materialise(caller, record, continuing, input.requestId, tx)
+          ? await materialise(this, caller, record, continuing, input.requestId, tx)
           : undefined;
         if (injecting)
           await tx.run(
@@ -572,7 +568,7 @@ export class ResearchService implements Research {
         );
         const advanced = await this.get(caller, record.id, tx);
         if (moved.state === 'complete')
-          advanced.digest = await this.digested(caller, advanced, tx, false);
+          advanced.digest = await digested(this, caller, advanced, tx, false);
         return advanced;
       });
     });
@@ -625,7 +621,7 @@ export const researchPlugin = {
         }),
       );
       yield () => service.close();
-      yield await service.bindAutomatic(ctx.domainEvents);
+      yield await bindAutomatic(service, ctx.domainEvents);
       yield ctx.provide('research', service);
     });
   },

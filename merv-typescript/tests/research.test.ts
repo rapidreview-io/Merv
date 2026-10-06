@@ -9,6 +9,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
+import { bindAutomatic, wakeAutomatic } from '../packages/research/src/automatic.js';
 import { ResearchService } from '../packages/research/src/index.js';
 import type { ResearchDigest, ResearchRecord } from '../packages/research/src/types.js';
 import { createApp } from './fixtures/app.js';
@@ -1801,7 +1802,7 @@ test('an automatic v2 wave exposes Code absence and rolls back before retry', as
   const approved = await f.app.ctx.reflections.approved(f.owner, record.reflectionId!);
   const before = await counts(f);
   await f.code(false);
-  const release = await f.research.bindAutomatic(f.app.ctx.domainEvents);
+  const release = await bindAutomatic(f.research, f.app.ctx.domainEvents);
   try {
     await f.app.ctx.domainEvents.drain();
     const blocked = await f.research.get(f.owner, record.id);
@@ -1810,7 +1811,7 @@ test('an automatic v2 wave exposes Code absence and rolls back before retry', as
     assert.deepEqual(await counts(f), before);
     assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
     await f.code(true);
-    await f.research.wakeAutomatic();
+    await wakeAutomatic(f.research);
     // The advance asks Git outside the consumer's transaction and commits on its own, after the
     // delivery that woke it, so what it moves is delivered in a later pass.
     const deadline = Date.now() + 5000;

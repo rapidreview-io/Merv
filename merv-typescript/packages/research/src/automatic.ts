@@ -12,7 +12,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
-import type { ResearchService } from './index.js';
+import type { ResearchContext } from './index.js';
 import { definition } from './policy.js';
 import type { ResearchAdvance, ResearchRecord } from './types.js';
 
@@ -161,24 +161,24 @@ export const automaticBlocker = (error: MervError): AutomaticBlocker => ({
 export const automaticRequest = (cycle: string, revision: number, action: string) =>
   `research-auto:${digest({ cycle, revision, action })}`;
 
-// Automatic progress, as ResearchService (index.ts) runs it as its own methods: binding the
+// Automatic progress, run on ResearchService (index.ts) as its ResearchContext: binding the
 // consumer, waking cycles, the advance it makes, and closing work a failed input stranded.
 /** Subscribe through the existing engine's durable events; workers keep their fixed grants. */
 export async function bindAutomatic(
-  this: ResearchService,
+  ctx: ResearchContext,
   events: DomainEvents,
 ): Promise<() => void | Promise<void>> {
-  this.open();
+  ctx.open();
   const release = await automaticResearch(
-    this.state,
-    this.scope,
-    this.workflows,
+    ctx.state,
+    ctx.scope,
+    ctx.workflows,
     events,
-    async (caller, row, tx) => await this.reconcileAutomatic(caller, row, tx),
-    (row) => this.retryUnavailable(row),
+    async (caller, row, tx) => await reconcileAutomatic(ctx, caller, row, tx),
+    (row) => retryUnavailable(ctx, row),
   );
   try {
-    await this.wakeAutomatic();
+    await wakeAutomatic(ctx);
   } catch (error) {
     await release();
     throw error;
@@ -195,28 +195,28 @@ export async function bindAutomatic(
  * when this retry was first asked for.
  */
 export function retryUnavailable(
-  this: ResearchService,
+  ctx: ResearchContext,
   row: AutomaticRow,
   since = Date.now(),
 ): void {
-  if (this.retrying.has(row.project_id)) return;
-  this.retrying.add(row.project_id);
+  if (ctx.retrying.has(row.project_id)) return;
+  ctx.retrying.add(row.project_id);
   const wake = async () => {
-    this.retrying.delete(row.project_id);
-    if (this.closed) return;
+    ctx.retrying.delete(row.project_id);
+    if (ctx.closed) return;
     const source = JSON.parse(row.source_json) as DelegationSource;
-    await this.state.transaction(async (tx) => {
+    await ctx.state.transaction(async (tx) => {
       const out = await tx.all<{ blocker_json: string | null }>(
         'SELECT blocker_json FROM research_automation WHERE project_id=? AND blocker_json IS NOT NULL',
         row.project_id,
       );
       if (
         !out.some(
-          (item) => Date.now() - unavailableSince(item.blocker_json) <= this.unavailableForMs,
+          (item) => Date.now() - unavailableSince(item.blocker_json) <= ctx.unavailableForMs,
         )
       )
         return;
-      await this.state.appendEvent(tx, {
+      await ctx.state.appendEvent(tx, {
         projectId: row.project_id,
         actorId: source.actorId,
         type: 'research.resume',
@@ -228,23 +228,23 @@ export function retryUnavailable(
   // Outside the consumer's transaction context, which ends before this runs.
   const retry = () =>
     void wake().catch(() => {
-      if (Date.now() - since < this.unavailableForMs) this.retryUnavailable(row, since);
+      if (Date.now() - since < ctx.unavailableForMs) retryUnavailable(ctx, row, since);
     });
-  this.detached(() => setTimeout(retry, this.retryAfterMs).unref());
+  ctx.detached(() => setTimeout(retry, ctx.retryAfterMs).unref());
 }
 
 /** Startup must also revisit events previously consumed while blocked. */
-export async function wakeAutomatic(this: ResearchService): Promise<void> {
-  if (this.closed) return;
-  await this.state.transaction(async (tx) => {
+export async function wakeAutomatic(ctx: ResearchContext): Promise<void> {
+  if (ctx.closed) return;
+  await ctx.state.transaction(async (tx) => {
     // One resume per project: its consumer reconciles every open cycle there.
-    const cycles = await this.workflows.open('research', null, tx);
+    const cycles = await ctx.workflows.open('research', null, tx);
     const rows = await tx.all<{ project_id: string; source_json: string; research_id: string }>(
       'SELECT DISTINCT ON (project_id) project_id,source_json,research_id FROM research_automation WHERE research_id IN (SELECT jsonb_array_elements_text(?::jsonb)) ORDER BY project_id,cycle_index,research_id',
       JSON.stringify(cycles.map((cycle) => cycle.id)),
     );
     for (const row of rows)
-      await this.state.appendEvent(tx, {
+      await ctx.state.appendEvent(tx, {
         projectId: row.project_id,
         actorId: JSON.parse(row.source_json).actorId,
         type: 'research.resume',
@@ -255,18 +255,18 @@ export async function wakeAutomatic(this: ResearchService): Promise<void> {
 }
 
 export async function reconcileAutomatic(
-  this: ResearchService,
+  ctx: ResearchContext,
   caller: Caller,
   automatic: AutomaticRow,
   tx: Transaction,
 ): Promise<AutomaticBlocker> {
-  this.open();
-  const record = await this.get(caller, automatic.research_id, tx);
-  await this.authorize(caller, record, tx);
+  ctx.open();
+  const record = await ctx.get(caller, automatic.research_id, tx);
+  await ctx.authorize(caller, record, tx);
   if (definition.terminal.includes(record.workflow.state)) return null;
   if (record.workflow.state === 'defining' && record.previousCycleId) {
-    const previous = await this.get(caller, record.previousCycleId, tx);
-    const current = await this.definition(caller, tx);
+    const previous = await ctx.get(caller, record.previousCycleId, tx);
+    const current = await ctx.definition(caller, tx);
     check(
       !previous.problem || current.revision === previous.problem.revision,
       'research_definition_changed',
@@ -274,10 +274,10 @@ export async function reconcileAutomatic(
       409,
     );
   }
-  if (record.workflow.state === 'researching') await this.closeBlockedWork(caller, record, tx);
+  if (record.workflow.state === 'researching') await closeBlockedWork(ctx, caller, record, tx);
   const atLimit = automatic.cycle_index >= automatic.max_cycles;
   const nextWave = atLimit ? 'skip' : 'create';
-  const guidance = await this.workflows.evaluate(
+  const guidance = await ctx.workflows.evaluate(
     caller,
     record.id,
     {
@@ -301,14 +301,14 @@ export async function reconcileAutomatic(
   };
   let advanced: ResearchRecord;
   try {
-    advanced = await this.advance(caller, input, tx);
+    advanced = await ctx.advance(caller, input, tx);
   } catch (error) {
     // Git is asked outside every transaction, so the same advance runs again on its own.
     if (error instanceof MervError && error.code === 'integration_candidates_unavailable')
-      this.soon(caller, automatic, input, automaticBlocker(error));
+      soon(ctx, caller, automatic, input, automaticBlocker(error));
     throw error;
   }
-  await this.event(
+  await ctx.event(
     caller,
     'automatically_advanced',
     record.id,
@@ -330,34 +330,34 @@ export async function reconcileAutomatic(
  * overwritten and nothing loops: the marker returns on the next event, today's retry cadence.
  */
 export function soon(
-  this: ResearchService,
+  ctx: ResearchContext,
   caller: Caller,
   row: AutomaticRow,
   input: ResearchAdvance,
   marker: AutomaticBlocker,
 ): void {
-  if (this.closed) return;
+  if (ctx.closed) return;
   const run = async () => {
     try {
-      await this.advance(caller, input);
+      await ctx.advance(caller, input);
     } catch (error) {
       if (
-        this.closed ||
+        ctx.closed ||
         !(error instanceof MervError) ||
         (error.status >= 500 && error.status !== 503)
       )
         return;
-      await this.state.transaction(async (tx) => {
-        const left = (await this.workflows.blockers(caller, row.research_id, tx)).find(
+      await ctx.state.transaction(async (tx) => {
+        const left = (await ctx.workflows.blockers(caller, row.research_id, tx)).find(
           (item) => item.provider === AUTOMATIC_PROVIDER,
         );
         if (left?.code === marker?.code && left?.message === marker?.message)
-          await publishBlocker(this.workflows, row, automaticBlocker(error), tx);
+          await publishBlocker(ctx.workflows, row, automaticBlocker(error), tx);
       });
     }
   };
   // Outside the consumer's transaction, whose commit its own transaction waits for.
-  this.detached(() => queueMicrotask(() => void run().catch(() => undefined)));
+  ctx.detached(() => queueMicrotask(() => void run().catch(() => undefined)));
 }
 
 /**
@@ -365,18 +365,18 @@ export function soon(
  * work between it and that input.
  */
 export async function closeBlockedWork(
-  this: ResearchService,
+  ctx: ResearchContext,
   caller: Caller,
   record: ResearchRecord,
   tx: Transaction,
 ) {
   const remaining = new Set<string>();
   for (const id of record.researchDependencies)
-    for (const item of await this.workflows.dependencyClosure(caller, id, tx)) remaining.add(item);
+    for (const item of await ctx.workflows.dependencyClosure(caller, id, tx)) remaining.add(item);
   for (let pass = 0, passes = remaining.size; remaining.size && pass < passes; pass++) {
     let changed = false;
     for (const id of [...remaining]) {
-      const work = await this.workflows.get(caller, id, tx);
+      const work = await ctx.workflows.get(caller, id, tx);
       if (
         !['task', 'experiment'].includes(work.workflow) ||
         !['in_progress', 'planned'].includes(work.state)
@@ -385,11 +385,11 @@ export async function closeBlockedWork(
         continue;
       }
       // Never cancel a running producer or review to close a wave.
-      if ((await this.workflows.workStarts(caller, id, tx)).length) {
+      if ((await ctx.workflows.workStarts(caller, id, tx)).length) {
         remaining.delete(id);
         continue;
       }
-      const failed = (await this.workflows.prerequisites(caller, [id], tx))
+      const failed = (await ctx.workflows.prerequisites(caller, [id], tx))
         .get(id)!
         .filter((item) => item.failed);
       if (!failed.length) continue;
@@ -403,13 +403,13 @@ export async function closeBlockedWork(
       );
       const requestId = automaticRequest(record.id, work.revision, `close:${id}`);
       if (work.workflow === 'task') {
-        await this.providers.tasks.markFailed(
+        await ctx.providers.tasks.markFailed(
           caller,
           { taskId: id, expectedRevision: work.revision, reason, requestId },
           tx,
         );
       } else {
-        await this.providers.experiments.transition(
+        await ctx.providers.experiments.transition(
           caller,
           {
             experimentId: id,
@@ -421,7 +421,7 @@ export async function closeBlockedWork(
           tx,
         );
       }
-      await this.event(
+      await ctx.event(
         caller,
         'blocked_work_closed',
         record.id,

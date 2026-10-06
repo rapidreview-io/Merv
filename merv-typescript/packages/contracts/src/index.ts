@@ -495,6 +495,11 @@ export async function createService<T extends { initialize(): Promise<void> }>(
   await service.initialize();
   return service;
 }
+/** A service module's function run on one service, which it takes as its first argument. */
+export const bound =
+  <C, A extends unknown[], R>(ctx: C, run: (ctx: C, ...args: A) => R) =>
+  (...args: A): R =>
+    run(ctx, ...args);
 export interface Sql {
   run(sql: string, ...params: SqlValue[]): Promise<{ changes: number }>;
   get<T = Record<string, unknown>>(sql: string, ...params: SqlValue[]): Promise<T | undefined>;

@@ -21,7 +21,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from './types.js';
-import type { ReflectionService } from './index.js';
+import type { ReflectionsContext } from './index.js';
 import { lensName } from './names.js';
 
 /**
@@ -253,15 +253,16 @@ export function wavePanel(
   };
 }
 
-// The Running page's reads of a wave, which ReflectionService (index.ts) runs as its own methods.
+// The Running page's reads of a wave. Each runs on ReflectionService (index.ts) as its
+// ReflectionsContext.
 /** What the Running page says of one wave: its record, every lease on it, its review limit. */
 export async function runningFacts(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   id: string,
   tx: Transaction,
 ): Promise<WaveFacts> {
-  const wave = await this.wave(caller, id, tx, true);
+  const wave = await ctx.wave(caller, id, tx, true);
   const ids = [wave.id, ...wave.lenses.map((lens) => lens.id)];
   const leases = await leaseRows(tx, { projectId: caller.projectId, instanceIds: ids });
   return {
@@ -275,11 +276,11 @@ export async function runningFacts(
     // The returns are counted from review, so only a wave in review can have used them up.
     exhausted:
       wave.workflow.state === 'in_review' &&
-      !!(await this.workflows.limitStatusOf(caller, [id], 'review_returns', tx)).get(id)?.exhausted,
+      !!(await ctx.workflows.limitStatusOf(caller, [id], 'review_returns', tx)).get(id)?.exhausted,
   };
 }
 export async function running(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   include: Iterable<RunningKey> = [],
   transaction?: Transaction,
@@ -288,8 +289,8 @@ export async function running(
   // A mark may name the wave, or one of its lenses, which the wave draws.
   const held = [...include].filter((key) => keyKind(key) === 'work').map(keyId);
   const listed = held.map(() => '?').join(',');
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.read(caller, tx);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.read(caller, tx);
     const waves = await tx.all<{ id: string }>(
       `SELECT id FROM reflections WHERE project_id=? AND (approved IS NULL AND abandoned IS NULL${
         held.length
@@ -303,7 +304,7 @@ export async function running(
     // other waves are drawn.
     const nodes = await mapAsync(waves, async ({ id }) => {
       try {
-        return waveNode(await this.runningFacts(caller, id, tx));
+        return waveNode(await runningFacts(ctx, caller, id, tx));
       } catch (error) {
         if (error instanceof MervError && error.status === 404) return null;
         throw error;
@@ -313,22 +314,22 @@ export async function running(
   });
 }
 export async function runningPanel(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   id: string,
   route?: WorkRoute,
 ): Promise<RunningPanelPart | null> {
   caller = structuredClone(caller);
-  const facts = await this.state.transaction(async (tx) => {
-    await this.read(caller, tx);
+  const facts = await ctx.state.transaction(async (tx) => {
+    await ctx.read(caller, tx);
     // Any other work key is another owner's, and a lens is drawn by its wave.
     const wave = await tx.get<{ id: string }>(
       'SELECT id FROM reflections WHERE id=? AND project_id=?',
       id,
       caller.projectId,
     );
-    return wave ? await this.runningFacts(caller, id, tx) : null;
+    return wave ? await runningFacts(ctx, caller, id, tx) : null;
   });
   // Workflows reads the ladder in a transaction of its own, as it does for Tasks.process.
-  return facts && wavePanel(facts, await this.workflows.process(caller, id), route);
+  return facts && wavePanel(facts, await ctx.workflows.process(caller, id), route);
 }

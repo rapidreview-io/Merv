@@ -1,7 +1,7 @@
 import { excludedFromReview, directsIndependently, standings } from './rules.js';
 import { canonical, visible, isDirectHuman } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
-import { createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
+import { bound, createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { leaseReleaseConsumer } from '@merv/workflows/lease-rows';
 import type { Context } from 'cordis';
@@ -27,15 +27,13 @@ import {
 } from '@merv/contracts';
 import { EARLIER, reviewSections } from './running.js';
 import { freeze, hydrate, type ReviewRow } from './rows.js';
-import { reissue, request, requireAdministration, saveRequest, supersede } from './requests.js';
+import { reissue, request, supersede } from './requests.js';
 import {
   actorPermissionsChanged,
   actorRevoked,
   checkStart,
   checkSubmit,
   releaseClaim,
-  releaseClaims,
-  requireLiveClaim,
   start,
   submit,
   validateReturnTo,
@@ -62,24 +60,23 @@ const submitFields: ReadonlySet<string> = new Set([
 const projectOwner = (caller: Caller, actor: Actor) =>
   actor.role === 'operator' && !!actor.user && isDirectHuman(caller);
 
+/** What the producer's side (requests.ts) and the reviewer's (claims.ts) read of the service. */
+export type ReviewsContext = Pick<
+  ReviewService,
+  'artifacts' | 'certificate' | 'command' | 'independent' | 'ownerOf' | 'row' | 'scope' | 'state'
+>;
 /** Generic assessment of immutable evidence. Target state changes belong to the integrating program. */
 export class ReviewService implements Reviews {
-  // The producer's side (requests.ts) and the reviewer's (claims.ts). Only the Reviews contract
-  // is public; the rest are theirs.
-  readonly request = request;
-  readonly reissue = reissue;
-  readonly supersede = supersede;
-  readonly requireAdministration = requireAdministration;
-  readonly saveRequest = saveRequest;
-  readonly checkStart = checkStart;
-  readonly start = start;
-  readonly checkSubmit = checkSubmit;
-  readonly submit = submit;
-  readonly releaseClaim = releaseClaim;
-  readonly actorRevoked = actorRevoked;
-  readonly actorPermissionsChanged = actorPermissionsChanged;
-  readonly requireLiveClaim = requireLiveClaim;
-  readonly releaseClaims = releaseClaims;
+  // The producer's side (requests.ts) and the reviewer's (claims.ts) run on this service as their
+  // ReviewsContext; the Reviews contract's share of them is bound here.
+  readonly request = bound(this, request);
+  readonly reissue = bound(this, reissue);
+  readonly supersede = bound(this, supersede);
+  readonly checkStart = bound(this, checkStart);
+  readonly start = bound(this, start);
+  readonly checkSubmit = bound(this, checkSubmit);
+  readonly submit = bound(this, submit);
+  readonly releaseClaim = bound(this, releaseClaim);
   private readonly owners = new Map<string, Readonly<ReviewSubmitOwner>>();
   private readonly provenanceOwners = new Map<string, ReviewProvenanceResolver>();
   private ownerEpoch = 0;
@@ -564,13 +561,13 @@ export const reviewsPlugin = {
         id: 'reviews.actor-revoked.v1',
         types: ['actor.revoked'],
         from: 'beginning',
-        handle: async (event, tx) => await reviews.actorRevoked(event, tx),
+        handle: async (event, tx) => await actorRevoked(reviews, event, tx),
       });
       yield await ctx.domainEvents.subscribe({
         id: 'reviews.actor-permissions-changed.v1',
         types: ['actor.permissions_changed'],
         from: 'beginning',
-        handle: async (event, tx) => await reviews.actorPermissionsChanged(event, tx),
+        handle: async (event, tx) => await actorPermissionsChanged(reviews, event, tx),
       });
       // A closed worker session releases its workflow lease, and the review claim it held.
       yield await ctx.domainEvents.subscribe(

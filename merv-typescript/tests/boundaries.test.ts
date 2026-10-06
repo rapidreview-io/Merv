@@ -97,7 +97,16 @@ const capabilities: Record<string, readonly string[]> = {
     'codeWork',
   ],
   paper: ['state', 'scope', 'artifacts'],
-  reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
+  reflections: [
+    'state',
+    'scope',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'paper',
+    'sessions',
+  ],
   workflows: ['state', 'scope'],
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
   tasks: ['state', 'scope', 'workflows', 'artifacts', 'reviews', 'contextBuilder', 'paper'],
@@ -134,8 +143,6 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   codeWork: ['reviews', 'sandboxes'],
   experiments: ['codeWork', 'sandboxes'],
   knowledge: ['codeWork'],
-  // A lens's continuity key, registered while Sessions is loaded; without it no session runs.
-  reflections: ['sessions'],
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.
