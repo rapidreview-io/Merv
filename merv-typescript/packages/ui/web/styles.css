@@ -6020,6 +6020,12 @@ details.running-section > summary {
   border-style: dashed;
   color: var(--faint);
 }
+/* A live visit whose lease lapsed: its machine went quiet or offline. */
+.agent-chip--bad,
+.agent-chip--bad:hover {
+  border-color: var(--refutes);
+  color: var(--refutes);
+}
 .thread-dialog {
   width: min(960px, calc(100vw - 32px));
   max-height: calc(100vh - 64px);

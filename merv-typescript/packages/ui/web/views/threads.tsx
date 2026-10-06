@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { runningKey } from '@merv/contracts/running';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
+import type { ThreadConversation, ThreadView, VisitView } from '@merv/sessions/models';
 import { useTool } from '../api';
 import { Live, LoadState, Ruled, Stamp, col, cx, stamp, useNow, words } from '../components';
 import { CloseIcon } from '../icons';
 import { clock, elapsed, type Clock } from '../liveness';
 import { StageList } from '../process';
 import { useReadsAgents } from '../session';
-import type { ThreadConversation, ThreadList, ThreadView, VisitView } from '../thread-view';
 import { AgentConversation, type ConversationVisit } from './agent-live';
 import { leaseLiveness } from './agent-sessions-panel';
 import { Target } from './running-phrase';
@@ -55,6 +55,12 @@ const liveLine = (thread: ThreadView, now: Clock) => {
         .join(' · ')
     : undefined;
 };
+/**
+ * A live visit whose lease ran out: its machine went quiet or offline, and Sessions' liveness
+ * says `lapsed`, the one verdict it calls bad.
+ */
+const lapsed = (thread: ThreadView) =>
+  thread.visits.some((visit) => visit.liveness?.verdict === 'lapsed');
 const threadName = (thread: ThreadView) =>
   `${capital(words(thread.role))} · ${words(thread.state)} · ${thread.status}`;
 
@@ -69,7 +75,11 @@ function ThreadChip({ thread, now, onOpen }: { thread: ThreadView; now: Clock; o
   return (
     <button
       type="button"
-      className={cx('agent-chip', thread.status === 'retired' && 'agent-chip--retired')}
+      className={cx(
+        'agent-chip',
+        thread.status === 'retired' && 'agent-chip--retired',
+        lapsed(thread) && 'agent-chip--bad',
+      )}
       aria-haspopup="dialog"
       title={thread.status === 'retired' ? 'Retired thread' : liveLine(thread, now)}
       onClick={onOpen}
@@ -159,24 +169,28 @@ function Conversation({ thread, label }: { thread: ThreadView; label: string }) 
   }, [liveId, reload]);
   const visits = useMemo(() => {
     const names = visitNames(thread);
-    return thread.visits.flatMap((visit): ConversationVisit[] =>
-      visit.launched
-        ? [
-            {
-              sessionId: visit.sessionId,
-              divider: [names.get(visit.sessionId), stamp(visit.startedAt ?? visit.offeredAt)].join(
-                ' · ',
-              ),
-              ...(active(visit)
-                ? { stream: `/sessions/${encodeURIComponent(visit.sessionId)}/events` }
-                : {
-                    events: kept.data?.visits.find((item) => item.sessionId === visit.sessionId)
-                      ?.events,
-                  }),
-            },
+    return thread.visits.flatMap((visit): ConversationVisit[] => {
+      if (!visit.launched) return [];
+      // Sessions sends each visit's live stream while it keeps it, else its stored transcript,
+      // else nothing (`from: 'none'`), which the divider says.
+      const said = kept.data?.visits.find((item) => item.sessionId === visit.sessionId);
+      const live = active(visit);
+      return [
+        {
+          sessionId: visit.sessionId,
+          divider: [
+            names.get(visit.sessionId),
+            stamp(visit.startedAt ?? visit.offeredAt),
+            !live && said?.from === 'none' && 'nothing kept',
           ]
-        : [],
-    );
+            .filter(Boolean)
+            .join(' · '),
+          ...(live
+            ? { stream: `/sessions/${encodeURIComponent(visit.sessionId)}/events` }
+            : { events: said?.events }),
+        },
+      ];
+    });
   }, [thread, kept.data]);
   if (!kept.data && !liveId) return <LoadState {...kept} />;
   return <AgentConversation key={liveId ?? ''} label={label} visits={visits} />;
@@ -273,7 +287,7 @@ function ThreadDialog({
  */
 export function ThreadStages({ graph, title }: { graph: ProcessGraph; title: string }) {
   const [every, setEvery] = useState(10_000);
-  const list = useTool<ThreadList>(
+  const list = useTool<{ threads: ThreadView[] }>(
     `/sessions/threads?instanceId=${encodeURIComponent(graph.instanceId)}`,
     {},
     { every },

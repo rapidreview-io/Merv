@@ -141,13 +141,14 @@ const threads = [
 ];
 const said = (id: string, text: string) => ({
   sessionId: id,
+  from: 'transcript',
   events: [{ seq: 1, at: at(2), event: { kind: 'text', id: 'a', delta: text, done: true } }],
 });
 
 /** The sidebars the page was asked to open, by key. */
 const opened: string[] = [];
 /** The card as the Work page's sidebar draws it, for a reader of this role. */
-async function open(role: string) {
+async function open(role: string, list: unknown[] = threads) {
   opened.length = 0;
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
   const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
@@ -156,9 +157,18 @@ async function open(role: string) {
     body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
   });
   serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
-  serve('/sessions/threads?instanceId=wf_1', { body: { threads } });
+  serve('/sessions/threads?instanceId=wf_1', { body: { threads: list } });
+  // Sessions' ThreadConversation: each visit says where its events came from.
   serve('/sessions/threads/thr_run/conversation', {
-    body: { visits: [said('ses_r1', 'First pass.'), said('ses_r4', 'Picked it up again.')] },
+    body: {
+      threadId: 'thr_run',
+      visits: [
+        said('ses_r1', 'First pass.'),
+        { sessionId: 'ses_r2', from: 'none', events: [] },
+        { sessionId: 'ses_r3', from: 'none', events: [] },
+        said('ses_r4', 'Picked it up again.'),
+      ],
+    },
   });
   await mount(
     createElement(
@@ -283,4 +293,27 @@ test('anyone else reads the visits alone, and never asks for the conversation', 
   assert.equal(document.querySelectorAll('.ruled-row').length, 4);
   assert.ok(!requests.some((request) => request.includes('/conversation')));
   assert.ok(dialogText().includes('Launch failed'));
+});
+
+test('a stage’s chip turns red while its live visit’s lease has lapsed, and only then', async (t) => {
+  t.after(unmount);
+  const live = threads[1]!;
+  const lapsed = {
+    ...live,
+    visits: [
+      {
+        ...live.visits[0]!,
+        liveness: { verdict: 'lapsed', tone: 'bad', rest: ['lease ran out · ', { since: at(31) }] },
+      },
+    ],
+  };
+  await open('reader', [threads[0], lapsed]);
+  assert.ok(chip('design_review').classList.contains('agent-chip--bad'));
+  assert.match(chip('design_review').getAttribute('title')!, /^lapsed · lease ran out/i);
+  assert.ok(!chip('planned').classList.contains('agent-chip--bad'));
+  unmount();
+
+  // An active lease, and a thread with no live visit, are never red.
+  await open('reader');
+  assert.equal(document.querySelectorAll('.agent-chip--bad').length, 0);
 });
