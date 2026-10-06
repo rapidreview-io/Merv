@@ -8,7 +8,7 @@ import {
   type MirrorTransport,
 } from '@merv/code/store/mirror';
 import type { CodeStore } from '@merv/code/store/operations';
-import type { Caller, Scope, State, Transaction, Workflows } from '@merv/contracts';
+import type { Caller, Reviews, Scope, State, Transaction, Workflows } from '@merv/contracts';
 import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositoryPrepareInput } from './models.js';
 import {
@@ -87,6 +87,7 @@ export class CodeService implements Code {
   private publicationHost: PublicationHost;
   private readonly board: CodeRunningReader;
   private publicationClosed = false;
+  private releaseProvenance?: () => void;
   private publicationTimer?: NodeJS.Timeout;
   private networkOperations = new Set<Promise<unknown>>();
   private network<T>(operation: () => Promise<T>): Promise<T> {
@@ -105,6 +106,7 @@ export class CodeService implements Code {
     private readonly scope: Scope,
     private readonly sessions: Sessions,
     private readonly workflows: Workflows,
+    private readonly reviews: Reviews,
     private readonly utility: Pick<
       CodeUtility,
       'github' | 'writers' | 'units' | 'openStore' | 'declareManaged' | 'repositories'
@@ -117,6 +119,7 @@ export class CodeService implements Code {
     this.publicationHost = new PublicationHost(
       state,
       scope,
+      reviews,
       utility.repositories,
       () => this.transport,
       async (caller, ref, oid) => {
@@ -187,8 +190,15 @@ export class CodeService implements Code {
           this.writerStore,
           utility.units,
           sessions,
+          this.reviews,
         ),
       );
+      // Reviews asks Code who contributed to a resolution before it lets anyone review it.
+      this.releaseProvenance = this.reviews
+        .provenance('code')
+        .register((projectId, subjectId, tx) =>
+          this.unitStore.reviewProvenance(projectId, subjectId, tx),
+        );
       this.unitStore.publications = this.publicationStore;
       // Bases come first: what the store's start finishes may derive units, which merge.
       const bases = new CodeBaseService(state, utility.repositories, {
@@ -218,8 +228,7 @@ export class CodeService implements Code {
       bases.start();
       await this.publicationStore.initialize();
       await migrateRepositorySync(state);
-      // The first pass waits a period, so Reviews, which every publication checks, is bound;
-      // a tick while a pass runs starts nothing, and closing stops the pass.
+      // A tick while a pass runs starts nothing, and closing stops the pass.
       let pass: Promise<unknown> | undefined;
       this.publicationTimer = setInterval(() => {
         pass ??= this.network(() => this.publicationStore.syncDue(() => this.publicationClosed))
@@ -289,20 +298,6 @@ export class CodeService implements Code {
     this.network(() => this.publicationStore.publicationDetails(...args));
   mergePublication: Code['mergePublication'] = (...args) =>
     this.network(() => this.publicationStore.mergePublication(...args));
-  bindReviews(reviews: import('@merv/contracts').Reviews): () => void {
-    this.unitStore.reviews = reviews;
-    const releasePublication = this.publicationHost.bindReviews(reviews);
-    const release = reviews
-      .provenance('code')
-      .register((projectId, subjectId, tx) =>
-        this.unitStore.reviewProvenance(projectId, subjectId, tx),
-      );
-    return () => {
-      release();
-      releasePublication();
-      if (this.unitStore.reviews === reviews) this.unitStore.reviews = undefined;
-    };
-  }
   /** The adapter that runs a project check. */
   bindChecks(sandboxes: import('@merv/sandboxes/types').Sandboxes): () => void {
     const bases = this.baseStore;
@@ -518,6 +513,8 @@ export class CodeService implements Code {
   }
   async close(): Promise<void> {
     this.publicationClosed = true;
+    this.releaseProvenance?.();
+    this.releaseProvenance = undefined;
     clearInterval(this.publicationTimer);
     // Stop scheduling immediately, then join the whole pass, including its final journal write.
     const mirroring = this.mirrorStore?.close();

@@ -49,10 +49,10 @@ type Controls = Omit<NonNullable<CodeProjectStatus['publication']>['controls'], 
 
 /** Hosted publication borrows the repository and admission journal; it never owns a credential. */
 export class PublicationHost {
-  private reviews?: { service: Pick<Reviews, 'get'> };
   constructor(
     private state: State,
     private scope: Scope,
+    private reviews: Pick<Reviews, 'get'>,
     private repositories: CodeRepositories,
     private mirror: () => MirrorTransport,
     private imported: (caller: Caller, ref: string, oid: string) => Promise<void>,
@@ -66,19 +66,8 @@ export class PublicationHost {
     ) => Promise<void>,
     private changed: (projectId: string, tx: Transaction) => Promise<void>,
   ) {}
-  bindReviews(service: Pick<Reviews, 'get'>): () => void {
-    const binding = { service };
-    this.reviews = binding;
-    return () => {
-      if (this.reviews === binding) this.reviews = undefined;
-    };
-  }
   async review(caller: Caller, reviewId: string, tx: Transaction) {
-    const binding = this.reviews;
-    check(binding, 'reviews_unavailable', 'Publication requires Reviews', 503);
-    const review = await binding.service.get(caller, reviewId, tx);
-    check(this.reviews === binding, 'reviews_unavailable', 'Publication requires Reviews', 503);
-    return review;
+    return await this.reviews.get(caller, reviewId, tx);
   }
   async check(caller: Caller, record: CodePublication, tx: Transaction) {
     if (record.destination !== 'local') {

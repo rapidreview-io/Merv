@@ -55,6 +55,7 @@ async function fixture(t: TestContext) {
       f.scope,
       f.sessions,
       f.workflows,
+      f.reviews,
       Object.assign(Object.create(core), { github: remote.github }),
       {
         config: { settleMs: 60_000 },
@@ -252,10 +253,8 @@ async function fixture(t: TestContext) {
     return await code.syncPublications(f.admin);
   };
   const unbind = f.bindCode(code);
-  const unbindReviews = code.bindReviews(f.reviews);
   f.beforeClose.push(async () => {
     unbind();
-    unbindReviews();
     await code.close();
     await core.close();
     repositories.git.close();

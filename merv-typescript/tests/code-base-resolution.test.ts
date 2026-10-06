@@ -37,7 +37,7 @@ async function fixture(t: TestContext, human = false) {
     }),
   );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, core),
   );
   const units = (code as unknown as { unitStore: CodeUnitService }).unitStore;
   // These tests drive their own base worker, whose Git they watch: Code's own one stops.
@@ -67,8 +67,6 @@ async function fixture(t: TestContext, human = false) {
   await bases.initialize();
   units.bases = bases;
   const unbind = f.bindCode(code);
-  const unbindReviews = code.bindReviews(f.reviews);
-  f.beforeClose.push(unbindReviews);
   const inputAuthor = {
     projectId: f.admin.projectId,
     actorId: (
@@ -417,7 +415,6 @@ async function fixture(t: TestContext, human = false) {
     handle,
     input,
     unbind,
-    unbindReviews,
     unsubscribe,
   };
 }
@@ -530,8 +527,9 @@ test('every reviewer excluded is visible on the resolution task and pinned revie
     JSON.stringify(await f.workflows.evaluate(f.admin, taskId)),
     /Every eligible reviewer/,
   );
+  // Closing Code Work withdraws the provenance it registered with Reviews.
   f.unbind();
-  f.unbindReviews();
+  await f.code.close();
   await assert.rejects(f.reviews.start(f.admin, request.id), { code: 'review_independence' });
   // What follows is the Reviews protocol alone: as the task's own review, only a leased worker
   // could claim it.

@@ -48,7 +48,7 @@ async function fixture(t: TestContext) {
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const managed = await managedServices(
-    { state, scope, artifacts, workflows },
+    { state, scope, artifacts, workflows, reviews },
     directory,
     operator,
   );

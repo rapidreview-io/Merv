@@ -11,7 +11,7 @@
   "serverPlugins": 69,
   "machinePlugins": 1,
   "directDependencyCount": 194,
-  "optionalDependencyCount": 16,
+  "optionalDependencyCount": 15,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -171,10 +171,10 @@
         "scope",
         "sessions",
         "workflows",
+        "reviews",
         "domainEvents"
       ],
       "optional": [
-        "reviews",
         "sandboxes"
       ],
       "kind": "service",

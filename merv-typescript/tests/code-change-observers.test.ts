@@ -19,6 +19,7 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
     'blobs',
     'artifacts',
     'sessions',
+    'reviews',
     'code',
     'code-work',
   ]);

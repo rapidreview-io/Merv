@@ -115,7 +115,11 @@ async function fixture(t: TestContext, limits?: { designRounds: number; resultRo
     workflows = await createService(new WorkflowsService(state, scope)),
     reviews = await createService(new ReviewService(state, scope, artifacts)),
     contextBuilder = await createService(new RecipeContextBuilder(state, scope, artifacts));
-  const managed = await managedServices({ state, scope, artifacts, workflows }, dir, operator);
+  const managed = await managedServices(
+    { state, scope, artifacts, workflows, reviews },
+    dir,
+    operator,
+  );
   let experiments = await createService(
       new ExperimentService(
         state,
@@ -872,7 +876,7 @@ test('A fresh storage connection restores attempts, immutable review pins, figur
     reviews = await createService(new ReviewService(state, scope, artifacts)),
     builder = await createService(new RecipeContextBuilder(state, scope, artifacts)),
     restoredManaged = await managedServices(
-      { state, scope, artifacts, workflows },
+      { state, scope, artifacts, workflows, reviews },
       f.directory,
       f.producer,
     ),

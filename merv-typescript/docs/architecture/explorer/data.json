@@ -184,7 +184,7 @@
       {
         "from": "codeWork",
         "to": "reviews",
-        "optional": true
+        "optional": false
       }
     ]
   },
@@ -633,10 +633,10 @@
         "scope",
         "sessions",
         "workflows",
+        "reviews",
         "domainEvents"
       ],
       "optional": [
-        "reviews",
         "sandboxes"
       ],
       "kind": "service",
@@ -3034,13 +3034,13 @@
     },
     {
       "from": "codeWork",
-      "to": "domainEvents",
+      "to": "reviews",
       "optional": false
     },
     {
       "from": "codeWork",
-      "to": "reviews",
-      "optional": true
+      "to": "domainEvents",
+      "optional": false
     },
     {
       "from": "codeWork",

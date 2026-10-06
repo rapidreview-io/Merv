@@ -4,6 +4,7 @@ import {
   createService,
   type Artifacts,
   type Caller,
+  type Reviews,
   type Scope,
   type State,
   type Workflows,
@@ -14,7 +15,13 @@ import { CodeService } from '@merv/code-work/service';
 
 /** Real Code storage for isolated owner-service tests of new-work creation. */
 export async function managedServices(
-  host: { state: State; scope: Scope; artifacts: Artifacts; workflows: Workflows },
+  host: {
+    state: State;
+    scope: Scope;
+    artifacts: Artifacts;
+    workflows: Workflows;
+    reviews: Reviews;
+  },
   directory: string,
   caller: Caller,
 ) {
@@ -32,7 +39,7 @@ export async function managedServices(
     }),
   );
   const code = await createService(
-    new CodeService(host.state, host.scope, sessions, host.workflows, core),
+    new CodeService(host.state, host.scope, sessions, host.workflows, host.reviews, core),
   );
   await host.state.transaction((tx) => code.ensureRepository(caller, tx));
   await (code as unknown as { store: { maintain(): Promise<void> } }).store.maintain();

@@ -22,6 +22,7 @@ import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeBaseService, INHERITED_QUARANTINE } from '../packages/code-work/src/bases.js';
 import { openState } from './fixtures/state.js';
+import { ReviewService } from '@merv/reviews';
 
 const oid = (char: string) => char.repeat(40);
 const repository = 'runner-repository';
@@ -78,7 +79,10 @@ async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-automatic-base-'));
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
+  );
+  const reviews = await createService(new ReviewService(state, scope, artifacts));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -89,7 +93,9 @@ async function fixture(t: TestContext) {
       repositories: { root: join(directory, 'code'), quotaBytes: 1024 ** 3, reservedFreeBytes: 1 },
     }),
   );
-  const code = await createService(new CodeService(state, scope, sessions, workflows, core));
+  const code = await createService(
+    new CodeService(state, scope, sessions, workflows, reviews, core),
+  );
   // The subscription the Code plugin makes, so a transition reaches Code as it does in the app.
   const unsubscribe = await events.subscribe({
     id: 'code.reconcile.v1',

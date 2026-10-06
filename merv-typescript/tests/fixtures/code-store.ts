@@ -21,6 +21,7 @@ import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeStoreConfig, FaultPoint } from '@merv/code/store/operations';
 import { boundProject } from './code-binding.js';
 import { openState, schemaFor } from './state.js';
+import { ReviewService } from '@merv/reviews';
 
 /** Git as a test runs it: no configuration of the machine or the user reaches it. */
 export function git(cwd: string, args: string[], input?: string | Buffer): string {
@@ -181,7 +182,10 @@ export async function codeStoreFixture(
   const schema = schemaFor();
   const state = await openState(undefined, { schema });
   const scope = await createService(new ProjectScope(state));
-  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
+  );
+  const reviews = await createService(new ReviewService(state, scope, artifacts));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -206,7 +210,7 @@ export async function codeStoreFixture(
         },
       }),
     );
-    code = new CodeService(state, scope, seen, workflows, core, {
+    code = new CodeService(state, scope, seen, workflows, reviews, core, {
       ...options,
       config: { settleMs: 60_000, ...config, ...options.config },
     });
@@ -234,7 +238,7 @@ export async function codeStoreFixture(
       repositories: { root, quotaBytes: 10 * 1024 ** 3, reservedFreeBytes: 1, ...config },
     }),
   );
-  code = await createService(new CodeService(state, scope, seen, workflows, core));
+  code = await createService(new CodeService(state, scope, seen, workflows, reviews, core));
   await boundProject(state, admin.projectId, mainOid, 'fixture-repository');
   await open();
   const paths = new CodeRepositories({ root, quotaBytes: 0, reservedFreeBytes: 0 }).paths(

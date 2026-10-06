@@ -64,7 +64,7 @@ async function fixture(t: TestContext) {
         },
       }),
     );
-    code = await createService(new CodeService(state, scope, sessions, workflows, core));
+    code = await createService(new CodeService(state, scope, sessions, workflows, reviews, core));
     tasks = await createService(
       new TaskService(state, scope, artifacts, workflows, reviews, builder, code, blankPaper),
     );

@@ -5,7 +5,7 @@ import type { CodeCapture } from '@merv/code-work/types';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { WorkUnitRecords } from '@merv/code-work/unit-store';
 import { CodeWriterService } from '@merv/code/writers';
-import { createService, type WorkflowSnapshot } from '@merv/contracts';
+import { createService, MervError, type WorkflowSnapshot } from '@merv/contracts';
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -36,7 +36,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
     new CoreCodeService(f.state, f.scope, codeConfig(join(f.directory, 'legacy-code'))),
   );
   const legacy = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.workflows, legacyCore),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, legacyCore),
   );
   await legacy.close();
   await legacyCore.close();
@@ -64,6 +64,7 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
       f.scope,
       f.sessions,
       f.workflows,
+      f.reviews,
       Object.assign(Object.create(core), { github: remote?.github ?? core.github }),
       {
         config: { settleMs: 60_000 },
@@ -269,10 +270,8 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
       requestId: 'canary',
     });
   const unbind = f.bindCode(code);
-  const unbindReviews = code.bindReviews(f.reviews);
   f.beforeClose.push(async () => {
     unbind();
-    unbindReviews();
     await code.close();
     await core.close();
     repositories.git.close();
@@ -914,14 +913,16 @@ test('a sync that keeps failing before its pull request opens waits on an operat
   await f.publishes(work);
   await f.pin(work);
   await f.accept(work, f.feature);
-  // Reviews is unbound from publication, so every check of the reviewed facts fails.
-  const host = (f.code as unknown as { publicationHost: { bindReviews(r: unknown): () => void } })
+  // Reviews cannot answer, so every check of the reviewed facts fails.
+  const host = (f.code as unknown as { publicationHost: { review(): Promise<unknown> } })
     .publicationHost;
-  host.bindReviews(f.reviews)();
+  const unavailable = t.mock.method(host, 'review', async () => {
+    throw new MervError('reviews_unavailable', 'Publication requires Reviews', 503);
+  });
   await f.sync();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'setup_required');
   assert.equal((await f.blockers(work.id))[0].code, 'code_publication_setup_required');
-  host.bindReviews(f.reviews);
+  unavailable.mock.restore();
   await f.sync();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'published');
   assert.deepEqual(await f.blockers(work.id), []);

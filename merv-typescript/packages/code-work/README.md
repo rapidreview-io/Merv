@@ -6,10 +6,9 @@ obligations. The adapter translates those decisions into exact code pins, isolat
 retained evidence, dependency blockers, conflict-resolution work and publication operations.
 It never makes Code itself depend on a research service.
 
-It provides `ctx.codeWork`; Tasks, Experiments, Research and Knowledge require it. Sandboxes is
-an optional collaborator.
-A review-dependent action remains unavailable while its provider is absent; a missing plugin
-never grants acceptance or erases an existing Git obligation.
+It provides `ctx.codeWork`; Tasks, Experiments, Research and Knowledge require it. It requires
+Reviews, which every acceptance and publication reads; Sandboxes is an optional collaborator. A
+missing plugin never grants acceptance or erases an existing Git obligation.
 
 | Module                  | Dependencies    | Interface                                                                      |
 | ----------------------- | --------------- | ------------------------------------------------------------------------------ |
@@ -54,7 +53,7 @@ flowchart LR
   codeWork -- "injects" --> scope
   codeWork -- "injects" --> workflows
   codeWork -- "subscribes to events" --> domainEvents
-  codeWork -- "reads review provenance" --> reviews
+  codeWork -- "injects; registers review provenance" --> reviews
   codeWork -- "runs project checks" --> sandboxes
   codeWork -- "mounts /code, code.* tools" --> api
   codeWork -- "row, Running part" --> ui

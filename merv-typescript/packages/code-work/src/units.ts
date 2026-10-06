@@ -84,7 +84,6 @@ export class CodeUnitService {
   publications?: {
     openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction): Promise<void>;
   };
-  reviews?: import('@merv/contracts').Reviews;
   resolutionTasks?: ResolutionWorkCreator;
   constructor(
     private readonly state: State,
@@ -95,6 +94,7 @@ export class CodeUnitService {
     /** Code's own unit store, already initialized; it outlives this owner. */
     readonly code: CodeUnitStore,
     private readonly sessions: Pick<import('@merv/sessions/types').Sessions, 'contributors'>,
+    private readonly reviews: Pick<import('@merv/contracts').Reviews, 'get'>,
   ) {
     this.records = new WorkUnitRecords(state, scope, writers, code, {
       publication: (sql, projectId, stored) => this.enforcedPublication(sql, projectId, stored),
@@ -405,7 +405,6 @@ export class CodeUnitService {
       await this.reconcileUnit(tx, caller.projectId, row.unit_id);
       return;
     }
-    check(this.reviews, 'code_unavailable', 'The review service is unavailable', 503);
     const review = await this.reviews.get(caller, body.reviewRef, tx);
     const publicationId = newId('codeprop');
     await tx.run(
@@ -1033,7 +1032,6 @@ export class CodeUnitService {
     tx: Transaction,
     input: CodeUnitAcceptInput,
   ): Promise<boolean> {
-    check(this.reviews, 'code_provenance_unverifiable', 'The review service is unavailable', 503);
     const review = await this.reviews.get(caller, input.reviewRef, tx);
     const provenance = await this.reviewProvenance(caller.projectId, input.unitId, tx);
     return (

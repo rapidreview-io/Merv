@@ -138,7 +138,7 @@ const capabilities: Record<string, readonly string[]> = {
   sessions: ['state', 'scope', 'workflows', 'domainEvents'],
   // Code follows session attach and close events to open and end writer generations.
   code: ['state', 'scope', 'domainEvents'],
-  codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'domainEvents'],
+  codeWork: ['code', 'state', 'scope', 'sessions', 'workflows', 'reviews', 'domainEvents'],
   runner: [],
   pi: ['state', 'scope', 'fleet', 'tools', 'blobs'],
   // Legacy transport stands alone; native connection owners are conditional below.
@@ -160,7 +160,7 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   sandboxes: ['api', 'artifacts', 'domainEvents', 'scope', 'sessions', 'state', 'workflows'],
   // Optional: a deployment may run no sandboxes at all, and a project may have no
   // connection. Research integration owns project checks; Code is an independent utility.
-  codeWork: ['reviews', 'sandboxes'],
+  codeWork: ['sandboxes'],
   experiments: ['sandboxes'],
   // A lens's continuity key, registered while Sessions is loaded; without it no session runs.
   reflections: ['sessions'],

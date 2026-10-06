@@ -30,7 +30,7 @@ test('pending-merge migration preserve populated owner databases and enforce wri
     new CoreCodeService(f.state, f.scope, codeConfig(join(f.directory, 'code'))),
   );
   const code = await createService(
-    new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
+    new CodeService(f.state, f.scope, f.sessions, f.workflows, f.reviews, core),
   );
   f.beforeClose.push(async () => {
     await code.close();

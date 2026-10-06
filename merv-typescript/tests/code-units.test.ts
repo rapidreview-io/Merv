@@ -16,6 +16,7 @@ import { CodeCommandService } from '@merv/code-work/commands';
 import { workBranch } from '@merv/code/store/refs';
 import { openState } from './fixtures/state.js';
 import { codeConfig } from './fixtures/code-binding.js';
+import { ReviewService } from '@merv/reviews';
 
 const issuer = 'https://identity.example/auth/v1';
 const oid = (char: string) => char.repeat(40);
@@ -46,7 +47,10 @@ async function fixture(t: TestContext, withUnits = true) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-units-'));
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  await createService(new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))));
+  const artifacts = await createService(
+    new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
+  );
+  const reviews = await createService(new ReviewService(state, scope, artifacts));
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
@@ -58,7 +62,7 @@ async function fixture(t: TestContext, withUnits = true) {
     core = await createService(
       new CoreCodeService(state, scope, codeConfig(join(directory, 'code'))),
     );
-    const service = new CodeService(state, scope, sessions, workflows, core);
+    const service = new CodeService(state, scope, sessions, workflows, reviews, core);
     if (units) await service.initialize();
     else {
       const commands = await createService(new CodeCommandService(state, scope, sessions));
