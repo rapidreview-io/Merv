@@ -49,6 +49,10 @@ export interface ReviewRequest {
   requiredCriteria?: number[];
   /** Whether the reader of this answer may claim it now. Present on reads, not on writes. */
   claimable?: boolean;
+  /** On list reads: requested or started, so its subject is in its reviewer's hands. */
+  open?: true;
+  /** On list reads: the newest decided review of its subject, whose verdict sent the work back. */
+  returned?: true;
   /** Claimed by the project's owner as owner, past the independence rule; its reviewer is that person. */
   override?: true;
   /** On reads: the reader is the signed-in owner, or their agent, and may decide it as owner. */

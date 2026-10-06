@@ -61,7 +61,12 @@ descriptions and optional argument/reference builders. `evaluate` returns the
 current decision and supports read-only action preflight; `overview` decides every
 instance in the caller's project, reading what they wait on in a fixed number of queries
 however many there are, and sorts them into `ready`, `blocked`, `stalled`, `escalated`,
-`terminal` and `unavailable`. `process` draws one instance's graph with the traversals its
+`terminal` and `unavailable`. A decision is the reader's own: where the program's
+`describe` names the record's `owner` (the actor it belongs to, the actions that are their
+move even with nothing refused, with the sentence asking each, and those only a leased worker
+makes), a decision read by that owner carries `yours`, the rule Needs you draws by: their
+input is wanted, a prerequisite ended without succeeding, or an ask of theirs is held open on a
+step nobody else began. `process` draws one instance's graph with the traversals its
 history records; a version whose program is not loaded is drawn from its pinned graph, with
 no status on any edge. A supplied policy must guard every graph edge.
 A policy may also declare `limits` on its loop edges: they are deployed policy rather than
@@ -177,7 +182,9 @@ of a version pins its success states, or their absence; a later registration tha
 adds, drops or changes them is `workflow_version_conflict`. `prerequisites` returns the
 live forward rows, and `records` both directions, each with its revision and whether it is
 `settled`, `terminal` (ended, as a fact) or `failed` (ended in a way that fails the
-dependent; a provider's edge never is); `requireDependencies`, a pure rule in
+dependent; a provider's edge never is). `ends` says the same `settled` and `failed` of a
+record itself, from its pinned contract, so an owner sends them on its records and no page
+reads an end from a state name. `requireDependencies`, a pure rule in
 `@merv/workflows/rules`, is the shared prerequisite guard over them. Guidance, the guard and
 transitions read only what an instance depends on, in a fixed number of queries; what depends
 on it is read only when asked for. Attaching at start never walks the graph, because the new

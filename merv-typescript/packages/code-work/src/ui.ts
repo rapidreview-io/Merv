@@ -17,6 +17,11 @@ export const codeUiPlugin = {
         // Its deeper addresses are selections on the one drawing.
         rooms: true,
         view: { kind: 'code' },
+        // Home's part: the move each record's first person-facing blocker asks, as Code words it.
+        home: {
+          keep: ['instanceId', 'provider', 'key', 'move'],
+          list: async (caller) => await ctx.codeWork.homeMoves(caller),
+        },
         // `commands` are the commit receipts; the store transfers of the same name, and the
         // publications, are inside status.
         read: async (caller) =>

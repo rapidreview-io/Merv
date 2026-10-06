@@ -30,6 +30,8 @@ function fixture() {
     deliveryIds: ['delivery', 'assessment'],
     reviewId: 'review',
     createdAt: 'now',
+    settled: true,
+    failed: false,
     guidance: {
       dependencies: [],
       limits: [],

@@ -521,6 +521,7 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   const home = (await tool('ui.home', operator)).body.result as Record<string, unknown>;
   assert.deepEqual(Object.keys(home).sort(), [
     'actors',
+    'code',
     'experiments',
     'project',
     'reflections',

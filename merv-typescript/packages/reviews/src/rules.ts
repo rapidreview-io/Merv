@@ -1,6 +1,8 @@
-import { check, clip, type ReviewRequest } from '@merv/contracts';
+import { clip, visible } from '@merv/contracts/text';
+import type { ReviewFinding, ReviewRequest, Verdict } from '@merv/contracts/types';
 
-// Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them.
+// Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them,
+// and free of server code, so the browser's verdict desk checks a verdict by the same rules.
 
 /** The verdicts a review may reach. */
 export const REVIEW_VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
@@ -25,17 +27,170 @@ export const directsIndependently = (
   authorityId: string,
 ) =>
   review.provenance ? !excludedFromReview(review, authorityId) : review.producerId !== authorityId;
-/** The lease source a review worker would speak for, refused where it may not direct one. */
-export const requireDirecting = (
-  review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,
-  authorityId: string,
-) =>
-  check(
-    directsIndependently(review, authorityId),
-    'review_independence',
-    'A producer or contributor cannot direct the reviewer of its own work',
-    403,
+/**
+ * A list of reviews as a reader reads it, in its own order: each open one says so, its subject
+ * being in its reviewer's hands, and the newest decided review of each subject (the first of
+ * the newest, where several share a moment) says whether its verdict sent the work back.
+ */
+export function standings<
+  T extends Pick<ReviewRequest, 'subjectId' | 'status' | 'verdict' | 'createdAt'>,
+>(reviews: T[]): (T & Pick<ReviewRequest, 'open' | 'returned'>)[] {
+  const newest = new Map<string, T>();
+  for (const review of reviews) {
+    const known = newest.get(review.subjectId);
+    if (review.status === 'submitted' && (!known || review.createdAt > known.createdAt))
+      newest.set(review.subjectId, review);
+  }
+  return reviews.map((review) => ({
+    ...review,
+    ...(review.status === 'requested' || review.status === 'started' ? { open: true } : {}),
+    ...(newest.get(review.subjectId) === review && review.verdict && review.verdict !== 'pass'
+      ? { returned: true }
+      : {}),
+  }));
+}
+
+/** The refusal of a lease source that may not direct a reviewer: `check(directsIndependently(…), ...)`. */
+export const NOT_INDEPENDENT = [
+  'review_independence',
+  'A producer or contributor cannot direct the reviewer of its own work',
+  403,
+] as const;
+
+/** A generated identifier: a short lowercase prefix, then a token carrying digits (exp_3f9a1c…). */
+const entityId = /\b[a-z]{2,16}_(?=[A-Za-z]*\d)[A-Za-z0-9]{6,}/u;
+/** The trimmed length of a synopsis review.submit takes. */
+export const SYNOPSIS_LENGTH = { min: 40, max: 420 } as const;
+/**
+ * Why review.submit refuses a synopsis, or undefined where it takes it: its trimmed length, a
+ * form that is not one plain paragraph (a line break, Markdown, a list or heading marker), or
+ * an entity identifier where words should name the thing.
+ */
+export function synopsisProblem(synopsis: unknown): 'length' | 'format' | 'identifier' | undefined {
+  if (typeof synopsis !== 'string') return 'length';
+  const { length } = synopsis.trim();
+  if (length < SYNOPSIS_LENGTH.min || length > SYNOPSIS_LENGTH.max) return 'length';
+  if (
+    !visible(synopsis) ||
+    /[\r\n\u2028\u2029`]|\*\*|__|\]\(|<\/?[a-z]+>/iu.test(synopsis) ||
+    /^\s*(?:#|[-*+]\s|\d+[.)]\s|>)/u.test(synopsis)
+  )
+    return 'format';
+  return entityId.test(synopsis) ? 'identifier' : undefined;
+}
+
+/**
+ * The first rule of review.submit a verdict's findings break, in the order it checks them, or
+ * undefined. `rule` is which: the findings' own shape, a criterion left without a word or notes,
+ * one met without evidence, a pass over a criterion neither met nor waived, or a pass over a
+ * required criterion that is not met. The server refuses with `code` and `message`; a desk words
+ * the same rule for a person and points at `criterion`.
+ */
+export function assessmentProblem(
+  review: Pick<ReviewRequest, 'criteria' | 'artifactIds' | 'requiredCriteria'>,
+  input: { verdict?: Verdict | null; findings?: unknown },
+):
+  | {
+      rule: 'shape' | 'unanswered' | 'uncited' | 'unmet' | 'required';
+      criterion?: number;
+      code: string;
+      message: string;
+    }
+  | undefined {
+  const refused = (
+    rule: 'shape' | 'unanswered' | 'uncited' | 'unmet',
+    message: string,
+    criterion?: number,
+  ) => ({ rule, message, code: 'invalid_findings', ...(criterion ? { criterion } : {}) });
+  const value: unknown = input.findings;
+  if (!Array.isArray(value))
+    return refused('shape', 'Supply one finding for every numbered review criterion');
+  const seen = new Set<number>();
+  for (const item of value) {
+    if (!(
+      item &&
+      typeof item === 'object' &&
+      !Array.isArray(item) &&
+      Object.keys(item).every((key) =>
+        ['criterionNumber', 'status', 'evidenceIds', 'notes'].includes(key),
+      )
+    ))
+      return refused(
+        'shape',
+        'Findings must contain criterionNumber, status, evidenceIds and notes only',
+      );
+    if (!(
+      Number.isSafeInteger(item.criterionNumber) &&
+      item.criterionNumber >= 1 &&
+      item.criterionNumber <= review.criteria.length &&
+      !seen.has(item.criterionNumber)
+    ))
+      return refused(
+        'shape',
+        `Each criterion from 1 through ${review.criteria.length} must appear exactly once`,
+      );
+    const number = item.criterionNumber as number;
+    seen.add(number);
+    if (!['met', 'not_met', 'not_verified', 'waived'].includes(item.status))
+      return refused(
+        'unanswered',
+        'Finding status must be met, not_met, not_verified, or waived',
+        number,
+      );
+    if (!(typeof item.notes === 'string' && visible(item.notes) && item.notes.length <= 16000))
+      return refused(
+        'unanswered',
+        `Criterion ${number} needs assessment notes (1–16000 characters)`,
+        number,
+      );
+    if (!(
+      Array.isArray(item.evidenceIds) &&
+      new Set(item.evidenceIds).size === item.evidenceIds.length &&
+      item.evidenceIds.every(
+        (id: unknown) => typeof id === 'string' && review.artifactIds.includes(id),
+      )
+    ))
+      return refused(
+        'shape',
+        `Criterion ${number} must refer only to distinct pinned artifact IDs`,
+        number,
+      );
+    if (item.status === 'met' && !item.evidenceIds.length)
+      return refused(
+        'uncited',
+        `Criterion ${number} claims met and requires retained evidence`,
+        number,
+      );
+  }
+  const missing = review.criteria.map((_, index) => index + 1).filter((n) => !seen.has(n));
+  if (missing.length)
+    return refused(
+      'unanswered',
+      `Missing findings for criteria: ${missing.join(', ')}`,
+      missing[0],
+    );
+  const findings = value as ReviewFinding[];
+  const objection = findings.find((item) => item.status !== 'met' && item.status !== 'waived');
+  if (input.verdict === 'pass' && objection)
+    return refused(
+      'unmet',
+      'A passing verdict requires every criterion to be met or explicitly waived with a reason',
+      objection.criterionNumber,
+    );
+  // The requesting domain depends on these criteria, so a reviewer's waiver cannot stand in
+  // for them; needs_changes is the way out when one cannot be met.
+  const unmet = (review.requiredCriteria ?? []).find(
+    (number) => findings.find((item) => item.criterionNumber === number)?.status !== 'met',
   );
+  if (input.verdict === 'pass' && unmet !== undefined)
+    return {
+      rule: 'required',
+      criterion: unmet,
+      code: 'criterion_not_waivable',
+      message: `Criterion ${unmet} is required: a passing verdict needs it met with retained evidence, and it cannot be waived. Return needs_changes if it is not met`,
+    };
+  return undefined;
+}
 
 /** One rejected review round as the next author reads it. */
 interface ReviewRound {

@@ -21,16 +21,12 @@ export const experimentsUiPlugin = {
         view: { kind: 'experiments' },
         home: {
           tool: 'experiment.list',
-          keep: ['id', 'name', 'intent', 'ownerId', 'conclusion', 'workflow'],
+          keep: ['id', 'name', 'intent', 'ownerId', 'conclusion', 'workflow', 'settled', 'failed'],
           list: async (caller) => await experiments.summaries(caller),
         },
         needs: {
           name: 'name',
           owner: 'ownerId',
-          asks: {
-            submit_design: 'Submit the design for review',
-            submit_results: 'Submit the results for review',
-          },
           reads: { design_review: 'Review this design', experiment_review: 'Review these results' },
         },
         // One record, with the gate it stands at: the process graph is derived from the

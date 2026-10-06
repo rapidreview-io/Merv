@@ -56,9 +56,11 @@ export class UiRegistry implements Ui {
       'Row view must declare a kind',
     );
     check(
-      row.home === undefined || (typeof row.home.tool === 'string' && Array.isArray(row.home.keep)),
+      row.home === undefined ||
+        ((typeof row.home.tool === 'string' || typeof row.home.list === 'function') &&
+          Array.isArray(row.home.keep)),
       'invalid_row',
-      'Row home must name a tool and the fields it keeps',
+      'Row home must name a tool or a list, and the fields it keeps',
     );
     check(!this.entries.has(row.id), 'row_conflict', `Row is already registered: ${row.id}`, 409);
     const entry: UiRow = { ...row, view: structuredClone(row.view) };

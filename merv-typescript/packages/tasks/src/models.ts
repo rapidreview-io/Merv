@@ -21,6 +21,9 @@ export interface Task {
   deliveryIds: string[];
   reviewId: string | null;
   workflow: WorkflowSnapshot;
+  /** Ended done, or ended any other way: Workflows' word for its own end, never read from a state name. */
+  settled: boolean;
+  failed: boolean;
   guidance: WorkflowDecision;
   failure: TaskFailure | null;
   dependencies: WorkflowDependency[];

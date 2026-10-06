@@ -29,6 +29,8 @@ export const reviewUiPlugin = {
             'returnTo',
             'findings',
             'createdAt',
+            'open',
+            'returned',
           ],
         },
         status: async (caller: Caller) => ({ count: await reviews.open(caller) }),

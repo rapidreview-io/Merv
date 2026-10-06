@@ -218,9 +218,10 @@ const capabilityOf = (owner: string) =>
 
 /**
  * Contracts belongs to no component. Besides its index, a component may run only these shared
- * modules: the portable id and Git schemas a browser-safe protocol module is built from.
+ * modules: the portable id and Git schemas a browser-safe protocol module is built from, and the
+ * text helpers, which a pure rules module the browser also runs may import in the index's place.
  */
-const contractsRuntimeExports = new Set(['schemas', 'workspace']);
+const contractsRuntimeExports = new Set(['schemas', 'text', 'workspace']);
 const sharedContract = (specifier: string) =>
   specifier === '@merv/contracts' ||
   (specifier.startsWith('@merv/contracts/') &&
@@ -537,7 +538,8 @@ test('pure rule modules that other units run import nothing but contracts and zo
     const [, name, file] = specifier.split('/');
     for (const reference of moduleReferences(parse(join(packagesRoot, name!, 'src', `${file}.ts`))))
       assert.ok(
-        ['@merv/contracts', 'zod'].includes(reference.specifier),
+        ['@merv/contracts', '@merv/contracts/text', 'zod'].includes(reference.specifier) ||
+          (reference.typeOnly && reference.specifier.startsWith('@merv/contracts/')),
         `${specifier} imports ${reference.specifier}`,
       );
   }

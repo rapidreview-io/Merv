@@ -513,8 +513,13 @@ test('A design returned as often as its limit allows waits for a human; the refu
   assert.equal((await f.reviews.get(f.reviewer, e.reviewId!)).verdict, null);
   assert.deepEqual(await f.experiments.get(f.producer, e.id), e);
   // The work is not failed, and its owner may still end it.
+  assert.deepEqual([e.settled, e.failed], [false, false]);
   e = await f.transition(e, 'abandon', { evidence: { reason: 'The design will not converge.' } });
   assert.equal(e.workflow.state, 'abandoned');
+  // Workflows' word for its end, on the record and on the list Home reads.
+  assert.deepEqual([e.settled, e.failed], [false, true]);
+  const [summary] = await f.experiments.summaries(f.producer);
+  assert.deepEqual([summary.settled, summary.failed], [false, true]);
 });
 
 test('The experiment limits default to four design rounds and three result rounds', async (t) => {

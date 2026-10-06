@@ -219,6 +219,7 @@ export class ResearchService implements Research {
           : null;
         return {
           label: record.name,
+          owner: { actorId: record.ownerId },
           gate: context.snapshot.state,
           waiting:
             context.snapshot.state === 'researching'

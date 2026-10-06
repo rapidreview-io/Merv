@@ -201,7 +201,16 @@ function assignmentTask(task: Task) {
   // goal and checks are the brief's, the last round's notes the feedback's, and the delivery's
   // confirmations its pinned sheet's. These tasks have their own briefs, so the numbered checks
   // are the record's.
-  const { dependents: _d, checks: _c, acceptanceChecks, goal: _g, workflow, ...record } = task;
+  const {
+    dependents: _d,
+    checks: _c,
+    settled: _s,
+    failed: _f,
+    acceptanceChecks,
+    goal: _g,
+    workflow,
+    ...record
+  } = task;
   const { deliveryConfirmations: _dc, deliveryIds: _di, ...rest } = record;
   const { revisionContext: _r, deliveryIds: _ids, ...data } = workflow.data;
   return { ...rest, acceptanceChecks, workflow: { ...workflow, data } };

@@ -401,6 +401,8 @@ test('summaries give each list the home fields in its order without reading reco
     'ownerId',
     'conclusion',
     'workflow',
+    'settled',
+    'failed',
   ]);
   assert.equal(listed.length, 1);
   const gets = t.mock.method(f.app.ctx.workflows, 'get');

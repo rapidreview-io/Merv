@@ -15,6 +15,8 @@ const { MemoryRouter, Routes, Route } = await import('react-router-dom');
 await import('../packages/ui/web/components.js');
 const { NeedsYou, needsYou, recordSentence, reviewSentence } =
   await import('../packages/ui/web/views/needs-you.js');
+// Code's part of the home read, as the server makes it from the blockers Workflows holds.
+const { heldMoves } = await import('../packages/code-work/src/blockers.js');
 
 const { UiRegistry } = await import('../packages/ui/src/index.js');
 // The rows exactly as the plugins register them: every word Needs you says of a record is its row's.
@@ -96,6 +98,7 @@ const dependency = (name: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 const home = (over: Record<string, unknown>) => ({
+  code: null,
   project: null,
   actors: null,
   experiments: null,
@@ -114,27 +117,24 @@ const home = (over: Record<string, unknown>) => ({
 });
 
 test('a move is one sentence made from the gate’s facts, never the agent’s instruction', () => {
-  const ready = (action: string) => ({ nextAction: { action }, dependencies: [] });
-  const { asks } = needs('experiments');
-  assert.equal(recordSentence(ready('submit_design'), false, asks), 'Submit the design for review');
+  const ready = (ask?: string) => ({ ask, dependencies: [] });
+  // The sentence is the one the gate says asks the move, in its program's words.
   assert.equal(
-    recordSentence(ready('submit_results'), false, asks),
-    'Submit the results for review',
+    recordSentence(ready('Submit the design for review')),
+    'Submit the design for review',
   );
-  assert.equal(recordSentence(ready('an_action_nobody_named'), false, asks), 'Needs your input');
   // The shell has no words of its own for any workflow's action.
-  assert.equal(recordSentence(ready('submit_design')), 'Needs your input');
-  assert.equal(recordSentence(ready('constructor'), false, asks), 'Needs your input');
+  assert.equal(recordSentence(ready()), 'Needs your input');
   assert.equal(
     recordSentence({
-      nextAction: { action: 'end' },
+      ask: 'Submit the design for review',
       dependencies: [dependency('Baseline run', { failed: true, state: 'failed' })],
     }),
     'Decide what happens next: Baseline run failed',
   );
   // Work a review sent back says so, in the ask's own words.
   assert.equal(
-    recordSentence(ready('submit_design'), true, asks),
+    recordSentence(ready('Submit the design for review'), true),
     'Changes requested: submit the design for review',
   );
 
@@ -147,7 +147,7 @@ test('a move is one sentence made from the gate’s facts, never the agent’s i
   assert.equal(reviewSentence(true, 'in_review', reads), 'Finish your review');
 });
 
-test('only the reader’s own moves are listed, and a code the page cannot read is never promoted', () => {
+test('only the moves the gate says are the reader’s are listed, in its words', () => {
   const data = home({
     experiments: [experiment('wf_mine', me.id)],
     tasks: [
@@ -166,6 +166,7 @@ test('only the reader’s own moves are listed, and a code the page cannot read 
             status: 'needs_input',
           },
           blockers: [blocker('input_required', INPUT)],
+          yours: { ask: 'Submit the design for review' },
         }),
         gate('wf_theirs', {
           blockers: [blocker('forbidden', 'Only this task’s producer may submit its delivery')],
@@ -183,8 +184,8 @@ test('only the reader’s own moves are listed, and a code the page cannot read 
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const lines = needsYou(rows as any, data as any, me, named);
-  // What is with an agent, waits on other work, is simply running or has ended is not the
-  // reader's move, and neither is their own record under a code this page cannot read.
+  // Whose move a record is, is its gate's answer: what is with an agent, waits on other
+  // work, is simply running or has ended carries no `yours`, and is not listed.
   assert.deepEqual(
     lines.map((line: { id: string; sentence: string }) => [line.id, line.sentence]),
     [['wf_mine', 'Submit the design for review']],
@@ -196,7 +197,7 @@ test('only the reader’s own moves are listed, and a code the page cannot read 
   assert.equal(lines[0].desk, undefined);
 });
 
-test('work whose submission waits on the reader is theirs even when its gate reports no blocker', () => {
+test('work a review sent back says so, and work out for review is its reviewer’s move', () => {
   // Sent back for changes, or never begun: only `begin` is ready and nothing blocks.
   const waiting = {
     nextAction: { action: 'begin', tool: 'workflow.begin', status: 'ready' },
@@ -204,6 +205,7 @@ test('work whose submission waits on the reader is theirs even when its gate rep
       { action: 'begin', tool: 'workflow.begin', status: 'ready' },
       { action: 'submit_design', tool: 'experiment.transition', status: 'needs_input' },
     ],
+    yours: { ask: 'Submit the design for review' },
   };
   const data = home({
     experiments: [
@@ -217,9 +219,11 @@ test('work whose submission waits on the reader is theirs even when its gate rep
       workflows: [
         gate('wf_returned', waiting),
         gate('wf_fresh', waiting),
-        gate('wf_held', { ...waiting, workStart: { actorId: 'actor_bot' } }),
-        gate('wf_theirs', waiting),
+        gate('wf_held', { ...waiting, yours: undefined, workStart: { actorId: 'actor_bot' } }),
+        gate('wf_theirs', { ...waiting, yours: undefined }),
+        // Even where its gate would call it theirs, a record out for review is not.
         gate('wf_out', {
+          ...waiting,
           currentGate: 'independent_review',
           blockers: [blocker('review_independence', 'A producer may not review their own work')],
         }),
@@ -232,6 +236,7 @@ test('work whose submission waits on the reader is theirs even when its gate rep
         status: 'submitted',
         reviewerId: 'actor_ada',
         verdict: 'needs_changes',
+        returned: true,
         createdAt: '2026-09-20T09:00:00.000Z',
       },
       {
@@ -240,6 +245,7 @@ test('work whose submission waits on the reader is theirs even when its gate rep
         status: 'started',
         reviewerId: 'actor_ada',
         verdict: null,
+        open: true,
         createdAt: '2026-09-20T11:00:00.000Z',
       },
     ],
@@ -256,34 +262,6 @@ test('work whose submission waits on the reader is theirs even when its gate rep
   assert.equal(yours.wf_fresh.sentence, 'Submit the design for review');
 });
 
-test('a task’s delivery is never the reader’s move: only its leased worker can make one', () => {
-  const data = home({
-    tasks: [task('wf_waiting', me.id), task('wf_returned', me.id)],
-    workflows: {
-      workflows: [
-        // Nobody holds the task: its gate asks for the delivery's input, as it would of a worker.
-        gate('wf_waiting', {
-          nextAction: {
-            action: 'submit_delivery',
-            tool: 'task.submit_delivery',
-            status: 'needs_input',
-          },
-          blockers: [blocker('input_required', INPUT)],
-        }),
-        gate('wf_returned', {
-          nextAction: { action: 'begin', tool: 'workflow.begin', status: 'ready' },
-          actions: [
-            { action: 'begin', tool: 'workflow.begin', status: 'ready' },
-            { action: 'submit_delivery', tool: 'task.submit_delivery', status: 'needs_input' },
-          ],
-        }),
-      ],
-    },
-  });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assert.deepEqual(needsYou(rows as any, data as any, me, named), []);
-});
-
 test('a review is yours when the server says so and its gate lets you claim it, and claimed here only then', () => {
   const review = (id: string, subjectId: string, over: Record<string, unknown> = {}) => ({
     id,
@@ -292,6 +270,7 @@ test('a review is yours when the server says so and its gate lets you claim it, 
     reviewerId: null,
     claimable: false,
     verdict: null,
+    open: true,
     createdAt: '2026-09-20T11:00:00.000Z',
     ...over,
   });
@@ -316,7 +295,7 @@ test('a review is yours when the server says so and its gate lets you claim it, 
       review('review_c', 'wf_c'),
       review('review_d', 'wf_d', { status: 'started', reviewerId: me.id }),
       review('review_e', 'wf_e', { status: 'started', reviewerId: 'actor_ada' }),
-      review('review_f', 'wf_a', { status: 'submitted', verdict: 'pass' }),
+      review('review_f', 'wf_a', { status: 'submitted', verdict: 'pass', open: undefined }),
     ],
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -459,18 +438,21 @@ test('a Code blocker whose next move is a person’s stands on Needs you, in the
     since: '2026-09-21T09:00:00.000Z',
     updatedAt: '2026-09-21T09:00:00.000Z',
   };
+  const quiet = { ...publication, instanceId: 'wf_quiet', code: 'code_base_wait' };
   const data = home({
     tasks: [task('wf_pub', me.id, 'done')],
     experiments: [experiment('wf_quiet', me.id)],
+    code: heldMoves([publication, quiet]),
     workflows: {
       workflows: [
         gate('wf_pub', { terminal: true, state: 'done', providerBlockers: [publication] }),
         // A code nobody prints is not a move: the record keeps its own gate, its own
         // sentence and its own desk, exactly as if Code had published nothing about it.
         gate('wf_quiet', {
-          providerBlockers: [{ ...publication, instanceId: 'wf_quiet', code: 'code_base_wait' }],
+          providerBlockers: [quiet],
           nextAction: { action: 'submit_design', tool: 'experiment.transition', status: 'ready' },
           actions: [{ action: 'submit_design', tool: 'experiment.transition', status: 'ready' }],
+          yours: { ask: 'Submit the design for review' },
         }),
       ],
     },
@@ -512,26 +494,20 @@ test('a Code blocker whose next move is a person’s stands on Needs you, in the
 test('an operator’s move with no control here is still theirs, and promises nothing', () => {
   // A publication an operator disabled: nothing on any page of this app turns it back on,
   // and the ruling prints it precisely because the next move is that operator's.
+  const disabled = {
+    instanceId: 'wf_off',
+    provider: 'code',
+    key: 'publication',
+    code: 'code_publication_disabled',
+    status: 409,
+    message: 'publication is not enabled for this project',
+    related: [],
+  };
   const data = home({
     tasks: [task('wf_off', me.id, 'done')],
+    code: heldMoves([disabled]),
     workflows: {
-      workflows: [
-        gate('wf_off', {
-          terminal: true,
-          state: 'done',
-          providerBlockers: [
-            {
-              instanceId: 'wf_off',
-              provider: 'code',
-              key: 'publication',
-              code: 'code_publication_disabled',
-              status: 409,
-              message: 'publication is not enabled for this project',
-              related: [],
-            },
-          ],
-        }),
-      ],
+      workflows: [gate('wf_off', { terminal: true, state: 'done', providerBlockers: [disabled] })],
     },
   });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -559,6 +535,7 @@ test('a cycle its abandoned wave stopped names the wave, not the work it reflect
             blocker('dependency_failed', 'The reflection wf_wave was abandoned.'),
             blocker('input_required'),
           ],
+          yours: {},
           // As the server reads them: the work first, then the wave the cycle opened. Work a
           // cycle selected may fail and still be reflected on: it stopped nothing.
           dependencies: [
@@ -606,6 +583,7 @@ test('work a cycle reflects on may fail and stop nothing: the next cycle still a
           state: 'reflecting',
           currentGate: 'input_required',
           blockers: [blocker('input_required')],
+          yours: {},
           dependencies: [
             dependency('Seed sweep', { state: 'failed', failed: true, workflow: 'experiment' }),
             dependency('Wave 2', { state: 'approved', settled: true, workflow: 'reflection' }),
@@ -641,6 +619,7 @@ test('the review of a reflection wave is named by the wave it reviews', () => {
         reviewerId: null,
         claimable: false,
         verdict: null,
+        open: true,
         createdAt: '2026-09-20T11:00:00.000Z',
       },
     ],

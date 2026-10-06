@@ -21,10 +21,12 @@ flowchart LR
     fleet[Fleet]
     artifacts[Artifacts]
     workflows[Workflows]
+    reviews[Reviews]
   end
   person -- "HTTP /ui, /tools" --> api
   ui -- "mounts /ui, registers ui.*" --> api
   ui -- "reads open gates, work records' workflows" --> workflows
+  ui -- "checks a verdict by @merv/reviews/rules" --> reviews
   tasks -- "row, Running part" --> ui
   experiments -- "row, Running part" --> ui
   sessions -- "row, Running part" --> ui

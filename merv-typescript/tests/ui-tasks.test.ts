@@ -549,7 +549,7 @@ test('work is listed as its chains: what waits stands under what it waits on, ne
     {
       id: 'prep',
       title: 'Prepare',
-      workflow: { state: 'in_progress' },
+      settled: false,
       dependencies: [],
       dependents: [dep('exp', false)],
     },

@@ -322,7 +322,12 @@ test('task reads, context and failure keep their original caller and inputs', as
     const failing = f.tasks.markFailed(caller, input);
     Object.assign(caller, f.operator);
     input.reason = 'Replacement reason';
+    assert.deepEqual([task.settled, task.failed], [false, false]);
     const failed = await failing;
+    // Workflows' word for its end, on the record and on the list Home reads.
+    assert.deepEqual([failed.settled, failed.failed], [false, true]);
+    const [listed] = await f.tasks.list(f.producer);
+    assert.deepEqual([listed.settled, listed.failed], [false, true]);
     assert.equal(failed.failure!.actorId, f.producer.actorId);
     assert.equal(failed.failure!.reason, 'Original reason');
   });
