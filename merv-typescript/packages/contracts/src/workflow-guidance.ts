@@ -40,6 +40,11 @@ export interface WorkflowProvidedBlockerInput extends WorkflowBlocker {
   /** The recovery action, in words an operator can follow. */
   next: string;
   related?: WorkflowReference[];
+  /**
+   * Which kind of `code` this is, as the provider's own machine word, for a reader that words
+   * kinds differently; Workflows stores it unread. Readers use it, never the message.
+   */
+  cause?: string;
 }
 /**
  * A blocker a plugin other than the owner published for an instance. Workflows stores it
@@ -52,6 +57,7 @@ export interface WorkflowProvidedBlocker extends WorkflowBlocker {
   key: string;
   next: string;
   related: WorkflowReference[];
+  cause?: string;
   /** When this key first took this code; a changed code starts a new age. */
   since: string;
   updatedAt: string;

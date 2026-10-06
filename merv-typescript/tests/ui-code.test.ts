@@ -2020,19 +2020,24 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
     who: 'An operator',
     whose: 'operator',
   });
-  // The cap or budget a person set is named by the server's own word for which one it is.
+  // The cap or budget a person set is named by the cause the server sent, never its message.
   assert.equal(
-    said('code_base_admission', { message: 'Base 9f is queued: budget_exceeded.' })?.sentence,
+    said('code_base_admission', { cause: 'budget_exceeded' })?.sentence,
     'The budget set for this project is spent',
   );
   assert.equal(
-    said('code_base_admission', { message: 'Base 9f is queued: dispatch_disabled.' })?.sentence,
+    said('code_base_admission', { cause: 'dispatch_disabled' })?.sentence,
     'Dispatch is paused for this project',
   );
-  assert.equal(
-    said('code_base_admission', { message: 'Base 9f is queued: something new.' })?.sentence,
-    'A limit somebody set is holding this merge',
-  );
+  for (const blocker of [
+    { cause: 'something_new' },
+    { message: 'Base 9f is queued: budget_exceeded.' },
+    { cause: 'toString' },
+  ])
+    assert.equal(
+      said('code_base_admission', blocker)?.sentence,
+      'A limit somebody set is holding this merge',
+    );
   // Only main waits on a person binding or importing; every other pending base is a record.
   assert.deepEqual(said('code_base_pending', { key: 'main' }), {
     sentence: 'Main is not in this project’s repository yet',
@@ -2045,6 +2050,7 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
   const conflict = (state: string) =>
     held('code_merge_conflict', {
       message: `Base resolution task “Merge A with B” (wf_1) is ${state}. Conflicting paths: a.py`,
+      ...(state === 'suspended' ? { cause: 'suspended' } : {}),
       related: [{ kind: 'task', id: 'wf_1', label: 'Merge A with B' }],
     });
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -2121,6 +2127,7 @@ test('a record’s Code section leads with the move, and folds the agent’s ins
         {
           key: 'merge',
           code: 'code_base_admission',
+          cause: 'budget_exceeded',
           status: 409,
           message: 'Base 9f is queued: budget_exceeded.',
           next: 'Enable project dispatch or raise the budget with usage.set_budget.',

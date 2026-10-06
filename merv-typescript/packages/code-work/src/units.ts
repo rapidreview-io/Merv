@@ -1,5 +1,5 @@
 import { baseKey } from './base-plan.js';
-import { blockerGroup } from './blockers.js';
+import { admissionCause, blockerGroup } from './blockers.js';
 import { pendingMerge, pinMerge } from '@merv/code/pending-merge';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeUnitStore } from '@merv/code/units';
@@ -742,6 +742,9 @@ export class CodeUnitService {
           ['suspended', 'cancelled', 'blocked_infra'].includes(record.state) ||
           record.blocker,
       );
+      // An admission refusal names which cap or budget holds the merge as its cause.
+      const admission =
+        !held?.quarantined && admissionCause(held?.blocker) ? held!.blocker! : undefined;
       if (held)
         return {
           status: 'blocked',
@@ -751,15 +754,10 @@ export class CodeUnitService {
               key: 'merge',
               code: held.quarantined
                 ? 'code_quarantined'
-                : [
-                      'sessions_unavailable',
-                      'dispatch_disabled',
-                      'capacity_full',
-                      'budget_exceeded',
-                      'usage_unavailable',
-                    ].includes(held.blocker ?? '')
+                : admission
                   ? 'code_base_admission'
                   : 'code_base_blocked',
+              ...(admission ? { cause: admission } : {}),
               status: 409,
               message: `Base ${held.key} is ${held.quarantined ? 'quarantined' : held.state}: ${held.blocker ?? held.operatorReason ?? 'operator control'}.`,
               next:
@@ -804,6 +802,7 @@ export class CodeUnitService {
         resolutionBlockers.push({
           key: `resolution:${record.key}`,
           code: 'code_merge_conflict',
+          ...(task?.instance.state === 'suspended' ? { cause: 'suspended' } : {}),
           status: 409,
           message: `Base resolution task “${task?.instance.name ?? record.resolutionTaskId}” (${record.resolutionTaskId}) is ${task?.instance.state ?? 'missing'}. ${record.resolutionError ?? `Conflicting paths: ${(record.conflict?.paths ?? []).join(', ')}`}`,
           next:

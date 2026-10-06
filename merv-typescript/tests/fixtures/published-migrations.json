@@ -927,6 +927,12 @@
       "version": 10,
       "hash": "cfab281f4ed8ad5f655a04ad8260f03bda33cdc9337323995eb597eedb8db494",
       "published": true
+    },
+    {
+      "component": "workflows",
+      "version": 11,
+      "hash": "b196971e7ec2026eed0a9aa90ac3eadf21cfe5736b843d14efab07375fbab70b",
+      "published": false
     }
   ]
 }

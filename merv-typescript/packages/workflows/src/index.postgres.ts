@@ -228,4 +228,6 @@ CREATE TRIGGER wf_success_states_pinned BEFORE UPDATE OR DELETE ON wf_success_st
 DROP TABLE wf_system_requests;
 DROP FUNCTION wf_system_requests_guard();
 `,
+  // A blocker may say which kind of its code it is, so readers never parse its message.
+  11: `ALTER TABLE wf_blockers ADD COLUMN cause TEXT;`,
 };
