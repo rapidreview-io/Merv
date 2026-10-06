@@ -249,11 +249,13 @@ async function fixture(
   );
   let current = true,
     admits = true,
-    retired = false;
+    retired = false,
+    huggingFace = true;
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
     retired: async () => retired,
+    huggingFace: () => huggingFace,
     assignmentSources: async (binding) => [
       binding.source,
       ...(reviewer
@@ -326,6 +328,9 @@ async function fixture(
     },
     admits: (value: boolean) => {
       admits = value;
+    },
+    huggingFace: (value: boolean) => {
+      huggingFace = value;
     },
     retire: () => {
       current = false;
@@ -1091,6 +1096,14 @@ for (const sourceKind of [undefined, 'human', 'key', 'service-human', 'service-k
     );
     token = null;
     assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
+    // Eligibility is the managed validator's: a machine whose image brokers no HF gets none.
+    token = marker;
+    f.huggingFace(false);
+    const before = identities.length;
+    assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
+    assert.equal(identities.length, before);
+    f.huggingFace(true);
+    token = null;
     assert.ok(!JSON.stringify(await f.sessions.get(f.caller, bound.id)).includes(marker));
     f.current(false);
     const reads = identities.length;
@@ -1187,14 +1200,29 @@ for (const sourceKind of ['human', 'key', 'service-human', 'service-key'] as con
         `200 HF authorization reads, batches of 8: ${Math.round(performance.now() - start)} ms`,
       );
     }
+    const binding = JSON.parse(grant.binding);
     for (const changed of [
-      { epoch: grant.epoch + 1 },
+      { epoch: binding.epoch + 1 },
       { runnerId: 'wrong' },
       { allocationId: 'wrong' },
       { sessionId: 'session_other' },
       { hostRef: 'wrong' },
+      { extra: true },
     ])
-      await assert.rejects(f.sessions.authorizeHuggingFaceGrant({ ...grant, ...changed }));
+      await assert.rejects(
+        f.sessions.authorizeHuggingFaceGrant({
+          ...grant,
+          binding: JSON.stringify({ ...binding, ...changed }),
+        }),
+      );
+    for (const bad of ['', 'not json', '[]'])
+      await assert.rejects(f.sessions.authorizeHuggingFaceGrant({ ...grant, binding: bad }), {
+        code: 'unauthorized',
+      });
+    // A grant outliving its session's hard deadline is refused.
+    await assert.rejects(f.sessions.authorizeHuggingFaceGrant({ ...grant, exp: grant.exp + 1 }), {
+      code: 'unauthorized',
+    });
     f.current(false);
     await assert.rejects(f.sessions.authorizeHuggingFaceGrant(grant));
     f.current(true);

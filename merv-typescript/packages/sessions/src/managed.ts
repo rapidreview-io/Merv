@@ -18,7 +18,6 @@ import { sourceCaller, tokenDigest } from './agents.js';
 import type { RunnerHeartbeat, RunnerPlatform, Session, SessionPlatform } from './types.js';
 import type { CredentialStore } from '@merv/identity/credentials';
 import type { CallerRules } from '@merv/api/types';
-import type { HuggingFaceGrant } from '@merv/secrets/types';
 import type {
   ManagedRunnerBindingIdentity,
   ManagedRunnerValidator,
@@ -28,6 +27,18 @@ import type {
   ManagedBindingRow,
 } from './managed-types.js';
 import { capabilitiesSchema as capabilities, runnerPlatformSchema as profile } from './rules.js';
+
+/** What a Hugging Face grant binds, opaque to Secrets: one session attached on one host. */
+const huggingFaceBinding = z
+  .object({
+    sessionId: z.string().min(1).max(200),
+    runnerId: z.string().min(1).max(200),
+    allocationId: z.string().min(1).max(200),
+    epoch: z.number().int().safe().nonnegative(),
+    hostRef: z.string().min(1).max(512),
+  })
+  .strict();
+export type HuggingFaceBinding = z.infer<typeof huggingFaceBinding>;
 
 /** A session's allocation by either binding, its work host's or (before every machine was a work
  *  host) its runner's own: two index lookups, never a scan of every one. */
@@ -420,14 +431,30 @@ export class ManagedRunnerBindings {
     await this.current(row, tx);
     return { row, sourceCaller: sourceCaller(JSON.parse(row.source_json)) };
   }
+  /** Whether the machine's validator brokers Hugging Face downloads to its sessions. */
+  huggingFace(row: ManagedBindingRow): boolean {
+    return !!this.validator?.huggingFace?.(this.identity(row));
+  }
   /** A decrypted HF grant authorizes only this exact binding, never runner control calls. */
-  async huggingFaceBinding(grant: HuggingFaceGrant, tx: Transaction): Promise<ManagedBindingRow> {
-    const row = await tx.get<ManagedBindingRow>(
-      'SELECT * FROM session_managed_runners WHERE allocation_id=?',
-      grant.allocationId,
-    );
+  async huggingFaceBinding(
+    binding: string,
+    tx: Transaction,
+  ): Promise<{ grant: HuggingFaceBinding; row: ManagedBindingRow }> {
+    let grant: HuggingFaceBinding | undefined;
+    try {
+      grant = huggingFaceBinding.parse(JSON.parse(binding));
+    } catch {
+      grant = undefined;
+    }
+    const row =
+      grant &&
+      (await tx.get<ManagedBindingRow>(
+        'SELECT * FROM session_managed_runners WHERE allocation_id=?',
+        grant.allocationId,
+      ));
     check(
-      row &&
+      grant &&
+        row &&
         Number(row.epoch) === grant.epoch &&
         (await this.hasSession(row, grant.sessionId, tx)) &&
         row.runner_id === grant.runnerId,
@@ -436,7 +463,7 @@ export class ManagedRunnerBindings {
       401,
     );
     await this.require(this.caller(row), tx);
-    return this.forSession(row, grant.sessionId, tx);
+    return { grant, row: await this.forSession(row, grant.sessionId, tx) };
   }
   async heartbeat(caller: Caller, input: RunnerHeartbeat, tx: Transaction): Promise<Caller> {
     const { row, sourceCaller: source } = await this.require(caller, tx);

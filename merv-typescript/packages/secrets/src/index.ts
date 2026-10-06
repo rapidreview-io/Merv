@@ -14,15 +14,7 @@ import {
 import type { AccountIdentity, HuggingFaceStatus, HuggingFaceGrant, Secrets } from './types.js';
 
 const grantSchema = z
-  .object({
-    v: z.literal(1),
-    sessionId: z.string().min(1).max(200),
-    runnerId: z.string().min(1).max(200),
-    allocationId: z.string().min(1).max(200),
-    epoch: z.number().int().safe().nonnegative(),
-    hostRef: z.string().min(1).max(512),
-    exp: z.number().int().safe().positive(),
-  })
+  .object({ binding: z.string().min(1).max(2048), exp: z.number().int().safe().positive() })
   .strict();
 
 const migrations = [
@@ -177,6 +169,7 @@ export class AccountSecrets implements Secrets {
     });
     return this.status(identity);
   }
+  /** Private runtime delivery only. The caller must authorize the immutable delegation owner. */
   async resolveHuggingFaceToken(identity: AccountIdentity): Promise<string | null> {
     // Missing deployment configuration must not prevent workers without credentials starting.
     if (!this.#key) return null;

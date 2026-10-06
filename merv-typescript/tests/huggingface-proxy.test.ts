@@ -69,20 +69,14 @@ test('real encrypted grant, prefixed streaming proxy, rotated/revoked access and
       'https://merv.example/hf',
     ),
   );
-  const unregister = secrets.registerHuggingFaceAuthority(async () => {
+  const unregister = secrets.registerHuggingFaceAuthority(async (grant) => {
+    // The authority gets back exactly the binding it issued; Secrets never reads into it.
+    assert.deepEqual(grant, context);
     checks++;
     return live ? person.user : null;
   });
   await secrets.saveHuggingFace(person, 'hf_SYNTHETIC_ROOT_ONLY');
-  const context = {
-    v: 1 as const,
-    sessionId: 'session_test',
-    runnerId: 'runner',
-    allocationId: 'allocation',
-    epoch: 1,
-    hostRef: 'host',
-    exp: Math.floor(now / 1000) + 100,
-  };
+  const context = { binding: 'opaque:session_test@host', exp: Math.floor(now / 1000) + 100 };
   const access = (await secrets.createHuggingFaceAccess(context))!;
   assert.ok(access && !access.token.includes('hf_SYNTHETIC_ROOT_ONLY'));
   const cipher = await state.read((sql) =>

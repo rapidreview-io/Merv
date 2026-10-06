@@ -67,13 +67,14 @@ The first version also refuses slash-containing revisions, filenames with spaces
 These fail explicitly; expand the path policy only with native-client evidence.
 
 New managed hosted Codex workers receive a readable, session-bound capability in
-`HF_TOKEN`, never the account token. jose encrypts a strict session/allocation/
-host/expiry context under an HKDF-derived grant key, separate from storage
-ciphertexts. The grant contains no account identity or Hugging Face token.
-Sessions owns the single authority callback and rechecks its live lease,
-allocation epoch, attached host, source delegation and review policy on every
-request using a read-only snapshot. Secrets then resolves the account's current
-token and inserts it into the upstream request. No authorization cache is used.
+`HF_TOKEN`, never the account token. A grant is `{binding, exp}`: Secrets checks
+the expiry and treats the binding as opaque. jose encrypts it under an HKDF-derived
+grant key, separate from storage ciphertexts. The grant contains no account identity
+or Hugging Face token. Sessions issues the binding and owns the single authority
+callback: on every request, using a read-only snapshot, it reads the binding back and
+rechecks its live lease, allocation epoch, attached host, source delegation and review
+policy. Secrets then resolves the account's current token and inserts it into the
+upstream request. No authorization cache is used.
 
 Removal, rotation, session closure and source/allocation revocation apply to the
 next request, including on existing connections. Transfers already authorized

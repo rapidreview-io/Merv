@@ -10,14 +10,10 @@ export interface HuggingFaceStatus {
   configured: boolean;
   updatedAt: string | null;
 }
-/** Opaque delivery capability. Sessions owns every liveness and identity check. */
+/** A delivery capability until `exp` (Unix seconds). Its binding is opaque to Secrets: the
+ *  registered authority that issued it checks liveness and identity. */
 export interface HuggingFaceGrant {
-  v: 1;
-  sessionId: string;
-  runnerId: string;
-  allocationId: string;
-  epoch: number;
-  hostRef: string;
+  binding: string;
   exp: number;
 }
 export interface HuggingFaceAccess {

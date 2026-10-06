@@ -53,7 +53,7 @@ import {
   type Row,
 } from './common.js';
 import { SessionServiceWork } from './service-work.js';
-import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
+import { ManagedRunnerBindings, managedRunnerRules, type HuggingFaceBinding } from './managed.js';
 import { SessionTranscripts } from './transcripts.js';
 import { SessionStreams } from './stream.js';
 import { SessionConversations } from './conversations.js';
@@ -1680,7 +1680,7 @@ export class LeasedSessions implements Sessions {
     const workspace = effectiveWorkspace(session.execution.policy);
     if (
       (session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain) ||
-      JSON.parse(row.platform_json).harness !== 'codex'
+      !this.managed.huggingFace(row)
     )
       return null;
     const source = session.source.kind === 'service' ? session.source.vouchedBy : session.source;
@@ -1688,12 +1688,16 @@ export class LeasedSessions implements Sessions {
     const { user } = await this.scope.requireDelegation(source, 'read', tx);
     return user ? { issuer: user.issuer, subject: user.subject } : null;
   }
-  async authorizeHuggingFaceGrant(grant: HuggingFaceGrant): Promise<AccountIdentity | null> {
+  /** Secrets' one check of a grant it holds opaquely: whose account, if any, it reads. */
+  async authorizeHuggingFaceGrant({
+    binding,
+    exp,
+  }: HuggingFaceGrant): Promise<AccountIdentity | null> {
     return this.reading(async (tx) => {
-      const row = await this.managed.huggingFaceBinding(grant, tx);
+      const { grant, row } = await this.managed.huggingFaceBinding(binding, tx);
       const session = this.decode(await this.row(tx, grant.sessionId));
       check(
-        grant.exp * 1000 <= Date.parse(session.hardDeadline),
+        exp * 1000 <= Date.parse(session.hardDeadline),
         'unauthorized',
         'Hugging Face access unavailable',
         401,
@@ -1709,13 +1713,15 @@ export class LeasedSessions implements Sessions {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
       const { row } = await this.managed.require(caller, tx);
       if (!(await this.huggingFaceIdentity(session, row, input.hostRef, tx))) return null;
-      return {
-        v: 1 as const,
+      const binding: HuggingFaceBinding = {
         sessionId: session.id,
         runnerId: input.runnerId,
         allocationId: row.allocation_id,
         epoch: Number(row.epoch),
         hostRef: input.hostRef,
+      };
+      return {
+        binding: JSON.stringify(binding),
         exp: Math.floor(Date.parse(session.hardDeadline) / 1000),
       };
     });
