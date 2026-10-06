@@ -412,7 +412,8 @@ export class AgentStream {
           id: `skip-${stat.size}`,
           text: `Stream skipped ${stat.size - 1 - from} bytes`,
         });
-        this.jump(stat.size - 1);
+        // The batch starts where it jumps to, past what Sessions holds, so it is taken.
+        this.jump((from = stat.size - 1));
       }
       const length = Math.min(stat.size - this.offset, CHUNK);
       if (length <= 0) {

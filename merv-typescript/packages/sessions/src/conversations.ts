@@ -102,12 +102,16 @@ export class SessionConversations {
    * A session holding a key closed: it is now the key's latest, with what it declared. One of the
    * row's own agent that declared nothing yet (a lapsed offer, a failed launch, a lost machine)
    * leaves the row's conversation in place, stamped with its close so it may still declare.
+   * One whose harness could not take up the conversation it was offered drops it: on whatever
+   * machine, the key's next offer starts afresh rather than failing to resume it again.
    */
   async closed(session: Session, tx: Transaction): Promise<void> {
     const row = await this.row(session, tx);
+    const failed = session.deferral?.cause === 'resume_failed' && session.continuity?.resume;
     if (row && (row.session_id === session.id || row.agent_id === session.agentId))
       await tx.run(
-        'UPDATE session_conversations SET updated_at=? WHERE project_id=? AND continuity_key=?',
+        `UPDATE session_conversations SET updated_at=?${failed && row.sha256 === failed.sha256 ? ',harness=NULL,conversation_id=NULL,sha256=NULL,size=NULL,uploaded_at=NULL' : ''}
+         WHERE project_id=? AND continuity_key=?`,
         session.closedAt ?? isoNow(this.clock),
         row.project_id,
         row.continuity_key,
@@ -173,13 +177,18 @@ export class SessionConversations {
       const found = await this.row(session, tx);
       if (found?.session_id === session.id && found.sha256 !== null) return found;
       // A closed session's row passed to a later one: what it kept is no longer the latest.
-      // The row's agent's session that closed last, with nothing declared, still may.
+      // A session of the row's agent newer than the row's own still may, though a later one
+      // closed since with nothing declared; another agent's never.
       check(
         found?.session_id === session.id ||
           live(session) ||
           (found !== undefined &&
             found.agent_id === session.agentId &&
-            session.closedAt! >= found.updated_at),
+            !!(await tx.get(
+              'SELECT 1 FROM worker_sessions s, worker_sessions r WHERE s.id=? AND r.id=? AND s._merv_rowid>r._merv_rowid',
+              session.id,
+              found.session_id,
+            ))),
         'conversation_superseded',
         'A later session of this work holds its conversation',
         409,

@@ -6,7 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, get } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -16,6 +16,7 @@ import test, { type TestContext } from 'node:test';
 import type { AgentEvent, Caller, WorkflowPolicy } from '@merv/contracts';
 import { serveEvents } from '@merv/api/event-stream';
 import type { ApplicationConfig } from '../src/config.js';
+import { AgentStream } from '../packages/runner/src/agent-stream.js';
 import { createApp } from './fixtures/app.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -463,4 +464,53 @@ test('a page gone while its authority was read gives its reader slot back at onc
   ]);
   assert.equal(ended, 'ended');
   assert.equal(given, taken);
+});
+
+test('a runner restarted over 4 MiB behind what Sessions holds skips to the log’s end and is taken', async (t) => {
+  const f = await fixture(t);
+  const { session, control } = await f.leased();
+  const path = `/sessions/${session.id}/stream`;
+  const directory = await mkdtemp(join(tmpdir(), 'merv-stream-log-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const one = (n: number) =>
+    `${JSON.stringify({ type: 'item.completed', item: { id: `i${n}`, type: 'agent_message', text: `m${n}${' '.repeat(200)}` } })}\n`;
+  let log = '';
+  for (let n = 0; log.length < 6 << 20; n++) log += one(n);
+  writeFileSync(join(directory, 'stdout.log'), log);
+  // The runner before the restart sent the log up to 1 MiB; then it lost its place.
+  const held = log.indexOf('\n', 1 << 20) + 1;
+  await f.ok('POST', path, f.token, { ...control, from: 0, to: held, events: [call] });
+  let posts = 0;
+  const restarted = new AgentStream(
+    directory,
+    'codex',
+    [],
+    async (batch) => {
+      posts++;
+      return (await f.ok('POST', path, f.token, { ...control, ...batch })).stream;
+    },
+    () => 0,
+  );
+  for (let tick = 0; tick < 6; tick++) await restarted.flush();
+  appendFileSync(join(directory, 'stdout.log'), one(-1));
+  await restarted.flush();
+  const rows = await f.app.ctx.state.read((sql) =>
+    sql.all<{ until: string; event: AgentEvent }>(
+      'SELECT until,event FROM session_events WHERE session_id=? ORDER BY seq',
+      session.id,
+    ),
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.event.kind, row.event.id]),
+    [
+      ['tool_call', 't1'],
+      ['status', `skip-${log.length}`],
+      ['text', 'i-1'],
+    ],
+  );
+  assert.equal(Number(rows.at(-1)!.until), log.length + one(-1).length);
+  // Caught up, the stream sends nothing while the log is still.
+  const sent = posts;
+  await restarted.flush();
+  assert.equal(posts, sent);
 });

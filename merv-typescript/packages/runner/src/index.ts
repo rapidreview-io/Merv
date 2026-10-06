@@ -45,6 +45,7 @@ import {
   forgetConversations,
   keepConversation,
   launchCodexHome,
+  refusedResume,
   restoreConversation,
   type ConversationFacts,
 } from './conversation.js';
@@ -1124,16 +1125,18 @@ export class MachineRunner implements Runner {
   }
   /** The one release: its outcome, or only its usage once closed. The reply says if attached. */
   private async release(record: LaunchRecord): Promise<LaunchRecord> {
-    // A harness that ended without taking up the conversation restored for it (Codex's "no
-    // rollout found", say) failed to resume, not to work: put off uncounted, then run fresh.
-    const { resumed } = record.metadata;
+    // A harness that would not take up the conversation restored for it failed to resume, not
+    // to work: put off uncounted, and Sessions offers the work fresh. Any other end is counted.
+    const { resumed, profile } = record.metadata as { resumed?: unknown; profile?: RunnerProfile };
     if (
       typeof resumed === 'string' &&
-      (record.metadata.conversation as Owed<ConversationFacts> | undefined)?.state === 'none' &&
+      profile &&
+      profile.harness !== 'command' &&
       record.metadata.releaseOutcome === undefined &&
       record.metadata.remoteClosed !== true &&
       !this.stopping &&
-      record.metadata.runnerStopped !== true
+      record.metadata.runnerStopped !== true &&
+      refusedResume(profile.harness, record.runDirectory)
     )
       record = this.save(record.id, {
         releaseOutcome: 'preparation_deferred',

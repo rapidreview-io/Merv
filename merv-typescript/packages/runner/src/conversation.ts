@@ -215,6 +215,24 @@ const printed = (harness: 'claude' | 'codex', runDirectory: string) => {
 };
 
 /**
+ * A launch whose harness would not take up the conversation restored for it: it started none
+ * and said it found none to resume (Codex's "no rollout found", Claude's "No conversation found").
+ */
+export function refusedResume(harness: 'claude' | 'codex', runDirectory: string): boolean {
+  return (
+    !printed(harness, runDirectory) &&
+    ['stdout.log', 'stderr.log'].some((name) => {
+      try {
+        const head = readOwned(join(runDirectory, name), undefined, 64 << 10, true);
+        return /no rollout found|no conversation found/i.test(head.toString('utf8'));
+      } catch {
+        return false;
+      }
+    })
+  );
+}
+
+/**
  * After a launch ends, kept or not: nothing of its conversations is left in a home the runner
  * shares. A local Codex launch's own home goes whole; from Claude's, the files of the conversation
  * it printed and of the one restored for it (which a launch that failed early never took up).
