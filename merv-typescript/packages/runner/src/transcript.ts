@@ -35,8 +35,8 @@ const MARKER = 128;
 
 /**
  * The launch's stdout as kept: the whole log up to `cap`, else its first min(16 MiB, cap/4) bytes
- * and its last bytes, each cut at a line end, around one marker line; bearers and each exact
- * secret (≥ 16 chars) blanked. Undefined when nothing was printed. Never follows a link or waits
+ * and its last bytes, each cut at a line end, around one marker line; partial-message deltas
+ * dropped, and bearers and each exact secret (≥ 16 chars) blanked. Undefined when nothing was printed. Never follows a link or waits
  * on a FIFO; reads at most `cap` bytes into one buffer, which the blanking compacts in place
  * (every replacement is shorter than what it replaces). Deterministic for one log. Synchronous:
  * a typical log is about 100 KB; one near the cap costs the tick a second or so.
@@ -84,6 +84,7 @@ export function readTranscript(
       segments.push([0, headEnd], [from, end]);
       omitted = logBytes - headEnd - (end - from);
     }
+    for (const segment of segments) segment[1] = dropDeltas(out, ...segment);
     const blank = blankPattern(secrets.map((secret) => Buffer.from(secret).toString('latin1')));
     const carry = Math.max(CARRY, ...secrets.map((secret) => Buffer.byteLength(secret)));
     let length = 0;
@@ -125,3 +126,20 @@ export function readTranscript(
 }
 const marker = (omittedBytes: number) =>
   `${JSON.stringify({ type: 'merv.transcript.truncated', omittedBytes })}\n`;
+/** A partial-message line: the live view reads it from stdout.log, and the whole message follows. */
+const DELTA = Buffer.from('{"type":"stream_event"');
+/** Moves the lines of out[start, end) that are not deltas to `start`; returns their new end. */
+function dropDeltas(out: Buffer, start: number, end: number): number {
+  let to = start;
+  for (let line = start; line < end;) {
+    const newline = out.indexOf(0x0a, line),
+      stop = newline < 0 || newline >= end ? end : newline + 1;
+    if (
+      stop - line < DELTA.length ||
+      out.compare(DELTA, 0, DELTA.length, line, line + DELTA.length)
+    )
+      to += out.copy(out, to, line, stop);
+    line = stop;
+  }
+  return to;
+}

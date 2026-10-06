@@ -79,7 +79,7 @@ export interface PaperProposal {
   projectId: string;
   source: PaperSource;
   artifact: { id: string; hash: string };
-  documents: { edit: PaperEdit; before: PaperRevision }[];
+  documents: { edit: PaperEdit }[];
   evidence: { id: string; hash: string }[];
   createdBy: string;
   createdAt: string;

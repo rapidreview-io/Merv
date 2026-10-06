@@ -212,8 +212,12 @@ test('the runner that holds a session sends its agent’s events; a retry is tak
     await f.ok('POST', path, f.token, { ...control, from: 0, to: 180, events: [call] }),
     { stream: { until: 100, seq: 2 } },
   );
+  // The same new batch twice at once, as a retry racing its first try: added once.
   const next = { ...control, from: 100, to: 150, events: [{ ...call, id: 't2' }] };
-  assert.deepEqual(await f.ok('POST', path, f.token, next), { stream: { until: 150, seq: 3 } });
+  assert.deepEqual(
+    await Promise.all([f.ok('POST', path, f.token, next), f.ok('POST', path, f.token, next)]),
+    [{ stream: { until: 150, seq: 3 } }, { stream: { until: 150, seq: 3 } }],
+  );
   const rows = await f.app.ctx.state.read((sql) =>
     sql.all<{ seq: string; until: string; event: AgentEvent }>(
       'SELECT seq,until,event FROM session_events WHERE session_id=? ORDER BY seq',
@@ -315,6 +319,26 @@ test('an operator’s page reads a snapshot, then live events, and from `after` 
   );
   assert.equal(await f.events(`/sessions/${session.id}/events?after=x`, f.token).status(), 400);
   assert.equal(await f.events('/sessions/session_missing/events', f.token).status(), 404);
+});
+
+test('a page’s first snapshot is the newest events within 2 MB', async (t) => {
+  const f = await fixture(t);
+  const { session } = await f.leased();
+  // Each event is 15,040 characters as stored, 15,104 counted: 132 fit in 2,000,000.
+  const event = JSON.stringify({ kind: 'text', id: 'x', delta: 'y'.repeat(15_000) });
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO session_events(session_id,seq,at,until,event)
+        SELECT ?,n,'2026-01-01T00:00:00Z',n,CAST(? AS JSONB) FROM generate_series(1,200) n`,
+      session.id,
+      event,
+    ),
+  );
+  const shown = await f.app.ctx.sessions.streams.snapshot(session.id);
+  assert.deepEqual(
+    shown.map((item) => item.seq),
+    Array.from({ length: 132 }, (_, i) => 69 + i),
+  );
 });
 
 test('a closed session still takes its agent’s last words within its grace', async (t) => {

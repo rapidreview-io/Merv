@@ -172,21 +172,23 @@ test('the id the harness printed first; a conversation restored is found and tak
   }
 });
 
-test('redaction is JSON-safe: inside string values only, every line still a record', () => {
-  const secret = 'S3cretValueOfTheRunner!';
+test('redaction is JSON-safe: inside string values only, other lines as written', () => {
+  const secret = 'S3cretValueOfTheRunner!',
+    quoted = 'Quote"dSecretOfTheRunner';
   const lines = [
     { type: 'user', text: `token ${bearer} and ${secret}`, nested: [{ [bearer]: `"${secret}"` }] },
     { type: 'tool', output: `line\n${bearer}"`, count: 3, ok: true, none: null },
   ];
   const input = Buffer.from(
-    `${lines.map((line) => JSON.stringify(line)).join('\n')}\nnot json\n\n`,
+    `${lines.map((line) => JSON.stringify(line)).join('\n')}\nnot json\n\nnot json ${secret}\n${JSON.stringify({ quoted })}\n{"kept":1}`,
   );
-  const output = redactConversation(input, [secret]).toString('utf8');
-  assert.ok(!output.includes(bearer) && !output.includes(secret));
-  const parsed = output
-    .trimEnd()
-    .split('\n')
-    .map((line) => JSON.parse(line));
+  const output = redactConversation(input, [secret, quoted]).toString('utf8');
+  assert.ok(!output.includes(bearer) && !output.includes(secret) && !output.includes('Quote'));
+  // A line with nothing to blank keeps its bytes; one that holds a secret but is no record is
+  // dropped, and a secret JSON escapes is found as written.
+  const [first, second, ...rest] = output.split('\n');
+  assert.deepEqual(rest, ['not json', '{"quoted":"[REDACTED]"}', '{"kept":1}', '']);
+  const parsed = [first!, second!].map((line) => JSON.parse(line));
   assert.deepEqual(parsed, [
     {
       type: 'user',
