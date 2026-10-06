@@ -4,14 +4,14 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:6222110697c4ec7fb91e4ecd5cad37978de369da421fabc0900210d4ca6d2dec",
-    "releaseId": "rt1_cf3c07051f776f8ce3c5c5f20f46ff44eeaafd8393d5cb0a584971d3939cd240",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:a807c43522787145b7e94a88b7310accbe72733c22217c4a9d7d6853bf8ceb57",
+    "releaseId": "rt1_03f5bdc67aff963203db3618ee8ced704256c8d4772aa7af9ba8b75429ff110b",
     "releases": {
-      "cloudflare-fleet": "rt1_cf3c07051f776f8ce3c5c5f20f46ff44eeaafd8393d5cb0a584971d3939cd240",
-      "cloudflare-fleet-large": "rt1_7659afaab36e0d5fa16e777015ca8ea25580abcf1b950569dcb10b1f10517337"
+      "cloudflare-fleet": "rt1_03f5bdc67aff963203db3618ee8ced704256c8d4772aa7af9ba8b75429ff110b",
+      "cloudflare-fleet-large": "rt1_58f701463c6a7fc67b6e7a6e5aac7a24164858e28b02580a7ab5ed3f828aa338"
     },
-    "localId": "sha256:d8cb9de8fcb713e2439e02ce6ff4b3f52d32d8a5bea0fe471fd28be7f49346af",
-    "sourceCommit": "7155f786c6e7992747d432bba983bbd78721a802",
+    "localId": "sha256:3984671f89723d2993e0c611f9633bb04d40b3ea8022428ca4cacc2cb9a873fd",
+    "sourceCommit": "6e0e1137d2c92134d297e0b4f42a42898e7ec5db",
     "sandboxesCommit": "5157f1ed7618ff3987da7f214d2312afd31e636d"
   },
   "inputs": [
@@ -45,6 +45,10 @@
     "packages/runner/src/agent-stream.ts",
     "packages/runner/src/client.ts",
     "packages/runner/src/conversation.ts",
+    "packages/runner/src/harness/claude.ts",
+    "packages/runner/src/harness/codex.ts",
+    "packages/runner/src/harness/index.ts",
+    "packages/runner/src/harness/shared.ts",
     "packages/runner/src/index.ts",
     "packages/runner/src/ledger.ts",
     "packages/runner/src/process-host.ts",
