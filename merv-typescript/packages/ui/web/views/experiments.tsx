@@ -172,7 +172,7 @@ function ExperimentDetail({ row, shell }: ViewProps) {
     codeUnit: CodeUnit | null;
   }>('ui.read', { rowId: row.id, params: { id } }, { every: settled.current ? undefined : 8000 });
   const state = record.data?.experiment.workflow.state;
-  settled.current = !!state && ['complete', 'abandoned', 'failed'].includes(state);
+  settled.current = !!record.data?.process.terminal;
   const live = settled.current ? undefined : 8000;
   const reviews = useTool<Review[]>('review.list', { subjectId: id }, { every: live });
   const exhibit = useTool<ExperimentExhibit>(

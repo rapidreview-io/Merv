@@ -238,12 +238,27 @@ test('the Work page is its title line and the map: nothing is listed, and Filter
     },
   });
   const rows = [{ ...row, id: 'tasks', path: '/tasks', view: { kind: 'tasks' } }, row];
+  // Open work is what no deployed shape has ended.
+  const workflows = [
+    {
+      name: 'task',
+      version: 1,
+      initial: 'ready',
+      states: ['ready', 'in_progress', 'done', 'failed'],
+      terminal: ['done', 'failed'],
+      edges: [],
+    },
+  ];
   await mount(
     createElement(
       MemoryRouter,
       { initialEntries: ['/work'] },
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      createElement(SessionProvider, null, createElement(WorkView as any, { shell: { rows } })),
+      createElement(
+        SessionProvider,
+        null,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        createElement(WorkView as any, { shell: { rows, workflows } }),
+      ),
     ),
   );
   await settle(20);

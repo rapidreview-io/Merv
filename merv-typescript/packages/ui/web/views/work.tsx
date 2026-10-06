@@ -9,8 +9,8 @@ import { Chips, ListPage, useListFilter } from '../list-filters';
 import { RecordPicker, type Pickable } from '../record-picker';
 import { useSession } from '../session';
 import { OPEN, ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
-import type { ShellData } from '../shell-types';
-import { Dependency, StageMark } from '../process';
+import type { ShellData, WorkflowShape } from '../shell-types';
+import { Dependency, StageMark, ended } from '../process';
 import { ArrowRightIcon } from '../icons';
 import { newest, useHome, type Flow, type MapCycle } from './map-data';
 import { ResearchCommand } from './paper';
@@ -30,9 +30,6 @@ import { LiveLines, LiveUnder, WorkMap, WorkPlane, type Wave } from './work-map'
 
 /** The tab that narrows nothing: every kind of work the wave holds. */
 const ALL = 'all';
-/** Open work, in the union of the two kinds' own words for having stopped. */
-const isOpen = (state: string) =>
-  !['done', 'failed', 'complete', 'approved', 'abandoned'].includes(state);
 
 /** One row of the wave, whichever kind of record it is. */
 interface Item {
@@ -133,9 +130,12 @@ export function chained<T extends { id: string; at: string }>(
 }
 
 /** The cycle the project is on: the newest one still running, else the newest. */
-export const currentCycle = <T extends MapCycle>(cycles: T[] | undefined) => {
+export const currentCycle = <T extends MapCycle>(
+  cycles: T[] | undefined,
+  shapes: WorkflowShape[] | undefined,
+) => {
   const all = newest(cycles ?? [], (cycle) => cycle.workflow.updatedAt);
-  return all.find((cycle) => isOpen(cycle.workflow.state)) ?? all[0];
+  return all.find((cycle) => !ended(shapes, cycle.workflow)) ?? all[0];
 };
 
 interface Listed {
@@ -259,7 +259,9 @@ function WaveList({ shell }: { shell: ShellData }) {
   const all = newest(cycles ?? [], (item) => item.workflow.updatedAt);
   const navigate = useNavigate();
   // The cycle the head shows is the one the narrowing means.
-  const cycle = cycles?.find((item) => item.id === chosen) ?? currentCycle(cycles ?? undefined);
+  const cycle =
+    cycles?.find((item) => item.id === chosen) ??
+    currentCycle(cycles ?? undefined, shell.workflows);
   // The work the cycle itself names: its own prerequisites, and nothing inferred.
   const inCycle = new Set(cycle?.researchDependencies);
   const items: Item[] = chained(
@@ -320,7 +322,8 @@ function WaveList({ shell }: { shell: ShellData }) {
     of === ALL || (of === 'cycle' ? item.named : item.kind === of);
   const filter = useListFilter(items, {
     stateOf: (item) => item.state,
-    isOpen,
+    // Open work: in no program's end state, as the deployed shapes declare them.
+    isOpen: (state) => !shell.workflows?.some((shape) => shape.terminal.includes(state)),
     mine: (item) => item.mine,
     labels: (item) => item.labels,
     ids: (item) => [item.id, item.owner],
@@ -373,7 +376,7 @@ function WaveList({ shell }: { shell: ShellData }) {
       name: item.name,
       flow: item.flow,
       at: item.at,
-      held: only ? kept.has(item) : isOpen(item.state) || item.named,
+      held: only ? kept.has(item) : !ended(shell.workflows, item.flow) || item.named,
     })),
     edges: (tasks ?? []).flatMap((task) => [
       ...(task.dependencies ?? []).map((on) => ({
@@ -546,7 +549,7 @@ export function CycleMove({
   listed?: boolean;
   onSaved(): void;
 }) {
-  const open = isOpen(cycle.workflow.state);
+  const open = !ended(shell.workflows, cycle.workflow);
   const read = useTool<WorkflowDecision>(
     open ? 'workflow.status_and_next' : null,
     { instanceId: cycle.id },

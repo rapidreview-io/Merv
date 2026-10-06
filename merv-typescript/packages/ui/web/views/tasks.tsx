@@ -74,7 +74,7 @@ function TaskDetail({ row, shell }: ViewProps) {
   const t = record.data?.task;
   // Every round of review this task has been through, the newest verdict and the earlier ones
   // in one answer; once the task has ended, none of them changes again.
-  const ended = !!t && ['done', 'failed'].includes(t.workflow.state);
+  const ended = !!record.data?.process.terminal;
   const reviews = useTool<Review[]>(
     t?.reviewId ? 'review.list' : null,
     { subjectId: id },
