@@ -62,9 +62,8 @@ export async function automaticResearch(
     ],
     handle: async (event, tx) => {
       // Startup and each provider bind ask for a resume; a later one still to come answers this.
-      const later = "SELECT 1 FROM events WHERE project_id=? AND type='research.resume' AND id>?";
-      if (event.type === 'research.resume' && (await tx.get(later, event.projectId, event.id)))
-        return;
+      const later = { projectId: event.projectId, type: 'research.resume', after: event.id };
+      if (event.type === 'research.resume' && (await state.findEvents(later, 1, tx)).length) return;
       // Only a defining cycle reads the paper, so only it can be unblocked by a patch.
       const cycles = (await workflows.open('research', event.projectId, tx)).filter(
         (cycle) => event.type !== 'paper.patched' || cycle.state === 'defining',

@@ -14,6 +14,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  requireHuman,
 } from '@merv/contracts';
 import type {
   ManagedModelGrant,
@@ -835,11 +836,10 @@ export const fleetWorkflowPlugin = {
       });
       // A person's own daily limit: only they, signed in, read or change it, never an agent.
       const person = (caller: Caller) => {
-        check(
-          caller.human && !caller.key && !caller.session && !caller.conversation,
+        requireHuman(
+          caller,
           'fleet_forbidden',
           'Only you, signed in, can see or change your daily tokens',
-          403,
         );
         return personKey(caller.human, caller);
       };

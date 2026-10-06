@@ -463,6 +463,12 @@
       "published": true
     },
     {
+      "component": "reviews",
+      "version": 14,
+      "hash": "67235b0d8d5160e1e9f69cc789680520e1bd04ff0264affb30a21c2450e0cc98",
+      "published": false
+    },
+    {
       "component": "scope",
       "version": 1,
       "hash": "65a9502fab93561cae7f780875db3561be701b2f5f0d21cf08f1acd7e0d2c95b",

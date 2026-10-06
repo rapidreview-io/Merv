@@ -4,6 +4,8 @@ Scope owns project membership, actors, actor credentials and user keys, delegati
 
 Its adapters publish it: `@merv/scope/tools` and `@merv/scope/api`, which mounts the HTTP routes `/account` (the caller's account and user keys) and `/projects` (projects and memberships) on the API. The browser's Settings → Members page reads these account routes directly; its `/people` compatibility redirect does not require a Scope UI plugin.
 
+`@merv/scope/rules` holds its pure role rules (`permits`, `needs`, `workerRoles`), which any unit may run; Reviews releases a claim by them. Whether a caller is the person themself, signed in (`isDirectHuman` / `requireHuman`), is a rule over the shared `Caller` and lives with it in `@merv/contracts`, where Code, which depends on contracts alone, can run it too. `permissionLost(projectId, actorId, permission, after, tx)` answers whether an actor was revoked or lost a permission after a given event.
+
 ## Where it sits
 
 ```mermaid

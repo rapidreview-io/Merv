@@ -16,6 +16,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  requireHuman,
 } from '@merv/contracts';
 import { z } from 'zod';
 import type { CodeProjectStatus } from './models.js';
@@ -344,11 +345,10 @@ export class PublicationHost {
     const input = parseCodeInput(publicationControlSchema, value);
     return this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'admin', tx);
-      check(
-        caller.human && !caller.session && !caller.key,
+      requireHuman(
+        caller,
         'github_human_required',
         'A signed-in human administrator must attest publication enforcement',
-        403,
       );
       const previous = await tx.get<{ input_hash: string; result_json: string }>(
         'SELECT input_hash,result_json FROM code_publication_requests WHERE project_id=? AND actor_id=? AND request_id=?',

@@ -1,5 +1,6 @@
-import { excludedFromReview, directsIndependently } from './rules.js';
-import { canonical, visible, sourceCaller } from '@merv/contracts';
+import { excludedFromReview, directsIndependently, REVIEW_VERDICTS } from './rules.js';
+import { permits } from '@merv/scope/rules';
+import { canonical, visible, sourceCaller, isDirectHuman } from '@merv/contracts';
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
@@ -13,6 +14,7 @@ import {
   type Artifacts,
   type Caller,
   type ReviewInput,
+  type Role,
   type ReviewProvenance,
   type ReviewProvenanceResolver,
   type ReviewRequest,
@@ -140,6 +142,10 @@ interface ReviewRow {
   reviewer_id: string | null;
   claim_id: string | null;
   claim_generation: number;
+  /** The open claim's review.started event, when it was taken, and whether a leased agent took it. */
+  claim_event_id: number | null;
+  claimed_at: string | null;
+  claimed_by_agent: boolean;
   owner_override: boolean;
   recovery_json: string | null;
   verdict: ReviewRequest['verdict'];
@@ -187,7 +193,7 @@ const hydrate = (row: ReviewRow): ReviewRequest => ({
  * Never a key, which agents and workers hold, a worker, a machine actor or a conversation.
  */
 const projectOwner = (caller: Caller, actor: Actor) =>
-  actor.role === 'operator' && !!actor.user && !!caller.human && !caller.key && !caller.session;
+  actor.role === 'operator' && !!actor.user && isDirectHuman(caller);
 
 /** Generic assessment of immutable evidence. Target state changes belong to the integrating program. */
 export class ReviewService implements Reviews {
@@ -873,8 +879,12 @@ export class ReviewService implements Reviews {
       );
       const gated = (id: string) => (gates.has(id) ? { gate: gates.get(id)! } : {});
       const sections = await mapAsync(rounds, async ([newest, ...earlier]) => {
-        const current = await view(hydrate(whole.get(newest!.id)!));
-        const claim = current.status === 'started' ? await this.claimOf(sql, current) : undefined;
+        const row = whole.get(newest!.id)!;
+        const current = await view(hydrate(row));
+        const claim =
+          current.status === 'started' && row.claimed_at !== null
+            ? { at: row.claimed_at, agent: row.claimed_by_agent }
+            : undefined;
         return reviewSections({
           current,
           ...gated(current.id),
@@ -917,25 +927,6 @@ export class ReviewService implements Reviews {
       }
     }
     return gates;
-  }
-
-  /**
-   * When the open claim was taken, from the event recorded with it (the one claimStartedAt
-   * finds), and whether a leased worker took it through its review lease.
-   */
-  private async claimOf(
-    sql: Sql,
-    review: ReviewRequest,
-  ): Promise<{ at: string; agent: boolean } | undefined> {
-    const event = await sql.get<{ created_at: string; kind: string | null }>(
-      `SELECT created_at, data_json::jsonb #>> '{source,kind}' AS kind FROM events
-       WHERE project_id=? AND subject_id=? AND type='review.started'
-         AND (data_json::jsonb #>> '{claimId}')=? ORDER BY id DESC LIMIT 1`,
-      review.projectId,
-      review.id,
-      review.claimId ?? null,
-    );
-    return event && { at: event.created_at, agent: event.kind === 'session' };
   }
 
   async checkStart(
@@ -1000,11 +991,17 @@ export class ReviewService implements Reviews {
         'Another reviewer already claimed this review',
         409,
       );
-      await recorded(this.state, tx, caller, 'review.started', reviewId, {
+      const event = await recorded(this.state, tx, caller, 'review.started', reviewId, {
         claimId,
         claimGeneration: current.claimGeneration + 1,
         ...(current.override && { override: true }),
       });
+      await tx.run(
+        `UPDATE reviews SET claim_event_id=?, claimed_at=?, claimed_by_agent=${!!caller.session} WHERE id=?`,
+        event.id,
+        event.createdAt,
+        reviewId,
+      );
       return hydrate(await this.row(tx, caller, reviewId));
     });
   }
@@ -1046,7 +1043,7 @@ export class ReviewService implements Reviews {
           409,
         );
         check(
-          ['pass', 'needs_changes', 'fail'].includes(input.verdict),
+          REVIEW_VERDICTS.includes(input.verdict),
           'invalid_verdict',
           'Verdict must be pass, needs_changes, or fail',
         );
@@ -1144,7 +1141,7 @@ export class ReviewService implements Reviews {
       },
     });
     await tx.run(
-      `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=? AND claim_id=?`,
+      `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL,claim_event_id=NULL,claimed_at=NULL,claimed_by_agent=false${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=? AND claim_id=?`,
       JSON.stringify({
         eventId: event.id,
         previousActorId: input.actorId,
@@ -1165,41 +1162,22 @@ export class ReviewService implements Reviews {
   async actorPermissionsChanged(event: StoredEvent, tx: Transaction): Promise<void> {
     this.state.assertTransaction(tx);
     if (event.type !== 'actor.permissions_changed') return;
-    const permitsReview = (role: unknown) => role === 'operator' || role === 'reviewer';
-    if (!permitsReview(event.data.beforeRole) || permitsReview(event.data.role)) return;
+    const review = (role: unknown) => permits(role as Role, 'review');
+    if (!review(event.data.beforeRole) || review(event.data.role)) return;
     await this.releaseClaims(event, 'review_permission_lost', tx);
-  }
-
-  private async claimStartedAt(row: ReviewRow, tx: Transaction): Promise<number> {
-    return (
-      (
-        await tx.get<{ id: number | null }>(
-          `SELECT MAX(id) AS id FROM events
-         WHERE project_id=? AND subject_id=? AND type='review.started'
-           AND (data_json::jsonb #>> '{claimId}')=?`,
-          row.project_id,
-          row.id,
-          row.claim_id,
-        )
-      )?.id ?? 0
-    );
   }
 
   private async requireLiveClaim(row: ReviewRow, tx: Transaction): Promise<void> {
     // A restored membership authorizes new work, but cannot revive a claim whose
     // permission was lost. Check the committed log before eventual recovery runs.
-    const loss = await tx.get<{ id: number }>(
-      `SELECT id FROM events WHERE project_id=? AND subject_id=? AND id>? AND (
-         type='actor.revoked' OR (type='actor.permissions_changed'
-           AND (data_json::jsonb #>> '{beforeRole}') IN ('operator','reviewer')
-           AND COALESCE((data_json::jsonb #>> '{role}'),'') NOT IN ('operator','reviewer'))
-       ) ORDER BY id LIMIT 1`,
-      row.project_id,
-      row.reviewer_id,
-      await this.claimStartedAt(row, tx),
-    );
     check(
-      !loss,
+      !(await this.scope.permissionLost(
+        row.project_id,
+        row.reviewer_id!,
+        'review',
+        row.claim_event_id ?? 0,
+        tx,
+      )),
       'stale_claim',
       'Review permission was lost after this claim; claim again after recovery releases it',
       409,
@@ -1215,7 +1193,7 @@ export class ReviewService implements Reviews {
     for (const row of rows) {
       // Recovery may lag behind rejoining a project. Its historical event can invalidate
       // an older claim, but must never release a fresh claim acquired after that event.
-      if ((await this.claimStartedAt(row, tx)) >= event.id) continue;
+      if ((row.claim_event_id ?? 0) >= event.id) continue;
       const recovery = {
         eventId: event.id,
         previousActorId: event.subjectId,
@@ -1223,7 +1201,7 @@ export class ReviewService implements Reviews {
         reason,
       };
       await tx.run(
-        `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=?`,
+        `UPDATE reviews SET status='requested',reviewer_id=NULL,claim_id=NULL,claim_event_id=NULL,claimed_at=NULL,claimed_by_agent=false${row.owner_override ? ',owner_override=false' : ''},recovery_json=? WHERE id=?`,
         JSON.stringify(recovery),
         row.id,
       );

@@ -11,6 +11,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  requireHuman,
 } from '@merv/contracts';
 import { NativeCredentials, NativeSandboxClient, nativeOrigin } from './native-client.js';
 import type { NativeConnectionRow, NativeWorkRow } from './native-schema.js';
@@ -71,11 +72,10 @@ export class NativeConnections {
   private async authorize(caller: Caller, tx: Transaction, admin = true) {
     await this.scope.require(caller, admin ? 'admin' : 'read', tx);
     if (admin)
-      check(
-        caller.human && !caller.key && !caller.session && !caller.managed && !caller.conversation,
+      requireHuman(
+        caller,
         'sandbox_human_required',
         'Sign in with your Merv account to manage compute',
-        403,
       );
   }
   private applicationSecret() {

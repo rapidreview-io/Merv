@@ -27,6 +27,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  requireHuman,
 } from '@merv/contracts';
 import { createHash } from 'node:crypto';
 import {
@@ -702,11 +703,10 @@ export class CodeStore {
   /** Verbatim the code.local.bind rule: a leased session never gains a human-only power. */
   private async humanAdministrator(caller: Caller, tx: Transaction): Promise<void> {
     await this.scope.require(caller, 'admin', tx);
-    check(
-      caller.human && !caller.session && !caller.key,
+    requireHuman(
+      caller,
       'code_human_required',
       'A signed-in project administrator rebinds the repository',
-      403,
     );
   }
 

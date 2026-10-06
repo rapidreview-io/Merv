@@ -2,6 +2,11 @@ import { check, clip, type ReviewRequest } from '@merv/contracts';
 
 // Reviews' rules that units requesting reviews apply themselves: pure, so any unit may run them.
 
+/** The verdicts a review may reach. */
+export const REVIEW_VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
+/** What a domain's review.submit step requires of its input. */
+export const REVIEW_SUBMIT_INPUT = ['verdict', 'notes', 'synopsis', 'findings'] as const;
+
 /** A review's producer and its excluded contributors cannot be its reviewer. */
 export const excludedFromReview = (
   review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,

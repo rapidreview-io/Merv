@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { idSchema, visible, parsed } from '@merv/contracts';
+import { REVIEW_VERDICTS } from '@merv/reviews/rules';
 export const id = idSchema;
 const requestId = z.string().trim().min(1).max(200).refine(visible);
 const revision = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
@@ -38,7 +39,7 @@ export const reviewSchema = changesSchema
   .extend({
     source: z.object({ kind: z.enum(['experiment', 'reflection']), id, revision }).strict(),
     reviewId: id,
-    verdict: z.enum(['pass', 'needs_changes', 'fail']),
+    verdict: z.enum(REVIEW_VERDICTS),
     evidenceIds: z.array(id).min(1).max(2000),
   })
   .strict();

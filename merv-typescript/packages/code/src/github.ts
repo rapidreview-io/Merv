@@ -7,6 +7,8 @@ import {
   type Scope,
   type Transaction,
   type DelegationSource,
+  isDirectHuman,
+  requireHuman,
 } from '@merv/contracts';
 import {
   githubRepositoryInputSchema,
@@ -154,11 +156,10 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
     const actor = await this.scope.require(caller, admin ? 'admin' : 'read', tx);
     this.live();
     if (admin)
-      check(
-        caller.human && !caller.key && !caller.session,
+      requireHuman(
+        caller,
         'github_human_required',
         'Sign in with your Merv account to manage GitHub',
-        403,
       );
     return actor;
   }
@@ -199,7 +200,7 @@ ALTER TABLE code_github ADD COLUMN base_branch TEXT;`;
   private async describe(caller: Caller, tx: Transaction): Promise<GitHubStatus> {
     const actor = await this.authorize(caller, tx);
     const row = await this.row(tx, caller.projectId);
-    const canManage = actor.role === 'operator' && !!caller.human && !caller.key && !caller.session;
+    const canManage = actor.role === 'operator' && isDirectHuman(caller);
     return {
       configured: !!this.#client,
       revision: row.revision,

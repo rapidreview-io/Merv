@@ -1,6 +1,6 @@
 import { CredentialStore } from '@merv/identity/credentials';
 import { Ledger } from './ledger.js';
-import { ACTOR_WITH_MEMBER, needs, permits, workerRoles } from './roles.js';
+import { needs, permits, workerRoles } from './rules.js';
 import { visible, createService, receipted, sha256Hex, within } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import { postgresMigrations as memberships } from './memberships.postgres.js';
@@ -16,6 +16,7 @@ import {
   eventSource,
   inTransaction,
   newId,
+  ROLES,
   type State,
   type Scope,
   type Caller,
@@ -46,6 +47,7 @@ import {
   type ProjectRow,
 } from './project-context.js';
 import {
+  ACTOR_WITH_MEMBER,
   ActorCredentials,
   actor,
   credential,
@@ -492,6 +494,28 @@ export class ProjectScope implements Scope {
       subjectId: row.id,
       data: { sessionId: row.session_id!, reason, managedBy: 'sessions' },
     });
+  }
+  async permissionLost(
+    projectId: string,
+    actorId: string,
+    permission: Permission,
+    after: number,
+    tx: Transaction,
+  ): Promise<boolean> {
+    this.state.assertTransaction(tx);
+    const holders = JSON.stringify(ROLES.filter((role) => permits(role, permission)));
+    return !!(await tx.get(
+      `SELECT 1 FROM events WHERE project_id=? AND subject_id=? AND id>? AND (
+         type='actor.revoked' OR (type='actor.permissions_changed'
+           AND (data_json::jsonb #>> '{beforeRole}') IN (SELECT jsonb_array_elements_text(?::jsonb))
+           AND COALESCE((data_json::jsonb #>> '{role}'),'') NOT IN (SELECT jsonb_array_elements_text(?::jsonb)))
+       ) LIMIT 1`,
+      projectId,
+      actorId,
+      after,
+      holders,
+      holders,
+    ));
   }
   async authorityActor(caller: Caller, tx?: Transaction): Promise<Actor> {
     caller = structuredClone(caller);

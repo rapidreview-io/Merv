@@ -1,4 +1,13 @@
-import type { Caller, ReviewFinding, ReviewRequest, Reviews, Transaction } from '@merv/contracts';
+import {
+  newId,
+  recorded,
+  type Caller,
+  type ReviewFinding,
+  type ReviewRequest,
+  type Reviews,
+  type State,
+  type Transaction,
+} from '@merv/contracts';
 
 /**
  * A complete assessment in the only verdict format, for a test exercising another gate: a plain
@@ -50,4 +59,27 @@ export async function claimUnowned(
   } finally {
     drop();
   }
+}
+
+/**
+ * Claims a review the way Reviews did before reviews@14 kept the claim's event on its row, for a
+ * test that runs storage older than that: the row's claim and its review.started event only.
+ */
+export async function legacyStart(
+  state: State,
+  reviews: Reviews,
+  caller: Caller,
+  reviewId: string,
+): Promise<ReviewRequest> {
+  const claimId = newId('claim');
+  await state.transaction(async (tx) => {
+    await tx.run(
+      "UPDATE reviews SET status='started',reviewer_id=?,claim_id=?,claim_generation=claim_generation+1 WHERE id=? AND status='requested'",
+      caller.actorId,
+      claimId,
+      reviewId,
+    );
+    await recorded(state, tx, caller, 'review.started', reviewId, { claimId, claimGeneration: 1 });
+  });
+  return await reviews.get(caller, reviewId);
 }

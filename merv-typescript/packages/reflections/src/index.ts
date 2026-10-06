@@ -1,4 +1,4 @@
-import { excludedFromReview, reviewHistory } from '@merv/reviews/rules';
+import { excludedFromReview, reviewHistory, REVIEW_SUBMIT_INPUT } from '@merv/reviews/rules';
 import {
   leaseReleaseConsumer,
   releasedLease,
@@ -1216,7 +1216,7 @@ export class ReflectionService implements Reflections {
                 tool: 'review.submit',
                 instruction:
                   'Verify the pinned synthesis and maintain Methods/Results with your own paperChanges in the verdict. If no paper edit is warranted, explain why in notes; pass, or return it with returnTo synthesizing or reflecting.',
-                requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
+                requiredInput: [...REVIEW_SUBMIT_INPUT],
                 arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
                   const wave = await this.row(caller, snapshot.id, tx);
                   const review = await this.reviews.get(caller, wave.review_id!, tx);

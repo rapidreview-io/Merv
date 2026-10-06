@@ -561,6 +561,18 @@ export interface StoredEvent {
   data: Data;
   createdAt: string;
 }
+/** Fields an event must match, all of them; `source` names fields of its recorded source. */
+export interface EventFilter {
+  projectId: string;
+  type?: string;
+  subjectId?: string;
+  actorId?: string;
+  /** Only events after this id. */
+  after?: number;
+  /** Only events created at or after this time. */
+  since?: string;
+  source?: Record<string, string>;
+}
 export interface State {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   /**
@@ -602,6 +614,8 @@ export interface State {
   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;
   events(projectId: string, after?: number): Promise<StoredEvent[]>;
   latestEvents(projectId: string, before?: number): Promise<StoredEvent[]>;
+  /** The oldest `limit` (at most 1000) events matching `filter`, in order. */
+  findEvents(filter: EventFilter, limit: number, tx?: Transaction): Promise<StoredEvent[]>;
   eventBatch(after: number, limit: number, tx?: Transaction): Promise<StoredEvent[]>;
   eventHead(tx?: Transaction): Promise<number>;
   onEventsCommitted(listener: () => void): () => void;
@@ -738,6 +752,30 @@ export interface Caller {
   };
   /** A project's credential-free service acting for a person, never set by a transport. */
   service?: { vouchedBy: DelegationSource };
+}
+/**
+ * The person themself, signed in: human authority and no other. Never a key, which agents and
+ * workers hold, a leased worker, a runner, a conversation, a service or an actor credential.
+ */
+export const isDirectHuman = (
+  caller: Caller,
+): caller is Caller & { human: NonNullable<Caller['human']> } =>
+  !!caller.human &&
+  [
+    caller.credentialId,
+    caller.key,
+    caller.session,
+    caller.managed,
+    caller.conversation,
+    caller.service,
+  ].every((authority) => !authority);
+/** Refuses (403) anyone but the person themself, signed in: see isDirectHuman. */
+export function requireHuman(
+  caller: Caller,
+  code: string,
+  message: string,
+): asserts caller is Caller & { human: NonNullable<Caller['human']> } {
+  check(isDirectHuman(caller), code, message, 403);
 }
 /** Immutable source of a lease; a shared login's short JWT lifetime is not the user lifetime. */
 export type DelegationSource = { actorId: string; projectId: string } & (
@@ -1060,6 +1098,17 @@ export interface Scope {
     tx: Transaction,
   ): Promise<void>;
   retireSessionActor(actorId: string, reason: string, tx: Transaction): Promise<void>;
+  /**
+   * Whether this actor was revoked, or lost `permission` through a role change, after event
+   * `after`: a restored membership authorizes new work, never what was taken before the loss.
+   */
+  permissionLost(
+    projectId: string,
+    actorId: string,
+    permission: Permission,
+    after: number,
+    tx: Transaction,
+  ): Promise<boolean>;
   /** Verified delegation owner for scoped remote grants; does not change request attribution. */
   authorityActor(caller: Caller, tx?: Transaction): Promise<Actor>;
   bootstrap(input: { projectName: string; actorName: string }): Promise<Credentials>;
