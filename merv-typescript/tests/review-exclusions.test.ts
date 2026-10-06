@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { createService, migrationList } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -49,7 +49,9 @@ async function fixture(t: TestContext, version = Infinity) {
   state.migrate = async (component, migrations) =>
     await migrate(
       component,
-      component === 'reviews' ? migrations.filter((m) => m.version <= version) : migrations,
+      component === 'reviews'
+        ? migrationList(migrations).filter((m) => m.version <= version)
+        : migrations,
     );
   let reviews = await createService(new ReviewService(state, scope, artifacts));
   ownReviews(reviews);

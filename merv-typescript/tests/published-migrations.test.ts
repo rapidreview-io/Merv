@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { digest, type Migration, type State } from '@merv/contracts';
+import { digest, type Migration, migrationList, type State } from '@merv/contracts';
 import { PostgresState } from '@merv/state';
 import { createApp } from './fixtures/app.js';
 import { legacyFoundationImportMigrations } from './fixtures/legacy-foundation-import.js';
@@ -41,8 +41,8 @@ const published = JSON.parse(
  */
 async function registered(stop: (close: () => Promise<void>) => void) {
   const seen: { component: string; migration: Migration }[] = [];
-  const record = (component: string, migrations: Migration[]) => {
-    for (const migration of migrations) seen.push({ component, migration });
+  const record = (component: string, migrations: Parameters<State['migrate']>[1]) => {
+    for (const migration of migrationList(migrations)) seen.push({ component, migration });
   };
   const original = PostgresState.prototype.migrate;
   PostgresState.prototype.migrate = async function (component, migrations) {
@@ -63,7 +63,7 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   // and then abandoned. Refusing to open a database keeps this a census, not an import.
   const abandon = Symbol('census');
   const recorder = {
-    async migrate(component: string, migrations: Migration[]) {
+    async migrate(component: string, migrations: Parameters<State['migrate']>[1]) {
       record(component, migrations);
       // Pi initializes the shared credential ledger before its own migrations.
       if (component === 'identity-credentials') return;

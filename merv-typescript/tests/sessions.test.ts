@@ -1,4 +1,4 @@
-import { createService } from '@merv/contracts';
+import { createService, migrationList } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -42,7 +42,9 @@ async function fixture(t: TestContext, legacySchema = false) {
     state.migrate = async (component, migrations) =>
       await migrate(
         component,
-        component === 'sessions' ? migrations.filter((m) => m.version <= 2) : migrations,
+        component === 'sessions'
+          ? migrationList(migrations).filter((m) => m.version <= 2)
+          : migrations,
       );
   const scope = await createService(new ProjectScope(state, () => clock));
   const workflows = await createService(new WorkflowsService(state, scope));

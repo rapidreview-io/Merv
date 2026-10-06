@@ -9,6 +9,7 @@ import type {
   SandboxCheckVerdict,
   SandboxChecks,
 } from '@merv/sandboxes';
+import { migrationList } from '@merv/contracts';
 import { checkScript } from '@merv/sandboxes';
 import { checkFailure } from '@merv/code-work/base-check';
 import { resolutionBrief } from '@merv/tasks/resolution-brief';
@@ -672,7 +673,7 @@ test('the populated cleanup migration retains legacy ownership without inventing
   state.migrate = (component, migrations) =>
     migrate(
       component,
-      migrations.filter((m) => m.version <= 2),
+      migrationList(migrations).filter((m) => m.version <= 2),
     );
   await migrateBases(state);
   state.migrate = migrate;
@@ -696,7 +697,7 @@ test('the populated cleanup migration retains legacy ownership without inventing
   state.migrate = (component, migrations) =>
     migrate(
       component,
-      migrations.filter((m) => m.version <= 2),
+      migrationList(migrations).filter((m) => m.version <= 2),
     );
   await assert.rejects(
     migrateBases(state),

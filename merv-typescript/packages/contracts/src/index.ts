@@ -515,6 +515,13 @@ export interface Migration {
    */
   sql: string;
 }
+/** A component's migrations as its `*.postgres.ts` exports them: `{ [version]: sql }`. */
+export type MigrationRecord = Readonly<Record<number, string>>;
+/** The `{ version, sql }` list State runs, from either form `State.migrate` accepts. */
+export const migrationList = (migrations: Migration[] | MigrationRecord): Migration[] =>
+  Array.isArray(migrations)
+    ? migrations
+    : Object.entries(migrations).map(([version, sql]) => ({ version: +version, sql }));
 /**
  * `statements` between `ALTER TABLE <table> DISABLE TRIGGER <trigger>;` and the matching ENABLE,
  * one line per trigger. DISABLE TRIGGER is transactional, so other sessions never see a guard off,
@@ -590,7 +597,7 @@ export interface State {
    */
   remember<T>(key: string, compute: () => Promise<T>): Promise<T>;
   assertTransaction(tx: Transaction): void;
-  migrate(component: string, migrations: Migration[]): Promise<void>;
+  migrate(component: string, migrations: Migration[] | MigrationRecord): Promise<void>;
   appendEvent(tx: Transaction, event: Omit<StoredEvent, 'id' | 'createdAt'>): Promise<StoredEvent>;
   events(projectId: string, after?: number): Promise<StoredEvent[]>;
   latestEvents(projectId: string, before?: number): Promise<StoredEvent[]>;

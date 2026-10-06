@@ -1,6 +1,6 @@
 import type { TaskContext } from '@merv/tasks/types';
 import { waitForManagedCode } from './fixtures/managed-code.js';
-import { createService } from '@merv/contracts';
+import { createService, migrationList } from '@merv/contracts';
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -484,7 +484,9 @@ test('Existing project rows gain empty Introduction defaults through migration w
   state.migrate = async (component, migrations) =>
     await migrate(
       component,
-      component === 'scope' ? migrations.filter((migration) => migration.version < 6) : migrations,
+      component === 'scope'
+        ? migrationList(migrations).filter((migration) => migration.version < 6)
+        : migrations,
     );
   const legacy = await createService(new ProjectScope(state));
   const boot = await legacy.credentials.bootstrap({

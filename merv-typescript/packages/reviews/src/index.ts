@@ -83,19 +83,14 @@ export class ReviewService implements Reviews {
   private readonly provenanceOwners = new Map<string, ReviewProvenanceResolver>();
   private ownerEpoch = 0;
   private closed = false;
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     readonly state: State,
     readonly scope: Scope,
     readonly artifacts: Artifacts,
-  ) {
-    this.initialize = async () => {
-      await state.migrate(
-        'reviews',
-        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-      );
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate('reviews', postgresMigrations);
   }
 
   provenance(provider: string): ReturnType<Reviews['provenance']> {

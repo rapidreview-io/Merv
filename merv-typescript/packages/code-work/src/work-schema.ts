@@ -126,8 +126,5 @@ export async function initializeWorkRecords(state: State): Promise<void> {
 
 /** Preserve the exact published migration path for existing installations and release census. */
 export async function initializeLegacyCodeRecords(state: State): Promise<void> {
-  await state.migrate(
-    'code_units',
-    Object.entries(postgresMigrations).map(([version, sql]) => ({ version: Number(version), sql })),
-  );
+  await state.migrate('code_units', postgresMigrations);
 }

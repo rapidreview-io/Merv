@@ -67,10 +67,7 @@ export class CodeCommandService implements CodeCommands {
 
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
-    await this.state.migrate(
-      'code_commands',
-      [1, 2].map((version) => ({ version, sql: postgresMigrations[version] })),
-    );
+    await this.state.migrate('code_commands', postgresMigrations);
   }
 
   private async transaction<T>(fn: (tx: Transaction) => T): Promise<T> {

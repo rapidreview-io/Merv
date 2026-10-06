@@ -8,6 +8,8 @@ import {
   now,
   plain,
   type Migration,
+  migrationList,
+  type MigrationRecord,
   type Sql,
   type SqlValue,
   type State,
@@ -631,14 +633,14 @@ END $merv$;`);
     );
   }
 
-  async migrate(component: string, migrations: Migration[]): Promise<void> {
+  async migrate(component: string, migrations: Migration[] | MigrationRecord): Promise<void> {
     check(/^[a-z][a-z0-9_-]*$/.test(component), 'invalid_component', 'Invalid component name');
     check(
       !this.context.getStore(),
       'nested_transaction',
       'Migrations require their own database scope',
     );
-    const ordered = plain<Migration[]>(migrations, 'invalid_migration').sort(
+    const ordered = plain<Migration[]>(migrationList(migrations), 'invalid_migration').sort(
       (a, b) => a.version - b.version,
     );
     const seen = new Set<number>();

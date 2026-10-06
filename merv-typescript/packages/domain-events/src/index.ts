@@ -50,12 +50,7 @@ export class DurableEvents implements DomainEvents {
   }
 
   private async prepare(): Promise<void> {
-    await this.state.migrate('domain_events', [
-      {
-        version: 1,
-        sql: postgresMigrations[1],
-      },
-    ]);
+    await this.state.migrate('domain_events', postgresMigrations);
     if (this.closed) return;
     this.unlisten = this.state.onEventsCommitted(() => this.wake());
     this.wake();
