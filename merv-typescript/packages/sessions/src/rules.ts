@@ -4,7 +4,7 @@
  * the server's replies with the same patterns.
  */
 import { z } from 'zod';
-import type { RunnerPlatform } from '@merv/contracts';
+import type { RunnerPlatform } from '@merv/contracts/types';
 
 /** Keyed by the harness type, so the list below is exactly that type's members. */
 const harnesses: Record<RunnerPlatform['harness'], true> = {
@@ -50,3 +50,6 @@ export const capabilitiesSchema = z
   .refine((items) => new Set(items).size === items.length);
 /** Every status a session row can hold (`SessionStatus`). */
 export const SESSION_STATUSES = ['offered', 'active', 'released', 'expired'] as const;
+/** A lease's platform as a person reads it, on the Running sidebar and the Agents page. */
+export const platformPhrase = (platform: Pick<RunnerPlatform, 'name' | 'model' | 'effort'>) =>
+  [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');

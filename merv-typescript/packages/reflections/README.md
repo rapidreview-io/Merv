@@ -13,6 +13,7 @@ flowchart LR
     reflections["Reflections<br/><small>lens waves</small>"]
     research["Research<br/><small>cycle coordinator</small>"]
     paper["Paper<br/><small>living paper</small>"]
+    experiments["Experiments"]
   end
   subgraph foundations["Foundations"]
     workflows["Workflows<br/><small>durable workflow engine</small>"]
@@ -21,6 +22,8 @@ flowchart LR
     artifacts["Artifacts<br/><small>lens reports</small>"]
     sessions["Sessions<br/><small>agent continuity</small>"]
     domainEvents["Domain Events"]
+    scope["Scope<br/><small>projects</small>"]
+    ui["UI"]
     state["State"]
   end
   subgraph external["External"]
@@ -32,9 +35,12 @@ flowchart LR
   reflections -- "requests synthesis review" --> reviews
   reflections -- "registers three recipes" --> contextBuilder
   reflections -- "applies paper changes" --> paper
+  reflections -- "imports @merv/experiments/rules" --> experiments
   reflections -- "reads reports" --> artifacts
   reflections -. "registers lens continuity" .-> sessions
   reflections -- "subscribes lease release" --> domainEvents
+  reflections -- "injects" --> scope
+  reflections -- "registers /reflections page" --> ui
   reflections -- "injects" --> state
   state -- "reads/writes" --> postgres
   class reflections self

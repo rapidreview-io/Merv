@@ -27,22 +27,15 @@ interface AgentRow {
 
 /** Agent identity and continuity belong to Sessions; Scope stores its security actor. */
 export class AgentDirectory {
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
     private clock: () => number,
     private credentials: CredentialStore,
-  ) {
-    this.initialize = async () => {
-      await state.migrate('agents', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-      ]);
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate('agents', [{ version: 1, sql: postgresMigrations[1] }]);
   }
   /** Sessions parsed the input: a registration, or the implicit agent of an offer. */
   async create(

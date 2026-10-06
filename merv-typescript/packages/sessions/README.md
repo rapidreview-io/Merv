@@ -61,7 +61,8 @@ flowchart LR
   sessions -- "injects" --> blobs
   blobs -- "reads/writes" --> blobStore
   fleet -- "injects" --> sessions
-  ui -- "imports @merv/sessions/models" --> sessions
+  ui -- "imports @merv/sessions/models, rules" --> sessions
+  sessions -- "ui adapter injects; registers Agents page and Running lane" --> ui
   sandboxes -- "injects" --> sessions
   sessions -- "emits session.closed" --> tasks
   sessions -- "emits session.closed" --> experiments
