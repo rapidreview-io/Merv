@@ -14,7 +14,7 @@ The acceptance criteria and ordering are in [EXECUTION_PLAN.md](EXECUTION_PLAN.m
   scientific reviews own paper updates, and Consolidation consumes retained artifacts
   without Reflections. Full regression: 682 passed, zero failed, one optional skip.
   UI and all 144 dependency edges are verified. See
-  [current verification and compatibility](docs/PAPER_WORKFLOW_REFACTOR.md).
+  [current verification and compatibility](docs/archive/PAPER_WORKFLOW_REFACTOR.md).
   The living-research wave below is the preceding architecture checkpoint.
 
 - The living-research wave is integrated: Paper, Reflections, Consolidation and

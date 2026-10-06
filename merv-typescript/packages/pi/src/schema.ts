@@ -141,7 +141,6 @@ export const piConfig = z
     path: ['host'],
   });
 export type PiConfig = z.input<typeof piConfig>;
-export type PiMachineConfig = z.output<typeof piConfig>['machines'][number];
 export type PiModelConfig = z.output<typeof piConfig>['models'][number];
 
 export const migration = {

@@ -39,6 +39,6 @@ export interface AgentStreamSession {
   endedAt?: string;
   /** The session whose conversation this one continues, where it resumed one. */
   continues?: string;
-  /** Read with GET /sessions/:id/events (server-sent events: `snapshot`, then `events`). */
+  /** A same-origin path, read with GET (server-sent events: `snapshot`, then `events`); Sessions serves /sessions/:id/events. */
   events: string;
 }

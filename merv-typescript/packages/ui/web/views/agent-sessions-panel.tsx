@@ -1,3 +1,4 @@
+import { workName } from '@merv/contracts/running';
 import type { AgentSummary, AgentObservation as Observation } from '@merv/contracts/types';
 import { useEffect, useRef, useState } from 'react';
 import { useTool } from '../api';
@@ -24,20 +25,6 @@ const duration = (ms: number | null) =>
   ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 export const activity = (agent: AgentSummary) =>
   agent.status === 'retired' ? 'retired' : agent.currentExecutionId ? 'assigned' : 'unassigned';
-/**
- * A lease is labelled for the agent that takes it up — `Work: …`, `Review: …`, or
- * the recipe it runs — and the role beside it already says which. What is left is
- * the record's own name, which is the only part a person reads it for.
- */
-const PURPOSE = /^(?:Work|Review|experiment\.\w+):\s+/;
-/**
- * A reflection's lens is named by the server as the wave and then the lens's own enum
- * word — `After the first sweep: next_steps` — which the reflection page writes as
- * words. Only that closing word is rewritten: an underscore inside a name is its author's.
- */
-const LENS = /: ([a-z]+(?:_[a-z]+)+)$/;
-export const workName = (label: string) =>
-  label.replace(PURPOSE, '').replace(LENS, (_, lens: string) => `: ${lens.replaceAll('_', ' ')}`);
 /** The view kind a workflow's records are drawn as, where this build draws them. */
 const KIND_OF: Record<string, string> = {
   task: 'tasks',

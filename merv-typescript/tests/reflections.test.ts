@@ -1078,6 +1078,9 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
       ?.label;
   assert.equal(lensExecution.assignment.label, `${wave.title}: ${lens!.perspective}`);
   assert.equal(await offered(others[0]!.id), `${wave.title}: ${others[0]!.perspective}`);
+  // A perspective's enum word is named in words, so no reader has to rewrite it.
+  const nextSteps = others.find((entry) => entry.perspective === 'next_steps')!;
+  assert.equal(await offered(nextSteps.id), `${wave.title}: next steps`);
   const previous = f.app.ctx.reflections;
   await f.app.setEnabled('reflections', false);
   await assert.rejects(async () => await previous.get(f.owner, wave.id), {

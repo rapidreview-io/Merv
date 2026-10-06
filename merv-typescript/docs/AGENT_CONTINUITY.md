@@ -56,7 +56,7 @@ Already prepared invocations, claims, workspace observations, command receipts a
 
 ## Runner and existing clients
 
-Automatic dispatch still launches one fresh agent per execution. These agents are registered as nonpersistent and retire when their execution closes. Runner recovery and workspace capture stay keyed by execution ID; snapshots now also include agent and agent-session IDs. There is no automatic process reuse or handoff.
+Automatic dispatch launches a fresh, nonpersistent agent per execution, or continues the dormant agent that last held the same work ([Sessions README](../packages/sessions/README.md#continuity)). A nonpersistent agent retires when its execution closes unless that execution may be continued; then it stays dormant until its work comes back, a later agent supersedes it, or 14 days pass. Runner recovery and workspace capture stay keyed by execution ID; snapshots now also include agent and agent-session IDs. There is no automatic process handoff.
 
 Existing one-assignment clients can continue using `/sessions/offer` and their execution token. A trusted source can additionally offer to a registered continuing agent by supplying `agentId` and the same `runnerId`. The execution token must differ from the continuing credential.
 

@@ -1,6 +1,6 @@
 # Code as an optional utility
 
-Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document older workflow versions. See [Always-on Git](ALWAYS_GIT.md).
+Current creation policy: all new tasks and experiments use managed Git, without requiring GitHub. Scratch, central-base and workspace-selection descriptions below document older workflow versions. See [Always-on Git](../ALWAYS_GIT.md).
 
 Status: implementation complete and verified on staging, 2026-09-22.
 
