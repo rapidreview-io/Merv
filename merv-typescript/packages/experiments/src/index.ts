@@ -74,6 +74,7 @@ import {
   EXPERIMENT_LIMITS,
   EXPERIMENT_WORKFLOW,
   experimentEpoch,
+  captureEpochs,
   ExperimentProgram,
   feasibilityCriterion,
   programVersion,
@@ -479,7 +480,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           caller.projectId,
           row.id,
           tx,
-          EXPERIMENT_WORKFLOW.states.map((state) => experimentEpoch(attempt.index, state)),
+          captureEpochs(attempt.index, workflow),
         )) ?? [],
     };
   }

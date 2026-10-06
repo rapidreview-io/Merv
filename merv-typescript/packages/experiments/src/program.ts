@@ -1,5 +1,5 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
-import { computeGuidance } from '@merv/sandboxes/compute-capability';
+import { computeEpoch, computeGuidance } from '@merv/sandboxes/compute-capability';
 import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
 import { releasedLease, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
@@ -30,6 +30,7 @@ import {
   type WorkflowExecutionReferences,
   type WorkflowLease,
   type WorkflowPolicy,
+  type WorkflowSnapshot,
   type Workflows,
   type WorkflowTransition,
 } from '@merv/contracts';
@@ -125,6 +126,19 @@ export function reviewedSubmission(
  * cancels compute started under an older epoch, so a retry in the same state keeps it.
  */
 export const experimentEpoch = (attemptIndex: number, state: string) => `${attemptIndex}:${state}`;
+/**
+ * The epochs an attempt's compute runs under: one per state, and for work Sandboxes pinned
+ * before Experiments recorded one, the epoch Sandboxes derived from the instance as it stands.
+ */
+export const captureEpochs = (
+  attemptIndex: number,
+  workflow: Pick<WorkflowSnapshot, 'data' | 'revision'>,
+): string[] => [
+  ...new Set([
+    ...EXPERIMENT_WORKFLOW.states.map((state) => experimentEpoch(attemptIndex, state)),
+    computeEpoch(workflow.data, workflow.revision),
+  ]),
+];
 /** The workflow data that sets the epoch the move `action` leads to. */
 export function epochAfter(
   experiment: Pick<Experiment, 'workflow'>,
@@ -1454,7 +1468,7 @@ export abstract class ExperimentProgram {
       outputs: async (context) => {
         // `check`, the whole admission, ran on this revision just before, in this transaction.
         const { id, revision, state } = context.snapshot;
-        await this.lease(
+        const lease = await this.lease(
           context.caller,
           { id, projectId: context.caller.projectId, workflow: { revision, state } },
           context.tx,
@@ -1469,6 +1483,7 @@ export abstract class ExperimentProgram {
                 context.caller.projectId,
                 context.snapshot.id,
                 context.tx,
+                captureEpochs(lease.attempt_index, context.snapshot),
               )) ?? []),
             ]),
           ],

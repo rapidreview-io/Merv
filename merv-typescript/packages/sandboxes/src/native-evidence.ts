@@ -290,7 +290,9 @@ export class NativeEvidence {
           workflow.id,
           node.id,
           artifact.id,
-          workflow.attempt_ref ?? null,
+          // A workflow launched under no assignment is the work's at its epoch of the time, so
+          // no capture answers for every attempt.
+          workflow.attempt_ref ?? work.desired_attempt,
         );
       });
     }
