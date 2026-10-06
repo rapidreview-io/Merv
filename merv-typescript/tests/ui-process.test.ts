@@ -319,8 +319,17 @@ test('how long a record stood in each state is read from its crossings, a state 
 
 test('a record on a retired version reads its program from any version still registered', async () => {
   const { ended } = await import('../packages/ui/web/process.js');
-  // The catalog lists only the versions still registered: tasks v40, not the v38 a done task ran.
+  // The catalog lists only the versions still registered, oldest first: tasks v6 and v40, not
+  // the v38 a done task ran. Its stages are its program's newest, where it stands as it did.
   const shapes = [
+    {
+      name: 'task',
+      version: 6,
+      initial: 'draft',
+      states: ['draft', 'done'],
+      terminal: ['done'],
+      edges: [{ from: 'draft', to: 'done', action: 'act' }],
+    },
     {
       name: 'task',
       version: 40,

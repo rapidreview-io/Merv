@@ -207,12 +207,12 @@ function StageGlyph({
 
 /** Where a record read from a list stands: the program it names, and its state. */
 type Standing = { workflow?: string; version?: number; state: string };
-/** The shape of the record's own version, else, for a version no longer registered, any of its program's. */
+/** The shape of the record's own version, else, for a version no longer registered, its program's newest. */
 const shapeOf = (shapes: WorkflowShape[] | undefined, workflow: Standing) => {
   const named = shapes?.filter((item) => item.name === workflow.workflow) ?? [];
   return (
     named.find((item) => workflow.version === undefined || item.version === workflow.version) ??
-    named[0]
+    named.at(-1)
   );
 };
 /** That program's steps with the record's place marked; none for a program with no shape here. */
