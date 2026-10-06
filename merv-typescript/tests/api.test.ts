@@ -1374,9 +1374,11 @@ test('a namespace owner authenticates its bearers on the routes it allows, and n
   const { scope, tools } = fixture();
   const keys: string[] = [];
   Object.assign(scope, {
-    authenticateKey: async (token: string) => {
-      keys.push(token);
-      throw new MervError('unauthorized', 'Invalid key', 401);
+    userKeys: {
+      authenticate: async (token: string) => {
+        keys.push(token);
+        throw new MervError('unauthorized', 'Invalid key', 401);
+      },
     },
   });
   let verified = 0;

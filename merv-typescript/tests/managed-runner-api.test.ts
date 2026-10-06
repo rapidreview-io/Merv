@@ -309,8 +309,10 @@ async function credentialGate(t: TestContext) {
       if (token !== 'actor-token') throw new MervError('unauthorized', 'Invalid token', 401);
       return actor;
     },
-    authenticateKey: async () => {
-      throw new MervError('unauthorized', 'Invalid key', 401);
+    userKeys: {
+      authenticate: async () => {
+        throw new MervError('unauthorized', 'Invalid key', 401);
+      },
     },
     projects: async () => [],
   } as unknown as Scope;

@@ -240,7 +240,10 @@ test('Needs you lists, from the owners’ answers, exactly the rows it used to w
     rmSync(directory, { recursive: true, force: true });
   });
   const scope = await createService(new ProjectScope(state));
-  const boot = await scope.credentials.bootstrap({ projectName: 'Needs you', actorName: 'Operator' });
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Needs you',
+    actorName: 'Operator',
+  });
   const me: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
   const issue = async (name: string, role: 'reviewer' | 'reader') => ({
     actorId: (await scope.credentials.issueActor(me, { name, role })).actor.id,
