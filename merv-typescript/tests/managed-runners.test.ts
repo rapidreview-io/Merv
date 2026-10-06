@@ -501,6 +501,19 @@ test('enrollment rejects absent, malformed and extra nonce fields', async (t) =>
   }
 });
 
+test('an enrolled platform takes a runner heartbeat’s rules: a model or effort is one trimmed line', async (t) => {
+  const f = await fixture(t);
+  for (const tuned of [{ model: ' gpt' }, { model: 'gpt\nx' }, { effort: 'low ' }, { effort: '' }])
+    await assert.rejects(
+      f.sessions.managed.ensure({
+        ...f.input,
+        allocationId: randomUUID(),
+        platform: { ...f.input.platform, ...tuned },
+      }),
+      { code: 'invalid_managed_enrollment' },
+    );
+});
+
 test('enrollment retries fail closed after allocation expiry or source revocation', async (t) => {
   let now = Date.now();
   const f = await fixture(t, { clock: () => now });

@@ -11,7 +11,6 @@ import {
   check,
   digest,
   newId,
-  RUNNER_HARNESSES,
   sessionSecretPattern,
   type Caller,
   type DelegationSource,
@@ -55,24 +54,10 @@ import {
   workNameOf,
 } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
+import { capabilitiesSchema, label, platformTuning, runnerPlatformSchema } from './rules.js';
 
-const label = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
-const name = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/);
-const harness = z.enum(RUNNER_HARNESSES);
-const tuning = {
-  name,
-  enabled: z.boolean(),
-  model: label.optional(),
-  effort: label.optional(),
-  parallelism: z.number().int().min(1).max(32),
-};
-const platformSchema = z.object({ ...tuning, harness }).strict();
 const platformsSchema = z
-  .array(platformSchema)
+  .array(runnerPlatformSchema)
   .max(32)
   .refine(
     (items) => new Set(items.map((item) => item.name)).size === items.length,
@@ -81,7 +66,7 @@ const platformsSchema = z
 const settingsSchema = z
   .object({
     platforms: z
-      .array(z.object(tuning).strict())
+      .array(z.object(platformTuning).strict())
       .max(32)
       .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
   })
@@ -93,24 +78,18 @@ const heartbeatSchema = z
     platforms: platformsSchema,
     capacity: z.number().int().min(0).max(256),
     appliedVersion: z.number().int().nonnegative().safe().optional(),
-    capabilities: z
-      .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))
-      .max(16)
-      .refine((items) => new Set(items).size === items.length)
-      .optional(),
+    capabilities: capabilitiesSchema.optional(),
   })
   .strict();
 const demandSchema = z
-  .object({ platform: platformSchema, capabilities: heartbeatSchema.shape.capabilities })
+  .object({ platform: runnerPlatformSchema, capabilities: heartbeatSchema.shape.capabilities })
   .strict();
 const leaseSchema = z
   .object({
     runnerId: label,
     requestId: z.string().trim().min(1).max(256),
     secret: z.string().regex(sessionSecretPattern),
-    platform: z
-      .object({ name, harness, model: label.optional(), effort: label.optional() })
-      .strict(),
+    platform: runnerPlatformSchema.pick({ name: true, harness: true, model: true, effort: true }),
     hardDeadlineSeconds: z.number().int().min(300).max(604800).optional(),
   })
   .strict();

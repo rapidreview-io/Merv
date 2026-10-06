@@ -6,7 +6,6 @@ import {
   digest,
   MervError,
   effectiveWorkspace,
-  RUNNER_HARNESSES,
   codexHandoffGraceMs,
   sessionSecretPattern,
   type Actor,
@@ -30,24 +29,11 @@ import type {
   ManagedRunnerInspection,
   ManagedBindingRow,
 } from './managed-types.js';
+import { capabilitiesSchema as capabilities, runnerPlatformSchema as profile } from './rules.js';
 
 /** A session's allocation by either binding: two index lookups, never a scan of every one. */
 const boundTo = `SELECT * FROM session_managed_runners WHERE allocation_id IN (SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?
   UNION ALL SELECT allocation_id FROM session_managed_assignments WHERE session_id=?)`;
-const profile = z
-  .object({
-    name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/),
-    harness: z.enum(RUNNER_HARNESSES),
-    enabled: z.boolean(),
-    model: z.string().min(1).max(200).optional(),
-    effort: z.string().min(1).max(200).optional(),
-    parallelism: z.number().int().min(1).max(32),
-  })
-  .strict();
-const capabilities = z
-  .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))
-  .max(16)
-  .refine((items) => new Set(items).size === items.length);
 const enrollment = z
   .object({
     allocationId: z.string().min(1).max(200),

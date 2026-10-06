@@ -1,5 +1,6 @@
 import { nativeMcpConnectionsSchema } from '@merv/contracts';
 import type { NativeMcpConnection, SessionStreamBatch } from '@merv/sessions/types';
+import { label, platformName, SESSION_STATUSES } from '@merv/sessions/rules';
 import { z } from 'zod';
 import {
   canonical,
@@ -47,18 +48,13 @@ export class RunnerControlError extends Error {
 /** Retried whatever their status. */
 const retriedCodes = ['transaction_conflict', 'invalid_control_response'];
 
-const label = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
 // Replies ignore fields a server adds (`runner.1`). Tuned values are validated again as a
 // profile before use; only the list's own bounds are checked here.
 const settingsSchema = z.object({
   platforms: z
     .array(
       z.object({
-        name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/),
+        name: z.string().regex(platformName),
         enabled: z.boolean(),
         model: z.string().optional(),
         effort: z.string().optional(),
@@ -85,7 +81,7 @@ const sessionSchema = z
     runnerId: label,
     hostRef: z.string().min(1).max(1024).nullable(),
     expectedRevision: z.number().int().nonnegative().safe(),
-    status: z.enum(['offered', 'active', 'released', 'expired']),
+    status: z.enum(SESSION_STATUSES),
     expiresAt: z.string().datetime(),
     hardDeadline: z.string().datetime(),
     assignment: z.object({ label: z.string(), brief: z.string() }).passthrough(),
