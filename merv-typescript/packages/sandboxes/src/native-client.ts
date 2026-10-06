@@ -128,6 +128,8 @@ export class NativeSandboxClient {
     try {
       return (await fetchJson(url, options.application ? null : secret, {
         method: options.method ?? 'GET',
+        // The native service answers some actions with 204, whatever their method.
+        empty: true,
         headers: {
           ...(options.application && { 'x-sandbox-application-secret': secret }),
           ...(options.scope && {

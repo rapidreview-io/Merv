@@ -48,8 +48,8 @@ function retryAfter(value: string | null): number | undefined {
 /**
  * One JSON request: a GET, or a POST of `body`, unless `method` says otherwise. The key is sent
  * as a bearer token, or `headers` carry the credential instead. No redirect (it would carry the
- * key somewhere nobody chose), and a JSON object of at most `maxBytes` back, or `{}` when a DELETE
- * answers 204.
+ * key somewhere nobody chose), and a JSON object of at most `maxBytes` back, or `{}` for a 204
+ * when `empty` allows one.
  * A failure says only its kind and HTTP status, nothing the service wrote; the signal's own
  * reason is thrown when it ends the call.
  */
@@ -58,6 +58,8 @@ export async function fetchJson(
   key: string | null,
   options: {
     method?: 'GET' | 'POST' | 'DELETE';
+    /** A 204 is an empty answer, to any method. */
+    empty?: boolean;
     body?: unknown;
     headers?: Record<string, string>;
     userAgent?: string;
@@ -95,7 +97,7 @@ export async function fetchJson(
       { kind: 'status', status: response.status },
       retryAfter(response.headers.get('retry-after')),
     );
-  if (response.status === 204 && options.method === 'DELETE') {
+  if (response.status === 204 && options.empty) {
     void response.body?.cancel().catch(() => undefined);
     return {};
   }

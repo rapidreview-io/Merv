@@ -113,17 +113,26 @@ test('a paged list reads each cursor once, and one named twice is stuck', async 
   assert.deepEqual(await whole!(), [undefined, 'a', 'b']);
   await assert.rejects(looping!(), /stuck/);
 });
-test('a DELETE answered 204 is empty, and any other 204 is no answer', async () => {
-  for (const [method, code] of [
-    ['DELETE', undefined],
-    ['GET', 'sandbox_unavailable'],
-  ] as const) {
-    const client = new NativeSandboxClient(
-      'https://sandbox.example',
-      (async () => new Response(null, { status: 204 })) as typeof fetch,
+test('a 204 is an empty answer to any method, while another empty 2xx is still refused', async () => {
+  let answer = () => new Response(null, { status: 204 });
+  const client = new NativeSandboxClient('https://sandbox.example', (async () =>
+    answer()) as typeof fetch);
+  for (const method of ['POST', 'DELETE', 'GET'] as const)
+    assert.deepEqual(
+      await client.request('/v1/delegations/works/w/actions', secret, { method }),
+      {},
     );
-    const answer = client.request('/v1/delegations/connection', secret, { method });
-    if (code) await assert.rejects(answer, { code, status: 502 });
-    else assert.deepEqual(await answer, {});
-  }
+  answer = () => new Response(null, { status: 202 });
+  await assert.rejects(
+    client.request('/v1/delegations/works/w/actions', secret, { method: 'POST' }),
+    {
+      code: 'sandbox_unavailable',
+      status: 502,
+    },
+  );
+  answer = () => Response.json({ accepted: true }, { status: 202 });
+  assert.deepEqual(
+    await client.request('/v1/delegations/works/w/actions', secret, { method: 'POST' }),
+    { accepted: true },
+  );
 });
