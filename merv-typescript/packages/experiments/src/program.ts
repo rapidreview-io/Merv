@@ -1,5 +1,5 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
-import { computeEpoch, computeGuidance } from '@merv/sandboxes/compute-capability';
+import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { requireDependencies } from '@merv/workflows/rules';
 import {
   excludedFromReview,
@@ -47,6 +47,7 @@ import { artifactItem } from '@merv/context-builder/artifact-item';
 import type { Code, CodeCapture } from '@merv/code-work/types';
 import type {
   Experiment,
+  ExperimentAttempt,
   ExperimentEvidence,
   ExperimentReview,
   ExperimentSubmission,
@@ -135,19 +136,23 @@ export function reviewedSubmission(
 export const experimentEpoch = (attemptIndex: number, state: string) => `${attemptIndex}:${state}`;
 /**
  * The epochs an attempt's compute runs under: one per state, and for work Sandboxes pinned
- * before Experiments recorded one, every epoch Sandboxes derived from a revision the instance
- * passed through, since a move changes it and from then on records one.
+ * before Experiments recorded one, the epoch Sandboxes derived from each revision this attempt
+ * passed through (a move changes it and from then on records one). No other attempt's revisions.
  */
 export const captureEpochs = (
-  attemptIndex: number,
+  attempt: Pick<ExperimentAttempt, 'index' | 'startedRevision' | 'endedRevision'>,
   workflow: Pick<WorkflowSnapshot, 'data' | 'revision'>,
-): string[] => [
-  ...new Set([
-    ...EXPERIMENT_WORKFLOW.states.map((state) => experimentEpoch(attemptIndex, state)),
-    computeEpoch(workflow.data, workflow.revision),
-    ...Array.from({ length: workflow.revision }, (_, index) => String(index + 1)),
-  ]),
-];
+): string[] => {
+  const last = attempt.endedRevision ?? workflow.revision;
+  return [
+    ...new Set([
+      ...EXPERIMENT_WORKFLOW.states.map((state) => experimentEpoch(attempt.index, state)),
+      ...Array.from({ length: Math.max(0, last - attempt.startedRevision + 1) }, (_, n) =>
+        String(attempt.startedRevision + n),
+      ),
+    ]),
+  ];
+};
 /** The workflow data that sets the epoch the move `action` leads to. */
 export function epochAfter(
   experiment: Pick<Experiment, 'workflow'>,
@@ -1479,13 +1484,30 @@ export abstract class ExperimentProgram {
                 context.caller.projectId,
                 context.snapshot.id,
                 context.tx,
-                captureEpochs(lease.attempt_index, context.snapshot),
+                captureEpochs(
+                  await this.attemptRevisions(id, lease.attempt_index, context.tx),
+                  context.snapshot,
+                ),
               )) ?? []),
             ]),
           ],
         };
       },
       release: async ({ lease, reason, tx }) => await this.release(lease, reason, tx),
+    };
+  }
+
+  /** The revisions an attempt ran through, as captureEpochs reads them. */
+  private async attemptRevisions(id: string, index: number, tx: Transaction) {
+    const row = (await tx.get<{ started_revision: number; ended_revision: number | null }>(
+      'SELECT started_revision,ended_revision FROM experiment_attempts WHERE experiment_id=? AND attempt_index=?',
+      id,
+      index,
+    ))!;
+    return {
+      index,
+      startedRevision: Number(row.started_revision),
+      endedRevision: row.ended_revision === null ? null : Number(row.ended_revision),
     };
   }
 

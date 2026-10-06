@@ -520,7 +520,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           caller.projectId,
           row.id,
           tx,
-          captureEpochs(attempt.index, workflow),
+          captureEpochs(attempt, workflow),
         )) ?? [],
     };
   }

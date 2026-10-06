@@ -1589,15 +1589,29 @@ test('a lease admits the captures of its own attempt only', async (t) => {
   await f.release(first.session.id);
 });
 
-test('work pinned before Experiments recorded an epoch keeps every one Sandboxes derived', () => {
-  // Sandboxes derived the epoch of such work from its revision, so each revision it passed
-  // through had its own; a move, which records an epoch from then on, loses none of them.
+test('work pinned before Experiments recorded an epoch keeps the revision epochs of its own attempt only', () => {
+  // Sandboxes derived the epoch of such work from its revision, so each revision the attempt
+  // passed through had its own; a move, which records an epoch from then on, loses none of
+  // them, and no other attempt's revisions leak in.
+  const second = { index: 2, startedRevision: 4, endedRevision: null };
   for (const data of [{}, { computeEpoch: '2:running' }] as Data[]) {
-    const epochs = captureEpochs(2, { data, revision: 7 });
-    for (const revision of ['1', '4', '7']) assert.ok(epochs.includes(revision));
+    const epochs = captureEpochs(second, { data, revision: 7 });
+    for (const revision of ['4', '5', '7']) assert.ok(epochs.includes(revision));
     assert.ok(epochs.includes('2:running'));
-    assert.ok(!epochs.includes('8') && !epochs.includes('1:running'));
+    for (const other of ['1', '3', '8', '1:running']) assert.ok(!epochs.includes(other), other);
   }
+  // An ended attempt keeps the revisions it ran through, and none after.
+  const first = captureEpochs(
+    { index: 1, startedRevision: 1, endedRevision: 3 },
+    {
+      data: { computeEpoch: '2:running' },
+      revision: 7,
+    },
+  );
+  assert.deepEqual(
+    ['1', '2', '3', '4', '7'].filter((revision) => first.includes(revision)),
+    ['1', '2', '3'],
+  );
 });
 
 test('a context embeds only the newest interruptions, each clipped, and counts the earlier ones', async (t) => {
