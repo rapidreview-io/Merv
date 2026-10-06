@@ -1940,7 +1940,7 @@ test('base operator controls retain history, deny workers, and explain each disp
   assert.equal(blocker.code, 'code_quarantined');
   const history = await f.state.read((sql) =>
     sql.all<{ payload_json: string }>(
-      "SELECT payload_json FROM code_operations WHERE project_id=? AND kind='base-control' ORDER BY created_at,id",
+      "SELECT payload_json FROM code_work_receipts WHERE project_id=? AND kind='base-control' ORDER BY created_at,id",
       f.admin.projectId,
     ),
   );

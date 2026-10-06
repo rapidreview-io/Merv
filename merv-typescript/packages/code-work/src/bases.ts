@@ -5,7 +5,7 @@ import {
   projectCheck,
 } from './check-configuration.js';
 import { migrateBases } from './base-schema.js';
-import { OperationJournal } from '@merv/code/operation-journal';
+import { OperatorReceipt } from './receipts.js';
 import { canonical, check, digest, newId, MervError } from '@merv/contracts';
 import type { Caller, Scope, State, Sql, Transaction } from '@merv/contracts';
 import type { SandboxChecks } from '@merv/sandboxes/types';
@@ -1331,7 +1331,7 @@ export class CodeBaseService {
         403,
       );
       const { requestId, ...body } = input;
-      return await new OperationJournal(
+      return await new OperatorReceipt(
         tx,
         caller.projectId,
         principal,
@@ -1376,13 +1376,7 @@ export class CodeBaseService {
       );
       const { requestId, ...body } = input;
       const principal = `actor:${caller.actorId}`;
-      const journal = new OperationJournal(
-        tx,
-        caller.projectId,
-        principal,
-        requestId,
-        digest(body),
-      );
+      const journal = new OperatorReceipt(tx, caller.projectId, principal, requestId, digest(body));
       const previous = await journal.previous();
       if (previous) {
         // A receipt kept before records carried their verbs gets them from what it records.

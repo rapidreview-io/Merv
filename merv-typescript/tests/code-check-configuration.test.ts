@@ -3,7 +3,8 @@ import test from 'node:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createService } from '@merv/contracts';
+import { canonical, createService, digest } from '@merv/contracts';
+import { postgresMigrations } from '@merv/code-work/commands.postgres';
 import { CodeService } from '@merv/code/service';
 import { CodeStore } from '@merv/code/store/operations';
 import {
@@ -70,7 +71,7 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
   await configure('a'.repeat(200));
   const journals = await state.read((sql) =>
     sql.all<{ request_id: string }>(
-      "SELECT request_id FROM code_operations WHERE project_id=? AND kind='configure' ORDER BY request_id",
+      "SELECT request_id FROM code_work_receipts WHERE project_id=? AND kind='configure' ORDER BY request_id",
       caller.projectId,
     ),
   );
@@ -99,10 +100,62 @@ test('research configuration retains one exact journal, accepts maximum IDs, and
   assert.equal(
     await state.read((sql) =>
       sql.get(
-        "SELECT id FROM code_operations WHERE project_id=? AND request_id='rollback'",
+        "SELECT id FROM code_work_receipts WHERE project_id=? AND request_id='rollback'",
         caller.projectId,
       ),
     ),
     undefined,
+  );
+});
+
+test('a configuration answered before receipts moved to Code Work replays by its old request id', async (t) => {
+  const state = await openState();
+  const scope = await createService(new ProjectScope(state));
+  const boot = await scope.credentials.bootstrap({ projectName: 'Receipts', actorName: 'Admin' });
+  const caller = await scope.caller({ kind: 'actor', actor: await scope.authenticate(boot.token) });
+  const core = await createService(new CodeService(state, scope, {}));
+  t.after(async () => {
+    await core.close();
+    await state.close();
+  });
+  await boundProject(state, caller.projectId, 'a'.repeat(40));
+  // A database as the release before this one left it: Code Work's commands at v2, and the
+  // answered request in Code's operation journal.
+  await state.migrate('code_commands', [
+    { version: 1, sql: postgresMigrations[1] },
+    { version: 2, sql: postgresMigrations[2] },
+  ]);
+  const body = { denyGlobs: [], secretExemptGlobs: [], check: null };
+  const kept = { format: 1, denyGlobs: ['kept/**'], secretExemptGlobs: [], check: null };
+  await state.transaction((tx) =>
+    tx.run(
+      "INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,result_json,created_at,completed_at) VALUES ('cop_old',?,?,'old','configure',?,?,'completed',?,'t','t')",
+      caller.projectId,
+      `actor:${caller.actorId}`,
+      digest(body),
+      canonical(body),
+      canonical(kept),
+    ),
+  );
+  await initializeCheckConfiguration(state);
+  const configure = (requestId: string, denyGlobs: string[] = []) =>
+    configureWorkRepository(state, scope, undefined as never, caller, {
+      requestId,
+      denyGlobs,
+      secretExemptGlobs: [],
+      check: null,
+    });
+  // The same request answers what it answered, without touching the store; other input is refused.
+  assert.deepEqual(await configure('old'), kept);
+  await assert.rejects(configure('old', ['other/**']), { code: 'request_conflict' });
+  assert.deepEqual(
+    await state.read((sql) =>
+      sql.all(
+        'SELECT id,kind,request_id FROM code_work_receipts WHERE project_id=? AND principal_scope=?',
+        caller.projectId,
+        `actor:${caller.actorId}`,
+      ),
+    ),
+    [{ id: 'cop_old', kind: 'configure', request_id: 'old' }],
   );
 });

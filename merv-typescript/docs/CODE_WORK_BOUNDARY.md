@@ -42,6 +42,9 @@ Code consumes an explicit technical permission and never queries research base h
 Repository admission configuration belongs to Code. The check command, timeout and machine
 selection belong to Code Work. The existing public configuration request still commits
 both atomically and keeps one replayable request receipt with its original input semantics.
+That receipt, like those of the base controls, is Code Work's own (`code_work_receipts`, in
+its `code_commands` storage); `code_commands@3` copied the ones Code's operation journal held,
+so an old request id still replays, and Code Work writes none to Code any more.
 
 ## Upgrade behavior
 

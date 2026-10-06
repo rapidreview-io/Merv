@@ -117,6 +117,12 @@
       "published": true
     },
     {
+      "component": "code_commands",
+      "version": 3,
+      "hash": "f32edd397d657b4ad40cc6d4dda9a639ae1ec45f204d6ac7f54f8602d0efdc82",
+      "published": false
+    },
+    {
       "component": "code_github",
       "version": 1,
       "hash": "c0850ecb0595bf8daf60039f0c8a0f4e66ab8a54d7869bbb8b8e6e863e9b41ba",
