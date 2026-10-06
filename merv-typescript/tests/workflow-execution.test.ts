@@ -1,5 +1,6 @@
 import { currentTask, currentWork } from './fixtures/current-work.js';
-import { admitDispatch, createService } from '@merv/contracts';
+import { createService } from '@merv/contracts';
+import { admitDispatch } from '@merv/workflows/execution';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';

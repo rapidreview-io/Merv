@@ -19,7 +19,7 @@ import {
 
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
-import { executionFingerprint, validateExecution } from '@merv/workflows/execution';
+import { executionFingerprint, validateExecution } from '@merv/workflows/execution-policy';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { countWrites, openState } from './fixtures/state.js';

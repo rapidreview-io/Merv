@@ -16,6 +16,7 @@
     "@merv/identity": "0.1.0",
     "@merv/api": "0.1.0",
     "@merv/ui": "0.1.0",
+    "@merv/workflows": "0.1.0",
     "zod": "^3.25.0"
   }
 }

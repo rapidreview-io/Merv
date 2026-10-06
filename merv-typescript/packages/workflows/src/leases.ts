@@ -24,7 +24,7 @@ import {
   executionFingerprint,
   executionReferences,
   executionMetadata,
-} from './execution.js';
+} from './execution-policy.js';
 import { prerequisites, prerequisitesOf, requireDependencies } from './dependencies.js';
 import {
   batches,

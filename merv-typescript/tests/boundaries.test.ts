@@ -233,6 +233,7 @@ const pureRules = new Set([
   '@merv/experiments/rules',
   '@merv/reviews/rules',
   '@merv/reflections/names',
+  '@merv/workflows/execution',
 ]);
 
 /** This adapter composes the Git utility; no other feature may import its implementation. */

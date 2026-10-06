@@ -7,7 +7,8 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { admitDispatch, createService } from '@merv/contracts';
+import { createService } from '@merv/contracts';
+import { admitDispatch } from '@merv/workflows/execution';
 import type {
   Caller,
   Data,

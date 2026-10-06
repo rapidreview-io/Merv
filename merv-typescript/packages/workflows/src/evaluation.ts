@@ -17,7 +17,7 @@ import type {
 import { identifier, toolName, valid } from './definition.js';
 import { freezeData, workflowJson } from './json.js';
 import { requireDependencies } from './dependencies.js';
-import { validateExecution } from './execution.js';
+import { validateExecution } from './execution-policy.js';
 import { limitMessage, validateLimits } from './limits.js';
 
 const descriptionSchema = z.object({
