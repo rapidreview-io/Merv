@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  createReadStream,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -225,4 +233,18 @@ test('timeout, abort, and close promptly end Git command descendants', async (t)
       }
     }
   }
+});
+
+test('a command that exits before reading its input stream closes that stream', async (t) => {
+  const directory = home(t);
+  const git = new ServerGit(directory);
+  const input = join(directory, 'input');
+  writeFileSync(input, Buffer.alloc(8 * 1024 * 1024, 7));
+  const stream = createReadStream(input);
+  // `false` reads nothing: the 8 MiB stream is never drained, so only Code can close it.
+  const result = await git.run(['-c', 'alias.quit=!false', 'quit'], { input: stream });
+  assert.notEqual(result.code, 0);
+  await delay(50);
+  assert.equal(stream.destroyed, true);
+  assert.equal((stream as unknown as { fd: number | null }).fd, null);
 });

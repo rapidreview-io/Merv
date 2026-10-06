@@ -183,18 +183,22 @@ export class ServerGit {
         );
         options.input.pipe(child.stdin);
       }
-      child.once('error', (error) => {
+      const finish = () => {
         clearTimeout(timer);
         abortSignal?.removeEventListener('abort', aborted);
         this.children.delete(child);
+        // A child that exits before reading all its input leaves the stream (and its file) open.
+        if (typeof options.input === 'object' && !Buffer.isBuffer(options.input))
+          options.input.destroy();
+      };
+      child.once('error', (error) => {
+        finish();
         reject(
           failure ?? new MervError('code_git_failed', `Git could not run: ${error.message}`, 500),
         );
       });
       child.once('close', (code, signal) => {
-        clearTimeout(timer);
-        abortSignal?.removeEventListener('abort', aborted);
-        this.children.delete(child);
+        finish();
         if (failure) reject(failure);
         else if (this.closed) reject(new MervError('code_unavailable', 'Code is unavailable', 503));
         // A child ended by a signal never reached an exit of its own. Callers read the exit
