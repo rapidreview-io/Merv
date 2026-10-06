@@ -88,17 +88,6 @@ export interface GitModel {
 /** The trunk is one node whatever its commit is, so nothing joins to a bare oid. */
 export const MAIN = 'main';
 
-/** The route a name leads to says what kind a unit is, and so what colour it wears. */
-const COLOUR: [string, string][] = [
-  ['/tasks/', 'tasks'],
-  ['/experiments/', 'experiments'],
-  ['/reflections/', 'reflections'],
-  ['/research/', 'research'],
-  ['/reviews/', 'reviews'],
-];
-const colourOf = (to: string | undefined) =>
-  (to && COLOUR.find(([prefix]) => to.startsWith(prefix))?.[1]) || 'code';
-
 /** Two member sets name the same merge when they hold the same commits. */
 export const sameMerge = (left: readonly string[], right: readonly string[]) =>
   left.length === right.length && [...left].sort().join() === [...right].sort().join();
@@ -254,7 +243,8 @@ export function gitModel(
     nodes.push({
       id: unit.unitId,
       kind: 'unit',
-      colour: colourOf(named?.to),
+      // The row a unit's record opens on says what kind it is, and so what colour it wears.
+      colour: named?.kind ?? 'code',
       // A lane a list cannot name is still a fact about the repository, so it is drawn
       // as the branch the mirror publishes it under rather than left out.
       name: named?.name ?? unit.branch,

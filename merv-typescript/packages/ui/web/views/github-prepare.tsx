@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 import { accountRequest, call, useTool } from '../api';
 import { useCommand } from '../mutations';
 import { Short } from '../components';
+import { useReferences } from '../markdown';
 import type {
   CodeProjectStatus,
   CodeRepositoryPreparation,
@@ -18,6 +19,11 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
   const [selecting, setSelecting] = useState(false);
   const [error, setError] = useState<string>();
   const live = useRef(true);
+  // The integration task opens where its owner's row lists it, as project.references says.
+  const taskId = result?.state === 'review_required' ? result.taskId : undefined;
+  const integration = useReferences(useMemo(() => (taskId ? [taskId] : []), [taskId])).get(
+    taskId ?? '',
+  )?.to;
   useEffect(() => {
     live.current = true;
     return () => {
@@ -117,8 +123,12 @@ export function GitHubPreparation({ status }: { status: GitHubStatus }) {
       {result?.state === 'review_required' && (
         <p role="status">
           Both histories are retained.{' '}
-          <Link to={`/tasks/${result.taskId}`}>Review the integration task</Link> before Merv main
-          advances. GitHub publication follows separately.
+          {integration ? (
+            <Link to={integration}>Review the integration task</Link>
+          ) : (
+            'Review the integration task'
+          )}{' '}
+          before Merv main advances. GitHub publication follows separately.
         </p>
       )}
       {result?.state === 'importing' && (

@@ -73,6 +73,8 @@ export const idsIn = (text: string): string[] => [
 export interface Named {
   name: string;
   to?: string;
+  /** The view kind of the row it opens on, which says what kind of record it is. */
+  kind?: string;
 }
 export type RecordNames = ReadonlyMap<string, Named>;
 
@@ -105,11 +107,15 @@ export function recordNames(
   const listed = rows.flatMap((row) => {
     const records = parts[row.id];
     return Array.isArray(records)
-      ? records.map((record) => ({ ...record, to: `${row.path}/${record.id}` }))
+      ? records.map((record) => ({
+          ...record,
+          to: `${row.path}/${record.id}`,
+          kind: row.view?.kind,
+        }))
       : [];
   });
-  for (const { id, name = '', title = '', to } of listed)
-    if (name || title) names.set(id, { name: name || title, to });
+  for (const { id, name = '', title = '', to, kind } of listed)
+    if (name || title) names.set(id, { name: name || title, to, ...(kind && { kind }) });
   for (const actor of parts.actors ?? [])
     // A directory name that is itself an identifier names nobody.
     if (!/[0-9a-f]{16,}/.test(actor.name)) names.set(actor.id, { name: actor.name });

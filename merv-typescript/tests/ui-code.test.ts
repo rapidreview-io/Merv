@@ -543,14 +543,14 @@ const bases = (): CodeBaseRecord[] => [
 ];
 const names = new Map([
   ['main', { name: 'main' }],
-  ['u1', { name: 'Pin the tokenizer', to: '/tasks/u1' }],
-  ['u2', { name: 'Baseline p97', to: '/experiments/u2' }],
-  ['u3', { name: 'Sweep depth', to: '/experiments/u3' }],
-  ['u4', { name: 'Fold both sweeps', to: '/tasks/u4' }],
-  ['u5', { name: 'Resolve loader', to: '/tasks/u5' }],
-  ['u6', { name: 'Long-run grokking', to: '/experiments/u6' }],
-  ['u7', { name: 'Wave one', to: '/tasks/u7' }],
-  ['u9', { name: 'Re-run the ablation grid', to: '/experiments/u9' }],
+  ['u1', { name: 'Pin the tokenizer', to: '/tasks/u1', kind: 'tasks' }],
+  ['u2', { name: 'Baseline p97', to: '/experiments/u2', kind: 'experiments' }],
+  ['u3', { name: 'Sweep depth', to: '/experiments/u3', kind: 'experiments' }],
+  ['u4', { name: 'Fold both sweeps', to: '/tasks/u4', kind: 'tasks' }],
+  ['u5', { name: 'Resolve loader', to: '/tasks/u5', kind: 'tasks' }],
+  ['u6', { name: 'Long-run grokking', to: '/experiments/u6', kind: 'experiments' }],
+  ['u7', { name: 'Wave one', to: '/tasks/u7', kind: 'tasks' }],
+  ['u9', { name: 'Re-run the ablation grid', to: '/experiments/u9', kind: 'experiments' }],
 ]);
 const commands = () => [receipt('u1', 'a1', 1), receipt('u1', 'a2', 2), receipt('u1', 'c1', 3)];
 const project = () => gitModel(status(units(), bases()), commands(), [published()], names);
@@ -2578,9 +2578,35 @@ test('the same move drawn inside the canvas offers no control back to the canvas
             },
           };
     });
+    // The task opens where the row that lists its workflow opens it, as its owner names it.
+    serve('/tools/project.references', {
+      body: {
+        result: [
+          {
+            ref: 'integration-task',
+            status: 'resolved',
+            kind: 'service-task',
+            id: 'integration-task',
+            label: 'Integrate main',
+          },
+        ],
+      },
+    });
+    serve('/tools/ui.shell', {
+      body: {
+        result: {
+          rows: [{ id: 'chores', path: '/chores', workflow: 'service-task', view: { kind: 'x' } }],
+        },
+      },
+    });
     await mount(createElement(MemoryRouter, null, createElement(GitHubPreparation, { status })));
     await click('Prepare repository');
     assert.match(text(), /Both histories are retained/);
+    await settle(10);
+    assert.equal(
+      document.querySelector('a[href="/chores/integration-task"]')?.textContent,
+      'Review the integration task',
+    );
     await click('Check integration review');
     serve('/code/github/branches', {
       body: { branches: [{ name: status.baseBranch, sha: moved }] },
