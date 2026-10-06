@@ -1182,9 +1182,12 @@ test('State.remember keeps an answer for one snapshot only, and never a failure'
   const { state } = await fixture(t);
   let computed = 0;
   const compute = async () => ++computed;
-  // Outside a snapshot, and in a write transaction, every call computes.
+  // Outside any scope every call computes; a write transaction keeps its answer until it ends.
   assert.equal(await state.remember('k', compute), 1);
-  await state.transaction(async () => assert.equal(await state.remember('k', compute), 2));
+  await state.transaction(async () => {
+    assert.equal(await state.remember('k', compute), 2);
+    assert.equal(await state.remember('k', compute), 2);
+  });
   // One snapshot answers once, across its sibling transactions; the next snapshot afresh.
   await state.snapshot(async () => {
     const [a, b] = await Promise.all([
@@ -1210,4 +1213,46 @@ test('State.remember keeps an answer for one snapshot only, and never a failure'
     assert.equal(await second, 7);
     assert.equal(await state.remember('f', flaky), 7);
   });
+});
+
+test('State.remember in a write transaction forgets everything at each statement that may write', async (t) => {
+  const { state } = await fixture(t);
+  await state.migrate('memo', [
+    { version: 1, sql: 'CREATE TABLE memo_rows(id TEXT PRIMARY KEY, value INTEGER NOT NULL)' },
+  ]);
+  let reads = 0;
+  await state.transaction(async (tx) => {
+    await tx.run("INSERT INTO memo_rows VALUES ('a', 1)");
+    const value = () =>
+      state.remember('memo:a', async () => {
+        reads++;
+        return (await tx.get<{ value: number }>("SELECT value FROM memo_rows WHERE id='a'"))!.value;
+      });
+    // Reads alone share one answer.
+    assert.deepEqual([await value(), await value(), reads], [1, 1, 1]);
+    // run(), and a write through get() or all() (RETURNING, a CTE), each retire it.
+    await tx.run("UPDATE memo_rows SET value=2 WHERE id='a'");
+    assert.deepEqual([await value(), await value(), reads], [2, 2, 2]);
+    await tx.get("UPDATE memo_rows SET value=3 WHERE id='a' RETURNING value");
+    assert.deepEqual([await value(), reads], [3, 3]);
+    await tx.all('WITH w AS (UPDATE memo_rows SET value=4 RETURNING id) SELECT id FROM w');
+    assert.deepEqual([await value(), reads], [4, 4]);
+    // A plain read does not.
+    await tx.all('SELECT id FROM memo_rows');
+    assert.deepEqual([await value(), reads], [4, 4]);
+  });
+  // Each write transaction starts with nothing remembered.
+  await state.transaction(async (tx) => {
+    await tx.run("UPDATE memo_rows SET value=5 WHERE id='a'");
+  });
+  assert.equal(
+    await state.transaction(() =>
+      state.remember('memo:a', async () => {
+        reads++;
+        return 5;
+      }),
+    ),
+    5,
+  );
+  assert.equal(reads, 5);
 });

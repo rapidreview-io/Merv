@@ -119,7 +119,7 @@ interface Context {
   readOnly?: boolean;
   /** Shared by every scope of one snapshot: whether an isolated read holds its savepoint. */
   isolation?: { open: boolean };
-  /** Shared by every scope of one snapshot: what `remember` keeps. */
+  /** What `remember` keeps: for one snapshot, or for one write transaction until it writes. */
   memo?: Map<string, Promise<unknown>>;
 }
 
@@ -358,18 +358,24 @@ END $merv$;`);
         409,
       );
     };
+    // A write transaction's statement that may write retires everything `remember` kept.
+    const wrote = (sql: string) =>
+      !scope.readOnly && !/^\s*SELECT\b/i.test(sql) && scope.memo?.clear();
     scope.sql = {
       run: async (sql, ...params) => {
         valid();
         check(!scope.readOnly, 'read_only_scope', 'A read scope cannot write', 409);
+        scope.memo?.clear();
         return connection.run(sql, params);
       },
       get: async <T>(sql: string, ...params: SqlValue[]) => {
         valid();
+        wrote(sql);
         return connection.get<T>(sql, params);
       },
       all: async <T>(sql: string, ...params: SqlValue[]) => {
         valid();
+        wrote(sql);
         return connection.all<T>(sql, params);
       },
     };
@@ -389,6 +395,7 @@ END $merv$;`);
     scope.live = true;
     const tx: Transaction = { ...scope.sql, transactionId: Symbol('transaction') };
     scope.transaction = tx;
+    scope.memo = new Map();
     const value = await this.within(
       connection,
       this.writeBegin,

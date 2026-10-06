@@ -635,9 +635,10 @@ export interface State {
    */
   isolated<T>(fn: () => T | Promise<T>): Promise<T>;
   /**
-   * Inside a snapshot, the value it already holds for `key`, else `compute()`'s, kept until the
-   * snapshot ends (a failure is not kept). Elsewhere it just runs `compute`. Only for answers
-   * that rest on nothing but the snapshot's rows and the key.
+   * Inside a snapshot or a write transaction, the value it already holds for `key`, else
+   * `compute()`'s, kept until the scope ends or, in a write transaction, its next statement that
+   * may write (a failure is not kept). Elsewhere it just runs `compute`. Only for answers that
+   * rest on nothing but the scope's rows and the key.
    */
   remember<T>(key: string, compute: () => Promise<T>): Promise<T>;
   assertTransaction(tx: Transaction): void;

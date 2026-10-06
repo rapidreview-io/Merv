@@ -584,9 +584,15 @@ export abstract class ExperimentProgram {
     return input.returnTo === 'planned' ? 'revise_plan' : 'revise_execution';
   }
 
+  /** The checked experiment. Guidance's callbacks each ask; one snapshot reads it once. */
+  protected async current({ caller, snapshot, tx }: WorkflowCheckContext): Promise<Experiment> {
+    const key = `experiments:get:${caller.projectId}:${snapshot.id}`;
+    return structuredClone(await this.state.remember(key, () => this.get(caller, snapshot.id, tx)));
+  }
+
   private async facts(context: WorkflowCheckContext): Promise<Experiment> {
     check(!this.closed, 'experiment_unavailable', 'The experiment program is unavailable', 503);
-    const experiment = await this.get(context.caller, context.snapshot.id, context.tx);
+    const experiment = await this.current(context);
     check(
       experiment.workflow.revision === context.snapshot.revision &&
         experiment.workflow.state === context.snapshot.state,

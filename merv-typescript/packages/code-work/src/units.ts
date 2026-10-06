@@ -616,8 +616,8 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   }
 
   /**
-   * What a unit depends on. A snapshot gets each answer once; every writing path asks Workflows
-   * again, because a transaction that moves an instance must see what it moved.
+   * What a unit depends on. A snapshot gets each answer once, and so does a write transaction
+   * until it writes: one that moves an instance must see what it moved.
    */
   private async dependencies(
     tx: Transaction,
