@@ -59,9 +59,11 @@ export function contextSections(documents: PaperWorkspace['documents']): PaperCo
 /**
  * The paper as one context section's items: whole sections, highest priority first, while
  * their distinct text fits `maxChars`, since no more could ever be embedded, and while their
- * JSON fits INPUT_BYTES. One more item names the sections past that by ID and title while those
- * fit too, and counts the rest; both keep the paper's order. A paper with nothing written is one
- * item that says so.
+ * JSON fits INPUT_BYTES. One more item names the sections past that, a line each with its
+ * title, revision and the paper.read that returns it, while those fit an eighth of `maxChars`,
+ * and counts the rest; both keep the paper's order. It outranks every section, so a budget
+ * that cuts sections still shows what was left out. A paper with nothing written is one item
+ * that says so.
  */
 export function paperInput(documents: PaperWorkspace['documents'], maxChars: number): ContextInput {
   const sections = contextSections(documents);
@@ -79,12 +81,15 @@ export function paperInput(documents: PaperWorkspace['documents'], maxChars: num
     texts.add(section.text);
     kept.add(section);
   }
-  const left: { id: string; title: string }[] = [],
+  const left: string[] = [],
     rest = sections.filter((section) => !kept.has(section));
-  for (const { id, title } of rest) {
-    if (size({ id, title }) > bytes) break;
-    bytes -= size({ id, title });
-    left.push({ id, title });
+  let chars = Math.floor(maxChars / 8);
+  for (const { title, revision, refs } of rest) {
+    const line = `- ${title} — revision ${revision} — ${refs.map((ref) => `${ref.tool} ${JSON.stringify(ref.input)}`).join('; ')}`;
+    if (line.length + 1 > chars || size([line]) > bytes) break;
+    chars -= line.length + 1;
+    bytes -= size([line]);
+    left.push(line);
   }
   const more = rest.length - left.length;
   const read = { tool: 'paper.read', input: {} };
@@ -105,8 +110,8 @@ export function paperInput(documents: PaperWorkspace['documents'], maxChars: num
             {
               id: 'paper:not-included',
               title: `${rest.length} more paper section${rest.length === 1 ? '' : 's'}, not included in this assignment`,
-              body: { text: JSON.stringify(left) },
-              priority: 0,
+              body: { text: left.join('\n') },
+              priority: 900,
               ...(more ? { note: `${more} of them not named here for lack of room` } : {}),
               refs: [read],
             },

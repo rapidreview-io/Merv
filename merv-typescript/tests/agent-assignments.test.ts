@@ -241,7 +241,7 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
   const { items } = (JSON.parse(receipt) as { paper: ContextInput }).paper;
   const sections = items.filter((item) => item.id !== 'paper:not-included');
   const rest = items.find((item) => item.id === 'paper:not-included')!;
-  const left = JSON.parse((rest.body as { text: string }).text) as unknown[];
+  const left = (rest.body as { text: string }).text.split('\n').filter(Boolean);
   const more = Number(/^(\d+) of them/.exec(rest.note ?? '')?.[1] ?? 0);
   assert.ok(sections.length > 0 && more > 0);
   assert.equal(sections.length + left.length + more, 300);

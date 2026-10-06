@@ -484,24 +484,25 @@ test('the paper as context items keeps whole sections within the budget and name
     expectedRevision: 0,
     requestId: f.request(),
     changes: [
-      { id: 'problem', content: 'p'.repeat(40) },
-      { id: 'goals', content: 'g'.repeat(30) },
+      { id: 'problem', content: 'p'.repeat(600) },
+      { id: 'goals', content: 'g'.repeat(500) },
     ],
   });
   // Both fit whole, in the paper's order.
   assert.deepEqual(
-    (await items(70)).map((item) => item.id),
+    (await items(1100)).map((item) => item.id),
     ['paper:problem:current:1:0:problem', 'paper:problem:current:1:2:goals'],
   );
   // The budget keeps the first that fits by priority and names the other, which stays readable.
-  const [kept, rest] = await items(50);
+  const [kept, rest] = await items(1000);
   assert.equal(kept!.id, 'paper:problem:current:1:0:problem');
-  assert.deepEqual(kept!.body, { text: 'p'.repeat(40) });
+  assert.deepEqual(kept!.body, { text: 'p'.repeat(600) });
   assert.equal(rest!.id, 'paper:not-included');
   assert.equal(rest!.title, '1 more paper section, not included in this assignment');
-  assert.deepEqual(JSON.parse('text' in rest!.body ? rest!.body.text : ''), [
-    { id: 'paper:problem:current:1:2:goals', title: 'problem current: Goals' },
-  ]);
+  assert.deepEqual(rest!.body, {
+    text: '- problem current: Goals — revision 1 — paper.read {"kind":"problem","revision":1,"section":"goals"}',
+  });
+  assert.equal(rest!.priority, 900);
   assert.deepEqual(rest!.refs, [{ tool: 'paper.read', input: {} }]);
 });
 
