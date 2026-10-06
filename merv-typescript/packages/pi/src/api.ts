@@ -1,3 +1,4 @@
+import { isUtf8 } from 'node:buffer';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import { MervError, check, type Caller } from '@merv/contracts';
@@ -52,7 +53,16 @@ export class PiHttp {
       401,
     );
     const token = r.bearer();
-    const input = await r.json(undefined, bodyBytes);
+    // Read raw, not through r.json: a completion carries what the agent's tools returned, which
+    // may hold any key, any depth and half a character, and the handlers check its shape.
+    const bytes = await r.bytes(bodyBytes, 'application/json');
+    check(isUtf8(bytes), 'invalid_pi_input', 'Expected UTF-8 JSON');
+    let input: unknown;
+    try {
+      input = JSON.parse(bytes.toString('utf8'));
+    } catch {
+      throw new MervError('invalid_pi_input', 'Invalid JSON');
+    }
     check(!this.closed, 'pi_unavailable', 'Worker connection closed', 503);
     const action = match[1];
     if (action === 'next') return await this.pi.next(token, input, this.holdMs);

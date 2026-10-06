@@ -274,6 +274,24 @@ test('worker mount enforces exact method, path, origin, bearer and bounded JSON 
   assert.deepEqual(f.calls, ['next', 'begin', 'tool', 'progress', 'complete', 'fail']);
 });
 
+test('a worker body carries whatever its tools returned: a lone surrogate, any key and deep nesting', async (t) => {
+  const f = fixture(t);
+  const base = await f.api.start();
+  let deep: unknown = 'leaf';
+  for (let depth = 0; depth < 70; depth++) deep = { a: deep };
+  // Written by hand: JSON.stringify would escape the lone surrogate, which JSON.parse keeps.
+  const body = `{"messages":[{"role":"assistant","text":"emoji \\ud83d"}],"outcomes":[{"output":{"constructor":"x","nested":${JSON.stringify(deep)}}}]}`;
+  const response = await fetch(`${base}/pi-worker/complete`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
+    body,
+  });
+  assert.equal(response.status, 200);
+  const { input } = (await json(response)) as { input: { messages: { text: string }[] } };
+  assert.equal(input.messages[0]!.text, 'emoji \ud83d');
+  assert.deepEqual(f.calls, ['complete']);
+});
+
 test('SSE sends canonical snapshots and deltas, reconnects, and releases disconnected subscribers', async (t) => {
   const f = fixture(t);
   const base = await f.api.start();

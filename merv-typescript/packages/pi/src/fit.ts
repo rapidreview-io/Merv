@@ -9,7 +9,8 @@ const within = <T>(whole: number, make: (n: number) => T): T => {
     shown = Math.min(shown - 1, Math.floor((shown * (resultBytes - 200)) / bytes));
   return make(shown);
 };
-/** Objects inside arrays keep only their scalar fields, their strings clipped to 300 characters:
+/** Objects inside arrays keep only their scalar fields, their strings clipped to 300 characters
+ * at a whole character:
  * every record's id, title and status in a list far too long to show whole. */
 const index = (value: unknown, listed = false): unknown =>
   Array.isArray(value)
@@ -24,7 +25,7 @@ const index = (value: unknown, listed = false): unknown =>
               !listed
                 ? index(item)
                 : typeof item === 'string' && item.length > 300
-                  ? `${item.slice(0, 300)}…`
+                  ? `${item.slice(0, 300).replace(/[\uD800-\uDBFF]$/, '')}…`
                   : item,
             ]),
         );
