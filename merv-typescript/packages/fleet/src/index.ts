@@ -617,12 +617,19 @@ export class FleetService implements Fleet {
           count < this.config.globalLimit &&
           (byProject.get(a.projectId) ?? 0) < this.limit(a.projectId)
         ) {
-          a.phase = 'provisioning';
-          // The machine's time starts here; waiting in the queue does not spend it.
-          a.deadlineAt = this.deadline(a.seconds);
-          if (capped(a)) a.usdPerHour = prices.get(offer(a));
-          count++;
-          byProject.set(a.projectId, (byProject.get(a.projectId) ?? 0) + 1);
+          // Its person may have spent today's compute while it waited.
+          if (capped(a) && (await this.spentToday(a.person!, tx)) >= cap!) {
+            a.error = 'wallet_refused';
+            a.intent = 'stop';
+            a.phase = 'released';
+          } else {
+            a.phase = 'provisioning';
+            // The machine's time starts here; waiting in the queue does not spend it.
+            a.deadlineAt = this.deadline(a.seconds);
+            if (capped(a)) a.usdPerHour = prices.get(offer(a));
+            count++;
+            byProject.set(a.projectId, (byProject.get(a.projectId) ?? 0) + 1);
+          }
         }
         await this.save(tx, a, before);
       }
