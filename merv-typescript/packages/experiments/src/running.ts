@@ -15,6 +15,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { Experiment } from './models.js';
+import { EXPERIMENT_ROLES } from './rules.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
 
 /**
@@ -55,14 +56,8 @@ const GATE: Record<string, string> = {
   experiment_review: 'Results review',
 };
 const WORK: Record<string, string> = { planned: 'Designing', running: 'Running' };
-const ROLES = ['plan', 'feasibility', 'result', 'report', 'exhibit'];
 const EVIDENCE_ROWS = 20;
 
-/** The domain's own order of evidence; a role it no longer writes goes last. */
-const roleOrder = (role: string) => {
-  const at = ROLES.indexOf(role);
-  return at < 0 ? ROLES.length : at;
-};
 const timed = (phrase: RunningPhrase) =>
   phrase.some((part) => typeof part === 'object' && ('since' in part || 'ago' in part));
 
@@ -212,7 +207,11 @@ export function experimentPanel(input: {
   );
   const evidence = experiment.evidence
     .filter((item) => item.current && item.attemptIndex === experiment.attempt.index)
-    .sort((a, b) => roleOrder(a.role) - roleOrder(b.role) || a.sequence - b.sequence);
+    .sort(
+      (a, b) =>
+        EXPERIMENT_ROLES.indexOf(a.role) - EXPERIMENT_ROLES.indexOf(b.role) ||
+        a.sequence - b.sequence,
+    );
   const files = evidence.slice(0, EVIDENCE_ROWS);
   const count = (drawn: number, total: number): RunningPhrase =>
     drawn < total ? [{ count: drawn, of: total }] : [{ count: total }];

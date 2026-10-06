@@ -1,13 +1,7 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
-import {
-  itemTitle,
-  releasedLease,
-  mapAsync,
-  getArtifacts,
-  executionOutputs,
-} from '@merv/contracts';
+import { releasedLease, mapAsync, getArtifacts, executionOutputs } from '@merv/contracts';
 import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
 import { postgresMigrations } from './program.postgres.js';
 import {
@@ -39,7 +33,8 @@ import {
   type Workflows,
   type WorkflowTransition,
 } from '@merv/contracts';
-import type { Paper, PaperContextSection } from '@merv/paper/types';
+import type { Paper } from '@merv/paper/types';
+import { artifactItem } from '@merv/context-builder/artifact-item';
 import type { Code, CodeCapture } from '@merv/code-work/types';
 import type {
   Experiment,
@@ -253,6 +248,8 @@ const verifying =
 
 /** Current format-2 recipes, constructed directly without retired intermediate versions.
  * Published versions and recipe bytes are immutable; only their construction is shared. */
+/** Every recipe's budget, which the paper's items are chosen within too. */
+const CONTEXT_CHARS = 160_000;
 export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((state) => ({
   name: recipeNames[state],
   version: state === 'experiment_review' ? 12 : 11,
@@ -268,7 +265,7 @@ export const EXPERIMENT_RECIPES: ContextRecipeDefinition[] = activeStates.map((s
       (gatedHandoffs[state]
         ? ` When ${state === 'planned' ? 'the experiment below carries feasibilityFormat' : 'the pinned review names requiredCriteria'}: ${gatedHandoffs[state]}`
         : ''),
-    maxChars: 160_000,
+    maxChars: CONTEXT_CHARS,
     sections: [
       { key: 'experiment', title: 'Experiment and exact assignment', required: true },
       { key: 'projectPaper', title: 'Project paper and document revisions', required: false },
@@ -326,8 +323,8 @@ export const resultsCriteria = [
 
 interface FrozenInputs {
   experiment: Data;
-  /** The paper, section by section. */
-  paper: PaperContextSection[];
+  /** The paper's items. */
+  paper: ContextInput;
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
   /** Earlier feedback and selected recovery: readable by reference, never auto-inlined. */
@@ -1027,7 +1024,7 @@ export abstract class ExperimentProgram {
           selected.includes(evidence.artifactId),
         ),
       }),
-      paper: this.paper.contextSections(await this.paper.documents(caller, tx)),
+      paper: await this.paper.contextInput(caller, CONTEXT_CHARS, tx),
       approvedArtifacts,
       evidenceArtifacts,
       historicalArtifacts,
@@ -1198,10 +1195,7 @@ export abstract class ExperimentProgram {
         (artifact): ContextItem => {
           const id = artifact.id;
           const record = records.get(id);
-          return {
-            id: `artifact:${id}`,
-            title: itemTitle(artifact),
-            body: { artifactId: id },
+          return artifactItem(artifact, {
             priority,
             ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
             ...(record
@@ -1209,8 +1203,7 @@ export abstract class ExperimentProgram {
               : figures.has(id)
                 ? { note: 'figure' }
                 : {}),
-            refs: [{ tool: 'artifact.read', input: { artifactId: id } }],
-          };
+          });
         },
       );
     const stateRef = { tool: 'experiment.get_state', input: { experimentId: experiment.id } };
@@ -1227,20 +1220,10 @@ export abstract class ExperimentProgram {
           },
         ],
       },
-      ...(inputs.paper.length
-        ? {
-            projectPaper: {
-              items: inputs.paper.map(({ id, title, text, priority, note, refs }): ContextItem => ({
-                id,
-                title,
-                body: { text },
-                priority,
-                note,
-                refs,
-              })),
-            },
-          }
-        : {}),
+      // A lease taken before 2026-10-06 froze the paper's sections, not its items: read it now.
+      projectPaper: inputs.paper.items
+        ? inputs.paper
+        : await this.paper.contextInput(context.caller, CONTEXT_CHARS, context.tx),
       feedback: {
         items: [
           {

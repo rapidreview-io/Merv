@@ -34,7 +34,7 @@ flowchart LR
   tasks -- "registers task workflow" --> workflows
   tasks -- "requests reviews" --> reviews
   tasks -- "registers recipes" --> contextBuilder
-  tasks -- "reads paper sections" --> paper
+  tasks -- "reads paper context" --> paper
   tasks -- "pins evidence" --> artifacts
   tasks -- "subscribes lease release" --> domainEvents
   tasks -. "binds managed Git" .-> codeWork

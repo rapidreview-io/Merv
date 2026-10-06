@@ -1,4 +1,5 @@
 import type { PaperRevision } from './models.js';
+import { PROBLEM_SECTIONS } from './rules.js';
 
 /** Scope's limit for the project Introduction. */
 const limit = 16_000;
@@ -15,7 +16,7 @@ export function introductionFrom(problem: Pick<PaperRevision, 'sections'>): stri
   const text = problem.sections
     .filter(
       (section) =>
-        ['problem', 'scope', 'goals', 'constraints'].includes(section.id) && section.content.trim(),
+        (PROBLEM_SECTIONS as readonly string[]).includes(section.id) && section.content.trim(),
     )
     .map((section) => `## ${section.title}\n\n${section.content.trim()}`)
     .join('\n\n');

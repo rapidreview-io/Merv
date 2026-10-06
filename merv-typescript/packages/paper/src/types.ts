@@ -1,4 +1,4 @@
-import type { Caller, Transaction } from '@merv/contracts';
+import type { Caller, ContextInput, Transaction } from '@merv/contracts';
 import type {} from 'cordis';
 import type {
   PaperWorkspace,
@@ -57,10 +57,11 @@ export interface Paper {
   /** Validate reviewer edits against the current paper without writing. */
   checkReview(caller: Caller, input: PaperReview, tx: Transaction): Promise<unknown>;
   /**
-   * The documents `read` returned, as whole sections in the paper's order, for a context that
-   * budgets them item by item. Reads nothing.
+   * The paper as one context section's items, for a recipe of `maxChars`: its written sections
+   * whole, highest priority first, while they could still be embedded, then one item naming the
+   * rest. At most 384 KiB of JSON, so a lease may freeze it.
    */
-  contextSections(documents: PaperWorkspace['documents']): PaperContextSection[];
+  contextInput(caller: Caller, maxChars: number, tx: Transaction): Promise<ContextInput>;
   close(): void;
 }
 declare module 'cordis' {

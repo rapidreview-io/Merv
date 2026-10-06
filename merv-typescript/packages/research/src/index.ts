@@ -13,7 +13,6 @@ import {
   recorded,
   childRequest,
   replayed,
-  visible,
   type Artifact,
   type Artifacts,
   type Caller,
@@ -31,6 +30,7 @@ import {
 } from '@merv/contracts';
 import type { Experiments } from '@merv/experiments/types';
 import { MAX_ACTIVE_EXPERIMENTS } from '@merv/experiments/rules';
+import { problemDefined } from '@merv/paper/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';
 import type { ApprovedReflection, ChangeSpec, Reflections } from '@merv/reflections/types';
 import type { Context } from 'cordis';
@@ -574,9 +574,7 @@ export class ResearchService implements Research {
     const problem = (await this.use('paper', checks, (service) => service.documents(caller, tx)))
       .problem.current;
     check(
-      ['problem', 'scope', 'goals', 'constraints'].every((id) =>
-        problem.sections.some((section) => section.id === id && visible(section.content)),
-      ),
+      problemDefined(problem),
       'research_definition_required',
       'Fill the problem, scope, goals and constraints before starting research',
       409,

@@ -8,6 +8,7 @@ import {
   now,
   type Artifacts,
   type Caller,
+  type ContextInput,
   type Scope,
   type State,
   type Transaction,
@@ -15,7 +16,6 @@ import {
 import type {
   Paper,
   PaperCitation,
-  PaperContextSection,
   PaperCite,
   PaperKind,
   PaperPatch,
@@ -29,12 +29,12 @@ import type {
   PaperEdit,
 } from './types.js';
 import { changesSchema, citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
-import { contextSections } from './context.js';
+import { paperInput } from './context.js';
 import { introductionFrom } from './introduction.js';
+import { PROBLEM_SECTIONS } from './rules.js';
 import { migratePaper } from './storage.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
-const problemKeys = ['problem', 'scope', 'goals', 'constraints'];
 const unique = (values: string[]) => [...new Set(values)].sort();
 /** A document before its first revision; the Problem already has its four empty sections. */
 const blank = (projectId: string, kind: PaperKind): PaperRevision => ({
@@ -43,7 +43,11 @@ const blank = (projectId: string, kind: PaperKind): PaperRevision => ({
   revision: 0,
   sections:
     kind === 'problem'
-      ? problemKeys.map((id) => ({ id, title: id[0].toUpperCase() + id.slice(1), content: '' }))
+      ? PROBLEM_SECTIONS.map((id) => ({
+          id,
+          title: id[0].toUpperCase() + id.slice(1),
+          content: '',
+        }))
       : [],
   updatedBy: null,
   updatedAt: null,
@@ -234,7 +238,9 @@ export class PaperService implements Paper {
     for (const change of input.changes) {
       if (input.kind === 'problem')
         check(
-          problemKeys.includes(change.id) && !change.remove && change.afterId === undefined,
+          (PROBLEM_SECTIONS as readonly string[]).includes(change.id) &&
+            !change.remove &&
+            change.afterId === undefined,
           'invalid_paper_input',
           'Problem sections are problem, scope, goals, constraints in that order',
         );
@@ -432,8 +438,8 @@ export class PaperService implements Paper {
   async checkReview(caller: Caller, input: PaperReview, tx: Transaction) {
     return await this.reviewed(this.capture(caller), parse(reviewSchema, input), tx);
   }
-  contextSections(documents: PaperWorkspace['documents']): PaperContextSection[] {
-    return contextSections(documents);
+  async contextInput(caller: Caller, maxChars: number, tx: Transaction): Promise<ContextInput> {
+    return paperInput(await this.documents(caller, tx), maxChars);
   }
   /** The documents a parsed review would publish, before and after its edits. */
   private async reviewed(caller: Caller, changes: PaperReview, tx: Transaction) {

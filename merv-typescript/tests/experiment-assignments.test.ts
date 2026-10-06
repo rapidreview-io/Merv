@@ -33,6 +33,7 @@ import type {
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { confirmedDelivery, reviewedFindings } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
+import { blankPaper } from './fixtures/blank-paper.js';
 
 const plan =
   '# Summary\nCompare two methods.\n# Objective & hypothesis\nA improves held-out accuracy.\n# Evaluation\nUse the same held-out examples, baseline, metric and denominator.\n';
@@ -49,7 +50,7 @@ async function fixture(t: TestContext) {
   const reviews = await createService(new ReviewService(state, scope, artifacts));
   const builder = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
-    new TaskService(state, scope, artifacts, workflows, reviews, builder),
+    new TaskService(state, scope, artifacts, workflows, reviews, builder, blankPaper),
   );
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
