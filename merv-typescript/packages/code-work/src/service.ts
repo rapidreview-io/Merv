@@ -12,7 +12,8 @@ import {
 } from '@merv/code/store/mirror';
 import type { CodeStore } from '@merv/code/store/operations';
 import type { Caller, Scope, State, StoredEvent, Transaction, Workflows } from '@merv/contracts';
-import type { CodeRepositoryPrepareInput, CodeStoreOperation } from '@merv/code/store/protocol';
+import type { CodeStoreOperation } from '@merv/code/store/protocol';
+import type { CodeRepositoryPrepareInput } from './models.js';
 import {
   check,
   codeCommandCompletionSchema,

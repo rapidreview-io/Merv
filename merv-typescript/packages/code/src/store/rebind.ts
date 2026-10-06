@@ -17,8 +17,7 @@ import {
   type CodeStoreOperation,
 } from './protocol.js';
 import { parseCodeInput } from '../input.js';
-import { CodeExporter } from './export.js';
-import { columns, held, type OperationRow, type RebindPayload } from './receive.js';
+import { columns, held, type OperationRow, type RebindPayload, type StoreCore } from './core.js';
 
 /** A commit this project retains as authoritative, with what retains it. */
 interface RetainedRef {
@@ -41,7 +40,9 @@ interface RebindProof {
 }
 
 /** Rebinding a hosted project to another repository identity. */
-export class CodeRebinder extends CodeExporter {
+export class CodeRebinder {
+  constructor(private readonly core: StoreCore) {}
+
   /**
    * Bind a hosted project to another repository identity. Nothing is moved and nothing is
    * published: Code's own repository is keyed by the project alone, so it stays where it is and
@@ -52,7 +53,7 @@ export class CodeRebinder extends CodeExporter {
    * units only through the existing `imported` hook.
    */
   async rebindRepository(caller: Caller, value: unknown): Promise<CodeStoreOperation> {
-    this.assertOpen();
+    this.core.assertOpen();
     caller = structuredClone(caller);
     const input = parseCodeInput(codeRepositoryRebindInputSchema, value);
     const { requestId, ...body } = input;
@@ -69,7 +70,7 @@ export class CodeRebinder extends CodeExporter {
     // Phase 1 — prepare. No Git, no network, one small transaction; `unit_id` stays null so
     // code_operations_unit_open does not apply, and one prepared rebind per project is what
     // the read below enforces inside this transaction rather than an index.
-    const prepared = await this.state.transaction(async (tx) => {
+    const prepared = await this.core.state.transaction(async (tx) => {
       await this.humanAdministrator(caller, tx);
       const journal = new OperationJournal(tx, caller.projectId, principal, requestId, inputHash);
       const previous = await journal.previous<OperationRow>(columns);
@@ -110,13 +111,13 @@ export class CodeRebinder extends CodeExporter {
         'verifying',
         at,
       );
-      return (await this.row(tx, id))!;
+      return (await this.core.row(tx, id))!;
     });
-    if (prepared.status !== 'prepared') return this.view(prepared);
-    await this.owned(() =>
-      this.repositories.run(prepared.project_id, () => this.rebind(caller, prepared, input)),
+    if (prepared.status !== 'prepared') return this.core.view(prepared);
+    await this.core.owned(() =>
+      this.core.repositories.run(prepared.project_id, () => this.rebind(caller, prepared, input)),
     );
-    return this.view((await this.state.read((sql) => this.row(sql, prepared.id)))!);
+    return this.core.view((await this.core.state.read((sql) => this.core.row(sql, prepared.id)))!);
   }
 
   /**
@@ -129,10 +130,10 @@ export class CodeRebinder extends CodeExporter {
     row: OperationRow,
     input: CodeRepositoryRebindInput,
   ): Promise<void> {
-    const bound = (await this.state.read((sql) => this.bound(sql, row.project_id)))!;
+    const bound = (await this.core.state.read((sql) => this.bound(sql, row.project_id)))!;
     const previousMain = (JSON.parse(bound.main_json) as { oid: string }).oid;
     const refs = await this.retained(row.project_id, previousMain, input.mainOid);
-    const missing = await this.absent(
+    const missing = await this.core.absent(
       row.project_id,
       refs.map((ref) => ref.oid),
     );
@@ -164,8 +165,12 @@ export class CodeRebinder extends CodeExporter {
       ).map((entry) => entry.repositoryId),
       bound.repository_id,
     ];
-    const markerIds = await this.repositories.rebind(row.project_id, lineage, input.repositoryId);
-    this.fault('after_rebind_marker');
+    const markerIds = await this.core.repositories.rebind(
+      row.project_id,
+      lineage,
+      input.repositoryId,
+    );
+    this.core.fault('after_rebind_marker');
     const proof: RebindProof = {
       formatVersion: 1,
       repositoryId: input.repositoryId,
@@ -178,8 +183,8 @@ export class CodeRebinder extends CodeExporter {
       count: refs.length,
       markerIds,
     };
-    await this.state.transaction(async (tx) => {
-      const current = await this.row(tx, row.id);
+    await this.core.state.transaction(async (tx) => {
+      const current = await this.core.row(tx, row.id);
       if (current?.status !== 'prepared') return;
       await this.humanAdministrator(caller, tx);
       await this.rebindable(caller, input, tx);
@@ -241,7 +246,7 @@ export class CodeRebinder extends CodeExporter {
       );
       // Every unpinned unit is derived again under the new binding. Pure SQL: no Git and no
       // network enter this transaction.
-      await this.hooks.imported(tx, row.project_id);
+      await this.core.hooks.imported(tx, row.project_id);
       // Last, because the relaxed code_projects_binding trigger requires this operation to
       // still be prepared while code_projects is written.
       await tx.run(
@@ -251,7 +256,7 @@ export class CodeRebinder extends CodeExporter {
         at,
         row.id,
       );
-      await this.state.appendEvent(tx, {
+      await this.core.state.appendEvent(tx, {
         projectId: row.project_id,
         actorId: caller.actorId,
         type: 'code.repository_rebound',
@@ -272,7 +277,7 @@ export class CodeRebinder extends CodeExporter {
 
   /** Verbatim the code.local.bind rule: a leased session never gains a human-only power. */
   private async humanAdministrator(caller: Caller, tx: Transaction): Promise<void> {
-    await this.scope.require(caller, 'admin', tx);
+    await this.core.scope.require(caller, 'admin', tx);
     requireHuman(
       caller,
       'code_human_required',
@@ -300,7 +305,7 @@ export class CodeRebinder extends CodeExporter {
   ): Promise<void> {
     const bound = await this.bound(tx, caller.projectId);
     check(bound, 'code_project_unbound', 'This project has no Code binding', 409);
-    const project = await this.project(tx, caller.projectId);
+    const project = await this.core.project(tx, caller.projectId);
     check(
       project?.store_json,
       'code_rebind_unhosted',
@@ -337,7 +342,10 @@ export class CodeRebinder extends CodeExporter {
     // Consumers holding repository-scoped snapshots must release them before rebinding.
     const listed = [
       ...busy,
-      ...held('sessions holding a workspace:', await this.hooks.workspaces(caller.projectId, tx)),
+      ...held(
+        'sessions holding a workspace:',
+        await this.core.hooks.workspaces(caller.projectId, tx),
+      ),
     ];
     check(
       !listed.length,
@@ -357,7 +365,7 @@ export class CodeRebinder extends CodeExporter {
     previousMain: string,
     mainOid: string,
   ): Promise<RetainedRef[]> {
-    const read = await this.state.read(async (sql) => ({
+    const read = await this.core.state.read(async (sql) => ({
       units: await sql.all<{ unit_id: string; base_json: string | null; head_oid: string | null }>(
         'SELECT unit_id,base_json,head_oid FROM code_workspaces WHERE project_id=? ORDER BY unit_id',
         projectId,
@@ -387,8 +395,8 @@ export class CodeRebinder extends CodeExporter {
   private async ancestor(projectId: string, base: string, tip: string): Promise<boolean> {
     return (
       (
-        await this.repositories.git.run(['merge-base', '--is-ancestor', base, tip], {
-          env: this.repositories.environment(projectId),
+        await this.core.repositories.git.run(['merge-base', '--is-ancestor', base, tip], {
+          env: this.core.repositories.environment(projectId),
         })
       ).code === 0
     );

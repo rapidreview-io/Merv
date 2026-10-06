@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { hashFile } from '../files.js';
 import { bundleHeader } from './admission.js';
 import { EXPORT_TTL_MS } from './repository.js';
-import { CodeReceiver, FETCH_TIMEOUT_MS, serial } from './receive.js';
+import { FETCH_TIMEOUT_MS, serial, type StoreCore } from './core.js';
 
 export type CodeExport =
   | { upToDate: true; head: string }
@@ -20,9 +20,9 @@ export type CodeExport =
     };
 
 /** Downloads: the bundle a session reads of one commit and of what its machine lacks. */
-export class CodeExporter extends CodeReceiver {
-  protected readonly exporting = new Map<string, Promise<void>>();
-  protected readonly exports = new Map<
+export class CodeExporter {
+  readonly exporting = new Map<string, Promise<void>>();
+  readonly exports = new Map<
     string,
     {
       key: string;
@@ -31,6 +31,7 @@ export class CodeExporter extends CodeReceiver {
       view: Exclude<CodeExport, { upToDate: true }>;
     }
   >();
+  constructor(private readonly core: StoreCore) {}
 
   /**
    * Write exactly one commit and what the machine does not have of its history into a bundle
@@ -42,12 +43,12 @@ export class CodeExporter extends CodeReceiver {
     caller: Caller,
     input: { sessionId: string; head: string; haves: string[]; secondParent?: string },
   ): Promise<CodeExport> {
-    this.assertOpen();
-    await this.managedRead(caller, input.sessionId);
+    this.core.assertOpen();
+    await this.core.managedRead(caller, input.sessionId);
     // The session's one bundle path is cut, or swept, by one job at a time; one asked again waits.
     const exportId = `exp${createHash('sha256').update(`${caller.projectId}\0${input.sessionId}`).digest('hex').slice(0, 32)}`;
     return await serial(this.exporting, exportId, () =>
-      this.owned(() => this.writeExport(caller, input, exportId)),
+      this.core.owned(() => this.writeExport(caller, input, exportId)),
     );
   }
 
@@ -57,14 +58,14 @@ export class CodeExporter extends CodeReceiver {
     exportId: string,
   ): Promise<CodeExport> {
     const projectId = caller.projectId;
-    const env = this.repositories.environment(projectId);
-    const git = this.repositories.git;
-    const missing = await this.absent(projectId, input.haves);
+    const env = this.core.repositories.environment(projectId);
+    const git = this.core.repositories.git;
+    const missing = await this.core.absent(projectId, input.haves);
     const haves = [...new Set(input.haves)].filter((oid) => !missing.has(oid)).sort();
     if (haves.includes(input.head) && (!input.secondParent || haves.includes(input.secondParent)))
       return { upToDate: true, head: input.head };
     const key = digest({ head: input.head, haves, secondParent: input.secondParent ?? null });
-    const paths = this.repositories.paths(projectId);
+    const paths = this.core.repositories.paths(projectId);
     const file = join(paths.exports, `${exportId}.bundle`);
     const known = this.exports.get(exportId);
     if (
@@ -73,7 +74,7 @@ export class CodeExporter extends CodeReceiver {
       (await lstat(file).catch(() => null))
     )
       return known.view;
-    return await this.repositories.transfer(async () => {
+    return await this.core.repositories.transfer(async () => {
       await mkdir(paths.exports, { recursive: true, mode: 0o700 });
       const ref = `refs/merv/exports/${exportId}`;
       // Whatever this session held is given back before the next is measured: one download at
@@ -82,7 +83,7 @@ export class CodeExporter extends CodeReceiver {
       // This session's exports run one at a time on the one server writing this root, so a
       // lock still on its bundle or refs is what a killed Git child or server left behind.
       await rm(`${file}.lock`, { force: true });
-      await this.clearRefLocks(paths.repository, [ref, `${ref}-second`]);
+      await this.core.clearRefLocks(paths.repository, [ref, `${ref}-second`]);
       await rm(file, { force: true });
       await git.run(['update-ref', '-d', ref], { env });
       await git.run(['update-ref', '-d', `${ref}-second`], { env });
@@ -103,7 +104,7 @@ export class CodeExporter extends CodeReceiver {
       );
       const estimate = Number(measured.toString('utf8').trim());
       check(Number.isFinite(estimate), 'code_git_failed', 'Git could not weigh the download', 500);
-      await this.repositories.assertRoom(projectId, estimate);
+      await this.core.repositories.assertRoom(projectId, estimate);
       await git.ok(['update-ref', ref, input.head], { env });
       const secondRef = `${ref}-second`;
       if (input.secondParent) await git.ok(['update-ref', secondRef, input.secondParent], { env });
@@ -142,7 +143,7 @@ export class CodeExporter extends CodeReceiver {
         bytes: (await stat(file)).size,
         head: input.head,
         prerequisites: (await bundleHeader(file, true)).prerequisites,
-        partBytes: this.config.partBytes,
+        partBytes: this.core.config.partBytes,
         expiresAt: new Date(Date.now() + EXPORT_TTL_MS).toISOString(),
       };
       this.exports.set(exportId, { key, projectId, sessionId: input.sessionId, view });
@@ -156,8 +157,8 @@ export class CodeExporter extends CodeReceiver {
     exportId: string,
     input: { sessionId: string; offset: number; length: number },
   ): Promise<Buffer> {
-    this.assertOpen();
-    await this.managedRead(caller, input.sessionId);
+    this.core.assertOpen();
+    await this.core.managedRead(caller, input.sessionId);
     const known = this.exports.get(exportId);
     check(
       known &&
@@ -169,12 +170,16 @@ export class CodeExporter extends CodeReceiver {
       404,
     );
     const handle = await open(
-      join(this.repositories.paths(caller.projectId).exports, `${exportId}.bundle`),
+      join(this.core.repositories.paths(caller.projectId).exports, `${exportId}.bundle`),
       'r',
     ).catch(() => null);
     check(handle, 'code_export_not_found', 'This export has expired; ask for it again', 404);
     try {
-      const length = Math.min(input.length, this.config.partBytes, known.view.bytes - input.offset);
+      const length = Math.min(
+        input.length,
+        this.core.config.partBytes,
+        known.view.bytes - input.offset,
+      );
       check(length > 0, 'code_upload_offset', 'The export has no bytes at that offset', 409);
       const bytes = Buffer.alloc(length);
       const { bytesRead } = await handle.read(bytes, 0, length, input.offset);

@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { check, createService, type Caller } from '@merv/contracts';
-import type { CodeUploadFinalize } from '@merv/code/store/protocol';
+import type { CodeUpload } from '@merv/code/store/protocol';
 import { ProjectScope } from '@merv/scope';
 import { CodeUnitStore } from '@merv/code/units';
 import { CodeWriterService } from '@merv/code/writers';
@@ -92,7 +92,7 @@ test('managed Code transfers are fenced to one session even for the same source 
   await store.putPart(owner, imported.id, 0, bundle.content);
   assert.equal((await store.complete(owner, imported.id)).status, 'completed');
 
-  const input: CodeUploadFinalize = {
+  const input: CodeUpload = {
     kind: 'final',
     sessionId: 'session_first',
     runnerId: 'runner_first',

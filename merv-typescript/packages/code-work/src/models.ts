@@ -5,14 +5,37 @@ import type {
 } from '@merv/contracts/workflow-guidance';
 import type { CodeProjectBinding } from '@merv/contracts/code';
 import type { GitHubPullRequest } from '@merv/contracts/github-models';
+import type { z } from 'zod';
 import type {
   CodeAdmissionLimits,
+  codeMirrorRetryInputSchema,
   CodeStoreOperation,
   CodeStoreStatus,
   CodeMirrorStatus,
   CodeStoreWarning,
+  codeUnitFenceInputSchema,
   CodeWriterState,
 } from '@merv/code/store/protocol';
+
+/** The branch and exact commit selected by a repository administrator before preparation. */
+export interface CodeRepositoryPrepareInput {
+  expectedRevision: number;
+  baseBranch: string;
+  headOid: string;
+  expectedMainOid?: string;
+  requestId: string;
+}
+export interface CodeRepositoryPreparation {
+  state: 'ready' | 'importing' | 'review_required' | 'failed';
+  mainOid?: string;
+  taskId?: string;
+  baseBranch: string;
+  headOid: string;
+  operation: CodeStoreOperation;
+}
+/** The inputs of `code.unit.fence` and `code.mirror.retry`, which Code parses again itself. */
+export type CodeUnitFenceInput = z.infer<typeof codeUnitFenceInputSchema>;
+export type CodeMirrorRetryInput = z.infer<typeof codeMirrorRetryInputSchema>;
 
 /** Portable immutable code observation identities, without server runtime dependencies. */
 export type CodeCaptureRef =
@@ -222,7 +245,25 @@ export interface CodeUnit {
   mirroredAt: string | null;
   /** A final capture admission refused; the unit waits for an operator until it is fenced. */
   quarantine: { operationId: string } | null;
+  /** How the unit stands, in one word, by Code Work's own reading of the fields above. */
+  standing: CodeUnitStanding;
 }
+/**
+ * A unit that is not accepted reads what keeps it from being: quarantine first, because
+ * nothing it holds may be reused; `held` is a writer an operator must fence.
+ */
+export type CodeUnitStanding =
+  | 'quarantined'
+  | 'accepted'
+  | 'artifacts only'
+  | 'ended'
+  | 'blocked'
+  | 'waiting'
+  | 'ready'
+  | 'held'
+  | 'working';
+/** Which of four things a blocker holds work up for; any other is work waiting on the server. */
+export type CodeBlockerGroup = 'conflict' | 'quarantine' | 'publication' | 'waiting';
 
 export type CodeBaseState =
   | 'waiting_inputs'
@@ -340,7 +381,7 @@ export interface CodeProjectStatus {
   warnings: CodeStoreWarning[];
   /** The newest 200 units. */
   units: CodeUnit[];
-  blockers: WorkflowProvidedBlocker[];
+  blockers: (WorkflowProvidedBlocker & { group: CodeBlockerGroup })[];
 }
 
 /**

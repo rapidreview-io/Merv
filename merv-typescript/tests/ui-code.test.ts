@@ -43,11 +43,12 @@ const MEASURED = 1440;
   disconnect() {}
 };
 const { UnitCode } = await import('../packages/ui/web/views/code-section.js');
-const { firstPersonMove, personMove } = await import('@merv/code-work/blockers');
+const { blockerGroup, firstPersonMove, personMove } = await import('@merv/code-work/blockers');
 // What the server sends with each record: a base's verbs, a unit publication's blockers and a
 // publication's word, each by Code Work's own rule.
 const { actionsOf } = await import('../packages/code-work/src/bases.js');
-const { publicationBlockers } = await import('../packages/code-work/src/unit-store.js');
+const { publicationBlockers, withStanding } =
+  await import('../packages/code-work/src/unit-store.js');
 const { publicationState } = await import('../packages/code-work/src/publications.js');
 
 const row = {
@@ -242,24 +243,27 @@ const unit = (
   }: Partial<Omit<CodeUnit, 'publication'>> & {
     publication?: Standing | null;
   } = {},
-): CodeUnit => ({
-  publication: publication ? { ...publication, blockers: publicationBlockers(publication) } : null,
-  unitId: id,
-  workflow: 'task',
-  version: 1,
-  declaredAt: '2026-09-01T00:00:00.000Z',
-  branch: `merv/work/${id}`,
-  base: null,
-  baseStatus: { status: 'waiting' },
-  acceptance: null,
-  generation: 0,
-  writerState: 'idle',
-  canonicalHead: null,
-  mirroredHead: null,
-  mirroredAt: null,
-  quarantine: null,
-  ...over,
-});
+): CodeUnit =>
+  withStanding({
+    publication: publication
+      ? { ...publication, blockers: publicationBlockers(publication) }
+      : null,
+    unitId: id,
+    workflow: 'task',
+    version: 1,
+    declaredAt: '2026-09-01T00:00:00.000Z',
+    branch: `merv/work/${id}`,
+    base: null,
+    baseStatus: { status: 'waiting' },
+    acceptance: null,
+    generation: 0,
+    writerState: 'idle',
+    canonicalHead: null,
+    mirroredHead: null,
+    mirroredAt: null,
+    quarantine: null,
+    ...over,
+  });
 const pin = (
   kind: CodeBasePin['kind'],
   reference: string,
@@ -441,6 +445,7 @@ const blocker = (
   related,
   since: '2026-09-04T00:00:00.000Z',
   updatedAt: '2026-09-04T00:00:00.000Z',
+  group: blockerGroup(code),
 });
 
 /**

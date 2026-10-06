@@ -108,29 +108,6 @@ const mergeOf = (unit: CodeUnit): string[] =>
   unit.baseStatus && 'merge' in unit.baseStatus ? (unit.baseStatus.merge ?? []) : [];
 
 /**
- * Nothing this unit holds may be reused: either its own capture was refused, or the base
- * it was to be built on was quarantined and the taint reaches it through the lineage.
- */
-const refused = (unit: CodeUnit) =>
-  !!unit.quarantine ||
-  (unit.baseStatus?.status === 'blocked' &&
-    unit.baseStatus.blockers.some((blocker) => blocker.code === 'code_quarantined'));
-
-/**
- * How a unit stands, in one word. A unit that is not accepted reads what is keeping it
- * from being: quarantine first, because nothing it holds may be reused again.
- */
-function unitWord(unit: CodeUnit, conflicted: boolean): string {
-  if (refused(unit)) return 'quarantined';
-  if (unit.acceptance) return unit.acceptance.reference ? 'accepted' : 'artifacts only';
-  if (!unit.baseStatus) return 'ended';
-  if (unit.baseStatus.status === 'blocked') return conflicted ? 'conflicted' : 'blocked';
-  if (unit.baseStatus.status !== 'pinned') return unit.baseStatus.status;
-  if (unit.writerState === 'recovery_required') return 'held';
-  return unit.generation > 0 ? 'working' : 'ready';
-}
-
-/**
  * A unit is a lane once there is anything to draw of it: a base it took, the code it
  * was accepted at, a writer that wrote, or a base it is waiting for. A unit that is
  * none of those has not reached Code at all.
@@ -282,10 +259,16 @@ export function gitModel(
       // as the branch the mirror publishes it under rather than left out.
       name: named?.name ?? unit.branch,
       ...(named?.to ? { to: named.to } : {}),
-      hollow: refused(unit),
+      // Nothing a quarantined unit holds may be reused, so it is drawn hollow.
+      hollow: unit.standing === 'quarantined',
       row: rows.get(unit.unitId) ?? 0,
     });
-    word.set(unit.unitId, unitWord(unit, !!behind?.conflict));
+    // The one thing Code Work's word cannot say: that the base this lane waits behind is
+    // the conflict, which only the drawing joins.
+    word.set(
+      unit.unitId,
+      unit.standing === 'blocked' && behind?.conflict ? 'conflicted' : unit.standing,
+    );
     const stops: GitLane['stops'] = (receipts.get(unit.unitId) ?? []).map((record) => ({
       oid: record.receipt!.headOid,
       stat: { add: record.receipt!.stats.insertions, del: record.receipt!.stats.deletions },
@@ -385,20 +368,18 @@ interface GitChip {
   count: number;
   lights: ReadonlySet<string>;
 }
+/** Code Work's group of a blocker, as the chip it is counted under. */
+const LABEL = {
+  conflict: 'Conflicted',
+  waiting: 'Waiting',
+  quarantine: 'Quarantined',
+  publication: 'To publish',
+} as const;
 /**
- * A blocker's code says which of four things is holding work up; anything else Code
- * publishes is work waiting on the server, which is what every remaining code says in
- * its own words. Nothing here prints a blocker: the chip is a filter, and the node's
- * own state word is what says why it stands where it does.
+ * Nothing here prints a blocker: the chip is a filter, and the node's own state word is
+ * what says why it stands where it does.
  */
-const GROUPS: [string, RegExp][] = [
-  ['Conflicted', /conflict/],
-  // Quarantine is the strongest word this vocabulary has: nothing may ever be built on
-  // it again. A writer stuck mid-generation is recoverable and waits with the rest.
-  ['Quarantined', /quarantin/],
-  ['To publish', /publish|publication/],
-];
-const ORDER = ['Conflicted', 'Waiting', 'Quarantined', 'To publish'];
+const ORDER = Object.values(LABEL);
 
 export function chipsOf(
   blockers: NonNullable<CodeProjectStatus['blockers']>,
@@ -411,7 +392,7 @@ export function chipsOf(
     // so a chip counts only what pressing it can light: a filter never names what it
     // cannot then show.
     if (!drawn.has(blocker.instanceId)) continue;
-    const label = GROUPS.find(([, code]) => code.test(blocker.code))?.[0] ?? 'Waiting';
+    const label = LABEL[blocker.group];
     const group = held.get(label) ?? { work: new Set<string>(), lights: new Set<string>() };
     held.set(label, group);
     // One unit held up is one thing to look at, however many opinions say so.

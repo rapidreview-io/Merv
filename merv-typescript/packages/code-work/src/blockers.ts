@@ -15,9 +15,23 @@
  * the very sentence the Code page writes.
  */
 
-import type { BlockerMove, PersonMove } from './models.js';
+import type { BlockerMove, CodeBlockerGroup, PersonMove } from './models.js';
 
 export type { BlockerMove, PersonMove };
+
+/**
+ * Which of four things a blocker's code says is holding work up. Quarantine is the strongest
+ * word: nothing may ever be built on it again. A writer stuck mid-generation is recoverable
+ * and waits with every other code, which is work waiting on the server.
+ */
+export const blockerGroup = (code: string): CodeBlockerGroup =>
+  /conflict/.test(code)
+    ? 'conflict'
+    : /quarantin/.test(code)
+      ? 'quarantine'
+      : /publish|publication/.test(code)
+        ? 'publication'
+        : 'waiting';
 
 /** Names records by id. The browser's RecordNames, a ReadonlyMap, is one. */
 export interface NameLookup {

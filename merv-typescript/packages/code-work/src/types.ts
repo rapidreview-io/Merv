@@ -178,8 +178,8 @@ export interface CodeRepositoryControls {
   ensureRepository(caller: Caller, tx: Transaction): Promise<void>;
   prepareRepository(
     caller: Caller,
-    input: import('@merv/code/store/protocol').CodeRepositoryPrepareInput,
-  ): Promise<import('@merv/code/store/protocol').CodeRepositoryPreparation>;
+    input: import('./models.js').CodeRepositoryPrepareInput,
+  ): Promise<import('./models.js').CodeRepositoryPreparation>;
   /**
    * The accepted units of this project whose code the current main does not contain yet.
    * It asks Git, so it lives with the repository rather than with the units, and takes no
@@ -208,12 +208,12 @@ export interface CodeRepositoryControls {
   ): Promise<CodeStoreLimits>;
   fenceUnit(
     caller: Caller,
-    input: import('@merv/code/store/protocol').CodeUnitFenceInput,
+    input: import('./models.js').CodeUnitFenceInput,
   ): Promise<import('@merv/code/store/protocol').CodeWriterStatus>;
   /** Put a ref publication that waits for an operator back in the queue; it never forces. */
   retryMirror(
     caller: Caller,
-    input: import('@merv/code/store/protocol').CodeMirrorRetryInput,
+    input: import('./models.js').CodeMirrorRetryInput,
   ): Promise<import('@merv/code/store/protocol').CodeMirrorStatus>;
 }
 /**

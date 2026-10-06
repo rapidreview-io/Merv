@@ -14,10 +14,8 @@ import {
   codeRepositoryImportInputSchema,
   codeRepositoryRebindInputSchema,
   codeUnitFenceInputSchema,
-  type CodeMirrorRetryInput,
   type CodeRepositoryImportInput,
   type CodeRepositoryRebindInput,
-  type CodeUnitFenceInput,
 } from '@merv/code/store/protocol';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -27,6 +25,7 @@ import { repositoryPrepareSchema } from './repository-setup.js';
 import { codeRepositoryConfigureInputSchema } from './check-configuration.js';
 import { codePublicationMergeSchema } from './publications.js';
 import type { CodePublicationMerge, CodeRepositoryConfigureInput } from './types.js';
+import type { CodeMirrorRetryInput, CodeUnitFenceInput } from './models.js';
 
 export const codeToolsPlugin = {
   name: 'merv-code-tools',

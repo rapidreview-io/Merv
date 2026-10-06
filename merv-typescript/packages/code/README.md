@@ -27,7 +27,6 @@ flowchart LR
     codeWork["Code work<br/><small>research integration</small>"]
     code["Code<br/><small>Git utility</small>"]
     runner["Runner<br/><small>machine workspace driver</small>"]
-    ui[UI]
     scope[Scope]
     state[State]
   end
@@ -40,7 +39,6 @@ flowchart LR
   experiments -- "injects if present" --> codeWork
   codeWork -- "injects" --> code
   runner -- "loads workspace driver" --> code
-  ui -- "imports @merv/code/store/protocol" --> code
   code -- "injects" --> scope
   code -- "injects" --> state
   state -- "reads/writes" --> postgres
@@ -50,7 +48,7 @@ flowchart LR
   class code self
 ```
 
-Code sits at the bottom of the Git path: only Code work injects it, and research plugins reach Git through Code work, never through Code. The browser imports only the types of Code's store protocol. Code keeps the facts, the repository files and the GitHub connection; whether a commit is accepted is decided above it.
+Code sits at the bottom of the Git path: only Code work injects it, and research plugins reach Git through Code work, never through Code. The browser reaches Code's store types only through Code work's models. Code keeps the facts, the repository files and the GitHub connection; whether a commit is accepted is decided above it.
 
 ## Composition and ownership
 
@@ -77,9 +75,10 @@ Code's defaults; only automatic base merging is the integration's to switch off.
 storage migration creates technical workspace, commit retention and repository hold records;
 standalone Code never interprets acceptance or reviews.
 
-Code owns the [store protocol](src/store/protocol.ts) (`@merv/code/store/protocol`): the
-bundle transfer, import, rebind, fence and mirror inputs, the store, mirror and writer
-statuses, and their size limits. It is portable, so Code work and the browser import it.
+Code owns the [store protocol](src/store/protocol.ts) (`@merv/code/store/protocol`): what Code
+itself parses (the import, rebind, upload fence, fence and mirror inputs and the workspace
+manifest), the store, mirror and writer statuses, and their size limits. The machine routes'
+own bodies and the repository preparation belong to Code work.
 
 The machine [Code workspace driver](src/driver/index.ts) supports isolated checkouts and
 cross-machine handoff. The [Runner](../runner/README.md) loads it only when enabled;

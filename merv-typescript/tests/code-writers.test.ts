@@ -98,10 +98,12 @@ test('a lease reserves the next generation only once the last one closed', async
   // The grace passes: the unit says it needs an operator, and work on it is refused.
   await f.code.maintainStore();
   assert.equal((await f.unit()).writerState, 'recovery_required');
+  assert.equal((await f.unit()).standing, 'held', 'Code Work says which word the unit stands at');
   const status = await f.code.status(f.admin);
   assert.deepEqual(
-    status.blockers.map((blocker) => [blocker.key, blocker.code]),
-    [['writer', 'code_recovery_required']],
+    status.blockers.map((blocker) => [blocker.key, blocker.code, blocker.group]),
+    [['writer', 'code_recovery_required', 'waiting']],
+    'a recoverable writer waits with the rest; only quarantine is grouped as quarantine',
   );
   await assert.rejects(f.lease('ses_3'), refused('code_recovery_required'));
 

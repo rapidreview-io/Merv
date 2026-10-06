@@ -8,11 +8,8 @@ import {
   type Transaction,
   recorded,
 } from '@merv/contracts';
-import type {
-  CodeRepositoryPrepareInput,
-  CodeRepositoryPreparation,
-  CodeStoreOperation,
-} from '@merv/code/store/protocol';
+import type { CodeStoreOperation } from '@merv/code/store/protocol';
+import type { CodeRepositoryPrepareInput, CodeRepositoryPreparation } from './models.js';
 import { pinMerge, verifyResolution } from '@merv/code/pending-merge';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeGitHubService } from '@merv/code/github';
