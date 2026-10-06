@@ -120,7 +120,7 @@
       "component": "code_commands",
       "version": 3,
       "hash": "f32edd397d657b4ad40cc6d4dda9a639ae1ec45f204d6ac7f54f8602d0efdc82",
-      "published": false
+      "published": true
     },
     {
       "component": "code_github",
@@ -884,19 +884,19 @@
       "component": "sandboxes-native",
       "version": 5,
       "hash": "54fc2d423d84c4c5a91dd468eed11841ff93e4e9385160f2c753302c61ba8416",
-      "published": false
+      "published": true
     },
     {
       "component": "code_repository_sync",
       "version": 1,
       "hash": "641e09699b431b85e5837e1a9a95c4a61ea1996819335aadcc04d43bcd83734d",
-      "published": false
+      "published": true
     },
     {
       "component": "code_storage",
       "version": 1,
       "hash": "1183e9bfb7fd0c79f1ed9fcb3c3eade1bf0049c612fe42b7c156553ee5365e44",
-      "published": false
+      "published": true
     },
     {
       "component": "code_storage",
@@ -914,13 +914,13 @@
       "component": "code_research_records",
       "version": 2,
       "hash": "17b3a32d387739ceba2bd01ace18cc644f7b8d7142584deec7b19e7f42f6f76b",
-      "published": false
+      "published": true
     },
     {
       "component": "code_research_repository_holds",
       "version": 1,
       "hash": "ad45bd44c590bedc29487aab57f5c60c423af381ee70e9c64de2565b2409987f",
-      "published": false
+      "published": true
     },
     {
       "component": "code_research_repository_holds",
@@ -932,7 +932,7 @@
       "component": "code_research_check_configuration",
       "version": 1,
       "hash": "5b59c689e27a8666be981e87bb1cfbc2660d908891919dfb57243149ab05c02b",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
@@ -944,31 +944,31 @@
       "component": "workflows",
       "version": 11,
       "hash": "b196971e7ec2026eed0a9aa90ac3eadf21cfe5736b843d14efab07375fbab70b",
-      "published": false
+      "published": true
     },
     {
       "component": "workflows",
       "version": 12,
       "hash": "d10310da71f937c432c30ef41b4775fbb2aa2c96acdbd5fc0db602f6a24670df",
-      "published": false
+      "published": true
     },
     {
       "component": "tasks",
       "version": 10,
       "hash": "d3e30ce5bf77f5120191afc09068be6f55e0c688c0c5f5f0fe1925ad31d482bc",
-      "published": false
+      "published": true
     },
     {
       "component": "experiment_program",
       "version": 4,
       "hash": "e813fc888564f332653088715a5df6b9f7a0379e3be58b1d91401a07dda3fc3d",
-      "published": false
+      "published": true
     },
     {
       "component": "reflections",
       "version": 5,
       "hash": "933a736527b5dc112047dacba533effe693850e74e487f470e78ba9446383dee",
-      "published": false
+      "published": true
     }
   ]
 }
