@@ -60,6 +60,7 @@ async function fixture(
     maxLaunchFailures?: number;
     dispatchSchema?: number;
     config?: SessionsConfig;
+    tuning?: Partial<StuckReport['thresholds']>;
     workspace?: WorkflowWorkspacePolicy;
   } = {},
 ) {
@@ -164,14 +165,19 @@ async function fixture(
             );
     try {
       return await createService(
-        new LeasedSessions(state, scope, workflows, events, {
-          clock: () => clock,
-          sweepIntervalMs: 60_000,
-          ...options.config,
-          ...(options.maxLaunchFailures === undefined
-            ? {}
-            : { maxLaunchFailures: options.maxLaunchFailures }),
-        }),
+        new LeasedSessions(
+          state,
+          scope,
+          workflows,
+          events,
+          { clock: () => clock, sweepIntervalMs: 60_000, ...options.config },
+          {
+            ...options.tuning,
+            ...(options.maxLaunchFailures === undefined
+              ? {}
+              : { maxLaunchFailures: options.maxLaunchFailures }),
+          },
+        ),
       );
     } finally {
       state.migrate = migrate;
@@ -759,7 +765,7 @@ test('a tool call that hangs counts from its start, so it does not hide the sile
 
 test('hours without a Merv call never close a session or count against its target', async (t) => {
   const f = await fixture(t, {
-    config: { idleNoticeSeconds: 600 },
+    tuning: { idleNoticeSeconds: 600 },
   });
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -778,7 +784,7 @@ test('hours without a Merv call never close a session or count against its targe
 });
 
 test('no read closes an idle session, yet the stuck report already names it', async (t) => {
-  const f = await fixture(t, { config: { idleNoticeSeconds: 600 } });
+  const f = await fixture(t, { tuning: { idleNoticeSeconds: 600 } });
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.instance();
@@ -823,16 +829,15 @@ test('the stuck report leaves out no_live_runner while Fleet rents for the proje
   assert.match(item.next, /Fleet serves a project as its owner/, 'the key-made project has none');
 });
 
-test('the idle, quiet-ready and refusal thresholds are bounded', async (t) => {
+test('configuration sets neither the stuck report’s thresholds nor the test clock', async (t) => {
   for (const config of [
-    { idleNoticeSeconds: 59 },
-    { quietReadySeconds: 59 },
-    { refusalSeconds: 29 },
-    { refusalSeconds: 1.5 },
-    // Operator config cannot replace the test clock.
+    { idleNoticeSeconds: 600 },
+    { maxLaunchFailures: 3 },
+    { quietReadySeconds: 600 },
+    { refusalSeconds: 30 },
     { clock: 1 },
   ])
-    await assert.rejects(async () => await fixture(t, { config }), {
+    await assert.rejects(async () => await fixture(t, { config: config as SessionsConfig }), {
       code: 'invalid_sessions_config',
     });
 });
@@ -903,7 +908,7 @@ test('the stuck report names a switched-off dispatch, a missing runner and a run
 });
 
 test('a ready step nobody takes is quiet, an operator step included, and a failing target is reported once', async (t) => {
-  const f = await fixture(t, { maxLaunchFailures: 2, config: { quietReadySeconds: 600 } });
+  const f = await fixture(t, { maxLaunchFailures: 2, tuning: { quietReadySeconds: 600 } });
   f.wallClock();
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   const target = await f.instance();
@@ -988,7 +993,7 @@ for (const code of ['code_base_pending', 'code_merge_required', 'code_dependenci
   });
 
 test('work another plugin published a blocker for is named in the stuck report until it clears', async (t) => {
-  const f = await fixture(t, { config: { quietReadySeconds: 600 } });
+  const f = await fixture(t, { tuning: { quietReadySeconds: 600 } });
   f.wallClock();
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -1179,7 +1184,7 @@ test('a preparation nobody could make is deferred: it names its cause, never cou
 });
 
 test('a run of deferred preparations is shown as work nobody could take, with its cause', async (t) => {
-  const f = await fixture(t, { config: { quietReadySeconds: 600 } });
+  const f = await fixture(t, { tuning: { quietReadySeconds: 600 } });
   f.wallClock();
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -1388,7 +1393,7 @@ async function views(f: Awaited<ReturnType<typeof fixture>>, step: string) {
 }
 
 test('the stuck report, the status read and the Running board agree on why work waits', async (t) => {
-  const f = await fixture(t, { maxLaunchFailures: 2, config: { quietReadySeconds: 600 } });
+  const f = await fixture(t, { maxLaunchFailures: 2, tuning: { quietReadySeconds: 600 } });
   f.wallClock();
   const registered = await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   assert.deepEqual(await views(f, 'empty'), []);

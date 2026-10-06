@@ -159,9 +159,13 @@ export interface StuckItem {
 export interface StuckReport {
   observedAt: string;
   thresholds: {
+    /** Seconds without a tool call before an active session is reported quiet; nothing closes it. */
     idleNoticeSeconds: number;
+    /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
     maxLaunchFailures: number;
+    /** Seconds a dispatchable target may wait on one revision before it is reported quiet. */
     quietReadySeconds: number;
+    /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
     refusalSeconds: number;
   };
   /** What needs someone: every item except `dispatch_failing`, which is still being retried. */

@@ -181,7 +181,7 @@ pause is visible (`budgets[]`, the runner's last decision) and an admin reverses
 ## Launch retry cap
 
 Failed launches on one instance revision used to be retried for ever, thirty seconds
-apart. Sessions config `maxLaunchFailures` (1 to 100, default 5) ends that. Each failed
+apart. Sessions' `maxLaunchFailures` (5) ends that. Each failed
 attempt bumps one counter row per instance and revision in `session_dispatch_holds`
 (session_dispatch 4), across every runner and platform of the project. An attempt is a
 session that closed as `host_failed`, `crash_loop`, `workspace_failed` or `launch_failed`;

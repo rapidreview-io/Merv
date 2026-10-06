@@ -115,11 +115,14 @@ async function fixture(t: TestContext, maxLaunchFailures?: number) {
     credentialId: issued.credential.id,
   };
   const sessions = await createService(
-    new LeasedSessions(state, scope, workflows, events, {
-      clock: () => clock,
-      sweepIntervalMs: 60_000,
-      ...(maxLaunchFailures === undefined ? {} : { maxLaunchFailures }),
-    }),
+    new LeasedSessions(
+      state,
+      scope,
+      workflows,
+      events,
+      { clock: () => clock, sweepIntervalMs: 60_000 },
+      maxLaunchFailures === undefined ? {} : { maxLaunchFailures },
+    ),
   );
   t.after(async () => {
     await sessions.close();
@@ -621,8 +624,4 @@ test('the launch backoff reads only the closes inside its window, not a runnerâ€
     'the target is offered again',
   );
   assert.deepEqual(read, [0, 0], 'the backoff read no close from outside its window');
-});
-
-test('sessions refuses a launch-failure cap outside 1â€“100', async (t) => {
-  await assert.rejects(async () => await fixture(t, 0), { code: 'invalid_sessions_config' });
 });

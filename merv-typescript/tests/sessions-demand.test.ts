@@ -66,11 +66,14 @@ async function fixture(t: TestContext, maxLaunchFailures = 3) {
   const workflows = await createService(new WorkflowsService(state, scope));
   const events = await createService(new DurableEvents(state));
   const sessions = await createService(
-    new LeasedSessions(state, scope, workflows, events, {
-      clock: () => now,
-      maxLaunchFailures,
-      sweepIntervalMs: 60_000,
-    }),
+    new LeasedSessions(
+      state,
+      scope,
+      workflows,
+      events,
+      { clock: () => now, sweepIntervalMs: 60_000 },
+      { maxLaunchFailures },
+    ),
   );
   const boot = await scope.bootstrap({ projectName: 'Demand', actorName: 'Owner' });
   const owner: Caller = {
