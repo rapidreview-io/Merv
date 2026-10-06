@@ -94,6 +94,39 @@ export interface PublicationRow {
   stale: number;
   verified: number;
 }
+const publicationColumns =
+  'p.record_json,p.pull_json,p.merge_json,p.incident_json,p.error,p.stale,p.verified';
+/** What a stored publication says of itself, before any enforcement is read. */
+function storedPublication(publication: PublicationRow): CodeUnitPublication {
+  const { destination } = JSON.parse(publication.record_json) as {
+    destination?: 'local' | 'github';
+  };
+  const pull = publication.pull_json
+    ? (JSON.parse(publication.pull_json) as GitHubPullRequest)
+    : null;
+  const merge = publication.merge_json
+    ? (JSON.parse(publication.merge_json) as { commitSha: string | null })
+    : null;
+  const mergeCommit = merge?.commitSha ?? pull?.mergeCommitSha ?? null;
+  const state = publication.incident_json
+    ? 'incident'
+    : Number(publication.verified)
+      ? 'published'
+      : Number(publication.stale)
+        ? 'stale'
+        : pull && pull.state === 'closed' && !pull.merged
+          ? 'closed'
+          : // A sync failing before any pull request opens waits on an operator, not the server.
+            !pull && publication.error
+            ? 'setup_required'
+            : 'pending';
+  return {
+    state,
+    ...(destination ? { destination } : {}),
+    ...(pull ? { pull: { number: pull.number, url: pull.url } } : {}),
+    ...(state === 'published' && mergeCommit ? { mergeCommit } : {}),
+  };
+}
 /**
  * Whether an acceptance made under `repositoryId` belongs to this project: the repository it is
  * bound to now, or any it was bound to before a verified rebind. A pre-rebind acceptance that
@@ -201,11 +234,18 @@ export class WorkUnitRecords {
         `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
         caller.projectId,
       );
+      // Only a consolidation, a unit declared to publish to main, has a pull request.
+      const published = await tx.all<PublicationRow & { unit_id: string }>(
+        `SELECT u.unit_id,${publicationColumns} FROM code_units u JOIN code_publications p ON p.project_id=u.project_id AND p.proposal_id=u.publication_id WHERE u.project_id=? AND u.publishes_at IS NOT NULL AND u.acceptance_json IS NOT NULL`,
+        caller.projectId,
+      );
+      const units = new Map(rows.map((row) => [row.unit_id, row]));
       const rejected = new Set<string>();
-      for (const row of rows)
-        if ((await this.publicationOf(tx, caller.projectId, row))?.state === 'closed') {
-          rejected.add(row.unit_id);
-          this.pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
+      for (const publication of published)
+        if (storedPublication(publication).state === 'closed') {
+          rejected.add(publication.unit_id);
+          const row = units.get(publication.unit_id);
+          if (row) this.pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
         }
       for (const row of rows) {
         const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
@@ -326,39 +366,11 @@ export class WorkUnitRecords {
       // Declared to publish, accepted, and nothing opened: its own facts could not be sealed.
       return row.publishes_at && row.acceptance_json ? { state: 'unsealed' } : null;
     const publication = await sql.get<PublicationRow>(
-      'SELECT record_json,pull_json,merge_json,incident_json,error,stale,verified FROM code_publications WHERE proposal_id=? AND project_id=?',
+      `SELECT ${publicationColumns} FROM code_publications p WHERE proposal_id=? AND project_id=?`,
       row.publication_id,
       projectId,
     );
-    if (!publication) return null;
-    const { destination } = JSON.parse(publication.record_json) as {
-      destination?: 'local' | 'github';
-    };
-    const pull = publication.pull_json
-      ? (JSON.parse(publication.pull_json) as GitHubPullRequest)
-      : null;
-    const merge = publication.merge_json
-      ? (JSON.parse(publication.merge_json) as { commitSha: string | null })
-      : null;
-    const mergeCommit = merge?.commitSha ?? pull?.mergeCommitSha ?? null;
-    const state = publication.incident_json
-      ? 'incident'
-      : Number(publication.verified)
-        ? 'published'
-        : Number(publication.stale)
-          ? 'stale'
-          : pull && pull.state === 'closed' && !pull.merged
-            ? 'closed'
-            : // A sync failing before any pull request opens waits on an operator, not the server.
-              !pull && publication.error
-              ? 'setup_required'
-              : 'pending';
-    return {
-      state,
-      ...(destination ? { destination } : {}),
-      ...(pull ? { pull: { number: pull.number, url: pull.url } } : {}),
-      ...(state === 'published' && mergeCommit ? { mergeCommit } : {}),
-    };
+    return publication ? storedPublication(publication) : null;
   }
   protected acceptance(row: UnitRow): CodeUnitAcceptance | null {
     return row.acceptance_json === null
