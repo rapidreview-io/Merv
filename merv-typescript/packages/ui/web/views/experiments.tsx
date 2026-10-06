@@ -108,7 +108,7 @@ function ExperimentRecord({
   );
   const figures = e.submissions.at(-1)?.figureIds ?? [];
   const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
-  const ended = ['failed', 'abandoned'].includes(e.workflow.state);
+  const ended = e.failed;
   const thread = reviews ? threadOf({ graph: process, reviews, subject: e.id, nameOf }) : [];
   const names = useRecordNames(e.intent);
   return (

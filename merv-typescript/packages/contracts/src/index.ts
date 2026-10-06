@@ -1692,6 +1692,15 @@ export interface Workflows {
    */
   pinned(workflow: string, version: number, tx?: Transaction): Promise<WorkflowPinned | null>;
   /**
+   * How each instance stands against its own pinned contract, as a prerequisite's edge says it:
+   * `settled` in one of its success states, `failed` in a terminal state outside them. Without
+   * declared success states neither holds. Reads contracts only, so it needs no caller.
+   */
+  ends(
+    instances: readonly Pick<WorkflowSnapshot, 'workflow' | 'version' | 'state'>[],
+    tx?: Transaction,
+  ): Promise<{ settled: boolean; failed: boolean }[]>;
+  /**
    * Derived on read from the definition and the record; never pinned, never authored. With
    * `checks: false` no program callback runs, so no edge carries a status: for a view that
    * draws only where the work stands.

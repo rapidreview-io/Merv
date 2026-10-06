@@ -508,6 +508,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       createdAt: row.created_at,
       ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
       workflow,
+      ...(await this.workflows.ends([workflow], tx))[0],
       attempt,
       attempts,
       evidence,
@@ -562,12 +563,14 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       );
       const sql =
         'SELECT id,name,intent,owner_id AS "ownerId",conclusion FROM experiments WHERE project_id=? ORDER BY created_at,id';
-      return (
-        await tx.all<Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId' | 'conclusion'>>(
-          sql,
-          caller.projectId,
-        )
-      ).map((row) => ({ ...row, workflow: flows.get(row.id)! }));
+      const rows = await tx.all<
+        Pick<Experiment, 'id' | 'name' | 'intent' | 'ownerId' | 'conclusion'>
+      >(sql, caller.projectId);
+      const ends = await this.workflows.ends(
+        rows.map((row) => flows.get(row.id)!),
+        tx,
+      );
+      return rows.map((row, index) => ({ ...row, workflow: flows.get(row.id)!, ...ends[index] }));
     });
   }
   async occupancy(caller: Caller, transaction?: Transaction): Promise<ExperimentOccupancy> {

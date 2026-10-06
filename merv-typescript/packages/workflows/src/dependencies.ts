@@ -69,7 +69,7 @@ const instanceName = (data: { title?: unknown; name?: unknown }, workflow: strin
  * An instance judged against a contract; one the project no longer holds has only its id and
  * what its edge recorded. Without declared success states it never settles, so never fails.
  */
-function classify(
+export function classify(
   node: Pick<NodeRow, 'id' | 'workflow' | 'version'> & Partial<NodeRow>,
   success: readonly string[] | null | undefined,
   terminal: readonly string[],

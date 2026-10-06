@@ -18,11 +18,20 @@ export type Flow = { state: string; updatedAt: string; workflow?: string; versio
  */
 type MapExperiment = Pick<
   Experiment,
-  'id' | 'name' | 'intent' | 'ownerId' | 'conclusion' | 'workflow'
+  'id' | 'name' | 'intent' | 'ownerId' | 'conclusion' | 'workflow' | 'settled' | 'failed'
 >;
 type MapTask = Pick<
   Task,
-  'id' | 'title' | 'goal' | 'producerId' | 'dependencies' | 'dependents' | 'failure' | 'workflow'
+  | 'id'
+  | 'title'
+  | 'goal'
+  | 'producerId'
+  | 'dependencies'
+  | 'dependents'
+  | 'failure'
+  | 'workflow'
+  | 'settled'
+  | 'failed'
 >;
 export type MapCycle = Pick<
   ResearchRecord,

@@ -1,4 +1,4 @@
-import { canonical, check, newId } from '@merv/contracts';
+import { canonical, check, mapAsync, newId } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type {
   Caller,
@@ -26,6 +26,7 @@ import { readWorkStarts } from './assignments.js';
 import { limitStatusOf } from './limits.js';
 import {
   attachDependencies,
+  classify,
   dependents,
   instanceRelations,
   normalizeDependencies,
@@ -115,6 +116,24 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
   ): Promise<WorkflowPinned | null> {
     this.assertOpen();
     return await this.read(transaction, (tx) => this.contracts.get(tx, workflow, version));
+  }
+
+  async ends(
+    instances: readonly Pick<WorkflowSnapshot, 'workflow' | 'version' | 'state'>[],
+    transaction?: Transaction,
+  ): Promise<{ settled: boolean; failed: boolean }[]> {
+    this.assertOpen();
+    return await this.read(transaction, async (tx) =>
+      mapAsync(instances, async ({ workflow, version, state }) => {
+        const pinned = await this.contracts.get(tx, workflow, version);
+        const { settled, failed } = classify(
+          { id: '', workflow, version, state },
+          pinned?.successStates,
+          pinned?.definition.terminal ?? [],
+        );
+        return { settled, failed };
+      }),
+    );
   }
 
   async get(caller: Caller, instanceId: string, tx?: Transaction): Promise<WorkflowSnapshot> {

@@ -1212,10 +1212,17 @@ export class TaskService implements Tasks {
       rows.map((row) => row.id),
       tx,
     );
-    return rows.map((row) => {
-      const found = facts.get(row.id);
-      check(found, 'not_found', 'Workflow instance not found', 404);
-      const { snapshot: workflow, workStarts, dependencies, dependents } = found;
+    const found = rows.map((row) => {
+      const item = facts.get(row.id);
+      check(item, 'not_found', 'Workflow instance not found', 404);
+      return item;
+    });
+    const ends = await this.workflows.ends(
+      found.map((item) => item.snapshot),
+      tx,
+    );
+    return rows.map((row, index) => {
+      const { snapshot: workflow, workStarts, dependencies, dependents } = found[index];
       // The instance data repeats the brief the record already carries; it is not sent twice.
       const {
         title: _title,
@@ -1244,6 +1251,7 @@ export class TaskService implements Tasks {
         deliveryIds: JSON.parse(row.delivery_ids),
         reviewId: row.review_id,
         workflow: { ...workflow, data },
+        ...ends[index],
         workStarts,
         failure: (workflow.data.failure as unknown as TaskFailure | undefined) ?? null,
         dependencies,
@@ -1696,7 +1704,14 @@ export class TaskService implements Tasks {
     // the last round's notes in the feedback, and the delivery's confirmations in its pinned
     // sheet: each is embedded once, and task.get has all. A producer's own brief need not number
     // the checks, so a worker is given them numbered unless Merv rendered the brief.
-    const { dependents: _dependents, checks: _checks, acceptanceChecks, ...record } = task;
+    const {
+      dependents: _dependents,
+      checks: _checks,
+      settled: _settled,
+      failed: _failed,
+      acceptanceChecks,
+      ...record
+    } = task;
     const { deliveryConfirmations: _confirmations, deliveryIds: _deliveryIds, ...rest } = record;
     const { goal: _goal, workflow, ...work } = rest;
     const { deliveryIds: _ids, ...reviewData } = workflow.data;

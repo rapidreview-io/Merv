@@ -39,6 +39,8 @@ interface Item {
   to: string;
   state: string;
   flow: Flow;
+  /** Workflows' word for the record's end, where its owner sends one. */
+  end?: { settled: boolean; failed: boolean };
   at: string;
   mine: boolean;
   outcome: string | null;
@@ -62,7 +64,7 @@ export function chained<T extends { id: string; at: string }>(
   items: T[],
   tasks: (Pick<Task, 'id' | 'dependencies' | 'dependents'> & {
     title?: string;
-    workflow?: { state: string };
+    settled?: boolean;
   })[],
 ): (T & { depth: number; waits: string[] })[] {
   const known = new Map(items.map((item) => [item.id, item]));
@@ -83,7 +85,7 @@ export function chained<T extends { id: string; at: string }>(
     // the task itself, which is how an experiment's wait is known without reading it.
     for (const next of task.dependents ?? []) {
       edge(task.id, next.id);
-      if (task.title && task.workflow && task.workflow.state !== 'done')
+      if (task.title && task.settled === false)
         waits.set(next.id, [...(waits.get(next.id) ?? []), task.title]);
     }
   }
@@ -273,6 +275,7 @@ function WaveList({ shell }: { shell: ShellData }) {
         to: `${tasksRow!.path}/${task.id}`,
         state: task.workflow.state,
         flow: task.workflow,
+        end: task,
         at: task.workflow.updatedAt,
         mine: task.producerId === actor.id,
         outcome: task.failure?.reason ?? null,
@@ -289,6 +292,7 @@ function WaveList({ shell }: { shell: ShellData }) {
         to: `${experimentsRow!.path}/${item.id}`,
         state: item.workflow.state,
         flow: item.workflow,
+        end: item,
         at: item.workflow.updatedAt,
         mine: item.ownerId === actor.id,
         outcome: item.conclusion,
@@ -376,7 +380,7 @@ function WaveList({ shell }: { shell: ShellData }) {
       name: item.name,
       flow: item.flow,
       at: item.at,
-      held: only ? kept.has(item) : !ended(shell.workflows, item.flow) || item.named,
+      held: only ? kept.has(item) : !ended(shell.workflows, item.flow, item.end) || item.named,
     })),
     edges: (tasks ?? []).flatMap((task) => [
       ...(task.dependencies ?? []).map((on) => ({
@@ -387,7 +391,7 @@ function WaveList({ shell }: { shell: ShellData }) {
       ...(task.dependents ?? []).map((next) => ({
         from: task.id,
         to: next.id,
-        waiting: task.workflow.state !== 'done',
+        waiting: !task.settled,
       })),
     ]),
   };

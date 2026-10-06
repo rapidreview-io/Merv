@@ -21,7 +21,7 @@ export const experimentsUiPlugin = {
         view: { kind: 'experiments' },
         home: {
           tool: 'experiment.list',
-          keep: ['id', 'name', 'intent', 'ownerId', 'conclusion', 'workflow'],
+          keep: ['id', 'name', 'intent', 'ownerId', 'conclusion', 'workflow', 'settled', 'failed'],
           list: async (caller) => await experiments.summaries(caller),
         },
         needs: {

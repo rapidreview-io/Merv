@@ -98,6 +98,9 @@ export interface Experiment {
   /** Present only when explicitly created with the Git program. */
   workspace?: 'git';
   workflow: WorkflowSnapshot;
+  /** Ended complete, or ended any other way: Workflows' word for its own end, never read from a state name. */
+  settled: boolean;
+  failed: boolean;
   attempt: ExperimentAttempt;
   attempts: ExperimentAttempt[];
   evidence: ExperimentEvidence[];

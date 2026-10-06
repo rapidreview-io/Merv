@@ -29,6 +29,8 @@ export const taskUiPlugin = {
             'dependents',
             'failure',
             'workflow',
+            'settled',
+            'failed',
           ],
         },
         // A delivery names its worker's own commit, so only a leased worker ever makes one.

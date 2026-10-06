@@ -177,7 +177,9 @@ of a version pins its success states, or their absence; a later registration tha
 adds, drops or changes them is `workflow_version_conflict`. `prerequisites` returns the
 live forward rows, and `records` both directions, each with its revision and whether it is
 `settled`, `terminal` (ended, as a fact) or `failed` (ended in a way that fails the
-dependent; a provider's edge never is); `requireDependencies`, a pure rule in
+dependent; a provider's edge never is). `ends` says the same `settled` and `failed` of a
+record itself, from its pinned contract, so an owner sends them on its records and no page
+reads an end from a state name. `requireDependencies`, a pure rule in
 `@merv/workflows/rules`, is the shared prerequisite guard over them. Guidance, the guard and
 transitions read only what an instance depends on, in a fixed number of queries; what depends
 on it is read only when asked for. Attaching at start never walks the graph, because the new

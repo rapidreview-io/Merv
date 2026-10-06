@@ -220,13 +220,21 @@ function stepsOf(shapes: WorkflowShape[] | undefined, workflow: Standing): Step[
   return shape ? stagesOfShape(shape, workflow.state) : [];
 }
 /**
- * The record stands in an end state of its program, as any deployed version of it declares
- * one, as the list's open filter reads it: a retired version is not in the catalog.
+ * The record stands in an end state of its program. Where its owner sends Workflows' word for
+ * the record's end (`settled`, `failed`) that word decides; otherwise the record ends where
+ * any deployed version of its program declares the state an end, as the list's open filter
+ * reads it: a retired version is not in the catalog.
  */
-export const ended = (shapes: WorkflowShape[] | undefined, workflow: Standing) =>
-  !!shapes?.some(
-    (item) => item.name === workflow.workflow && item.terminal.includes(workflow.state),
-  );
+export const ended = (
+  shapes: WorkflowShape[] | undefined,
+  workflow: Standing,
+  record?: { settled?: boolean; failed?: boolean },
+) =>
+  typeof record?.settled === 'boolean'
+    ? record.settled || !!record.failed
+    : !!shapes?.some(
+        (item) => item.name === workflow.workflow && item.terminal.includes(workflow.state),
+      );
 /**
  * A state said beside a name, the one way everywhere: its mark in the stage's colour, then
  * its word in plain ink. The stages come from the record's own graph where the page holds
