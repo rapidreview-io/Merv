@@ -1748,6 +1748,7 @@ export interface Workflows {
 import type { Verdict } from './types.js';
 export type { Verdict } from './types.js';
 import type {
+  ReviewClaim,
   ReviewFinding,
   ReviewGuide,
   ReviewProvenance,
@@ -1755,6 +1756,7 @@ import type {
   ReviewReturn,
 } from './review-models.js';
 export type {
+  ReviewClaim,
   ReviewFinding,
   ReviewGuide,
   ReviewProvenance,
@@ -1827,14 +1829,21 @@ export interface ReviewSubmitOwner {
    * reviewed at more than one. Read-only; ids it does not own are left out.
    */
   gates?(reviewIds: readonly string[], sql: Sql): Promise<Readonly<Record<string, string>>>;
+  /** What the delivery an owned review judges claimed of each check, where the owner keeps
+   *  such claims; read-only, and empty for a review of anything but the newest delivery. */
+  claims?(
+    caller: Caller,
+    review: Readonly<ReviewRequest>,
+    tx: Transaction,
+  ): Promise<readonly ReviewClaim[]>;
 }
 export interface Reviews {
   provenance(provider: string): { register(resolve: ReviewProvenanceResolver): () => void };
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void;
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;
-  /** What the one domain that owns this review tells its reviewer: its verdict rules and return
-   * routes, where it states them. A review the caller has just read (get, start) is not read again. */
+  /** What the one domain that owns this review tells its reviewer: its verdict rules, return
+   * routes, the gate it reads and what the delivery claimed, where it states them. A review the caller has just read (get, start) is not read again. */
   guide(caller: Caller, review: string | ReviewRequest, tx?: Transaction): Promise<ReviewGuide>;
   request(caller: Caller, input: ReviewInput, tx?: Transaction): Promise<ReviewRequest>;
   reissue(

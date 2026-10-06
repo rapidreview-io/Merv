@@ -1,4 +1,5 @@
-import { ellipsis } from '@merv/contracts';
+import { firstSentence } from '@merv/contracts/text';
+import { reviewExceptions, reviewStanding } from './rules.js';
 import type {
   ReviewRequest,
   RunningFact,
@@ -39,15 +40,6 @@ const ROUND: Record<string, string> = {
   started: 'Claimed',
 };
 
-/** The first clause of a recorded sentence, in its own words, as the review list reads it. */
-function firstSentence(text: string | null | undefined, limit = 140): string | null {
-  const trimmed = (text ?? '').trim();
-  if (!trimmed) return null;
-  const stop = trimmed.search(/[.!?](\s|$)|\n/);
-  const first = (stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed).trim();
-  return ellipsis(first, limit);
-}
-
 /** After a gate the clause runs on in lower case, as 'Design · with Ada' reads. */
 const after = (gate: string | undefined, word: string) =>
   gate ? word.charAt(0).toLowerCase() + word.slice(1) : word;
@@ -59,14 +51,15 @@ const after = (gate: string | undefined, word: string) =>
  * as claimed.
  */
 function standing({ current, gate, claim }: ReviewRounds): RunningPhrase {
+  const said = reviewStanding(current);
   const clause: RunningPhrase =
-    current.status === 'requested'
+    said?.word === 'unclaimed'
       ? [after(gate, 'Unclaimed')]
-      : current.status === 'started'
-        ? current.reviewerId
+      : said?.word === 'claimed'
+        ? said.reviewerId
           ? [
               {
-                actor: current.reviewerId,
+                actor: said.reviewerId,
                 prefix: after(gate, 'With '),
                 unnamed: after(gate, claim?.agent ? 'With an agent' : 'Claimed'),
               },
@@ -78,18 +71,11 @@ function standing({ current, gate, claim }: ReviewRounds): RunningPhrase {
 
 /** What a verdict let through or held back, as a pass built on waivers must still say. */
 function exceptions(findings: ReviewRequest['findings']): RunningPhrase {
-  const phrase: RunningPhrase = [];
-  for (const [status, words] of [
-    ['not_met', ' not met'],
-    ['waived', ' waived'],
-    ['not_verified', ' not verified'],
-  ] as const) {
-    const count = findings.filter((finding) => finding.status === status).length;
-    if (!count) continue;
-    if (phrase.length) phrase.push(' · ');
-    phrase.push({ count, of: findings.length }, words);
-  }
-  return phrase;
+  return reviewExceptions(findings).flatMap(({ status, criteria }, at): RunningPhrase => [
+    ...(at ? [' · '] : []),
+    { count: criteria.length, of: findings.length },
+    ` ${status.replace('_', ' ')}`,
+  ]);
 }
 
 /**

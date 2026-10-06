@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ellipsis } from '@merv/contracts/text';
+import { reviewStanding } from '@merv/reviews/rules';
 import { StatusPill, cx, words } from './components';
 
 /**
@@ -87,63 +87,36 @@ export function ThreeStates({
 
 /** What a row needs of a review: the shape `review.list` already returns. */
 interface ReviewFacts {
-  subjectId: string;
-  subjectRevision: number;
   status: string;
   reviewerId?: string | null;
   verdict?: string | null;
   returnTo?: string;
-  findings?: { status: string }[];
-  createdAt: string;
+  findings?: { criterionNumber: number; status: string }[];
 }
 
 /**
- * The review that speaks for a record: the newest at the highest revision it
- * pinned, so an open re-review outranks the verdict it will replace.
- */
-export function newestReview<T extends ReviewFacts>(
-  reviews: T[] | undefined,
-  subjectId: string,
-): T | undefined {
-  const mine = (reviews ?? []).filter((review) => review.subjectId === subjectId);
-  return mine.sort(
-    (a, b) => a.subjectRevision - b.subjectRevision || a.createdAt.localeCompare(b.createdAt),
-  )[mine.length - 1];
-}
-
-/**
- * The review clause: the verdict recorded against this record, or that nobody
- * has taken it up yet. The state pill beside it already says the record is in
- * review, so an open review adds only what the pill cannot: whose hands it is in,
- * or that it is in nobody's. A pass built on waivers carries the qualification,
- * since dropping it would let two exceptions read as an unqualified pass.
+ * The review clause: how Reviews says the review stands (`reviewStanding`). The state pill
+ * beside it already says the record is in review, so an open review adds only what the pill
+ * cannot: whose hands it is in, or that it is in nobody's. A verdict carries every check it did
+ * not take as met, since dropping one would let two exceptions read as an unqualified pass.
  */
 export function reviewClause(review: ReviewFacts | undefined, reviewer?: ReactNode): Clause | null {
-  if (!review) return null;
-  if (review.status === 'requested') return { word: 'unclaimed' };
-  if (review.status === 'started')
+  const said = review && reviewStanding(review);
+  if (!said) return null;
+  if (said.word === 'claimed')
     return reviewer ? { detail: <>with {reviewer}</> } : { word: 'claimed' };
-  if (review.status === 'superseded') return { word: 'superseded' };
-  if (!review.verdict) return null;
-  const findings = review.findings ?? [];
-  const count = (status: string) => findings.filter((item) => item.status === status).length;
+  if (!('exceptions' in said)) return { word: said.word };
   const detail = [
-    count('waived') && `${count('waived')} of ${findings.length} waived`,
-    count('not_verified') && `${count('not_verified')} not verified`,
+    ...said.exceptions.map(({ status, criteria }) =>
+      status === 'not_verified'
+        ? `${criteria.length} ${words(status)}`
+        : `${criteria.length} of ${said.of} ${words(status)}`,
+    ),
     review.returnTo && `returned to ${words(review.returnTo)}`,
   ]
     .filter(Boolean)
     .join(' · ');
-  return { word: review.verdict, verdict: true, detail };
-}
-
-/** The first clause of a recorded sentence, in the record's own words. */
-export function firstSentence(text: string | null | undefined, limit = 140): string | null {
-  const trimmed = (text ?? '').trim();
-  if (!trimmed) return null;
-  const stop = trimmed.search(/[.!?](\s|$)|\n/);
-  const first = (stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed).trim();
-  return ellipsis(first, limit);
+  return { word: said.word, verdict: true, detail };
 }
 
 /** What the count beside a row label means, so arriving from it lands on that work. */

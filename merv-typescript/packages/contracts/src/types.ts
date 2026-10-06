@@ -5,6 +5,7 @@ export type * from './sessions-models.js';
 export type * from './github-models.js';
 export type * from './workflow-guidance.js';
 export type {
+  ReviewClaim,
   ReviewFinding,
   ReviewGuide,
   ReviewProvenance,

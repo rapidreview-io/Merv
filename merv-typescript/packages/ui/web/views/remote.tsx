@@ -33,7 +33,7 @@ import { elapsed, say, type Liveness } from '../liveness';
 import { Markdown } from '../markdown';
 import { useCommand } from '../mutations';
 import { TimeInStatus } from '../process';
-import { firstSentence } from '../states';
+import { firstSentence } from '@merv/contracts/text';
 import type { ViewProps } from './index';
 import { at, list, money, num, phrase, records, str, unit, type Json } from './remote-fields';
 

@@ -21,7 +21,8 @@ import { Gate, StageMark } from '../process';
 import { useSession } from '../session';
 import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
-import { ThreeStates, newestReview, reviewClause } from '../states';
+import { currentReview } from '@merv/reviews/rules';
+import { ThreeStates, reviewClause } from '../states';
 import { Thread, threadOf } from '../thread';
 import { type Review } from './reviews';
 import { useActorNames } from './people';
@@ -98,7 +99,7 @@ function ExperimentRecord({
   // The publication verbs answer a signed-in operator and nobody else, so the Code
   // section is told who is reading before it offers the move.
   const { actor, account } = useSession();
-  const newest = newestReview(reviews, e.id);
+  const newest = currentReview(reviews, e.id);
   const stage = e.submissions.find((item) => item.reviewId === newest?.id)?.stage;
   // What the newest review decided, or where it stands until it has; a passing verdict
   // is not an outcome, so the conclusion is said apart from it, whole.

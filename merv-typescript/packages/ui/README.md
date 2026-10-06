@@ -30,7 +30,7 @@ flowchart LR
   person -- "HTTP /ui, /tools" --> api
   ui -- "mounts /ui, registers ui.*" --> api
   ui -- "reads open gates, the catalog, work records' workflows" --> workflows
-  ui -- "checks a verdict by @merv/reviews/rules" --> reviews
+  ui -- "checks a verdict and says a review's standing by @merv/reviews/rules" --> reviews
   tasks -- "row, Running part" --> ui
   experiments -- "row, Running part" --> ui
   reflections -- "row, Running part" --> ui
