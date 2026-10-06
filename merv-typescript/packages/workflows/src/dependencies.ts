@@ -9,6 +9,7 @@ import type {
   WorkflowSnapshot,
 } from '@merv/contracts';
 import type { PinnedContracts } from './pinned.js';
+import { instanceName } from './rules.js';
 
 /**
  * The most distinct ids one call may name. Every id is bound in each statement that reads or
@@ -60,10 +61,6 @@ const INSTANCE = 'id,workflow,version,state,revision,data_json';
  */
 const NODE = `id,workflow,version,state,revision,CASE WHEN strpos(data_json,'\\u0000')>0 THEN data_json ELSE json_build_object('title',data_json::json->'title','name',data_json::json->'name')::text END AS data_json`;
 const marks = (values: readonly unknown[]) => values.map(() => '?').join(',');
-
-/** What an instance is called: its title, else its name, else the workflow it runs. */
-const instanceName = (data: { title?: unknown; name?: unknown }, workflow: string) =>
-  [data.title, data.name].find((item): item is string => typeof item === 'string') ?? workflow;
 
 /**
  * An instance judged against a contract; one the project no longer holds has only its id and

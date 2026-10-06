@@ -308,7 +308,8 @@ test('Scoped references distinguish missing, unsupported and unpublished without
       'resolved',
       'missing',
       'missing',
-      'unsupported',
+      // An id no record holds is missing, whatever it looks like.
+      'missing',
       'unsupported',
       'unsupported',
       'unsupported',
@@ -332,6 +333,76 @@ test('Scoped references distinguish missing, unsupported and unpublished without
   await assert.rejects(async () => await f.knowledge.resolve(f.reader, refs), {
     code: 'knowledge_unavailable',
   });
+});
+
+test('every kind of reference reads the same, by its id alone or with its kind', async (t) => {
+  const f = await fixture(t);
+  const task = await f.completeTask(),
+    experiment = await f.createExperiment();
+  const brief = await f.artifacts.get(f.reader, task.briefId);
+  const review = await f.reviews.get(f.reader, task.reviewId!);
+  const read = async (refs: string[]) =>
+    (await f.knowledge.resolve(f.reader, refs)).map(({ ref: _, ...rest }) => rest);
+  const taskRef = {
+    status: 'resolved',
+    kind: 'task',
+    id: task.id,
+    label: task.title,
+    revision: task.workflow.revision,
+    state: task.workflow.state,
+  };
+  const experimentRef = {
+    status: 'resolved',
+    kind: 'experiment',
+    id: experiment.id,
+    label: experiment.name,
+    revision: experiment.workflow.revision,
+    state: experiment.workflow.state,
+  };
+  const artifactRef = {
+    status: 'resolved',
+    kind: 'artifact',
+    id: brief.id,
+    label: brief.title,
+    hash: brief.hash,
+  };
+  const reviewRef = {
+    status: 'resolved',
+    kind: 'review',
+    id: review.id,
+    label: `Review of ${task.title}`,
+    revision: review.subjectRevision,
+    state: review.status,
+    hash: review.snapshotHash,
+  };
+  assert.deepEqual(await read([task.id, `task:${task.id}`, `work-item:${task.id}`]), [
+    taskRef,
+    taskRef,
+    taskRef,
+  ]);
+  assert.deepEqual(await read([experiment.id, `experiment:${experiment.id}`]), [
+    experimentRef,
+    experimentRef,
+  ]);
+  assert.deepEqual(await read([brief.id, `artifact:${brief.id}`]), [artifactRef, artifactRef]);
+  assert.deepEqual(await read([review.id, `review:${review.id}`]), [reviewRef, reviewRef]);
+  // A kind that does not hold the id keeps its own kind in the answer.
+  assert.deepEqual(
+    await read([
+      `experiment:${task.id}`,
+      `task:${experiment.id}`,
+      `artifact:${task.id}`,
+      `review:${brief.id}`,
+      `work-item:${brief.id}`,
+    ]),
+    [
+      { status: 'missing', kind: 'experiment', id: task.id },
+      { status: 'missing', kind: 'task', id: experiment.id },
+      { status: 'missing', kind: 'artifact', id: task.id },
+      { status: 'missing', kind: 'review', id: brief.id },
+      { status: 'missing', kind: null, id: brief.id },
+    ],
+  );
 });
 
 test('Knowledge keeps one caller throughout its inventory and evidence reads', async (t) => {

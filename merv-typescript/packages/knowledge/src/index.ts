@@ -15,6 +15,7 @@ import {
 } from '@merv/contracts';
 import type { Experiments } from '@merv/experiments/types';
 import type { Code } from '@merv/code-work/types';
+import { instanceName } from '@merv/workflows/rules';
 import type {
   Knowledge,
   KnowledgeRecords,
@@ -28,6 +29,10 @@ export type * from './types.js';
 
 const errorCode = (error: unknown) =>
   error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+/** The work programs a reference names; any other workflow's instance is unsupported. */
+const WORK = new Set(['task', 'experiment', 'reflection', 'research']);
+/** A reference as its source reads it: everything but what the caller asked. */
+type Found = Omit<KnowledgeReference, 'ref' | 'id'>;
 const missingCodes = new Set([
   'not_found',
   'experiment_not_found',
@@ -120,112 +125,123 @@ export class KnowledgeService implements Knowledge {
     });
   }
 
+  /**
+   * Each kind of reference, read from the service that holds it, and the kind a missing one is
+   * reported as. A read is null when its service holds no such record for this caller.
+   */
+  private readonly sources: Record<
+    string,
+    {
+      kind: KnowledgeReferenceKind | null;
+      read(caller: Caller, id: string, tx: Transaction): Promise<Found | null>;
+    }
+  > = {
+    // A work item is whatever program its instance runs, named as Workflows names it.
+    'work-item': {
+      kind: null,
+      read: async (caller, id, tx) => {
+        const snapshot = await this.optional(async () => await this.workflows.get(caller, id, tx));
+        if (!snapshot) return null;
+        if (!WORK.has(snapshot.workflow)) return { status: 'unsupported', kind: null };
+        return {
+          status: 'resolved',
+          kind: snapshot.workflow as KnowledgeReferenceKind,
+          label: instanceName(snapshot.data, snapshot.workflow),
+          revision: snapshot.revision,
+          state: snapshot.state,
+        };
+      },
+    },
+    artifact: {
+      kind: 'artifact',
+      read: async (caller, id, tx) => {
+        const artifact = await this.optional(async () => await this.artifacts.get(caller, id, tx));
+        return (
+          artifact && {
+            status: 'resolved',
+            kind: 'artifact',
+            label: artifact.title,
+            hash: artifact.hash,
+          }
+        );
+      },
+    },
+    review: {
+      kind: 'review',
+      read: async (caller, id, tx) => {
+        const review = await this.optional(async () => await this.reviews.get(caller, id, tx));
+        if (!review) return null;
+        // A review is named by the work it judges, as a person would name it.
+        const subject = await this.optional(
+          async () => await this.workflows.get(caller, review.subjectId, tx),
+        );
+        return {
+          status: 'resolved',
+          kind: 'review',
+          label: `Review of ${instanceName(subject?.data ?? {}, review.subjectId)}`,
+          revision: review.subjectRevision,
+          state: review.status,
+          hash: review.snapshotHash,
+        };
+      },
+    },
+    'session-final': {
+      kind: 'code-capture',
+      read: async (caller, sessionId, tx) =>
+        await this.capture(caller, { kind: 'session-final', sessionId }, tx),
+    },
+    'code-commit': {
+      kind: 'code-capture',
+      read: async (caller, commandId, tx) =>
+        await this.capture(caller, { kind: 'code-commit', commandId }, tx),
+    },
+  };
+
+  private async capture(
+    caller: Caller,
+    ref: Parameters<Code['capture']>[1],
+    tx: Transaction,
+  ): Promise<Found | null> {
+    const code = this.code;
+    if (!code) return { status: 'unavailable', kind: 'code-capture' };
+    const capture = await this.optional(async () => await code.capture(caller, ref, tx));
+    return capture && { status: 'resolved', kind: 'code-capture', state: capture.status, capture };
+  }
+
   private async reference(
     caller: Caller,
     ref: string,
     tx: Transaction,
   ): Promise<KnowledgeReference> {
-    let kind: string | undefined, id: string;
     const colon = ref.indexOf(':');
-    if (colon >= 0) {
-      kind = ref.slice(0, colon);
-      id = ref.slice(colon + 1);
-    } else {
-      id = ref;
-      kind = [
-        ['art_', 'artifact'],
-        ['review_', 'review'],
-        ['codecmd_', 'code-commit'],
-        ['session_', 'session-final'],
-        ['wf_', 'work-item'],
-      ].find(([prefix]) => ref.startsWith(prefix))?.[1];
-    }
-    const missing = (known: KnowledgeReferenceKind | null): KnowledgeReference => ({
-      ref,
-      status: 'missing',
-      kind: known,
-      id,
-    });
-    const resolved = (
-      known: KnowledgeReferenceKind,
-      facts: Omit<KnowledgeReference, 'ref' | 'status' | 'kind' | 'id'>,
-    ): KnowledgeReference => ({ ref, status: 'resolved', kind: known, id, ...facts });
+    const id = colon >= 0 ? ref.slice(colon + 1) : ref;
     if (!id || !knowledgeIdSchema.safeParse(id).success)
       return { ref, status: 'unsupported', kind: null, id: null };
-    if (kind === 'work-item' || kind === 'reflection' || kind === 'research') {
-      // A work item is whatever program its instance runs; a wave and a cycle are named by it.
-      const snapshot = await this.optional(async () => await this.workflows.get(caller, id, tx));
-      if (kind !== 'work-item' && snapshot?.workflow !== kind) return missing(kind);
-      if (!snapshot) return missing(null);
-      if (snapshot.workflow === 'reflection' || snapshot.workflow === 'research')
-        return resolved(snapshot.workflow, {
-          label: String(snapshot.data.title ?? snapshot.data.name),
-          revision: snapshot.revision,
-          state: snapshot.state,
-        });
-      if (snapshot.workflow !== 'task' && snapshot.workflow !== 'experiment')
-        return { ref, status: 'unsupported', kind: null, id };
-      kind = snapshot.workflow;
+    if (colon < 0) {
+      // A bare id is whichever record holds it.
+      for (const source of Object.values(this.sources)) {
+        const found = await source.read(caller, id, tx);
+        if (found && found.status !== 'unavailable') return { ref, id, ...found };
+      }
+      return { ref, status: 'missing', kind: null, id };
     }
-    if (kind === 'task') {
-      const task = await this.optional(async () => await this.tasks.record(caller, id, tx));
-      return task
-        ? resolved('task', {
-            label: task.title,
-            revision: task.workflow.revision,
-            state: task.workflow.state,
-          })
-        : missing('task');
-    }
-    if (kind === 'experiment') {
-      const experiment = await this.optional(
-        async () => await this.experiments.get(caller, id, tx),
-      );
-      return experiment
-        ? resolved('experiment', {
-            label: experiment.name,
-            revision: experiment.workflow.revision,
-            state: experiment.workflow.state,
-          })
-        : missing('experiment');
-    }
-    if (kind === 'artifact') {
-      const artifact = await this.optional(async () => await this.artifacts.get(caller, id, tx));
-      return artifact
-        ? resolved('artifact', { label: artifact.title, hash: artifact.hash })
-        : missing('artifact');
-    }
-    if (kind === 'review') {
-      const review = await this.optional(async () => await this.reviews.get(caller, id, tx));
-      // A review is named by the work it judges, as a person would name it.
-      const subject = review
-        ? await this.optional(async () => await this.workflows.get(caller, review.subjectId, tx))
+    const kind = ref.slice(0, colon);
+    // A task, experiment, wave or cycle is a work item running the program it names.
+    const work = WORK.has(kind);
+    const source = work
+      ? this.sources['work-item']
+      : Object.hasOwn(this.sources, kind)
+        ? this.sources[kind]
         : undefined;
-      return review
-        ? resolved('review', {
-            label: `Review of ${String(subject?.data.title ?? subject?.data.name ?? review.subjectId)}`,
-            revision: review.subjectRevision,
-            state: review.status,
-            hash: review.snapshotHash,
-          })
-        : missing('review');
-    }
-    if (kind === 'session-final' || kind === 'code-commit') {
-      const code = this.code;
-      if (!code) return { ref, status: 'unavailable', kind: 'code-capture', id };
-      const capture = await this.optional(
-        async () =>
-          await code.capture(
-            caller,
-            kind === 'session-final' ? { kind, sessionId: id } : { kind, commandId: id },
-            tx,
-          ),
-      );
-      return capture
-        ? resolved('code-capture', { state: capture.status, capture })
-        : missing('code-capture');
-    }
-    return { ref, status: 'unsupported', kind: null, id: null };
+    if (!source) return { ref, status: 'unsupported', kind: null, id: null };
+    const found = await source.read(caller, id, tx);
+    if (found && (!work || found.kind === kind)) return { ref, id, ...found };
+    return {
+      ref,
+      status: 'missing',
+      kind: work ? (kind as KnowledgeReferenceKind) : source.kind,
+      id,
+    };
   }
 }
 
