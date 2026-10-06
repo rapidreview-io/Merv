@@ -1059,7 +1059,7 @@ test(
     const runner = f.make();
     await runner.start();
     await f.enabled(true);
-    // It names `runner.2` without `git.local`, so the lease declines rather than failing work.
+    // No runner has a repository of its own, so the lease declines rather than failing work.
     await until(
       () => runner.snapshot().lastDeclined === 'runner_incompatible',
       runner,

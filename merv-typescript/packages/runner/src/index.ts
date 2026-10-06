@@ -50,7 +50,7 @@ import {
 } from './conversation.js';
 import { launchCodexHome } from './harness/codex.js';
 import { harnessOf } from './harness/index.js';
-import { assignmentUser, RunnerWorkspaces, type RepositoryDriverFactory } from './workspaces.js';
+import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
   sealed,
@@ -61,11 +61,6 @@ import {
 } from './profiles.js';
 import type { Runner, RunnerSnapshot } from './types.js';
 export type * from './types.js';
-export type {
-  RepositoryDriverFactory,
-  RepositoryDriverHost,
-  RunnerRepository,
-} from './workspaces.js';
 
 /** Local machine configuration. Remote settings can tune profiles, never replace executables. */
 const configSchema = z
@@ -94,21 +89,6 @@ const configSchema = z
     profiles: z.array(z.unknown()).max(32),
     /** CLI composition: omit for the existing Code driver, or [] for work without Git. */
     workspaceDrivers: z.array(z.literal('code')).max(1).optional(),
-    /** A local source repository, of which the composition's repository driver keeps a private copy. */
-    workspace: z
-      .object({
-        repository: z
-          .string()
-          .min(1)
-          .refine((value) => !/[\0\r\n]/.test(value)),
-        baseRef: z
-          .string()
-          .min(1)
-          .max(200)
-          .refine((value) => !value.startsWith('-') && !/[\0\r\n]/.test(value)),
-      })
-      .strict()
-      .optional(),
     /** Existing image-provisioned scratch root outside the private ledger, for isolated Codex. */
     assignmentWorkspaceDirectory: z
       .string()
@@ -152,13 +132,6 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
       'invalid_runner_config',
       'A work host requires one isolated Codex profile, capacity one and an assignment root',
     );
-  // An isolated machine's Git checkouts are its workspace driver's; the runner's own
-  // repository gives it only scratch directories.
-  check(
-    !parsed.data.assignmentWorkspaceDirectory || !parsed.data.workspace,
-    'invalid_runner_config',
-    'An assignment workspace directory cannot be combined with a runner repository',
-  );
   return { ...parsed.data, profiles };
 }
 const liveSession = (session: Session) =>
@@ -265,8 +238,8 @@ export class MachineRunner implements Runner {
   private readonly workspaces: RunnerWorkspaces;
   /**
    * Whatever prepares checkouts, by the name a workspace policy gives it. The scheduler below
-   * only ever speaks the driver interface; the runner's own repository serves every policy
-   * that names no driver, exactly as it always has.
+   * only ever speaks the driver interface; work that names no driver gets only a scratch
+   * directory.
    */
   private readonly drivers = new Map<string, WorkspaceDriver>();
   private lastDeclined?: string;
@@ -304,18 +277,11 @@ export class MachineRunner implements Runner {
       autoPoll?: boolean;
       /** Workspace drivers other plugins own; whoever composes the machine supplies them. */
       drivers?: WorkspaceDriverFactory[];
-      /** The driver of the runner's own repository; required with `workspace`. */
-      repositoryDriver?: RepositoryDriverFactory;
       /** Trusted hosted-runtime barrier: kill all assignment descendants and clear private state. */
       resetAssignment?: () => Promise<void>;
     } = {},
   ) {
     const parsed = validateRunnerConfig(config);
-    check(
-      !parsed.workspace || options.repositoryDriver,
-      'invalid_runner_config',
-      'A runner repository requires a repository workspace driver',
-    );
     check(
       !parsed.workInstanceId || options.resetAssignment,
       'invalid_runner_config',
@@ -336,11 +302,9 @@ export class MachineRunner implements Runner {
     );
     this.sourceBearer = source;
     check(
-      !JSON.stringify({ profiles: this.profiles, workspace: this.config.workspace }).includes(
-        source,
-      ),
+      !JSON.stringify({ profiles: this.profiles }).includes(source),
       'invalid_runner_config',
-      'Source credentials cannot appear in launch or workspace configuration',
+      'Source credentials cannot appear in launch configuration',
     );
     this.clock = options.clock ?? Date.now;
     this.autoPoll = options.autoPoll ?? true;
@@ -373,14 +337,15 @@ export class MachineRunner implements Runner {
         'invalid_runner_config',
         'Retained runner history belongs to another work item',
       );
+      // A work host always has both: the configuration refuses one without the other.
       this.workspaces = new RunnerWorkspaces(
         this.ledger,
-        this.config.workspace && {
-          driver: options.repositoryDriver!,
-          config: this.config.workspace,
-        },
-        this.config.assignmentWorkspaceDirectory,
-        this.config.workInstanceId,
+        this.config.workInstanceId
+          ? {
+              directory: this.config.assignmentWorkspaceDirectory!,
+              workInstanceId: this.config.workInstanceId,
+            }
+          : undefined,
         (id) => this.previousWorkspace(id),
       );
       for (const factory of options.drivers ?? [])
@@ -483,12 +448,10 @@ export class MachineRunner implements Runner {
     return this.ledger.updateMetadata(id, patch as LaunchMetadata);
   }
   private async advertise(): Promise<void> {
-    // `runner.2`: this runner ignores fields a server adds to its replies (`runner.1`) and names
-    // `git.local` exactly when it has a repository of its own for work that names no driver.
-    // A managed runner's capabilities must equal its enrolment, so it names only its drivers.
-    const marker = this.managed()
-      ? ['workflow.workhost.1']
-      : ['runner.2', ...(this.config.workspace ? ['git.local'] : [])];
+    // `runner.2`: this runner ignores fields a server adds to its replies (`runner.1`), and it
+    // has no repository of its own for work that names no driver. A managed runner's
+    // capabilities must equal its enrolment, so it names only its drivers.
+    const marker = this.managed() ? ['workflow.workhost.1'] : ['runner.2'];
     const capabilities = [...this.drivers.keys(), ...marker].sort();
     // Sent when it changed or 15 s after the last one succeeded (fresh for 45 s on the server).
     const heartbeat = async () => {
@@ -1343,15 +1306,12 @@ export class MachineRunner implements Runner {
 }
 
 /** The runner with the workspace drivers of other plugins, which only a composition may name. */
-export const runnerWith = (
-  drivers: WorkspaceDriverFactory[],
-  repositoryDriver?: RepositoryDriverFactory,
-) => ({
+export const runnerWith = (drivers: WorkspaceDriverFactory[]) => ({
   name: 'merv-runner',
   inject: [],
   async apply(ctx: Context, config: RunnerConfig) {
     await ctx.effect(async function* () {
-      const runner = new MachineRunner(config, { drivers, repositoryDriver });
+      const runner = new MachineRunner(config, { drivers });
       yield () => runner.stop();
       await runner.start();
       yield ctx.provide('runner', runner);

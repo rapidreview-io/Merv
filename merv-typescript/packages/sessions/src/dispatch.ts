@@ -455,7 +455,6 @@ export class SessionDispatch {
     capabilities: ReadonlySet<string>,
     failures: readonly Failure[] = [],
     skipped: ReadonlySet<string> = new Set(),
-    localRepository = true,
   ): Promise<{ candidates: WorkflowDispatchCandidate[]; reason: DispatchDecision | null }> {
     if (!(await this.dispatch(caller.projectId, tx)).enabled)
       return { candidates: [], reason: 'dispatch_disabled' };
@@ -471,14 +470,12 @@ export class SessionDispatch {
         reason: project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable',
       };
     const open = admissible.queue;
-    // A checkout with no driver is cloned from the runner's own repository, which a machine
-    // Fleet rents, or a runner configured without one, does not have.
+    // A checkout goes only to a runner carrying its driver. One that names no driver was cloned
+    // from a runner's own repository, which no runner has any more.
     const compatible = open.filter(
       (item) =>
         item.workspace.mode === 'none' ||
-        (item.workspace.driver === undefined
-          ? localRepository
-          : capabilities.has(item.workspace.driver)),
+        (item.workspace.driver !== undefined && capabilities.has(item.workspace.driver)),
     );
     const candidates = compatible.filter(
       (item) =>
@@ -544,7 +541,6 @@ export class SessionDispatch {
         new Set(input.capabilities ?? []),
         await this.recentFailures(tx, owner, input.platform.name),
         this.passing(owner),
-        false,
       );
       return {
         candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
@@ -776,8 +772,6 @@ export class SessionDispatch {
           capabilities,
           failures,
           new Set([...skipped, ...this.passing(phaseOwner.hash)]),
-          // A `runner.2` names `git.local` exactly when it has a repository; an older one is trusted.
-          !managed && (capabilities.has('git.local') || !capabilities.has('runner.2')),
         );
         candidate = selected.candidates.find(
           (item) => !managed || item.instanceId === managed.row.work_instance_id,

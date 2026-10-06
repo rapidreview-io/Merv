@@ -1259,7 +1259,7 @@ test('both dispatch views require three consecutive recent deferred closes at th
   assert.deepEqual(await deferred(), [[], []]);
 });
 
-test('Fleet local-Git incompatibility is immediate, per target, and clears with an own runner', async (t) => {
+test('local-Git work is reported incompatible at once, whoever would supply machines', async (t) => {
   const f = await fixture(t, {
     workspace: {
       mode: 'ephemeral',
@@ -1282,36 +1282,25 @@ test('Fleet local-Git incompatibility is immediate, per target, and clears with 
     (await f.sessions.dispatch.stuck(f.owner)).items.filter(
       (item) => item.code === 'runner_incompatible',
     );
-  assert.deepEqual(
-    (await blocked()).map((item) => [item.kind, item.instanceId]),
-    [['work_blocked', work.id]],
-  );
-  assert.match((await blocked())[0].next, /frozen workspace policy/);
   const marks = async () => (await f.sessions.running.marks(f.owner)).marks;
-  assert.match(JSON.stringify(await marks()), /Fleet cannot supply/);
+  const reported = async () => {
+    assert.deepEqual(
+      (await blocked()).map((item) => [item.kind, item.instanceId]),
+      [['work_blocked', work.id]],
+    );
+    assert.match((await blocked())[0].next, /frozen workspace policy/);
+    assert.match(JSON.stringify(await marks()), /No runner has this step/);
+  };
+  await reported();
+  // No runner has a repository of its own any more: neither Fleet's, nor the project's own.
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true, ownMachines: true });
-  assert.deepEqual(await blocked(), [], 'own-machines mode does not dispatch to Fleet');
-  assert.doesNotMatch(JSON.stringify(await marks()), /Fleet cannot supply/);
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true, ownMachines: false });
-  assert.equal((await blocked()).length, 1);
+  await reported();
+  served = false;
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
+  await reported();
+  // With dispatch off, dispatch_disabled says why it waits instead.
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
   assert.deepEqual(await blocked(), []);
-  assert.deepEqual(await marks(), []);
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  served = false;
-  assert.deepEqual(await blocked(), []);
-  assert.deepEqual(await marks(), []);
-  served = true;
-  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
-  assert.deepEqual(await blocked(), []);
-  assert.deepEqual(await marks(), []);
-  f.advance(120_000);
-  assert.equal((await blocked()).length, 1, 'an offline own runner cannot supply the checkout');
-  assert.match(JSON.stringify(await marks()), /Fleet cannot supply/);
-  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
-  const { worker } = await f.active();
-  assert.deepEqual(await blocked(), [], 'live work is not reported as waiting');
-  await f.sessions.session(worker);
 });
 
 test('Fleet does not label scratch or hosted-driver work as needing a local repository', async (t) => {
@@ -1450,7 +1439,7 @@ test('the stuck report, the status read and the Running board agree on why work 
   assert.deepEqual(await views(f, 'off again'), ['work_deferred', 'dispatch_disabled']);
 });
 
-test('the three dispatch views agree while Fleet cannot supply a local checkout', async (t) => {
+test('the three dispatch views agree while no runner can supply a local checkout', async (t) => {
   const f = await fixture(t, {
     workspace: { mode: 'ephemeral', namespace: 'work', base: 'central', retain: false },
   });
@@ -1465,5 +1454,5 @@ test('the three dispatch views agree while Fleet cannot supply a local checkout'
   );
   assert.deepEqual(await views(f, 'fleet'), ['work_blocked']);
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
-  assert.deepEqual(await views(f, 'own runner'), []);
+  assert.deepEqual(await views(f, 'own runner'), ['work_blocked']);
 });

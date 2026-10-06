@@ -46,7 +46,7 @@ async function fixture(t: TestContext) {
     await workflows.close();
     await state.close();
   });
-  // `null`: a checkout of the runner's own repository, which names no driver.
+  // `null`: a checkout of a runner's own repository, which names no driver and no runner has.
   const register = async (name: string, driver?: string | null) => {
     const policy: WorkflowPolicy = {
       successStates: ['done'],
@@ -222,27 +222,19 @@ test('a hand offer requires the driver before leasing and attachment rechecks th
   }
 });
 
-test('work on the runner’s own repository goes to a runner.2 only when it names git.local', async (t) => {
+test('work on a runner’s own repository goes to no runner, an older one included', async (t) => {
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.source, presence('bare', ['runner.2']));
   await f.sessions.dispatch.heartbeatRunner(
     f.source,
     presence('repository', ['git.local', 'runner.2']),
   );
-  // A runner from before `runner.2` does not say, so it is still trusted to have one.
+  // A runner from before `runner.2` does not say, and is no longer trusted to have one.
   await f.sessions.dispatch.heartbeatRunner(f.source, presence('older'));
-  const first = await f.local.start(f.source, { workflow: 'local', requestId: request() });
-  const second = await f.local.start(f.source, { workflow: 'local', requestId: request() });
-  assert.deepEqual(await f.sessions.dispatch.lease(f.source, auto('bare')), {
-    session: null,
-    reason: 'runner_incompatible',
-  });
-  assert.equal(
-    (await f.sessions.dispatch.lease(f.source, auto('repository'))).session?.instanceId,
-    first.id,
-  );
-  assert.equal(
-    (await f.sessions.dispatch.lease(f.source, auto('older'))).session?.instanceId,
-    second.id,
-  );
+  await f.local.start(f.source, { workflow: 'local', requestId: request() });
+  for (const runner of ['bare', 'repository', 'older'])
+    assert.deepEqual(await f.sessions.dispatch.lease(f.source, auto(runner)), {
+      session: null,
+      reason: 'runner_incompatible',
+    });
 });

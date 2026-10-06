@@ -4,13 +4,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   effectiveWorkspace,
-  type CheckoutSlotClaim,
-  type CheckoutSlotLedger,
-  type CheckoutWorkspaceChange,
-  type CheckoutWorkspaceRow,
   WorkspaceDeferred,
-  type CodeCommitCommand,
-  type CodeCommitReceipt,
   type SessionWorkspace,
   type WorkflowWorkspacePolicy,
   type WorkspaceDriver,
@@ -18,13 +12,7 @@ import {
   type WorkspaceLaunch,
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
-import {
-  LocalLedger,
-  privateDirectory,
-  terminalLaunch,
-  type LaunchMetadata,
-  type LocalJson,
-} from './ledger.js';
+import { LocalLedger, privateDirectory, terminalLaunch } from './ledger.js';
 
 export type { WorkspaceHandle } from '@merv/contracts';
 /** The hosted image's unprivileged assignment user, and the wrapper that runs Git as it. */
@@ -33,35 +21,24 @@ export const assignmentUser = {
   gid: 12001,
   git: '/opt/merv/python/merv_sandboxes/runtimes/assignment.py',
 };
-/** The runner's own repository: a local source it never changes, and the ref work starts from. */
-export type RunnerRepository = { repository: string; baseRef: string };
-/** What the driver of the runner's own repository is lent: the ledger and its view of a launch. */
-export interface RepositoryDriverHost {
-  directory: string;
+/** A hosted work host's scratch root, kept for exactly this one work item across its phases. */
+export type RunnerAssignment = { directory: string; workInstanceId: string };
+/** One launch's claim of a scratch directory, with the workspace row it opens. */
+interface CheckoutSlotClaim {
+  launchId: string;
+  slotId: string;
   path: string;
-  runnerId: string;
-  terminal(launchId: string): boolean;
-  launch(launchId: string):
-    | {
-        sessionId: string;
-        runDirectory: string;
-        status: string;
-        deadline: number;
-        session?: Record<string, unknown>;
-      }
-    | undefined;
-  note(launchId: string, code: string, detail: Record<string, unknown>): void;
-  /** The runner's checkout-slot ledger, which the driver's checkouts are claimed in too. */
-  slots: CheckoutSlots;
+  policy: WorkflowWorkspacePolicy;
+  readOnly: boolean;
 }
-/**
- * Whatever makes checkouts of the runner's own repository for policies that name no driver.
- * Only a composition names it, as it does every other driver; the runner itself runs no Git.
- */
-export interface RepositoryDriverFactory {
-  create(host: RepositoryDriverHost, repository: RunnerRepository): Required<WorkspaceDriver>;
+type SlotOwner = { launch_id: string; slot_id: string; epoch: number };
+/** A launch's workspace row in the runner's slot ledger. */
+interface WorkspaceRow extends SlotOwner {
+  path: string;
+  policy_json: string;
+  read_only: number;
+  status: WorkspaceHandle['status'];
 }
-type WorkspaceRow = CheckoutWorkspaceRow;
 class WorkspaceError extends Error {
   readonly code: string;
   constructor(code: string) {
@@ -78,16 +55,13 @@ const statIfPresent = (path: string) => {
   }
 };
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const scratch = (row: WorkspaceRow) =>
-  (JSON.parse(row.policy_json) as WorkflowWorkspacePolicy).mode === 'none';
 
-type SlotOwner = Pick<WorkspaceRow, 'launch_id' | 'slot_id' | 'epoch'>;
 /**
- * The runner's checkout-slot ledger: which launch owns each checkout path, at which epoch, and
- * each launch's workspace row. Scratch directories and the repository driver's checkouts are
- * claimed and released here alike; the driver keeps only what it adds to a row.
+ * The runner's checkout-slot ledger: which launch owns each scratch path, at which epoch, and
+ * each launch's workspace row. Earlier runners kept checkouts of their own repository here too,
+ * so the tables keep those columns.
  */
-export class CheckoutSlots implements CheckoutSlotLedger {
+class CheckoutSlots {
   private readonly db: DatabaseSync;
   constructor(private readonly ledger: LocalLedger) {
     this.db = new DatabaseSync(ledger.path);
@@ -113,13 +87,6 @@ export class CheckoutSlots implements CheckoutSlotLedger {
         WHEN OLD.result_json IS NOT NULL BEGIN SELECT RAISE(ABORT,'immutable workspace result'); END;
     `);
   }
-  /** The base a slot was first claimed at, if it was ever claimed. */
-  base(slotId: string): string | undefined {
-    const row = this.db
-      .prepare('SELECT base_oid FROM runner_checkout_slots WHERE slot_id=?')
-      .get(slotId);
-    return row && String(row.base_oid);
-  }
   /** `adoptable`: whether a directory at the path that no slot records may be taken over. */
   claim(claim: CheckoutSlotClaim, adoptable?: () => boolean): void {
     this.transaction(() => {
@@ -140,11 +107,11 @@ export class CheckoutSlots implements CheckoutSlotLedger {
           `INSERT INTO runner_checkout_slots VALUES(?,?,?,?,?,?)
           ON CONFLICT(slot_id) DO UPDATE SET owner_launch_id=excluded.owner_launch_id,epoch=excluded.epoch`,
         )
-        .run(claim.slotId, claim.path, claim.branch, claim.base, claim.launchId, epoch);
+        .run(claim.slotId, claim.path, null, '', claim.launchId, epoch);
       this.db
         .prepare(
           `INSERT INTO runner_workspaces(launch_id,slot_id,epoch,path,policy_json,read_only,base_oid,branch,repository_id,status)
-          VALUES(?,?,?,?,?,?,?,?,?,'preparing')`,
+          VALUES(?,?,?,?,?,?,'',NULL,NULL,'preparing')`,
         )
         .run(
           claim.launchId,
@@ -153,9 +120,6 @@ export class CheckoutSlots implements CheckoutSlotLedger {
           claim.path,
           JSON.stringify(claim.policy),
           Number(claim.readOnly),
-          claim.base,
-          claim.branch,
-          claim.repositoryId,
         );
     });
   }
@@ -163,26 +127,10 @@ export class CheckoutSlots implements CheckoutSlotLedger {
     return this.db.prepare('SELECT * FROM runner_workspaces WHERE launch_id=?').get(launchId) as
       WorkspaceRow | undefined;
   }
-  update(launchId: string, change: CheckoutWorkspaceChange): void {
-    const set = Object.entries({
-      status: change.status,
-      attachment_json: change.attachment && JSON.stringify(change.attachment),
-      result_json: change.result && JSON.stringify(change.result),
-      canceled: change.canceled && 1,
-    }).filter(([, value]) => value !== undefined) as [string, string | number][];
-    // Only the columns named: naming a written-once column again would trip its trigger.
+  update(launchId: string, status: WorkspaceHandle['status']): void {
     this.db
-      .prepare(
-        `UPDATE runner_workspaces SET ${set.map(([key]) => `${key}=?`).join(',')} WHERE launch_id=?`,
-      )
-      .run(...set.map(([, value]) => value), launchId);
-  }
-  abandon(launchId: string): void {
-    this.db
-      .prepare(
-        "UPDATE runner_workspaces SET canceled=1,status=CASE status WHEN 'capturing' THEN 'captured' ELSE status END WHERE launch_id=?",
-      )
-      .run(launchId);
+      .prepare('UPDATE runner_workspaces SET status=? WHERE launch_id=?')
+      .run(status, launchId);
   }
   requireOwnership(row: SlotOwner): void {
     const slot = this.db
@@ -220,60 +168,23 @@ export class CheckoutSlots implements CheckoutSlotLedger {
   }
 }
 
-/** What the repository driver is lent of a runner's ledger. */
-export function ledgerHost(
-  ledger: LocalLedger,
-  slots = new CheckoutSlots(ledger),
-): RepositoryDriverHost {
-  return {
-    slots,
-    directory: ledger.directory,
-    path: ledger.path,
-    runnerId: ledger.runnerId,
-    terminal: (id) => terminalLaunch(ledger.get(id)!),
-    launch: (id) => {
-      const record = ledger.get(id);
-      return (
-        record && {
-          sessionId: record.sessionId,
-          runDirectory: record.runDirectory,
-          status: record.status,
-          deadline: record.deadline,
-          session: record.metadata.session as Record<string, unknown> | undefined,
-        }
-      );
-    },
-    // A launch's workspace diagnostic: in its ledger metadata, on stderr, and as lastError.
-    note: (id, code, detail) => {
-      const notes = ledger.get(id)?.metadata.workspaceNotes as LaunchMetadata;
-      ledger.updateMetadata(id, {
-        workspaceNotes: { ...notes, [code]: detail as Record<string, LocalJson> },
-      });
-      process.stderr.write(`merv-runner: launch ${id} ${code} ${JSON.stringify(detail)}\n`);
-    },
-  };
-}
-
 /**
  * The workspaces of work whose policy names no driver: a scratch directory of the launch's own,
- * or a checkout of the runner's own repository through the driver the composition supplied.
- * Both keep their rows in the same ledger tables, so a launch's row says which one it is.
+ * or on a work host the one directory its work item keeps across phases. Git checkouts are
+ * always a named driver's.
  */
-export class RunnerWorkspaces implements Required<WorkspaceDriver> {
+export class RunnerWorkspaces implements WorkspaceDriver {
   private readonly slots: CheckoutSlots;
-  private readonly assignmentWorkspaceDirectory?: string;
-  private readonly repository?: Required<WorkspaceDriver>;
   private serial: Promise<unknown> = Promise.resolve();
   private disposed = false;
 
   constructor(
     private readonly ledger: LocalLedger,
-    repository?: { driver: RepositoryDriverFactory; config: RunnerRepository },
-    assignmentWorkspaceDirectory?: string,
-    private readonly workInstanceId?: string,
+    private readonly assignment?: RunnerAssignment,
     private readonly previousWorkspace?: (launchId: string) => WorkspaceHandle | undefined,
   ) {
-    if (assignmentWorkspaceDirectory) {
+    if (assignment) {
+      const assignmentWorkspaceDirectory = assignment.directory;
       if (
         !isAbsolute(assignmentWorkspaceDirectory) ||
         resolve(assignmentWorkspaceDirectory) !== assignmentWorkspaceDirectory
@@ -289,37 +200,18 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       )
         throw new WorkspaceError('workspace_assignment_root_invalid');
     }
-    this.assignmentWorkspaceDirectory = assignmentWorkspaceDirectory;
     this.slots = new CheckoutSlots(ledger);
-    try {
-      this.repository = repository?.driver.create(
-        ledgerHost(ledger, this.slots),
-        repository.config,
-      );
-    } catch (error) {
-      this.slots.close();
-      throw error;
-    }
-  }
-  /** The repository driver when this launch's row is one of its checkouts. */
-  private checkout(launchId: string): Required<WorkspaceDriver> | undefined {
-    if (this.disposed) throw new WorkspaceError('workspace_manager_closed');
-    const row = this.row(launchId);
-    return row && !scratch(row) ? this.repository : undefined;
   }
   get(launchId: string): WorkspaceHandle | undefined {
     const row = this.row(launchId);
     if (!row) return undefined;
-    if (!scratch(row)) return this.repository?.get(launchId);
     return { path: row.path, retain: true, readOnly: !!row.read_only, status: row.status };
   }
   prepare(record: WorkspaceLaunch, session: Session): Promise<WorkspaceHandle> {
-    if (this.workInstanceId && session.instanceId !== this.workInstanceId)
+    if (this.assignment && session.instanceId !== this.assignment.workInstanceId)
       return Promise.reject(new WorkspaceError('workspace_work_mismatch'));
     if (effectiveWorkspace(session.execution.policy).mode !== 'none')
-      return this.repository
-        ? this.repository.prepare(record, session)
-        : Promise.reject(new WorkspaceError('workspace_repository_required'));
+      return Promise.reject(new WorkspaceError('workspace_repository_required'));
     return this.run({ record, session }, async ({ record, session }) => {
       this.requireLaunch(record);
       if (record.sessionId !== session.id) throw new WorkspaceError('workspace_session_mismatch');
@@ -340,23 +232,20 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       }
       if (terminalLaunch(this.ledger.get(record.id)!))
         throw new WorkspaceError('workspace_launch_closed');
-      const path = this.assignmentWorkspaceDirectory
-        ? join(this.assignmentWorkspaceDirectory, hash(this.workInstanceId ?? record.id))
+      const path = this.assignment
+        ? join(this.assignment.directory, hash(this.assignment.workInstanceId))
         : join(realpathSync(record.runDirectory), 'workspace');
       this.slots.claim(
         {
           launchId: record.id,
-          slotId: `scratch:${this.workInstanceId ?? record.id}`,
+          slotId: `scratch:${this.assignment?.workInstanceId ?? record.id}`,
           path,
-          branch: null,
-          base: '',
           policy,
           readOnly: session.execution.policy.readOnly,
-          repositoryId: null,
         },
         // A retained directory the preceding phase of the same work closed is this work's own.
         () => {
-          const previous = this.workInstanceId && this.previousWorkspace?.(record.id);
+          const previous = this.assignment && this.previousWorkspace?.(record.id);
           return (
             !!previous && previous.path === path && previous.status === 'closed' && previous.retain
           );
@@ -368,8 +257,6 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
   }
   /** A scratch directory is the launch's own: nothing in it is captured or checked. */
   capture(record: WorkspaceLaunch): Promise<SessionWorkspace | undefined> {
-    const checkout = this.checkout(record.id);
-    if (checkout) return checkout.capture(record);
     return this.run(record, async (record) => {
       this.requireLaunch(record);
       if (!terminalLaunch(this.ledger.get(record.id)!))
@@ -377,13 +264,11 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       const row = this.row(record.id);
       if (!row || row.status === 'captured' || row.status === 'closed') return undefined;
       this.slots.requireOwnership(row);
-      this.slots.update(record.id, { status: 'captured' });
+      this.slots.update(record.id, 'captured');
       return undefined;
     });
   }
   close(record: WorkspaceLaunch): Promise<void> {
-    const checkout = this.checkout(record.id);
-    if (checkout) return checkout.close(record);
     return this.run(record, async (record) => {
       this.requireLaunch(record);
       if (!terminalLaunch(this.ledger.get(record.id)!))
@@ -396,28 +281,9 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       this.slots.release(row);
     });
   }
-  checkpointCommit(
-    record: WorkspaceLaunch,
-    command: CodeCommitCommand,
-  ): Promise<CodeCommitReceipt> {
-    return this.repository
-      ? this.repository.checkpointCommit(record, command)
-      : Promise.reject(new WorkspaceError('workspace_git_attachment_required'));
-  }
-  pendingCommits(launchId: string): CodeCommitCommand[] {
-    return this.repository?.pendingCommits(launchId) ?? [];
-  }
-  commitOutcome(commandId: string): { receipt: CodeCommitReceipt } | { error: string } | null {
-    return this.repository?.commitOutcome(commandId) ?? null;
-  }
-  acknowledgeCommit(commandId: string): void {
-    if (!this.repository) throw new WorkspaceError('workspace_commit_outcome_required');
-    this.repository.acknowledgeCommit(commandId);
-  }
   dispose(): void {
     this.disposed = true;
     this.slots.close();
-    this.repository?.dispose();
   }
 
   private async run<Input, T>(input: Input, action: (input: Input) => Promise<T>): Promise<T> {
@@ -442,10 +308,7 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       throw new WorkspaceError('workspace_unknown_launch');
   }
   private parent(row: WorkspaceRow): string {
-    return (
-      this.assignmentWorkspaceDirectory ??
-      realpathSync(this.ledger.get(row.launch_id)!.runDirectory)
-    );
+    return this.assignment?.directory ?? realpathSync(this.ledger.get(row.launch_id)!.runDirectory);
   }
   private prepareScratch(row: WorkspaceRow): void {
     this.slots.requireOwnership(row);
@@ -453,12 +316,7 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
     const info = statIfPresent(row.path);
     // On a retained hosted machine the preceding phase handed this same leaf to the
     // unprivileged assignment user. Its parent is still supervisor-owned and fenced.
-    if (
-      this.workInstanceId &&
-      info &&
-      process.getuid?.() === 0 &&
-      info.uid === assignmentUser.uid
-    ) {
+    if (this.assignment && info && process.getuid?.() === 0 && info.uid === assignmentUser.uid) {
       if (
         !info.isDirectory() ||
         info.isSymbolicLink() ||
@@ -467,7 +325,7 @@ export class RunnerWorkspaces implements Required<WorkspaceDriver> {
       )
         throw new WorkspaceError('workspace_foreign_checkout');
     } else privateDirectory(row.path);
-    this.slots.update(row.launch_id, { status: 'ready' });
+    this.slots.update(row.launch_id, 'ready');
   }
   private validate(row: WorkspaceRow): void {
     this.within(this.parent(row), row.path);

@@ -81,18 +81,14 @@ const stuckKinds: StuckKind[] = [
   'runner_refusing',
 ];
 const localGitWhy =
-  'This step requires a runner’s local Git repository. Fleet machines do not have that repository, and no live project-owned runner is available.';
+  'This step requires a runner’s local Git repository, and no runner has one any more.';
 const localGitNext =
-  'Start a project-owned runner with the repository, or prepare hosted Code and create replacement work using it. Preparing Code does not change this existing work’s frozen workspace policy.';
-/** This diagnosis is specific to Fleet's known inability to supply a local checkout. */
-function localGitBlocked(
-  queue: readonly WorkflowDispatchCandidate[],
-  fleet: boolean,
-  ownRunnerLive: boolean,
-): WorkflowDispatchCandidate[] {
-  return fleet && !ownRunnerLive
-    ? queue.filter((item) => item.workspace.mode !== 'none' && item.workspace.driver === undefined)
-    : [];
+  'Prepare hosted Code and create replacement work using it. Preparing Code does not change this existing work’s frozen workspace policy.';
+/** Git work that names no driver needed a runner's own repository, which no runner has. */
+function localGitBlocked(queue: readonly WorkflowDispatchCandidate[]): WorkflowDispatchCandidate[] {
+  return queue.filter(
+    (item) => item.workspace.mode !== 'none' && item.workspace.driver === undefined,
+  );
 }
 const stuckLimit = 200;
 /** Why queued work does not start: the first of the reading's stalls. */
@@ -261,13 +257,7 @@ async function readingOf(
     failing,
     recent,
   );
-  const incompatible = new Set(
-    localGitBlocked(
-      dispatch.enabled ? queue : [],
-      fleet && !dispatch.ownMachines,
-      live.some((runner) => !runner.rented),
-    ).map(targetKey),
-  );
+  const incompatible = new Set(localGitBlocked(dispatch.enabled ? queue : []).map(targetKey));
   const quiet = all.flatMap((item) => {
     const key = targetKey(item),
       step = item.role === 'operator';

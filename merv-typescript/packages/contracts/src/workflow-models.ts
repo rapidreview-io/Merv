@@ -46,7 +46,8 @@ export type WorkflowWorkspacePolicy =
       retain: boolean;
       /**
        * The workspace driver that prepares this checkout, opaque to everything but the runner
-       * and the plugin that owns the driver. Absent means the runner's own local repository.
+       * and the plugin that owns the driver. Absent means a runner's own repository, which no
+       * runner has any more, so such work is offered to none.
        */
       driver?: string;
     }

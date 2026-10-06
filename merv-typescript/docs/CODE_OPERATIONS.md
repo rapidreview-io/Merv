@@ -262,7 +262,7 @@ back. It is the only workspace transport: the GitHub checkpoint transport and it
 
 The server authenticates the original source, checks ownership and validates replay consistency. A checkpoint's runner receipt alone does not independently prove the Git tree. Hosted work uses Code's repository and driver for durable handoff, automatic bases and reviewed merge resolution. A domain owner admits accepted code only after its own evidence and review checks; publication verifies the approved head and tree against the imported merge. Source revocation or loss of authority leaves cleanup awaiting authorized reconciliation.
 
-See [Git workspaces](WORKSPACES.md) for workspace ownership and source isolation. Automated checks live in `tests/code-*.test.ts` and `tests/runner-code-*.test.ts`; `scripts/live-code.ts` exercises a bounded real producer and independent reviewer on a synthetic program. Latest execution results belong in [VERIFICATION.md](../VERIFICATION.md), rather than being inferred from the existence of these scripts.
+See [Git workspaces](WORKSPACES.md) for workspace ownership and source isolation. Automated checks live in `tests/code-*.test.ts` and `tests/runner-code-*.test.ts` (the local-driver `scripts/live-code.ts` was removed with that driver). Latest execution results belong in [VERIFICATION.md](../VERIFICATION.md), rather than being inferred from the existence of these scripts.
 
 ## Reviewed unit publication
 

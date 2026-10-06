@@ -25,7 +25,7 @@ Automation stores the original owner's stable Scope delegation separately from t
 
 Installation tokens restricted to **one repository** are minted on the server for one import, mirror push or publication operation and revoked when it ends; GitHub expiry bounds a failed revocation. Neither they nor the user's OAuth token leave the server. A token is passed only to the fixed Git child's process environment through Git's environment configuration; it is absent from command arguments, saved Git config, journals and every worker.
 
-Existing local-source runner configuration (`repository` plus `baseRef`) remains supported. Switching a runner to another repository/base requires a fresh runner directory; it must not silently reuse another repository's checkout journal. GitHub.com only is supported. Git LFS, recursive submodules, repository administration and Actions workflow editing are outside this feature.
+Runners have no local source repository; the former `repository` plus `baseRef` configuration was removed. GitHub.com only is supported. Git LFS, recursive submodules, repository administration and Actions workflow editing are outside this feature.
 
 ## Server and App configuration
 

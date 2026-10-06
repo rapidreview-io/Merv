@@ -20,8 +20,7 @@
     "./store/protocol": "./src/store/protocol.ts",
     "./store/refs": "./src/store/refs.ts",
     "./store/repository": "./src/store/repository.ts",
-    "./driver/index": "./src/driver/index.ts",
-    "./driver/local": "./src/driver/local.ts"
+    "./driver/index": "./src/driver/index.ts"
   },
   "dependencies": {
     "cordis": "4.0.0-rc.10",

@@ -221,6 +221,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   private readonly pollMs: number;
   private readonly admissionMs: number;
   private readonly assignmentRoot?: string;
+  /** The one work item a hosted machine keeps; set exactly when `assignmentRoot` is. */
+  private readonly workKey?: string;
   private readonly serial = new Map<string, Promise<unknown>>();
   private disposed = false;
 
@@ -233,9 +235,14 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     this.admissionMs = options.admissionMs ?? 120_000;
     this.root = realpathSync(privateDirectory(join(host.directory, 'code-v2')));
     const template = privateDirectory(join(this.root, 'empty-template'));
-    if (host.assignmentWorkspaceDirectory) {
+    // A hosted machine is a work host: its assignment root holds exactly one work item.
+    if (host.assignmentWorkspaceDirectory || host.workInstanceId !== undefined) {
       const assignmentRoot = host.assignmentWorkspaceDirectory;
+      const key = host.workInstanceId;
       if (
+        !assignmentRoot ||
+        key === undefined ||
+        !/^[A-Za-z0-9_-]{1,200}$/.test(key) ||
         resolve(assignmentRoot) !== assignmentRoot ||
         realpathSync(assignmentRoot) !== assignmentRoot ||
         !lstatSync(assignmentRoot).isDirectory() ||
@@ -244,6 +251,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       )
         throw new WorkspaceError('workspace_assignment_root_invalid');
       this.assignmentRoot = assignmentRoot;
+      this.workKey = key;
     }
     this.git = new DriverGit(
       template,
@@ -305,7 +313,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     return {
       path: row.path,
       ...(encoded ? { snapshot: JSON.parse(encoded) as SessionWorkspace } : {}),
-      retain: policy.mode === 'none' || policy.retain || !!this.sharedWorkKey(),
+      retain: policy.mode === 'none' || policy.retain || !!this.workKey,
       readOnly: !!row.read_only,
       status: row.status,
     };
@@ -317,9 +325,9 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
    * a preparation that fails half-way leaves nothing behind that anyone must clean up.
    */
   prepare(launch: WorkspaceLaunch, session: WorkspaceSession): Promise<WorkspaceHandle> {
-    return this.run(this.host.workInstanceId ?? launch.id, async () => {
+    return this.run(this.workKey ?? launch.id, async () => {
       if (launch.sessionId !== session.id) throw new WorkspaceError('workspace_session_mismatch');
-      if (this.sharedWorkKey() && this.sharedWorkKey() !== session.instanceId)
+      if (this.workKey && this.workKey !== session.instanceId)
         throw new WorkspaceError('workspace_session_mismatch');
       const policy = effectiveWorkspace(session.execution.policy);
       if (policy.mode === 'none' || policy.driver !== CODE_DRIVER)
@@ -349,7 +357,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       const cache = await this.run('', () => this.cache(manifest));
       await this.fetch(cache, manifest, control);
       const path = this.assignmentRoot
-        ? join(this.assignmentRoot, hash(this.sharedWorkKey() ?? launch.id))
+        ? join(this.assignmentRoot, hash(this.workKey!))
         : manifest.mode === 'write'
           ? join(dirname(cache), 'checkouts', 'work', hash(manifest.unitId).slice(0, 32))
           : join(dirname(cache), 'checkouts', 'read', hash(launch.id).slice(0, 32));
@@ -386,7 +394,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         throw new WorkspaceError('workspace_recorded_base_changed');
       await this.checkout(cache, row, !!existing);
       const snapshot = await this.snapshot(row, manifest.head);
-      if (this.sharedWorkKey() && !row.read_only) {
+      if (this.workKey && !row.read_only) {
         const preserved = this.preservedPath();
         const info = pathStat(preserved);
         if (info?.isSymbolicLink() || (info && !info.isDirectory()))
@@ -413,15 +421,15 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   }
 
   /**
-   * Commit the checkout deterministically, exactly as the runner's own driver does, but keep
-   * the commit aside until Code has admitted it: HEAD moves only on that acknowledgement, so
-   * the local branch never runs ahead of the one everybody else resumes from.
+   * Commit the checkout deterministically, but keep the commit aside until Code has admitted
+   * it: HEAD moves only on that acknowledgement, so the local branch never runs ahead of the
+   * one everybody else resumes from.
    */
   checkpointCommit(launch: WorkspaceLaunch, input: CodeCommitCommand): Promise<CodeCommitReceipt> {
     const parsed = codeCommitCommandSchema.safeParse(input);
     if (!parsed.success) return Promise.reject(new WorkspaceError('workspace_invalid_command'));
     const command = parsed.data;
-    return this.run(this.host.workInstanceId ?? launch.id, async () => {
+    return this.run(this.workKey ?? launch.id, async () => {
       const row = this.row(launch.id);
       if (
         !row ||
@@ -449,9 +457,9 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         return await this.commit(row, command, journal);
       } catch (error) {
         const code = (error as { code?: unknown }).code;
-        // Before there is a commit, a failure is this checkout's and ends the command, as it
-        // does in the runner's own driver. Once Code is involved only a refusal that time
-        // cannot change ends it; everything else is tried again with the same journal.
+        // Before there is a commit, a failure is this checkout's and ends the command. Once
+        // Code is involved only a refusal that time cannot change ends it; everything else is
+        // tried again with the same journal.
         const ended =
           error instanceof UploadRefused ||
           (typeof code === 'string' && terminal.includes(code)) ||
@@ -502,7 +510,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
    * and never builds another; what Code does not admit stays here and in Code's held bundles.
    */
   capture(launch: WorkspaceLaunch): Promise<SessionWorkspace | undefined> {
-    return this.run(this.host.workInstanceId ?? launch.id, async () => {
+    return this.run(this.workKey ?? launch.id, async () => {
       if (!this.host.terminal(launch.id))
         throw new WorkspaceError('workspace_process_stop_unconfirmed');
       let row = this.row(launch.id);
@@ -534,7 +542,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   }
 
   close(launch: WorkspaceLaunch): Promise<void> {
-    return this.run(this.host.workInstanceId ?? launch.id, async () => {
+    return this.run(this.workKey ?? launch.id, async () => {
       const row = this.row(launch.id);
       if (!row || row.status === 'closed') return;
       if (!['captured', 'closing'].includes(row.status))
@@ -542,7 +550,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       this.db
         .prepare("UPDATE code_v2_workspaces SET status='closing' WHERE launch_id=?")
         .run(launch.id);
-      if (this.sharedWorkKey() && row.read_only) {
+      if (this.workKey && row.read_only) {
         this.assignmentPath(row.path);
         const preserved = this.preservedPath();
         const info = pathStat(preserved);
@@ -601,16 +609,10 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         !row.canceled &&
         policy.mode !== 'none' &&
         !policy.retain &&
-        !this.sharedWorkKey() &&
+        !this.workKey &&
         existsSync(row.path)
-      ) {
-        if (this.assignmentRoot) {
-          this.assignmentPath(row.path);
-          rmSync(row.path, { recursive: true, force: true });
-        } else {
-          await this.git.ok(['--git-dir', cache!, 'worktree', 'remove', '--force', row.path]);
-        }
-      }
+      )
+        await this.git.ok(['--git-dir', cache!, 'worktree', 'remove', '--force', row.path]);
       for (const transfer of this.db
         .prepare('SELECT bundle_path,index_path FROM code_v2_transfers WHERE launch_id=?')
         .all(launch.id) as { bundle_path: string | null; index_path: string | null }[])
@@ -666,16 +668,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     )?.path;
   }
 
-  /** Only hosted work units opt in; ordinary Code checkouts retain their old lifecycle. */
-  private sharedWorkKey(): string | undefined {
-    const key = this.host.workInstanceId;
-    if (key !== undefined && (!/^[A-Za-z0-9_-]{1,200}$/.test(key) || !this.assignmentRoot))
-      throw new WorkspaceError('workspace_assignment_root_invalid');
-    return key;
-  }
-
   private preservedPath(): string {
-    return join(privateDirectory(join(this.root, 'preserved')), hash(this.sharedWorkKey()!));
+    return join(privateDirectory(join(this.root, 'preserved')), hash(this.workKey!));
   }
 
   private rejectedPath(row: WorkspaceRow): string {
@@ -876,10 +870,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   }
 
   private async checkout(cache: string, row: WorkspaceRow, retryPreparing = false): Promise<void> {
-    if (this.assignmentRoot)
-      return this.sharedWorkKey()
-        ? this.checkoutShared(cache, row, retryPreparing)
-        : this.checkoutAssignment(cache, row);
+    if (this.assignmentRoot) return this.checkoutShared(cache, row, retryPreparing);
     privateDirectory(dirname(row.path));
     await this.git.ok(['--git-dir', cache, 'worktree', 'prune']);
     if (!existsSync(join(row.path, '.git'))) {

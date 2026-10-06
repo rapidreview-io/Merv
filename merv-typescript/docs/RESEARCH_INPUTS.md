@@ -198,7 +198,7 @@ See [project context tests](../tests/project-context.test.ts),
 [Knowledge tests](../tests/knowledge.test.ts),
 [capture tests](../tests/code-captures.test.ts),
 [Experiment assignments](../tests/experiment-assignments.test.ts), and
-[real local Git tests](../tests/runner-workspaces.test.ts).
+[Code driver tests](../tests/runner-code-driver.test.ts).
 
 The earlier four-agent scratch acceptance remains historical evidence for
 `experiment@1`. The new `scripts/live-experiments.ts --git` acceptance is running
