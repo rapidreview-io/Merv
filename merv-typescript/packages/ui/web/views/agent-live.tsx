@@ -144,7 +144,7 @@ const SAID: Record<AgentStreamState, string> = {
  * window of them, and earlier ones a press away.
  */
 function Timeline({ session }: { session: AgentStreamSession }) {
-  const { timeline, state } = useAgentStream(session.events, session.live);
+  const { timeline, state } = useAgentStream(session.events);
   const [shown, setShown] = useState(WINDOW);
   const [bottom, setBottom] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);

@@ -112,10 +112,11 @@ export type AgentStreamState = 'connecting' | 'open' | 'retrying' | 'ended' | 'r
  * One session's stream, read while the page that shows it is mounted and its tab is shown. A
  * hidden tab closes it, and showing the tab again opens it from the last event held, as a
  * dropped connection does after a wait that doubles with each failure, up to half a minute.
- * A stream the server rotates is opened again at once. A session that has ended is read once
- * and left closed.
+ * A stream the server rotates is opened again at once; one the server says has ended is left
+ * closed. A snapshot that does not follow what is held (a reader that fell too far behind)
+ * starts the timeline over, so no block is joined across what was missed.
  */
-export function useAgentStream(url: string, live: boolean) {
+export function useAgentStream(url: string) {
   const held = useRef(NO_TIMELINE);
   const [timeline, setTimeline] = useState(NO_TIMELINE);
   const [state, setState] = useState<AgentStreamState>('connecting');
@@ -129,22 +130,29 @@ export function useAgentStream(url: string, live: boolean) {
     const connect = async () => {
       const since = Date.now();
       const after = held.current.last;
+      let ended = false;
       try {
         const rotated = await readEventStream(
           after ? `${url}${url.includes('?') ? '&' : '?'}after=${after}` : url,
           controller.signal,
           (event, value) => {
+            if (event === 'end') ended = true;
             if (stopped || (event !== 'snapshot' && event !== 'events')) return;
             failures = 0;
             setState('open');
-            const next = mergeEvents(held.current, eventsOf(value));
+            const events = eventsOf(value);
+            const gap =
+              event === 'snapshot' &&
+              events.length > 0 &&
+              Math.min(...events.map((item) => item.seq)) > held.current.last + 1;
+            const next = mergeEvents(gap ? NO_TIMELINE : held.current, events);
             if (next === held.current) return;
             held.current = next;
             setTimeline(next);
           },
         );
         if (stopped) return;
-        if (!live) return setState('ended');
+        if (ended) return setState('ended');
         if (rotated && Date.now() - since > 5000) return void connect();
       } catch (cause) {
         if (stopped) return;
@@ -163,6 +171,6 @@ export function useAgentStream(url: string, live: boolean) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [url, live, visible]);
+  }, [url, visible]);
   return { timeline, state };
 }
