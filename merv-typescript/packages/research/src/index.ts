@@ -771,18 +771,19 @@ export class ResearchService implements Research {
     // Main moved first, or the task ended without acceptance: what main lacks now decides
     // between a successor task and completing, as it did at reflection.
     if (publication?.state === 'stale') return judged('advance', 'reinject');
-    const pull = publication?.pull ? ` ${publication.pull.url}` : '';
-    throw new MervError(
-      'publication_pending',
-      publication?.destination === 'local' && publication.state === 'pending'
-        ? `The consolidation task ${taskId} is accepted; publication sync must integrate its reviewed commit into Merv main before the cycle completes. Run code.publication.sync to retry it.`
-        : publication?.state === 'pending'
-          ? `The consolidation task ${taskId} is accepted; a signed-in operator merges its pull request${pull} before the cycle completes`
-          : publication?.state === 'setup_required'
-            ? `The consolidation task ${taskId} is accepted; an operator completes publication setup before its pull request can be merged${pull}`
-            : `The consolidation task ${taskId} is accepted, but its publication is ${publication?.state ?? 'not open'}; a signed-in operator clears or investigates it${pull} before the cycle completes`,
-      409,
-    );
+    // Code says what holds its publication and who ends the wait, in its own code and words.
+    const said = publication?.blockers[0];
+    throw said
+      ? new MervError(
+          said.code,
+          `The consolidation task ${taskId} is accepted; ${said.message}. ${said.next}`,
+          409,
+        )
+      : new MervError(
+          'publication_pending',
+          `The consolidation task ${taskId} is accepted, but Code holds no publication for it`,
+          409,
+        );
   }
 
   /** Git answers what main lacks outside every transaction; null says it could not be asked. */

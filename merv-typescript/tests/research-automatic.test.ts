@@ -21,6 +21,7 @@ import { ResearchService } from '../packages/research/src/index.js';
 import { createApp } from './fixtures/app.js';
 import { feasibilityStatement } from './feasibility-fixture.js';
 import { hostedCode, type Main } from './fixtures/research.js';
+import { publicationBlockers, type PublicationStanding } from '@merv/code-work/unit-store';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const stop: ChangeSpec = {
@@ -62,6 +63,14 @@ const next = (name: string): ChangeSpec => ({
   carriedOver: [],
   rejected: [],
 });
+
+/** A consolidation pull request waiting on an operator, as Code reports it. */
+const waiting: PublicationStanding = {
+  destination: 'github',
+  state: 'pending',
+  pull: { number: 3, url: 'https://example.test/pull/3' },
+};
+const pending = { ...waiting, blockers: publicationBlockers(waiting) };
 
 async function fixture(t: TestContext, plugin = false) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-automatic-research-'));
@@ -850,17 +859,13 @@ test('an automatic cycle waits on its consolidation task and its publication as 
     (await f.research.get(f.owner, cycle.id)).automation!.blocker!.code,
     'dependencies_pending',
   );
-  main.publication = {
-    blockers: [],
-    state: 'pending',
-    pull: { number: 3, url: 'https://example.test/pull/3' },
-  };
+  main.publication = pending;
   await f.finishTask(taskId);
   await f.pump();
   record = await f.research.get(f.owner, cycle.id);
   assert.equal(record.workflow.state, 'consolidating');
-  assert.deepEqual(record.automation!.blocker!.code, 'publication_pending');
-  assert.match(record.automation!.blocker!.message, /https:\/\/example\.test\/pull\/3/);
+  assert.deepEqual(record.automation!.blocker!.code, 'code_publication_pending');
+  assert.match(record.automation!.blocker!.message, /merges pull request #3/);
   assert.equal(record.automation!.cycle, 1);
   const commitSha = 'd'.repeat(40);
   main.publication = { blockers: [], state: 'published', mergeCommit: commitSha };
@@ -896,16 +901,12 @@ test('a publication main overtook wakes an automatic cycle to inject its success
   await new Promise((resolve) => setTimeout(resolve, 100));
   await f.pump();
   const [taskId] = (await f.research.get(f.owner, cycle.id)).integrations;
-  main.publication = {
-    blockers: [],
-    state: 'pending',
-    pull: { number: 3, url: 'https://example.test/pull/3' },
-  };
+  main.publication = pending;
   await f.finishTask(taskId);
   await f.pump();
   assert.equal(
     (await f.research.get(f.owner, cycle.id)).automation!.blocker!.code,
-    'publication_pending',
+    'code_publication_pending',
   );
   // Main moved first: Code marks the publication stale, and says so.
   main.publication = { blockers: [], state: 'stale' };

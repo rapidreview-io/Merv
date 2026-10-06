@@ -15,14 +15,15 @@ Advancing from reflection verifies its exact independent approval, then asks Cod
 
 From `consolidating` the advance reads the newest consolidation task and its `CodeUnit.publication`:
 
-| The task                 | Its publication                            | The advance                                                                                                                                     |
-| ------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| unfinished               | —                                          | `dependencies_pending` (409): wait                                                                                                              |
-| done                     | `published`                                | completes the cycle, applying the next-wave choice                                                                                              |
-| done                     | `stale` (main moved first)                 | `reinject`: a fresh `acceptedSince`, in which the stale task is itself a candidate, and a successor task; completes when main lacks nothing now |
-| done                     | `pending`                                  | `publication_pending` (409): a signed-in operator merges the pull request, named by URL                                                         |
-| done                     | disabled, closed, unsealed, incident, none | `publication_pending` (409): a signed-in operator clears or investigates it                                                                     |
-| ended without acceptance | —                                          | `integration_failed` (409) until the advance carries `retryIntegration: true`, which injects afresh, or completes when main lacks nothing       |
+| The task                 | Its publication                                       | The advance                                                                                                                                     |
+| ------------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| unfinished               | —                                                     | `dependencies_pending` (409): wait                                                                                                              |
+| done                     | `published`                                           | completes the cycle, applying the next-wave choice                                                                                              |
+| done                     | `stale` (main moved first)                            | `reinject`: a fresh `acceptedSince`, in which the stale task is itself a candidate, and a successor task; completes when main lacks nothing now |
+| done                     | pending, setup_required, disabled, unsealed, incident | Code's own publication blocker (409), such as `code_publication_pending`: its message and the next move Code names                              |
+| done                     | `closed` (pull request closed unmerged)               | completes the cycle without its code, recording the integration as abandoned                                                                    |
+| done                     | none                                                  | `publication_pending` (409)                                                                                                                     |
+| ended without acceptance | —                                                     | `integration_failed` (409) until the advance carries `retryIntegration: true`, which injects afresh, or completes when main lacks nothing       |
 
 Every injected task is appended to `integrations`, newest last, so a cycle's consolidation history is on its record; `research.end` still ends the cycle from `consolidating`.
 
