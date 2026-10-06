@@ -138,8 +138,6 @@ export interface Session {
   outcome?: SessionOutcome | null;
   /** Why a `preparation_deferred` close was put off; absent on every other outcome. */
   deferral?: SessionDeferral | null;
-  /** Set by the sweep while the session is alive without progressing; cleared when it moves. */
-  quietSince?: string | null;
   assignment: WorkflowAssignment;
   execution: WorkflowExecution;
   lease: WorkflowLease;

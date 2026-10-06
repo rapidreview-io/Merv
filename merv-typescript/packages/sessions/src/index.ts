@@ -43,7 +43,7 @@ import {
 import { SessionDispatch, failureReasons } from './dispatch.js';
 import { SessionRunning } from './running.js';
 import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
-import { AgentObservations, lastActivity } from './observations.js';
+import { AgentObservations } from './observations.js';
 import { isoNow, liveTargets, ownerOf, readFirst, refused, targetKey } from './common.js';
 import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
@@ -2712,46 +2712,6 @@ export class LeasedSessions implements Sessions {
       await this.observations.finish(invocation.caller.session!.invocationId!, 'failed');
   }
   /**
-   * A runner renews a lease for as long as its process lives, so a lease alone never says
-   * the work moves — and neither does silence: a worker with no Merv call may be training
-   * locally, waiting on a sandbox job or using another service, which the server cannot
-   * tell from one that is stuck. So quiet is only observed and said, never acted on; ending
-   * a session stays an explicit halt or the lease's hard deadline. The mark and its clearing
-   * live only here, in the sweep's upkeep of one session.
-   */
-  private async progress(
-    session: Session,
-    lastCallAt: string | undefined,
-    tx: Transaction,
-  ): Promise<void> {
-    const lastActivityAt = lastActivity(session, lastCallAt)!;
-    const idleSeconds = Math.floor((this.clock() - Date.parse(lastActivityAt)) / 1000);
-    const { idleNoticeSeconds } = this.thresholds;
-    if (idleSeconds < idleNoticeSeconds) {
-      if (!session.quietSince) return;
-      session.quietSince = null;
-      await this.save(tx, session);
-      return;
-    }
-    // Once per episode: the mark is what keeps a later sweep from saying it again.
-    if (session.quietSince) return;
-    session.quietSince = isoNow(this.clock);
-    await this.save(tx, session);
-    await this.state.appendEvent(tx, {
-      projectId: session.projectId,
-      actorId: 'system:sessions',
-      type: 'session.quiet',
-      subjectId: session.id,
-      data: {
-        sessionId: session.id,
-        instanceId: session.instanceId,
-        revision: session.expectedRevision,
-        lastActivityAt,
-        idleSeconds,
-      },
-    });
-  }
-  /**
    * Upkeep, each subject decided on a snapshot of its own and recorded in a writer only when it
    * has something to record, so a healthy pass takes no writer lock and a failing subject holds
    * back no other. Full: every live session, active agent and service reservation; else only the
@@ -2762,8 +2722,7 @@ export class LeasedSessions implements Sessions {
       this.checkedAt = this.clock();
       this.failing.clear();
     }
-    const { calls, sessions, agents } = await this.reading(async (tx) => ({
-      calls: full ? await this.observations.activity(tx) : undefined,
+    const { sessions, agents } = await this.reading(async (tx) => ({
       sessions: await this.live(tx, !full),
       agents: full
         ? // A dormant agent, which holds no credential, waits for its work, not its delegation.
@@ -2774,7 +2733,7 @@ export class LeasedSessions implements Sessions {
     }));
     // A session that failed is retried by the next full pass, not by every tick and lease.
     for (const { id } of sessions.filter(({ id }) => full || !this.failing.has(id)))
-      await this.alone(id, () => this.readFirst((tx) => this.upkeep(id, tx, calls)));
+      await this.alone(id, () => this.readFirst((tx) => this.upkeep(id, tx)));
     for (const { id } of agents)
       await this.alone(id, () => this.readFirst((tx) => this.lapsed(id, tx)));
     if (full) {
@@ -2808,8 +2767,8 @@ export class LeasedSessions implements Sessions {
         at.set(id, instance.revision);
     return live.filter((row) => row.expired || at.get(row.instance_id) !== row.revision);
   }
-  /** One live session's upkeep: a closure found, stranding or a change of quiet. */
-  private async upkeep(id: string, tx: Transaction, calls?: Map<string, string>) {
+  /** One live session's upkeep: a closure found, or its stranding. */
+  private async upkeep(id: string, tx: Transaction) {
     const session = this.decode(await this.row(tx, id));
     if (await this.reconcile(session, tx)) return;
     const stranded = await this.managed.stranded(id, tx);
@@ -2821,7 +2780,6 @@ export class LeasedSessions implements Sessions {
         'expired',
         stranded ? 'machine_retired' : 'host_failed',
       );
-    else if (calls && session.status === 'active') await this.progress(session, calls.get(id), tx);
   }
   private async lapsed(id: string, tx: Transaction): Promise<void> {
     const agent = await this.directory.get(id, tx);

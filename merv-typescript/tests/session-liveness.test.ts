@@ -688,7 +688,11 @@ test('a refusal of what the runner sent is not counted against any target', asyn
 
 const minute = 60_000;
 
-test('a session that lives without a tool call is reported quiet once by the sweep, and a call clears the mark', async (t) => {
+/** The session's line in `GET /sessions/status`. */
+const summaryOf = async (f: Awaited<ReturnType<typeof fixture>>, id: string) =>
+  (await f.sessions.projectStatus(f.owner)).sessions.find((session) => session.id === id)!;
+
+test('the status read says a session is quiet from when its idle clock passed the notice, and a call clears it', async (t) => {
   const f = await fixture(t, {});
   await f.sessions.heartbeatRunner(f.source, presence());
   await f.sessions.setDispatch(f.owner, { enabled: true });
@@ -698,46 +702,31 @@ test('a session that lives without a tool call is reported quiet once by the swe
 
   f.advance(29 * minute);
   await f.sessions.sweep();
-  assert.equal((await f.stored(id)).quietSince ?? null, null, 'not yet idle');
+  assert.equal((await summaryOf(f, id)).quietSince, null, 'not yet idle');
 
   // The runner renews the lease for as long as its process lives; that is not progress.
   await f.sessions.heartbeat(f.source, { sessionId: id, runnerId: 'machine' });
   f.advance(minute);
-  await f.sessions.sweep();
   const quietSince = f.time();
-  assert.equal((await f.stored(id)).quietSince, quietSince);
   f.advance(5 * minute);
-  await f.sessions.sweep();
-  assert.equal((await f.stored(id)).quietSince, quietSince, 'one mark for one episode');
-  const quiet = await f.events('session.quiet');
-  assert.equal(quiet.length, 1);
-  assert.equal(quiet[0].actorId, 'system:sessions');
-  assert.deepEqual(quiet[0].data, {
-    sessionId: id,
-    instanceId: (await f.stored(id)).instanceId,
-    revision: 0,
-    lastActivityAt: activatedAt,
-    idleSeconds: 1800,
-  });
-  let [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+  let summary = await summaryOf(f, id);
   assert.deepEqual([summary.lastActivityAt, summary.quietSince], [activatedAt, quietSince]);
 
   await f.call(worker);
   const calledAt = f.time();
   f.advance(minute);
-  await f.sessions.sweep();
-  assert.equal((await f.stored(id)).quietSince, null, 'a tool call is progress');
-  [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+  summary = await summaryOf(f, id);
   assert.deepEqual([summary.lastActivityAt, summary.quietSince], [calledAt, null]);
 
-  // Mark only by default: hours of quiet local work are never closed for idleness.
+  // Read only: hours of quiet local work are never closed for idleness, and nothing is stored.
   for (let hour = 0; hour < 5; hour++) {
     f.advance(60 * minute);
     await f.sessions.heartbeat(f.source, { sessionId: id, runnerId: 'machine' });
     await f.sessions.sweep();
   }
-  assert.equal((await f.stored(id)).status, 'active');
-  assert.equal((await f.events('session.quiet')).length, 2, 'a second episode says so again');
+  const stored = await f.stored(id);
+  assert.deepEqual([stored.status, 'quietSince' in stored], ['active', false]);
+  assert.deepEqual(await f.events('session.quiet'), []);
 });
 
 test('a tool call that hangs counts from its start, so it does not hide the silence', async (t) => {
@@ -749,13 +738,12 @@ test('a tool call that hangs counts from its start, so it does not hide the sile
   let finish!: () => void;
   const hung = f.call(worker, () => new Promise<void>((resolve) => (finish = resolve)));
   while (!finish) await new Promise((resolve) => setImmediate(resolve));
+  const began = Date.parse(f.time());
 
   f.advance(10 * minute);
-  await f.sessions.sweep();
-  assert.equal((await f.stored(id)).quietSince ?? null, null, 'a call that began recently');
+  assert.equal((await summaryOf(f, id)).quietSince, null, 'a call that began recently');
   f.advance(20 * minute);
-  await f.sessions.sweep();
-  assert.equal((await f.stored(id)).quietSince, f.time());
+  assert.equal((await summaryOf(f, id)).quietSince, new Date(began + 30 * minute).toISOString());
   finish();
   await hung;
 });
@@ -776,12 +764,11 @@ test('hours without a Merv call never close a session or count against its targe
   }
   const kept = await f.stored(id);
   assert.deepEqual([kept.status, kept.outcome ?? null], ['active', null]);
-  assert.ok(kept.quietSince, 'the silence is observed');
-  assert.equal((await f.events('session.quiet')).length, 1, 'and said once');
+  assert.ok((await summaryOf(f, id)).quietSince, 'the silence is observed');
   assert.deepEqual(await f.holds(), [], 'silence is not a failed attempt');
 });
 
-test('no read marks or closes an idle session, yet the stuck report already names it', async (t) => {
+test('no read closes an idle session, yet the stuck report already names it', async (t) => {
   const f = await fixture(t, { config: { idleNoticeSeconds: 600 } });
   await f.sessions.heartbeatRunner(f.source, presence());
   await f.sessions.setDispatch(f.owner, { enabled: true });
@@ -793,9 +780,7 @@ test('no read marks or closes an idle session, yet the stuck report already name
   await f.sessions.describe(worker);
   await f.sessions.projectStatus(f.owner);
   const report = await f.sessions.stuck(f.owner);
-  const stored = await f.stored(id);
-  assert.deepEqual([stored.status, stored.quietSince ?? null], ['active', null]);
-  assert.equal((await f.events('session.quiet')).length, 0);
+  assert.equal((await f.stored(id)).status, 'active');
   assert.deepEqual(
     report.items.map((item) => [item.kind, item.sessionId, item.since, item.forSeconds, item.code]),
     [['session_idle', id, activatedAt, 1800, 'idle']],

@@ -1391,6 +1391,13 @@ export class SessionDispatch {
         )
       ).map((row) => {
         const session: Omit<Session, 'assignment' | 'execution'> = JSON.parse(row.session_json);
+        const lastActivityAt =
+          session.status === 'active' ? lastActivity(session, activity.get(session.id)) : null;
+        // Quiet from the moment the idle clock passed its notice; nothing is stored for it.
+        const quietAt = lastActivityAt
+          ? Date.parse(lastActivityAt) + this.thresholds.idleNoticeSeconds * 1000
+          : Infinity;
+        const quietSince = quietAt <= this.clock() ? new Date(quietAt).toISOString() : null;
         return {
           id: session.id,
           agentId: session.agentId,
@@ -1411,9 +1418,8 @@ export class SessionDispatch {
           closedAt: session.closedAt,
           closeReason: session.closeReason,
           outcome: session.outcome ?? null,
-          lastActivityAt:
-            session.status === 'active' ? lastActivity(session, activity.get(session.id)) : null,
-          quietSince: session.quietSince ?? null,
+          lastActivityAt,
+          quietSince,
           workspaceMode: row.workspace_mode ?? 'none',
           ...(row.attachment_json === null
             ? {}
