@@ -144,7 +144,7 @@ async function resolve(
     }
   };
   // The batch is refused only when an ID is: then each one learns its own answer.
-  if (!(await fetch([...ids]))) for (const id of ids) await fetch([id]);
+  if (ids.size && !(await fetch([...ids]))) for (const id of ids) await fetch([id]);
   return {
     get: (id) => {
       const artifact = found.get(id)!;
