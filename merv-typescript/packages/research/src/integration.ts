@@ -616,11 +616,8 @@ export async function unpublished(
   });
   if (!asks) return { unitIds: [], quarantined: [] };
   if (tx) return null;
-  const since = await this.use('code', checks, (code) => code.acceptedSince(caller));
-  // Code keeps the acceptance of an instance the 2026-09-22 retirement deleted as history, but
-  // no task can depend on an instance that no longer exists, so no cycle integrates that code.
-  const live = new Set(
-    since.unitIds.length ? (await this.workflows.list(caller)).map(({ id }) => id) : [],
+  const { unitIds, quarantined } = await this.use('code', checks, (code) =>
+    code.acceptedSince(caller),
   );
-  return { unitIds: since.unitIds.filter((id) => live.has(id)), quarantined: since.quarantined };
+  return { unitIds, quarantined };
 }

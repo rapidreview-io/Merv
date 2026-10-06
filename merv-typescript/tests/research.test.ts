@@ -361,24 +361,6 @@ const work = async (f: Awaited<ReturnType<typeof fixture>>) => {
   return task;
 };
 
-/**
- * Accepted Git work of an instance the 2026-09-22 retirement deleted: Code keeps the acceptance,
- * and only the retirement ledger still names the instance.
- */
-const retired = async (f: Awaited<ReturnType<typeof fixture>>) => {
-  const id = 'wf_retired_git_experiment';
-  await f.app.ctx.state.transaction(
-    async (tx) =>
-      await tx.run(
-        `INSERT INTO wf_retired_instances(id,project_id,workflow,version,reason)
-         VALUES(?,?,'experiment',4,'retired_version')`,
-        id,
-        f.owner.projectId,
-      ),
-  );
-  return id;
-};
-
 test('summaries give each list the home fields in its order without reading records one by one', async (t) => {
   const f = await fixture(t);
   await f.app.ctx.experiments.create(f.owner, {
@@ -411,13 +393,15 @@ test('summaries give each list the home fields in its order without reading reco
   assert.equal(gets.mock.callCount(), 0);
 });
 
-test('accepted code of a retired instance is history no cycle integrates', async (t) => {
-  // A task cannot depend on an instance that no longer exists, so the consolidation task
-  // stands on the rest of what main lacks.
+test('the publish check integrates every unit Code reports without listing the project', async (t) => {
+  // Code reports the accepted units main lacks; Research no longer filters them against the
+  // project's workflows, so each one becomes a prerequisite of the consolidation task.
   const f = await fixture(t);
   const accepted = await work(f);
-  const { advance } = await hosted(f, { unitIds: [await retired(f), accepted.id] });
+  const { advance } = await hosted(f, { unitIds: [accepted.id] });
+  const lists = t.mock.method(f.app.ctx.workflows, 'list');
   const moved = await advance();
+  assert.equal(lists.mock.callCount(), 0);
   assert.equal(moved.workflow.state, 'consolidating');
   assert.deepEqual(
     (await f.app.ctx.workflows.prerequisites(f.owner, [moved.integrations[0]!]))
@@ -425,15 +409,6 @@ test('accepted code of a retired instance is history no cycle integrates', async
       .map((d) => d.id),
     [accepted.id],
   );
-  // With nothing else unpublished, the cycle completes at approval as if main held it all.
-  const g = await fixture(t);
-  const only = await hosted(g, { unitIds: [await retired(g)] });
-  const done = await only.advance();
-  assert.equal(done.workflow.version, 6);
-  assert.equal(done.workflow.state, 'complete');
-  assert.deepEqual(done.integrations, []);
-  assert.deepEqual(only.published, []);
-  assert.equal((await digestOf(g, done)).digest.integration, null);
 });
 
 test('accepted code main lacks injects one consolidation task marked to publish, and the cycle waits on it', async (t) => {
