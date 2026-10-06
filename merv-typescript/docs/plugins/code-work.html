@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Code Work — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "code-work",
+        "name": "Code Work",
+        "group": "foundation",
+        "tagline": "The bridge that turns research decisions into exact Git actions on a project's code.",
+        "analogy": {
+          "icon": "🦺",
+          "text": "A site foreman between the architects and the builders. The architects decide what to build and approve the results. The foreman turns that into exact jobs for the crew, and keeps the paperwork on who approved each change."
+        },
+        "why": [
+          "Research decides what code work is needed and what is accepted, but Git only knows commits. Something has to **translate**.",
+          "Each piece of work starts from an exact commit, so changing the project's base never rewrites work already under way.",
+          "It keeps the proof: which review approved which change, and what still has to be published to GitHub."
+        ],
+        "neighbors": [
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "uses it for code changes",
+            "detail": "When a task changes code, Tasks works through Code Work, if it is installed."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "uses it for its code",
+            "detail": "Experiments uses Code Work for experiment code and reads its saved results. Research does too."
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "calls the code tools",
+            "detail": "An agent on a job uses the code tools to commit and check status.",
+            "page": null
+          },
+          {
+            "id": "code",
+            "name": "Code",
+            "dir": "out",
+            "says": "drives the Git work",
+            "detail": "Code Work is the only plugin that drives Code: checkouts, kept commits and merges."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "both",
+            "says": "registers; follows each move",
+            "detail": "Code Work registers with Workflows and updates the Git work on every move a work item makes."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "out",
+            "says": "ties workspaces to sessions",
+            "detail": "A session's writing turn opens when its workspace attaches and ends when it closes."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "out",
+            "says": "reads who approved what",
+            "detail": "Code Work reads review records to know which changes were reviewed."
+          },
+          {
+            "id": "sandboxes",
+            "name": "Sandboxes",
+            "dir": "out",
+            "says": "runs project checks",
+            "detail": "It uses Sandboxes to run a project's code checks."
+          }
+        ],
+        "story": {
+          "title": "A code change, from task to base",
+          "steps": [
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "A task that changes code starts. Code Work **pins** it to an exact starting commit."
+            },
+            {
+              "from": "sessions",
+              "to": "self",
+              "text": "An agent's session attaches a workspace. Code Work opens its writing turn."
+            },
+            {
+              "from": "self",
+              "to": "code",
+              "text": "Code gives the agent a private checkout of that commit."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The agent commits its work with the code tools. Code Work asks Code to keep each commit."
+            },
+            {
+              "from": "reviews",
+              "to": "self",
+              "text": "After review, Code Work reads who approved the change and records it with the **accepted** commit."
+            },
+            {
+              "from": "workflows",
+              "to": "self",
+              "text": "On each move of the work, Code Work brings the Git side up to date, and merges accepted commits into the project's base."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Base", "meaning": "The branch the project builds on, chosen in Merv." },
+          { "term": "Pin", "meaning": "The exact starting commit a piece of work uses." },
+          { "term": "Acceptance", "meaning": "The record that a reviewed change is approved." },
+          {
+            "term": "Publication",
+            "meaning": "A duty to send accepted changes to GitHub, tracked until done."
+          }
+        ],
+        "not": [
+          "It doesn't run Git or store repositories. **Code** does.",
+          "It doesn't decide what research needs. **Tasks**, **Experiments** and **Research** decide; Code Work carries it out.",
+          "It doesn't give verdicts. **Reviews** does; Code Work only reads them."
+        ],
+        "readme": "../../packages/code-work/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

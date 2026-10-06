@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sandboxes — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "sandboxes",
+        "name": "Sandboxes",
+        "group": "foundation",
+        "tagline": "Connects Merv to the outside Sandboxes service, where agents get computers to run things.",
+        "analogy": {
+          "icon": "🏗️",
+          "text": "A tool-rental counter. You sign up once and say who pays. A worker on a job gets a pass for the heavy machines, good for that job only. When the job ends, the pass is cancelled, and the results are kept."
+        },
+        "why": [
+          "Experiments need real computers, often with powerful graphics chips. Sandboxes lets an agent on a job reach them **directly**.",
+          "Access must end when the job ends. Sandboxes listens for closed sessions and finished work and takes access back.",
+          "Results must be kept. Each finished capture becomes stored files a reviewer can see."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "connects a project",
+            "detail": "In Settings → Integrations, a person signs in and picks who pays for a project's compute.",
+            "page": null
+          },
+          {
+            "id": "service",
+            "name": "Sandboxes service",
+            "kind": "outside",
+            "dir": "out",
+            "says": "runs machines and jobs",
+            "detail": "The outside service runs the computers, the jobs and the billing. Merv keeps only links to them.",
+            "page": null
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "out",
+            "says": "gets a compute pass",
+            "detail": "An agent on a leased job gets a direct connection to compute, good only for that job.",
+            "page": null
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "both",
+            "says": "adds compute; hears closes",
+            "detail": "Sandboxes gives Sessions the compute connection for each job, and takes it back when the session closes."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "follows each work item",
+            "detail": "When a work item moves on, Sandboxes cancels the older attempt's jobs. When it ends, the work is closed."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "keeps captured results",
+            "detail": "Each finished capture becomes one stored collection of files."
+          },
+          {
+            "id": "fleet",
+            "name": "Fleet",
+            "dir": "in",
+            "says": "rents machines through it",
+            "detail": "Fleet rents its protected runner machines through Sandboxes, kept apart from project compute."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "in",
+            "says": "runs project checks",
+            "detail": "Code Work uses Sandboxes to run a project's code checks."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "reads captured evidence",
+            "detail": "Experiments uses Sandboxes too, and reads the captures a step took as evidence."
+          }
+        ],
+        "story": {
+          "title": "Compute for one job",
+          "steps": [
+            {
+              "from": "person",
+              "to": "self",
+              "text": "A person connects the project and picks who pays."
+            },
+            {
+              "from": "sessions",
+              "to": "self",
+              "text": "Sessions leases a job to an agent and asks Sandboxes for its compute connection."
+            },
+            {
+              "from": "self",
+              "to": "worker",
+              "text": "The first launch ties the work to the project's connection. The agent gets a direct line to the service, for this job only."
+            },
+            {
+              "from": "worker",
+              "to": "service",
+              "text": "The agent starts machines and jobs, and saves results as **captures**."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "Each finished capture becomes a stored collection of files, kept as evidence."
+            },
+            {
+              "from": "sessions",
+              "to": "self",
+              "text": "When the session closes, Sandboxes takes the agent's access back."
+            },
+            {
+              "from": "workflows",
+              "to": "self",
+              "text": "When the work moves to a new step, older jobs are cancelled. When it ends, the work is closed."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Connection",
+            "meaning": "A project's link to the service, including who pays."
+          },
+          { "term": "Capture", "meaning": "A saved set of result files from a machine." },
+          {
+            "term": "Epoch",
+            "meaning": "Which attempt at the work is current. Older attempts are cut off."
+          },
+          {
+            "term": "Extend / release",
+            "meaning": "The two buttons on a machine: rent it longer, or give it back."
+          }
+        ],
+        "not": [
+          "It doesn't run the machines or bill for them. The outside **Sandboxes service** does.",
+          "It doesn't decide how many runner machines may exist. **Fleet** does.",
+          "It doesn't schedule jobs or keep its own cost ledger. The service holds the one true record."
+        ],
+        "readme": "../../packages/sandboxes/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

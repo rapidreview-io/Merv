@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Legacy History — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "legacy-history",
+        "name": "Legacy History",
+        "group": "foundation",
+        "tagline": "A read-only archive of research brought over from Merv's previous server.",
+        "analogy": {
+          "icon": "🏺",
+          "text": "A museum display case. You can look at everything from the old days, but the glass is locked: nothing inside can be changed or thrown away. New work happens elsewhere."
+        },
+        "why": [
+          "Merv used to run on a different server. Its old projects, experiments, tasks, papers and reviews are worth keeping.",
+          "Old records must stay exactly as they were, so the archive's tables **refuse** every change and every deletion.",
+          "Keeping the archive apart means the live research plugins don't have to carry old data or old rules."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "browses Previous research",
+            "detail": "A person opens the Previous research page to read the old records.",
+            "page": null
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "out",
+            "says": "shows Previous research",
+            "detail": "The page appears in the browser app only when the project has imported records."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "checks the reader's project",
+            "detail": "Scope checks that the reader belongs to the project before anything is shown."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "reads the archive tables",
+            "detail": "The archive is read through State, like every other part of the database."
+          },
+          {
+            "id": "postgres",
+            "name": "PostgreSQL",
+            "kind": "outside",
+            "dir": "out",
+            "says": "holds the old records",
+            "detail": "The archive lives in Merv's database, in tables locked against changes.",
+            "page": null
+          },
+          {
+            "id": "old-server",
+            "name": "Previous server",
+            "kind": "outside",
+            "dir": "in",
+            "says": "where the records came from",
+            "detail": "The records were copied in from the server Merv used before.",
+            "page": null
+          }
+        ],
+        "story": {
+          "title": "Looking at old research",
+          "steps": [
+            {
+              "from": "old-server",
+              "to": "self",
+              "text": "Records from the previous server were copied into the archive."
+            },
+            {
+              "from": "self",
+              "to": "postgres",
+              "text": "Their tables are locked: any attempt to change or delete a row is refused."
+            },
+            {
+              "from": "self",
+              "to": "ui",
+              "text": "If the project has imported records, a **Previous research** page appears in the browser app."
+            },
+            {
+              "from": "person",
+              "to": "ui",
+              "text": "A person opens it and picks a tab, like Experiments, Tasks or Papers."
+            },
+            {
+              "from": "ui",
+              "to": "self",
+              "text": "The page asks Legacy History for a list of that kind of record."
+            },
+            {
+              "from": "self",
+              "to": "scope",
+              "text": "Legacy History checks with Scope that the person belongs to the project."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "It reads the records. Opening one shows its details and links to its saved media files."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Archive", "meaning": "A collection of old records kept for reference." },
+          { "term": "Read-only", "meaning": "You can look, but you cannot change anything." },
+          {
+            "term": "Import",
+            "meaning": "Copying records in from somewhere else, here the previous server."
+          },
+          {
+            "term": "Source",
+            "meaning": "One imported batch of old records. The page shows one source."
+          }
+        ],
+        "not": [
+          "It doesn't continue old work. Live research happens in **Tasks**, **Experiments** and the other research plugins.",
+          "It offers no tools to agents. Only people read it, through the **UI**.",
+          "It doesn't decide who may look. **Scope** checks the reader's project."
+        ],
+        "readme": "../../packages/legacy-history/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

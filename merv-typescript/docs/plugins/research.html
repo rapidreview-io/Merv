@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Research — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "research",
+        "name": "Research",
+        "group": "research",
+        "tagline": "The coordinator that moves a project through cycles of work, reflection and planning.",
+        "analogy": {
+          "icon": "🔄",
+          "text": "A coach running training seasons. The coach doesn't play. They wait until the drills are done, call a team review, and plan the next season from what was learned."
+        },
+        "why": [
+          "Research is a loop: do the work, look back, plan again. Something has to keep that loop moving.",
+          "Every cycle starts from the paper's **Problem**, so the work always aims at a clearly defined question.",
+          "In **automatic** mode, cycles move forward on their own when work finishes, without the owner pressing a button."
+        ],
+        "neighbors": [
+          {
+            "id": "owner",
+            "name": "Project owner",
+            "kind": "person",
+            "dir": "in",
+            "says": "creates and advances cycles",
+            "detail": "The owner creates a cycle and moves it forward, unless it runs automatically.",
+            "page": null
+          },
+          {
+            "id": "paper",
+            "name": "Paper",
+            "kind": "research",
+            "dir": "out",
+            "says": "reads the Problem",
+            "detail": "A cycle can start only when the paper's Problem has all four parts: problem, scope, goals and constraints."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "out",
+            "says": "waits on and creates tasks",
+            "detail": "A cycle waits for its tasks to finish, and an approved plan's tasks are created through Tasks."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "out",
+            "says": "waits on and creates experiments",
+            "detail": "A cycle waits for its experiments too, and creates the plan's new ones."
+          },
+          {
+            "id": "reflections",
+            "name": "Reflections",
+            "kind": "research",
+            "dir": "out",
+            "says": "opens a reflection wave",
+            "detail": "When the work is done, Research opens a wave that judges it."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "tracks the cycle",
+            "detail": "Workflows tracks the cycle's stage, and its events wake automatic cycles."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "out",
+            "says": "gets code onto main",
+            "detail": "Accepted code that is not on main yet is brought there by one consolidation task before the cycle ends."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "saves a cycle digest",
+            "detail": "When a cycle ends, a summary of its decisions is saved for the next cycle to read."
+          }
+        ],
+        "story": {
+          "title": "One research cycle",
+          "steps": [
+            {
+              "from": "owner",
+              "to": "self",
+              "text": "The owner creates a cycle and picks the work it waits on. It starts in **defining**."
+            },
+            {
+              "from": "self",
+              "to": "paper",
+              "text": "Research checks that the paper's **Problem** is complete, then moves to **researching**."
+            },
+            { "from": "self", "to": "tasks", "text": "It waits for its tasks..." },
+            {
+              "from": "self",
+              "to": "experiments",
+              "text": "...and its experiments to finish. Research launches no agents itself."
+            },
+            {
+              "from": "self",
+              "to": "reflections",
+              "text": "When they are done, it opens a **reflection wave** and moves to **reflecting**."
+            },
+            {
+              "from": "self",
+              "to": "code-work",
+              "text": "The wave is approved. If accepted code is missing from main, a **consolidation** task brings it there first."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "The cycle is **complete**, and a digest of its decisions is saved."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "If the approved plan says continue, Research creates the next tasks and experiments, and a new cycle that waits on them."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Cycle",
+            "meaning": "One loop: defining, researching, reflecting, then complete."
+          },
+          {
+            "term": "Consolidation",
+            "meaning": "A task that brings the cycle's accepted code onto main."
+          },
+          {
+            "term": "Automatic mode",
+            "meaning": "Cycles advance on their own with the owner's earlier permission, up to a set number of cycles."
+          },
+          {
+            "term": "Digest",
+            "meaning": "A saved summary of a finished cycle that the next cycle reads."
+          }
+        ],
+        "not": [
+          "It doesn't do the work or launch agents. **Tasks** and **Experiments** hold the work.",
+          "It doesn't judge the results. **Reflections** does.",
+          "It doesn't write the paper. **Paper** stores it; Research only reads the Problem."
+        ],
+        "readme": "../../packages/research/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

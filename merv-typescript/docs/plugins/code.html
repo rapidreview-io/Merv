@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Code — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "code",
+        "name": "Code",
+        "group": "foundation",
+        "tagline": "Keeps a project's Git repositories and every exact commit, without judging any of them.",
+        "analogy": {
+          "icon": "🏦",
+          "text": "A bank vault for code. It holds every version deposited with it and never loses one, even if the account moves. It checks the locks and the receipts, but doesn't care what is inside each box."
+        },
+        "why": [
+          "Research needs to point at **exact** versions of code. Code keeps every commit it was asked to keep, even if the repository moves.",
+          "Two writers must never clash. Code hands out numbered writing turns, so an outdated writer is refused.",
+          "All Git work lives in one place: the repository files, running Git, and the optional GitHub link."
+        ],
+        "neighbors": [
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "in",
+            "says": "drives it for research",
+            "detail": "Code Work is the only plugin that uses Code. It turns research decisions into Git actions."
+          },
+          {
+            "id": "runner",
+            "name": "Runner",
+            "dir": "in",
+            "says": "uses its workspace driver",
+            "detail": "On the agent machine, the runner loads Code's driver to set up a checkout and capture commits."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "in",
+            "says": "reads its status shapes",
+            "detail": "The browser uses Code's shared description of repository and writer status."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "saves its records",
+            "detail": "Repository links, kept commits and writing turns are saved in the database through State."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "checks project access",
+            "detail": "Scope says who may act on a project's repository."
+          },
+          {
+            "id": "repos",
+            "name": "Repo files",
+            "kind": "outside",
+            "dir": "out",
+            "says": "stores the repositories",
+            "detail": "The repositories live as files on the server's disk, within a size limit.",
+            "page": null
+          },
+          {
+            "id": "github",
+            "name": "GitHub",
+            "kind": "outside",
+            "dir": "out",
+            "says": "syncs with it (optional)",
+            "detail": "If connected, Code signs in to GitHub as an app and moves Git data to and from it. A local repository needs no GitHub.",
+            "page": null
+          }
+        ],
+        "story": {
+          "title": "Keeping one commit safe",
+          "steps": [
+            {
+              "from": "code-work",
+              "to": "self",
+              "text": "Code Work asks Code to set up the project's repository on the server."
+            },
+            {
+              "from": "self",
+              "to": "repos",
+              "text": "Code stores the repository as files on disk."
+            },
+            {
+              "from": "code-work",
+              "to": "self",
+              "text": "A job starts. Code Work asks for a **writing turn**, so only that agent may write there."
+            },
+            {
+              "from": "runner",
+              "to": "self",
+              "text": "On the agent machine, the runner uses Code's driver to check out the exact starting commit."
+            },
+            {
+              "from": "code-work",
+              "to": "self",
+              "text": "The agent commits. Code Work asks Code to **retain** that commit under a key, so it can never be lost."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "Code records the kept commit in the database."
+            },
+            {
+              "from": "self",
+              "to": "github",
+              "text": "If the project is connected, Code moves the commits to GitHub."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Commit", "meaning": "One saved snapshot of the code." },
+          {
+            "term": "Retained commit",
+            "meaning": "A commit Code promises to keep, filed under a key."
+          },
+          { "term": "Workspace", "meaning": "A private copy of the code where one agent works." },
+          {
+            "term": "Writer generation",
+            "meaning": "A numbered writing turn. An older turn is refused."
+          }
+        ],
+        "not": [
+          "It doesn't decide whether a change is accepted or reviewed. **Code Work** and the research plugins decide that.",
+          "Research plugins never use it directly. They go through **Code Work**.",
+          "It knows nothing about tasks, reviews or sessions. It depends only on **State** and **Scope**."
+        ],
+        "readme": "../../packages/code/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

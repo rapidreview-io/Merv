@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Identity — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "identity",
+        "name": "Identity",
+        "group": "foundation",
+        "tagline": "Checks who is signing in, and keeps the one shared list of access keys.",
+        "analogy": {
+          "icon": "🪪",
+          "text": "The ID check at a building's entrance. The guard confirms your ID card is real, but doesn't decide which rooms you may enter. The guard also keeps a book of every visitor pass, and a crossed-out pass stays crossed out."
+        },
+        "why": [
+          "Merv must know **who** is calling before anyone can decide what they may do.",
+          "People sign in through Supabase, an outside sign-in service. Identity checks that the sign-in **token** really came from Supabase.",
+          "Agents and services use access keys. Identity keeps **one shared list** of them, storing only a fingerprint of each key, never the key itself."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "brings a sign-in token",
+            "detail": "A person signs in with Supabase in the browser, then sends the token with each request.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "in",
+            "says": "asks who this caller is",
+            "detail": "For each browser request, the API asks Identity to check the token and name the person."
+          },
+          {
+            "id": "supabase",
+            "name": "Supabase",
+            "kind": "outside",
+            "dir": "out",
+            "says": "provides its public keys",
+            "detail": "Identity downloads Supabase's public keys and refreshes them in the background every five minutes.",
+            "page": null
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "in",
+            "says": "uses the key list",
+            "detail": "Scope issues and checks keys for agents, and people's own keys, using Identity's list."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "uses the key list",
+            "detail": "Sessions issues keys for agent sessions and runners in the same list."
+          },
+          {
+            "id": "pi",
+            "name": "Pi",
+            "dir": "in",
+            "says": "uses the key list",
+            "detail": "Pi records the keys of its workers in the same list."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "saves the key list",
+            "detail": "The key list is a table in the database, written through State."
+          }
+        ],
+        "story": {
+          "title": "Proving who you are",
+          "steps": [
+            {
+              "from": "person",
+              "to": "supabase",
+              "text": "A person signs in with **Supabase** and gets a signed token: a digital pass."
+            },
+            {
+              "from": "person",
+              "to": "api",
+              "text": "The browser sends that token with every request to Merv's API."
+            },
+            { "from": "api", "to": "self", "text": "The API asks Identity: is this token real?" },
+            {
+              "from": "self",
+              "to": "supabase",
+              "text": "Identity checks the token's signature against Supabase's public keys, which it keeps fresh."
+            },
+            {
+              "from": "self",
+              "to": "api",
+              "text": "If it checks out, Identity says who the person is. If not, the request is refused."
+            },
+            {
+              "from": "api",
+              "to": "scope",
+              "text": "Scope then decides what this person is allowed to do."
+            },
+            {
+              "from": "scope",
+              "to": "self",
+              "text": "Agents use access keys instead. Scope looks a key up in Identity's list: a cancelled or expired key never gets in."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Authentication",
+            "meaning": "Proving who you are. Deciding what you may do is a separate job."
+          },
+          { "term": "Token", "meaning": "A signed digital pass that says who you are." },
+          { "term": "Credential", "meaning": "An access key for an agent, a service or a person." },
+          {
+            "term": "Revoke",
+            "meaning": "Cancel a key for good. A revoked key can never come back."
+          }
+        ],
+        "not": [
+          "It doesn't decide what anyone may do or who belongs to a project. **Scope** does.",
+          "It doesn't create agents or sessions. **Sessions** and **Pi** own those, and add their own keys to the shared list.",
+          "It never cancels a key on its own. Only the plugin that issued a key may renew or cancel it."
+        ],
+        "readme": "../../packages/identity/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

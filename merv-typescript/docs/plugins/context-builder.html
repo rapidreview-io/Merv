@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Context Builder — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "context-builder",
+        "name": "Context Builder",
+        "group": "foundation",
+        "tagline": "Packs exactly what an agent needs to read before it starts, within a size limit.",
+        "analogy": {
+          "icon": "🎒",
+          "text": "Packing a backpack with a checklist and a weight limit. The must-haves go in first. Nice-to-haves go in by importance while they fit. Anything left out gets a note saying where to find it."
+        },
+        "why": [
+          "Agents can only read so much at once. Context Builder fits the most important material into a fixed **budget**.",
+          "Every package is saved exactly as built, so you can always see later what an agent was shown.",
+          "Plugins describe what goes in with a **recipe**, so the packing rules aren't copied into each one."
+        ],
+        "neighbors": [
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "registers recipes, asks for packs",
+            "detail": "Tasks registers a recipe for each task type and builds the context when an agent asks for it."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "registers its recipes",
+            "detail": "Experiments registers its own recipes the same way."
+          },
+          {
+            "id": "reflections",
+            "name": "Reflections",
+            "kind": "research",
+            "dir": "in",
+            "says": "registers its recipes",
+            "detail": "Reflections registers its own recipes too."
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "reads the finished package",
+            "detail": "The agent asks Tasks for its context and gets the package back as one prompt.",
+            "page": null
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "supplies the documents",
+            "detail": "Documents named in the inputs are read from Artifacts and listed by title and fingerprint."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "saves each package",
+            "detail": "Each package is saved for good, along with its recipe version and a fingerprint."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "checks project access",
+            "detail": "Only someone with access to the project may build or replay a package."
+          }
+        ],
+        "story": {
+          "title": "Packing one prompt",
+          "steps": [
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "When it loads, Tasks registers a **recipe** for each task type: the sections, the inputs and a size budget."
+            },
+            {
+              "from": "worker",
+              "to": "tasks",
+              "text": "An agent starts its work and asks Tasks for its context."
+            },
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "Tasks checks the assignment, then hands Context Builder the items for each section."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "Context Builder reads the documents. **Must-have** items go in; the rest go in by priority while they fit."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "The finished package is saved for good with a fingerprint, so it can't quietly change."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "The prompt goes back through Tasks to the agent. Items that didn't fit are listed, with the tools that fetch them."
+            },
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "If the agent asks again with the same request, it gets the same saved package back."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Recipe",
+            "meaning": "The plan for a prompt: instructions, sections, inputs and a size budget."
+          },
+          {
+            "term": "Budget",
+            "meaning": "The most characters a prompt may hold. It is never exceeded."
+          },
+          {
+            "term": "Package",
+            "meaning": "The finished prompt plus a list of every source it used, saved for good."
+          },
+          {
+            "term": "Replay",
+            "meaning": "Getting the same saved package again instead of building a new one."
+          }
+        ],
+        "not": [
+          "It doesn't decide who may do a task. **Tasks** checks the assignment before asking for a package.",
+          "It doesn't store the documents. **Artifacts** keeps them; Context Builder only reads them.",
+          "It doesn't fetch web pages or run code to build a prompt. Only the items it is given go in."
+        ],
+        "readme": "../../packages/context-builder/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

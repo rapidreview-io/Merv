@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Experiments — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "experiments",
+        "name": "Experiments",
+        "group": "research",
+        "tagline": "A research question tested in planned attempts, each checked twice by independent reviewers.",
+        "analogy": {
+          "icon": "🧪",
+          "text": "A science fair project with two check-ins. A teacher approves your **plan** before you start. After you run it, a **different** teacher checks your results, and only then does it count."
+        },
+        "why": [
+          "Running a test costs time and computer power, so the **plan** is reviewed before anything runs.",
+          "Results only count after an **independent** reviewer checks them, so mistakes get caught.",
+          "Every plan, result and report is kept, so any finding can be traced back to its evidence."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "plans, runs and reports",
+            "detail": "An AI agent writes the plan, runs the experiment and hands in the results and a report.",
+            "page": null
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "out",
+            "says": "asks for two reviews",
+            "detail": "One reviewer checks the plan before it runs; another checks the results afterwards."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "tracks its stage",
+            "detail": "Workflows keeps track of the stage: planned, design review, running, results review or complete."
+          },
+          {
+            "id": "context-builder",
+            "name": "Context Builder",
+            "dir": "out",
+            "says": "packs what each agent needs",
+            "detail": "Experiments gives Context Builder four recipes: planning, design review, running and results review."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "keeps the evidence",
+            "detail": "Plans, results and reports are stored for good before they are attached, so they never quietly change."
+          },
+          {
+            "id": "sandboxes",
+            "name": "Sandboxes",
+            "dir": "out",
+            "says": "gives the agent compute",
+            "detail": "Experiments owns no computers. Sandboxes gives the working agent the computer power to run things."
+          },
+          {
+            "id": "paper",
+            "name": "Paper",
+            "kind": "research",
+            "dir": "out",
+            "says": "updates Methods and Results",
+            "detail": "When a reviewer passes the results, the reviewer's edits to Methods and Results are saved at the same time."
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "kind": "research",
+            "dir": "in",
+            "says": "creates planned experiments",
+            "detail": "When a research plan is approved, Research creates the experiments it names."
+          },
+          {
+            "id": "reflections",
+            "name": "Reflections",
+            "kind": "research",
+            "dir": "in",
+            "says": "pauses new experiments",
+            "detail": "While a reflection wave is open, new experiments wait to start. Ones already running carry on."
+          }
+        ],
+        "story": {
+          "title": "The life of one experiment",
+          "steps": [
+            {
+              "from": "research",
+              "to": "self",
+              "text": "Research creates an experiment from an approved plan. It starts as **planned**."
+            },
+            {
+              "from": "self",
+              "to": "context-builder",
+              "text": "An agent is assigned. Context Builder packs the question, the paper and any earlier feedback."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The worker agent writes a **plan** and a feasibility note, and hands them in."
+            },
+            {
+              "from": "self",
+              "to": "reviews",
+              "text": "In the **design review**, an independent reviewer approves the plan or sends it back."
+            },
+            {
+              "from": "self",
+              "to": "sandboxes",
+              "text": "Once approved, the experiment is **running**. Sandboxes gives the agent compute to run it."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The agent hands in its **results** and a report, first saved for good as artifacts."
+            },
+            {
+              "from": "self",
+              "to": "reviews",
+              "text": "In the **results review**, a different reviewer checks the evidence."
+            },
+            {
+              "from": "reviews",
+              "to": "paper",
+              "text": "A **pass** completes the experiment and writes the findings into the paper. Otherwise it goes back to planning or running."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Attempt",
+            "meaning": "One try at the experiment. Going back to planning starts a new attempt."
+          },
+          { "term": "Design review", "meaning": "The check on the plan, before anything runs." },
+          {
+            "term": "Results review",
+            "meaning": "The check on the results, by a different reviewer."
+          },
+          {
+            "term": "Evidence",
+            "meaning": "What the agent hands in: a plan and feasibility note first, then results and a report."
+          }
+        ],
+        "not": [
+          "It doesn't own computers. **Sandboxes** attaches the compute.",
+          "It doesn't choose which experiments to run next. **Research** and **Reflections** do.",
+          "It doesn't publish code. Accepted code reaches main through a task that **Research** creates."
+        ],
+        "readme": "../../packages/experiments/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

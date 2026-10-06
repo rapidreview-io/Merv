@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reflections — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "reflections",
+        "name": "Reflections",
+        "group": "research",
+        "tagline": "A panel of five independent agents that judges the project's research and proposes changes.",
+        "analogy": {
+          "icon": "🔍",
+          "text": "A panel of five judges, each looking at one thing: evidence, theory, methods, the big picture and what to try next. A head judge combines their notes into one report. Then an independent referee approves it or sends it back."
+        },
+        "why": [
+          "Research can drift, so after each round of work the project stops to judge what is really known.",
+          "Five separate viewpoints, by five **different** agents, catch problems one reviewer would miss.",
+          "New tasks and experiments **wait** while judging happens, so the project doesn't move under the judges."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "writes reports",
+            "detail": "Different agents write the five lens reports, the synthesis and the review.",
+            "page": null
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "kind": "research",
+            "dir": "both",
+            "says": "opens a wave, reads the plan",
+            "detail": "Research opens a wave when a cycle's work is done, and later turns the approved plan into new work."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "runs the wave, pauses starts",
+            "detail": "Workflows tracks the wave and its five lenses, and refuses new task and experiment starts while it is open."
+          },
+          {
+            "id": "context-builder",
+            "name": "Context Builder",
+            "dir": "out",
+            "says": "packs each agent's brief",
+            "detail": "Reflections gives Context Builder three recipes: one for a lens, one for synthesis and one for the review."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "keeps the reports",
+            "detail": "Lens reports and the synthesis are stored as files that never change."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "out",
+            "says": "asks for an independent review",
+            "detail": "An agent who wrote none of the work checks the synthesis and gives the verdict."
+          },
+          {
+            "id": "paper",
+            "name": "Paper",
+            "kind": "research",
+            "dir": "out",
+            "says": "updates Methods and Results",
+            "detail": "The approving reviewer's edits to the paper's Methods and Results are saved with the verdict."
+          }
+        ],
+        "story": {
+          "title": "One reflection wave",
+          "steps": [
+            {
+              "from": "research",
+              "to": "self",
+              "text": "A research cycle's work is done, so Research opens a **wave**."
+            },
+            {
+              "from": "self",
+              "to": "workflows",
+              "text": "The wave starts. New tasks and experiments now **wait**; work already started carries on."
+            },
+            {
+              "from": "self",
+              "to": "context-builder",
+              "text": "Each lens agent gets a brief: its viewpoint and how to read the live research."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "Five different agents each hand in a **lens report**: evidence, theory, methods, synthesis and next steps."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "After the fifth report, a synthesis agent combines them into one report and a **change specification**."
+            },
+            {
+              "from": "self",
+              "to": "reviews",
+              "text": "An independent reviewer checks the synthesis. It can approve it or send it back."
+            },
+            {
+              "from": "reviews",
+              "to": "paper",
+              "text": "On approval, the reviewer's edits to Methods and Results are saved to the paper."
+            },
+            {
+              "from": "self",
+              "to": "research",
+              "text": "The wave ends and the pause lifts. Research can turn the approved plan into the next tasks and experiments."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Wave",
+            "meaning": "One round of judging: five lenses, a synthesis and a review."
+          },
+          {
+            "term": "Lens",
+            "meaning": "One viewpoint, such as evidence or methods, written by its own agent."
+          },
+          { "term": "Synthesis", "meaning": "The report that combines all five lenses." },
+          {
+            "term": "Change specification",
+            "meaning": "What the synthesis proposes to change, sometimes as a plan of new tasks and experiments."
+          }
+        ],
+        "not": [
+          "It doesn't create the next tasks or experiments. **Research** does that after approval.",
+          "It doesn't call Tasks or Experiments to pause them. **Workflows** holds back every new start while a wave is open.",
+          "It doesn't store the paper. **Paper** does; Reflections' reviewer only sends edits."
+        ],
+        "readme": "../../packages/reflections/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

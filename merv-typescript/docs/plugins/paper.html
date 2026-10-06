@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Paper — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "paper",
+        "name": "Paper",
+        "group": "research",
+        "tagline": "The project's living paper: Problem, Literature, Methods and Results, with full history.",
+        "analogy": {
+          "icon": "📓",
+          "text": "A shared lab notebook that is never erased. Every change makes a new version, so you can see how the story grew. Findings only go in after a reviewer has checked them."
+        },
+        "why": [
+          "The project needs **one place** that says what it is about and what has been found so far.",
+          "Every agent's assignment carries the paper, so all work fits what is already known.",
+          "Each change is kept as a new **revision**, so nothing is lost or quietly rewritten."
+        ],
+        "neighbors": [
+          {
+            "id": "agent",
+            "name": "Main agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "edits any document",
+            "detail": "The agent acting for the owner can edit any of the four documents.",
+            "page": null
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "adds reviewed findings",
+            "detail": "A reviewer who passes an experiment's results saves edits to Methods and Results with the verdict."
+          },
+          {
+            "id": "reflections",
+            "name": "Reflections",
+            "kind": "research",
+            "dir": "in",
+            "says": "adds reviewed findings",
+            "detail": "The reviewer of a reflection wave updates Methods and Results across experiments."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "reads the paper",
+            "detail": "Each task's assignment carries the current paper."
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "kind": "research",
+            "dir": "both",
+            "says": "reads the Problem",
+            "detail": "A cycle starts only when the Problem is complete. A change to the Problem wakes a waiting cycle."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "writes the Introduction",
+            "detail": "The Problem becomes the project Introduction that every assignment carries."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "checks citations",
+            "detail": "When the paper cites a stored file or result, Paper checks that it exists."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "out",
+            "says": "shows the Paper page",
+            "detail": "Paper adds its own page to the web app."
+          }
+        ],
+        "story": {
+          "title": "How the paper grows",
+          "steps": [
+            {
+              "from": "agent",
+              "to": "self",
+              "text": "The main agent writes the **Problem**: the question, its scope, goals and constraints."
+            },
+            {
+              "from": "self",
+              "to": "scope",
+              "text": "Paper turns the Problem into the project **Introduction**."
+            },
+            {
+              "from": "self",
+              "to": "research",
+              "text": "A waiting research cycle wakes up: the Problem is now complete."
+            },
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "Agents doing tasks get the current paper as part of their brief."
+            },
+            {
+              "from": "experiments",
+              "to": "self",
+              "text": "A reviewer passes an experiment and adds its findings to **Results**, saved together with the verdict."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "Citations in the paper point at stored evidence, and Paper checks each one exists."
+            },
+            {
+              "from": "reflections",
+              "to": "self",
+              "text": "After a reflection wave, its reviewer updates Methods and Results across all the experiments."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Document",
+            "meaning": "One of the four parts: Problem, Literature, Methods and Results."
+          },
+          {
+            "term": "Revision",
+            "meaning": "A saved version. Each change makes a new one, and old ones are kept."
+          },
+          { "term": "Citation", "meaning": "A link from the paper to stored evidence." },
+          {
+            "term": "Introduction",
+            "meaning": "The project summary made from the Problem, carried in every agent's assignment."
+          }
+        ],
+        "not": [
+          "It doesn't hand out work. **Tasks**, **Experiments** and **Reflections** run their own workflows.",
+          "It doesn't decide whether a finding is true. Reviewers in **Experiments** and **Reflections** do that first.",
+          "It doesn't hold other people's papers. Searching published literature is **Nisa**'s job."
+        ],
+        "readme": "../../packages/paper/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

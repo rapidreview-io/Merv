@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Contracts — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "contracts",
+        "name": "Contracts",
+        "group": "foundation",
+        "tagline": "Shared descriptions and helpers that let plugins work together without depending on each other.",
+        "analogy": {
+          "icon": "🔌",
+          "text": "A standard wall-plug shape. Any lamp works in any socket because both follow the same shape. The standard isn't a lamp or a socket; it only describes how they fit."
+        },
+        "why": [
+          "If every plugin used the others directly, changing one would break many. Instead, each follows a shared **interface**: a description of what a service offers.",
+          "A few small helpers, like error messages and file fingerprints, are needed everywhere but belong to no single plugin.",
+          "It runs nothing and keeps no data. Strictly it is a shared package, not a plugin, so it can never secretly own anything."
+        ],
+        "neighbors": [
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "in",
+            "says": "fits the State description",
+            "detail": "State provides the database service that Contracts describes."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "in",
+            "says": "fits the Scope description",
+            "detail": "Scope provides the permissions service that Contracts describes."
+          },
+          {
+            "id": "domain-events",
+            "name": "Domain Events",
+            "dir": "in",
+            "says": "fits its description",
+            "detail": "Domain Events provides the event delivery service that Contracts describes."
+          },
+          {
+            "id": "blobs",
+            "name": "Blobs",
+            "dir": "in",
+            "says": "fits the Blobs description",
+            "detail": "Blobs provides the file-bytes service that Contracts describes."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "codes against the descriptions",
+            "detail": "Research plugins like Tasks use the shared descriptions instead of reaching into other plugins."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "shares session shapes",
+            "detail": "The shapes of session inputs that cross plugins are described here."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "in",
+            "says": "shares code shapes",
+            "detail": "The shapes of code transfers and workspaces are described here."
+          },
+          {
+            "id": "runner",
+            "name": "Runner",
+            "dir": "in",
+            "says": "shares launch shapes",
+            "detail": "Runner checks the data it launches agents with against shapes from here."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "in",
+            "says": "uses browser-safe parts",
+            "detail": "The browser app uses only the parts that need no server."
+          }
+        ],
+        "story": {
+          "title": "Two plugins that never meet",
+          "steps": [
+            {
+              "from": "state",
+              "to": "self",
+              "text": "State says: I provide the **State** service, exactly as Contracts describes it."
+            },
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "Tasks needs a database. It writes its code against the description in Contracts, not against State's own code."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "When Merv starts, Tasks is handed the real State service, which fits the description."
+            },
+            {
+              "from": "blobs",
+              "to": "self",
+              "text": "The same goes for Blobs, Scope and Domain Events: each one fits a shared description."
+            },
+            {
+              "from": "scope",
+              "to": "self",
+              "text": "Shared rules live here too, like Merv's standard error and the check for \"is this caller a signed-in person?\"."
+            },
+            {
+              "from": "ui",
+              "to": "self",
+              "text": "The browser app takes only the parts that can run without a server."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Interface",
+            "meaning": "A description of what a service offers, without the code behind it."
+          },
+          { "term": "Type", "meaning": "A label that says what shape a piece of data has." },
+          {
+            "term": "Schema",
+            "meaning": "A checker that makes sure incoming data really has the right shape."
+          },
+          {
+            "term": "Helper",
+            "meaning": "A small piece of shared code, like making an id or a fingerprint."
+          }
+        ],
+        "not": [
+          "It doesn't provide the services it describes. **State**, **Scope**, **Blobs** and others do.",
+          "Anything with one owner lives with that owner. For example, the rules for acting on someone's behalf belong to **Scope**.",
+          "It owns no tables and saves no data. **State** does the saving."
+        ],
+        "readme": "../../packages/contracts/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>
