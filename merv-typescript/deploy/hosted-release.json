@@ -4,14 +4,14 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:2bfb89dfe5e05759fe72b1f72234cad3ff38011114767d450d2eac2d9f190273",
-    "releaseId": "rt1_fd86c3cfa253a31e5350d19df83b27a7773fd95f8608a94a9ff9e38e94c6c496",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:ddb8ddcbb07d720ad1752e8b76faa97cdbd7e77bbc37d9f208dc717b27f7cd84",
+    "releaseId": "rt1_58d720f825b9225cd8c032e8066354133ce5c669eeee687187c31579fb85c569",
     "releases": {
-      "cloudflare-fleet": "rt1_fd86c3cfa253a31e5350d19df83b27a7773fd95f8608a94a9ff9e38e94c6c496",
-      "cloudflare-fleet-large": "rt1_f5b312abea0a5fa594081e9fa17d9521f2962edbabae1fbb9b3cd6a361f4f6d8"
+      "cloudflare-fleet": "rt1_58d720f825b9225cd8c032e8066354133ce5c669eeee687187c31579fb85c569",
+      "cloudflare-fleet-large": "rt1_616d7f66b0ce1cf0c86d04f5406175e0e7a15e276e0f3ddbd86deda3ec45bc05"
     },
-    "localId": "sha256:5387966da3e33079ddf43c4abfbedae800fd1e3691a87dec350c21192c6e46fe",
-    "sourceCommit": "722903c7e562de583f21a410fca8c551a1d38ef3",
+    "localId": "sha256:bfa5ff1fb295829542078eedf98de02064bad493abde65cf3a440229ed47e10b",
+    "sourceCommit": "10250d7b64cad0be6db8cf41c737a3b6665c95d8",
     "sandboxesCommit": "5157f1ed7618ff3987da7f214d2312afd31e636d"
   },
   "inputs": [
@@ -19,12 +19,11 @@
     "packages/code/src/driver/index.ts",
     "packages/code/src/files.ts",
     "packages/code/src/merge-settings.ts",
+    "packages/code/src/store/protocol.ts",
     "packages/code/src/store/refs.ts",
     "packages/contracts/src/agent-stream.ts",
     "packages/contracts/src/async.ts",
-    "packages/contracts/src/checked-transitions.ts",
     "packages/contracts/src/code-github.ts",
-    "packages/contracts/src/code-store.ts",
     "packages/contracts/src/code.ts",
     "packages/contracts/src/index.ts",
     "packages/contracts/src/launch-connections.ts",
@@ -39,6 +38,7 @@
     "packages/contracts/src/usage-report.ts",
     "packages/contracts/src/workspace-driver.ts",
     "packages/contracts/src/workspace.ts",
+    "packages/fleet/src/hosted-codex.ts",
     "packages/pi/src/checkpoint.ts",
     "packages/pi/src/limits.ts",
     "packages/pi/src/tool-names.ts",
@@ -57,6 +57,7 @@
     "packages/runner/src/profiles.ts",
     "packages/runner/src/transcript.ts",
     "packages/runner/src/workspaces.ts",
+    "packages/sessions/src/rules.ts",
     "scripts/hosted-runner/smoke-supervisor.ts"
   ]
 }
