@@ -127,6 +127,8 @@ interface Reference {
   kind: string | null;
   id: string | null;
   label?: string;
+  /** Where the record stands, in its owner's word: a work item's state, a review's status. */
+  state?: string;
 }
 /** Where a record a reference names opens: a work record on the row that lists its workflow. */
 const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
@@ -198,32 +200,52 @@ const hear = (listener: () => void) => {
 };
 
 /**
- * The names for one text, read only when the text mentions something to name: what
- * project.references says of each id, over the people and records of the home read the
- * rail already holds. A text with no ids in it costs nothing at all.
+ * These records as their owners name them, through project.references: each one's name, where
+ * it opens (on the row that lists its workflow, `routeOf`), and the state it stands in. Ids asked
+ * alike share the page's one request; an id nobody named is absent.
  */
-export function useRecordNames(text: string): RecordNames {
-  const ids = useMemo(() => idsIn(text).slice(0, 200), [text]);
+export function useReferences(
+  ids: readonly string[],
+): ReadonlyMap<string, Named & { state?: string }> {
   const version = useSyncExternalStore(
     hear,
     () => heard,
     () => heard,
   );
   useEffect(() => askNames(ids), [ids]);
-  const home = useTool<NamedHome>(ids.length ? 'ui.home' : null);
   // The rows say where each record opens: the ones the shell already holds.
   const rows = useRows();
   return useMemo(() => {
-    const names = new Map(recordNames(null, home.data, rows));
+    const names = new Map<string, Named & { state?: string }>();
     // What another project's page was told names nothing here.
     if (epoch === scopeVersion())
       for (const reference of ids.map((id) => told.get(id)?.reference))
         if (reference?.status === 'resolved' && reference.id && reference.label)
-          names.set(reference.id, { name: reference.label, to: routeOf(reference, rows) });
+          names.set(reference.id, {
+            name: reference.label,
+            to: routeOf(reference, rows),
+            ...(reference.state !== undefined && { state: reference.state }),
+          });
     return names;
     // `version` counts the answers heard, which `told` holds.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ids, version, home.data, rows]);
+  }, [ids, version, rows]);
+}
+
+/**
+ * The names for one text, read only when the text mentions something to name: what
+ * project.references says of each id, over the people and records of the home read the
+ * rail already holds. A text with no ids in it costs nothing at all.
+ */
+export function useRecordNames(text: string): RecordNames {
+  const ids = useMemo(() => idsIn(text).slice(0, 200), [text]);
+  const referenced = useReferences(ids);
+  const home = useTool<NamedHome>(ids.length ? 'ui.home' : null);
+  const rows = useRows();
+  return useMemo(
+    () => new Map([...recordNames(null, home.data, rows), ...referenced]),
+    [referenced, home.data, rows],
+  );
 }
 
 /**
