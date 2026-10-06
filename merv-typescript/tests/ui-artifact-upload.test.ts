@@ -246,3 +246,69 @@ test('Files refuses a file over 512 MiB before hashing or calling Main', async (
   assert.doesNotMatch(text(), /Hashing/);
   assert.deepEqual(fetches, []);
 });
+
+test('Files keeps the rows it shows while older files load', async (t) => {
+  t.after(unmount);
+  const { setToken } = await import('../packages/ui/web/api.js');
+  setToken('fixture-token');
+  t.after(() => setToken(null));
+  const { MemoryRouter, Routes, Route } = await import('react-router-dom');
+  const { SessionProvider } = await import('../packages/ui/web/session.js');
+  const { ArtifactsView } = await import('../packages/ui/web/views/artifacts.js');
+  const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
+  const actor = { id: 'actor_1', projectId: project.id, name: 'Ada', role: 'reader' };
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', {
+    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
+  });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  serve('/tools/artifact.storage_status', { body: { result: { available: false } } });
+  const files = Array.from({ length: 400 }, (_, at) => ({
+    id: `art_${String(at).padStart(32, '0')}`,
+    projectId: project.id,
+    createdBy: actor.id,
+    hash: 'abc',
+    size: 10,
+    createdAt: new Date().toISOString(),
+    title: `File ${at}`,
+    mediaType: 'text/plain',
+  }));
+  serve('/tools/artifact.list', (_, sent) => ({
+    body: { result: files.slice(0, Number(sent.limit)) },
+  }));
+  // The older page is still on its way when the page is next drawn.
+  const answered = globalThis.fetch;
+  t.after(() => void (globalThis.fetch = answered));
+  globalThis.fetch = ((input: string, init: { body?: string }) =>
+    typeof init?.body === 'string' && JSON.parse(init.body).limit === 400
+      ? new Promise(() => {})
+      : answered(input, init)) as typeof fetch;
+  const row = { id: 'artifacts', label: 'Files', path: '/artifacts', view: { kind: 'artifacts' } };
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/artifacts'] },
+      createElement(
+        SessionProvider,
+        null,
+        createElement(
+          Routes,
+          null,
+          createElement(Route, {
+            path: '/artifacts/*',
+            element: createElement(ArtifactsView as never, { row, shell: { rows: [row] } }),
+          }),
+        ),
+      ),
+    ),
+  );
+  await settle(10);
+  assert.ok(text().includes('File 199'), text().slice(0, 300));
+  const older = [...document.querySelectorAll('button')].find(
+    (b) => b.textContent === 'Show older files',
+  );
+  assert.ok(older, 'a full first page offers the next');
+  await act(async () => older!.click());
+  await settle(10);
+  assert.ok(text().includes('File 0') && text().includes('File 199'), 'the rows it had stay put');
+});

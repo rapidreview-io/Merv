@@ -126,9 +126,6 @@ export function recordNames(
   return names;
 }
 
-/** The newest files every name lookup reads, one read shared with the Artifacts page's first page. */
-export const FILE_PAGE = 200;
-
 /**
  * The names for one text, read only when the text mentions something to name: the
  * file list for an `art_`, the home read for anything else. Both are questions the
@@ -139,7 +136,6 @@ export function useRecordNames(text: string): RecordNames {
   const ids = useMemo(() => idsIn(text), [text]);
   const files = useTool<NamedFile[]>(
     ids.some((id) => prefixOf(id) === 'art') ? 'artifact.list' : null,
-    { limit: FILE_PAGE },
   );
   const others = ids.some((id) => prefixOf(id) !== 'art');
   const home = useTool<NamedHome>(others ? 'ui.home' : null);

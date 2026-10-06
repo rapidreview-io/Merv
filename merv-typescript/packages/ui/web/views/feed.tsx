@@ -4,7 +4,7 @@ import { useTool } from '../api';
 import { Ago, cx, words } from '../components';
 import { Icon, type IconName } from '../icons';
 import { ListPage, useListFilter } from '../list-filters';
-import { FILE_PAGE, Markdown, RecordLink, recordNames, type RecordNames } from '../markdown';
+import { Markdown, RecordLink, recordNames, type RecordNames } from '../markdown';
 import type { ViewProps } from './index';
 import { fileType, type Artifact } from './artifacts';
 import { useHome } from './map-data';
@@ -153,7 +153,6 @@ export function FeedView({ shell }: ViewProps) {
   const home = useHome();
   const listed = useTool<Artifact[]>(
     shell.rows.some((row) => row.view.kind === 'artifacts') ? 'artifact.list' : null,
-    { limit: FILE_PAGE },
   );
   const names = useMemo(
     () => recordNames(listed.data, home.data, shell.rows),

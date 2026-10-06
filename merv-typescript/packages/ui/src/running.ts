@@ -596,8 +596,10 @@ function agentSessionOf(value: unknown): AgentStreamSession | null {
     return null;
   if (value.endedAt !== undefined && !instant(value.endedAt)) return null;
   if (value.continues !== undefined && !words(value.continues, 200)) return null;
-  // Any same-origin path: one slash, never `//` or `/\`, which a browser reads as another host.
-  if (!words(value.events, 300) || !/^\/(?![/\\])/.test(value.events)) return null;
+  // Any same-origin path: printable ASCII with no backslash (a browser strips a tab or a line
+  // break, and reads `\` as `/`, either of which can leave `//host`), resolving on this host.
+  if (!words(value.events, 300) || !/^\/[!-[\]-~]*$/.test(value.events)) return null;
+  if (new URL(value.events, 'http://x').origin !== 'http://x') return null;
   const { sessionId, state, role, live, startedAt, endedAt, continues, events } = value;
   return {
     sessionId,

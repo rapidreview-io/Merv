@@ -706,3 +706,37 @@ test('experiment references display names for bare IDs and explicit paper links'
   );
   assert.ok(!text().includes(id));
 });
+
+test('a file older than the newest page is still named where it is cited', async (t) => {
+  t.after(async () => await unmount());
+  const { useArtifacts } = await import('../packages/ui/web/components.js');
+  const old = 'art_00000000000000000000000000000abc';
+  const newer = Array.from({ length: 200 }, (_, at) => ({
+    id: `art_${String(at).padStart(32, '0')}`,
+    title: `Newer ${at}`,
+  }));
+  // The tool's first page holds as many as were asked for, newest first.
+  serve('/tools/artifact.list', (_, sent) => ({
+    body: {
+      result: [...newer, { id: old, title: 'Brief: the first sweep' }].slice(
+        0,
+        Number(sent.limit ?? 1000),
+      ),
+    },
+  }));
+  function Picked() {
+    const files = useArtifacts();
+    return createElement('p', { className: 'picked' }, files.get(old)?.title ?? 'missing');
+  }
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(Markdown, { source: `Cites ${old}.` }),
+      createElement(Picked),
+    ),
+  );
+  await settle(10);
+  assert.equal(document.querySelector('.md')!.textContent, 'Cites Brief: the first sweep.');
+  assert.equal(document.querySelector('.picked')!.textContent, 'Brief: the first sweep');
+});
