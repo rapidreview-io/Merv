@@ -114,7 +114,7 @@
       "component": "code_commands",
       "version": 2,
       "hash": "7036dce7e43d9583067469539516922c9724c5a013a4470e01280e0fc230ce7c",
-      "published": false
+      "published": true
     },
     {
       "component": "code_github",
@@ -164,7 +164,7 @@
       "component": "code_publications",
       "version": 3,
       "hash": "f900510583f848d4c2edb563deecb7bc7cdd93f31db71dedca0197a0881af0d9",
-      "published": false
+      "published": true
     },
     {
       "component": "code_units",
@@ -466,7 +466,7 @@
       "component": "reviews",
       "version": 14,
       "hash": "67235b0d8d5160e1e9f69cc789680520e1bd04ff0264affb30a21c2450e0cc98",
-      "published": false
+      "published": true
     },
     {
       "component": "scope",
@@ -850,13 +850,13 @@
       "component": "sandboxes-native",
       "version": 1,
       "hash": "20bb7afa2dc67ad965818904e24c1c2d1f7e508d8988aa757772a8cafcd692cb",
-      "published": false
+      "published": true
     },
     {
       "component": "sandboxes-native",
       "version": 2,
       "hash": "dc316a6787960ca3cd117dc8201a4389c6856c14cc3c3761ef6bd8e96b537f42",
-      "published": false
+      "published": true
     },
     {
       "component": "sandboxes-native",
