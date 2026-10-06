@@ -167,7 +167,7 @@ export interface CodeWriters {
     tx: Transaction,
   ): Promise<void>;
 }
-/** The project's repository on the server's disk; refused where the server keeps none. */
+/** The project's repository on the server's disk. */
 export interface CodeRepositoryControls {
   /** Declare the project repository before creating new work. */
   ensureRepository(caller: Caller, tx: Transaction): Promise<void>;
@@ -297,8 +297,7 @@ export interface Code
   readonly github: import('@merv/contracts').CodeGitHub;
   /**
    * The workspace protocol, served below `/code/v2/`: a route with its JSON body, or the
-   * bytes of one part. Each parses what it receives. Absent where the server keeps no
-   * repositories, and once Code is closing.
+   * bytes of one part. Each parses what it receives. Absent once Code is closing.
    */
   readonly v2?: {
     call(caller: Caller, route: string, body: unknown): Promise<unknown>;

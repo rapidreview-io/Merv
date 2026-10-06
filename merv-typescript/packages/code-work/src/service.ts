@@ -76,11 +76,12 @@ export class CodeService implements Code {
   private captureReader!: CodeCaptureReader;
   private unitStore!: CodeUnitService;
   private readonly writerStore: CodeWriterService;
-  private store?: CodeStore;
-  private mirrorStore?: CodeMirrorService;
-  private transport?: MirrorTransport;
-  private baseStore?: CodeBaseService;
-  private protocol?: CodeWorkspaceProtocol;
+  // Set by initialize(); close() also runs after an initialization that failed half-way.
+  private store!: CodeStore;
+  private mirrorStore!: CodeMirrorService;
+  private transport!: MirrorTransport;
+  private baseStore!: CodeBaseService;
+  private protocol!: CodeWorkspaceProtocol;
   readonly github: CodeGitHubService;
   private publicationStore: CodePublicationService;
   private publicationHost: PublicationHost;
@@ -106,7 +107,7 @@ export class CodeService implements Code {
     private readonly workflows: Workflows,
     private readonly utility: Pick<
       CodeUtility,
-      'github' | 'writers' | 'units' | 'openStore' | 'declareManaged'
+      'github' | 'writers' | 'units' | 'openStore' | 'declareManaged' | 'repositories'
     >,
     private readonly repositories: CodeStoreOptions = {},
   ) {
@@ -116,10 +117,10 @@ export class CodeService implements Code {
     this.publicationHost = new PublicationHost(
       state,
       scope,
-      () => this.requireStore().repositories,
-      () => (this.requireStore(), this.transport!),
+      utility.repositories,
+      () => this.transport,
       async (caller, ref, oid) => {
-        const store = this.requireStore();
+        const store = this.store;
         if (await store.contains(caller.projectId, oid)) return;
         // A failed import is final under its request id, so each call past one starts the next
         // attempt. Code's operation journal holds every attempt, and so the bound.
@@ -174,7 +175,7 @@ export class CodeService implements Code {
       scope,
       sessions,
       this.writerStore,
-      async (projectId, base, head) => await this.store?.stats(projectId, base, head),
+      async (projectId, base, head) => await this.store.stats(projectId, base, head),
     );
     try {
       this.unitStore = await createService(
@@ -189,6 +190,19 @@ export class CodeService implements Code {
         ),
       );
       this.unitStore.publications = this.publicationStore;
+      // Bases come first: what the store's start finishes may derive units, which merge.
+      const bases = new CodeBaseService(state, utility.repositories, {
+        changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
+        sponsors: (tx, projectId, members) => this.unitStore.baseSponsors(tx, projectId, members),
+        serviceWork: sessions.serviceWork,
+        resolved: async (tx, projectId, key, commit) => {
+          await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
+          await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
+        },
+      });
+      await bases.initialize();
+      this.unitStore.bases = bases;
+      this.baseStore = bases;
       const opened = await utility.openStore(
         {
           imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
@@ -197,26 +211,11 @@ export class CodeService implements Code {
         },
         repositories,
       );
-      if (opened) {
-        const { store } = opened;
-        this.store = store;
-        this.mirrorStore = opened.mirror;
-        this.transport = opened.transport;
-        this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, store);
-        const bases = new CodeBaseService(state, store.repositories, {
-          changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
-          sponsors: (tx, projectId, members) => this.unitStore.baseSponsors(tx, projectId, members),
-          serviceWork: sessions.serviceWork,
-          resolved: async (tx, projectId, key, commit) => {
-            await this.unitStore.records.retainBaseResult(tx, projectId, key, commit);
-            await enqueueMirror(tx, projectId, 'mirror-base', key, commit);
-          },
-        });
-        await bases.initialize();
-        this.unitStore.bases = bases;
-        this.baseStore = bases;
-        bases.start();
-      }
+      this.store = opened.store;
+      this.mirrorStore = opened.mirror;
+      this.transport = opened.transport;
+      this.protocol = new CodeWorkspaceProtocol(state, sessions, this.writerStore, opened.store);
+      bases.start();
       await this.publicationStore.initialize();
       await migrateRepositorySync(state);
       // The first pass waits a period, so Reviews, which every publication checks, is bound;
@@ -304,13 +303,9 @@ export class CodeService implements Code {
       if (this.unitStore.reviews === reviews) this.unitStore.reviews = undefined;
     };
   }
-  /**
-   * The adapter that runs a project check. A deployment with no repository root keeps no
-   * bases, so there is nothing to check and nothing to unbind.
-   */
+  /** The adapter that runs a project check. */
   bindChecks(sandboxes: import('@merv/sandboxes/types').Sandboxes): () => void {
     const bases = this.baseStore;
-    if (!bases) return () => {};
     bases.checks = sandboxes.checks;
     return () => {
       if (bases.checks === sandboxes.checks) bases.checks = undefined;
@@ -339,7 +334,7 @@ export class CodeService implements Code {
   async acceptedSince(caller: Caller): Promise<CodeAcceptedSince> {
     caller = structuredClone(caller);
     const { main, candidates } = await this.unitStore.records.acceptedCandidates(caller);
-    const repositories = this.requireStore().repositories;
+    const repositories = this.utility.repositories;
     const commits = [...new Set(candidates.map((item) => item.commit))];
     const beyond = new Set<string>();
     if (commits.length) {
@@ -381,19 +376,17 @@ export class CodeService implements Code {
   async transitioned(...args: Parameters<CodeUnitService['transitioned']>) {
     await this.unitStore.transitioned(...args);
     // An acceptance journals the ref it is kept under; the journal takes it up after this.
-    this.store?.wake();
+    this.store.wake();
   }
   /** One maintenance pass now, as the timer would make it. */
-  maintainStore = async () => void (await this.store?.maintain());
+  maintainStore = async () => void (await this.store.maintain());
   /** One publication pass now, as the timer would make it. */
-  mirrorStep = async () => void (await this.mirrorStore?.run());
+  mirrorStep = async () => void (await this.mirrorStore.run());
   async controlBase(caller: Caller, input: unknown) {
-    check(this.baseStore, 'code_unavailable', 'Hosted bases are unavailable', 503);
     return this.baseStore.control(this.scope, caller, input);
   }
   async retryMirror(caller: Caller, input: unknown) {
-    this.requireStore();
-    return await this.mirrorStore!.retry(caller, input);
+    return await this.mirrorStore.retry(caller, input);
   }
   async requireLeasable(
     caller: Caller,
@@ -416,7 +409,7 @@ export class CodeService implements Code {
   }
   /** Every admitted upload of the unit is first given the chance to finish; then the fence. */
   async fenceUnit(caller: Caller, input: unknown) {
-    const store = this.requireStore();
+    const store = this.store;
     caller = structuredClone(caller);
     await store.maintain(false);
     const status = await this.state.transaction(async (tx) => {
@@ -435,7 +428,6 @@ export class CodeService implements Code {
     // Whether Code's repository holds the named commit is asked of Git before the transaction.
     const named = (input as { mainOid?: unknown } | null)?.mainOid;
     const stored =
-      !!this.store &&
       typeof named === 'string' &&
       /^[0-9a-f]{40,64}$/.test(named) &&
       (await this.store.contains(caller.projectId, named));
@@ -455,12 +447,10 @@ export class CodeService implements Code {
   async ensureRepository(caller: Caller, tx: Transaction): Promise<void> {
     await this.scope.require(caller, 'write', tx);
     if (await this.utility.units.hosted(caller, tx)) return;
-    const store = this.requireStore();
     await this.utility.declareManaged(tx, caller.projectId);
-    store.wake();
+    this.store.wake();
   }
   async projectCreated(projectId: string, tx: Transaction): Promise<void> {
-    if (!this.store) return;
     await this.utility.declareManaged(tx, projectId);
     this.store.wake();
   }
@@ -476,36 +466,28 @@ export class CodeService implements Code {
             },
           }
         : {};
-    if (!this.store) return { ...status, ...publication };
     const technical = await this.store.describe(caller.projectId);
     const configuredCheck = await this.state.read((sql) => projectCheck(sql, caller.projectId));
     return {
       ...status,
       ...publication,
-      bases: await this.state.read(
-        (sql) => this.baseStore?.records(sql, caller.projectId) ?? Promise.resolve([]),
-      ),
+      bases: await this.state.read((sql) => this.baseStore.records(sql, caller.projectId)),
       ...technical,
       store: { ...technical.store, limits: { ...technical.store.limits, check: configuredCheck } },
-      mirror: (await this.mirrorStore?.describe(caller.projectId)) ?? null,
+      mirror: await this.mirrorStore.describe(caller.projectId),
     };
   }
-  private requireStore(): CodeStore {
-    if (!this.store)
-      throw new MervError('code_store_unavailable', 'This server keeps no Code repositories', 503);
-    return this.store;
-  }
   importRepository = async (caller: Caller, input: unknown) =>
-    this.requireStore().importRepository(caller, input);
+    this.store.importRepository(caller, input);
   async prepareRepository(caller: Caller, value: CodeRepositoryPrepareInput) {
     caller = structuredClone(caller);
     const input = parseCodeInput(repositoryPrepareSchema, value);
     await this.state.transaction((tx) => this.ensureRepository(caller, tx));
-    await this.requireStore().maintain(false);
+    await this.store.maintain(false);
     return prepareRepository(this, caller, input, (operation) =>
       reconcileRepository(
         this.state,
-        this.requireStore().repositories,
+        this.utility.repositories,
         this.github,
         this.unitStore,
         caller,
@@ -516,7 +498,7 @@ export class CodeService implements Code {
   }
   /** The binding and hosting a preparation compares; status() reads far more than these. */
   async repositoryState(caller: Caller) {
-    const store = this.requireStore();
+    const store = this.store;
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
       const project = await this.utility.units.project(tx, caller.projectId);
@@ -524,12 +506,12 @@ export class CodeService implements Code {
     });
   }
   rebindRepository = async (caller: Caller, input: unknown) =>
-    this.requireStore().rebindRepository(caller, input);
+    this.store.rebindRepository(caller, input);
   configureRepository = async (caller: Caller, input: unknown) =>
-    configureWorkRepository(this.state, this.scope, this.requireStore(), caller, input);
+    configureWorkRepository(this.state, this.scope, this.store, caller, input);
   /**
    * The second workspace protocol as the API forwards it: opaque bodies and bundle bytes.
-   * Absent when this server keeps no repositories, which the API answers as unavailable.
+   * Absent once Code Work is closing, which the API answers as unavailable.
    */
   get v2() {
     return this.publicationClosed ? undefined : this.protocol;

@@ -15,6 +15,7 @@ import { LeasedSessions } from '@merv/sessions';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { CodeBaseService } from '@merv/code-work/bases';
 import { openState } from './state.js';
+import { codeConfig } from './code-binding.js';
 
 /**
  * The four branches off one main, committed once per test process: each fixture copies their
@@ -89,8 +90,12 @@ export async function baseFixture(t: TestContext) {
     writeFileSync(join(bare, 'refs', 'heads', branch), `${oid}\n`);
   const commits = seed.commits;
   await createService(new ArtifactStore(state, scope, new DiskBlobs(join(root, 'blobs'))));
-  const core = await createService(new CoreCodeService(state, scope, {}));
+  // Code Work only lays down its tables here; the tests drive their own base workers.
+  const core = await createService(
+    new CoreCodeService(state, scope, codeConfig(join(root, 'server'))),
+  );
   const code = await createService(new CodeService(state, scope, sessions, workflows, core));
+  await code.close();
   let changes = 0;
   const hooks = {
     changed: async () => void (changes += 1),

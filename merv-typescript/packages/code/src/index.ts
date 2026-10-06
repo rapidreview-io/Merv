@@ -14,17 +14,15 @@ const configuration = z
         quotaBytes: bytes.default(10 * 1024 ** 3),
         reservedFreeBytes: bytes.default(2 * 1024 ** 3),
       })
-      .strict()
-      .optional(),
+      .strict(),
   })
-  .strict()
-  .default({});
+  .strict();
 
 export const codePlugin = {
   name: 'merv-code',
   Config: configuration,
   inject: ['state', 'scope', 'domainEvents'],
-  async apply(ctx: Context, config: z.infer<typeof configuration> = {}) {
+  async apply(ctx: Context, config: z.infer<typeof configuration>) {
     await ctx.effect(async function* () {
       const service = await createService(
         new CodeService(ctx.state, ctx.scope, config, githubConfig()),

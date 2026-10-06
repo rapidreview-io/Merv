@@ -4,15 +4,20 @@ import { createService } from '@merv/contracts';
 import { CodeService } from '@merv/code/service';
 import { ProjectScope } from '@merv/scope';
 import { openState } from './fixtures/state.js';
-import { boundProject } from './fixtures/code-binding.js';
+import { boundProject, codeConfig } from './fixtures/code-binding.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('standalone Code stores writer inputs and retained commits without research tables', async (t) => {
   const state = await openState();
   const scope = await createService(new ProjectScope(state));
-  const code = await createService(new CodeService(state, scope, {}));
+  const root = mkdtempSync(join(tmpdir(), 'merv-code-core-'));
+  const code = await createService(new CodeService(state, scope, codeConfig(root)));
   t.after(async () => {
     await code.close();
     await state.close();
+    rmSync(root, { recursive: true, force: true });
   });
   const boot = await scope.credentials.bootstrap({
     projectName: 'Technical code',

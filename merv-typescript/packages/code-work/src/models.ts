@@ -371,7 +371,7 @@ export interface CodeProjectStatus {
   /** Shared base records and their retained admission and recovery state, when hosted. */
   bases?: CodeBaseRecord[];
   project: CodeProjectBinding | null;
-  /** Null when this server keeps no repositories. */
+  /** Null only in a server that predates required repositories. */
   store: CodeWorkStoreStatus | null;
   /** Every unfinished transfer or ref operation, oldest first, and the newest that failed. */
   operations: CodeStoreOperation[];

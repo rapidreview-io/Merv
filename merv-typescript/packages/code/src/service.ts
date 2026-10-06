@@ -22,7 +22,7 @@ import { CodeChanges } from './changes.js';
 
 export interface CodeConfiguration {
   finalizeGraceSeconds?: number;
-  repositories?: CodeRepositoryConfig;
+  repositories: CodeRepositoryConfig;
 }
 
 /**
@@ -56,7 +56,7 @@ export class CodeService {
   readonly units: CodeUnitStore;
   readonly writers: CodeWriterService;
   readonly github: CodeGitHubService;
-  readonly repositories?: CodeRepositories;
+  readonly repositories: CodeRepositories;
 
   constructor(
     private readonly state: State,
@@ -73,14 +73,14 @@ export class CodeService {
     );
     this.units = new CodeUnitStore(state, scope, this.writers);
     this.github = new CodeGitHubService(state, scope, github);
-    if (config.repositories) this.repositories = new CodeRepositories(config.repositories);
+    this.repositories = new CodeRepositories(config.repositories);
   }
 
   async initialize(): Promise<void> {
     try {
       await createService(this.units);
       await this.github.initialize();
-      await this.repositories?.open();
+      await this.repositories.open();
     } catch (error) {
       await this.close();
       throw error;
@@ -90,15 +90,9 @@ export class CodeService {
   /**
    * Build and start the repository store and its mirror, once the owner of work units can answer
    * their callbacks: a start first finishes what a crash left, which may derive units again.
-   * Nothing is started on a server that keeps no repositories.
    */
-  async openStore(
-    port: CodeStorePort,
-    options: CodeStoreOptions = {},
-  ): Promise<CodeStoreHandle | undefined> {
-    const repositories = this.repositories;
-    if (!repositories) return undefined;
-    const { github, writers } = this;
+  async openStore(port: CodeStorePort, options: CodeStoreOptions = {}): Promise<CodeStoreHandle> {
+    const { github, writers, repositories } = this;
     // Published only once it holds the writer lock and has finished what a crash left.
     const store = new CodeStore(
       this.state,
@@ -148,7 +142,7 @@ export class CodeService {
   async close(): Promise<void> {
     this.units.close();
     this.writers.close();
-    await this.repositories?.close(45_000);
+    await this.repositories.close(45_000);
     await this.github.close();
   }
 }

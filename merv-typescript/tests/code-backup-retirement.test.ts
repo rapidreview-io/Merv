@@ -8,7 +8,9 @@ test('a retired repository backup setting is refused while the configuration is 
   for (const plugin of [code, research]) {
     const repositories = { ...(plugin === code ? { root: '/unused' } : {}), backup: {} };
     assert.equal(plugin.Config.safeParse({ repositories }).success, false);
-    assert.ok(plugin.Config.safeParse({}).success);
+    assert.ok(
+      plugin.Config.safeParse(plugin === code ? { repositories: { root: '/unused' } } : {}).success,
+    );
   }
 });
 

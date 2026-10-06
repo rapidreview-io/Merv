@@ -229,7 +229,11 @@ export async function codeStoreFixture(
     credentialId: boot.credential.id,
   };
   // This fixture represents an existing runner-local binding, predating managed initialization.
-  core = await createService(new CoreCodeService(state, scope, {}));
+  core = await createService(
+    new CoreCodeService(state, scope, {
+      repositories: { root, quotaBytes: 10 * 1024 ** 3, reservedFreeBytes: 1, ...config },
+    }),
+  );
   code = await createService(new CodeService(state, scope, seen, workflows, core));
   await boundProject(state, admin.projectId, mainOid, 'fixture-repository');
   await open();

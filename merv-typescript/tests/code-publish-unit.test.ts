@@ -11,7 +11,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { CodeBaseService } from '../packages/code-work/src/bases.js';
-import { boundProject } from './fixtures/code-binding.js';
+import { boundProject, codeConfig } from './fixtures/code-binding.js';
 import { git, gitSource } from './fixtures/code-store.js';
 import { resolutionFixture } from './fixtures/resolution.js';
 import { githubFixture } from './github-fixture.js';
@@ -32,7 +32,9 @@ async function fixture(t: TestContext, connected = false, human = connected, imp
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
   const branches = remote?.branches ?? new Map<string, string>();
-  const legacyCore = await createService(new CoreCodeService(f.state, f.scope, {}));
+  const legacyCore = await createService(
+    new CoreCodeService(f.state, f.scope, codeConfig(join(f.directory, 'legacy-code'))),
+  );
   const legacy = await createService(
     new CodeService(f.state, f.scope, f.sessions, f.workflows, legacyCore),
   );

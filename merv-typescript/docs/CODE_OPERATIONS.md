@@ -128,7 +128,7 @@ What this adapter cannot guarantee is on every receipt and on the base card, nev
 
 [The Git model](GIT_MODEL.md) makes Code the shared remote for imported projects. Its repository, admission, writer generations, runner transfers and mirrors ship together. Binding alone leaves new work on the production versions; import selects the hosted versions.
 
-**Where it lives.** The `code` plugin takes `repositories.root` (default `${directory}/code`, on the data volume in a deployment). Without it the server keeps no repositories: `code.status` reports `store: null`, `code.repository.import` answers `code_store_unavailable`, and everything else of Code works as before. Beneath the root:
+**Where it lives.** The `code` plugin requires `repositories.root` (`${directory}/code` in the default configuration, on the data volume in a deployment). Beneath the root:
 
 ```text
 writer.sock                       the writer lock, held for the life of the process

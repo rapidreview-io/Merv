@@ -93,7 +93,7 @@ test('the second workspace protocol is forwarded unread, under the bounds of its
     ],
     [503, 'unavailable'],
   );
-  // Code that keeps no repositories offers the rest of its controls and not this protocol.
+  // Code that is closing offers the rest of its controls and not this protocol.
   const withdraw = f.register({ ...f.provider, v2: undefined });
   assert.deepEqual(
     [
@@ -388,51 +388,16 @@ test('code-import brings a local branch into a served project, in steps, as its 
   );
 });
 
-test('a server configured with no repository root keeps none, and everything else of Code works', async (t) => {
+test('a server configured with no repository root does not start', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-rootless-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
   config.plugins = config.plugins
     .filter(({ id }) => !['api', 'identity', 'ui'].includes(id) && !/-(api|ui)$/.test(id))
     .map((entry) => (entry.id === 'code' ? { id: entry.id, name: entry.name } : entry));
-  const app = await createApp({ directory, config });
-  t.after(async () => {
-    await app.stop();
-    rmSync(directory, { recursive: true, force: true });
-  });
-  const boot = await app.ctx.scope.credentials.bootstrap({
-    projectName: 'Rootless',
-    actorName: 'Owner',
-  });
-  const owner: Caller = {
-    projectId: boot.project.id,
-    actorId: boot.actor.id,
-    credentialId: boot.credential.id,
-  };
-  await boundProject(app.ctx.state, owner.projectId, 'a'.repeat(40));
-  const status = await app.ctx.codeWork.status(owner);
-  assert.deepEqual(
-    [status.store, status.operations, status.project!.durability],
-    [null, [], 'legacy-local'],
-  );
-  await assert.rejects(
-    app.ctx.codeWork.importRepository(owner, {
-      source: 'github',
-      ref: 'refs/heads/main',
-      requestId: 'r',
-    }),
-    { code: 'code_store_unavailable', status: 503 },
-  );
+  // Code's configuration requires the root, so Code fails and everything that needs it waits.
+  await assert.rejects(createApp({ directory, config }), /code \(@merv\/code\): failed/);
   assert.equal(existsSync(join(directory, 'code')), false);
-  await assert.rejects(
-    app.ctx.tasks.create(owner, {
-      title: 'T',
-      goal: 'G',
-      checks: ['C'],
-      workspace: 'git',
-      requestId: 't',
-    }),
-    { code: 'code_store_unavailable' },
-  );
 });

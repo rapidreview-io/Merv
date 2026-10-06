@@ -3,7 +3,6 @@ import { CodeService as CoreCodeService } from '@merv/code/service';
 import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
-import { mkdirSync } from 'node:fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
@@ -31,15 +30,18 @@ import { boundProject } from './fixtures/code-binding.js';
 async function fixture(t: TestContext, human = false) {
   const f = await resolutionFixture(t, { human });
   await f.sessions.dispatch.setDispatch(f.admin, { enabled: true });
-  const core = await createService(new CoreCodeService(f.state, f.scope, {}));
+  const root = join(f.directory, 'code');
+  const core = await createService(
+    new CoreCodeService(f.state, f.scope, {
+      repositories: { root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 },
+    }),
+  );
   const code = await createService(
     new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
   );
   const units = (code as unknown as { unitStore: CodeUnitService }).unitStore;
-  const root = join(f.directory, 'code');
-  // These tests exercise Git and database transactions, not the store's socket writer lock.
-  mkdirSync(join(root, 'tmp'), { recursive: true });
-  mkdirSync(join(root, 'empty-template'));
+  // These tests drive their own base worker, whose Git they watch: Code's own one stops.
+  await units.bases.close();
   const repositories = new CodeRepositories({ root, quotaBytes: 1024 ** 3, reservedFreeBytes: 1 });
   await repositories.ensure(f.admin.projectId, 'repository', 'sha1');
   const insideTransaction = new AsyncLocalStorage<boolean>();

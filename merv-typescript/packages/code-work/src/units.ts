@@ -78,8 +78,8 @@ const RECONCILED =
 export class CodeUnitService {
   /** The durable unit records this policy reads through and retains facts in. */
   readonly records: WorkUnitRecords;
-  /** Set once the project repositories exist; without it several commits are never merged. */
-  bases?: CodeBaseService;
+  /** Set by Code Work's start, before anything derives a unit: where several commits merge. */
+  bases!: CodeBaseService;
   /** The journal that carries an accepted unit to main; without it nothing publishes. */
   publications?: {
     openUnit(caller: Caller, input: CodeUnitPublicationSeal, tx: Transaction): Promise<void>;
@@ -118,7 +118,7 @@ export class CodeUnitService {
 
   reviewProvenance(projectId: string, taskId: string, tx: Transaction) {
     check(
-      !this.records.closed && this.bases,
+      !this.records.closed,
       'code_provenance_unverifiable',
       'Base provenance is unavailable',
       503,
@@ -171,7 +171,7 @@ export class CodeUnitService {
     projectId: string,
     unitId: string,
   ): Promise<WorkflowProvidedBlockerInput | null> {
-    const base = await this.bases?.forTask(tx, projectId, unitId);
+    const base = await this.bases.forTask(tx, projectId, unitId);
     if (!base || (!base.quarantined && !['suspended', 'cancelled'].includes(base.state)))
       return null;
     return {
@@ -377,7 +377,7 @@ export class CodeUnitService {
     const stored = await this.records.retainUnitAcceptance(caller, body, tx);
     if (!existing?.acceptance_hash && stored.publishes_at)
       await this.sealPublication(caller, relations.instance.name, stored, body, digest(body), tx);
-    this.bases?.soon(caller.projectId);
+    this.bases.soon(caller.projectId);
     return acceptance(stored)!;
   }
 
@@ -732,8 +732,6 @@ export class CodeUnitService {
       .map((item) => ({ kind: 'workflow', id: item.id, label: item.name }));
     // Several accepted commits are one base, made once for everyone who waits on that set.
     if (commits.size > 1) {
-      // Several commits only come from Code's repositories, which also make their base.
-      check(this.bases, 'code_store_unavailable', 'This server keeps no Code repositories', 503);
       const base = await this.bases.find(tx, projectId, commits.keys());
       const path = base ? await this.bases.path(tx, projectId, base.key) : [];
       const held = path.find(
@@ -934,7 +932,7 @@ export class CodeUnitService {
     // The first unit to wait on a set writes its record and plan; this is a writing path,
     // which a derivation itself never is.
     let prerequisites: string[] = [];
-    if (derived.status !== 'waiting' && derived.merge && this.bases) {
+    if (derived.status !== 'waiting' && derived.merge) {
       const base = await this.bases.ensure(tx, projectId, derived.merge);
       // Main is no unit's acceptance, so the lineage names it: a resolution of a clash with
       // main is then reviewed like any other, with main contributing no authors.
@@ -1000,7 +998,6 @@ export class CodeUnitService {
 
   /** Creation and linkage share the caller's transaction, so a crash never leaves an orphan. */
   private async resolveBases(tx: Transaction, projectId: string): Promise<void> {
-    if (!this.bases) return;
     for (const base of await this.bases.records(tx, projectId)) {
       if (base.state !== 'awaiting_resolution' || base.quarantined) continue;
       if (!base.resolutionTaskId && this.resolutionTasks) {
@@ -1058,7 +1055,7 @@ export class CodeUnitService {
     left: string,
     right: string,
   ): Promise<ResolutionWork> {
-    const records = await this.bases!.records(tx, projectId);
+    const records = await this.bases.records(tx, projectId);
     const units = new Map<string, ResolutionInput['units']>();
     for (const unit of await tx.all<UnitRow>(
       `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
@@ -1111,7 +1108,6 @@ export class CodeUnitService {
    * operator quarantined in its own right keeps its whole reach.
    */
   private async propagateQuarantine(tx: Transaction, projectId: string): Promise<void> {
-    if (!this.bases) return;
     const records = await this.bases.records(tx, projectId);
     // Generic Code consumers share storage but do not opt into work-unit quarantine policy.
     // With no quarantined base nothing is reached, so only units still marked need clearing.
@@ -1198,7 +1194,7 @@ export class CodeUnitService {
   private async reconcileProject(tx: Transaction, projectId: string): Promise<void> {
     await this.propagateQuarantine(tx, projectId);
     await this.resolveBases(tx, projectId);
-    for (const base of (await this.bases?.records(tx, projectId)) ?? []) {
+    for (const base of await this.bases.records(tx, projectId)) {
       if (!base.resolutionTaskId) continue;
       const blocker = await this.resolutionBlocker(tx, projectId, base.resolutionTaskId);
       if (blocker || base.operatorReason)
@@ -1219,7 +1215,6 @@ export class CodeUnitService {
 
   /** Rebuild projects whose facts may change while detached; `resolving`, those owed a task. */
   async reconcileAll(resolving = false): Promise<void> {
-    if (resolving && !this.bases) return;
     const projects = await this.state.read(async (sql) => {
       const ids = new Set(
         (
@@ -1246,7 +1241,7 @@ export class CodeUnitService {
    * those.
    */
   async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
-    if (this.bases && (await this.bases.forTask(tx, event.projectId, event.subjectId))) {
+    if (await this.bases.forTask(tx, event.projectId, event.subjectId)) {
       await this.reconcileProject(tx, event.projectId);
       return;
     }

@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { CodeService } from '@merv/code/service';
 import { CodeStore } from '@merv/code/store/operations';
 import { git, gitSource, openRepositories } from './fixtures/code-store.js';
-import { boundProject } from './fixtures/code-binding.js';
+import { boundProject, codeConfig } from './fixtures/code-binding.js';
 import {
   createService,
   MervError,
@@ -1664,7 +1664,9 @@ test('work-host Code transfers use only the unfinished assignment, including clo
   const root = mkdtempSync(join(tmpdir(), 'merv-managed-code-'));
   const source = gitSource(t);
   const head = source.commit({ 'tracked.txt': 'evidence' });
-  const core = await createService(new CodeService(f.state, f.scope, {}));
+  const core = await createService(
+    new CodeService(f.state, f.scope, codeConfig(join(root, 'core'))),
+  );
   await boundProject(f.state, f.owner.projectId, head);
   let finalized = 0;
   const repositories = await openRepositories(root);

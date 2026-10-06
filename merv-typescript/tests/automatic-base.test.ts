@@ -84,7 +84,11 @@ async function fixture(t: TestContext) {
   const sessions = await createService(
     new LeasedSessions(state, scope, workflows, events, { sweepIntervalMs: 60_000 }),
   );
-  const core = await createService(new CoreCodeService(state, scope, {}));
+  const core = await createService(
+    new CoreCodeService(state, scope, {
+      repositories: { root: join(directory, 'code'), quotaBytes: 1024 ** 3, reservedFreeBytes: 1 },
+    }),
+  );
   const code = await createService(new CodeService(state, scope, sessions, workflows, core));
   // The subscription the Code plugin makes, so a transition reaches Code as it does in the app.
   const unsubscribe = await events.subscribe({

@@ -53,7 +53,7 @@ export class PublicationHost {
   constructor(
     private state: State,
     private scope: Scope,
-    private repositories: () => CodeRepositories,
+    private repositories: CodeRepositories,
     private mirror: () => MirrorTransport,
     private imported: (caller: Caller, ref: string, oid: string) => Promise<void>,
     private binding: (caller: Caller, tx: Transaction) => Promise<GitHubBinding>,
@@ -141,7 +141,7 @@ export class PublicationHost {
     await this.changed(caller.projectId, tx);
   }
   async ancestor(projectId: string, base: string, head: string) {
-    const repos = this.repositories();
+    const repos = this.repositories;
     const result = await repos.git.run(['merge-base', '--is-ancestor', base, head], {
       env: repos.environment(projectId),
     });
@@ -154,7 +154,7 @@ export class PublicationHost {
     return result.code === 0;
   }
   private async retainSnapshot(caller: Caller, record: CodePublication) {
-    const repos = this.repositories();
+    const repos = this.repositories;
     const ref = `refs/merv/proposals/${record.proposalId}`;
     await repos.run(caller.projectId, async () => {
       const env = repos.environment(caller.projectId);
@@ -211,7 +211,7 @@ export class PublicationHost {
       'This is not a local integration',
       409,
     );
-    const repos = this.repositories();
+    const repos = this.repositories;
     const tree = (
       await repos.git.ok(['rev-parse', `${record.headOid}^{tree}`], {
         env: repos.environment(caller.projectId),
@@ -233,7 +233,7 @@ export class PublicationHost {
 
   async verify(caller: Caller, record: CodePublication, oid: string) {
     await this.import(caller, record, oid);
-    const repos = this.repositories();
+    const repos = this.repositories;
     const output = await repos.git.ok(['show', '-s', '--format=%T%n%P', oid], {
       env: repos.environment(caller.projectId),
     });

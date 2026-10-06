@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CodeService } from '@merv/code-work/service';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 
@@ -25,7 +24,7 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
   ]);
   config.plugins = config.plugins.filter(({ id }) => ids.has(id));
   for (const plugin of config.plugins)
-    if (plugin.id === 'code') plugin.config = { finalizeGraceSeconds };
+    if (plugin.id === 'code') plugin.config = { ...plugin.config, finalizeGraceSeconds };
     else if (plugin.id === 'code-work') plugin.config = {};
   const app = await createApp({ directory, config });
   t.after(async () => {
@@ -38,6 +37,9 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
     subject: 'owner',
     expiresAt: new Date(Date.now() + 3600_000).toISOString(),
   });
+  // A project bound to a machine's repository before Code initialized projects itself: Code
+  // Work, which initializes new projects, is away while it is created and bound.
+  await app.setEnabled('code-work', false);
   const project = await ctx.scope.members.createProject(principal, {
     name: 'Observed Code',
     requestId: 'project',
@@ -79,6 +81,7 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
       stored,
     );
   await bind('a', undefined, true);
+  await app.setEnabled('code-work', true);
   await ctx.state.transaction((tx) => ctx.codeWork.declareUnit(caller, workflow.id, tx));
   return {
     app,
@@ -93,8 +96,6 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
 
 test('direct core binding changes update research and detached adapters reconcile on reload', async (t) => {
   const f = await fixture(t);
-  assert.equal(f.ctx.code.repositories, undefined);
-  assert.equal((f.ctx.codeWork as CodeService).v2, undefined);
   assert.deepEqual(await f.blockers(), []);
   await f.bind('b', 'a');
   assert.equal((await f.blockers())[0]?.key, 'main');

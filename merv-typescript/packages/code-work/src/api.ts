@@ -186,7 +186,7 @@ function codeRoutes(code: CodeRoutes): MountHandler {
       if (!v2)
         throw new MervError(
           'code_store_unavailable',
-          'This server keeps no Code repositories',
+          'Code repositories are unavailable while Code closes',
           503,
         );
       if (part) return await v2.putPart(caller, part[1]!, Number(part[2]), body as Buffer);
