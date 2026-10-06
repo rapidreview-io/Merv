@@ -114,15 +114,16 @@ export type AgentStreamState = 'connecting' | 'open' | 'retrying' | 'ended' | 'r
  * dropped connection does after a wait that doubles with each failure, up to half a minute.
  * A stream the server rotates is opened again at once; one the server says has ended is left
  * closed. A snapshot that does not follow what is held (a reader that fell too far behind)
- * starts the timeline over, so no block is joined across what was missed.
+ * starts the timeline over, so no block is joined across what was missed. No url, no stream;
+ * a caller that streams another url remounts, so no timeline is carried from one to the other.
  */
-export function useAgentStream(url: string) {
+export function useAgentStream(url: string | null) {
   const held = useRef(NO_TIMELINE);
   const [timeline, setTimeline] = useState(NO_TIMELINE);
   const [state, setState] = useState<AgentStreamState>('connecting');
   const visible = useSyncExternalStore(onShown, shown);
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !url) return;
     let stopped = false;
     let failures = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;

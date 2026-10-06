@@ -8,7 +8,6 @@ import {
   type RunningAction,
   type RunningAttention,
   type RunningFact,
-  type RunningLinkRow,
   type RunningMark,
   type RunningNode,
   type RunningNodes,
@@ -23,7 +22,7 @@ import {
   type Transaction,
   type WorkRoute,
 } from '@merv/contracts';
-import type { AgentEvent, AgentStreamSession } from '@merv/contracts';
+import type { AgentEvent } from '@merv/contracts';
 import type { SessionDispatch } from './dispatch.js';
 import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';
@@ -36,7 +35,7 @@ import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from
 /**
  * The Running page's reading of Sessions: a node for every live lease and where it runs, the
  * lane's line about dispatch, the marks dispatch puts on work it holds back, the sidebar of a
- * lease, and the Sessions rows on the work a lease is on. Every read runs on the page's
+ * lease. What worked a record's stages is its threads (threads.ts), never a section here. Every read runs on the page's
  * read-only snapshot and only reads: nothing is reconciled, marked quiet or closed here, which
  * stays the sweep's. A frozen assignment can be half a megabyte, so a lease row is parsed once,
  * in SQL, for the few fields a face needs, and never decoded whole.
@@ -51,8 +50,6 @@ const movingAfterMs = 5000;
 /** The most of a brief the sidebar carries, cut at a line end. */
 const briefCap = 16_000;
 const callLimit = 50;
-/** The most sessions a unit's live view lists. */
-const agentLimit = 20;
 const ROLES: Record<SessionRole, string> = {
   producer: 'Producer',
   reviewer: 'Reviewer',
@@ -221,18 +218,6 @@ export function leaseNode(
     links: [{ to: runningKey('work', lease.instanceId), verb: VERBS[lease.role] }],
     ...(lease.fleet ? { aliases: [runningKey('fleet', lease.fleet)] } : {}),
     rank,
-  };
-}
-
-/** A lease as a row of the work it is on, saying what its node says. */
-function leaseRow(lease: Lease, now: number, idleNoticeSeconds: number): RunningLinkRow {
-  const { line, attention } = face(lease, now, idleNoticeSeconds);
-  return {
-    to: { key: runningKey('session', lease.id) },
-    kind: ROLES[lease.role],
-    name: lease.fleet ? 'a Fleet VM' : ellipsis(lease.machine?.hostname ?? 'an agent', 200),
-    says: attention?.says ?? line,
-    ...(attention ? { attention: true } : {}),
   };
 }
 
@@ -412,22 +397,13 @@ export class SessionRunning {
       fn(tx, (await this.scope.require(caller, 'read', tx)).role === 'operator'),
     );
   }
-  /** The project's live leases, or those on some instances, oldest first, at most 200. */
-  private async leases(
-    tx: Transaction,
-    projectId: string,
-    operator: boolean,
-    instanceIds?: readonly string[],
-  ): Promise<Lease[]> {
-    const within = instanceIds
-      ? ` AND s.instance_id IN (${instanceIds.map(() => '?').join(',')})`
-      : '';
+  /** The project's live leases, oldest first, at most 200. */
+  private async leases(tx: Transaction, projectId: string, operator: boolean): Promise<Lease[]> {
     return await this.facts(
       tx,
       await tx.all<LeaseRow>(
-        `SELECT ${LEASE} ${FROM} WHERE s.project_id=? AND s.status IN ('offered','active')${within} ORDER BY s._merv_rowid LIMIT 200`,
+        `SELECT ${LEASE} ${FROM} WHERE s.project_id=? AND s.status IN ('offered','active') ORDER BY s._merv_rowid LIMIT 200`,
         projectId,
-        ...(instanceIds ?? []),
       ),
       operator,
     );
@@ -541,79 +517,6 @@ export class SessionRunning {
       const reading = await this.dispatcher.running(caller, tx);
       return { marks: dispatchMarks(reading), summary: laneSummary(reading) };
     });
-  }
-
-  /** The leases on some work, as one Sessions section of that work's sidebar. */
-  async work(caller: Caller, instanceIds: readonly string[]): Promise<RunningSection[]> {
-    this.enter(caller);
-    check(
-      Array.isArray(instanceIds) && instanceIds.every((id) => text(id)),
-      'invalid_instance',
-      'Instance identifiers are required',
-    );
-    const ids = [...new Set(instanceIds)].slice(0, 64);
-    if (!ids.length) return [];
-    return await this.read(caller, async (tx, operator) => {
-      const now = this.clock();
-      const rows = (await this.leases(tx, caller.projectId, operator, ids)).map((lease) =>
-        leaseRow(lease, now, this.thresholds.idleNoticeSeconds),
-      );
-      const sections: RunningSection[] = rows.length
-        ? [
-            {
-              title: 'Sessions',
-              place: 'activity',
-              kind: 'links',
-              rows,
-              ...(rows.some((row) => row.attention) ? { attention: true } : {}),
-            },
-          ]
-        : [];
-      // What its agents think and call, read live: an operator's, as a lease's brief is.
-      const agents = operator ? await this.agents(tx, caller.projectId, ids) : [];
-      if (agents.length)
-        sections.push({ title: 'Agent', place: 'activity', kind: 'agent', sessions: agents });
-      return sections;
-    });
-  }
-
-  /** The sessions on some work, newest first, each with the route that reads its stream. Only
-   *  the listed rows' frozen JSON is parsed. */
-  private async agents(
-    tx: Transaction,
-    projectId: string,
-    instanceIds: readonly string[],
-  ): Promise<AgentStreamSession[]> {
-    const rows = await tx.all<{
-      id: string;
-      status: LeaseRow['status'];
-      state: string;
-      role: SessionRole;
-      created_at: string;
-      activated_at: string | null;
-      closed_at: string | null;
-      continues: string | null;
-    }>(
-      `SELECT s.id,s.status,x.j #>> '{execution,state}' AS state,x.j #>> '{role}' AS role,
-        x.j #>> '{createdAt}' AS created_at,x.j #>> '{activatedAt}' AS activated_at,
-        x.j #>> '{closedAt}' AS closed_at,x.j #>> '{continuity,resume,sessionId}' AS continues
-        FROM (SELECT id,status,session_json,_merv_rowid FROM worker_sessions
-          WHERE project_id=? AND instance_id IN (${instanceIds.map(() => '?').join(',')})
-          ORDER BY _merv_rowid DESC LIMIT ${agentLimit}) s
-        CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x ORDER BY s._merv_rowid DESC`,
-      projectId,
-      ...instanceIds,
-    );
-    return rows.map((row) => ({
-      sessionId: row.id,
-      state: row.state,
-      role: row.role,
-      live: row.status === 'offered' || row.status === 'active',
-      startedAt: row.activated_at ?? row.created_at,
-      ...(row.closed_at ? { endedAt: row.closed_at } : {}),
-      ...(row.continues ? { continues: row.continues } : {}),
-      events: `/sessions/${encodeURIComponent(row.id)}/events`,
-    }));
   }
 
   /**

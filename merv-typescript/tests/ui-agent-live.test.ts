@@ -1,6 +1,6 @@
 /**
- * The live agent in a unit's sidebar: its sessions, and the chosen one's stream read from a
- * fake server-sent event body. Each test states one thing a person reading it relies on: a
+ * What a thread's agent said, in its dialog: the live visit's stream read from a fake
+ * server-sent event body. Each test states one thing a person reading it relies on: a
  * block written in pieces reads as one, a tool's answer stands under its call, thinking stays
  * folded until asked for, a dropped stream picks up where it left off without repeating
  * itself, and a stream nobody is looking at is closed.
@@ -23,31 +23,27 @@ const { createElement, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { MemoryRouter } = await import('react-router-dom');
 await import('../packages/ui/web/components.js');
-const { AgentLive } = await import('../packages/ui/web/views/agent-live.js');
+const { AgentConversation } = await import('../packages/ui/web/views/agent-live.js');
 const { mergeEvents, NO_TIMELINE } = await import('../packages/ui/web/agent-stream.js');
 
 const at = new Date().toISOString();
-const session = (id: string, over: Record<string, unknown> = {}) => ({
+/** A thread's one live visit, streamed from its session's route. */
+const session = (id: string) => ({
   sessionId: id,
-  state: 'in_progress',
-  role: 'producer',
-  live: true,
-  startedAt: at,
-  events: `/sessions/${id}/events`,
-  ...over,
+  divider: 'Visit 1',
+  stream: `/sessions/${id}/events`,
 });
 let seq = 0;
 const event = (value: Record<string, unknown>) => ({ seq: ++seq, at, event: value });
 
-/** The panel's agent section, and a way to shut the panel as the Work page does. */
-function Panel({ sessions }: { sessions: unknown[] }) {
+/** The conversation, and a way to shut it as its dialog does. */
+function Panel({ sessions }: { sessions: ReturnType<typeof session>[] }) {
   const [open, setOpen] = useState(true);
   return createElement(
     MemoryRouter,
     null,
     createElement('button', { onClick: () => setOpen(false) }, 'Close panel'),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    open && createElement(AgentLive as any, { sessions }),
+    open && createElement(AgentConversation, { label: 'Producer', visits: sessions }),
   );
 }
 /** Serves each request of a path the next of these streams. */
@@ -102,7 +98,10 @@ test('pieces of one block read as one, and a tool’s answer stands under its ca
   assert.equal(tool.querySelector('.agent-tool-state'), null, 'answered, so no longer running');
   assert.ok(tool.querySelector('.agent-output .code-body')!.textContent!.includes('ok'));
   assert.ok(!tool.textContent!.includes('\x1b'));
-  assert.equal(document.querySelector('.agent-status')!.textContent, 'Finished · 1,204 tokens');
+  assert.equal(
+    document.querySelector('.agent-status:not(.agent-visit)')!.textContent,
+    'Finished · 1,204 tokens',
+  );
 
   // Opened, thinking is read whole.
   await act(async () => {
@@ -193,34 +192,6 @@ test('a hidden tab closes the stream, and showing it again reopens it from the l
   assert.ok(requests.includes('GET /sessions/ses_3/events?after=1'));
 });
 
-test('the sessions are chips, newest first, each naming what it continues; choosing one reads it instead', async (t) => {
-  t.after(async () => await unmount());
-  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
-  streams('/sessions/ses_new/events', 1);
-  streams('/sessions/ses_old/events', 1);
-  await mount(
-    createElement(Panel, {
-      sessions: [
-        session('ses_new', { state: 'in_progress', continues: 'ses_old' }),
-        session('ses_old', { state: 'in_review', role: 'reviewer', live: false, endedAt: at }),
-      ],
-    }),
-  );
-  const chips = [...document.querySelectorAll<HTMLButtonElement>('.agent-chip')];
-  assert.deepEqual(
-    chips.map((chip) => chip.getAttribute('aria-pressed')),
-    ['true', 'false'],
-    'the live session is read first',
-  );
-  assert.match(chips[0]!.textContent!, /^Producer · in progresscontinues Reviewer · in review/);
-  assert.ok(chips[0]!.querySelector('.live-dot--live'));
-  assert.equal(chips[1]!.querySelector('.live-dot'), null, 'an ended session has no dot');
-  await act(async () => chips[1]!.click());
-  await settle(10);
-  assert.ok(requests.includes('GET /sessions/ses_old/events'));
-  assert.deepEqual(aborted, ['/sessions/ses_new/events']);
-});
-
 test('a snapshot after a gap starts the timeline over, and nothing is joined across the gap', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/ui.shell', { body: { result: { rows: [] } } });
@@ -243,17 +214,17 @@ test('a snapshot after a gap starts the timeline over, and nothing is joined acr
   await settle(10);
   assert.deepEqual(
     [...document.querySelectorAll('.agent-blocks > li')].map((node) => node.textContent),
-    ['Turn completed', 'END'],
+    ['Visit 1', 'Turn completed', 'END'],
   );
 });
 
-test('a stream reads on through rotations until the server says it ended, live or not', async (t) => {
+test('a stream reads on through rotations until the server says it ended', async (t) => {
   t.after(async () => await unmount());
   serve('/tools/ui.shell', { body: { result: { rows: [] } } });
-  // An ended session still takes its agent's last words for a while: it rotates, not ends.
+  // A session that ends still takes its agent's last words for a while: it rotates, not ends.
   const [first] = streams('/sessions/ses_5/events', 1);
   const [second] = streams('/sessions/ses_5/events?after=1', 2);
-  await mount(createElement(Panel, { sessions: [session('ses_5', { live: false })] }));
+  await mount(createElement(Panel, { sessions: [session('ses_5')] }));
   first!.send('snapshot', {
     events: [{ seq: 1, at, event: { kind: 'text', id: 'a', delta: 'One.', done: true } }],
   });
@@ -324,7 +295,7 @@ test('a transcript of many tool calls names their records in one request', async
     createElement(
       MemoryRouter,
       null,
-      createElement(AgentLive, { sessions: [session('ses_names')] } as never),
+      createElement(AgentConversation, { label: 'Producer', visits: [session('ses_names')] }),
     ),
   );
   stream.send('snapshot', {
@@ -339,4 +310,48 @@ test('a transcript of many tool calls names their records in one request', async
   });
   await settle(50);
   assert.equal(requests.filter((r) => r === 'POST /tools/project.references').length, 1);
+});
+
+test('a tool’s JSON answer is laid out two spaces deep, folded once it is long, and keeps its controls', async (t) => {
+  t.after(async () => await unmount());
+  // jsdom has no clipboard, and the copy control is drawn only where there is one.
+  Object.defineProperty(navigator, 'clipboard', {
+    value: { writeText: async () => undefined },
+    configurable: true,
+  });
+  t.after(() => void delete (navigator as { clipboard?: unknown }).clipboard);
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  seq = 0;
+  const [stream] = streams('/sessions/ses_json/events', 1);
+  await mount(createElement(Panel, { sessions: [session('ses_json')] }));
+  const task = Object.fromEntries(Array.from({ length: 20 }, (_, at) => [`field_${at}`, at]));
+  stream!.send('snapshot', {
+    events: [
+      event({ kind: 'tool_call', id: 'short', name: 'task.status', input: '{}' }),
+      event({ kind: 'tool_result', id: 'short', output: '{"state":"done","ok":true}' }),
+      event({ kind: 'tool_call', id: 'long', name: 'task.get', input: '{}' }),
+      event({ kind: 'tool_result', id: 'long', output: JSON.stringify(task) }),
+    ],
+  });
+  await settle(10);
+  const [short, long] = [...document.querySelectorAll('.agent-output')];
+  // Short: open, one key a line, with the code block's wrap and copy controls.
+  assert.equal(short!.tagName, 'DIV');
+  assert.equal(
+    short!.querySelector('.code-body')!.textContent,
+    '{\n  "state": "done",\n  "ok": true\n}',
+  );
+  assert.ok(short!.querySelector('[aria-label="Wrap long lines"]'));
+  assert.ok(short!.querySelector('[aria-label="Copy"]'));
+  // Long: folded to its line count until it is opened, then laid out the same way.
+  const fold = long as HTMLDetailsElement;
+  assert.equal(fold.tagName, 'DETAILS');
+  assert.equal(fold.querySelector('summary')!.textContent, 'Output · 22 lines');
+  await act(async () => {
+    fold.open = true;
+    fold.dispatchEvent(new window.Event('toggle'));
+  });
+  assert.ok(fold.querySelector('.code-body')!.textContent!.includes('\n  "field_19": 19\n}'));
+  // What is not JSON stays the terminal's text it was.
+  assert.equal(document.querySelectorAll('.agent-tool').length, 2);
 });

@@ -48,6 +48,11 @@ export const useSession = (): Session => {
  */
 export const writes = (actor: Pick<Actor, 'role'>) =>
   actor.role === 'operator' || actor.role === 'producer';
+/**
+ * Whether this reader may read what agents say: Sessions' own test for the live stream and a
+ * thread's conversation, the reader's Scope role being operator. Outside a session, no one.
+ */
+export const useReadsAgents = () => useContext(SessionContext)?.actor.role === 'operator';
 /** The identity a page's own state belongs to: when it changes, the page starts again. */
 export const useScopeKey = () => {
   const epoch = useScopeVersion();

@@ -29,21 +29,6 @@ export interface AgentStreamEvent {
   event: AgentEvent;
 }
 
-/** One session of a unit of work, as its panel lists them for the live view. */
-export interface AgentStreamSession {
-  sessionId: string;
-  /** The responsibility it holds, in the workflow's own words: the state and the role. */
-  state: string;
-  role: string;
-  live: boolean;
-  startedAt: string;
-  endedAt?: string;
-  /** The session whose conversation this one continues, where it resumed one. */
-  continues?: string;
-  /** A same-origin path, read with GET (server-sent events: `snapshot`, then `events`); Sessions serves /sessions/:id/events. */
-  events: string;
-}
-
 // ─── Reading a harness's own output as AgentEvents ─────────────────────────────────────────
 // The runner reads its agent's log with these as it streams; Sessions reads a stored transcript
 // back with the same readers, so a visit whose stream was pruned reads as it streamed.

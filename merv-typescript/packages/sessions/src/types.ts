@@ -9,7 +9,6 @@ import type {
   RunningMark,
   RunningNodes,
   RunningPanelPart,
-  RunningSection,
   RunningSummary,
   SessionUsageReport,
   WorkflowAssignment,
@@ -460,8 +459,6 @@ export interface SessionRunningReads {
   marks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }>;
   /** A lease's sidebar, any status; null for a lease the project does not hold. */
   panel(caller: Caller, sessionId: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
-  /** The Sessions section of the given work's sidebar: the live leases on those instances. */
-  work(caller: Caller, instanceIds: readonly string[]): Promise<RunningSection[]>;
 }
 export interface ManagedRunners {
   registerValidator(validator: ManagedRunnerValidator): () => void;

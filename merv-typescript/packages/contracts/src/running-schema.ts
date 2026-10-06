@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import type { AgentStreamSession } from './agent-stream.js';
 import type { Json } from './data.js';
 import { runningKeyPattern, sameOriginPath } from './running.js';
 import { visible } from './text.js';
@@ -401,19 +400,6 @@ export const runningStreamItem = byFirstKey(
     }),
   ]),
 );
-/** One session of the live view: its words, its times and the route that reads its stream. */
-const agentSession: z.ZodType<AgentStreamSession, z.ZodTypeDef, AgentStreamSession> = z
-  .object({
-    sessionId: words(200),
-    state: words(200),
-    role: words(40),
-    live: z.boolean(),
-    startedAt: instant,
-    endedAt: instant.optional(),
-    continues: words(200).optional(),
-    events: words(300).refine(sameOriginPath),
-  })
-  .transform(lean);
 /** The workflow drawn with the record's place in it (UI_DESIGN: workflows are drawn). */
 const processGraph = z.custom<ProcessGraph>(
   (graph) =>
@@ -464,8 +450,6 @@ export const runningSection = z
       items: kept(runningStreamItem, 60),
       total: count(),
     }),
-    /** The unit's agent sessions, newest first, each read live (operators only). */
-    z.object({ ...frame, kind: z.literal('agent'), sessions: kept(agentSession, 20) }),
   ])
   .transform((section, context) => {
     const shown =
@@ -480,9 +464,7 @@ export const runningSection = z
         ? true
         : shown.kind === 'stream'
           ? shown.items.length > 0 || shown.total > 0
-          : shown.kind === 'agent'
-            ? shown.sessions.length > 0
-            : shown.rows.length > 0;
+          : shown.rows.length > 0;
     if (said) return lean(shown);
     context.addIssue({ code: 'custom', message: 'The section says nothing' });
     return z.NEVER;

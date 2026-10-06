@@ -446,24 +446,6 @@ test('a lease quiet past the idle notice needs a person, and so does one whose m
   assert.equal(panel.sections[0].title, 'Machine');
   assert.deepEqual(facts(panel, 'Machine').Presence, ['offline · last seen ', { ago: seen }]);
   assert.ok(facts(panel, 'Lease')['Lapses'], 'a lease nothing renews says when it lapses');
-
-  // Its row on the work it is on says what its node says.
-  const [rows] = await f.sessions.running.work(f.reader, [session.instanceId]);
-  assert.deepEqual(rows, {
-    title: 'Sessions',
-    place: 'activity',
-    kind: 'links',
-    rows: [
-      {
-        to: { key },
-        kind: 'Producer',
-        name: 'mac-studio',
-        says: ['Machine offline · last seen ', { ago: seen }],
-        attention: true,
-      },
-    ],
-    attention: true,
-  });
 });
 
 test('a revoked key reads as such, and a lease with no runner row is never red for its machine', () => {
@@ -855,7 +837,6 @@ test('a short stream carries the lease’s own moments, and a lease is offered o
     () => f.sessions.running.nodes(worker),
     () => f.sessions.running.marks(worker),
     () => f.sessions.running.panel(worker, leased.id),
-    () => f.sessions.running.work(worker, [leased.instanceId]),
   ])
     await assert.rejects(read(), { status: 403 });
   await assert.rejects(f.board(worker), { code: 'running_forbidden' });

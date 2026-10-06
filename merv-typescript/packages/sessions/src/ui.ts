@@ -32,7 +32,7 @@ export const sessionsUiPlugin = {
         },
       }),
     );
-    // The Running page's Sessions lane, the lease sidebars and the Sessions rows on work. The
+    // The Running page's Sessions lane and the lease sidebars. The
     // marks and the lane's line are one reading of dispatch, taken once per answer.
     const dispatch = (read: RunningRead) =>
       read.once('dispatch', () => ctx.sessions.running.marks(read.caller));
@@ -48,10 +48,6 @@ export const sessionsUiPlugin = {
           keyKind(key) === 'session'
             ? await ctx.sessions.running.panel(read.caller, keyId(key), read.route)
             : null,
-        sections: async (read, keys) => {
-          const work = keys.filter((key) => keyKind(key) === 'work').map(keyId);
-          return work.length ? await ctx.sessions.running.work(read.caller, work) : [];
-        },
       }),
     );
   },

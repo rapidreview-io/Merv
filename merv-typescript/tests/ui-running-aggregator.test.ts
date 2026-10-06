@@ -915,23 +915,10 @@ test('sections that break the contract or say nothing are left out, row by row w
     sectionOf({ ...frame, kind: 'ladder', graph: { state: 'x', nodes: [], edges: [] } }),
     null,
   );
-  // An agent's stream is read from any same-origin path, and never from another host.
-  const agent = (events: string) =>
-    sectionOf({
-      ...frame,
-      kind: 'agent',
-      sessions: [
-        {
-          sessionId: 's',
-          state: 'x',
-          role: 'producer',
-          live: true,
-          startedAt: '2026-10-05T00:00:00.000Z',
-          events,
-        },
-      ],
-    });
-  assert.equal((agent('/pi/s/events') as { sessions: unknown[] }).sessions.length, 1);
+  // A route is any same-origin path, and never another host.
+  const routed = (route: string) =>
+    sectionOf({ ...frame, kind: 'links', rows: [{ to: { route }, name: 'x' }] });
+  assert.ok(routed('/pi/s/events'));
   for (const events of [
     '//evil.test/x',
     '/\\evil.test/x',
@@ -945,10 +932,10 @@ test('sections that break the contract or say nothing are left out, row by row w
     '/\u0000/evil.test/x',
     '/a\\b',
   ])
-    assert.equal(agent(events), null, JSON.stringify(events));
+    assert.equal(routed(events), null, JSON.stringify(events));
   // An encoded slash is a path on this host, never a second one.
   const encoded = '/%2F%2Fevil.test/x';
-  assert.equal((agent(encoded) as { sessions: unknown[] }).sessions.length, 1);
+  assert.ok(routed(encoded));
   assert.equal(new URL(encoded, 'https://merv.app').origin, 'https://merv.app');
 });
 

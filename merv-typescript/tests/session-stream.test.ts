@@ -368,9 +368,9 @@ test('a closed session still takes its agent’s last words within its grace', a
   assert.equal(rows.length, 2);
 });
 
-test('a unit’s sidebar lists its sessions for an operator alone, and a lease’s line says what its agent does', async (t) => {
+test('a lease’s line says what its agent does', async (t) => {
   const f = await fixture(t);
-  const { session, instance, control, secret: worker } = await f.leased();
+  const { session, control, secret: worker } = await f.leased();
   await f.app.ctx.sessions.authenticate(worker); // the worker takes it up
   const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
     name: 'Reader',
@@ -381,29 +381,6 @@ test('a unit’s sidebar lists its sessions for an operator alone, and a lease�
     projectId: f.owner.projectId,
     credentialId: reader.credential.id,
   };
-  const operatorSections = await f.app.ctx.sessions.running.work(f.owner, [instance.id]);
-  const agent = operatorSections.find((section) => section.kind === 'agent');
-  assert.ok(agent && agent.kind === 'agent');
-  assert.deepEqual(
-    agent.sessions.map(({ startedAt, ...rest }) => ({ ...rest, startedAt: typeof startedAt })),
-    [
-      {
-        sessionId: session.id,
-        state: 'working',
-        role: 'producer',
-        live: true,
-        startedAt: 'string',
-        events: `/sessions/${session.id}/events`,
-      },
-    ],
-  );
-  const readerSections = await f.app.ctx.sessions.running.work(readerCaller, [instance.id]);
-  assert.equal(
-    readerSections.find((section) => section.kind === 'agent'),
-    undefined,
-    'the live view is an operator’s',
-  );
-
   // The lease's node says what its agent does now, from the newest event.
   const line = async () =>
     (await f.app.ctx.sessions.running.nodes(f.owner)).nodes.find(
