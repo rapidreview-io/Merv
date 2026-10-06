@@ -283,13 +283,14 @@ export class NativeEvidence {
           tx,
         );
         await tx.run(
-          `INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,artifact_id)
-         VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING`,
+          `INSERT INTO sandbox_native_captures(connection_id,namespace,workflow_id,node_id,artifact_id,attempt_ref)
+         VALUES(?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
           connection.id,
           workflow.namespace,
           workflow.id,
           node.id,
           artifact.id,
+          workflow.attempt_ref ?? null,
         );
       });
     }

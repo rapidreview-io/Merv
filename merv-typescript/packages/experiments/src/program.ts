@@ -1209,12 +1209,7 @@ export abstract class ExperimentProgram {
               : figures.has(id)
                 ? { note: 'figure' }
                 : {}),
-            refs: [
-              { tool: 'artifact.read', input: { artifactId: id } },
-              ...(id === exhibit
-                ? [{ tool: 'experiment.exhibit', input: { experimentId: experiment.id } }]
-                : []),
-            ],
+            refs: [{ tool: 'artifact.read', input: { artifactId: id } }],
           };
         },
       );

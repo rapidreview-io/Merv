@@ -243,16 +243,28 @@ export class NativeWorkService {
       leaseId,
     );
   }
-  /** Only collections verified and registered by this instance's evidence bridge. */
-  async captures(project: string, instanceId: string, tx: Transaction): Promise<string[]> {
+  /**
+   * Only collections verified and registered by this instance's evidence bridge, and with
+   * `attempts` only those captured under one of these epochs. A capture registered before
+   * captures recorded their epoch answers for any.
+   */
+  async captures(
+    project: string,
+    instanceId: string,
+    tx: Transaction,
+    attempts?: string[],
+  ): Promise<string[]> {
     this.state.assertTransaction(tx);
     return (
       await tx.all<{ artifact_id: string }>(
         `SELECT DISTINCT c.artifact_id FROM sandbox_native_captures c
       JOIN sandbox_native_work w ON w.connection_id=c.connection_id AND w.namespace=c.namespace
-      WHERE w.project_id=? AND w.work_id=? ORDER BY c.artifact_id`,
+      WHERE w.project_id=? AND w.work_id=? AND (CAST(? AS TEXT) IS NULL OR c.attempt_ref IS NULL
+      OR c.attempt_ref IN (SELECT jsonb_array_elements_text(CAST(? AS jsonb)))) ORDER BY c.artifact_id`,
         project,
         instanceId,
+        attempts ? 'some' : null,
+        JSON.stringify(attempts ?? []),
       )
     ).map((r) => r.artifact_id);
   }

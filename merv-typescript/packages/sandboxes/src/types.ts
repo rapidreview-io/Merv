@@ -242,8 +242,14 @@ export interface Sandboxes {
   /**
    * The artifact collections native compute verified and registered for one workflow
    * instance, in the caller's transaction. Empty where native compute is not configured.
+   * `attempts` keeps only those captured under one of these compute epochs.
    */
-  captures(projectId: string, instanceId: string, tx: Transaction): Promise<string[]>;
+  captures(
+    projectId: string,
+    instanceId: string,
+    tx: Transaction,
+    attempts?: string[],
+  ): Promise<string[]>;
   nativeMachines?: import('./native-types.js').NativeMachineReads;
   /** Rows from the last accepted manifest, already named and routed for the UI registry. */
   rows(): SandboxRow[];

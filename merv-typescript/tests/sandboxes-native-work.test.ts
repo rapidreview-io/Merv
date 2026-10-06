@@ -298,6 +298,15 @@ test('native work pins one payer and returns only verified capture IDs from the 
     );
     assert.deepEqual(await f.work.captures('project', 'task_work', tx), ['verified']);
     assert.deepEqual(await f.work.captures('other', 'task_work', tx), []);
+    // An owner may ask for the captures of some attempts only; a row registered before captures
+    // recorded their attempt answers for any.
+    await tx.run(
+      "INSERT INTO sandbox_native_captures VALUES('connection','ns_work','wf2','node','current','2'),('connection','ns_work','wf3','node','earlier','1')",
+    );
+    assert.deepEqual(await f.work.captures('project', 'task_work', tx, ['2']), [
+      'current',
+      'verified',
+    ]);
   });
   assert.equal(f.calls.length, 0);
 });

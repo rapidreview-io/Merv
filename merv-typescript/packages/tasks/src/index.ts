@@ -2988,7 +2988,26 @@ export class TaskService implements Tasks {
           current,
           {
             action,
-            input: { ...input },
+            // Reviews keeps the whole verdict. The move carries the verdict, its notes and each
+            // criterion's status, never their evidence, so a verdict Reviews accepts always fits
+            // the workflow's own input limit.
+            input: {
+              reviewId: input.reviewId,
+              claimId: input.claimId,
+              verdict: input.verdict,
+              expectedRevision: input.expectedRevision,
+              requestId: input.requestId,
+              ...(input.notes === undefined ? {} : { notes: input.notes }),
+              ...(input.synopsis === undefined ? {} : { synopsis: input.synopsis }),
+              ...(input.findings === undefined
+                ? {}
+                : {
+                    findings: input.findings.map(({ criterionNumber, status }) => ({
+                      criterionNumber,
+                      status,
+                    })),
+                  }),
+            },
             requestId: childRequest(caller, 'task', 'review', input.requestId),
             data: {
               verdict: input.verdict,

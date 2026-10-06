@@ -58,7 +58,9 @@ beginning of the event log and are safe to replay: `sandboxes.native-leases.v1` 
 closed session's assignment, and `sandboxes.native-work.v1` moves pinned work to its instance's
 current epoch on every `workflow.transition` (only ever forward, cancelling the older attempt's
 jobs and access) and closes it on the terminal move. Units read retained evidence with
-`ctx.sandboxes.captures(projectId, instanceId, tx)`. The native service is sent `work_kind`
+`ctx.sandboxes.captures(projectId, instanceId, tx, attempts?)`; `attempts` keeps the captures
+taken under those epochs (a capture registered before captures recorded theirs answers for any).
+The native service is sent `work_kind`
 `experiment` for the `experiment` workflow and `task` for every other one, until it confirms
 other kinds. Leases issued before 2026-10-04 still carry `sandboxConnectionId`/`sandboxAttempt`/
 `sandboxProfile` references and are issued exactly as they name.

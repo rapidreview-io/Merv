@@ -569,7 +569,8 @@ test('results review keeps JSON observations inline and lists the generated exhi
   );
   assert.ok(
     packet.context!.prompt.includes(
-      `retrieve: artifact.read {"artifactId":"${exhibit.artifactId}"}; experiment.exhibit {"experimentId":"${running.id}"}\n`,
+      // experiment.exhibit answers only while the experiment runs; the review reads the artifact.
+      `retrieve: artifact.read {"artifactId":"${exhibit.artifactId}"}\n`,
     ),
   );
   assert.doesNotMatch(packet.context!.prompt, /"resultFiles":/);

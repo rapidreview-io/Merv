@@ -1097,6 +1097,36 @@ test('a result submission may select a verified sandbox capture its worker attac
   assert.ok(review.artifactIds.includes(capture.id));
 });
 
+test('a worker cannot attach a sandbox capture another attempt retained', async (t) => {
+  const f = await fixture(t);
+  const native = nativeWorkFixture();
+  t.after(f.experiments.bindSandboxes(native.service));
+  const experiment = await f.running();
+  const service = await f.scope.serviceActor('sandboxes', f.producer.projectId);
+  const capture = await f.artifacts.createCollection(service, {
+    title: 'Earlier output',
+    sourceKey: 'earlier-result',
+    files: [
+      { name: 'r.txt', hash: 'c'.repeat(64), size: 10, provider: 'sandboxes', reference: 'old' },
+    ],
+  });
+  native.verified.set(experiment.id, [capture.id]);
+  native.attempts.set(capture.id, `${experiment.attempt.index + 1}:running`);
+  await assert.rejects(
+    f.experiments.attach(f.worker(experiment), {
+      experimentId: experiment.id,
+      attemptIndex: experiment.attempt.index,
+      expectedRevision: experiment.workflow.revision,
+      artifactId: capture.id,
+      role: 'result',
+      resultFormat: 'qualitative',
+      path: 'result.txt',
+      requestId: f.id(),
+    }),
+    code('invalid_evidence_author'),
+  );
+});
+
 test('an attempt refuses its 101st result file when it is attached', async (t) => {
   const f = await fixture(t);
   const experiment = await f.running();
@@ -1110,6 +1140,24 @@ test('an attempt refuses its 101st result file when it is attached', async (t) =
   await f.attach(experiment, 'result', '{"index":0,"rerun":true}', { path: 'results/0.json' });
   const current = await f.experiments.get(f.producer, experiment.id);
   assert.equal(current.evidence.filter((e) => e.current && e.role === 'result').length, 100);
+});
+
+test('an attempt refuses a result its metrics exhibit could not hold beside the others', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  // Each file is within its own limits; some dozens of them pass the exhibit's total.
+  const scores = JSON.stringify({ scores: Array.from({ length: 8000 }, (_, i) => i % 2) });
+  let refused = 0;
+  for (let index = 0; index < 40; index++)
+    await f
+      .attach(experiment, 'result', scores, { path: `results/${index}.json` })
+      .catch((error: { code?: string }) => {
+        assert.equal(error.code, 'invalid_experiment_evidence');
+        refused++;
+      });
+  assert.ok(refused > 0 && refused < 40);
+  // What the attempt kept still makes an exhibit.
+  await f.experiments.exhibit(f.producer, experiment.id);
 });
 
 test('guidance never offers a person the results submission only the attempt’s worker can make', async (t) => {

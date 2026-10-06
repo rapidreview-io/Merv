@@ -426,10 +426,12 @@ export class SandboxService implements Sandboxes {
     this.#nativeWork = work;
   }
 
-  async captures(projectId: string, instanceId: string, tx: Transaction): Promise<string[]> {
+  captures: Sandboxes['captures'] = async (projectId, instanceId, tx, attempts) => {
     const work = this.#nativeWork;
-    return work ? await this.nativeOperation(() => work.captures(projectId, instanceId, tx)) : [];
-  }
+    return work
+      ? await this.nativeOperation(() => work.captures(projectId, instanceId, tx, attempts))
+      : [];
+  };
 
   bindNativeMachines(reader: NativeMachineReads): void {
     this.nativeMachines = {

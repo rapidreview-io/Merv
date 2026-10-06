@@ -105,6 +105,11 @@ BEGIN
 END $$;
 `,
   },
+  {
+    // The compute epoch a capture was taken under, so an owner can keep one attempt's.
+    version: 4,
+    sql: `ALTER TABLE sandbox_native_captures ADD COLUMN attempt_ref TEXT;`,
+  },
 ];
 
 export interface NativeConnectionRow {

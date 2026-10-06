@@ -57,7 +57,6 @@ import {
   buildMetricsExhibit,
   decodeEvidence,
   exhibitBytes,
-  RESULT_FILES,
   markdownImageTargets,
   feasibilityShortfalls,
   parseFeasibility,
@@ -474,7 +473,14 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       submissions,
       reviewId: row.review_id,
       conclusion: row.conclusion,
-      captureArtifactIds: (await this.sandboxes?.captures(caller.projectId, row.id, tx)) ?? [],
+      // Only what this attempt's own compute captured, under any of its states' epochs.
+      captureArtifactIds:
+        (await this.sandboxes?.captures(
+          caller.projectId,
+          row.id,
+          tx,
+          EXPERIMENT_WORKFLOW.states.map((state) => experimentEpoch(attempt.index, state)),
+        )) ?? [],
     };
   }
   /**
@@ -685,13 +691,24 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         const text = await this.text(caller, artifact.id, tx);
         if (input.role === 'result') {
           parseResult(text, input.resultFormat ?? 'json');
-          // The exhibit pins every current result, so one past its limit could never be submitted.
-          check(
-            currentEvidence(experiment, ['result']).filter((e) => e.path !== input.path).length <
-              RESULT_FILES,
-            'invalid_experiment_evidence',
-            `An attempt keeps at most ${RESULT_FILES} result files; attach this one at the path of one it replaces`,
-          );
+          // The exhibit pins every current result, so one past its limits could never be submitted.
+          const kept = currentEvidence(experiment, ['result']).filter((e) => e.path !== input.path);
+          const added = {
+            path: input.path,
+            artifactId: artifact.id,
+            hash: artifact.hash,
+            createdAt: now(),
+            resultFormat: input.resultFormat,
+            sequence: 0,
+          } as ExperimentEvidence;
+          await this.buildExhibit(caller, experiment, [...kept, added], tx).catch((error) => {
+            throw error instanceof MervError && error.code === 'invalid_experiment_evidence'
+              ? new MervError(
+                  error.code,
+                  `The attempt's metrics exhibit cannot hold this result beside the others (${error.message}); attach it at the path of one it replaces`,
+                )
+              : error;
+          });
         }
         if (input.role === 'feasibility') parseFeasibility(text);
         const figureIds = ['plan', 'report'].includes(input.role)

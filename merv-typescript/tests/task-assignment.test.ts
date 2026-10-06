@@ -392,8 +392,8 @@ test('a brief at its size limit and a returned review at its limits still leave 
         findings: reviewed.findings.map((finding) => ({
           ...finding,
           status: 'not_met',
-          // The verdict stays within the workflow data limit beside its longest notes.
-          evidenceIds: finding.evidenceIds.slice(0, 1),
+          // Reviews holds the whole verdict; the workflow move carries only what it decides.
+          evidenceIds: finding.evidenceIds,
           notes: 'f'.repeat(8000),
         })),
         evidence: { log: 'l'.repeat(60000) },
