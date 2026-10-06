@@ -278,10 +278,11 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
   // A paper this size cannot all be embedded: the sections past the budget are named by one item,
   // which says how to read them.
   assert.match(synthesis.prompt, /paper:not-included — \d+ more paper sections, not included/);
-  // Each left out is still named, with its revision and the read that returns exactly it.
+  // The lens reports outrank it, so it may be shown by its line alone: the line still names
+  // sections left out by the read that returns exactly each.
   assert.match(
     synthesis.prompt,
-    /\n- (?:literature|methods|results) current: \w+ \d+ — revision 1 — paper\.read \{"kind":"\w+","revision":1,"section":"\w+-\d+"\}\n/,
+    /paper:not-included — [^\n]*paper\.read \{"kind":"\w+","revision":1,"section":"\w+-\d+"\}/,
   );
   assert.match(synthesis.prompt, /paper:problem:current:1:0:problem/);
   assert.ok(reports.every((id) => synthesis.sources.some((source) => source.id === id)));

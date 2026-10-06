@@ -12,7 +12,8 @@ import { PaperService } from '@merv/paper';
 import { introductionFrom } from '@merv/paper/introduction';
 import { MervError, type Caller } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
-import { contextSections } from '@merv/paper/context';
+import { contextSections, paperInput } from '@merv/paper/context';
+import { renderItems } from '../packages/context-builder/src/items.js';
 const hasCode = (code: string) => (error: unknown) =>
   error instanceof MervError && error.code === code;
 async function fixture(t: TestContext) {
@@ -502,8 +503,67 @@ test('the paper as context items keeps whole sections within the budget and name
   assert.deepEqual(rest!.body, {
     text: '- problem current: Goals — revision 1 — paper.read {"kind":"problem","revision":1,"section":"goals"}',
   });
-  assert.equal(rest!.priority, 900);
-  assert.deepEqual(rest!.refs, [{ tool: 'paper.read', input: {} }]);
+  assert.equal(rest!.priority, 590);
+  assert.deepEqual(rest!.refs, [
+    { tool: 'paper.read', input: {} },
+    { tool: 'paper.read', input: { kind: 'problem', revision: 1, section: 'goals' } },
+  ]);
+});
+
+test("the list of paper sections left out never pushes a consumer's own evidence out of a tight budget", async () => {
+  const maxChars = 24_000;
+  const section = (id: string, chars: number) => ({ id, title: id, content: 'x'.repeat(chars) });
+  const documents = {
+    problem: {
+      current: { revision: 1, updatedAt: null, sections: [section('problem', 9000)] },
+      published: null,
+    },
+    literature: {
+      current: {
+        revision: 1,
+        updatedAt: null,
+        sections: Array.from({ length: 40 }, (_, n) => section(`s${n}`, 3000 + n)),
+      },
+      published: null,
+    },
+  } as never;
+  const paper = paperInput(documents, maxChars);
+  const definition = {
+    name: 'probe',
+    version: 1,
+    kind: 'work',
+    recipe: {
+      maxChars,
+      instructions: 'Work.',
+      outputInstructions: 'Answer.',
+      sections: [
+        { key: 'task', title: 'Task', required: true },
+        { key: 'projectPaper', title: 'Paper', required: false },
+        { key: 'evidence', title: 'Evidence', required: false },
+      ],
+    },
+  } as never;
+  const evidence = 'e'.repeat(12_000);
+  const { prompt } = await renderItems(
+    definition,
+    'hash',
+    { actorId: 'act_1', projectId: 'prj_1' },
+    {
+      subject: {},
+      inputs: {
+        task: {
+          items: [{ id: 'task:1', title: 'Task', body: { text: 'Do it.' }, embed: 'always' }],
+        },
+        projectPaper: paper,
+        evidence: {
+          items: [{ id: 'evidence:1', title: 'Evidence', body: { text: evidence }, priority: 800 }],
+        },
+      },
+    } as never,
+    { get: () => assert.fail('no artifacts'), read: async () => null },
+  );
+  assert.ok(prompt.includes(evidence), 'the evidence (800) is embedded');
+  assert.ok(prompt.includes('paper:not-included'), 'what was left out is still named');
 });
 
 test('a Problem patch writes the Introduction from it, replacing what was there, an empty Problem included', async (t) => {

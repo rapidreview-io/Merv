@@ -61,9 +61,11 @@ export function contextSections(documents: PaperWorkspace['documents']): PaperCo
  * their distinct text fits `maxChars`, since no more could ever be embedded, and while their
  * JSON fits INPUT_BYTES. One more item names the sections past that, a line each with its
  * title, revision and the paper.read that returns it, while those fit an eighth of `maxChars`,
- * and counts the rest; both keep the paper's order. It outranks every section, so a budget
- * that cuts sections still shows what was left out. A paper with nothing written is one item
- * that says so.
+ * and counts the rest; both keep the paper's order. It ranks below a consumer's own evidence,
+ * feedback and recovery (600 and up), so it never pushes them out, and above background (500)
+ * and the published sections (450, 250). Where it is shown only by its line, the line still
+ * names the first seven sections left out by their exact paper.read. A paper with nothing
+ * written is one item that says so.
  */
 export function paperInput(documents: PaperWorkspace['documents'], maxChars: number): ContextInput {
   const sections = contextSections(documents);
@@ -111,9 +113,9 @@ export function paperInput(documents: PaperWorkspace['documents'], maxChars: num
               id: 'paper:not-included',
               title: `${rest.length} more paper section${rest.length === 1 ? '' : 's'}, not included in this assignment`,
               body: { text: left.join('\n') },
-              priority: 900,
+              priority: 590,
               ...(more ? { note: `${more} of them not named here for lack of room` } : {}),
-              refs: [read],
+              refs: [read, ...rest.slice(0, 7).flatMap((section) => section.refs)],
             },
           ]
         : []),
