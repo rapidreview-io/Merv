@@ -15,6 +15,7 @@ import {
   type RunningPanel,
   type RunningPhrase,
   type RunningSection,
+  type Transaction,
   type WorkflowPolicy,
 } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
@@ -1188,4 +1189,51 @@ test('the sweep deletes an ended session’s stream although a live one holds a 
   // The busy session's older events, which lapsed only now, are not what the sweep waits on.
   assert.equal(await count(session.id), 0);
   assert.equal(await count(busy.session.id), 1000);
+});
+
+test('the sweep reads only sessions that still hold events, however many ended long ago', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.heartbeat();
+  await f.instance();
+  const { session } = await f.active();
+  await f.sessions.dispatch.halt(f.owner, { sessionId: session.id, reason: 'halted_by_operator' });
+  f.advance(31 * 86_400_000);
+  await f.state.transaction(async (tx) => {
+    // Many sessions that ended long ago and whose streams were pruned already.
+    await tx.run(
+      `INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json)
+        SELECT id||'_'||n,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id||'_'||n,token_hash||'_'||n,fingerprint,status,session_json
+        FROM worker_sessions, generate_series(1,500) AS n WHERE id=?`,
+      session.id,
+    );
+    await tx.run(
+      `INSERT INTO session_events(session_id,seq,at,until,event) VALUES(?,1,?,1,'{"kind":"status","id":"s","text":"Started"}')`,
+      session.id,
+      new Date(f.now() - 32 * 86_400_000).toISOString(),
+    );
+    await tx.run('ANALYZE worker_sessions');
+  });
+  // What reading worker_sessions in this transaction has cost so far: the sweep's share is the
+  // difference.
+  const reads = async (tx: Transaction) =>
+    Number(
+      (await tx.get<{ n: string }>(
+        `SELECT COALESCE(seq_tup_read,0)+COALESCE(idx_tup_fetch,0) AS n FROM pg_stat_xact_user_tables
+          WHERE relname='worker_sessions' AND schemaname=current_schema()`,
+      ))!.n,
+    );
+  const read = await f.state.transaction(async (tx) => {
+    const before = await reads(tx);
+    await f.sessions.streams.prune();
+    return (await reads(tx)) - before;
+  });
+  assert.ok(read <= 5, `the sweep read ${read} sessions`);
+  const left = await f.state.read((sql) =>
+    sql.get<{ n: string }>(
+      'SELECT COUNT(*) AS n FROM session_events WHERE session_id=?',
+      session.id,
+    ),
+  );
+  assert.equal(Number(left!.n), 0);
 });

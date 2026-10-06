@@ -76,6 +76,8 @@ const view = (row: Row): AgentStreamEvent => ({
 export class SessionStreams implements SessionStreamReads {
   private readonly readers = new Map<string, Set<() => void>>();
   private open = 0;
+  /** The last session the sweep looked at: the next sweep goes on after it. */
+  private pruned = '';
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -230,17 +232,30 @@ export class SessionStreams implements SessionStreamReads {
   }
 
   /**
-   * The sweep's: the events of sessions that ended over 30 days ago, a hundred sessions at a
-   * time. They are chosen among ended sessions, never among the oldest events, which a session
-   * still live, or ended lately, could fill and so keep every other one's events.
+   * The sweep's: the events of sessions that ended over 30 days ago. Each sweep looks at the
+   * next hundred sessions that still hold events, in id order from where the last one stopped
+   * and from the start again after the last, a step along the events' own key each; so it
+   * never reads the sessions whose events are gone, and a session still live, or ended
+   * lately, is only one it passes over.
    */
   async prune(): Promise<void> {
     const cutoff = isoNow(() => this.clock() - RETAIN_MS);
-    await readFirst(this.state, async (tx) => {
+    const after = this.pruned;
+    this.pruned = await readFirst(this.state, async (tx) => {
+      const held = await tx.all<{ id: string }>(
+        `WITH RECURSIVE held(id) AS (
+            (SELECT session_id FROM session_events WHERE session_id>? ORDER BY session_id LIMIT 1)
+            UNION ALL
+            SELECT (SELECT e.session_id FROM session_events e WHERE e.session_id>held.id
+              ORDER BY e.session_id LIMIT 1) FROM held WHERE held.id IS NOT NULL)
+          SELECT id FROM held WHERE id IS NOT NULL LIMIT 100`,
+        after,
+      );
+      if (!held.length) return '';
       const ended = await tx.all<{ id: string }>(
-        `SELECT s.id FROM worker_sessions s WHERE s.status IN ('released','expired')
-          AND (s.session_json::jsonb #>> '{closedAt}')<?
-          AND EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id) LIMIT 100`,
+        `SELECT id FROM worker_sessions WHERE id IN (${held.map(() => '?').join(',')})
+          AND status IN ('released','expired') AND (session_json::jsonb #>> '{closedAt}')<?`,
+        ...held.map((row) => row.id),
         cutoff,
       );
       if (ended.length)
@@ -248,6 +263,7 @@ export class SessionStreams implements SessionStreamReads {
           `DELETE FROM session_events WHERE session_id IN (${ended.map(() => '?').join(',')})`,
           ...ended.map((row) => row.id),
         );
+      return held.length < 100 ? '' : held.at(-1)!.id;
     });
   }
 }
