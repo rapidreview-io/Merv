@@ -1492,7 +1492,11 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
         }
       : {
           body: {
-            result: { result: { url: 'https://files.example/art_1?sig=abc', expiresAt: 'soon' } },
+            result: {
+              result: { url: 'https://files.example/art_1?sig=abc', expiresAt: 'soon' },
+              told: 'Ran artifact.read; its result is shown only to me.',
+              whole: false,
+            },
           },
         };
   });
@@ -1601,7 +1605,7 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   assert.deepEqual(ran(), ['Ran', undefined]);
 });
 
-test('research.advance tells Pi the transition and every child ID while keeping the full Problem for the person', async (t) => {
+test('Run tells Pi what the server wrote of a call and keeps the whole result for the person', async (t) => {
   t.after(cleanup);
   setProject('p1');
   const proposal = {
@@ -1622,7 +1626,9 @@ test('research.advance tells Pi the transition and every child ID while keeping 
     successorId: 'research_successor',
     problem: { text: 'Full Problem content '.repeat(300) },
   };
-  serve('/tools/pi.run', { body: { result: { result } } });
+  const told =
+    'Ran research.advance: {"id":"research_1","state":"researching","revision":1}. Re-read research.get and workflow.status_and_next for current details.';
+  serve('/tools/pi.run', { body: { result: { result, told, whole: false } } });
   const sent: Record<string, unknown>[] = [];
   serve('/tools/pi.send', (_count, input) => {
     sent.push(input);
@@ -1632,21 +1638,7 @@ test('research.advance tells Pi the transition and every child ID while keeping 
   await act(async () => document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click());
   await settle(10);
   assert.equal(sent.length, 1, 'running the proposal still starts one continuation turn');
-  const told = String(sent[0]!.text);
-  assert.match(told, /^Ran research\.advance:/);
-  for (const value of [
-    result.id,
-    result.workflow.state,
-    result.reflectionId,
-    ...result.integrations,
-    result.successorId,
-    'research.get',
-    'workflow.status_and_next',
-  ])
-    assert.ok(told.includes(value), value);
-  assert.ok(told.includes('"revision":1'));
-  assert.ok(!told.includes('Full Problem content'));
-  assert.ok(told.length < 500);
+  assert.equal(sent[0]!.text, told, 'the server writes what the agent is told');
   // The whole of it stays in the card, behind its fold, read as a tree, its long Problem one
   // press away.
   const full = document.querySelector('.pi-proposal .pi-receipt')!;
@@ -1975,7 +1967,11 @@ test('what Run as me tells the agent is kept in the composer when it cannot be s
     () => state,
     () => [conversation()],
   );
-  serve('/tools/pi.run', { body: { result: { result: { halted: true } } } });
+  serve('/tools/pi.run', {
+    body: {
+      result: { result: { halted: true }, told: 'Ran fleet.halt: {"halted":true}', whole: true },
+    },
+  });
   const sent: Record<string, unknown>[] = [];
   serve('/tools/pi.send', (count, input) => {
     sent.push(input);

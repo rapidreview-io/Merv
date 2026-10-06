@@ -369,6 +369,13 @@ export interface PiPrompt {
   instructions: string;
   turn: { commandId: string; notes: string[]; tools: string[]; context?: string } | null;
 }
+/** A proposed call the person ran, and what Run tells the agent of it in their name: `whole` when
+ *  that is the result itself (as much of its JSON as fits), else the person alone sees it all. */
+export interface PiRan {
+  result: unknown;
+  told: string;
+  whole: boolean;
+}
 export interface Pi {
   create(caller: Caller, input: unknown): Promise<PiConversation>;
   list(caller: Caller): Promise<PiConversation[]>;
@@ -385,7 +392,7 @@ export interface Pi {
   /** pi.machine.stop {}: interrupt every turn of the host, release every slot, clear sticky (T9). */
   stopMachine(caller: Caller): Promise<PiHostView>;
   /** pi.run {id, commandId, proposalId}: run a call the agent proposed, once, as the person. */
-  run(caller: Caller, input: unknown): Promise<{ result: unknown }>;
+  run(caller: Caller, input: unknown): Promise<PiRan>;
   /** pi.model.set {id, model}: the person picks the conversation's model, and their default here. */
   setModel(caller: Caller, input: unknown): Promise<PiSnapshot>;
 }

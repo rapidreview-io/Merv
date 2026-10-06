@@ -1,7 +1,13 @@
 import type { Context } from 'cordis';
 import type { Caller } from '@merv/contracts';
 import type {} from '@merv/api/types';
-import type { ResearchCreate, ResearchAdvance, ResearchEnd, ResearchReplan } from './types.js';
+import type {
+  ResearchCreate,
+  ResearchAdvance,
+  ResearchEnd,
+  ResearchRecord,
+  ResearchReplan,
+} from './types.js';
 import {
   createSchema,
   endSchema,
@@ -78,6 +84,18 @@ export const researchToolsPlugin = {
         inputSchema: advanceSchema,
         handler: async (caller: Caller, input: ResearchAdvance) =>
           await research.advance(caller, input),
+        // The transition's identity and new children, never the cycle's full Problem.
+        receipt: (cycle: ResearchRecord) => ({
+          summary: {
+            id: cycle.id,
+            state: cycle.workflow.state,
+            revision: cycle.workflow.revision,
+            ...(cycle.reflectionId ? { reflectionId: cycle.reflectionId } : {}),
+            integrations: cycle.integrations,
+            ...(cycle.successorId ? { successorId: cycle.successorId } : {}),
+          },
+          reread: ['research.get', 'workflow.status_and_next'],
+        }),
       },
     ])
       ctx.effect(() => ctx.tools.register(tool));

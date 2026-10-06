@@ -120,14 +120,14 @@ export function factsOf(name: string, input: unknown): Fact[] {
 }
 
 /*
- * What Run tells the agent in the person's name (`run` in views/pi.tsx): a result, as much of its
- * JSON as Run sends; the sentence that stands for a result shown only to the person; a refusal and
- * why; and research.advance's own receipt, which ends by saying where to read on.
+ * What Run tells the agent in the person's name, which Pi's server writes (`run` in views/pi.tsx):
+ * a result, as much of its JSON as Run sends; the sentence that stands for a result shown only to
+ * the person; a refusal and why; and a tool's own receipt, which ends by saying where to read on.
  */
 const RAN = /^Ran (\S+): ([^]*)$/;
 const SECRET = /^Ran (\S+); its result is shown only to me\.$/;
 const REFUSED = /^(\S+) was refused: ([^]*)$/;
-const ADVANCED = '. Re-read research.get and workflow.status_and_next for current details.';
+const REREAD = /\. Re-read [\w. ]+ for current details\.$/;
 
 /** What came back for a call the person ran: its result as it was told, if any, or the refusal. */
 export type Receipt = { proposal: PiProposal } & ({ result?: string } | { refused: string });
@@ -142,7 +142,7 @@ function toldOf(command?: PiCommand) {
   if (secret) return { tool };
   if (refused) return { tool, refused: refused[2]! };
   const told = ran![2]!;
-  return { tool, result: told.endsWith(ADVANCED) ? told.slice(0, -ADVANCED.length) : told };
+  return { tool, result: told.replace(REREAD, '') };
 }
 
 /**

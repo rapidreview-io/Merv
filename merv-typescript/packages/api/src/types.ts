@@ -21,6 +21,13 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  function of the parsed input decides per call. */
   conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
+  /** What an agent conversation is told when its person runs this tool's proposed call, in place
+   *  of the whole result: a compact summary, and the reads that give the current details. */
+  receipt?(result: unknown, input: z.infer<S>): ToolReceipt;
+}
+export interface ToolReceipt {
+  summary: Record<string, unknown>;
+  reread: readonly string[];
 }
 /** Public tool metadata, including the native project-selection envelope. */
 export type ToolDescription = Tool;

@@ -36,6 +36,8 @@ import type {
   PiEvent,
   PiHostRecord,
   PiHostView,
+  PiProposal,
+  PiRan,
   PiSnapshot,
 } from './types.js';
 import { decode, equal, hash, parse, publicCommand, roleOf } from './core.js';
@@ -415,7 +417,7 @@ export class PiService extends PiWorkerProtocol implements Pi, FleetOwner {
 
   /** pi.run: the person presses Run on a call their agent proposed, which runs once, as them, with
    * every check their own call meets. A secret result reaches only them: nothing keeps it. */
-  async run(caller: Caller, input: unknown): Promise<{ result: unknown }> {
+  async run(caller: Caller, input: unknown): Promise<PiRan> {
     this.ready();
     const value = parse(runInput, input);
     const find = (command: PiCommandRecord) =>
@@ -445,13 +447,31 @@ export class PiService extends PiWorkerProtocol implements Pi, FleetOwner {
     try {
       const result = await this.tools.call(proposal.name, caller, proposal.input);
       await settle(true);
-      return { result };
+      return { result, ...(await this.ran(proposal, result)) };
     } catch (error) {
       await settle(false, error instanceof MervError ? error.code : 'tool_failed');
       throw error;
     } finally {
       this.streams.changed(value.id, value.commandId);
     }
+  }
+
+  /** What Run tells the agent in the person's name: the sentence that stands for a result only the
+   *  person sees, the tool's own receipt, or as much of the result's JSON as Run sends. */
+  private async ran(proposal: PiProposal, result: unknown): Promise<Omit<PiRan, 'result'>> {
+    if (proposal.secret)
+      return { told: `Ran ${proposal.name}; its result is shown only to me.`, whole: false };
+    const tool = (await this.tools.list()).find(({ name }) => name === proposal.name);
+    const receipt = tool && 'receipt' in tool ? tool.receipt?.(result, proposal.input) : undefined;
+    if (receipt)
+      return {
+        told: `Ran ${proposal.name}: ${JSON.stringify(receipt.summary)}. Re-read ${receipt.reread.join(' and ')} for current details.`,
+        whole: false,
+      };
+    return {
+      told: `Ran ${proposal.name}: ${(JSON.stringify(result) ?? 'null').slice(0, 4000)}`,
+      whole: true,
+    };
   }
 
   /** Interrupts this conversation's turn only; the host serves the person's others. */

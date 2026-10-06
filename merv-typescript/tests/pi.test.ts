@@ -737,10 +737,10 @@ test('an exact repeated proposal in one turn keeps one Run action and one mutati
       commandId: turn.input.commandId,
       proposalId,
     });
-  assert.deepEqual(await run(first.proposed.id), { result: { mutations: 1 } });
+  assert.deepEqual((await run(first.proposed.id)).result, { mutations: 1 });
   await assert.rejects(run(first.proposed.id), code('pi_proposal_ran'));
   assert.equal(mutations, 1);
-  assert.deepEqual(await run(changed.proposed.id), { result: { mutations: 2 } });
+  assert.deepEqual((await run(changed.proposed.id)).result, { mutations: 2 });
 });
 
 test('the hand-off: the agent proposes, the person runs it once as themselves, and a secret stays theirs', async (t) => {
@@ -802,13 +802,22 @@ test('the hand-off: the agent proposes, the person runs it once as themselves, a
     { callId: 'propose_1', name: 'probe.secret', input: {}, output: { proposed: {} } },
   ];
   await f.pi.complete(turn.token, result);
-  assert.deepEqual(await run(human, ids[0]), { result: { token: 'secret' } });
+  // What Run tells the agent never holds a secret result.
+  assert.deepEqual(await run(human, ids[0]), {
+    result: { token: 'secret' },
+    told: 'Ran probe.secret; its result is shown only to me.',
+    whole: false,
+  });
   assert.equal(runs['probe.secret'], 1);
   await assert.rejects(run(human, ids[0]), code('pi_proposal_ran'));
   assert.equal(runs['probe.secret'], 1);
   await assert.rejects(run(human, 'pip_missing'), code('pi_not_found'));
   // The signed-in gate passes when the person presses Run, and fails through their key.
-  assert.deepEqual(await run(human, ids[1]), { result: { signed: true } });
+  assert.deepEqual(await run(human, ids[1]), {
+    result: { signed: true },
+    told: 'Ran probe.signed: {"signed":true}',
+    whole: true,
+  });
   const keyTurn = await f.begun(key);
   await f.pi.tool(keyTurn.token, { ...keyTurn.input, name: 'probe.signed', input: {} });
   await f.pi.complete(keyTurn.token, f.completion(keyTurn.input));
@@ -880,6 +889,43 @@ test('a Fleet halt the person runs from a proposal is recorded as theirs', async
   );
   assert.equal(halted.at(-1)?.actorId, human.actorId);
   assert.equal(halted.at(-1)?.data.intent, 'stop');
+});
+
+test('a proposed call whose tool writes a receipt tells the agent that receipt, not its result', async (t) => {
+  const f = await fixture(t);
+  t.after(
+    f.tools.register({
+      name: 'probe.advance',
+      description: 'Advance a probe',
+      conversation: 'propose',
+      inputSchema: z.object({}).strict(),
+      handler: () => ({ id: 'probe_1', problem: 'Full Problem '.repeat(500) }),
+      receipt: (result) => ({
+        summary: { id: (result as { id: string }).id },
+        reread: ['probe.get', 'workflow.status_and_next'],
+      }),
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const { proposed } = (await f.pi.tool(turn.token, {
+    ...turn.input,
+    name: 'probe.advance',
+    input: {},
+  })) as { proposed: { id: string } };
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  const ran = await f.pi.run(human, {
+    id: turn.input.conversationId,
+    commandId: turn.input.commandId,
+    proposalId: proposed.id,
+  });
+  assert.equal(
+    ran.told,
+    'Ran probe.advance: {"id":"probe_1"}. Re-read probe.get and workflow.status_and_next for current details.',
+  );
+  assert.equal(ran.whole, false);
+  assert.match(JSON.stringify(ran.result), /Full Problem/);
 });
 
 test('each turn says whom the agent serves, where, on what, what the project holds now, and what a stopped answer made; its person can read it back', async (t) => {
