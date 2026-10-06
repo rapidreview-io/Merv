@@ -1,7 +1,12 @@
 import type { TaskRecord } from './types.js';
 import {
   ellipsis,
+  keyId,
+  keyKind,
+  mapAsync,
+  MervError,
   runningKey,
+  type Caller,
   type ProcessGraph,
   type ReviewRequest,
   type RunningAttention,
@@ -10,10 +15,15 @@ import {
   type RunningPanelPart,
   type RunningPhrase,
   type RunningSection,
+  type Transaction,
   type WorkflowDependency,
+  type WorkflowLimitStatus,
   type WorkRoute,
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
+import { composedBrief } from './evidence.js';
+import type { TaskLeaseRow, TaskRow, TaskService } from './index.js';
+import { roundsFrom, taskVersions } from './workflow.js';
 
 /**
  * A task on the Running page: its card in the work lane and its sidebar, composed from facts
@@ -42,8 +52,6 @@ export interface TaskStanding {
 
 const ENDED: Record<string, string> = { done: 'Done', failed: 'Failed' };
 const ended = (state: string) => Object.hasOwn(ENDED, state);
-/** How the server titles the brief it composes from the title, the goal and the checks. */
-const COMPOSED = 'Task brief: ';
 
 /** Where a task stands, in the order its card is read: the first that holds wins. */
 type Holding =
@@ -273,7 +281,7 @@ export function taskPanel(
     { title: 'Goal', place: 'content', kind: 'text', text: record.goal, clamp: 4 },
     // A brief somebody wrote can say more than the goal and the checks; the one the server
     // composes only repeats them, so it is not offered.
-    ...(brief && !brief.title.startsWith(COMPOSED)
+    ...(brief && !composedBrief(brief)
       ? [
           {
             title: 'Pinned brief',
@@ -322,5 +330,195 @@ export function taskPanel(
     actions: [],
     ...(page ? { route: page } : {}),
     live: task.lease !== null,
+  };
+}
+
+// TaskService's reads for the board and the sidebar, which it runs as its own methods.
+
+/** A record another plugin answers 404 for is simply not there to speak of. */
+const absent = (error: unknown): null => {
+  if (error instanceof MervError && error.status === 404) return null;
+  throw error;
+};
+
+/** A task as the Running page's work lane reads it, with where its workflow stands. */
+interface RunningTaskRow {
+  id: string;
+  title: string;
+  review_id: string | null;
+  version: number;
+  state: string;
+  revision: number;
+}
+
+/**
+ * Every task still in flight, and each ended one another owner holds on the board, read in
+ * one snapshot that refuses writes. Guidance is never evaluated here: it is per reader, where
+ * a card says the same to everyone, and it would cost an evaluation per task on every poll.
+ * The board draws only what a task waits on, so what waits on it is left to its sidebar, and
+ * the prerequisites and review rounds of every task are each read once for all of them.
+ */
+export async function running(
+  this: TaskService,
+  caller: Caller,
+  include: Iterable<string> = [],
+): Promise<RunningNode[]> {
+  caller = structuredClone(caller);
+  const held = [...new Set([...include].filter((key) => keyKind(key) === 'work').map(keyId))];
+  return await this.state.snapshot(
+    async () =>
+      await this.state.transaction(async (tx) => {
+        await this.scope.require(caller, 'read', tx);
+        const ids = [
+          ...(await this.workflows.open('task', caller.projectId, tx)).map((w) => w.id),
+          ...held,
+        ];
+        const at = await this.workflows.revisions(caller.projectId, ids, tx);
+        const rows = (
+          await tx.all<Pick<RunningTaskRow, 'id' | 'title' | 'review_id'>>(
+            `SELECT id,title,review_id FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY created_at,id`,
+            caller.projectId,
+            ...ids,
+          )
+        ).flatMap((row) => {
+          const w = at.get(row.id);
+          return w ? [{ ...row, version: w.version, state: w.state, revision: w.revision }] : [];
+        });
+        const leases = await this.liveLeases(caller, tx);
+        const blocked = new Set(
+          (await this.workflows.blockers(caller, undefined, tx)).map(
+            (blocker) => blocker.instanceId,
+          ),
+        );
+        const waitsOn = await this.workflows.prerequisites(
+          caller,
+          rows.map((row) => row.id),
+          tx,
+        );
+        const rounds = await this.workflows.limitStatusOf(
+          caller,
+          rows
+            .filter((row) => taskVersions[row.version] && row.state === roundsFrom(row.version))
+            .map((row) => row.id),
+          'review_rounds',
+          tx,
+        );
+        return await mapAsync(
+          rows.filter((row) => taskVersions[row.version] || held.includes(row.id)),
+          async (row) =>
+            taskNode(
+              await this.standing(
+                caller,
+                row,
+                waitsOn.get(row.id) ?? [],
+                leases,
+                blocked.has(row.id),
+                tx,
+                rounds,
+              ),
+            ),
+        );
+      }),
+  );
+}
+
+/** A task's Running sidebar, whatever its state, so an open sidebar outlives the card. */
+export async function runningPanel(
+  this: TaskService,
+  caller: Caller,
+  taskId: string,
+  route: WorkRoute = () => undefined,
+): Promise<RunningPanelPart | null> {
+  caller = structuredClone(caller);
+  return await this.state.snapshot(async () => {
+    const read = await this.state.transaction(async (tx) => {
+      await this.scope.require(caller, 'read', tx);
+      const row = await tx.get<TaskRow>(
+        'SELECT * FROM tasks WHERE id=? AND project_id=?',
+        taskId,
+        caller.projectId,
+      );
+      if (!row) return null;
+      const record = await this.projectRecord(caller, row, tx);
+      const { version, state, revision } = record.workflow;
+      const standing = await this.standing(
+        caller,
+        { id: row.id, title: row.title, review_id: row.review_id, version, state, revision },
+        record.dependencies,
+        await this.liveLeases(caller, tx, taskId),
+        (await this.workflows.blockers(caller, taskId, tx)).length > 0,
+        tx,
+      );
+      const brief = await this.artifacts.get(caller, record.briefId, tx).catch((error) => {
+        if (error instanceof MervError && error.status === 404) return null;
+        throw error;
+      });
+      return { record, standing, brief };
+    });
+    if (!read) return null;
+    // The ladder is Workflows' own read of this snapshot, so it runs after the one above.
+    const graph = await this.process(caller, taskId);
+    return taskPanel(read.standing, read.record, graph, read.brief, route);
+  });
+}
+
+/** The purpose of each live lease, by task and the revision it was offered for. */
+export async function liveLeases(
+  this: TaskService,
+  caller: Caller,
+  tx: Transaction,
+  taskId?: string,
+): Promise<Map<string, 'work' | 'review'>> {
+  const rows = await tx.all<Pick<TaskLeaseRow, 'task_id' | 'revision' | 'purpose'>>(
+    'SELECT task_id,revision,purpose FROM task_leases WHERE project_id=? AND (CAST(? AS TEXT) IS NULL OR task_id=?) AND released_at IS NULL',
+    caller.projectId,
+    taskId ?? null,
+    taskId ?? null,
+  );
+  return new Map(rows.map((row) => [`${row.task_id}@${row.revision}`, row.purpose]));
+}
+
+/**
+ * One task's facts. `counted` is the board's one read of review rounds for every task; the
+ * sidebar, reading one task, counts its own. A review the task names and Reviews does not
+ * hold leaves the task drawn without it, rather than taking every other task with it.
+ */
+export async function standing(
+  this: TaskService,
+  caller: Caller,
+  row: RunningTaskRow,
+  dependencies: TaskStanding['dependencies'],
+  leases: Awaited<ReturnType<TaskService['liveLeases']>>,
+  blocked: boolean,
+  tx: Transaction,
+  counted?: ReadonlyMap<string, WorkflowLimitStatus>,
+): Promise<TaskStanding> {
+  // Only the limit leaving the current state stops anything, as the gate reads it.
+  const rounds =
+    !taskVersions[row.version] || row.state !== roundsFrom(row.version)
+      ? null
+      : counted
+        ? (counted.get(row.id) ?? null)
+        : (await this.workflows.limitStatusOf(caller, [row.id], 'review_rounds', tx)).get(row.id)!;
+  const review =
+    row.state === 'in_review' && row.review_id
+      ? await this.reviews.get(caller, row.review_id, tx).catch(absent)
+      : null;
+  return {
+    id: row.id,
+    title: row.title,
+    state: row.state,
+    // A lease of an earlier revision holds nothing the task still is.
+    lease: leases.get(`${row.id}@${row.revision}`) ?? null,
+    review: review && {
+      id: review.id,
+      status: review.status,
+      reviewerId: review.reviewerId,
+      createdAt: review.createdAt,
+      ...(review.waiting ? { waiting: review.waiting } : {}),
+    },
+    dependencies,
+    roundsUsed: !!rounds?.exhausted,
+    blocked,
   };
 }

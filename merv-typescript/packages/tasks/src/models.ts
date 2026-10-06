@@ -40,6 +40,11 @@ export interface Task {
   /** The commit the current delivery names; the review pins its rendered record. */
   deliveryCode?: TaskDeliveryCode;
   deliveryCodeArtifactId?: string;
+  /**
+   * The brief is the one Tasks composed from the title, the goal and the checks, so it says
+   * nothing the record does not. Work contexts embed the record without it.
+   */
+  composed: boolean;
 }
 /**
  * The commit a Git task delivered. The receipt stays resolvable through its ref, so the record
