@@ -1734,6 +1734,14 @@ export interface ReviewSubmitOwner {
   fields?: readonly string[];
   /** Refuses a claim of an owned review that the owner's rules could never let finish. */
   claim?(caller: Caller, review: Readonly<ReviewRequest>, tx: Transaction): Promise<void>;
+  /** The codes of `claim`'s refusals that the project's owner, deciding as owner, lifts. */
+  overrides?: readonly string[];
+  /** The verdicts this caller may submit on an owned review, where the owner's rules rule some out. */
+  verdicts?(
+    caller: Caller,
+    review: Readonly<ReviewRequest>,
+    tx: Transaction,
+  ): Promise<readonly Verdict[]>;
   /** The routes a rejecting verdict on this review may choose, where the owner offers a choice. */
   returns?(review: Readonly<ReviewRequest>, tx: Transaction): Promise<readonly ReviewReturn[]>;
   /**
@@ -1755,7 +1763,8 @@ export interface Reviews {
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;
   /** What the one domain that owns this review tells its reviewer: its verdict rules, return
-   * routes, the gate it reads and what the delivery claimed, where it states them. A review the caller has just read (get, start) is not read again. */
+   * routes, the verdicts open to this reader, what deciding as owner lifts, the gate it reads
+   * and what the delivery claimed, where it states them. A review the caller has just read (get, start) is not read again. */
   guide(caller: Caller, review: string | ReviewRequest, tx?: Transaction): Promise<ReviewGuide>;
   request(caller: Caller, input: ReviewInput, tx?: Transaction): Promise<ReviewRequest>;
   reissue(

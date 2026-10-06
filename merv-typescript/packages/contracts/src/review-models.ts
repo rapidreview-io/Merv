@@ -37,6 +37,13 @@ export interface ReviewGuide {
   guidance?: string;
   /** The routes a rejecting verdict may choose; absent where the owner's routes are fixed. */
   returns?: ReviewReturn[];
+  /** The verdicts this reader may submit; absent where the owner rules none out. */
+  verdicts?: Verdict[];
+  /**
+   * For a reader who may decide it as owner (`overridable`): the codes of the claim's refusals
+   * that deciding as owner lifts. A claim refused for any other reason is not the owner's either.
+   */
+  overrides?: string[];
   /** The gate the review is read at, where the owner reviews its records at more than one. */
   gate?: string;
   /** What the delivery under review claimed of each check, where the owner keeps such claims. */

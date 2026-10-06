@@ -34,7 +34,8 @@ const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
 
 /** A review as review.get and review.list answer it; review.get adds its owner's return routes,
  * the gate it reads and the delivery's claims. */
-export type Review = ReviewRequest & Pick<ReviewGuide, 'returns' | 'gate' | 'claims'>;
+export type Review = ReviewRequest &
+  Pick<ReviewGuide, 'returns' | 'verdicts' | 'overrides' | 'gate' | 'claims'>;
 /** What a desk has said about one check so far: its word, the sentence, the files it cites. */
 export interface Draft {
   status?: string;
@@ -466,19 +467,16 @@ function Controls({
         // Return routes are the one part of a verdict no schema enumerates: the owning
         // domain names them on the review it serves, and a task's review takes none.
         routes={review.returns ?? []}
-        // A Git task passes only from a leased reviewer in a checkout of the delivered commit,
-        // which no browser is, unless its owner decides as owner.
-        passes={guidance.data.workflow !== 'task' || !!review.override}
+        // The owner may rule some verdicts out for this reader.
+        verdicts={review.verdicts ?? REVIEW_VERDICTS}
         values={values}
         onDone={onDone}
       />
     );
   // What the default leaves to an independent reviewer, the project's owner may still decide;
-  // a claim held back for any other reason is not the owner's to take either.
+  // a claim held back for any other reason than the owner names is not the owner's to take.
   const own =
-    review.overridable &&
-    !!start?.blockers.length &&
-    start.blockers.every((b) => ['review_independence', 'leased_review_required'].includes(b.code));
+    !!start?.blockers.length && start.blockers.every((b) => review.overrides?.includes(b.code));
   const verb = own ? 'Decide as owner' : 'Claim review';
   if (start?.status === 'ready' || own)
     return (
@@ -568,14 +566,14 @@ function Desk({
   review,
   action,
   routes,
-  passes,
+  verdicts,
   values,
   onDone,
 }: {
   review: Review;
   action: WorkflowActionStatus;
   routes: { value: string; label: string }[];
-  passes: boolean;
+  verdicts: readonly Verdict[];
   values: Record<number, Draft>;
   onDone(): void;
 }) {
@@ -623,7 +621,7 @@ function Desk({
         </p>
       )}
       <div className="cluster">
-        {REVIEW_VERDICTS.filter((value) => passes || value !== 'pass').map((value) => (
+        {verdicts.map((value) => (
           <button
             key={value}
             type="button"
