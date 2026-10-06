@@ -5,7 +5,7 @@
 # every other layer, and every file outside /opt/merv/pi, as it was.
 ARG SANDBOX_IMAGE=merv-runtime-integration:test
 FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90 AS codex
-RUN npm install --prefix /opt/codex --omit=dev --no-audit --no-fund @openai/codex@0.155.0-alpha.2
+RUN npm install --prefix /opt/codex --omit=dev --no-audit --no-fund @openai/codex@0.160.1
 FROM node:22.19.0-bookworm-slim@sha256:4a4884e8a44826194dff92ba316264f392056cbe243dcc9fd3551e71cea02b90 AS pi-deps
 WORKDIR /opt/merv/pi
 COPY pi/package.json pi/package-lock.json ./

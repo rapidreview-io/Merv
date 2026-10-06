@@ -645,7 +645,7 @@ test('the child receives its session bearer but no inherited machine key, provid
   }
 });
 
-test('hosted gpt-6.1-sol Codex gets explicit model limits and no unstable-feature warning', () => {
+test('hosted gpt-6.1-sol Codex keeps Codex’s own model metadata, no sub-agents and no unstable-feature warning', () => {
   const hosted = validateProfile({
     ...hostedCodexPlatform,
     executable: '/opt/bin/codex',
@@ -653,14 +653,11 @@ test('hosted gpt-6.1-sol Codex gets explicit model limits and no unstable-featur
     hosted: true,
   });
   assert.equal(hosted.harness === 'codex' && hosted.model, 'gpt-6.1-sol');
-  const settings = config(buildLaunch(hosted, request(), safeEnv).args);
-  assert.equal(settings.suppress_unstable_features_warning, 'true');
-  assert.equal(settings.model_context_window, '272000');
-  assert.equal(settings.model_auto_compact_token_limit, '244800');
-  // A model Codex bundles, or none at all, keeps Codex's own metadata.
-  for (const profile of [codex, { ...codex, model: 'gpt-6-astra' }]) {
+  // The pinned Codex (0.160.1) bundles gpt-6.1-sol: its own 272K window, compacting at 90%.
+  for (const profile of [hosted, codex, { ...codex, model: 'gpt-6-astra' }]) {
     const own = config(buildLaunch(profile, request(), safeEnv).args);
     assert.equal(own.suppress_unstable_features_warning, 'true');
+    assert.equal(own['agents.enabled'], 'false');
     assert.equal(own.model_context_window, undefined);
     assert.equal(own.model_auto_compact_token_limit, undefined);
   }

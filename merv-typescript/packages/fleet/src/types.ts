@@ -163,6 +163,8 @@ export interface ModelRelayConfig<
   grant(raw: unknown): G;
   /** The body sent upstream, with the relay's own settings, or null to refuse the request. */
   payload(raw: unknown, grant: G): Record<string, unknown> | null;
+  /** Headers the upstream call carries for that body, besides the relay's own. */
+  headers?(body: Record<string, unknown>): Record<string, string>;
   lane(grant: G): string;
   maxRequestBytes: number;
   totalTimeoutMs: number;

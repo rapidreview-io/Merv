@@ -208,13 +208,19 @@ class Main(http.server.BaseHTTPRequestHandler):
             self.send_response(401)
             self.end_headers()
             return
-        tools = body.get('tools', [])
+        # Codex 0.160 sends gpt-6.1-sol's tools as Responses Lite's first input item, not `tools`.
+        tools = body.get('tools', []) + [t for i in body.get('input', [])
+                                          if i.get('type') == 'additional_tools' for t in i.get('tools', [])]
         calls.append((self.command, self.path, sorted(body), {t.get('type') for t in tools} |
                       {t.get('type') for n in tools for t in n.get('tools', [])}))
         # Never inject an unadvertised tool: that can execute despite being invisible to the model.
+        # The model's catalog runs it in code mode only: the shell is a tool of the advertised
+        # JavaScript `exec`, which its description declares.
         declared = tools + [t for n in tools for t in n.get('tools', [])]
-        assert any(t.get('type') == 'function' and t.get('name') == 'exec_command' for t in declared)
-        answered = [i['output'] for i in body.get('input', []) if i.get('type') == 'function_call_output']
+        assert any(t.get('type') == 'custom' and t.get('name') == 'exec' and
+                   'exec_command(' in t.get('description', '') for t in declared), declared
+        answered = [''.join(part.get('text', '') for part in i['output']) if isinstance(i['output'], list)
+                    else i['output'] for i in body.get('input', []) if i.get('type') == 'custom_tool_call_output']
         if answered:
             outputs.extend(answered)
             # The bearer is there to find: its own uid, outside Codex's sandbox, reads it.
@@ -224,8 +230,9 @@ class Main(http.server.BaseHTTPRequestHandler):
             ).stdout.split())
         item = ({'type': 'message', 'role': 'assistant', 'id': 'msg_gate',
                  'content': [{'type': 'output_text', 'text': 'done'}]} if answered else
-                {'type': 'function_call', 'name': 'exec_command', 'call_id': 'probe',
-                 'arguments': json.dumps({'cmd': probe_command(self.server.server_port)})})
+                {'type': 'custom_tool_call', 'name': 'exec', 'call_id': 'probe', 'input':
+                 'const r = await tools.exec_command(%s);\ntext(r.output);' % json.dumps(
+                     {'cmd': probe_command(self.server.server_port), 'yield_time_ms': 30000})})
         events = [{'type': 'response.created', 'response': {'id': 'resp_gate'}},
                   {'type': 'response.output_item.done', 'output_index': 0, 'item': item},
                   {'type': 'response.completed', 'response': {'id': 'resp_gate', 'usage': {
@@ -337,7 +344,7 @@ work = Path('/workspace/assignments') / secrets.token_hex(32)
 work.mkdir(mode=0o700)
 # The hosted profile's own settings (runner/src/profiles.ts), but for Merv's MCP server.
 settings = ['approval_policy="never"', 'model_reasoning_effort="low"', 'web_search="disabled"', 'features.shell_tool=true',
-            'features.multi_agent=false', 'features.shell_snapshot=false', 'allow_login_shell=false',
+            'features.multi_agent=false', 'agents.enabled=false', 'features.shell_snapshot=false', 'allow_login_shell=false',
             'shell_environment_policy.inherit="all"', 'shell_environment_policy.include_only=["PATH","HOME","USER","TMPDIR","LANG","HF_TOKEN","HF_ENDPOINT"]', 'shell_environment_policy.ignore_default_excludes=true',
             'shell_environment_policy.experimental_use_profile=false',
             'shell_environment_policy.set={"PATH"="/usr/bin:/bin","HOME"="/home/assignment",'
