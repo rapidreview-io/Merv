@@ -1,4 +1,9 @@
-import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
+import {
+  excludedFromReview,
+  requireDirecting,
+  reviewHistory,
+  REVIEW_SUBMIT_INPUT,
+} from '@merv/reviews/rules';
 import {
   check,
   CheckedTransitions,
@@ -57,6 +62,7 @@ import {
   type WorkflowSnapshot,
   type WorkflowTransition,
   type WorkRoute,
+  requireHuman,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
@@ -884,11 +890,10 @@ export class TaskService implements Tasks {
                 instruction:
                   'A signed-in human operator extends review_rounds to resume this same task.',
                 check: async ({ caller, tx, snapshot }: WorkflowCheckContext) => {
-                  check(
-                    caller.human && !caller.session && !caller.key,
+                  requireHuman(
+                    caller,
                     'forbidden',
                     'Only a signed-in human operator resumes service work',
-                    403,
                   );
                   await this.scope.require(caller, 'admin', tx);
                   const limit = await this.workflows.limitStatus(
@@ -935,7 +940,7 @@ export class TaskService implements Tasks {
           tool: 'review.submit',
           instruction:
             'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. Include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
-          requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
+          requiredInput: [...REVIEW_SUBMIT_INPUT],
           arguments: async (context) => {
             const review = await this.currentReview(context);
             return {

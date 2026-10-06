@@ -1,5 +1,4 @@
 import { expiry } from './expiry.js';
-import { ACTOR_WITH_MEMBER } from './roles.js';
 import type { Ledger } from './ledger.js';
 import {
   check,
@@ -20,6 +19,10 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
+
+/** An actor with the person it acts for, if any; append `WHERE …` on `a`. */
+export const ACTOR_WITH_MEMBER = `SELECT a.*,m.issuer AS user_issuer,m.subject AS user_subject FROM actors a
+  LEFT JOIN member_actors m ON m.actor_id=a.id`;
 
 export interface ActorRow {
   id: string;

@@ -1,6 +1,7 @@
 import type { Context } from 'cordis';
 import type {} from '@merv/api/types';
 import { z } from 'zod';
+import { REVIEW_VERDICTS } from './rules.js';
 import type { Caller, ReviewApplication, ReviewRequest, Reviews } from '@merv/contracts';
 
 const requestId = z.string().min(1).max(200);
@@ -66,7 +67,7 @@ export const reviewToolsPlugin = {
           .object({
             reviewId: id,
             claimId: id,
-            verdict: z.enum(['pass', 'needs_changes', 'fail']),
+            verdict: z.enum(REVIEW_VERDICTS),
             returnTo: z
               .string()
               .min(1)

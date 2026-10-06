@@ -232,6 +232,7 @@ const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
   '@merv/experiments/rules',
   '@merv/reviews/rules',
+  '@merv/scope/rules',
   '@merv/reflections/names',
 ]);
 

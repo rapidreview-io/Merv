@@ -1823,13 +1823,13 @@ export class LeasedSessions implements Sessions {
       );
       check(row, 'session_not_found', 'Session not found in this project', 404);
       const session = this.decode(row);
-      const event = session.workspace?.result
-        ? await sql.get<{ id: number; created_at: string }>(
-            "SELECT id,created_at FROM events WHERE project_id=? AND subject_id=? AND type='session.workspace_result' ORDER BY id LIMIT 1",
-            caller.projectId,
-            sessionId,
+      const [event] = session.workspace?.result
+        ? await this.state.findEvents(
+            { projectId: caller.projectId, subjectId: sessionId, type: 'session.workspace_result' },
+            1,
+            sql,
           )
-        : undefined;
+        : [];
       // Provenance names who delegated the work, not the credential they held.
       const { kind, actorId, projectId } = session.source;
       return {
@@ -1854,7 +1854,7 @@ export class LeasedSessions implements Sessions {
         workspaceMode: effectiveWorkspace(session.execution.policy).mode,
         live: live(session),
         workspace: session.workspace ?? null,
-        observedAt: event?.created_at ?? null,
+        observedAt: event?.createdAt ?? null,
         eventId: event?.id ?? null,
       };
     };

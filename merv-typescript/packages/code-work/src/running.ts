@@ -26,6 +26,7 @@ import {
   type Transaction,
   type WorkflowProvidedBlocker,
   type Workflows,
+  isDirectHuman,
 } from '@merv/contracts';
 import { personMove, type PersonMove } from './blockers.js';
 import type { CodeBaseService, CodeCheckStanding } from './bases.js';
@@ -89,7 +90,7 @@ const way = (move: PersonMove, operator: boolean) =>
 
 /** The reader Code's publication controls answer: an operator signed in as a person. */
 const signedIn = (caller: Caller, actor: Actor) =>
-  actor.role === 'operator' && !!caller.human && !caller.session && !caller.key;
+  actor.role === 'operator' && isDirectHuman(caller);
 
 /**
  * The marks. Open work is drawn by its owner whatever Code says, so each of its moves is a

@@ -143,11 +143,9 @@ export class CodeCaptureReader {
           'Commit receipt differs from its exact command',
           409,
         );
-      const event = await sql.get<{ id: number; created_at: string }>(
-        'SELECT id,created_at FROM events WHERE project_id=? AND subject_id=? AND type=? ORDER BY id LIMIT 1',
-        caller.projectId,
-        c.id,
-        `code.command_${record.status}`,
+      const [event] = await this.state.findEvents(
+        { projectId: caller.projectId, subjectId: c.id, type: `code.command_${record.status}` },
+        1,
       );
       return {
         ref,
@@ -161,7 +159,7 @@ export class CodeCaptureReader {
           ? { ...c.workspace, headOid: r.headOid, treeOid: r.treeOid, stats: r.stats }
           : null,
         ...(r ? { parentOid: r.parentOid } : {}),
-        observedAt: r ? (event?.created_at ?? null) : null,
+        observedAt: r ? (event?.createdAt ?? null) : null,
         eventId: r ? (event?.id ?? null) : null,
         ...(record.error ? { error: record.error } : {}),
       } satisfies CodeCapture;

@@ -15,6 +15,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  requireHuman,
 } from '@merv/contracts';
 import { parseCodeInput } from './input.js';
 import type { CodeWriterService } from './writers.js';
@@ -302,11 +303,10 @@ export class CodeUnitStore {
     const input = parseCodeInput(codeLocalBindInputSchema, value);
     return await inTransaction(this.state, tx, async (tx) => {
       await this.scope.require(caller, 'admin', tx);
-      check(
-        caller.human && !caller.session && !caller.key,
+      requireHuman(
+        caller,
         'code_human_required',
         'A signed-in project administrator binds the repository and names its main',
-        403,
       );
       const principal = `actor:${caller.actorId}`;
       const { requestId, ...payload } = input;

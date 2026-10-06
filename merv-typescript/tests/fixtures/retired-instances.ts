@@ -438,6 +438,10 @@ DELETE FROM component_migrations WHERE component='reflections' AND version=4;`);
     await client.query(
       "DELETE FROM component_migrations WHERE component='reflections' AND version=3",
     );
+    // reviews@14 (an open claim keeps its event on its row) came later still.
+    await client.query(`ALTER TABLE reviews DROP COLUMN claim_event_id, DROP COLUMN claimed_at,
+  DROP COLUMN claimed_by_agent;
+DELETE FROM component_migrations WHERE component='reviews' AND version=14;`);
     // So did reviews@11 (the owner override): version 1's check and version 7's claim guard return.
     await client.query(`ALTER TABLE reviews DROP COLUMN owner_override CASCADE;
 ALTER TABLE reviews ADD CHECK(reviewer_id IS NULL OR reviewer_id != producer_id);

@@ -18,6 +18,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  requireHuman,
 } from '@merv/contracts';
 import {
   publicationApproval,
@@ -636,11 +637,10 @@ export class CodePublicationService implements CodePublicationApi {
     caller = structuredClone(caller);
     const input = parseCodeInput(codePublicationMergeSchema, value);
     await this.scope.require(caller, 'admin');
-    check(
-      caller.human && !caller.session && !caller.key,
+    requireHuman(
+      caller,
       'github_human_required',
       'A signed-in project operator must merge the reviewed proposal',
-      403,
     );
     return this.locked(caller, input.proposalId, async (row, lock) => {
       const record = this.decode(row);
@@ -793,12 +793,7 @@ export class CodePublicationService implements CodePublicationApi {
           await this.state.transaction(async (tx) => {
             await this.scope.require(caller, 'admin', tx);
             await this.github.assertBinding(caller, JSON.parse(row.binding_json), tx, 'write');
-            check(
-              caller.human && !caller.session && !caller.key,
-              'github_human_required',
-              'A signed-in human must merge',
-              403,
-            );
+            requireHuman(caller, 'github_human_required', 'A signed-in human must merge');
             const latest = this.decode(await this.owned(caller, record.proposalId, lock, tx));
             check(
               latest.review?.verdict === 'pass' &&
@@ -868,12 +863,7 @@ export class CodePublicationService implements CodePublicationApi {
         async (tx) => {
           const current = this.decode(await this.owned(caller, row.proposal_id, lock, tx));
           await this.scope.require(caller, 'admin', tx);
-          check(
-            caller.human && !caller.session && !caller.key,
-            'github_human_required',
-            'A signed-in human must merge',
-            403,
-          );
+          requireHuman(caller, 'github_human_required', 'A signed-in human must merge');
           if (current.merge && !current.verified && !current.stale && !current.incident) {
             check(
               current.merge.requestId === input.requestId &&

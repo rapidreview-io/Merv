@@ -4,6 +4,7 @@ import {
   check,
   digest,
   MervError,
+  type EventFilter,
   now,
   plain,
   type Migration,
@@ -826,6 +827,41 @@ END $merv$;`);
       )
         .reverse()
         .map(eventFromRow),
+    );
+  }
+
+  async findEvents(filter: EventFilter, limit: number, tx?: Transaction): Promise<StoredEvent[]> {
+    check(
+      Number.isSafeInteger(limit) && limit > 0 && limit <= 1000,
+      'invalid_cursor',
+      'Invalid event limit',
+    );
+    if (tx) this.assertTransaction(tx);
+    const { projectId, type, subjectId, actorId, after, since, source } = filter;
+    const where = ['project_id=?'];
+    const values: SqlValue[] = [projectId];
+    const match = (clause: string, value: SqlValue | undefined) => {
+      if (value === undefined) return;
+      where.push(clause);
+      values.push(value);
+    };
+    match('type=?', type);
+    match('subject_id=?', subjectId);
+    match('actor_id=?', actorId);
+    match('id>?', after);
+    match('created_at>=?', since);
+    for (const [field, value] of Object.entries(source ?? {})) {
+      where.push("(data_json::jsonb -> 'source' ->> ?)=?");
+      values.push(field, value);
+    }
+    return this.read(async (sql) =>
+      (
+        await sql.all<EventRow>(
+          `SELECT * FROM events WHERE ${where.join(' AND ')} ORDER BY id LIMIT ?`,
+          ...values,
+          limit,
+        )
+      ).map(eventFromRow),
     );
   }
 

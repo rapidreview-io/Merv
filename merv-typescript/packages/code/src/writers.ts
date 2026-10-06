@@ -16,6 +16,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  requireHuman,
 } from '@merv/contracts';
 import { parseCodeInput } from './input.js';
 import { CodeChanges } from './changes.js';
@@ -241,11 +242,10 @@ export class CodeWriterService {
     this.assertOpen();
     const input = parseCodeInput(codeUnitFenceInputSchema, value);
     await this.scope.require(caller, 'admin', tx);
-    check(
-      caller.human && !caller.session && !caller.key,
+    requireHuman(
+      caller,
       'code_human_required',
       'A signed-in project administrator fences a writer',
-      403,
     );
     const principal = `actor:${caller.actorId}`;
     const { requestId, ...body } = input;

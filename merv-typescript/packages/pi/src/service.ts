@@ -1379,17 +1379,17 @@ export class PiService implements Pi, FleetOwner {
       );
       const before = row && decode<PiCommandRecord>(row);
       if (before?.status !== 'interrupted') return [];
-      const events = await tx.all<{ type: string; subject_id: string }>(
-        `SELECT type,subject_id FROM events WHERE project_id=? AND actor_id=? AND created_at>=?
-          AND data_json::jsonb #>> '{source,conversationId}'=? AND data_json::jsonb #>> '{source,commandId}'=?
-          ORDER BY id LIMIT 6`,
-        conversation.projectId,
-        conversation.source.actorId,
-        before.startedAt ?? before.createdAt,
-        conversation.id,
-        before.id,
+      const events = await this.state.findEvents(
+        {
+          projectId: conversation.projectId,
+          actorId: conversation.source.actorId,
+          since: before.startedAt ?? before.createdAt,
+          source: { conversationId: conversation.id, commandId: before.id },
+        },
+        6,
+        tx,
       );
-      return events.map(({ type, subject_id }) => `${type} ${subject_id}`);
+      return events.map(({ type, subjectId }) => `${type} ${subjectId}`);
     });
     return turnNotes({
       role,

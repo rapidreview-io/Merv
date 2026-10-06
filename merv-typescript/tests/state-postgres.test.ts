@@ -578,6 +578,35 @@ test('State refuses malformed events, cursors and migration versions', async (t)
   assert.equal(await state.eventHead(), 1);
 });
 
+test('State.findEvents returns the oldest events matching every field, its source included', async (t) => {
+  const { state } = await fixture(t);
+  const source = (commandId: string) => ({ source: { kind: 'conversation', commandId } });
+  const [first, second, third] = await state.transaction(async (tx) => [
+    await state.appendEvent(tx, { ...event, data: source('a') }),
+    await state.appendEvent(tx, { ...event, type: 'test.changed', data: source('b') }),
+    await state.appendEvent(tx, { ...event, data: source('b') }),
+    await state.appendEvent(tx, { ...event, projectId: 'other' }),
+  ]);
+  const ids = async (filter: Partial<Parameters<typeof state.findEvents>[0]>, limit = 10) =>
+    (await state.findEvents({ projectId: 'project', ...filter }, limit)).map(({ id }) => id);
+  assert.deepEqual(await ids({}), [first!.id, second!.id, third!.id]);
+  assert.deepEqual(await ids({}, 1), [first!.id]);
+  assert.deepEqual(await ids({ type: 'test.created' }), [first!.id, third!.id]);
+  assert.deepEqual(await ids({ type: 'test.created', after: first!.id }), [third!.id]);
+  assert.deepEqual(await ids({ source: { commandId: 'b' } }), [second!.id, third!.id]);
+  assert.deepEqual(await ids({ source: { commandId: 'b', kind: 'session' } }), []);
+  assert.deepEqual(await ids({ subjectId: 'elsewhere' }), []);
+  assert.deepEqual(await ids({ actorId: 'actor', since: first!.createdAt }), [
+    first!.id,
+    second!.id,
+    third!.id,
+  ]);
+  for (const limit of [0, 1001, 1.5])
+    await assert.rejects(state.findEvents({ projectId: 'project' }, limit), {
+      code: 'invalid_cursor',
+    });
+});
+
 test('PostgreSQL refuses a read with state_busy when every reader connection is held', async (t) => {
   const { state } = await fixture(t, { readConnections: 1, connectionTimeoutMs: 200 });
   const entered = deferred(),

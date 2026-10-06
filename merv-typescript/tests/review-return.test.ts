@@ -23,7 +23,7 @@ import {
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 import { openState } from './fixtures/state.js';
-import { assessment, claimUnowned } from './fixtures/review-verdict.js';
+import { assessment, claimUnowned, legacyStart } from './fixtures/review-verdict.js';
 
 async function fixture(maximumMigration = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-return-'));
@@ -329,7 +329,7 @@ test('omitted or explicitly undefined return routes preserve the old wire and re
 test('migration adds nullable route storage without rewriting old submitted rows or request receipts', async () => {
   const f = await fixture(5);
   try {
-    const claim = await f.claim(),
+    const claim = await legacyStart(f.state, f.reviews, f.reviewer.caller, (await f.request()).id),
       input = f.input(claim);
     const oldResult = {
       ...claim,
@@ -365,8 +365,15 @@ test('migration adds nullable route storage without rewriting old submitted rows
           required_criteria: required,
           provenance_json: provenance,
           owner_override: override,
+          claim_event_id: claimEvent,
+          claimed_at: claimedAt,
+          claimed_by_agent: agent,
           ...row
         }) => {
+          // A submitted row keeps no claim event: only an open claim reads it.
+          assert.equal(claimEvent, null);
+          assert.equal(claimedAt, null);
+          assert.equal(agent, false);
           assert.equal(route, null);
           assert.equal(exclusions, null);
           assert.equal(required, null);

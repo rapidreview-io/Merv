@@ -199,4 +199,15 @@ ${withoutTriggers(
 )}`,
   // The Running sidebar and the domains read a subject's reviews by its id.
   13: `CREATE INDEX reviews_subject ON reviews(project_id, subject_id);`,
+  // An open claim keeps the event it was taken with (when, and whether a leased agent took it),
+  // so reading a claim never searches State's log. Open claims copy theirs from that log.
+  14: `ALTER TABLE reviews ADD COLUMN claim_event_id BIGINT;
+ALTER TABLE reviews ADD COLUMN claimed_at TEXT;
+ALTER TABLE reviews ADD COLUMN claimed_by_agent BOOLEAN NOT NULL DEFAULT false;
+UPDATE reviews r SET claim_event_id=(SELECT MAX(e.id) FROM events e WHERE e.project_id=r.project_id
+  AND e.subject_id=r.id AND e.type='review.started' AND (e.data_json::jsonb #>> '{claimId}')=r.claim_id)
+  WHERE r.status='started';
+UPDATE reviews r SET claimed_at=e.created_at,
+  claimed_by_agent=COALESCE((e.data_json::jsonb #>> '{source,kind}')='session',false)
+  FROM events e WHERE e.id=r.claim_event_id;`,
 };

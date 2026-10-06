@@ -1,6 +1,12 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
-import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
+import {
+  excludedFromReview,
+  requireDirecting,
+  reviewHistory,
+  REVIEW_SUBMIT_INPUT,
+  REVIEW_VERDICTS,
+} from '@merv/reviews/rules';
 import {
   itemTitle,
   releasedLease,
@@ -560,7 +566,7 @@ export abstract class ExperimentProgram {
   /** The review edge a verdict takes from the stage it assessed. */
   protected route(stage: 'design' | 'results', input: ExperimentReview): string {
     check(
-      ['pass', 'needs_changes', 'fail'].includes(input.verdict),
+      REVIEW_VERDICTS.includes(input.verdict),
       'invalid_verdict',
       'A supported review verdict is required',
     );
@@ -1638,7 +1644,7 @@ export abstract class ExperimentProgram {
               : ['accept_results', 'revise_plan', 'revise_execution'],
           tool: 'review.submit',
           instruction: handoff(state),
-          requiredInput: ['verdict', 'notes', 'synopsis', 'findings'],
+          requiredInput: [...REVIEW_SUBMIT_INPUT],
           // The check pins the same review and gates its capture, so arguments only name it.
           arguments: async (context: WorkflowCheckContext): Promise<Data> => {
             const review = await this.review(context.caller, await this.facts(context), context.tx);

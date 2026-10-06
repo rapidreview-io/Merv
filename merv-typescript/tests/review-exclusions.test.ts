@@ -11,7 +11,7 @@ import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
 import type { Caller, ReviewInput, Role } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
-import { assessment, ownReviews } from './fixtures/review-verdict.js';
+import { assessment, legacyStart, ownReviews } from './fixtures/review-verdict.js';
 
 async function fixture(t: TestContext, version = Infinity) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-review-exclusions-'));
@@ -277,7 +277,7 @@ test('additive migration preserves legacy snapshot hash, absent field and stored
   const f = await fixture(t, 6);
   const input = f.input();
   const requested = await f.reviews.request(f.producer, input);
-  const claimed = await f.reviews.start(f.reviewer, requested.id);
+  const claimed = await legacyStart(f.state, f.reviews, f.reviewer, requested.id);
   const submit = {
     reviewId: claimed.id,
     claimId: claimed.claimId!,
@@ -481,4 +481,37 @@ test('a reissue replays the exclusions a delivery pinned, whoever asks for the n
       code: 'review_independence',
     });
   }
+});
+
+test('an open claim keeps its review.started event on its row, copied from the log for a claim taken before reviews@14', async (t) => {
+  const f = await fixture(t, 13);
+  const claimRow = async (id: string) =>
+    await f.state.read(
+      async (sql) =>
+        await sql.get(
+          'SELECT claim_event_id,claimed_at,claimed_by_agent FROM reviews WHERE id=?',
+          id,
+        ),
+    );
+  const started = async (id: string) =>
+    (await f.state.events(f.operator.projectId)).findLast(
+      (event) => event.type === 'review.started' && event.subjectId === id,
+    )!;
+  const legacy = await f.reviews.request(f.producer, f.input());
+  await legacyStart(f.state, f.reviews, f.reviewer, legacy.id);
+  await f.reload();
+  const copied = await started(legacy.id);
+  assert.deepEqual(await claimRow(legacy.id), {
+    claim_event_id: copied.id,
+    claimed_at: copied.createdAt,
+    claimed_by_agent: false,
+  });
+  const fresh = await f.reviews.request(f.producer, f.input());
+  await f.reviews.start(f.reviewer, fresh.id);
+  const recorded = await started(fresh.id);
+  assert.deepEqual(await claimRow(fresh.id), {
+    claim_event_id: recorded.id,
+    claimed_at: recorded.createdAt,
+    claimed_by_agent: false,
+  });
 });
