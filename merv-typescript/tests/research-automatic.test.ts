@@ -346,6 +346,22 @@ test('new manual cycles reflect on failed and abandoned work without weakening e
   assert.ok(digest.dropped.includes(abandoned.id));
 });
 
+test('a wave closes the unstarted work between its selection and a failed input it never named', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const data = await f.task();
+  const training = await f.experiment([data.id]);
+  const evaluation = await f.task([training.id]);
+  const cycle = await f.create([evaluation.id]);
+  await f.pump();
+  await f.failTask(data.id);
+  await f.pump();
+  assert.equal((await f.app.ctx.experiments.get(f.owner, training.id)).workflow.state, 'abandoned');
+  assert.equal((await f.app.ctx.tasks.get(f.owner, evaluation.id)).workflow.state, 'failed');
+  assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+});
+
 test('an entirely failed wave closes blocked descendants, reflects, and waits for independent approval', async (t) => {
   const f = await fixture(t);
   await f.define();

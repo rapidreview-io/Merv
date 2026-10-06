@@ -1647,10 +1647,16 @@ export class ResearchService implements Research {
     });
   }
 
-  /** A permanently failed input cannot strand never-started work in this selected wave. */
+  /**
+   * A permanently failed input cannot strand never-started work in this selected wave, or the
+   * work between it and that input.
+   */
   private async closeBlockedWork(caller: Caller, record: ResearchRecord, tx: Transaction) {
-    const remaining = new Set(record.researchDependencies);
-    for (let pass = 0; remaining.size && pass < record.researchDependencies.length; pass++) {
+    const remaining = new Set<string>();
+    for (const id of record.researchDependencies)
+      for (const item of await this.workflows.dependencyClosure(caller, id, tx))
+        remaining.add(item);
+    for (let pass = 0, passes = remaining.size; remaining.size && pass < passes; pass++) {
       let changed = false;
       for (const id of [...remaining]) {
         const work = await this.workflows.get(caller, id, tx);
