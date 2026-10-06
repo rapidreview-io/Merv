@@ -4,12 +4,8 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import type {
-  CodeCommitCommand,
-  CodeWorkspaceManifest,
-  Transaction,
-  WorkspaceSession,
-} from '@merv/contracts';
+import type { CodeCommitCommand, Transaction, WorkspaceSession } from '@merv/contracts';
+import type { CodeWorkspaceManifest } from '@merv/code/store/protocol';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { CodeRepositories } from '@merv/code/store/repository';
 import { MERGE_SETTINGS } from '../packages/code/src/merge-settings.js';

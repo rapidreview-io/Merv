@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { codeRepositoryImportInputSchema } from '@merv/contracts';
+import { codeRepositoryImportInputSchema } from '@merv/code/store/protocol';
 import { codeStoreFixture, gitSource } from './fixtures/code-store.js';
 
 test('the import journal freezes GitHub authorization across retries and rejects changed selection', async (t) => {

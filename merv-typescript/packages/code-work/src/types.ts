@@ -5,7 +5,6 @@ import type {
   CodeCommitInput,
   CodeLocalBindInput,
   CodeProjectBinding,
-  CodePublication,
   GitHubPullDetails,
   RunningMark,
   RunningNode,
@@ -15,7 +14,6 @@ import type {
   SessionWorkspace,
   Transaction,
 } from '@merv/contracts';
-import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { SessionObservationProvenance } from '@merv/sessions/types';
 import type {} from 'cordis';
 import type {
@@ -27,6 +25,8 @@ import type {
   CodeUnit,
   CodeUnitAcceptance,
   CodeUnitAcceptInput,
+  CodePublication,
+  CodeCaptureRef,
 } from './models.js';
 
 /** A project's check and admission lists, all restated on every call. */
@@ -60,7 +60,7 @@ export interface CodeCommands {
   completeCommand(caller: Caller, input: unknown): Promise<CodeCommandRecord>;
   close(): void;
 }
-export type { CodeCaptureRef } from '@merv/contracts/types';
+export type { CodeCaptureRef } from './models.js';
 export interface CodeCapture {
   ref: CodeCaptureRef;
   status: 'none' | 'pending' | 'ready' | 'failed';
@@ -153,13 +153,13 @@ export interface CodeWriters {
     caller: Caller,
     input: { unitId: string; leaseId: string },
     tx: Transaction,
-  ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  ): Promise<import('@merv/code/store/protocol').CodeWriterStatus>;
   /** Whether a new writer could be leased now; a pure read, like baseStatus. */
   writerStatus(
     caller: Caller,
     unitId: string,
     tx: Transaction,
-  ): Promise<import('@merv/contracts').CodeWriterStatus>;
+  ): Promise<import('@merv/code/store/protocol').CodeWriterStatus>;
   /**
    * Refuses, with Code's own blocker, a unit no lease could take now: its base cannot be
    * derived or, for a writer, the last writer's machine still owes its final capture or an
@@ -177,8 +177,8 @@ export interface CodeRepositoryControls {
   ensureRepository(caller: Caller, tx: Transaction): Promise<void>;
   prepareRepository(
     caller: Caller,
-    input: import('@merv/contracts').CodeRepositoryPrepareInput,
-  ): Promise<import('@merv/contracts').CodeRepositoryPreparation>;
+    input: import('@merv/code/store/protocol').CodeRepositoryPrepareInput,
+  ): Promise<import('@merv/code/store/protocol').CodeRepositoryPreparation>;
   /**
    * The accepted units of this project whose code the current main does not contain yet.
    * It asks Git, so it lives with the repository rather than with the units, and takes no
@@ -194,26 +194,26 @@ export interface CodeRepositoryControls {
   ): Promise<import('./models.js').CodeBaseRecord>;
   importRepository(
     caller: Caller,
-    input: import('@merv/contracts').CodeRepositoryImportInput,
-  ): Promise<import('@merv/contracts').CodeStoreOperation>;
+    input: import('@merv/code/store/protocol').CodeRepositoryImportInput,
+  ): Promise<import('@merv/code/store/protocol').CodeStoreOperation>;
   /** Change the repository identity of a hosted project, after proving Code holds its history. */
   rebindRepository(
     caller: Caller,
-    input: import('@merv/contracts').CodeRepositoryRebindInput,
-  ): Promise<import('@merv/contracts').CodeStoreOperation>;
+    input: import('@merv/code/store/protocol').CodeRepositoryRebindInput,
+  ): Promise<import('@merv/code/store/protocol').CodeStoreOperation>;
   configureRepository(
     caller: Caller,
     input: CodeRepositoryConfigureInput,
   ): Promise<CodeStoreLimits>;
   fenceUnit(
     caller: Caller,
-    input: import('@merv/contracts').CodeUnitFenceInput,
-  ): Promise<import('@merv/contracts').CodeWriterStatus>;
+    input: import('@merv/code/store/protocol').CodeUnitFenceInput,
+  ): Promise<import('@merv/code/store/protocol').CodeWriterStatus>;
   /** Put a ref publication that waits for an operator back in the queue; it never forces. */
   retryMirror(
     caller: Caller,
-    input: import('@merv/contracts').CodeMirrorRetryInput,
-  ): Promise<import('@merv/contracts').CodeMirrorStatus>;
+    input: import('@merv/code/store/protocol').CodeMirrorRetryInput,
+  ): Promise<import('@merv/code/store/protocol').CodeMirrorStatus>;
 }
 /**
  * Code's part of the Running page. Each is one read inside the page's snapshot, and none

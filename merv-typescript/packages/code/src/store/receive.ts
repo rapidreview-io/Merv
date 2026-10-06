@@ -2,25 +2,27 @@ import { OperationJournal } from '../operation-journal.js';
 import {
   canonical,
   check,
-  CODE_BUNDLE_MAX_BYTES,
-  CODE_PART_MAX_BYTES,
-  codeRepositoryImportInputSchema,
   digest,
   MervError,
   newId,
   now,
   type Caller,
+  type Scope,
+  type Sql,
+  type State,
+  type Transaction,
+} from '@merv/contracts';
+import {
+  CODE_BUNDLE_MAX_BYTES,
+  CODE_PART_MAX_BYTES,
+  codeRepositoryImportInputSchema,
   type CodeFinding,
   type CodeRepositoryImportInput,
   type CodeAdmissionLimits,
   type CodeStoreOperation,
   type CodeUploadBegin,
   type CodeUploadFinalize,
-  type Scope,
-  type Sql,
-  type State,
-  type Transaction,
-} from '@merv/contracts';
+} from './protocol.js';
 import { appendFile, chmod, link, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { hashFile, syncPath } from '../files.js';

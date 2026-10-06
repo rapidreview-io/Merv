@@ -216,8 +216,15 @@ const ownerOf = (path: string) => relative(packagesRoot, path).split(sep)[0];
 const capabilityOf = (owner: string) =>
   owner.replace(/-(\w)/g, (_, letter) => letter.toUpperCase());
 
-/** Contracts belongs to no component. A component may run only its index. */
-const sharedContract = (specifier: string) => specifier === '@merv/contracts';
+/**
+ * Contracts belongs to no component. Besides its index, a component may run only these shared
+ * modules: the portable id and Git schemas a browser-safe protocol module is built from.
+ */
+const contractsRuntimeExports = new Set(['schemas', 'workspace']);
+const sharedContract = (specifier: string) =>
+  specifier === '@merv/contracts' ||
+  (specifier.startsWith('@merv/contracts/') &&
+    contractsRuntimeExports.has(specifier.slice('@merv/contracts/'.length)));
 
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
  * limits, review independence and history, the prerequisite guard, the paper's Problem, an
@@ -244,7 +251,6 @@ const pureRules = new Set([
 /** This adapter composes the Git utility; no other feature may import its implementation. */
 const codeUtilityExports = new Set([
   'base-merge',
-  'configuration',
   'git',
   'github',
   'github-client',
@@ -254,6 +260,7 @@ const codeUtilityExports = new Set([
   'service',
   'store/mirror',
   'store/operations',
+  'store/protocol',
   'store/refs',
   'store/repository',
   'units',

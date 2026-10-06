@@ -12,7 +12,8 @@ import {
 import fsp from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
-import type { Caller, CodeStoreOperation } from '@merv/contracts';
+import type { Caller } from '@merv/contracts';
+import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeImportRemote, FaultPoint } from '@merv/code/store/operations';
 import { codeStoreFixture, faultAt, git, gitSource } from './fixtures/code-store.js';
 

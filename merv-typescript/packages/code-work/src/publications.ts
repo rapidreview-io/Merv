@@ -13,8 +13,6 @@ import {
   now,
   recorded,
   type Caller,
-  type CodePublication,
-  type CodePublicationState,
   type GitHubPullRequest,
   type Scope,
   type Sql,
@@ -24,6 +22,7 @@ import {
   idSchema,
 } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
+import type { CodePublication, CodePublicationState } from './models.js';
 import {
   publicationApproval,
   PublicationIncident,

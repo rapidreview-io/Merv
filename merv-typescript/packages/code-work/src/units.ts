@@ -30,7 +30,6 @@ import type {
   CodeCapture,
   CodeCaptureRef,
   CodeCaptures,
-  CodeUnits,
   ResolutionInput,
   ResolutionWork,
   ResolutionWorkCreator,
@@ -38,6 +37,8 @@ import type {
 
 import {
   WorkUnitRecords,
+  acceptance,
+  pin,
   publicationBlockers,
   type PublicationStanding,
   unitColumns,
@@ -53,7 +54,6 @@ import type {
   CodeUnit,
   CodeUnitAcceptance,
   CodeUnitAcceptInput,
-  CodeUnitPublication,
 } from './models.js';
 
 /** What a derivation finds; only `ready` carries a body a lease may pin. */
@@ -74,7 +74,9 @@ const RECONCILED =
   '(base_json IS NULL AND acceptance_json IS NULL) OR publication_id IN (SELECT proposal_id FROM code_publications WHERE settled=0)';
 
 /** Work-unit policy for durable Code records; absent deployments do not install this integration. */
-export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
+export class CodeUnitService {
+  /** The durable unit records this policy reads through and retains facts in. */
+  readonly records: WorkUnitRecords;
   /** Set once the project repositories exist; without it several commits are never merged. */
   bases?: CodeBaseService;
   /** The journal that carries an accepted unit to main; without it nothing publishes. */
@@ -84,15 +86,19 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   reviews?: import('@merv/contracts').Reviews;
   resolutionTasks?: ResolutionWorkCreator;
   constructor(
-    state: State,
-    scope: Scope,
+    private readonly state: State,
+    private readonly scope: Scope,
     private readonly workflows: Workflows,
     private readonly captures: CodeCaptures,
-    writers: CodeWriterService,
-    units: CodeUnitStore,
+    private readonly writers: CodeWriterService,
+    /** Code's own unit store, already initialized; it outlives this owner. */
+    readonly code: CodeUnitStore,
     private readonly sessions: Pick<import('@merv/sessions/types').Sessions, 'contributors'>,
   ) {
-    super(state, scope, writers, units);
+    this.records = new WorkUnitRecords(state, scope, writers, code, {
+      publication: (sql, projectId, stored) => this.enforcedPublication(sql, projectId, stored),
+      baseStatus: (tx, row, base) => this.derivedBaseStatus(tx, row, base),
+    });
     this.unobserve = writers.changes.observe(async (change, tx) => {
       if (change.kind === 'binding') await this.reconcileProject(tx, change.projectId);
       else await this.reconcileUnit(tx, change.projectId, change.unitId);
@@ -100,14 +106,18 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   }
 
   private readonly unobserve: () => void;
-  override close(): void {
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.records.initialize();
+  }
+  close(): void {
     this.unobserve();
-    super.close();
+    this.records.close();
   }
 
   reviewProvenance(projectId: string, taskId: string, tx: Transaction) {
     check(
-      !this.closed && this.bases,
+      !this.records.closed && this.bases,
       'code_provenance_unverifiable',
       'Base provenance is unavailable',
       503,
@@ -122,7 +132,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     baseReference?: string,
     derivationInputs?: string[],
   ): Promise<CodeUnit> {
-    this.assertOpen();
+    this.records.assertOpen();
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     derivationInputs = derivationInputs && [...derivationInputs];
@@ -138,7 +148,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         409,
       );
     }
-    await this.retainDeclaration(
+    await this.records.retainDeclaration(
       caller,
       {
         unitId,
@@ -151,7 +161,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     );
     // A unit that cannot start is shown from the moment it exists, not from its first poll.
     await this.reconcileUnit(tx, caller.projectId, unitId);
-    return await this.record(tx, (await this.row(tx, caller.projectId, unitId))!);
+    return await this.records.record(tx, (await this.records.row(tx, caller.projectId, unitId))!);
   }
 
   /** A base's disposition also gates its resolution task, without changing Tasks' history. */
@@ -181,16 +191,16 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
    * dispatch candidate scan all ask, and any of them may run for a caller who holds no lease.
    */
   async baseStatus(caller: Caller, unitId: string, tx: Transaction): Promise<CodeBaseStatus> {
-    this.assertOpen();
+    this.records.assertOpen();
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
     const disposition = await this.resolutionBlocker(tx, caller.projectId, unitId);
     if (disposition) return { status: 'blocked', blockers: [disposition] };
-    const row = await this.row(tx, caller.projectId, unitId);
+    const row = await this.records.row(tx, caller.projectId, unitId);
     if (row?.quarantine_base_key)
       return { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] };
-    if (row?.base_json) return { status: 'pinned', pin: this.pin(row)! };
+    if (row?.base_json) return { status: 'pinned', pin: pin(row)! };
     return this.baseState(await this.derive(tx, caller.projectId, unitId));
   }
 
@@ -206,7 +216,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     { unitId, leaseId }: { unitId: string; leaseId: string },
     tx: Transaction,
   ): Promise<CodeBasePin> {
-    this.assertOpen();
+    this.records.assertOpen();
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
@@ -217,7 +227,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       .filter((item) => item.kind !== 'system')
       .map((item) => item.id)
       .sort();
-    const existing = await this.row(tx, caller.projectId, unitId);
+    const existing = await this.records.row(tx, caller.projectId, unitId);
     check(
       !existing?.quarantine_base_key,
       'code_quarantined',
@@ -232,7 +242,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         'The dependencies of this unit changed after its base was pinned',
         409,
       );
-      return this.pin(existing)!;
+      return pin(existing)!;
     }
     const derived = await this.derive(tx, caller.projectId, unitId);
     if (derived.status !== 'ready') {
@@ -246,7 +256,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         409,
       );
     }
-    const pinned = await this.retainBase(
+    const pinned = await this.records.retainBase(
       caller,
       {
         unitId,
@@ -287,7 +297,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     );
     const disposition = await this.resolutionBlocker(tx, caller.projectId, input.unitId);
     if (disposition) throw new MervError(disposition.code, disposition.message, 409);
-    const health = await this.row(tx, caller.projectId, input.unitId);
+    const health = await this.records.row(tx, caller.projectId, input.unitId);
     check(
       !health?.quarantine_base_key,
       'code_quarantined',
@@ -362,12 +372,12 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       storage: code === null ? 'none' : 'code',
       ...(admitted ? { receipt: admitted.id } : {}),
     };
-    const existing = await this.row(tx, caller.projectId, input.unitId);
-    const stored = await this.retainUnitAcceptance(caller, body, tx);
+    const existing = await this.records.row(tx, caller.projectId, input.unitId);
+    const stored = await this.records.retainUnitAcceptance(caller, body, tx);
     if (!existing?.acceptance_hash && stored.publishes_at)
       await this.sealPublication(caller, relations.instance.name, stored, body, digest(body), tx);
     this.bases?.soon(caller.projectId);
-    return this.acceptance(stored)!;
+    return acceptance(stored)!;
   }
 
   /**
@@ -437,7 +447,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     { unitId }: { unitId: string },
     tx: Transaction,
   ): Promise<CodeUnit> {
-    this.assertOpen();
+    this.records.assertOpen();
     this.state.assertTransaction(tx);
     caller = structuredClone(caller);
     // A leased worker holds `write`, which is how acceptance reaches Code from a reviewer
@@ -450,10 +460,10 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       403,
     );
     await this.scope.require(caller, 'write', tx);
-    const row = await this.row(tx, caller.projectId, unitId);
+    const row = await this.records.row(tx, caller.projectId, unitId);
     check(row, 'code_unit_not_found', 'This unit of work has not been declared to Code', 404);
     if (!row.publishes_at) {
-      const project = await this.project(tx, caller.projectId);
+      const project = await this.code.project(tx, caller.projectId);
       check(
         project?.durability === 'code' && project.main.stored,
         'code_publish_unhosted',
@@ -494,7 +504,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       );
       await this.reconcileUnit(tx, caller.projectId, unitId);
     }
-    return await this.record(tx, (await this.row(tx, caller.projectId, unitId))!);
+    return await this.records.record(tx, (await this.records.row(tx, caller.projectId, unitId))!);
   }
 
   private async reviewedCode(
@@ -504,7 +514,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     reviewSessionId: string | null,
     tx: Transaction,
   ): Promise<NonNullable<AcceptanceBody['code']>> {
-    this.assertOpen();
+    this.records.assertOpen();
     const capture = await this.captures.capture(caller, ref, tx);
     const workspace = capture.workspace;
     check(
@@ -538,11 +548,11 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       reviewAttached: review?.attachedBaseOid === workspace.headOid,
     };
   }
-  override async status(caller: Caller): Promise<CodeProjectStatus> {
-    this.assertOpen();
+  async status(caller: Caller): Promise<CodeProjectStatus> {
+    this.records.assertOpen();
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
-      const stored = await this.readStatus(caller, tx);
+      const stored = await this.records.readStatus(caller, tx);
       return {
         ...stored,
         blockers: (await this.workflows.blockers(caller, undefined, tx)).filter(
@@ -628,7 +638,8 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
           : `${IMPORT}, or names an imported commit as main with code.local.bind.`,
       );
     };
-    const publishing = !!(await this.row(tx, projectId, relations.instance.id))?.publishes_at;
+    const publishing = !!(await this.records.row(tx, projectId, relations.instance.id))
+      ?.publishes_at;
     const fixed = await tx.get<{ reference: string }>(
       'SELECT reference FROM code_unit_inputs WHERE project_id=? AND unit_id=?',
       projectId,
@@ -654,7 +665,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     for (let node = queue.shift(); node; node = queue.shift()) {
       if (seen.has(node.id)) continue;
       seen.add(node.id);
-      const unit = await this.row(tx, projectId, node.id);
+      const unit = await this.records.row(tx, projectId, node.id);
       const accepted = unit?.acceptance_json
         ? (JSON.parse(unit.acceptance_json) as AcceptanceBody)
         : null;
@@ -904,12 +915,12 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   private async reconcileUnit(tx: Transaction, projectId: string, unitId: string): Promise<void> {
     const relations = await this.workflows.relations(projectId, unitId, tx);
     if (!relations) return;
-    const row = await this.row(tx, projectId, unitId);
+    const row = await this.records.row(tx, projectId, unitId);
     if (
       (row?.publication_id || (row?.publishes_at && row.acceptance_json)) &&
       !row.quarantine_base_key
     ) {
-      const publication = await this.publicationOf(tx, projectId, row);
+      const publication = await this.records.publicationOf(tx, projectId, row);
       await this.setBlockers(
         tx,
         projectId,
@@ -939,7 +950,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
       const base = await this.bases.ensure(tx, projectId, derived.merge);
       // Main is no unit's acceptance, so the lineage names it: a resolution of a clash with
       // main is then reviewed like any other, with main contributing no authors.
-      const main = row.publishes_at && (await this.project(tx, projectId))?.main.oid;
+      const main = row.publishes_at && (await this.code.project(tx, projectId))?.main.oid;
       if (main && derived.merge.includes(main))
         await tx.run(
           'INSERT INTO code_edges (project_id,source_ref,relation,target_ref,created_at) VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING',
@@ -1021,7 +1032,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
         base.resolutionTaskId = task.id;
       }
       if (base.resolutionTaskId) {
-        const unit = await this.row(tx, projectId, base.resolutionTaskId);
+        const unit = await this.records.row(tx, projectId, base.resolutionTaskId);
         const accepted = unit?.acceptance_json
           ? (JSON.parse(unit.acceptance_json) as AcceptanceBody)
           : null;
@@ -1269,12 +1280,11 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
   }
 
   /** Publication enforcement is work-unit policy; the durable store reports retained facts. */
-  protected override async publicationOf(
+  private async enforcedPublication(
     sql: Sql,
     projectId: string,
-    row: UnitRow,
+    publication: PublicationStanding | null,
   ): Promise<PublicationStanding | null> {
-    const publication = await super.publicationOf(sql, projectId, row);
     if (publication?.state !== 'pending') return publication;
     if (publication.destination === 'local') return publication;
     const controls = await sql.get<{ record_json: string }>(
@@ -1298,24 +1308,23 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     return publication;
   }
 
-  protected override async record(tx: Transaction, row: UnitRow): Promise<CodeUnit> {
-    const stored = await super.record(tx, row);
-    const base = stored.base;
-    // Only a unit that may still take a base is derived: one accepted or ended never will.
+  /** Only a unit that may still take a base is derived: one accepted or ended never will. */
+  private async derivedBaseStatus(
+    tx: Transaction,
+    row: UnitRow,
+    base: CodeBasePin | null,
+  ): Promise<CodeBaseStatus | null> {
     const open =
       !base && row.acceptance_json === null
         ? await this.workflows.relations(row.project_id, row.unit_id, tx)
         : null;
-    return {
-      ...stored,
-      baseStatus: row.quarantine_base_key
-        ? { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] }
-        : base
-          ? { status: 'pinned', pin: base }
-          : open && !open.instance.terminal
-            ? this.baseState(await this.derive(tx, row.project_id, row.unit_id))
-            : null,
-    };
+    return row.quarantine_base_key
+      ? { status: 'blocked', blockers: [this.quarantineBlocker(row.quarantine_base_key)] }
+      : base
+        ? { status: 'pinned', pin: base }
+        : open && !open.instance.terminal
+          ? this.baseState(await this.derive(tx, row.project_id, row.unit_id))
+          : null;
   }
   private async setBlockers(
     tx: Transaction,

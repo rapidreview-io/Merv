@@ -39,13 +39,14 @@ test('Code runtime neither imports research nor queries research-owned records',
 });
 
 test('technical contract modules do not import research policy', () => {
-  for (const name of ['code.ts', 'code-models.ts', 'code-units.ts', 'code-store.ts']) {
-    const source = readFileSync(join(root, 'packages/contracts/src', name), 'utf8');
+  for (const name of ['packages/contracts/src/code.ts', 'packages/code/src/store/protocol.ts']) {
+    const source = readFileSync(join(root, name), 'utf8');
     assert.doesNotMatch(
       source,
-      /from ['"]\.\/(?:workflow-guidance|code-publication-models)\.js['"]/,
+      /from ['"](?:\.\/|@merv\/contracts\/)workflow-guidance(?:\.js)?['"]/,
       name,
     );
+    assert.doesNotMatch(source, /from ['"]@merv\/code-work/, name);
     assert.doesNotMatch(
       source,
       /\b(?:reviewRef|submissionRef|acceptanceHash|resolutionTaskId|successStates|codeCheckSpecSchema)\b/,

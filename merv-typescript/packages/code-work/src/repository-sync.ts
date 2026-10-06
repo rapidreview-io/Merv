@@ -6,11 +6,13 @@ import {
   type Caller,
   type State,
   type Transaction,
-  type CodeRepositoryPrepareInput,
-  type CodeRepositoryPreparation,
-  type CodeStoreOperation,
   recorded,
 } from '@merv/contracts';
+import type {
+  CodeRepositoryPrepareInput,
+  CodeRepositoryPreparation,
+  CodeStoreOperation,
+} from '@merv/code/store/protocol';
 import { pinMerge, verifyResolution } from '@merv/code/pending-merge';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeGitHubService } from '@merv/code/github';
@@ -93,7 +95,7 @@ export async function reconcileRepository(
   const assertMain = async (tx: Transaction, expected: string) => {
     await github.assertBinding(caller, binding, tx, 'read');
     check(
-      (await units.project(tx, caller.projectId))?.main.oid === expected,
+      (await units.code.project(tx, caller.projectId))?.main.oid === expected,
       'code_main_changed',
       'Merv main moved; prepare a new integration against its current head',
       409,
@@ -141,7 +143,7 @@ export async function reconcileRepository(
     return { task_id: task.id, promoted_oid: null };
   });
   if (row.promoted_oid) return result(row.promoted_oid);
-  const unit = await units.unit(caller, row.task_id);
+  const unit = await units.records.unit(caller, row.task_id);
   const accepted = unit.acceptance;
   if (!accepted?.reference || !accepted.reviewAttached) return result(local, row.task_id);
   check(
@@ -195,7 +197,7 @@ export async function reconcileRepository(
       return;
     }
     await assertMain(tx, local);
-    const latest = await units.unit(caller, row.task_id, tx);
+    const latest = await units.records.unit(caller, row.task_id, tx);
     check(
       latest.acceptance?.hash === accepted.hash &&
         !latest.quarantine &&
@@ -204,7 +206,7 @@ export async function reconcileRepository(
       'The reviewed integration is no longer admissible',
       409,
     );
-    await units.moveMain(caller, accepted.reference!, tx, local, key);
+    await units.records.moveMain(caller, accepted.reference!, tx, local, key);
     await tx.run(
       'UPDATE code_repository_sync SET promoted_oid=? WHERE project_id=? AND sync_key=? AND promoted_oid IS NULL',
       accepted.reference,

@@ -10,8 +10,9 @@ import type {
   CodeBaseRecord,
   CodeUnit,
   CodeUnitAcceptance,
-} from '@merv/contracts/code-units';
-import type { CodePublication, GitHubStatus } from '@merv/contracts/types';
+  CodePublication,
+} from '@merv/code-work/models';
+import type { CodePublication } from '@merv/code-work/models';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { click, mount, requests, serve, settle, text, unmount } from './ui-render.js';

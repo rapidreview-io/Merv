@@ -5,25 +5,16 @@ import type {} from './types.js';
 import type {} from '@merv/code/service';
 import { z } from 'zod';
 import { CodeService } from './service.js';
-import { rejectRetiredBackup } from '@merv/code/configuration';
 
 const configuration = z
   .object({
-    /** Where Code keeps one repository per project. Without it the server keeps none. */
-    repositories: z.preprocess(
-      rejectRetiredBackup,
-      z
-        .object({
-          sweepSeconds: z.number().int().min(1).max(86_400).optional(),
-          drainSeconds: z.number().int().min(1).max(3600).optional(),
-          /** Merge several accepted commits into one base on the server; on unless disabled. */
-          autoMerge: z.boolean().optional(),
-          /** How often the server looks for refs to publish; zero publishes only when asked. */
-          mirrorSeconds: z.number().int().min(0).max(86_400).optional(),
-        })
-        .strict()
-        .optional(),
-    ),
+    repositories: z
+      .object({
+        /** Merge several accepted commits into one base on the server; on unless disabled. */
+        autoMerge: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .default({});
@@ -35,18 +26,9 @@ export const codePlugin = {
   async apply(ctx: Context, config: z.infer<typeof configuration> = {}) {
     await ctx.effect(async function* () {
       const service = await createService(
-        new CodeService(
-          ctx.state,
-          ctx.scope,
-          ctx.sessions,
-          ctx.workflows,
-          ctx.code,
-          (({ mirrorSeconds, autoMerge, ...store }) => ({
-            config: store,
-            autoMerge,
-            ...(mirrorSeconds === undefined ? {} : { mirrorConfig: { mirrorSeconds } }),
-          }))(config.repositories ?? {}),
-        ),
+        new CodeService(ctx.state, ctx.scope, ctx.sessions, ctx.workflows, ctx.code, {
+          autoMerge: config.repositories?.autoMerge,
+        }),
       );
       yield () => service.close();
       ctx.inject(['reviews'], (ctx) => {

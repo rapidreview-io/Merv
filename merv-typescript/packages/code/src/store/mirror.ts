@@ -4,18 +4,20 @@ import { OperationJournal } from '../operation-journal.js';
 import {
   canonical,
   check,
-  codeMirrorRetryInputSchema,
   digest,
   MervError,
   newId,
   now,
   type Caller,
-  type CodeMirrorStatus,
-  type CodeStoreWarning,
   type Scope,
   type State,
   type Transaction,
 } from '@merv/contracts';
+import {
+  codeMirrorRetryInputSchema,
+  type CodeMirrorStatus,
+  type CodeStoreWarning,
+} from './protocol.js';
 import { parseCodeInput } from '../input.js';
 import type { CodeRepositories } from './repository.js';
 import { validRetentionRef, retainedRef, resultRef, workRef } from './refs.js';

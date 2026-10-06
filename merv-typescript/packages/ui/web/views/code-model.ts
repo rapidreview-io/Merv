@@ -1,7 +1,11 @@
 import type { CodeCommandRecord } from '@merv/contracts/code';
-import type { CodePublication } from '@merv/contracts/types';
+import type {
+  CodePublication,
+  CodeProjectStatus,
+  CodeBaseRecord,
+  CodeUnit,
+} from '@merv/code-work/models';
 import type { RecordNames } from '../markdown';
-import type { CodeProjectStatus, CodeBaseRecord, CodeUnit } from '@merv/code-work/models';
 
 /**
  * What Git holds for this project, as one object graph: the trunk, one lane per unit

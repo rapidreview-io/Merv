@@ -3,23 +3,19 @@ import type { Context } from 'cordis';
 import { z } from 'zod';
 import { CodeService } from './service.js';
 import { githubConfig } from './github-client.js';
-import { rejectRetiredBackup } from './configuration.js';
 
 const bytes = z.number().int().positive().safe();
 const configuration = z
   .object({
     finalizeGraceSeconds: z.number().int().min(1).max(86_400).optional(),
-    repositories: z.preprocess(
-      rejectRetiredBackup,
-      z
-        .object({
-          root: z.string().refine((root) => root.startsWith('/'), 'The root is an absolute path'),
-          quotaBytes: bytes.default(10 * 1024 ** 3),
-          reservedFreeBytes: bytes.default(2 * 1024 ** 3),
-        })
-        .strict()
-        .optional(),
-    ),
+    repositories: z
+      .object({
+        root: z.string().refine((root) => root.startsWith('/'), 'The root is an absolute path'),
+        quotaBytes: bytes.default(10 * 1024 ** 3),
+        reservedFreeBytes: bytes.default(2 * 1024 ** 3),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
   .default({});

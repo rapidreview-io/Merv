@@ -11,7 +11,6 @@ import {
   type Caller,
   type CodeLocalBindInput,
   type CodeProjectBinding,
-  type CodeStoreWarning,
   type Scope,
   type Sql,
   type State,
@@ -19,6 +18,7 @@ import {
   requireHuman,
   oidPattern,
 } from '@merv/contracts';
+import type { CodeStoreWarning } from './store/protocol.js';
 import { parseCodeInput } from './input.js';
 import type { CodeWriterService } from './writers.js';
 import { retainedRef, validRetentionRef } from './store/refs.js';

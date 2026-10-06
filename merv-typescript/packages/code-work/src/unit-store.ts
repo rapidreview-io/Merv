@@ -11,9 +11,6 @@ import {
   now,
   type Caller,
   type GitHubPullRequest,
-  type CodeLocalBindInput,
-  type CodeProjectBinding,
-  type CodeStoreWarning,
   type Scope,
   type Sql,
   type State,
@@ -21,15 +18,16 @@ import {
   oidPattern,
   type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
-import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { CodeWriterService } from '@merv/code/writers';
 import { resultRef, workBranch } from '@merv/code/store/refs';
 import type {
   CodeBasePin,
+  CodeBaseStatus,
   CodeUnitPublication,
   CodeProjectStatus,
   CodeUnit,
   CodeUnitAcceptance,
+  CodeCaptureRef,
 } from './models.js';
 
 export interface UnitRow {
@@ -203,18 +201,70 @@ function storedPublication(publication: PublicationRow): PublicationStanding {
     ...(state === 'published' && mergeCommit ? { mergeCommit } : {}),
   };
 }
+/** The acceptance a row retains; null until the unit is accepted. */
+export function acceptance(row: UnitRow): CodeUnitAcceptance | null {
+  if (row.acceptance_json === null) return null;
+  const body = JSON.parse(row.acceptance_json) as AcceptanceBody;
+  return {
+    unitId: body.unitId,
+    hash: row.acceptance_hash!,
+    acceptedAt: row.accepted_at!,
+    terminalRevision: body.terminalRevision,
+    submissionRef: body.submissionRef,
+    reviewRef: body.reviewRef,
+    acceptedBy: body.acceptedBy,
+    reference: body.code?.commit ?? null,
+    reviewAttached: body.code?.reviewAttached ?? null,
+    storage: body.storage,
+    ...(body.receipt ? { receipt: body.receipt } : {}),
+  };
+}
+/** The base pin a row retains; null until one is pinned. */
+export function pin(row: UnitRow): CodeBasePin | null {
+  if (row.base_json === null) return null;
+  const base = JSON.parse(row.base_json) as BaseBody;
+  return {
+    unitId: row.unit_id,
+    kind: base.kind,
+    reference: base.reference,
+    sources: base.sources.map(({ unitId, acceptanceHash }) => ({ unitId, acceptanceHash })),
+    pinnedAt: row.based_at!,
+    leaseId: row.base_lease_id!,
+  };
+}
 export const unitColumns =
   'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key,publishes_at,publication_id';
 
+/**
+ * What the work-unit policy adds when a unit is read: the enforcement a pending publication is
+ * held by, and the base a unit still waiting for one would be given now.
+ */
+export interface UnitReadPolicy {
+  publication(
+    sql: Sql,
+    projectId: string,
+    stored: PublicationStanding | null,
+  ): Promise<PublicationStanding | null>;
+  baseStatus(
+    tx: Transaction,
+    row: UnitRow,
+    base: CodeBasePin | null,
+  ): Promise<CodeBaseStatus | null>;
+}
+
 /** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
 export class WorkUnitRecords {
-  protected closed = false;
-  /** `code` is Code's own unit store, already initialized; it outlives this owner. */
+  closed = false;
+  /**
+   * `code` is Code's own unit store, already initialized; it outlives this owner. Without a
+   * `policy` a unit reads as stored: a publication as it says of itself, a base only once pinned.
+   */
   constructor(
-    protected readonly state: State,
-    protected readonly scope: Scope,
-    protected readonly writers: CodeWriterService,
-    protected readonly code: CodeUnitStore,
+    private readonly state: State,
+    private readonly scope: Scope,
+    private readonly writers: CodeWriterService,
+    private readonly code: CodeUnitStore,
+    private readonly policy?: UnitReadPolicy,
   ) {}
 
   /** Complete storage migrations before publishing this service. */
@@ -265,7 +315,7 @@ export class WorkUnitRecords {
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read', tx);
     const row = await this.row(tx, caller.projectId, unitId);
-    return row ? this.pin(row) : null;
+    return row ? pin(row) : null;
   }
 
   /**
@@ -286,7 +336,7 @@ export class WorkUnitRecords {
     caller = structuredClone(caller);
     return await inTransaction(this.state, tx, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const project = await this.project(tx, caller.projectId);
+      const project = await this.code.project(tx, caller.projectId);
       check(project, 'code_project_unbound', 'This project has no Code binding', 409);
       const candidates: { unitId: string; commit: string; quarantined: boolean }[] = [];
       const rows = await tx.all<UnitRow>(
@@ -304,7 +354,7 @@ export class WorkUnitRecords {
         if (storedPublication(publication).state === 'closed') {
           rejected.add(publication.unit_id);
           const row = units.get(publication.unit_id);
-          if (row) this.pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
+          if (row) pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
         }
       for (const row of rows) {
         const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
@@ -318,26 +368,6 @@ export class WorkUnitRecords {
       }
       return { main: project.main.oid, candidates };
     });
-  }
-
-  /**
-   * Main is the project baseline, so only a signed-in human administrator names it, and
-   * moving it is a compare-and-set against the main that human last read: a replayed or
-   * racing call cannot move it backwards. A pin already taken keeps the commit it copied.
-   * `stored` is what Code's own repository said of that commit before this transaction began,
-   * so that nothing in here, or in an owner's create transaction later, has to ask Git.
-   */
-  async bindLocal(
-    caller: Caller,
-    value: CodeLocalBindInput,
-    stored = false,
-    tx?: Transaction,
-  ): Promise<CodeProjectBinding> {
-    return this.code.bindLocal(caller, value, stored, tx);
-  }
-
-  async hosted(caller: Caller, tx: Transaction): Promise<boolean> {
-    return this.code.hosted(caller, tx);
   }
 
   async unit(caller: Caller, unitId: string, tx?: Transaction): Promise<CodeUnit> {
@@ -356,10 +386,10 @@ export class WorkUnitRecords {
     return await this.state.transaction((tx) => this.readStatus(caller, tx));
   }
 
-  protected async readStatus(caller: Caller, tx: Transaction): Promise<CodeProjectStatus> {
+  async readStatus(caller: Caller, tx: Transaction): Promise<CodeProjectStatus> {
     await this.scope.require(caller, 'read', tx);
     return {
-      project: await this.project(tx, caller.projectId),
+      project: await this.code.project(tx, caller.projectId),
       store: null,
       operations: [],
       mirror: null,
@@ -375,12 +405,8 @@ export class WorkUnitRecords {
     };
   }
 
-  async project(sql: Sql, projectId: string): Promise<CodeProjectBinding | null> {
-    return this.code.project(sql, projectId);
-  }
-
   /** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
-  protected async row(sql: Sql, projectId: string, unitId: string): Promise<UnitRow | undefined> {
+  async row(sql: Sql, projectId: string, unitId: string): Promise<UnitRow | undefined> {
     const row = await this.state.remember(`code-work:unit:${projectId}:${unitId}`, () =>
       sql.get<UnitRow>(
         `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND unit_id=?`,
@@ -391,7 +417,7 @@ export class WorkUnitRecords {
     return row && { ...row };
   }
 
-  protected async retainAcceptance(
+  private async retainAcceptance(
     caller: Caller,
     unitId: string,
     body: AcceptanceBody,
@@ -411,8 +437,17 @@ export class WorkUnitRecords {
       });
   }
 
-  /** What the sealed publication of this unit says now; null while nothing declared one. */
-  protected async publicationOf(
+  /** What the sealed publication of this unit says now, as the policy reads it. */
+  async publicationOf(
+    sql: Sql,
+    projectId: string,
+    row: UnitRow,
+  ): Promise<PublicationStanding | null> {
+    const stored = await this.storedPublicationOf(sql, projectId, row);
+    return this.policy ? await this.policy.publication(sql, projectId, stored) : stored;
+  }
+  /** What the sealed publication of this unit says of itself; null while nothing declared one. */
+  private async storedPublicationOf(
     sql: Sql,
     projectId: string,
     row: UnitRow,
@@ -427,58 +462,18 @@ export class WorkUnitRecords {
     );
     return publication ? storedPublication(publication) : null;
   }
-  protected acceptance(row: UnitRow): CodeUnitAcceptance | null {
-    return row.acceptance_json === null
-      ? null
-      : this.acceptanceValue(
-          JSON.parse(row.acceptance_json),
-          row.acceptance_hash!,
-          row.accepted_at!,
-        );
-  }
-
-  private acceptanceValue(
-    body: AcceptanceBody,
-    hash: string,
-    acceptedAt: string,
-  ): CodeUnitAcceptance {
-    return {
-      unitId: body.unitId,
-      hash: hash,
-      acceptedAt: acceptedAt,
-      terminalRevision: body.terminalRevision,
-      submissionRef: body.submissionRef,
-      reviewRef: body.reviewRef,
-      acceptedBy: body.acceptedBy,
-      reference: body.code?.commit ?? null,
-      reviewAttached: body.code?.reviewAttached ?? null,
-      storage: body.storage,
-      ...(body.receipt ? { receipt: body.receipt } : {}),
-    };
-  }
-
-  protected pin(row: UnitRow): CodeBasePin | null {
-    if (row.base_json === null) return null;
-    const base = JSON.parse(row.base_json) as BaseBody;
-    return {
-      unitId: row.unit_id,
-      kind: base.kind,
-      reference: base.reference,
-      sources: base.sources.map(({ unitId, acceptanceHash }) => ({ unitId, acceptanceHash })),
-      pinnedAt: row.based_at!,
-      leaseId: row.base_lease_id!,
-    };
-  }
 
   close(): void {
     this.closed = true;
   }
 
-  protected assertOpen(): void {
+  assertOpen(): void {
     check(!this.closed, 'code_unavailable', 'Code is unavailable', 503);
   }
-  protected async record(tx: Transaction, row: UnitRow): Promise<CodeUnit> {
-    const base = this.pin(row);
+  async record(tx: Transaction, row: UnitRow): Promise<CodeUnit> {
+    const base = pin(row);
+    const publication = await this.publicationOf(tx, row.project_id, row);
+    const facts = await this.writers.facts(tx, row.project_id, row.unit_id);
     return {
       unitId: row.unit_id,
       workflow: row.workflow,
@@ -486,16 +481,21 @@ export class WorkUnitRecords {
       declaredAt: row.declared_at,
       branch: workBranch(row.unit_id),
       base,
-      baseStatus: base ? { status: 'pinned', pin: base } : null,
-      acceptance: this.acceptance(row),
-      publication: await this.publicationOf(tx, row.project_id, row).then(
-        (standing) => standing && { ...standing, blockers: publicationBlockers(standing) },
-      ),
-      ...(await this.writers.facts(tx, row.project_id, row.unit_id)),
+      baseStatus: this.policy
+        ? await this.policy.baseStatus(tx, row, base)
+        : base
+          ? { status: 'pinned', pin: base }
+          : null,
+      acceptance: acceptance(row),
+      publication: publication && {
+        ...publication,
+        blockers: publicationBlockers(publication),
+      },
+      ...facts,
     };
   }
 
-  protected async retainDeclaration(
+  async retainDeclaration(
     caller: Caller,
     input: {
       unitId: string;
@@ -577,7 +577,7 @@ export class WorkUnitRecords {
     return (await this.row(tx, caller.projectId, unitId))!;
   }
 
-  protected async retainBase(
+  async retainBase(
     caller: Caller,
     input: { unitId: string; workflow: string; version: number; leaseId: string; body: BaseBody },
     tx: Transaction,
@@ -623,10 +623,10 @@ export class WorkUnitRecords {
           target,
           at,
         );
-    return this.pin(stored)!;
+    return pin(stored)!;
   }
 
-  protected async retainUnitAcceptance(
+  async retainUnitAcceptance(
     caller: Caller,
     body: AcceptanceBody,
     tx: Transaction,

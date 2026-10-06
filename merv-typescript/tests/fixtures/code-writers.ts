@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import type { TestContext } from 'node:test';
 import {
   MervError,
-  type CodeStoreOperation,
   type StoredEvent,
   type WorkflowDefinition,
   type WorkflowPolicy,
 } from '@merv/contracts';
+import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeStoreOptions } from '@merv/code-work/service';
 import { codeStoreFixture, gitSource, type Bundle } from './code-store.js';
 

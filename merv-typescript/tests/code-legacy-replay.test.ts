@@ -69,11 +69,14 @@ test('completed legacy checkpoints replay exactly without reopening the retired 
     receipt,
   };
   assert.equal((await service.completeCommand(caller, input)).status, 'succeeded');
-  Object.assign(service, {
+  // Code Work's admission around the same commands, with a writer that never admitted one.
+  const host = {
+    state,
+    commands: service,
     writerStore: { row: async () => ({ generation: 0 }), requireAdmitted: async () => {} },
-  });
+  };
   const replay = (value: unknown) =>
-    CodeService.prototype.completeCommand.call(service as unknown as CodeService, caller, value);
+    CodeService.prototype.completeCommand.call(host as unknown as CodeService, caller, value);
   assert.equal((await replay(input)).status, 'succeeded');
   await assert.rejects(replay({ ...input, hostRef: 'another_launch' }), {
     code: 'session_forbidden',

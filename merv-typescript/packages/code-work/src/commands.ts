@@ -42,7 +42,6 @@ type Row = {
 };
 const terminal = (status: Row['status']) =>
   status === 'succeeded' || status === 'failed' || status === 'cancelled';
-const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 /** How many of a project's newest commits the Running page looks through for one unit's. */
 const RECENT_COMMITS = 200;
 
@@ -323,7 +322,8 @@ export class CodeCommandService implements CodeCommands {
       );
       if (!row) return null;
       const { command } = this.decode(row);
-      if (!live(session)) {
+      // A session no longer offered or active holds no lease.
+      if (session.status !== 'offered' && session.status !== 'active') {
         // Recover an already-issued descriptor after a lost response. This records no
         // new dispatch; the runner may reconcile its stopped/fenced Git outcome only.
         if (row.status === 'dispatched') return command;
