@@ -605,3 +605,34 @@ test('experiment.plan is retired: no version of it can be created', async () => 
     await f.close();
   }
 });
+
+test('a leased worker reads the paper its lease froze, never the current one', async (t) => {
+  const f = await fixture();
+  try {
+    await f.app.ctx.paper.patch(f.producer.caller, {
+      kind: 'methods',
+      expectedRevision: 0,
+      requestId: 'paper-before-lease',
+      changes: [{ id: 'early', title: 'Early method', content: 'Measured before the lease.' }],
+    });
+    const task = await f.create();
+    const held = await f.work.lease(task);
+    try {
+      await f.app.ctx.paper.patch(f.producer.caller, {
+        kind: 'methods',
+        expectedRevision: 1,
+        requestId: 'paper-after-lease',
+        changes: [{ id: 'late', title: 'Late method', content: 'Written after the lease.' }],
+      });
+      const reads = t.mock.method(f.app.ctx.paper, 'contextInput');
+      const leased = await f.app.ctx.workflows.assignment(held.worker, task.id);
+      assert.match(leased.context!.prompt, /Measured before the lease/);
+      assert.doesNotMatch(leased.context!.prompt, /Written after the lease/);
+      assert.equal(reads.mock.callCount(), 0);
+    } finally {
+      await f.work.release(held);
+    }
+  } finally {
+    await f.close();
+  }
+});

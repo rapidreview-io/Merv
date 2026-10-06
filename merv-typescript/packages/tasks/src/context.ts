@@ -192,17 +192,15 @@ export async function contextInputs(
     purpose === 'work'
       ? { ...work, ...(rendered ? {} : { acceptanceChecks }), workflow: { ...workflow, data } }
       : { ...rest, workflow: { ...workflow, data: reviewData } };
-  // Worker contexts retain the offer's Introduction even if an operator later changes it.
+  // Worker contexts retain the offer's Introduction and paper even if they later change.
   const receipt = caller.session
     ? (JSON.parse(
         (await this.currentLease(caller, task.id, task.workflow.revision, tx)).receipt,
       ) as Data)
     : null;
   const project = receipt?.project ?? (await this.projectContext(caller, tx));
-  // A lease taken before 2026-10-06 froze the paper's sections, not its items: read it now.
-  const frozen = receipt?.paper as ContextInput | undefined;
-  const projectPaper = frozen?.items
-    ? frozen
+  const projectPaper = receipt
+    ? (receipt.paper as unknown as ContextInput)
     : await this.paper.contextInput(caller, type.definition.recipe.maxChars, tx);
   const taskMetadata =
     JSON.stringify(assignmentTask) +
