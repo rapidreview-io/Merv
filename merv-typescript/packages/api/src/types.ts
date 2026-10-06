@@ -20,10 +20,19 @@ export interface ToolDefinition<S extends ZodTypeAny = ZodTypeAny> {
    *  'never': offered to no person's agent (only a leased worker or Merv's pages run it). A
    *  function of the parsed input decides per call. */
   conversation?: ConversationUse | ((input: z.infer<S>) => 'propose' | 'secret' | undefined);
+  /** What the card of a proposed call says it does, in the product's words ('Submit verdict').
+   *  `title` reads the input as the agent proposed it, unparsed, where it says which act;
+   *  `says` names the input field the title already said, which the card does not list again.
+   *  Omitted: the card says the tool's own name in words. */
+  act?: ToolAct;
   handler(caller: Caller, input: z.infer<S>): unknown | Promise<unknown>;
   /** What an agent conversation is told when its person runs this tool's proposed call, in place
    *  of the whole result: a compact summary, and the reads that give the current details. */
   receipt?(result: unknown, input: z.infer<S>): ToolReceipt;
+}
+export interface ToolAct {
+  title: string | ((input: Record<string, unknown>) => string);
+  says?: string;
 }
 export interface ToolReceipt {
   summary: Record<string, unknown>;

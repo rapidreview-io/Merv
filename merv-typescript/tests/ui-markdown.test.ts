@@ -22,7 +22,6 @@ const {
   parseInline,
   parseMarkdown,
   recordNames,
-  recordRoute,
   safeHref,
   shortId,
 } = await import('../packages/ui/web/markdown.js');
@@ -229,17 +228,9 @@ test('a record id is recognised in text and in a code span, and only as a whole 
     `exp_sub_${'0'.repeat(32)}`,
   ]);
   assert.equal(shortId(ART), 'art_…e959e2');
-  const reviews = [{ id: 'verdicts', path: '/verdicts', view: { kind: 'reviews' } }];
-  assert.equal(recordRoute(ART, []), `/artifacts/${ART}`);
-  const review = `review_${'a'.repeat(32)}`;
-  assert.equal(recordRoute(review, reviews), `/verdicts/${review}`);
-  // Without a reviews row, a review has no page to open.
-  assert.equal(recordRoute(review, []), undefined);
-  // A wf_ may be a task, an experiment, a cycle or a reflection: its shape names no page.
-  assert.equal(recordRoute(TASK, reviews), undefined);
 });
 
-test('names come from the lists the app already reads, a review named by what it judges', () => {
+test('names come from the lists the app already reads, and a review is named by its owner', () => {
   const review = `review_${'c'.repeat(32)}`;
   const names = recordNames(
     [{ id: ART, title: 'Delivery: grokking curve, seed 7' }],
@@ -266,10 +257,8 @@ test('names come from the lists the app already reads, a review named by what it
     to: `/artifacts/${ART}`,
   });
   assert.deepEqual(names.get(TASK), { name: 'Reproduce grokking', to: `/tasks/${TASK}` });
-  assert.deepEqual(names.get(review), {
-    name: 'Review of Reproduce grokking',
-    to: `/reviews/${review}`,
-  });
+  // A review has no name of its own in a list: project.references names it (below).
+  assert.equal(names.has(review), false);
   assert.equal(names.has('review_unnamed'), false);
   assert.deepEqual(names.get('actor_1'), { name: 'Codex producer' });
   // A directory name that is itself an identifier names nobody.
@@ -574,30 +563,63 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
 
 test('ids outside Markdown are named the same way, and a document reads its own names', async (t) => {
   t.after(async () => await unmount());
-  serve('/tools/artifact.list', {
-    body: { result: [{ id: ART, title: 'Delivery: grokking curve, seed 7' }] },
+  const review = `review_${'c'.repeat(32)}`;
+  const asked: unknown[] = [];
+  // Each record is named and placed as its owner says, whatever its id looks like.
+  serve('/tools/project.references', (_, sent) => {
+    asked.push(sent.refs);
+    const known: Record<string, object> = {
+      [ART]: { kind: 'artifact', label: 'Delivery: grokking curve, seed 7' },
+      [TASK]: { kind: 'task', label: 'Reproduce grokking' },
+      [review]: { kind: 'review', label: 'Review of Reproduce grokking' },
+    };
+    return {
+      body: {
+        result: (sent.refs as string[]).map((id) =>
+          known[id]
+            ? { ref: id, id, status: 'resolved', ...known[id] }
+            : { ref: id, id, status: 'missing', kind: null },
+        ),
+      },
+    };
   });
-  serve('/tools/ui.home', {
-    body: { result: { tasks: [{ id: TASK, title: 'Reproduce grokking' }] } },
+  serve('/tools/ui.home', { body: { result: { actors: [{ id: 'actor_1', name: 'Ada' }] } } });
+  serve('/tools/ui.shell', {
+    body: {
+      result: {
+        rows: [
+          { id: 'tasks', path: '/tasks', workflow: 'task', view: { kind: 'tasks' } },
+          { id: 'verdicts', path: '/verdicts', view: { kind: 'reviews' } },
+        ],
+      },
+    },
   });
-  serve('/tools/ui.shell', { body: { result: { rows: [{ id: 'tasks', path: '/tasks' }] } } });
+  const nobody = `wf_${'d'.repeat(32)}`;
   await mount(
     createElement(
       MemoryRouter,
       null,
       createElement(RecordText, { text: `Pinned ${ART}.`, names: new Map() }),
+      createElement(RecordText, { text: `Judged in ${review} by actor_1 of ${nobody}.` }),
       createElement(Markdown, { source: `Evidence: ${ART} for \`${TASK}\`` }),
     ),
   );
   await settle(10);
+  // Given names it is not, a text names nothing; given none, it reads its own.
   assert.equal(
     text(),
-    'Pinned art_…e959e2.Evidence: Delivery: grokking curve, seed 7 for Reproduce grokking',
+    'Pinned art_…e959e2.' +
+      `Judged in Review of Reproduce grokking by actor_1 of wf_…dddddd.` +
+      'Evidence: Delivery: grokking curve, seed 7 for Reproduce grokking',
   );
   assert.deepEqual(
     all('a').map((a) => a.getAttribute('href')),
-    [`/artifacts/${ART}`, `/artifacts/${ART}`, `/tasks/${TASK}`],
+    [`/verdicts/${review}`, `/artifacts/${ART}`, `/tasks/${TASK}`],
   );
+  assert.deepEqual(asked, [
+    [review, nobody],
+    [ART, TASK],
+  ]);
 });
 
 test('a file is named by a short human type, never by its media type', () => {
@@ -728,6 +750,19 @@ test('a file older than the newest page is still named where it is cited', async
     const files = useArtifacts();
     return createElement('p', { className: 'picked' }, files.get(old)?.title ?? 'missing');
   }
+  serve('/tools/project.references', {
+    body: {
+      result: [
+        {
+          ref: old,
+          id: old,
+          status: 'resolved',
+          kind: 'artifact',
+          label: 'Brief: the first sweep',
+        },
+      ],
+    },
+  });
   await mount(
     createElement(
       MemoryRouter,

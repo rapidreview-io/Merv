@@ -22,6 +22,7 @@ export type {
   UiRow,
   UiRowDescription,
   UiRowStatus,
+  UiStateWords,
 } from './types.js';
 
 const idPattern = /^[a-z][a-z0-9-]{0,63}$/;

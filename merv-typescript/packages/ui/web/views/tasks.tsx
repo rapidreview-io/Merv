@@ -1,7 +1,7 @@
 import { Link, useParams } from 'react-router-dom';
 import { useTool, type Loaded } from '../api';
 import { recordRoutes } from '../list-filters';
-import { homeOf } from '../navigation';
+import { homeOf, useStateWords } from '../navigation';
 import { Evidence, KV, LoadState, RecordPage, Stamp, timeRows, useArtifacts } from '../components';
 import { Gate, Relations, StageMark } from '../process';
 import { useSession } from '../session';
@@ -81,6 +81,7 @@ function TaskDetail({ row, shell }: ViewProps) {
     { every: ended ? undefined : 8000 },
   );
   const process = record.data?.process;
+  const states = useStateWords();
   if (!t)
     return (
       <div className="page-stage">
@@ -91,7 +92,14 @@ function TaskDetail({ row, shell }: ViewProps) {
   // a list that could not be read leaves the thread to the graph alone.
   const rounds = t.reviewId ? (reviews.data ?? (reviews.error ? [] : undefined)) : [];
   const thread = rounds
-    ? threadOf({ graph: process, reviews: rounds, subject: t.id, briefId: t.briefId, nameOf })
+    ? threadOf({
+        graph: process,
+        reviews: rounds,
+        subject: t.id,
+        briefId: t.briefId,
+        nameOf,
+        states,
+      })
     : [];
   return (
     <RecordPage

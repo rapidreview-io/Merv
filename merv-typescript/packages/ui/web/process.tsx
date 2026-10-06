@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { KindLabel, StatusPill, cx, toneOf, useNow, words } from './components';
 import { elapsed } from './liveness';
-import { useRows } from './navigation';
+import { useRows, useStateWords, type StateWords } from './navigation';
 import type { WorkflowShape } from './shell-types';
 
 /**
@@ -133,22 +133,22 @@ export function stageTimes(graph: ProcessGraph, now: number): Map<string, number
  * How a stage is coloured, the way Linear colours a status: by what kind of standing it is,
  * never by which program it belongs to. Not begun is grey, work is yellow, a review is
  * orange, what is running is green, the finish is indigo; an end the record took another
- * way is grey, or the refusal's red where it failed.
+ * way is grey, or the refusal's red where it failed. Which states are not begun is the
+ * owner's word, and a review is a gate of the deployed program (StateWords).
  */
 type Hue = 'idle' | 'work' | 'review' | 'live' | 'done' | 'bad' | 'off';
-const IDLE = ['planned', 'queued', 'requested', 'pending', 'draft'];
-const hueOf = (step: Step): Hue =>
+const hueOf = (step: Step, states: StateWords): Hue =>
   step.end
     ? !step.stopped
       ? 'done'
-      : toneOf(step.state) === 'bad'
+      : toneOf(step.state, states) === 'bad'
         ? 'bad'
         : 'off'
-    : IDLE.includes(step.state)
+    : states.said.get(step.state)?.idle
       ? 'idle'
-      : step.state.includes('review')
+      : states.gates.has(step.state)
         ? 'review'
-        : toneOf(step.state) === 'ok'
+        : toneOf(step.state, states) === 'ok'
           ? 'live'
           : 'work';
 
@@ -169,9 +169,10 @@ function StageGlyph({
   size?: number;
   ahead?: boolean;
 }) {
+  const states = useStateWords();
   const step = steps[at]!;
-  const hue = ahead ? 'idle' : hueOf(step);
-  const begun = steps.filter((item) => !item.end && hueOf(item) !== 'idle');
+  const hue = ahead ? 'idle' : hueOf(step, states);
+  const begun = steps.filter((item) => !item.end && hueOf(item, states) !== 'idle');
   const turn = ((begun.indexOf(step) + 1) / (begun.length + 1)) * 2 * Math.PI;
   return (
     <svg
@@ -250,13 +251,14 @@ export function StageMark({
   graph?: ProcessGraph;
   workflow: Standing;
 }) {
+  const states = useStateWords();
   const steps = graph ? stagesOfGraph(graph) : stepsOf(shapes, workflow);
   const at = steps.findIndex((step) => step.current);
   return (
     <span className="stage-mark">
       {at < 0 ? (
         <span
-          className={cx('status-dot', `status--${toneOf(workflow.state)}`)}
+          className={cx('status-dot', `status--${toneOf(workflow.state, states)}`)}
           aria-hidden="true"
         />
       ) : (

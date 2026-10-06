@@ -44,7 +44,7 @@ import {
   type WorkflowTransition,
 } from '@merv/contracts';
 import type { Paper } from '@merv/paper/types';
-import { artifactItem } from '@merv/context-builder/artifact-item';
+import { artifactItem, textItem } from '@merv/context-builder/artifact-item';
 import type { Code, CodeCapture } from '@merv/code-work/types';
 import type {
   Experiment,
@@ -1228,13 +1228,15 @@ export abstract class ExperimentProgram {
     const sources: Record<string, ContextInput> = {
       experiment: {
         items: [
-          {
-            id: `experiment:${experiment.id}`,
-            title: experiment.name,
-            body: { text: JSON.stringify(inputs.experiment) },
-            embed: 'always',
-            refs: [stateRef],
-          },
+          textItem(
+            `experiment:${experiment.id}`,
+            experiment.name,
+            JSON.stringify(inputs.experiment),
+            {
+              embed: 'always',
+              refs: [stateRef],
+            },
+          ),
         ],
       },
       // A lease taken before 2026-10-06 froze the paper's sections, not its items: read it now.
@@ -1243,13 +1245,12 @@ export abstract class ExperimentProgram {
         : await this.paper.contextInput(context.caller, CONTEXT_CHARS, context.tx),
       feedback: {
         items: [
-          {
-            id: `feedback:${experiment.id}`,
-            title: 'Previous reviews, interruptions and recovery',
-            body: { text: JSON.stringify(inputs.feedback) },
-            priority: 700,
-            refs: [stateRef],
-          },
+          textItem(
+            `feedback:${experiment.id}`,
+            'Previous reviews, interruptions and recovery',
+            JSON.stringify(inputs.feedback),
+            { priority: 700, refs: [stateRef] },
+          ),
         ],
       },
       ...(inputs.approvedArtifacts.length
@@ -1262,13 +1263,11 @@ export abstract class ExperimentProgram {
               items: exhibit
                 ? await artifactItems([exhibit], 0)
                 : [
-                    {
-                      id: `exhibit:${experiment.id}`,
-                      title: 'Metrics exhibit',
-                      body: {
-                        text: 'Any metrics exhibit is included with the selected evidence above.',
-                      },
-                    },
+                    textItem(
+                      `exhibit:${experiment.id}`,
+                      'Metrics exhibit',
+                      'Any metrics exhibit is included with the selected evidence above.',
+                    ),
                   ],
             },
           }
@@ -1277,13 +1276,15 @@ export abstract class ExperimentProgram {
         ? {
             assessment: {
               items: [
-                {
-                  id: `review:${inputs.review.id}`,
-                  title: 'Pinned review and numbered criteria',
-                  body: { text: JSON.stringify(inputs.review) },
-                  embed: 'always',
-                  refs: [{ tool: 'review.get', input: { reviewId: inputs.review.id } }],
-                },
+                textItem(
+                  `review:${inputs.review.id}`,
+                  'Pinned review and numbered criteria',
+                  JSON.stringify(inputs.review),
+                  {
+                    embed: 'always',
+                    refs: [{ tool: 'review.get', input: { reviewId: inputs.review.id } }],
+                  },
+                ),
               ],
             },
           }

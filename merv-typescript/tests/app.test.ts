@@ -330,6 +330,47 @@ test('a paper too long to show the agent whole reads on section by section', asy
     rmSync(directory, { recursive: true, force: true });
   }
 });
+test('a call an agent proposes is titled in the words of the plugin that owns its tool', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  try {
+    const tools = new Map((await app.ctx.tools.list()).map((tool) => [tool.name, tool]));
+    const act = (name: string, input: Record<string, unknown> = {}) => {
+      const declared = (tools.get(name) as ToolDefinition).act!;
+      const title = typeof declared.title === 'string' ? declared.title : declared.title(input);
+      return declared.says ? [title, declared.says] : [title];
+    };
+    const titles: [string, Record<string, unknown>, string[]][] = [
+      ['session.dispatch', { enabled: false, ownMachines: true }, ['Pause dispatch', 'enabled']],
+      ['session.dispatch', { enabled: true }, ['Start dispatch', 'enabled']],
+      ['session.halt', { sessionId: 'session_1' }, ['Halt lease']],
+      ['session.halt', {}, ['Halt all leases']],
+      ['research.advance', { researchId: 'research_1' }, ['Start next step']],
+      ['review.start', {}, ['Claim review']],
+      ['review.submit', {}, ['Submit verdict']],
+      ['task.submit_delivery', {}, ['Submit delivery']],
+      ['task.mark_failed', {}, ['Mark task failed']],
+      ['experiment.transition', { transition: 'abandon' }, ['Abandon experiment', 'transition']],
+      [
+        'experiment.transition',
+        { transition: 'mark_failed' },
+        ['Mark experiment failed', 'transition'],
+      ],
+      ['experiment.transition', { transition: 'submit_design' }, ['Submit design', 'transition']],
+      ['code.publication.control', { action: 'clear' }, ['Clear publication', 'action']],
+      ['code.local.bind', {}, ['Bind repository']],
+      ['artifact.read', {}, ['Read file', 'mode']],
+      ['artifact.read', { mode: 'download' }, ['Download file', 'mode']],
+    ];
+    for (const [name, input, said] of titles) assert.deepEqual(act(name, input), said, name);
+    // A tool whose owner names no act is said in its own words, on the page.
+    assert.equal((tools.get('task.create') as ToolDefinition).act, undefined);
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('every tool reaches an agent conversation as the relay accepts it, under its own model name', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
   const app = await createApp({ directory, api: true, port: 0 });

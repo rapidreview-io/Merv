@@ -24,6 +24,7 @@ flowchart LR
     artifacts["Artifacts"]
     reviews["Reviews"]
     codeWork["Code Work<br/><small>Git captures</small>"]
+    scope["Scope<br/><small>projects and read authority</small>"]
     state["State"]
   end
   subgraph external["External"]
@@ -34,22 +35,23 @@ flowchart LR
   knowledge -- "registers two tools" --> api
   knowledge -- "reads task records" --> tasks
   knowledge -- "reads experiments" --> experiments
-  knowledge -- "resolves wf_ ids" --> workflows
+  knowledge -- "names work items" --> workflows
   knowledge -- "resolves artifact refs" --> artifacts
   knowledge -- "resolves review refs" --> reviews
   knowledge -. "resolves code captures" .-> codeWork
+  knowledge -- "checks read, reads the project" --> scope
   knowledge -- "injects" --> state
   state -- "reads/writes" --> postgres
   class knowledge self
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Reflection waves and research cycles resolve through their workflow records, so it needs neither Reflections nor Research; the dotted arrow is an optional binding.
+Knowledge is a read-only index over records other plugins own: it lists the project's tasks and experiments and resolves typed references against the services that hold them. Tasks, experiments, reflection waves and research cycles resolve through their workflow records, named the way Workflows names an instance (`instanceName` from `@merv/workflows/rules`), so references need neither Reflections nor Research; the dotted arrow is an optional binding.
 
-| Entrypoint              | Requires                                                   | Provides                                |
-| ----------------------- | ---------------------------------------------------------- | --------------------------------------- |
-| `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Code | `knowledge` service                     |
-| `@merv/knowledge/tools` | Knowledge, Tools                                           | `project.records`, `project.references` |
+| Entrypoint              | Requires                                                                            | Provides                                |
+| ----------------------- | ----------------------------------------------------------------------------------- | --------------------------------------- |
+| `@merv/knowledge`       | State, Scope, Tasks, Experiments, Artifacts, Reviews, Workflows; Code Work optional | `knowledge` service                     |
+| `@merv/knowledge/tools` | Knowledge, Tools                                                                    | `project.records`, `project.references` |
 
 `project.records` returns the current Scope project record, including its
 Introduction and all task/experiment metadata. It performs no
@@ -59,9 +61,10 @@ or workflow mutation. Gate and next-action guidance stays in Workflows.
 `project.references` resolves up to 200 input references in order. Supported
 explicit forms are `task:ID`, `experiment:ID`, `reflection:ID`, `research:ID`,
 `artifact:ID`, `review:ID`, `code-commit:ID` and
-`session-final:ID`; supported record-ID prefixes also work, and a `wf_` ID names
-its task, experiment, reflection wave or research cycle. Results distinguish
-resolved, missing and unsupported. No lookup falls back to another project. A resolved code
+`session-final:ID`. A bare ID is whichever record holds it: Knowledge asks Workflows,
+Artifacts, Reviews and then Code Work in turn and never guesses a kind from the ID's
+prefix, and a work item names its task, experiment, reflection wave or research cycle.
+Results distinguish resolved, missing and unsupported; a bare ID nothing holds is missing. No lookup falls back to another project. A resolved code
 reference can describe a pending observation rather than ready Git evidence.
 
 ## Service

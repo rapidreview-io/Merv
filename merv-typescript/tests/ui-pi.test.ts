@@ -1466,6 +1466,7 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
       id: 'pip_download',
       name: 'artifact.read',
       input: { artifactId: 'art_1', mode: 'download' },
+      act: { title: 'Download file', says: 'mode' },
       secret: true,
       at: '2026-09-20T00:00:02Z',
     },
@@ -1612,6 +1613,7 @@ test('Run tells Pi what the server wrote of a call and keeps the whole result fo
     id: 'pip_advance',
     name: 'research.advance',
     input: { researchId: 'research_1', expectedRevision: 0, requestId: 'advance_1' },
+    act: { title: 'Start next step' },
     at: '2026-09-20T00:00:01Z',
   };
   boot(
@@ -2019,63 +2021,57 @@ test('what Run as me tells the agent is kept in the composer when it cannot be s
   assert.equal(document.querySelector('[role="alert"]')?.textContent, 'That model is not offered');
 });
 
-test('a call is titled by the act it performs, in the verb table’s words where it names one', () => {
-  const titles: [string, object, string][] = [
-    ['session.dispatch', { enabled: false, ownMachines: true }, 'Pause dispatch'],
-    ['session.dispatch', { enabled: true }, 'Start dispatch'],
-    ['session.halt', { sessionId: 'session_1' }, 'Halt lease'],
-    ['session.halt', {}, 'Halt all leases'],
-    ['research.advance', { researchId: 'research_1' }, 'Start next step'],
-    ['review.start', {}, 'Claim review'],
-    ['review.submit', {}, 'Submit verdict'],
-    ['task.submit_delivery', {}, 'Submit delivery'],
-    ['sandbox.extend', { id: 'sbx_1', seconds: 600 }, 'Extend lease'],
-    ['sandbox.release', { id: 'sbx_1' }, 'Release machine'],
-    ['task.create', {}, 'New task'],
-    ['task.mark_failed', {}, 'Mark task failed'],
-    ['experiment.transition', { transition: 'abandon' }, 'Abandon experiment'],
-    ['experiment.transition', { transition: 'mark_failed' }, 'Mark experiment failed'],
-    ['code.publication.control', { action: 'retry' }, 'Retry publication'],
-    ['code.local.bind', {}, 'Bind repository'],
-    ['fleet.workflow_retry', {}, 'Retry on Fleet'],
+test('a call is titled by the act its tool’s owner names, and otherwise by the tool’s own words', () => {
+  // The owner's title, which Pi keeps on the proposal from the tool's registration.
+  assert.equal(
+    actOf({ name: 'session.dispatch', act: { title: 'Pause dispatch', says: 'enabled' } }),
+    'Pause dispatch',
+  );
+  const titles: [string, string][] = [
+    ['task.create', 'New task'],
     // Otherwise the tool's own words: an action with an underscore says itself, any other comes
     // before what it acts on, in the product's word for it.
-    ['usage.set_budget', {}, 'Set budget'],
-    ['code.publication.merge', {}, 'Merge publication'],
-    ['research.create', {}, 'New cycle'],
-    ['research.end', {}, 'End cycle'],
-    ['artifact.read', {}, 'Read file'],
-    ['artifact.read', { mode: 'download' }, 'Download file'],
-    ['fleet.halt', {}, 'Halt machine'],
+    ['usage.set_budget', 'Set budget'],
+    ['code.publication.merge', 'Merge publication'],
+    ['research.create', 'New cycle'],
+    ['research.end', 'End cycle'],
+    ['artifact.read', 'Read file'],
+    ['fleet.halt', 'Halt machine'],
   ];
-  for (const [name, input, title] of titles) assert.equal(actOf(name, input), title, name);
+  for (const [name, title] of titles) assert.equal(actOf({ name }), title, name);
 });
 
 test('a call’s input reads as facts: keys in words, flags as Yes and No, nested values folded, machinery left out', () => {
   assert.deepEqual(
-    factsOf('session.dispatch', {
-      enabled: false,
-      ownMachines: true,
-      requestId: 'request_1',
-      expectedRevision: 3,
+    factsOf({
+      name: 'session.dispatch',
+      input: { enabled: false, ownMachines: true, requestId: 'request_1', expectedRevision: 3 },
+      act: { title: 'Pause dispatch', says: 'enabled' },
     }),
     // What the act said (Pause dispatch) is not said again.
     [{ key: 'ownMachines', label: 'Own machines', text: 'Yes' }],
   );
   assert.deepEqual(
-    factsOf('experiment.transition', { experimentId: 'exp_1', transition: 'abandon' }),
+    factsOf({
+      name: 'experiment.transition',
+      input: { experimentId: 'exp_1', transition: 'abandon' },
+      act: { title: 'Abandon experiment', says: 'transition' },
+    }),
     [{ key: 'experimentId', label: 'Experiment', text: 'exp_1' }],
   );
   assert.deepEqual(
-    factsOf('task.create', {
-      title: 'Seed sweep',
-      dependencies: ['wf_1', 'wf_2'],
-      seconds: 600,
-      deliverables: [{ title: 'Table' }],
-      budget: { maxTokens: 10 },
-      none: null,
-      blank: '',
-      nothing: [],
+    factsOf({
+      name: 'task.create',
+      input: {
+        title: 'Seed sweep',
+        dependencies: ['wf_1', 'wf_2'],
+        seconds: 600,
+        deliverables: [{ title: 'Table' }],
+        budget: { maxTokens: 10 },
+        none: null,
+        blank: '',
+        nothing: [],
+      },
     }),
     [
       { key: 'title', label: 'Title', text: 'Seed sweep' },
@@ -2094,7 +2090,10 @@ test('a call’s input reads as facts: keys in words, flags as Yes and No, neste
     ['Session', 'Files', 'Cycle', 'Unit', 'Sandbox', 'Max wall minutes'],
   );
   // An input with nothing left to say has no facts.
-  assert.deepEqual(factsOf('research.advance', { requestId: 'r', expectedRevision: 0 }), []);
+  assert.deepEqual(
+    factsOf({ name: 'research.advance', input: { requestId: 'r', expectedRevision: 0 } }),
+    [],
+  );
 });
 
 test('what Run told the agent is a receipt only where it answers a call that ran', () => {
@@ -2191,6 +2190,7 @@ test('a card names the records its input points at, folds what is long or nested
     name: 'research.advance',
     at: 'now',
     input: { requestId: 'request_2', expectedRevision: 0 },
+    act: { title: 'Start next step' },
   };
   serve('/tools/ui.home', { body: { result: { tasks: [{ id: task, title: 'Weight decay' }] } } });
   serve('/tools/ui.shell', { body: { result: { rows: [{ id: 'tasks', path: '/tasks' }] } } });
@@ -2241,6 +2241,7 @@ test('how a run came out is said once, in its card or on a quiet line, never as 
       id: 'pip_halt',
       name: 'session.halt',
       input: { sessionId: 'session_1' },
+      act: { title: 'Halt lease' },
       at: 'now',
       ran: { at: 'now', ok: false, code: 'forbidden' },
     },

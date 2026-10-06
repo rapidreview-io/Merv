@@ -642,7 +642,7 @@ test('a stored definition keeps only edge endpoints in code-unit order and refus
   ]);
   assert.deepEqual(
     workflows.catalog().find((item) => item.name === 'ordered')!.edges,
-    JSON.parse(stored!.definition_json).edges,
+    JSON.parse(stored!.definition_json).edges.map((edge: object) => ({ ...edge, tool: null })),
   );
   const ordered = await handle.start(caller, { workflow: 'ordered', requestId: 'ordered' });
   assert.equal(

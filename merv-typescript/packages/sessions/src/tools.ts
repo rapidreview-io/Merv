@@ -75,6 +75,10 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.dispatch',
+        act: {
+          title: ({ enabled }) => (enabled === false ? 'Pause dispatch' : 'Start dispatch'),
+          says: 'enabled',
+        },
         description:
           "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its longest-standing signed-in operator), whoever changed either.",
         conversation: 'propose',
@@ -88,6 +92,7 @@ export const sessionsToolsPlugin = {
     ctx.effect(() =>
       ctx.tools.register({
         name: 'session.halt',
+        act: { title: ({ sessionId }) => (sessionId ? 'Halt lease' : 'Halt all leases') },
         description:
           'Project admin only, never a leased worker. Close one offered or active session with sessionId, or, without it, turn automatic dispatch off and close every one in the project. reason is recorded (default operator_halt). Answers how many were halted.',
         conversation: 'propose',

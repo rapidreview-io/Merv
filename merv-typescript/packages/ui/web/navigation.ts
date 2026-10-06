@@ -1,5 +1,5 @@
 import { useTool } from './api';
-import type { PluginState, Row, ShellData } from './shell-types';
+import type { PluginState, Row, RowStateWords, ShellData } from './shell-types';
 
 /**
  * Sidebar navigation model. Sections express what a person is doing
@@ -52,6 +52,33 @@ const NO_ROWS: Row[] = [];
  */
 export const useRows = (): Row[] =>
   useTool<ShellData>('ui.shell', {}, { every: 30000 }).data?.rows ?? NO_ROWS;
+
+/**
+ * What a state says beyond its word, read from the deployed programs and the rows that list
+ * them, never from a list of names: a state a program works in is work under way, a review gate
+ * is a state left through review.submit, and the rest is in the words of the row that owns it.
+ */
+export interface StateWords {
+  working: ReadonlySet<string>;
+  gates: ReadonlySet<string>;
+  said: ReadonlyMap<string, RowStateWords>;
+}
+const WORDS = new WeakMap<object, StateWords>();
+export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>> = {}) {
+  const shapes = shell.workflows ?? [];
+  const words = WORDS.get(shell) ?? {
+    working: new Set(shapes.flatMap((s) => s.states.filter((at) => !s.terminal.includes(at)))),
+    gates: new Set(
+      shapes.flatMap((s) => s.edges.filter((e) => e.tool === 'review.submit').map((e) => e.from)),
+    ),
+    said: new Map((shell.rows ?? []).flatMap((row) => Object.entries(row.states ?? {}))),
+  };
+  WORDS.set(shell, words);
+  return words;
+}
+/** The state words of the shell's own read, shared as its rows are. */
+export const useStateWords = (): StateWords =>
+  stateWords(useTool<ShellData>('ui.shell', {}, { every: 30000 }).data);
 
 /** Rows of the `top` group stand with Home and the lead rows rather than inside a section. */
 export const topRows = (rows: Row[]) => rows.filter((row) => row.group === 'top');

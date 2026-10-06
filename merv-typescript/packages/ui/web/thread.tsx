@@ -2,16 +2,9 @@ import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { Link } from 'react-router-dom';
 import { Ago, Evidence, StatusPill, useArtifacts, words } from './components';
 import { ArrowRightIcon } from './icons';
-import { pathOf, useRows } from './navigation';
+import { pathOf, useRows, type StateWords } from './navigation';
 import { initials } from './views/people';
 import { notMet, type Review } from './views/reviews';
-
-/** The gates a review answers, and what crossing into each says its producer did. */
-const SUBMITTED = new Map([
-  ['design_review', 'Submitted the design'],
-  ['experiment_review', 'Submitted the results'],
-  ['in_review', 'Delivered'],
-]);
 
 /** One entry of a thread: a post in somebody's voice, or a quiet line in its gutter. */
 export type Entry =
@@ -59,6 +52,7 @@ export function threadOf({
   subject,
   briefId,
   nameOf,
+  states,
 }: {
   graph?: ProcessGraph;
   reviews: Review[];
@@ -66,6 +60,8 @@ export function threadOf({
   /** A task's brief: every review of it pins the brief, and a delivery's post shows the rest. */
   briefId?: string;
   nameOf(id: string | null | undefined): string | undefined;
+  /** The gates a review answers, and what crossing into each says its producer did. */
+  states: Pick<StateWords, 'gates' | 'said'>;
 }): Entry[] {
   const rounds = reviews
     .filter((review) => review.subjectId === subject)
@@ -103,8 +99,8 @@ export function threadOf({
   const entries: Entry[] = [];
   let open: Review | undefined;
   for (const step of crossings) {
-    const into = SUBMITTED.has(step.to);
-    const out = SUBMITTED.has(step.from);
+    const into = states.gates.has(step.to);
+    const out = states.gates.has(step.from);
     const decided = out && !into && open?.verdict ? open : undefined;
     open = into ? rounds.find((review) => review.subjectRevision === step.revision) : undefined;
     if (into && !out)
@@ -114,7 +110,7 @@ export function threadOf({
         role: 'Producer',
         who: nameOf(step.actorId),
         at: step.at,
-        said: SUBMITTED.get(step.to),
+        said: states.said.get(step.to)?.submitted,
         files: briefId === undefined ? undefined : open?.artifactIds.filter((id) => id !== briefId),
       });
     else if (decided) {
@@ -134,7 +130,7 @@ export function threadOf({
         at: step.at,
       });
   }
-  if (SUBMITTED.has(graph.state) && open && !open.verdict) entries.push(waiting(open));
+  if (states.gates.has(graph.state) && open && !open.verdict) entries.push(waiting(open));
   return entries;
 }
 

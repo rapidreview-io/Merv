@@ -57,6 +57,17 @@ export const experimentsToolsPlugin = {
       },
       {
         name: 'experiment.transition',
+        act: {
+          title: ({ transition }: Record<string, unknown>) =>
+            ({
+              submit_design: 'Submit design',
+              submit_results: 'Submit results',
+              retry_running: 'Retry running',
+              abandon: 'Abandon experiment',
+              mark_failed: 'Mark experiment failed',
+            })[String(transition)] ?? 'Move experiment',
+          says: 'transition',
+        },
         description:
           'Apply an owner action at the current expectedRevision: submit_design, submit_results, retry_running, abandon or mark_failed. Submission seals evidence and queues independent review atomically; reviewers alone apply their verdict through review.submit. submit_results comes only from the leased worker session that ran the attempt. retry_running, for an infrastructure interruption, preserves the approved plan and attempt and requires the interruption’s reason in evidence.reason, as terminal closure requires a specific reason there. Reuse an identical requestId for an uncertain response, and stop after a successful node handoff.',
         inputSchema: experimentTransitionSchema,

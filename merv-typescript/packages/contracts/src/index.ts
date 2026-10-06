@@ -1324,6 +1324,10 @@ export interface WorkflowDefinition {
   /** While an instance is nonterminal, pause creation of these workflow types in its project. */
   blocksStarts?: string[];
 }
+/** A deployed definition as the catalog reads it: each edge with the tool that takes it, if any. */
+export interface WorkflowCatalogEntry extends Omit<WorkflowDefinition, 'edges'> {
+  edges: (WorkflowDefinition['edges'][number] & { tool: string | null })[];
+}
 /** The immutable contract of one name@version, whether or not a program has it loaded. */
 export interface WorkflowPinned {
   definition: WorkflowDefinition;
@@ -1662,7 +1666,7 @@ export interface Workflows {
     match: { action: string; keys: readonly string[]; values: readonly string[] },
     tx?: Transaction,
   ): Promise<number>;
-  catalog(): WorkflowDefinition[];
+  catalog(): WorkflowCatalogEntry[];
   /**
    * The stored contract of a version, loaded or not, or null when none is stored. It never
    * changes, so it needs no caller. The object returned is shared and deeply frozen: a caller

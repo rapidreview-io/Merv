@@ -507,6 +507,31 @@ test('the assembled application serves the bundle, lists rows per active plugin,
     false,
   );
   assert.ok(readerShell.every((entry) => entry.status.state !== 'unavailable'));
+  // What a state means comes with the shell: the owner's words on its row, and the gates the
+  // catalog marks with the tool that leaves them. The browser holds no program's state words.
+  const said = (await tool('ui.shell', reader)).body.result as {
+    rows: { id: string; states?: Record<string, unknown> }[];
+    workflows: { name: string; edges: { from: string; tool: string | null }[] }[];
+  };
+  assert.deepEqual(said.rows.find((entry) => entry.id === 'experiments')?.states, {
+    planned: { idle: true },
+    design_review: { submitted: 'Submitted the design' },
+    experiment_review: { submitted: 'Submitted the results' },
+  });
+  assert.deepEqual(said.rows.find((entry) => entry.id === 'tasks')?.states, {
+    in_review: { submitted: 'Delivered' },
+  });
+  const gates = (name: string) => [
+    ...new Set(
+      said.workflows
+        .filter((shape) => shape.name === name)
+        .flatMap((shape) => shape.edges.filter((edge) => edge.tool === 'review.submit'))
+        .map((edge) => edge.from),
+    ),
+  ];
+  assert.deepEqual(gates('experiment').sort(), ['design_review', 'experiment_review']);
+  assert.deepEqual(gates('task'), ['in_review']);
+  assert.deepEqual(gates('research'), []);
   assert.equal(
     (await tool('ui.read', operator, { rowId: 'knowledge' })).body.error.code,
     'row_unreadable',

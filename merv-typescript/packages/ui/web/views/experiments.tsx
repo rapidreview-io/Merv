@@ -6,7 +6,7 @@ import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { CodeBlock } from '../code-block';
 import { recordRoutes } from '../list-filters';
-import { homeOf } from '../navigation';
+import { homeOf, useStateWords } from '../navigation';
 import {
   Evidence,
   KV,
@@ -109,7 +109,10 @@ function ExperimentRecord({
   const figures = e.submissions.at(-1)?.figureIds ?? [];
   const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
   const ended = e.failed;
-  const thread = reviews ? threadOf({ graph: process, reviews, subject: e.id, nameOf }) : [];
+  const states = useStateWords();
+  const thread = reviews
+    ? threadOf({ graph: process, reviews, subject: e.id, nameOf, states })
+    : [];
   const names = useRecordNames(e.intent);
   return (
     <RecordPage

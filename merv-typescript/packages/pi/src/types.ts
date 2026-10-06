@@ -83,6 +83,8 @@ export interface PiProposal {
   /** The native tool name. */
   name: string;
   input: Data;
+  /** What the tool's owner calls the act (its `act`), and the input field that title said. */
+  act?: { title: string; says?: string };
   /** Its result is shown only to the person and never kept. */
   secret?: true;
   at: string;

@@ -49,6 +49,19 @@ export interface UiRow {
   home?: { tool?: string; keep: readonly string[]; list?(caller: Caller): Promise<unknown> };
   /** How Needs you says a record of `home` is the reader's move, in the owner's words. */
   needs?: UiRowNeeds;
+  /** What the shell says of `workflow`'s states that its deployed definition does not. */
+  states?: Record<string, UiStateWords>;
+}
+
+/**
+ * One state of a row's workflow, in the owner's words. The catalog already says the rest: a
+ * state left through review.submit is a review gate, and an end is an end.
+ */
+export interface UiStateWords {
+  /** Work not yet begun: its stage reads grey, before any of the program's work. */
+  idle?: true;
+  /** At a review gate: what crossing into it says its producer did, e.g. 'Delivered'. */
+  submitted?: string;
 }
 
 /**

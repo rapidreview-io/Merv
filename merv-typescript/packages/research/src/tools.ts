@@ -76,6 +76,7 @@ export const researchToolsPlugin = {
       },
       {
         name: 'research.advance',
+        act: { title: 'Start next step' },
         // Almost every advance creates work (a reflection wave, consolidation, the next wave), and
         // its input cannot say which: the person runs it.
         conversation: 'propose' as const,

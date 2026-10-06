@@ -15,7 +15,7 @@
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react';
 import { CopyButton } from './components';
 import { ChevronRightIcon } from './icons';
-import { RecordLink, safeHref, splitIds, type RecordNames } from './markdown';
+import { RecordLink, safeHref, splitIds, useRecordNames, type RecordNames } from './markdown';
 
 /** How deep the tree stands open before anything is pressed: the root and its entries. */
 const OPEN_DEPTH = 2;
@@ -218,8 +218,14 @@ function Node({
   );
 }
 
-/** A parsed JSON value as a tree of folds; `names` are the records its ids may name. */
+/**
+ * A parsed JSON value as a tree of folds; `names` are the records its ids may name, and a tree
+ * given none reads its own.
+ */
 export function JsonView({ value, names }: { value: unknown; names?: RecordNames }) {
+  const text = useMemo(() => (names ? '' : (JSON.stringify(value) ?? '')), [names, value]);
+  const own = useRecordNames(text);
+  names ??= own;
   return (
     <div className="json">
       <ul className="json-list json-list--root">

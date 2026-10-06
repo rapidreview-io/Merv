@@ -61,6 +61,11 @@ export const codeToolsPlugin = {
       },
       {
         name: 'code.publication.control',
+        act: {
+          title: ({ action }: Record<string, unknown>) =>
+            `${String(action).charAt(0).toUpperCase()}${String(action).slice(1)} publication`,
+          says: 'action',
+        },
         conversation: 'propose' as const,
         description:
           'Signed-in human administrator: record the release canary result, acknowledge incomplete rules visibility, or clear publication disablement after a passing canary. Keep the tested App identity, rules and evidence in reason. A stale merge that succeeds disables this publication path; other work continues.',
@@ -132,6 +137,7 @@ export const codeToolsPlugin = {
       // Nothing below is granted by any execution policy, so no leased worker calls it.
       {
         name: 'code.local.bind',
+        act: { title: 'Bind repository' },
         conversation: 'propose' as const,
         description:
           'Bind this project to a repository identity and name the commit of its main. Only a signed-in project administrator may call it; an API key or a leased worker is refused. mainOid is the full commit work without code-bearing dependencies starts from; hosted work waits until Code holds it. The first call binds. A later call with the same repositoryId moves main and must carry expectedMainOid, the main read from code.status, or it is refused with code_main_changed; work whose base is already pinned keeps the commit it copied. Another repositoryId is refused with code_rebind_required; code.repository.rebind changes the binding after verifying that Code holds the project’s history. Supply a stable requestId: the same request replays its result, and a changed one is refused.',
