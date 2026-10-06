@@ -1,4 +1,4 @@
-import { REVIEW_SUBMIT_INPUT } from '@merv/reviews/rules';
+import { reviewActions } from '@merv/reviews/rules';
 import { types as nodeTypes } from 'node:util';
 import {
   check,
@@ -218,8 +218,8 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
           if (!this.checked.found(context)) await this.checkDelivery(context);
         },
       },
-      {
-        name: 'submit_review',
+      ...reviewActions<WorkflowCheckContext>({
+        names: { submit: 'submit_review', start: 'start_review' },
         states: ['in_review'],
         transitions: [
           'accept',
@@ -227,44 +227,19 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
           'fail_review',
           ...(serviceOwned(version) ? ['revise_suspended'] : []),
         ],
-        tool: 'review.submit',
-        instruction:
-          'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. Include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
-        requiredInput: [...REVIEW_SUBMIT_INPUT],
-        arguments: async (context) => {
-          const review = await this.currentReview(context);
-          return {
-            reviewId: review.id,
-            claimId: review.claimId,
-            expectedRevision: context.snapshot.revision,
-          };
+        instructions: {
+          submit:
+            'Read the review context and independently inspect the pinned evidence. Submit a verdict with verification notes. Include a short plain synopsis and one finding per numbered criterion: met, not_met, not_verified or waived, cited pinned evidenceIds and verification, correction or explicit waiver reasons. Pass requires every criterion met or explicitly waived, and a criterion the review names in requiredCriteria met, never waived; also judge whether the overall goal was achieved. Stop after the verdict; its task transition is automatic.',
+          start:
+            'Claim this independent review, then refresh its guidance and read the context for your new assignment.' +
+            ` ${GIT_CLAIM}`,
         },
-        check: async (context) => {
-          await this.checkTaskReview(context);
-        },
-      },
-      {
-        name: 'start_review',
-        states: ['in_review'],
-        tool: 'review.start',
-        instruction:
-          'Claim this independent review, then refresh its guidance and read the context for your new assignment.' +
-          ` ${GIT_CLAIM}`,
-        arguments: async (context) => ({ reviewId: (await this.currentReview(context)).id }),
-        check: async (context) => {
-          const review = await this.currentReview(context);
-          check(
-            !context.input ||
-              context.input.reviewId === undefined ||
-              context.input.reviewId === review.id,
-            'stale_review',
-            'reviewId must match this task submission',
-            409,
-          );
-          await this.leasedClaim(context.caller, context.snapshot, context.tx);
-          await this.reviews.checkStart(context.caller, review.id, context.tx);
-        },
-      },
+        reviews: this.reviews,
+        // Refuses a named reviewId that is not the current submission's.
+        current: async (context) => await this.currentReview(context),
+        submit: async (context) => await this.checkTaskReview(context),
+        start: async ({ caller, snapshot, tx }) => await this.leasedClaim(caller, snapshot, tx),
+      }),
       {
         name: 'reissue_review',
         states: ['in_review'],

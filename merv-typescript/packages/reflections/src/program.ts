@@ -1,4 +1,4 @@
-import { excludedFromReview, reviewHistory, REVIEW_SUBMIT_INPUT } from '@merv/reviews/rules';
+import { excludedFromReview, reviewActions, reviewHistory } from '@merv/reviews/rules';
 import {
   insertLease,
   leaseRows,
@@ -772,24 +772,22 @@ export function policy(this: ReflectionService, lens: boolean): WorkflowPolicy {
                 }
               },
             },
-            {
-              name: 'review',
+            ...reviewActions<WorkflowCheckContext>({
+              names: { submit: 'review', start: 'start_review' },
               states: ['in_review'],
               transitions: ['approve', 'revise_synthesis', 'restart_lenses'],
-              tool: 'review.submit',
-              instruction:
-                'Verify the pinned synthesis and maintain Methods/Results with your own paperChanges in the verdict. If no paper edit is warranted, explain why in notes; pass, or return it with returnTo synthesizing or reflecting.',
-              requiredInput: [...REVIEW_SUBMIT_INPUT],
-              arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
-                const wave = await this.row(caller, snapshot.id, tx);
-                const review = await this.reviews.get(caller, wave.review_id!, tx);
-                return {
-                  reviewId: review.id,
-                  ...(review.claimId ? { claimId: review.claimId } : {}),
-                  expectedRevision: snapshot.revision,
-                };
+              instructions: {
+                submit:
+                  'Verify the pinned synthesis and maintain Methods/Results with your own paperChanges in the verdict. If no paper edit is warranted, explain why in notes; pass, or return it with returnTo synthesizing or reflecting.',
+                start: 'Claim this exact independent reflection review.',
               },
-              check: async (c: WorkflowCheckContext) => {
+              reviews: this.reviews,
+              current: async ({ caller, snapshot, tx }) => {
+                const wave = await this.row(caller, snapshot.id, tx);
+                check(wave.review_id, 'stale_review', 'Reflection review is missing', 409);
+                return await this.reviews.get(caller, wave.review_id, tx);
+              },
+              submit: async (c) => {
                 const { wave } = await this.admit(c);
                 // A verdict needs the claim; before it, start_review is the step. A proposed
                 // verdict is checked as the verdict, so ready means the call will take it.
@@ -805,21 +803,7 @@ export function policy(this: ReflectionService, lens: boolean): WorkflowPolicy {
                 if (input && input.paperChanges !== undefined && !c.transition)
                   await this.paper.checkReview(c.caller, paperReview(wave, review, input), c.tx);
               },
-            },
-            {
-              name: 'start_review',
-              states: ['in_review'],
-              tool: 'review.start',
-              instruction: 'Claim this exact independent reflection review.',
-              arguments: async ({ caller, snapshot, tx }: WorkflowCheckContext) => ({
-                reviewId: (await this.row(caller, snapshot.id, tx)).review_id!,
-              }),
-              check: async ({ caller, snapshot, tx }: WorkflowCheckContext) => {
-                const wave = await this.row(caller, snapshot.id, tx);
-                check(wave.review_id, 'stale_review', 'Reflection review is missing', 409);
-                await this.reviews.checkStart(caller, wave.review_id, tx);
-              },
-            },
+            }),
           ]),
     ],
   };

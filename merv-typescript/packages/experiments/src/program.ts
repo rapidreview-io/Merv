@@ -6,7 +6,7 @@ import {
   excludedFromReview,
   NOT_INDEPENDENT,
   reviewHistory,
-  REVIEW_SUBMIT_INPUT,
+  reviewActions,
   REVIEW_VERDICTS,
 } from '@merv/reviews/rules';
 import { mapAsync } from '@merv/contracts';
@@ -1612,59 +1612,45 @@ export abstract class ExperimentProgram {
           [...activeStates],
           'End this experiment as failed with a specific reason; do not confuse this owner action with a reviewer returning work for correction.',
         ),
-        ...(['design_review', 'experiment_review'] as const).map((state) => ({
-          name: `submit_${state}`,
-          states: [state],
-          transitions:
-            state === 'design_review'
-              ? ['approve_design', 'revise_design']
-              : ['accept_results', 'revise_plan', 'revise_execution'],
-          tool: 'review.submit',
-          instruction: handoff(state),
-          requiredInput: [...REVIEW_SUBMIT_INPUT],
-          // The check pins the same review and gates its capture, so arguments only name it.
-          arguments: async (context: WorkflowCheckContext): Promise<Data> => {
-            const review = await this.review(context.caller, await this.facts(context), context.tx);
-            return {
-              reviewId: review.id,
-              ...(review.claimId ? { claimId: review.claimId } : {}),
-              expectedRevision: context.snapshot.revision,
-            };
-          },
-          check: async (context: WorkflowCheckContext) => {
-            const experiment = await this.facts(context);
-            const review = await this.review(context.caller, experiment, context.tx);
-            await this.reviewCapture(context.caller, experiment, context.tx);
-            await this.reviews.checkSubmit(
-              context.caller,
-              review.id,
-              context.input as unknown as ExperimentReview | undefined,
-              context.tx,
-            );
-            if (context.input) await this.checkReview(context, experiment, review);
-          },
-        })),
-        ...(['design_review', 'experiment_review'] as const).map((state) => ({
-          name: `start_${state}`,
-          states: [state],
-          tool: 'review.start',
-          instruction: 'Claim the exact current independent review, then refresh its assignment.',
-          arguments: async (context: WorkflowCheckContext): Promise<Data> => ({
-            reviewId: (await this.review(context.caller, await this.facts(context), context.tx)).id,
+        ...(['design_review', 'experiment_review'] as const).flatMap((state) =>
+          reviewActions<WorkflowCheckContext>({
+            names: { submit: `submit_${state}`, start: `start_${state}` },
+            states: [state],
+            transitions:
+              state === 'design_review'
+                ? ['approve_design', 'revise_design']
+                : ['accept_results', 'revise_plan', 'revise_execution'],
+            instructions: {
+              submit: handoff(state),
+              start: 'Claim the exact current independent review, then refresh its assignment.',
+            },
+            reviews: this.reviews,
+            // The submit check pins the same review and gates its capture, so this only names it.
+            current: async (context) =>
+              await this.review(context.caller, await this.facts(context), context.tx),
+            submit: async (context) => {
+              const experiment = await this.facts(context);
+              const review = await this.review(context.caller, experiment, context.tx);
+              await this.reviewCapture(context.caller, experiment, context.tx);
+              await this.reviews.checkSubmit(
+                context.caller,
+                review.id,
+                context.input as unknown as ExperimentReview | undefined,
+                context.tx,
+              );
+              if (context.input) await this.checkReview(context, experiment, review);
+            },
+            start: async (context, review) => {
+              await this.reviewCapture(context.caller, await this.facts(context), context.tx);
+              check(
+                !context.input?.reviewId || context.input.reviewId === review.id,
+                'stale_review',
+                'The current review is required',
+                409,
+              );
+            },
           }),
-          check: async (context: WorkflowCheckContext) => {
-            const experiment = await this.facts(context);
-            const review = await this.review(context.caller, experiment, context.tx);
-            await this.reviewCapture(context.caller, experiment, context.tx);
-            check(
-              !context.input?.reviewId || context.input.reviewId === review.id,
-              'stale_review',
-              'The current review is required',
-              409,
-            );
-            await this.reviews.checkStart(context.caller, review.id, context.tx);
-          },
-        })),
+        ),
       ],
     };
   }
