@@ -1,12 +1,11 @@
 import { directsIndependently, excludedFromReview, NOT_INDEPENDENT } from '@merv/reviews/rules';
+import { insertLease, leaseRows, reviewedLeaseHooks } from '@merv/workflows/lease-rows';
 import {
   check,
-  checkReceipt,
   newId,
   now,
   plain,
   recorded,
-  releasedLease,
   visible,
   type Caller,
   type Data,
@@ -27,49 +26,21 @@ import { serviceOwned } from './workflow.js';
 export function leaseHooks(
   this: TaskService,
 ): NonNullable<NonNullable<WorkflowPolicy['assignments']>[number]['lease']> {
-  return {
+  return reviewedLeaseHooks({
+    reviews: this.reviews,
+    artifacts: this.artifacts,
+    excluded: excludedFromReview,
     label: async ({ caller, snapshot, tx }) => (await this.row(tx, caller, snapshot.id)).title,
     role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> =>
       await this.leaseRole(context),
-    excludes: async ({ caller, snapshot, tx }, actorId) => {
-      const row = await this.row(tx, caller, snapshot.id);
-      return (
-        snapshot.state === 'in_review' &&
-        !!row.review_id &&
-        excludedFromReview(await this.reviews.get(caller, row.review_id, tx), actorId)
-      );
-    },
     acquire: async (context) => await this.acquireLease(context),
-    check: async ({ caller, snapshot, tx }, receipt) => {
-      const lease = await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
-      checkReceipt(lease, receipt, 'Lease ownership receipt no longer matches');
-      if (lease.purpose === 'review') {
-        const review = await this.reviews.checkSubmit(caller, lease.review_id!, undefined, tx);
-        check(
-          review.claimId === lease.claim_id && review.subjectRevision === snapshot.revision,
-          'stale_claim',
-          'Lease no longer owns its review claim',
-          409,
-        );
-      }
-    },
-    outputs: async ({ caller, snapshot, tx }) => {
-      await this.currentLease(caller, snapshot.id, snapshot.revision, tx);
-      return {
-        artifacts: [
-          ...new Set([
-            ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
-            ...(await this.captureArtifactIds(caller.projectId, snapshot.id, tx)),
-          ]),
-        ],
-      };
-    },
-    release: async ({ lease, reason, tx }) => {
-      await releasedLease(tx, this.reviews, 'task_leases', lease, reason, {
-        task_id: lease.instanceId,
-      });
-    },
-  };
+    review: async ({ caller, snapshot, tx }) =>
+      snapshot.state === 'in_review' ? (await this.row(tx, caller, snapshot.id)).review_id : null,
+    lease: async ({ caller, snapshot, tx }) =>
+      await this.currentLease(caller, snapshot.id, snapshot.revision, tx),
+    captures: async ({ caller, snapshot, tx }) =>
+      await this.captureArtifactIds(caller.projectId, snapshot.id, tx),
+  });
 }
 
 /**
@@ -139,14 +110,14 @@ export async function currentLease(
   tx: Transaction,
 ): Promise<TaskLeaseRow> {
   check(caller.session, 'stale_lease', 'This task operation requires its lease worker', 403);
-  const lease = await tx.get<TaskLeaseRow>(
-    'SELECT * FROM task_leases WHERE id=? AND project_id=? AND task_id=? AND revision=? AND actor_id=? AND released_at IS NULL',
-    caller.session.id,
-    caller.projectId,
-    taskId,
+  const [lease] = await leaseRows<TaskLeaseRow['details']>(tx, {
+    projectId: caller.projectId,
+    id: caller.session.id,
+    instanceIds: [taskId],
     revision,
-    caller.actorId,
-  );
+    actorId: caller.actorId,
+    active: true,
+  });
   check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
   return lease;
 }
@@ -203,21 +174,17 @@ export async function acquireLease(
       tx,
     )) as unknown as Data,
   };
-  await tx.run(
-    'INSERT INTO task_leases(id,project_id,task_id,revision,actor_id,source_actor_id,purpose,review_id,claim_id,receipt,pinned_artifacts,checkpoints) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-    leaseId,
-    caller.projectId,
-    snapshot.id,
-    snapshot.revision,
-    caller.actorId,
-    source.actorId,
-    purpose,
-    review?.id ?? null,
-    review?.claimId ?? null,
-    JSON.stringify(receipt),
-    JSON.stringify(pinnedArtifacts),
-    JSON.stringify(checkpoints),
-  );
+  await insertLease(tx, {
+    id: leaseId,
+    projectId: caller.projectId,
+    snapshot,
+    actorId: caller.actorId,
+    sourceActorId: source.actorId,
+    reviewId: review?.id ?? null,
+    claimId: review?.claimId ?? null,
+    receipt,
+    details: { purpose, pinnedArtifacts, checkpoints },
+  });
   return receipt;
 }
 
@@ -227,14 +194,50 @@ export async function leaseArtifactIds(
   lease: TaskLeaseRow,
   tx: Transaction,
 ): Promise<string[]> {
-  const pinned = JSON.parse(lease.pinned_artifacts) as { id: string }[];
   return [
     ...new Set([
-      ...pinned.map((artifact) => artifact.id),
-      ...((await this.captureArtifactIds(caller.projectId, lease.task_id, tx)) ?? []),
+      ...lease.details.pinnedArtifacts.map((artifact) => artifact.id),
+      ...((await this.captureArtifactIds(caller.projectId, lease.instance_id, tx)) ?? []),
       ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
     ]),
   ].sort();
+}
+
+/**
+ * Guidance of many tasks at once reads each one's row, and whether a worker holds its revision,
+ * in two reads for all of them, where `row` and `unleased` look for them.
+ */
+export async function prepareTasks(
+  this: TaskService,
+  {
+    caller,
+    tx,
+    snapshots,
+  }: { caller: Caller; tx: Transaction; snapshots: readonly WorkflowSnapshot[] },
+): Promise<void> {
+  const ids = snapshots.map((snapshot) => snapshot.id);
+  for (const row of await tx.all<TaskRow>(
+    `SELECT * FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+    caller.projectId,
+    ...ids,
+  ))
+    await this.state.remember(`tasks:row:${caller.projectId}:${row.id}`, async () => row);
+  if (caller.session) return;
+  const held = new Set(
+    (
+      await leaseRows<TaskLeaseRow['details']>(tx, {
+        projectId: caller.projectId,
+        instanceIds: ids,
+        active: true,
+      })
+    )
+      .filter((lease) => lease.details.purpose === 'work')
+      .map((lease) => `${lease.instance_id}:${lease.revision}`),
+  );
+  for (const { id, revision } of snapshots)
+    await this.state.remember(`tasks:leased:${caller.projectId}:${id}:${revision}`, async () =>
+      held.has(`${id}:${revision}`),
+    );
 }
 
 /** An interactive delivery yields to a worker that holds the revision, as every domain's submission does. */
@@ -248,13 +251,15 @@ export async function unleased(
   if (caller.session) return;
   const key = `tasks:leased:${caller.projectId}:${taskId}:${revision}`;
   check(
-    !(await this.state.remember(key, () =>
-      tx.get(
-        "SELECT id FROM task_leases WHERE project_id=? AND task_id=? AND revision=? AND purpose='work' AND released_at IS NULL",
-        caller.projectId,
-        taskId,
-        revision,
-      ),
+    !(await this.state.remember(key, async () =>
+      (
+        await leaseRows<TaskLeaseRow['details']>(tx, {
+          projectId: caller.projectId,
+          instanceIds: [taskId],
+          revision,
+          active: true,
+        })
+      ).some((lease) => lease.details.purpose === 'work'),
     )),
     'task_leased',
     'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
@@ -270,7 +275,9 @@ export async function isProducer(
   tx: Transaction,
 ): Promise<boolean> {
   if (!caller.session) return row.producer_id === caller.actorId;
-  return (await this.currentLease(caller, row.id, snapshot.revision, tx)).purpose === 'work';
+  return (
+    (await this.currentLease(caller, row.id, snapshot.revision, tx)).details.purpose === 'work'
+  );
 }
 
 export async function producerOrAdmin(
@@ -335,7 +342,7 @@ export async function visibleCheckpoints(
   );
   if (!caller.session) return checkpoints;
   const lease = await this.currentLease(caller, taskId, revision, tx);
-  const frozen = JSON.parse(lease.checkpoints) as TaskCheckpoint[];
+  const frozen = lease.details.checkpoints;
   const frozenIds = new Set(frozen.map((checkpoint) => checkpoint.id));
   const allowed = new Set(await this.leaseArtifactIds(caller, lease, tx));
   return [...frozen, ...checkpoints.filter((checkpoint) => !frozenIds.has(checkpoint.id))].map(

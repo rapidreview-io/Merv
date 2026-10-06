@@ -21,9 +21,10 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
+import { leaseRows } from '@merv/workflows/lease-rows';
 import { composedBrief } from './evidence.js';
 import type { TaskLeaseRow, TaskRow, TaskService } from './index.js';
-import { roundsFrom, taskVersions } from './workflow.js';
+import { roundsFrom, TASK_WORKFLOW, taskVersions } from './workflow.js';
 
 /**
  * A task on the Running page: its card in the work lane and its sidebar, composed from facts
@@ -469,13 +470,12 @@ export async function liveLeases(
   tx: Transaction,
   taskId?: string,
 ): Promise<Map<string, 'work' | 'review'>> {
-  const rows = await tx.all<Pick<TaskLeaseRow, 'task_id' | 'revision' | 'purpose'>>(
-    'SELECT task_id,revision,purpose FROM task_leases WHERE project_id=? AND (CAST(? AS TEXT) IS NULL OR task_id=?) AND released_at IS NULL',
-    caller.projectId,
-    taskId ?? null,
-    taskId ?? null,
-  );
-  return new Map(rows.map((row) => [`${row.task_id}@${row.revision}`, row.purpose]));
+  const rows = await leaseRows<TaskLeaseRow['details']>(tx, {
+    projectId: caller.projectId,
+    ...(taskId === undefined ? { workflows: [TASK_WORKFLOW.name] } : { instanceIds: [taskId] }),
+    active: true,
+  });
+  return new Map(rows.map((row) => [`${row.instance_id}@${row.revision}`, row.details.purpose]));
 }
 
 /**

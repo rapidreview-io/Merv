@@ -100,8 +100,12 @@ const consolidationTables = [
 ];
 /** Emptied by knowledge@2 and dropped by knowledge@3, which the release runs after it. */
 const knowledgeTables = ['knowledge_commands', 'knowledge_snapshots'];
-/** Dropped by workflows@10, which the release runs after the retirements. */
-const droppedTables = ['wf_system_requests'];
+/**
+ * Dropped by workflows@10, which the release runs after the retirements, and the lease tables
+ * whose rows tasks@10, experiment_program@4 and reflections@5 move into wf_leases.
+ */
+const leaseTables = ['task_leases', 'experiment_leases', 'reflection_leases'];
+const droppedTables = ['wf_system_requests', ...leaseTables];
 /** Every table whose no-delete guard a retirement migration turns off and on again. */
 const guarded = [
   'wf_work_starts',
@@ -110,7 +114,7 @@ const guarded = [
   'session_dispatch_receipts',
   'session_workspaces',
   'session_usage',
-  'task_leases',
+  'wf_leases',
   'task_checkpoints',
   'reviews',
   'context_packages',
@@ -119,13 +123,97 @@ const guarded = [
   'experiment_attempts',
   'experiment_commands',
   'experiments',
-  'experiment_leases',
-  'reflection_leases',
   'reflection_lenses',
   'reflections',
   'research_cycles',
   'research_automation',
 ];
+
+/** A wf_leases row as compared: its order of insertion aside, and its details read. */
+function comparableLease(text: string): string {
+  const { _merv_rowid: _, details, ...row } = JSON.parse(text) as Record<string, unknown>;
+  const sorted = (value: unknown): unknown =>
+    Array.isArray(value)
+      ? value.map(sorted)
+      : value && typeof value === 'object'
+        ? Object.fromEntries(
+            Object.entries(value)
+              .sort(([a], [b]) => (a < b ? -1 : 1))
+              .map(([key, item]) => [key, sorted(item)]),
+          )
+        : value;
+  return JSON.stringify(sorted({ ...row, details: JSON.parse(details as string) as unknown }));
+}
+
+/** The surviving rows of the three lease tables, as the lease migrations move them. */
+function movedLeases(before: Record<string, string[]>): string[] {
+  const parse = (table: string) =>
+    (before[table] ?? []).filter((text) => !namesRetired(text)).map((text) => JSON.parse(text));
+  const workflowOf = new Map(
+    parse('wf_instances').map((row: { id: string; workflow: string }) => [row.id, row.workflow]),
+  );
+  const stateAt = new Map(
+    parse('wf_history').map((row: { instance_id: string; revision: number; to_state: string }) => [
+      `${row.instance_id}@${row.revision}`,
+      row.to_state,
+    ]),
+  );
+  const lease = (row: Record<string, any>, instance: string, fallback: string, extra: object) =>
+    comparableLease(
+      JSON.stringify({
+        id: row.id,
+        project_id: row.project_id,
+        instance_id: instance,
+        revision: row.revision,
+        workflow: workflowOf.get(instance) ?? fallback,
+        actor_id: row.actor_id,
+        review_id: row.review_id,
+        claim_id: row.claim_id,
+        receipt: row.receipt,
+        released_at: row.released_at,
+        ...extra,
+      }),
+    );
+  return [
+    ...parse('task_leases').map((row) =>
+      lease(row, row.task_id, 'task', {
+        state:
+          stateAt.get(`${row.task_id}@${row.revision}`) ??
+          (row.purpose === 'review' ? 'in_review' : 'in_progress'),
+        source_actor_id: row.source_actor_id,
+        details: JSON.stringify({
+          purpose: row.purpose,
+          pinnedArtifacts: JSON.parse(row.pinned_artifacts),
+          checkpoints: JSON.parse(row.checkpoints),
+        }),
+      }),
+    ),
+    ...parse('experiment_leases').map((row) =>
+      lease(row, row.experiment_id, 'experiment', {
+        state: row.state,
+        source_actor_id: row.source_actor_id,
+        details: JSON.stringify({
+          attemptIndex: row.attempt_index,
+          artifacts: JSON.parse(row.artifacts),
+          recovery: JSON.parse(row.recovery),
+          inputs: JSON.parse(row.inputs),
+        }),
+      }),
+    ),
+    ...parse('reflection_leases').map((row) =>
+      lease(row, row.instance_id, 'reflection', {
+        state:
+          stateAt.get(`${row.instance_id}@${row.revision}`) ??
+          (row.review_id === null ? 'synthesizing' : 'in_review'),
+        source_actor_id: JSON.parse(row.receipt).sourceId ?? null,
+        details: JSON.stringify({
+          inputs: JSON.parse(row.inputs),
+          artifacts: JSON.parse(row.artifacts),
+        }),
+      }),
+    ),
+  ].sort();
+}
 
 async function connect(t: TestContext, directory: string): Promise<pg.Client> {
   const client = new pg.Client({ connectionString: postgresUrl });
@@ -431,7 +519,9 @@ test('retiring the versions that can no longer start deletes their records and n
   expected.session_managed_runners = [];
   expected.session_managed_assignments = [];
   expected.session_messages = [];
+  expected.wf_leases = movedLeases(before);
   const after = await snapshot(client);
+  after.wf_leases = after.wf_leases!.map(comparableLease).sort();
   for (const table of new Set([...Object.keys(expected), ...Object.keys(after)]))
     assert.deepEqual(after[table], expected[table], table);
 

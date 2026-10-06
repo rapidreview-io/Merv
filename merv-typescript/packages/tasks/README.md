@@ -20,7 +20,6 @@ flowchart LR
     reviews["Reviews<br/><small>independent verdicts</small>"]
     contextBuilder["Context Builder<br/><small>assignment context</small>"]
     artifacts["Artifacts<br/><small>immutable evidence</small>"]
-    domainEvents["Domain Events"]
     codeWork["Code Work<br/><small>managed Git</small>"]
     sandboxes["Sandboxes<br/><small>native compute</small>"]
     scope["Scope"]
@@ -32,12 +31,11 @@ flowchart LR
   worker -- "calls task.* tools" --> tasks
   research -- "creates plan, consolidation tasks" --> tasks
   reflections -- "pauses new tasks" --> tasks
-  tasks -- "registers task workflow" --> workflows
+  tasks -- "registers task workflow; keeps its leases" --> workflows
   tasks -- "requests reviews" --> reviews
   tasks -- "registers recipes" --> contextBuilder
   tasks -- "reads paper context" --> paper
   tasks -- "pins evidence" --> artifacts
-  tasks -- "subscribes lease release" --> domainEvents
   tasks -. "binds managed Git" .-> codeWork
   tasks -. "binds compute" .-> sandboxes
   tasks -- "injects" --> scope

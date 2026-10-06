@@ -41,4 +41,16 @@ ${withoutTriggers(
   'DELETE FROM experiment_leases WHERE experiment_id IN (SELECT id FROM wf_retired_instances);',
 )}
 `,
+  // Experiment leases move to Workflows' one lease table (workflows@12); experiment_leases goes.
+  4: `
+INSERT INTO wf_leases(id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,details,released_at)
+SELECT l.id,l.project_id,l.experiment_id,l.revision,
+  COALESCE((SELECT i.workflow FROM wf_instances i WHERE i.id=l.experiment_id),'experiment'),
+  l.state,l.actor_id,l.source_actor_id,l.review_id,l.claim_id,l.receipt,
+  jsonb_build_object('attemptIndex',l.attempt_index,'artifacts',l.artifacts::jsonb,'recovery',l.recovery::jsonb,'inputs',l.inputs::jsonb)::text,
+  l.released_at
+FROM experiment_leases l ORDER BY l.id;
+DROP TABLE experiment_leases;
+DROP FUNCTION experiment_lease_immutable_guard(), experiment_lease_no_delete_guard();
+`,
 };

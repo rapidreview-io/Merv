@@ -7,7 +7,7 @@ It owns no table and no migration: the retirement ledger it once held is Workflo
 - Errors, checks and input: `MervError`, `check`, `requiredEnv`, `envName`, `plain`, `parsed`, `RESERVED_KEYS`, `pathSegment`, and text helpers (`visible`, `clip`, `visibleMarkdown`, `markdownSection`).
 - Hashing: `canonical`, `digest`, `sha256Hex`, `newId`.
 - Transaction placement: `within`, `forRead`, `inTransaction`.
-- Helpers that run SQL on the caller's own table, in the caller's transaction: the command receipts (`receipted`, `replayed`), the lease release helpers (`releasedLease`, `releaseLeaseRow`, `leaseReleaseConsumer`, which also ask Reviews to release a claim), and `withoutTriggers`, which builds migration text.
+- Helpers that run SQL on the caller's own table, in the caller's transaction: the command receipts (`receipted`, `replayed`) and `withoutTriggers`, which builds migration text. Lease rows belong to Workflows (`@merv/workflows/lease-rows`).
 - Event provenance: `recorded`, `eventSource`.
 - The caller rules over the shared `Caller`: `isDirectHuman`, `requireHuman`.
 - `effectiveWorkspace`, the default of an execution policy's workspace, which Code and the runner run, and they may depend on Contracts alone.
@@ -52,5 +52,5 @@ Every package in `packages/` imports Contracts; the picture shows the two sides 
 
 - Service interfaces and the `Context` augmentation: `State`, `Transaction`, `DomainEvents`, `EventConsumer`, `Blobs`, `Scope`, `Artifacts`, `Workflows`, `Reviews`, `ContextBuilder`.
 - Errors and checks: `MervError`, `check`, `requiredEnv`, `plain`, `parsed`.
-- Reads and events: `within`, `forRead`, `recorded`, `leaseReleaseConsumer`, `withoutTriggers`.
+- Reads and events: `within`, `forRead`, `recorded`, `withoutTriggers`.
 - Subpath modules (`@merv/contracts/<file>`): `types`, `workflow-guidance`, `running`, `ui-manifest`, `agent-stream`, `code` and others. A plugin's portable `/models` module may name them for types.

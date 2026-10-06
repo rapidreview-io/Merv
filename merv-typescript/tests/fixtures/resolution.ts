@@ -32,7 +32,10 @@ export async function resolutionFixture(
           ? versions.workflows
           : component === 'reviews'
             ? versions.reviews
-            : undefined;
+            : // tasks@10 moves its leases into workflows@12's table.
+              component === 'tasks' && (versions.workflows ?? 12) < 12
+              ? 9
+              : undefined;
     return migrate(
       component,
       version === undefined
@@ -46,11 +49,11 @@ export async function resolutionFixture(
     new ArtifactStore(state, scope, new DiskBlobs(join(directory, 'blobs'))),
   );
   const reviews = await createService(new ReviewService(state, scope, artifacts));
-  state.migrate = migrate;
   const context = await createService(new RecipeContextBuilder(state, scope, artifacts));
   const tasks = await createService(
     new TaskService(state, scope, artifacts, workflows, reviews, context, blankPaper),
   );
+  state.migrate = migrate;
   // Tasks owns its own reviews; the fixture owns every other one a test requests.
   ownReviews(
     reviews,

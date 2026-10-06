@@ -141,4 +141,19 @@ BEGIN
     RAISE EXCEPTION USING MESSAGE = 'Retired experiment.plan tasks remain', ERRCODE = '23514';
   END IF;
 END $check$;`,
+  // Task leases move to Workflows' one lease table (workflows@12), with the state each was
+  // taken at as the task's history records it; task_leases goes.
+  10: `
+INSERT INTO wf_leases(id,project_id,instance_id,revision,workflow,state,actor_id,source_actor_id,review_id,claim_id,receipt,details,released_at)
+SELECT l.id,l.project_id,l.task_id,l.revision,
+  COALESCE((SELECT i.workflow FROM wf_instances i WHERE i.id=l.task_id),'task'),
+  COALESCE((SELECT h.to_state FROM wf_history h WHERE h.instance_id=l.task_id AND h.revision=l.revision),
+    CASE l.purpose WHEN 'review' THEN 'in_review' ELSE 'in_progress' END),
+  l.actor_id,l.source_actor_id,l.review_id,l.claim_id,l.receipt,
+  jsonb_build_object('purpose',l.purpose,'pinnedArtifacts',l.pinned_artifacts::jsonb,'checkpoints',l.checkpoints::jsonb)::text,
+  l.released_at
+FROM task_leases l ORDER BY l.id;
+DROP TABLE task_leases;
+DROP FUNCTION task_lease_identity_immutable_guard(), task_lease_no_delete_guard();
+`,
 };

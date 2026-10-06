@@ -1,6 +1,9 @@
 import { z } from 'zod';
 import { check, mapAsync, MervError, stateFault } from '@merv/contracts';
 import type {
+  Caller,
+  Transaction,
+  WorkflowSnapshot,
   WorkflowActionRule,
   WorkflowActionStatus,
   WorkflowCheckContext,
@@ -20,6 +23,7 @@ import { freezeData, workflowJson } from './json.js';
 import { requireDependencies } from './rules.js';
 import { validateExecution } from './execution-policy.js';
 import { limitMessage, validateLimits } from './limits.js';
+import { batches } from './engine.js';
 
 const descriptionSchema = z.object({
   label: z.string(),
@@ -132,6 +136,7 @@ export function validatePolicy(
     'A registered policy must guard every graph transition',
   );
   if (policy.describe) callback(policy.describe);
+  if (policy.prepare) callback(policy.prepare);
   if (policy.children) callback(policy.children);
   valid(
     policy.assignments === undefined || Array.isArray(policy.assignments),
@@ -203,6 +208,7 @@ export function validatePolicy(
   return {
     actions,
     describe: policy.describe,
+    ...(policy.prepare ? { prepare: policy.prepare } : {}),
     ...(policy.children === undefined ? {} : { children: policy.children }),
     ...(limits === undefined ? {} : { limits }),
     ...(assignments === undefined ? {} : { assignments }),
@@ -238,6 +244,32 @@ export function throwStateFault(error: MervError): void {
       500,
     );
   if (stateFault(error)) throw error;
+}
+
+/**
+ * Each version's `prepare`, with every instance of it a read is about to decide, in parts of at
+ * most 1,000; a version with one instance there is left to its callbacks. A refusal there
+ * answers nothing, so it is passed over; a State fault or a broken program is not.
+ */
+export async function prepare(
+  caller: Caller,
+  steps: readonly { registration?: { policy?: WorkflowPolicy }; snapshot: WorkflowSnapshot }[],
+  tx: Transaction,
+): Promise<void> {
+  const grouped = new Map<WorkflowPolicy, WorkflowSnapshot[]>();
+  for (const { registration, snapshot } of steps)
+    if (registration?.policy?.prepare)
+      grouped.set(registration.policy, [...(grouped.get(registration.policy) ?? []), snapshot]);
+  for (const [policy, snapshots] of grouped)
+    for (const part of snapshots.length > 1 ? batches(snapshots) : [])
+      try {
+        await policy.prepare!(
+          Object.freeze({ ...freezeData(structuredClone({ caller, snapshots: part })), tx }),
+        );
+      } catch (error) {
+        if (!(error instanceof MervError) || error.status >= 500) throw error;
+        throwStateFault(error);
+      }
 }
 
 export async function evaluateAction(

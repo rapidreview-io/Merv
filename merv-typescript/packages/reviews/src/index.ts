@@ -3,6 +3,7 @@ import { canonical, visible, isDirectHuman } from '@merv/contracts';
 import { sourceCaller } from '@merv/scope/rules';
 import { createService, idPattern, plain, receipted, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
+import { leaseReleaseConsumer } from '@merv/workflows/lease-rows';
 import type { Context } from 'cordis';
 import {
   check,
@@ -571,6 +572,10 @@ export const reviewsPlugin = {
         from: 'beginning',
         handle: async (event, tx) => await reviews.actorPermissionsChanged(event, tx),
       });
+      // A closed worker session releases its workflow lease, and the review claim it held.
+      yield await ctx.domainEvents.subscribe(
+        leaseReleaseConsumer('reviews.lease-release.v1', reviews),
+      );
       yield ctx.provide('reviews', reviews);
     });
   },

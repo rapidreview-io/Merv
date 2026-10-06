@@ -21,7 +21,6 @@ flowchart LR
     reviews["Reviews<br/><small>independent verdicts</small>"]
     contextBuilder["Context Builder<br/><small>assignment context</small>"]
     artifacts["Artifacts<br/><small>immutable evidence</small>"]
-    domainEvents["Domain Events"]
     codeWork["Code Work<br/><small>managed Git</small>"]
     sandboxes["Sandboxes<br/><small>native compute</small>"]
     scope["Scope"]
@@ -33,12 +32,11 @@ flowchart LR
   worker -- "calls experiment.* tools" --> experiments
   research -- "creates plan experiments" --> experiments
   reflections -- "pauses new experiments" --> experiments
-  experiments -- "registers experiment workflow" --> workflows
+  experiments -- "registers experiment workflow; keeps its leases" --> workflows
   experiments -- "requests design, results reviews" --> reviews
   experiments -- "registers four recipes" --> contextBuilder
   experiments -- "applies paper changes" --> paper
   experiments -- "pins evidence" --> artifacts
-  experiments -- "subscribes lease release" --> domainEvents
   experiments -. "binds managed Git" .-> codeWork
   experiments -. "binds compute" .-> sandboxes
   experiments -- "injects" --> scope
@@ -121,7 +119,7 @@ packages/experiments/
 └── src/
     ├── index.ts              # Service: records, commands, evidence sealing, review routing, Running board
     ├── program.ts            # Workflow, recipes, execution policy, lease hooks and review checks; the service's base class
-    ├── program.postgres.ts   # Published lease-table migrations
+    ├── program.postgres.ts   # Published lease-table migrations, through their move into wf_leases
     ├── storage.ts            # Owned table rows and migration registration
     ├── storage.postgres.ts   # Published record-table migrations
     ├── models.ts             # Record and command DTOs

@@ -9,6 +9,62 @@ export const REVIEW_VERDICTS = ['pass', 'needs_changes', 'fail'] as const;
 /** What a domain's review.submit step requires of its input. */
 export const REVIEW_SUBMIT_INPUT = ['verdict', 'notes', 'synopsis', 'findings'] as const;
 
+/** What a review action's callbacks read of a workflow check context. */
+interface ReviewActionContext {
+  caller: unknown;
+  snapshot: { revision: number };
+  tx: unknown;
+}
+/**
+ * A reviewed step's two review actions, as every owner offers them: `start` claims the current
+ * review through review.start, and `submit` hands in the verdict through review.submit, which
+ * takes the step's `transitions`. The owner names the step's review (`current`), checks a
+ * verdict (`submit`), and may refuse a claim for reasons of its own (`start`) before Reviews'
+ * own claim check. Where `current` reads a named reviewId, it refuses one that is not current.
+ */
+export function reviewActions<C extends ReviewActionContext>(owner: {
+  names: { submit: string; start: string };
+  states: string[];
+  transitions: string[];
+  instructions: { submit: string; start: string };
+  reviews: { checkStart(caller: C['caller'], reviewId: string, tx: C['tx']): Promise<unknown> };
+  current(context: C): Promise<{ id: string; claimId: string | null }>;
+  submit(context: C): Promise<void>;
+  start?(context: C, review: { id: string }): Promise<void>;
+}) {
+  return [
+    {
+      name: owner.names.submit,
+      states: [...owner.states],
+      transitions: [...owner.transitions],
+      tool: 'review.submit',
+      instruction: owner.instructions.submit,
+      requiredInput: [...REVIEW_SUBMIT_INPUT],
+      arguments: async (context: C) => {
+        const review = await owner.current(context);
+        return {
+          reviewId: review.id,
+          ...(review.claimId ? { claimId: review.claimId } : {}),
+          expectedRevision: context.snapshot.revision,
+        };
+      },
+      check: async (context: C) => await owner.submit(context),
+    },
+    {
+      name: owner.names.start,
+      states: [...owner.states],
+      tool: 'review.start',
+      instruction: owner.instructions.start,
+      arguments: async (context: C) => ({ reviewId: (await owner.current(context)).id }),
+      check: async (context: C) => {
+        const review = await owner.current(context);
+        await owner.start?.(context, review);
+        await owner.reviews.checkStart(context.caller, review.id, context.tx);
+      },
+    },
+  ];
+}
+
 /** A review's producer and its excluded contributors cannot be its reviewer. */
 export const excludedFromReview = (
   review: Pick<ReviewRequest, 'producerId' | 'excludedActorIds' | 'provenance'>,

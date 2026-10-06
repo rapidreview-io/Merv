@@ -799,116 +799,6 @@ export const recorded = async (
     subjectId,
     data: { ...data, ...eventSource(caller) },
   });
-/** A lease's stored ownership receipt must be exactly the one presented, or the lease is stale. */
-export function checkReceipt<T extends { receipt: string }>(
-  lease: T | undefined,
-  receipt: unknown,
-  message: string,
-): asserts lease is T {
-  check(
-    !!lease && digest(JSON.parse(lease.receipt)) === digest(receipt),
-    'stale_lease',
-    message,
-    409,
-  );
-}
-/** The columns every domain's lease table shares. */
-interface LeaseRow {
-  id: string;
-  project_id: string;
-  actor_id: string;
-  receipt: string;
-  released_at: string | null;
-  review_id: string | null;
-  claim_id: string | null;
-}
-/**
- * Release a domain's lease row by its exact ownership receipt. `where` adds the domain's
- * columns. A missing row or another receipt is a stale lease.
- */
-export async function releasedLease(
-  tx: Transaction,
-  reviews: Pick<Reviews, 'releaseClaim'>,
-  table: string,
-  lease: WorkflowLease,
-  reason: string,
-  where: Record<string, SqlValue> = {},
-): Promise<void> {
-  const match = {
-    id: lease.leaseId,
-    project_id: lease.projectId,
-    revision: lease.expectedRevision,
-    actor_id: lease.actorId,
-    ...where,
-  };
-  const row = await tx.get<LeaseRow>(
-    `SELECT * FROM ${table} WHERE ${Object.keys(match)
-      .map((column) => `${column}=?`)
-      .join(' AND ')}`,
-    ...Object.values(match),
-  );
-  checkReceipt(row, lease.receipt, 'Release must name the exact ownership receipt');
-  await releaseLeaseRow(tx, reviews, table, row, reason);
-}
-/**
- * Release a domain's lease row the caller already trusts: the worker's review claim goes back
- * with it, and a row already released is left alone. It checks no receipt, so it never fails
- * as stale.
- */
-async function releaseLeaseRow(
-  tx: Transaction,
-  reviews: Pick<Reviews, 'releaseClaim'>,
-  table: string,
-  row: LeaseRow,
-  reason: string,
-): Promise<void> {
-  if (row.released_at) return;
-  if (row.review_id && row.claim_id)
-    await reviews.releaseClaim(
-      {
-        projectId: row.project_id,
-        reviewId: row.review_id,
-        claimId: row.claim_id,
-        actorId: row.actor_id,
-        reason,
-      },
-      tx,
-    );
-  await tx.run(
-    `UPDATE ${table} SET released_at=? WHERE id=? AND released_at IS NULL`,
-    now(),
-    row.id,
-  );
-}
-/**
- * A lease owner's durable release: when a worker session closes, release the lease row it names.
- * A session's id is its lease's id, so the row is found without the workflow registration or a
- * receipt. A close logged while the owner was unloaded, or before this consumer existed, is
- * released when it next runs; a row already released, or gone with a retired instance, is left.
- */
-export const leaseReleaseConsumer = (
-  id: string,
-  table: string,
-  reviews: Pick<Reviews, 'releaseClaim'>,
-): EventConsumer => ({
-  id,
-  types: ['session.closed'],
-  from: 'beginning',
-  handle: async (event, tx) => {
-    const row = await tx.get<LeaseRow>(
-      `SELECT * FROM ${table} WHERE id=? AND released_at IS NULL`,
-      event.subjectId,
-    );
-    if (row)
-      await releaseLeaseRow(
-        tx,
-        reviews,
-        table,
-        row,
-        clip(String(event.data.reason ?? 'closed'), 500),
-      );
-  },
-});
 /** A plugin entry's lifecycle state as the composition root reports it. */
 type PluginRunState =
   'pending' | 'loading' | 'active' | 'failed' | 'disposed' | 'unloading' | 'disabled';
@@ -1392,6 +1282,18 @@ export interface WorkflowPolicy {
     tx: Transaction;
   }): Record<string, string[]> | Promise<Record<string, string[]>>;
   describe?(context: WorkflowCheckContext): WorkflowDescription | Promise<WorkflowDescription>;
+  /**
+   * Before a read decides many instances of this version at once (guidance, an overview, a
+   * dispatch scan), the program may read in one pass what its callbacks will ask of each, kept
+   * where they look for it (`state.remember`), so they need not read it one instance at a time.
+   * It only spares reads: it never changes an answer, and a refusal here is none, since each
+   * instance's callbacks still answer for it. Read-only, in the read's own transaction.
+   */
+  prepare?(context: {
+    caller: Caller;
+    tx: Transaction;
+    snapshots: readonly WorkflowSnapshot[];
+  }): void | Promise<void>;
 }
 export interface WorkflowDescription {
   label: string;

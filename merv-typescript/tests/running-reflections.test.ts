@@ -240,7 +240,7 @@ test('a lens with an agent makes the wave solid and its row the way to that sess
   const [{ released_at: released }] = await f.app.ctx.state.transaction(
     async (tx) =>
       await tx.all<{ released_at: string }>(
-        'SELECT released_at FROM reflection_leases WHERE id=?',
+        'SELECT released_at FROM wf_leases WHERE id=?',
         execution.id,
       ),
   );
@@ -435,7 +435,7 @@ test('a review leased to an agent says so rather than naming the agent, and lett
   const [{ released_at: released }] = await f.app.ctx.state.transaction(
     async (tx) =>
       await tx.all<{ released_at: string }>(
-        'SELECT released_at FROM reflection_leases WHERE id=?',
+        'SELECT released_at FROM wf_leases WHERE id=?',
         execution.id,
       ),
   );

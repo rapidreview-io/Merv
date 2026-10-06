@@ -10,8 +10,8 @@
   "apiEntries": 39,
   "serverPlugins": 69,
   "machinePlugins": 1,
-  "directDependencyCount": 196,
-  "optionalDependencyCount": 19,
+  "directDependencyCount": 193,
+  "optionalDependencyCount": 26,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -19,7 +19,7 @@
     "code": 1,
     "codeWork": 7,
     "contextBuilder": 3,
-    "domainEvents": 8,
+    "domainEvents": 5,
     "experiments": 4,
     "feed": 2,
     "fleet": 4,
@@ -236,8 +236,7 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper",
-        "domainEvents"
+        "paper"
       ],
       "optional": [
         "codeWork",
@@ -643,8 +642,7 @@
         "paper",
         "workflows",
         "reviews",
-        "contextBuilder",
-        "domainEvents"
+        "contextBuilder"
       ],
       "optional": [
         "sessions"
@@ -662,7 +660,9 @@
       "requires": [
         "state",
         "scope",
-        "workflows",
+        "workflows"
+      ],
+      "optional": [
         "domainEvents",
         "paper",
         "reflections",
@@ -671,7 +671,6 @@
         "artifacts",
         "codeWork"
       ],
-      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true
@@ -984,8 +983,7 @@
         "workflows",
         "reviews",
         "contextBuilder",
-        "paper",
-        "domainEvents"
+        "paper"
       ],
       "optional": [
         "codeWork",

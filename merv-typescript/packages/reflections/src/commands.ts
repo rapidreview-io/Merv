@@ -1,3 +1,4 @@
+import { leaseRows } from '@merv/workflows/lease-rows';
 import {
   visible,
   childRequest,
@@ -227,13 +228,12 @@ export async function submit(
             ...new Set([
               ...lenses.map((lens) => lens.producer_id!),
               ...(
-                await tx.all<{ receipt: string }>(
-                  `SELECT receipt FROM reflection_leases WHERE project_id=? AND instance_id IN (${lenses.map(() => '?').join(',')})`,
-                  caller.projectId,
-                  ...lenses.map((lens) => lens.id),
-                )
+                await leaseRows(tx, {
+                  projectId: caller.projectId,
+                  instanceIds: lenses.map((lens) => lens.id),
+                })
               )
-                .map((row) => (JSON.parse(row.receipt) as { sourceId?: string }).sourceId)
+                .map((row) => row.source_actor_id)
                 .filter((id): id is string => typeof id === 'string'),
               ...(caller.session
                 ? [wave.owner_id, (await this.scope.authorityActor(caller, tx)).id]
