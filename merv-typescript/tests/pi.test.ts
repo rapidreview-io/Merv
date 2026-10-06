@@ -24,6 +24,7 @@ import { PiService, type PiConfig } from '../packages/pi/src/index.js';
 import { CredentialStore, tokenDigest } from '../packages/identity/src/credentials.js';
 import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
 import { messageChars } from '../packages/pi/src/limits.js';
+import { fit } from '../packages/pi/src/fit.js';
 import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
 import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fixtures/pi.js';
@@ -926,6 +927,76 @@ test('a proposed call whose tool writes a receipt tells the agent that receipt, 
   );
   assert.equal(ran.whole, false);
   assert.match(JSON.stringify(ran.result), /Full Problem/);
+});
+
+test('a list shown as an index clips its long strings at a whole character', () => {
+  // The emoji straddles the 300th character of each record's description.
+  const description = 'd'.repeat(299) + '\u{1F680}' + ' more text'.repeat(40);
+  const result = {
+    items: Array.from({ length: 60 }, (_, n) => ({
+      id: `tsk_${n}`,
+      description,
+      nested: { big: 'x'.repeat(200) },
+    })),
+  };
+  const shown = fit('task.list', result) as { index: { items: { description: string }[] } };
+  assert.equal(shown.index.items[0]!.description, `${'d'.repeat(299)}…`);
+});
+
+test('what Run tells the agent never ends in half a character, and a failing receipt falls back to the result', async (t) => {
+  const f = await fixture(t);
+  const head = '{"id":"probe_1","title":"';
+  // The emoji straddles the 4000th character of the result's JSON.
+  const title = 'x'.repeat(3999 - head.length) + '\u{1F680} launch';
+  for (const [name, receipt] of [
+    ['probe.cut', undefined],
+    [
+      'probe.broken',
+      () => {
+        throw new Error('receipt failed');
+      },
+    ],
+  ] as const)
+    t.after(
+      f.tools.register({
+        name,
+        description: 'Probe',
+        conversation: 'propose',
+        inputSchema: z.object({}).strict(),
+        handler: () => ({ id: 'probe_1', title }),
+        ...(receipt ? { receipt } : {}),
+      }),
+    );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const ids: string[] = [];
+  for (const name of ['probe.cut', 'probe.broken'])
+    ids.push(
+      (
+        (await f.pi.tool(turn.token, { ...turn.input, name, input: {} })) as {
+          proposed: { id: string };
+        }
+      ).proposed.id,
+    );
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  for (const [index, name] of ['probe.cut', 'probe.broken'].entries()) {
+    const ran = await f.pi.run(human, {
+      id: turn.input.conversationId,
+      commandId: turn.input.commandId,
+      proposalId: ids[index]!,
+    });
+    assert.deepEqual(ran.result, { id: 'probe_1', title });
+    assert.equal(ran.whole, true);
+    assert.ok(ran.told.startsWith(`Ran ${name}: ${head}`));
+    assert.doesNotMatch(ran.told, /[\uD800-\uDBFF]$/);
+  }
+  // Both calls ran and are recorded as having succeeded.
+  const [command] = (await f.pi.snapshot(human, turn.input.conversationId)).commands;
+  assert.deepEqual(
+    command!.proposals!.map((proposal) => proposal.ran?.ok),
+    [true, true],
+  );
 });
 
 test('each turn says whom the agent serves, where, on what, what the project holds now, and what a stopped answer made; its person can read it back', async (t) => {

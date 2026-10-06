@@ -461,17 +461,21 @@ export class PiService extends PiWorkerProtocol implements Pi, FleetOwner {
   private async ran(proposal: PiProposal, result: unknown): Promise<Omit<PiRan, 'result'>> {
     if (proposal.secret)
       return { told: `Ran ${proposal.name}; its result is shown only to me.`, whole: false };
-    const tool = (await this.tools.list()).find(({ name }) => name === proposal.name);
-    const receipt = tool && 'receipt' in tool ? tool.receipt?.(result, proposal.input) : undefined;
-    if (receipt)
-      return {
-        told: `Ran ${proposal.name}: ${JSON.stringify(receipt.summary)}. Re-read ${receipt.reread.join(' and ')} for current details.`,
-        whole: false,
-      };
-    return {
-      told: `Ran ${proposal.name}: ${(JSON.stringify(result) ?? 'null').slice(0, 4000)}`,
-      whole: true,
-    };
+    try {
+      const tool = (await this.tools.list()).find(({ name }) => name === proposal.name);
+      const receipt =
+        tool && 'receipt' in tool ? tool.receipt?.(result, proposal.input) : undefined;
+      if (receipt)
+        return {
+          told: `Ran ${proposal.name}: ${JSON.stringify(receipt.summary)}. Re-read ${receipt.reread.join(' and ')} for current details.`,
+          whole: false,
+        };
+    } catch {
+      // The call ran; a receipt that fails says nothing, and the result stands for it.
+    }
+    // A cut inside a character would leave half of it, which pi.send refuses.
+    const json = (JSON.stringify(result) ?? 'null').slice(0, 4000).replace(/[\uD800-\uDBFF]$/, '');
+    return { told: `Ran ${proposal.name}: ${json}`, whole: true };
   }
 
   /** Interrupts this conversation's turn only; the host serves the person's others. */
