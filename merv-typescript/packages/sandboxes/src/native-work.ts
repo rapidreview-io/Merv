@@ -518,6 +518,8 @@ export class NativeWorkService {
         );
       });
     } catch (error) {
+      // Only a real mismatch fences the lease; a transient failure leaves it for a retry.
+      if ((error as { code?: string }).code !== 'sandbox_scope_conflict') throw error;
       await this.state.transaction((tx) => this.revokeAssignment(assignment.lease_id, tx));
       await this.revoke(work, connection, assignment.lease_id).catch(() => {});
       throw error;

@@ -93,6 +93,27 @@ test('a sandbox grant proved for one namespace cannot prove another', async (t) 
   assert.deepEqual(requests, ['/v1/auth/me', '/v1/sandboxes', '/v1/auth/me']);
 });
 
+test("an upstream 401 on a sandbox write is refused as 403, never as the caller's own sign-in", async (t) => {
+  process.env[tokenEnv] = 'sbxt_test_consumer';
+  t.after(() => {
+    delete process.env[tokenEnv];
+  });
+  t.mock.method(globalThis, 'fetch', async (url: URL) =>
+    url.pathname === '/v1/auth/me'
+      ? json({ role: 'consumer', namespace: 'test' })
+      : json({ error: { code: 'unauthorized', message: 'grant revoked' } }, 401),
+  );
+  await assert.rejects(
+    new SandboxClient('https://sandbox.test').write(
+      connection,
+      'POST',
+      '/v1/sandboxes/sbx_test/renew',
+      {},
+    ),
+    { code: 'sandbox_unauthorized', status: 403, message: 'grant revoked' },
+  );
+});
+
 test('independent sandbox clients cannot overwrite a renewal calculated from a stale read', async (t) => {
   const urlEnv = 'MERV_ADVERSARIAL_TEST_URL';
   process.env[tokenEnv] = 'sbxt_test_consumer';

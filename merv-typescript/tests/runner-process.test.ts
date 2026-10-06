@@ -289,6 +289,20 @@ test('cancellation before atomic claim prevents a later launch and rejects ident
   assert.equal(ledger.get(active.id)?.status, 'reserved');
 });
 
+test('a user key standing alone is refused, but mk_ inside another token is not', (t) => {
+  const { host, token, command } = setup(t);
+  const validate = (value: string) =>
+    (host as unknown as { validateCommand(c: object, t: string): void }).validateCommand(
+      { ...command(''), env: { VALUE: value } },
+      token,
+    );
+  assert.throws(() => validate(`mk_${'a'.repeat(43)}`), /source credentials/);
+  assert.throws(() => validate(`key=mk_${'a'.repeat(43)}\n`), /source credentials/);
+  // An HF grant (a JWE) or a session token can hold "mk_" by chance.
+  validate(`eyJhbGciOiJkaXIifQ..abc.Xmk_${'b'.repeat(40)}.tag`);
+  validate(`ms_${'c'.repeat(5)}mk_${'d'.repeat(35)}`);
+});
+
 test('a killed guardian closes its inherited group but leaves uncertain occupancy without an observer proof', async (t) => {
   const { directory, ledger, host, reserve, token, command } = setup(t);
   const record = reserve('guardian-crash');

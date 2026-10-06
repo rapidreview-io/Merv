@@ -211,13 +211,14 @@ export function loadConfiguration(options: ConfigurationOptions): {
       options.components ?? providerIds.filter((id) => !['identity'].includes(id)),
     );
     if (options.api) for (const id of apiSupport) selected.add(id);
+    // An adapter follows the provider whose package it extends (`code-tools` is Code Work's).
+    const extended = (name: string) =>
+      configured.find((entry) => entry.name === name.slice(0, name.lastIndexOf('/')))?.id ?? '';
     configured = configured.filter((entry) => {
       if (browser(entry.id)) return false;
       if (entry.id === 'api' || entry.id === 'tools') return options.api === true;
-      if (entry.id.endsWith('-api'))
-        return options.api === true && selected.has(entry.id.slice(0, -'-api'.length));
-      if (entry.id.endsWith('-tools'))
-        return options.api === true && selected.has(entry.id.slice(0, -'-tools'.length));
+      if (entry.id.endsWith('-api') || entry.id.endsWith('-tools'))
+        return options.api === true && selected.has(extended(entry.name));
       return selected.has(entry.id);
     });
   }

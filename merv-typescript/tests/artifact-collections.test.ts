@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createService, sha256Hex, type Caller } from '@merv/contracts';
+import { createService, MervError, sha256Hex, type Blobs, type Caller } from '@merv/contracts';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { ProjectScope } from '@merv/scope';
@@ -195,6 +195,58 @@ test('collection rejects duplicate names and malformed file claims before writin
     (await artifacts.download(caller, many.id, many.files![9999]!.name)).download.url,
     'https://example.invalid/nested',
   );
+});
+
+test('a manifest above the inline blob limit is mirrored by signed upload and downloads', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'merv-collections-'));
+  const state = await openState(directory);
+  t.after(async () => {
+    await state.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const disk = new DiskBlobs(join(directory, 'blobs'));
+  const stored = new Map<string, number>();
+  // Signed transfers of any size beside Disk's inline puts, as the S3 provider has.
+  const blobs: Blobs = {
+    put: (namespace, bytes) => disk.put(namespace, bytes),
+    get: (namespace, hash) => disk.get(namespace, hash),
+    async download(_namespace, hash, size) {
+      if (stored.get(hash) !== size) throw new MervError('blob_not_found', 'Blob not found', 404);
+      return { url: `https://bucket.invalid/${hash}`, expiresAt: '2026-09-30T13:00:00Z' };
+    },
+    async upload(_namespace, hash) {
+      return {
+        url: `https://bucket.invalid/${hash}`,
+        headers: { 'if-none-match': '*' },
+        expiresAt: '',
+      };
+    },
+  };
+  t.mock.method(globalThis, 'fetch', async (url: URL, init: RequestInit) => {
+    assert.equal(init.method, 'PUT');
+    const bytes = init.body as Uint8Array;
+    assert.equal(String(url), `https://bucket.invalid/${sha256Hex(bytes)}`);
+    stored.set(sha256Hex(bytes), bytes.length);
+    return new Response(null, { status: 200 });
+  });
+  const scope = await createService(new ProjectScope(state));
+  const artifacts = await createService(new ArtifactStore(state, scope, blobs));
+  const owner = await scope.bootstrap({ projectName: 'Collections', actorName: 'Owner' });
+  const caller: Caller = { projectId: owner.project.id, actorId: owner.actor.id };
+  const many = await artifacts.createCollection(caller, {
+    title: 'Full capture',
+    sourceKey: 'full',
+    files: Array.from({ length: 10_000 }, (_, i) => ({
+      name: `outputs/${'a'.repeat(180)}/${i}.txt`,
+      size: 1,
+      hash: 'a'.repeat(64),
+      provider: 'compute',
+      reference: 'r',
+    })),
+  });
+  assert.ok(many.size > 2_000_000);
+  const { download } = await artifacts.download(caller, many.id);
+  assert.equal(download.url, `https://bucket.invalid/${many.hash}`);
 });
 
 test('artifact.read selects a collection member only in download mode', async (t) => {

@@ -325,7 +325,26 @@ export class ArtifactStore implements Artifacts {
       ),
     );
     check(row?.content, 'artifact_bytes_missing', 'Stored artifact bytes are missing', 500);
-    await this.blobs.put(caller.projectId, row.content);
+    if (row.content.length <= MAX_ARTIFACT_BYTES || !this.blobs.upload)
+      await this.blobs.put(caller.projectId, row.content);
+    else {
+      // A collection manifest above the inline blob limit goes up by signed PUT; 412 means
+      // the same content-addressed object is already there.
+      const put = await this.blobs.upload(caller.projectId, artifact.hash, row.content.length);
+      const sent = await fetch(put.url, {
+        method: 'PUT',
+        headers: put.headers,
+        body: new Uint8Array(row.content),
+        signal: AbortSignal.timeout(60_000),
+      }).catch(() => undefined);
+      await sent?.body?.cancel();
+      check(
+        sent && (sent.ok || sent.status === 412),
+        'blob_unavailable',
+        'Blob upload failed',
+        503,
+      );
+    }
     return { artifact, download: await missing(sign) };
   }
   async bytes(

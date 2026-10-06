@@ -128,6 +128,13 @@ test('legacy selection keeps only matching providers and adapters without adding
     ['api', 'scope-tools', 'scope-api', 'tools', 'identity', 'scope', 'state'],
   );
   assert.equal(selected.entries.find((entry) => entry.id === 'api')?.config?.port, 0);
+  // An adapter follows the provider whose package it extends: code-tools is Code Work's.
+  const adapters = (components: string[]) =>
+    loadConfiguration({ directory: './data', components, api: true })
+      .entries.map((entry) => entry.id)
+      .filter((id) => id.startsWith('code'));
+  assert.deepEqual(adapters(['code-work']), ['code-tools', 'code-work-api', 'code-work']);
+  assert.deepEqual(adapters(['code']), ['code']);
   assert.deepEqual(
     loadConfiguration({ directory: './data', components: ['feed'] }).entries.map(
       (entry) => entry.id,

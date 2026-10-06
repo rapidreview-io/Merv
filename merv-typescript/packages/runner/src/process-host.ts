@@ -212,7 +212,7 @@ export class ProcessHost {
         typeof value !== 'string' ||
         value.includes('\0') ||
         /^MERV_.*(?:API_KEY|SOURCE|BEARER|RUNNER_KEY|AUTH_TOKEN)$/i.test(key) ||
-        /mk_[A-Za-z0-9_-]{32,}/.test(value) ||
+        /(?<![A-Za-z0-9_-])mk_[A-Za-z0-9_-]{43}(?![A-Za-z0-9_-])/.test(value) ||
         (value.includes(token) && key !== 'MERV_AGENT_SESSION_TOKEN')
       ) {
         throw new Error('Process environment must not contain source credentials');

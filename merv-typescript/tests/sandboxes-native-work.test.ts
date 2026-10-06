@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { randomBytes } from 'node:crypto';
-import { type Scope, type StoredEvent, type Transaction, sha256Hex } from '@merv/contracts';
+import {
+  MervError,
+  type Scope,
+  type StoredEvent,
+  type Transaction,
+  sha256Hex,
+} from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { NativeConnections } from '../packages/sandboxes/src/native-connections.js';
 import { NativeWorkService, type NativeResources } from '../packages/sandboxes/src/native-work.js';
@@ -505,6 +511,31 @@ test('a receipt with another scope is never returned and its lease is fenced', a
   });
   await assert.rejects(f.work.launchConnections(f.session()), { code: 'sandbox_scope_conflict' });
   assert.ok(f.tombstones.has('lease_one'));
+});
+
+test('a transient database failure after issuance keeps the lease, and a retry reuses it', async (t) => {
+  const f = await fixture(t),
+    session = f.session();
+  const transaction = f.state.transaction.bind(f.state);
+  let fail = false;
+  f.state.transaction = ((fn: never) => {
+    if (!fail) return transaction(fn);
+    fail = false;
+    return Promise.reject(new MervError('state_timeout', 'Database operation timed out', 503));
+  }) as typeof f.state.transaction;
+  f.onIssue(async () => {
+    fail = true;
+  });
+  await assert.rejects(f.work.launchConnections(session), { code: 'state_timeout' });
+  assert.ok(!f.tombstones.has('lease_one'));
+  assert.equal((await f.readAssignment())!.revoke_pending, false);
+  f.onIssue(async () => {});
+  const [granted] = await f.work.launchConnections(session);
+  assert.equal(
+    sha256Hex(granted!.bearer),
+    (f.assignments.get('lease_one') as unknown as { token_hash: string }).token_hash,
+  );
+  assert.equal((await f.readAssignment())!.native_token_id, 'token_lease_one');
 });
 
 test('lost issuance followed by release reconciles without ever learning a token ID', async (t) => {
