@@ -357,7 +357,7 @@ interface FrozenInputs {
   approvedArtifacts: string[];
   evidenceArtifacts: string[];
   /** Earlier feedback and selected recovery: readable by reference, never auto-inlined. */
-  historicalArtifacts?: string[];
+  historicalArtifacts: string[];
   review: ReviewRequest | null;
   feedback: Data;
 }
@@ -1107,7 +1107,7 @@ export abstract class ExperimentProgram {
       ...new Set([
         ...inputs.approvedArtifacts,
         ...inputs.evidenceArtifacts,
-        ...(inputs.historicalArtifacts ?? []),
+        ...inputs.historicalArtifacts,
       ]),
     ].sort();
   }
@@ -1169,7 +1169,7 @@ export abstract class ExperimentProgram {
       inputs = JSON.parse(
         (await this.lease(context.caller, experiment, context.tx)).inputs,
       ) as FrozenInputs;
-      const historical = new Set(inputs.historicalArtifacts ?? []);
+      const historical = new Set(inputs.historicalArtifacts);
       const owned = this.eligibleRecovery(experiment).filter(
         (evidence) => evidence.createdBy === context.caller.actorId,
       );
@@ -1328,7 +1328,7 @@ export abstract class ExperimentProgram {
           id: artifact.id,
           label: artifact.title,
         })),
-        ...(await mapAsync(inputs.historicalArtifacts ?? [], async (id) => {
+        ...(await mapAsync(inputs.historicalArtifacts, async (id) => {
           const artifact = await this.artifacts.get(context.caller, id, context.tx);
           return { kind: 'artifact' as const, id: artifact.id, label: artifact.title };
         })),
