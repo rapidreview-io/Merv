@@ -16,7 +16,13 @@ import type {
   WorkflowAssignmentRule,
 } from '@merv/contracts';
 import { workflowJson } from './json.js';
-import { checkAssignment, readContext, throwStateFault, type EngineContext } from './evaluation.js';
+import {
+  checkAssignment,
+  prepare,
+  readContext,
+  throwStateFault,
+  type EngineContext,
+} from './evaluation.js';
 import { buildAssignment, workStartsAt } from './assignments.js';
 import { limitStatusesOf } from './limits.js';
 import {
@@ -121,6 +127,11 @@ export class WorkflowLeases extends WorkflowGuidance {
           tx,
           source.projectId,
           open.map(({ row }) => row.id),
+        );
+        await prepare(
+          source,
+          open.map(({ row, registration }) => ({ registration, snapshot: this.snapshot(row) })),
+          tx,
         );
         for (const { row, registration, rule } of open) {
           const lease = rule.lease!;

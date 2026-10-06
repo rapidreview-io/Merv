@@ -203,6 +203,43 @@ export async function leaseArtifactIds(
   ].sort();
 }
 
+/**
+ * Guidance of many tasks at once reads each one's row, and whether a worker holds its revision,
+ * in two reads for all of them, where `row` and `unleased` look for them.
+ */
+export async function prepareTasks(
+  this: TaskService,
+  {
+    caller,
+    tx,
+    snapshots,
+  }: { caller: Caller; tx: Transaction; snapshots: readonly WorkflowSnapshot[] },
+): Promise<void> {
+  const ids = snapshots.map((snapshot) => snapshot.id);
+  for (const row of await tx.all<TaskRow>(
+    `SELECT * FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',')})`,
+    caller.projectId,
+    ...ids,
+  ))
+    await this.state.remember(`tasks:row:${caller.projectId}:${row.id}`, async () => row);
+  if (caller.session) return;
+  const held = new Set(
+    (
+      await leaseRows<TaskLeaseRow['details']>(tx, {
+        projectId: caller.projectId,
+        instanceIds: ids,
+        active: true,
+      })
+    )
+      .filter((lease) => lease.details.purpose === 'work')
+      .map((lease) => `${lease.instance_id}:${lease.revision}`),
+  );
+  for (const { id, revision } of snapshots)
+    await this.state.remember(`tasks:leased:${caller.projectId}:${id}:${revision}`, async () =>
+      held.has(`${id}:${revision}`),
+    );
+}
+
 /** An interactive delivery yields to a worker that holds the revision, as every domain's submission does. */
 export async function unleased(
   this: TaskService,

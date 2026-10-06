@@ -113,6 +113,7 @@ export function workflowPolicy(this: TaskService, version: number): WorkflowPoli
         lease: this.leaseHooks(),
       },
     ],
+    prepare: async (context) => await this.prepareTasks(context),
     describe: async ({ caller, snapshot, tx, dependencies }) => {
       const row = await this.row(tx, caller, snapshot.id);
       const review = row.review_id ? await this.reviews.get(caller, row.review_id, tx) : null;

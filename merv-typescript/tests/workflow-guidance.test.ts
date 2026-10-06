@@ -6,9 +6,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from './fixtures/app.js';
-import { storedContext } from './fixtures/state.js';
+import { openState, storedContext } from './fixtures/state.js';
+import { ProjectScope } from '@merv/scope';
+import { WorkflowsService } from '@merv/workflows';
 import {
   check,
+  createService,
+  MervError,
   type Caller,
   type Transaction,
   type WorkflowDefinition,
@@ -480,4 +484,71 @@ test('current task guidance follows leased delivery, independent review, revisio
     await app.stop();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('a version prepares the reads of many instances in one pass, and a refusal there changes no answer', async (t) => {
+  const state = await openState();
+  t.after(async () => await state.close());
+  const scope = await createService(new ProjectScope(state));
+  const boot = await scope.credentials.bootstrap({
+    projectName: 'Prepared',
+    actorName: 'Operator',
+  });
+  const caller: Caller = { actorId: boot.actor.id, projectId: boot.project.id };
+  const workflows = await createService(new WorkflowsService(state, scope));
+  const prepared: string[][] = [];
+  const unprepared: string[] = [];
+  let prepare: 'seed' | 'refuse' | 'write' = 'seed';
+  const ready = async (id: string) =>
+    await state.remember(`prepared:${id}`, async () => (unprepared.push(id), id.length > 0));
+  const program = await workflows.register(
+    {
+      name: 'prepared',
+      version: 1,
+      initial: 'open',
+      states: ['open', 'done'],
+      terminal: ['done'],
+      edges: [{ from: 'open', action: 'finish', to: 'done' }],
+    },
+    {
+      actions: [
+        {
+          name: 'finish',
+          states: ['open'],
+          transitions: ['finish'],
+          tool: 'prepared.finish',
+          instruction: 'Finish it.',
+          check: async ({ snapshot }) => {
+            check(await ready(snapshot.id), 'not_ready', 'Not ready', 409);
+          },
+        },
+      ],
+      prepare: async ({ snapshots, tx }) => {
+        assert.ok(Object.isFrozen(snapshots));
+        prepared.push(snapshots.map((snapshot) => snapshot.id));
+        if (prepare === 'refuse') throw new MervError('not_now', 'Nothing prepared', 409);
+        if (prepare === 'write') await tx.run('DELETE FROM wf_requests WHERE request_id=?', 'x');
+        for (const { id } of snapshots) await state.remember(`prepared:${id}`, async () => true);
+      },
+    },
+  );
+  const ids: string[] = [];
+  for (const requestId of ['a', 'b', 'c'])
+    ids.push((await program.start(caller, { workflow: 'prepared', requestId })).id);
+
+  const seeded = await workflows.overview(caller);
+  assert.deepEqual(prepared, [ids]);
+  assert.deepEqual(unprepared, []);
+  assert.deepEqual(seeded.ready, ids);
+  // One instance is left to its own callbacks.
+  await workflows.evaluate(caller, ids[0]!);
+  assert.deepEqual(prepared, [ids]);
+  assert.deepEqual(unprepared, [ids[0]]);
+
+  prepare = 'refuse';
+  unprepared.length = 0;
+  assert.deepEqual(await workflows.overview(caller), seeded);
+  assert.deepEqual(unprepared, ids);
+  prepare = 'write';
+  await assert.rejects(workflows.overview(caller), { code: 'invalid_workflow_policy' });
 });

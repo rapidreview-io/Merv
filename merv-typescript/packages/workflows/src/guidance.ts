@@ -14,7 +14,7 @@ import type {
 } from '@merv/contracts';
 import { processGraph } from './process.js';
 import { readBlockers } from './blockers.js';
-import { decision, readContext } from './evaluation.js';
+import { decision, prepare, readContext } from './evaluation.js';
 import { workStartsAt } from './assignments.js';
 import { limitStatusesOf } from './limits.js';
 import { prerequisites, relations } from './dependencies.js';
@@ -222,7 +222,7 @@ export class WorkflowGuidance extends WorkflowEngine {
 
   /**
    * The decision for each of several instances an authorized caller read: their facts at once,
-   * then each one's callbacks in turn, and one recheck after all of them.
+   * each version's `prepare` once, then each one's callbacks in turn, and one recheck after all.
    */
   private async guidance(
     caller: Caller,
@@ -232,6 +232,15 @@ export class WorkflowGuidance extends WorkflowEngine {
     checks: boolean,
   ): Promise<{ decision: WorkflowDecision; facts: Facts }[]> {
     const facts = await this.facts(tx, caller.projectId, rows);
+    if (checks)
+      await prepare(
+        caller,
+        rows.map((row) => ({
+          registration: facts.get(row.id)!.registration,
+          snapshot: this.snapshot(row),
+        })),
+        tx,
+      );
     const decided = await mapAsync(rows, async (row) => {
       const known = facts.get(row.id)!;
       const context = readContext({

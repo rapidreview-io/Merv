@@ -58,6 +58,7 @@ import {
   checkpoint,
   checkpointRows,
   currentLease,
+  prepareTasks,
   isProducer,
   leaseArtifactIds,
   leasedClaim,
@@ -160,6 +161,7 @@ export class TaskService implements Tasks {
   readonly acquireLease = acquireLease;
   readonly leaseArtifactIds = leaseArtifactIds;
   readonly unleased = unleased;
+  readonly prepareTasks = prepareTasks;
   readonly isProducer = isProducer;
   readonly producerOrAdmin = producerOrAdmin;
   readonly checkpointRows = checkpointRows;

@@ -288,6 +288,14 @@ A guard's refusal is read as a blocker; a State fault (`read_only_scope`,
 `nested_transaction`, `invalid_transaction`, `invalid_sql_parameters`, `transaction_*`,
 `state_*`) never is, and a write under a read is `invalid_workflow_policy` 500.
 
+**Batch reads.** A read that decides many instances at once (guidance and the overview
+behind Home, the dispatch scan) first calls each version's optional `prepare` once with all
+of its instances there (in parts of 1,000; a version with one instance is left to its
+callbacks). The program reads in one pass what its callbacks will ask of each and keeps it
+where they look (`state.remember`): Tasks reads every task row and which revisions a worker
+holds in two reads. `prepare` only spares reads and never answers: its refusal is passed
+over, each instance's callbacks still decide, and transitions never call it.
+
 **Lease hooks.** `lease.role` answers for the source, at discovery and at offer, whether
 the node may be leased now and which role its worker needs; it never runs once a lease
 exists. `lease.check` answers for the worker, at offer and on every admission for the

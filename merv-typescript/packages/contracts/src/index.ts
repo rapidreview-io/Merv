@@ -1285,6 +1285,18 @@ export interface WorkflowPolicy {
     tx: Transaction;
   }): Record<string, string[]> | Promise<Record<string, string[]>>;
   describe?(context: WorkflowCheckContext): WorkflowDescription | Promise<WorkflowDescription>;
+  /**
+   * Before a read decides many instances of this version at once (guidance, an overview, a
+   * dispatch scan), the program may read in one pass what its callbacks will ask of each, kept
+   * where they look for it (`state.remember`), so they need not read it one instance at a time.
+   * It only spares reads: it never changes an answer, and a refusal here is none, since each
+   * instance's callbacks still answer for it. Read-only, in the read's own transaction.
+   */
+  prepare?(context: {
+    caller: Caller;
+    tx: Transaction;
+    snapshots: readonly WorkflowSnapshot[];
+  }): void | Promise<void>;
 }
 export interface WorkflowDescription {
   label: string;
