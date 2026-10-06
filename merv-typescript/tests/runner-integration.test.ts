@@ -236,7 +236,8 @@ async function workHost(
     platform: { name: 'test-worker', harness: 'codex', enabled: true, parallelism: 1 },
     capabilities: [...drivers, 'workflow.workhost.1'],
     workInstanceId: instanceId,
-    stepSeconds: 3600,
+    // A step, and five minutes to stop, fit before the host's end: Sessions offers none otherwise.
+    stepSeconds: 1800,
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
   const control = await f.app.ctx.sessions.managed.enroll(enrollment.enrollmentToken, {

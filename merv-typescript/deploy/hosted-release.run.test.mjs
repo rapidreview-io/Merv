@@ -68,6 +68,29 @@ const TWO = {
   releases: { [LIVE.releaseId]: LIVE.image, [LIVE_L]: LIVE.image },
   catalog: [held(CF, LIVE.image, LIVE.releaseId), held(LARGE, LIVE.image, LIVE_L)],
 };
+// Staging's own apps and Main, which production's Sandboxes serves as two more providers.
+const [STG, STG_L] = ['cloudflare-fleet-staging', 'cloudflare-fleet-staging-large'];
+const copy = (provider, image, hex) =>
+  releaseId({ ...releaseEntry(image, hex.repeat(64)), provider });
+const STAGING = {
+  staging: {
+    apps: {
+      [STG]: {
+        ...NATIVE,
+        name: 'merv-fleet-staging-sandboxcontainer',
+        maxInstances: 5,
+        version: 3,
+      },
+      [STG_L]: {
+        ...NATIVE,
+        name: 'merv-fleet-staging-large-sandboxcontainer',
+        maxInstances: 2,
+        version: 3,
+      },
+    },
+    machines: { [STG]: copy(STG, LIVE.image, 'b'), [STG_L]: copy(STG_L, LIVE.image, 'b') },
+  },
+};
 const DEPLOYED = {
   build: {
     candidate: `sha256:${'c'.repeat(64)}`,
@@ -91,6 +114,16 @@ const argv = process.argv.slice(2);
 const input = fs.readFileSync(0, 'utf8');
 const at = argv.indexOf('python3');
 if (at < 0) { if (argv.includes('bash')) event('upload'); process.exit(0); }
+// Staging Main's switch on its own host: this file's committed host script arrives on stdin.
+if (argv[at + 1] === '-' && argv[at + 2] === 'staging') {
+  if (!input.includes('def staging(')) process.exit(2);
+  const releases = JSON.parse(argv[at + 3].slice(1, -1));
+  event('staging ' + JSON.stringify(releases));
+  if (sim.fail.stagingSwitch) { save(); console.log(JSON.stringify({ error: sim.fail.stagingSwitch })); process.exit(1); }
+  const changed = Object.entries(releases).some(([p, id]) => sim.staging.machines[p] !== id);
+  Object.assign(sim.staging.machines, releases); save();
+  console.log(JSON.stringify({ changed })); process.exit(0);
+}
 if (argv[at + 1] === '-') { console.log(JSON.stringify({ state: sim.state, active: sim.active })); process.exit(0); }
 const [, step, dir] = argv.slice(at + 1);
 const run = dir.split('/').pop();
@@ -145,13 +178,21 @@ if (step === 'catalog') {
   }
   out({ releaseId: arg.releaseId, releases: arg.releases, changed: true }, true);
 }
+// staging: the staging apps production's Sandboxes serves, and staging Main's machines.
+if (step === 'stage') {
+  if (fail) err(fail);
+  const served = arg.entries.filter((e) => sim.staging?.apps[e.provider]);
+  if (!served.length) err('Sandboxes serves no staging app');
+  for (const e of served) sim.catalog.push({ provider: e.provider, digest: e.image_digest, id: arg.releases[e.provider] });
+  out({ releases: Object.fromEntries(served.map((e) => [e.provider, arg.releases[e.provider]])), changed: true });
+}
 if (step === 'drain') out({ drained: true });
 if (step === 'note') { R.progress = { ...R.progress, ...arg }; out(R.progress); }
 // unread: {provider: reads left before Sandboxes can no longer read that app}.
 if (step === 'native') {
   const left = sim.unread?.[arg.provider];
   if (left !== undefined && (sim.unread[arg.provider] = left - 1) < 0) err(arg.provider + ' is not an enabled Sandboxes provider');
-  out(apps()[arg.provider ?? CF]);
+  out(apps()[arg.provider ?? CF] ?? sim.staging.apps[arg.provider]);
 }
 if (step === 'switch') {
   // A machine the switch leaves out keeps the release Main runs.
@@ -194,8 +235,16 @@ if (argv[0] === 'containers') {
 const config = JSON.parse(fs.readFileSync(argv[argv.indexOf('-c') + 1], 'utf8'));
 const [{ image, name }] = config.containers;
 const worker = fs.readFileSync(config.main, 'utf8').trim();
-const large = name.includes('large') && 'cloudflare-fleet-large';
-fs.appendFileSync(process.env.SIM_LOG, 'wrangler ' + image.slice(-4) + ' ' + worker + (large ? ' large' : '') + '\\n');
+const staging = name.includes('staging') && (name.includes('large') ? 'cloudflare-fleet-staging-large' : 'cloudflare-fleet-staging');
+const large = !staging && name.includes('large') && 'cloudflare-fleet-large';
+fs.appendFileSync(process.env.SIM_LOG, 'wrangler ' + image.slice(-4) + ' ' + worker + (large ? ' large' : '') + (staging ? ' ' + staging : '') + '\\n');
+if (staging) {
+  if (sim.fail.deploy === 'staging') process.exit(1);
+  const app = sim.staging.apps[staging];
+  sim.staging.apps[staging] = { ...app, image, version: app.version + 1 };
+  fs.writeFileSync(process.env.SIM, JSON.stringify(sim));
+  process.exit(0);
+}
 const which = image === sim.liveImage ? 'previous' : 'next';
 if (sim.fail.deploy === 'all' || sim.fail.deploy === which) process.exit(1);
 const instances = { failed: sim.fail.settle === which ? 1 : 0, scheduling: 0, starting: 0 };
@@ -755,4 +804,56 @@ test('--check reads the pins a release would give Main, and refuses them once th
     ),
   );
   assert.deepEqual(stale.steps, ['upload', 'pins']);
+});
+
+test('once production passes, staging takes the release: catalog copies, its apps, then its Main', () => {
+  const r = simulate('staging', STAGING);
+  assert.equal(r.status, 0, r.out);
+  order(r.steps, 'switch', 'canary', 'stage');
+  order(r.steps.slice(r.steps.indexOf('stage')), 'stage', 'wrangler', 'staging', 'finish');
+  const staged = r.steps.indexOf('stage');
+  assert.deepEqual(
+    r.events.slice(staged).filter((e) => e.startsWith('wrangler')),
+    [`wrangler dddd worker v2 ${STG}`, `wrangler dddd worker v2 ${STG_L}`],
+  );
+  // Staging Main names the releases only once both its apps run the image.
+  const switched = r.steps.indexOf('staging');
+  assert.deepEqual(r.steps.slice(r.steps.lastIndexOf('wrangler') + 1, switched), [
+    'native',
+    'native',
+  ]);
+  const next = { [STG]: copy(STG, NEXT, 'e'), [STG_L]: copy(STG_L, NEXT, 'e') };
+  assert.deepEqual(r.sim.staging.machines, next);
+  assert.deepEqual(r.sim.catalog.slice(-2), [
+    held(STG, NEXT, next[STG]),
+    held(STG_L, NEXT, next[STG_L]),
+  ]);
+  assert.deepEqual(
+    Object.values(r.sim.staging.apps).map((a) => a.image),
+    [NEXT, NEXT],
+  );
+  // Production's record is production's alone.
+  assert.deepEqual(r.sim.state.current.releases, { [CF]: NEXT_ID });
+  assert.match(
+    r.ledger,
+    new RegExp(`\\| pass \\| Sandboxes \\w+; staging ${STG} \\+ ${STG_L} switched on it \\|`),
+  );
+});
+
+test('a staging failure is reported in the ledger and never rolls production back', () => {
+  for (const fail of [{ deploy: 'staging' }, { stagingSwitch: 'Main did not take the release' }]) {
+    const r = simulate('staging-fails', { ...STAGING, fail });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(r.sim.main, NEXT_ID);
+    assert.equal(r.sim.native.image, NEXT);
+    assert.ok(!r.events.some((e) => e.startsWith('wrangler aaaa')), 'nothing rolled back');
+    assert.deepEqual(r.sim.staging.machines, STAGING.staging.machines);
+    assert.equal(r.sim.active, null);
+    assert.match(r.out, /staging was not updated \(production keeps the release\)/);
+    assert.match(r.ledger, /\| pass \| Sandboxes \w+; STAGING NOT UPDATED: /);
+  }
+  // Without staging apps in Sandboxes there is nothing to stage, and that is said too.
+  const none = simulate('no-staging');
+  assert.equal(none.status, 0, none.out);
+  assert.match(none.ledger, /STAGING NOT UPDATED: stage: Sandboxes serves no staging app \|/);
 });

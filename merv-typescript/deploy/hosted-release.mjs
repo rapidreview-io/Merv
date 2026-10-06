@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Release the hosted Pi/Codex worker image with one guarded command, from the founder's Mac:
 //   node deploy/hosted-release.mjs [--dry-run] [--resume] [--host ResearchSuite_Control]
+//        [--staging-host azureuser@dev-experiments.rapidreview.io]
 //        [--drain-minutes 15] [--canary-credential <root-only path on the host>]
 //        [--sandboxes <main checkout>/output/fleet-sandboxes] [--wrangler <path to wrangler.js>]
 //   node deploy/hosted-release.mjs --mint-canary   (once: the canary's root-only reader key)
@@ -37,6 +38,9 @@
 //    everywhere: until then Sandboxes refuses Pi launches.
 //  7 verify each app natively (settled health, SSH off), then a canary: one real Pi turn on
 //    Standard as a root-only reader key, whose machine it then releases.
+//  8 staging, once production passed: the release's copy for each staging app (STAGING_APPS) in the
+//    Sandboxes catalog, the same image and Worker on those apps, then staging Main (--staging-host)
+//    names those releases. A staging failure is reported in the ledger and never rolls back.
 // No run starts, and no open run is driven forward, unless a rollback could run from here: the
 // deployed Sandboxes commit's bridge Worker is in the checkout and wrangler is signed in. A failure
 // after 5 rolls back automatically, in the same order (previous digest and Worker on every app,
@@ -103,12 +107,19 @@ export const APPS = {
   'cloudflare-fleet-large': 'deploy/hosted-wrangler-large.json',
 };
 const STANDARD = 'cloudflare-fleet';
+// Staging's own apps, which staging Main rents through production's Sandboxes; they take each
+// release production passed.
+export const STAGING_APPS = {
+  'cloudflare-fleet-staging': 'deploy/hosted-wrangler-staging.json',
+  'cloudflare-fleet-staging-large': 'deploy/hosted-wrangler-staging-large.json',
+};
 // What this Mac runs or reads besides the archive; it must equal HEAD.
 const PIPELINE = [
   'deploy/hosted-release.mjs',
   'deploy/hosted-release-vm.py',
   'deploy/source-archive.mjs',
   ...Object.values(APPS),
+  ...Object.values(STAGING_APPS),
 ];
 // For the plan text; the host runs its own LANE_GATES, which a test keeps equal to these.
 export const GATES = {
@@ -121,7 +132,8 @@ const LANE_TEXT = {
   worker: 'worker-only',
   boundary: 'supervisor/bootstrap boundary',
 };
-const STEPS = 'build, gates, push, catalog, drain, deploy each live app, switch, verify, canary';
+const STEPS =
+  'build, gates, push, catalog, drain, deploy each live app, switch, verify, canary, then staging';
 const RUNS = '/opt/merv-typescript/hosted';
 const HOME = '/var/lib/merv-fleet-pilot/hosted-release';
 const SSH = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=30'];
@@ -314,6 +326,7 @@ async function main(args) {
     options: {
       help: { type: 'boolean' },
       host: { type: 'string', default: 'ResearchSuite_Control' },
+      'staging-host': { type: 'string', default: 'azureuser@dev-experiments.rapidreview.io' },
       sandboxes: { type: 'string' },
       wrangler: { type: 'string' },
       'canary-credential': { type: 'string' },
@@ -327,7 +340,7 @@ async function main(args) {
   });
   if (values.help) {
     console.log(
-      'Usage: node deploy/hosted-release.mjs [--host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--dry-run | --resume | --check | --abandon | --mint-canary]',
+      'Usage: node deploy/hosted-release.mjs [--host HOST] [--staging-host HOST] [--sandboxes PATH] [--wrangler PATH] [--canary-credential PATH] [--drain-minutes MINUTES] [--dry-run | --resume | --check | --abandon | --mint-canary]',
     );
     return 0;
   }
@@ -345,7 +358,9 @@ async function main(args) {
   const head = git(['rev-parse', 'HEAD']);
   const atHead = (path) => JSON.parse(git(['show', `${head}:./${path}`]));
   const seed = atHead('deploy/hosted-release.json');
-  const templates = Object.fromEntries(Object.entries(APPS).map(([p, file]) => [p, atHead(file)]));
+  const templates = Object.fromEntries(
+    Object.entries({ ...APPS, ...STAGING_APPS }).map(([p, file]) => [p, atHead(file)]),
+  );
   const template = templates[STANDARD]; // every app runs the same bridge Worker
   const bridge = dirname(dirname(template.main)); // the bridge Worker's directory in Sandboxes
   const canary = {
@@ -393,6 +408,37 @@ print(json.dumps({'state':json.loads(read('state.json') or 'null'),'active':read
     if (r.status !== 0)
       throw new Error(`cannot read the hosted state on ${host} (ssh exit ${r.status})`);
     return JSON.parse(r.stdout);
+  };
+  // Staging Main's switch, on its own host: the committed hosted-release-vm.py, run there as root
+  // from stdin, names these staging releases ({provider: releaseId}; ids only, nothing secret).
+  const onStaging = (releases) => {
+    const r = spawnSync(
+      'ssh',
+      [
+        ...SSH,
+        values['staging-host'],
+        'sudo',
+        '-n',
+        'python3',
+        '-',
+        'staging',
+        `'${JSON.stringify(releases)}'`,
+      ],
+      {
+        input: git(['show', `${head}:./deploy/hosted-release-vm.py`]),
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'inherit'],
+        timeout: 15 * 60_000,
+      },
+    );
+    let out;
+    try {
+      out = JSON.parse(r.stdout.trim().split('\n').pop());
+    } catch {
+      out = { error: `no result (ssh exit ${r.status})` };
+    }
+    if (r.status !== 0 || out.error) throw new Error(`staging switch: ${out.error ?? 'failed'}`);
+    return out;
   };
   const upload = (run, sandboxesCommit) => {
     const src = packageSource();
@@ -655,7 +701,7 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       const versions = [];
       for (const provider of which) {
         const [app] = templates[provider].containers;
-        const minVersion = apps[provider].version + raise;
+        const minVersion = (apps[provider]?.version ?? 0) + raise; // a staging app: any version
         const expect = { image, minVersion, name: app.name, maxInstances: app.max_instances };
         const pending = landed ? drift : unsettled;
         let last, stable;
@@ -848,10 +894,31 @@ tar -xzf sandboxes.tar.gz -C sandboxes --no-same-owner --no-same-permissions
       console.error(`hosted release ${run}: ${outcome}`);
       return code;
     }
+    const staged = await stage(entry, next.image);
     close('pass', { current: next, inputs: build.inputs });
-    record('pass', `Sandboxes ${plan.sandboxesCommit.slice(0, 8)}`);
-    console.log(JSON.stringify({ run, ...next, version: row.version, canary: row.canary }));
+    record('pass', `Sandboxes ${plan.sandboxesCommit.slice(0, 8)}`, staged);
+    console.log(JSON.stringify({ run, ...next, version: row.version, canary: row.canary, staged }));
     return 0;
+
+    // Production passed, so nothing here rolls back: a failure is only reported. Between the deploy
+    // and staging Main's switch, staging's launches are refused, as production's are in step 6.
+    async function stage(entry, image) {
+      const which = Object.keys(STAGING_APPS);
+      const entries = which.map((provider) => ({ ...entry, provider }));
+      const releases = Object.fromEntries(entries.map((e) => [e.provider, releaseId(e)]));
+      try {
+        const served = Object.keys(onHost(run, 'stage', { entries, releases }).releases);
+        if (served.some((p) => onHost(run, 'native', { provider: p }).image !== image)) {
+          deploy(next, served);
+          await landed(image, 0, served);
+        }
+        const switched = onStaging(Object.fromEntries(served.map((p) => [p, releases[p]])));
+        return `staging ${served.join(' + ')} ${switched.changed ? 'switched' : 'already'} on it`;
+      } catch (error) {
+        console.error(`staging was not updated (production keeps the release): ${error.message}`);
+        return `STAGING NOT UPDATED: ${brief(error.message)}`;
+      }
+    }
   }
 }
 

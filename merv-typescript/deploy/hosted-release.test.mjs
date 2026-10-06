@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   APPS,
   GATES,
+  STAGING_APPS,
   LEASE,
   WATCH,
   classify,
@@ -159,6 +160,7 @@ test('a gate passes only when every report line passes', () => {
     true,
   );
   assert.equal(passed(workflow({ sessionBearerUnreadableFromShell: false }), dispatch), false);
+  assert.equal(passed(workflow({ workHostStepRan: false }), dispatch), false);
 });
 
 test('every boundary image must prove it can be a work host before its release switches', () => {
@@ -174,6 +176,28 @@ test('every boundary image must prove it can be a work host before its release s
   assert.match(gate, /supervise\(\{'workInstanceId': work_instance\}\)/);
   assert.ok(gate.includes(`['${launcher}', '--reset']`), 'the gate resets as the supervisor does');
   assert.match(gate, /'retainedCodexLaunches': 2/);
+  // Main answers the enrollment, so the image's supervisor builds its runner with the work-host
+  // config and runs one step through to its release: Codex launched by the runner, calling the
+  // relay with the step's own bearer, and presence naming exactly the enrolled capabilities.
+  assert.match(gate, /return self\.reply\(\{'controlToken': control_token\}\)/);
+  assert.match(gate, /assert step_released\.wait\(\d+\)/);
+  assert.match(gate, /assert step_relayed\.is_set\(\)/);
+  const enrolled = text('packages/fleet/src/hosted-codex.ts').match(
+    /hostedCodexCapabilities = Object\.freeze\((\[[^\]]*\])\)/,
+  )[1];
+  const capabilities = [...JSON.parse(enrolled.replaceAll("'", '"')), 'workflow.workhost.1'].sort();
+  assert.ok(
+    gate.includes(
+      `b['capabilities'] == ${JSON.stringify(capabilities).replaceAll('"', "'").replaceAll(',', ', ')}`,
+    ),
+    capabilities.join(),
+  );
+  assert.match(gate, /'workHostStepRan': True/);
+  // Only the attestation, which the isolation gate proves, is set aside for that step: the
+  // stand-in runs the probed launcher's own assignment launcher, and the original comes back.
+  assert.match(text('scripts/hosted-runner/assignment-probed.py'), /return assignment\.main\(\)/);
+  assert.match(gate, /raise SystemExit\(assignment\.main\(\)\)/);
+  assert.match(gate, /finally:\n    LAUNCHER\.write_bytes\(original_launcher\)/);
   assert.ok(GATES.boundary.includes('linux-workflow-gate.py'));
   // A worker-lane image differs only in the Pi worker, so it keeps its gated supervisor and reset.
   assert.deepEqual(py('print(json.dumps(vm.WORKER_FILES))'), [
@@ -1163,4 +1187,86 @@ asyncio.run(main())`);
     { calls: 1, cancelled: true },
     { calls: 2, cancelled: true },
   ]);
+});
+
+test('each staging template is its app as wrangler created it, otherwise Standard’s or Large’s', () => {
+  const staging = Object.fromEntries(
+    Object.entries(STAGING_APPS).map(([p, f]) => [p, read(f.slice(7))]),
+  );
+  const shape = (t) => [t.name, t.containers[0].name, t.vars.SHAPE, t.containers[0].max_instances];
+  assert.deepEqual(shape(staging['cloudflare-fleet-staging']), [
+    'merv-fleet-staging',
+    'merv-fleet-staging-sandboxcontainer',
+    'standard-1',
+    5,
+  ]);
+  assert.deepEqual(shape(staging['cloudflare-fleet-staging-large']), [
+    'merv-fleet-staging-large',
+    'merv-fleet-staging-large-sandboxcontainer',
+    'standard-3',
+    2,
+  ]);
+  for (const [provider, live] of [
+    ['cloudflare-fleet-staging', 'cloudflare-fleet'],
+    ['cloudflare-fleet-staging-large', 'cloudflare-fleet-large'],
+  ]) {
+    const [t, p] = [staging[provider], templates[live]];
+    for (const key of ['account_id', 'main', 'compatibility_date', 'durable_objects', 'migrations'])
+      assert.deepEqual(t[key], p[key], key);
+    assert.equal(t.containers[0].instance_type, p.containers[0].instance_type);
+    assert.ok(wranglerConfig(t, image('c'), '/w'));
+  }
+});
+
+test('staging takes a release only for the staging apps Sandboxes serves', () => {
+  const out = py(
+    `${scratch}vm.env_of=lambda n:{'SANDBOXES_PROVIDERS':json.dumps([{'name':'cloudflare-fleet'},{'name':'cloudflare-fleet-staging'}])}
+step=vm.Step(r,{});seen=[]
+step.add_releases=lambda arg,backup,broken=None:seen.append([arg,backup.name]) or {'releases':arg['releases']}
+entry=lambda p:{'provider':p,'image_digest':'sha256:'+'d'*64}
+res={'out':step.stage({'entries':[entry('cloudflare-fleet-staging'),entry('cloudflare-fleet-staging-large')],
+  'releases':{'cloudflare-fleet-staging':'rt1_s','cloudflare-fleet-staging-large':'rt1_l'}}),'seen':seen}
+vm.env_of=lambda n:{'SANDBOXES_PROVIDERS':'[]'}
+try: step.stage({'entries':[entry('cloudflare-fleet-staging')],'releases':{'cloudflare-fleet-staging':'rt1_s'}})
+except RuntimeError as e: res['none']=str(e)
+print(json.dumps(res))`,
+  );
+  assert.deepEqual(out.out.releases, { 'cloudflare-fleet-staging': 'rt1_s' });
+  assert.deepEqual(
+    out.seen[0][0].entries.map((e) => e.provider),
+    ['cloudflare-fleet-staging'],
+  );
+  assert.equal(out.seen[0][1], 'stage.before');
+  assert.match(out.none, /Sandboxes serves no staging app/);
+});
+
+test('on the staging host Main names the staging releases, leaving every other pin as it was', () => {
+  const [S, SL, P] = ['e', 'f', '0'].map((c) => `rt1_${c.repeat(64)}`);
+  const out = py(
+    `${scratch}env=t/'typescript.env';vm.ENV=env
+machine=lambda k,p,i:{'key':k,'provider':p,'releaseId':i}
+line=lambda s,l:vm.RUNTIMES+"='"+json.dumps([machine('standard','cloudflare-fleet-staging',s),machine('large','cloudflare-fleet-staging-large',l)],separators=(',',':'))+"'"
+env.write_text(f"{vm.KEY}=${P}\\n{line('${OLD}','${OLD_L}')}\\nC=2\\n")
+vm.inspect=lambda n:{'Image':'sha256:img','Config':{'Labels':{'com.docker.compose.project.working_dir':str(t)}}}
+vm.healthy=lambda *a:None;vm.main_release_running=lambda:False
+main={};calls=[]
+def recreate():
+    f=vm.file_env(env.read_bytes());main.clear();main.update({vm.KEY:f[vm.KEY],vm.RUNTIMES:f[vm.RUNTIMES].strip("'")})
+recreate();vm.env_of=lambda n:dict(main)
+vm.run=lambda c,**k:calls.append(c[4]) or (recreate() if 'up' in c else None) or b''
+both={'cloudflare-fleet-staging':'${S}','cloudflare-fleet-staging-large':'${SL}'}
+res={'result':vm.staging(both)['changed'],'env':env.read_text(),'calls':calls,'again':vm.staging(both)}
+for bad in ({'cloudflare-fleet':'${S}'},{'cloudflare-fleet-staging':'latest'}):
+    try: vm.staging(bad)
+    except RuntimeError as e: res.setdefault('refused',[]).append(str(e))
+print(json.dumps(res))`,
+  );
+  const line = (s, l) =>
+    `MERV_FLEET_RUNTIMES='[{"key":"standard","provider":"cloudflare-fleet-staging","releaseId":"${s}"},{"key":"large","provider":"cloudflare-fleet-staging-large","releaseId":"${l}"}]'`;
+  assert.equal(out.result, true);
+  assert.equal(out.env, `MERV_FLEET_RUNTIME_RELEASE_ID=${P}\n${line(S, SL)}\nC=2\n`);
+  assert.deepEqual(out.calls, ['run', 'up']); // the render first, then the recreate
+  assert.deepEqual(out.again, { changed: false });
+  assert.match(out.refused[0], /staging Main runs no machine on these apps/);
+  assert.match(out.refused[1], /invalid release id/);
 });

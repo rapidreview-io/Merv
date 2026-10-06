@@ -752,24 +752,26 @@ test('a person’s source enrolls a managed runner that leases as that person', 
   assert.deepEqual([leased.session.instanceId, leased.session.source], [target.id, source]);
 });
 
-test('a hosted step ends five minutes before its machine, and a machine with under ten left starts none', async (t) => {
+test('a work host starts a step only with its whole step time left, five minutes before its end', async (t) => {
   let now = Date.now();
   const f = await fixture(t, { clock: () => now });
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  // The machine runs until its allocation's end, fixed at enrollment an hour from now.
-  now = Date.parse(f.input.expiresAt) - 599_999;
+  // The machine runs until its allocation's end, fixed at enrollment an hour from now; its
+  // steps are fifteen minutes, and it stops five minutes after the last may end.
+  const whole = (f.input.stepSeconds + 300) * 1000;
+  now = Date.parse(f.input.expiresAt) - whole + 1;
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await assert.rejects(f.sessions.dispatch.lease(f.caller, f.lease()), {
     code: 'managed_expiring',
   });
-  // With ten minutes left it does start, and its step, whatever the runner asked, ends at five.
+  // With a whole step left it starts one, and the step gets all of it, whatever the runner asked.
   now -= 1;
   const { session } = await f.sessions.dispatch.lease(f.caller, {
     ...f.lease(),
     hardDeadlineSeconds: 3600,
   });
   assert.ok(session);
-  assert.equal(Date.parse(session.hardDeadline), Date.parse(f.input.expiresAt) - 300_000);
+  assert.equal(Date.parse(session.hardDeadline), now + f.input.stepSeconds * 1000);
 });
 
 test('the sweep ends a bound session once its machine is no longer current', async (t) => {

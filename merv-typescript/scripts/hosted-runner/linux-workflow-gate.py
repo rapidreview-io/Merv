@@ -21,6 +21,72 @@ hf_digest = hashlib.sha256(hf_token.encode()).hexdigest()
 # bootstrap, or cannot reset between its steps below, fails here, before its release switches.
 work_instance = 'gate_work_' + secrets.token_hex(8)
 enrolled = threading.Event()
+# Main answers the enrollment, so the supervisor builds its runner with the work-host config and
+# runs one step of the work item end to end: lease, reset, retained workspace, attach, Codex
+# through the assignment launcher, and the release. A runner or Code driver that refuses that
+# config, or a step that never reaches Codex, fails here.
+control_token = 'mr_' + secrets.token_hex(32)
+step_id = 'session_gate_' + secrets.token_hex(8)
+step_secret, control_calls, step_calls = [], [], []
+step_relayed, step_released = threading.Event(), threading.Event()
+LAUNCHER = Path('/opt/merv/runtime/assignment-probed.py')
+LAUNCH_RECORD = Path('/run/merv-runtime/gate-launch.json')
+# The probed launcher attests the live boundary first, which a local fake Main's own listener
+# fails by design: the separate exact-image isolation gate proves that. For the step only, this
+# stand-in records the runner's exact launch, then runs the same assignment launcher unattested.
+UNATTESTED = '''#!/usr/bin/python3
+import json, os, sys
+sys.path.insert(0, '/opt/merv/python')
+from merv_sandboxes.runtimes import assignment
+if sys.argv[1:4] == ['--', '/opt/merv/bin/codex', 'exec']:
+    with open('%s', 'w') as f:
+        json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, f)
+raise SystemExit(assignment.main())
+''' % LAUNCH_RECORD
+
+
+def step_session(runner_id, status='offered', host_ref=None):
+    common = {'instanceId': work_instance, 'projectId': 'project_workflow_gate', 'actorId': 'actor_gate', 'revision': 0}
+    now = time.time()
+    stamp = lambda t: time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(t))
+    return {'id': step_id, 'projectId': 'project_workflow_gate', 'actorId': 'actor_gate', 'instanceId': work_instance,
+            'runnerId': runner_id, 'hostRef': host_ref, 'expectedRevision': 0, 'status': status,
+            'closeReason': None if status == 'offered' else 'released', 'outcome': None,
+            'expiresAt': stamp(now + 3600), 'hardDeadline': stamp(now + 3600),
+            'assignment': {**common, 'label': 'Gate step', 'brief': 'Reply done.', 'execution': {'readOnly': False}},
+            'execution': {**common, 'policy': {'readOnly': False, 'tools': []}, 'references': {}}}
+step_state = {}
+
+
+def control_reply(handler, method, body):
+    """Sessions as the work host's runner sees it, for one step."""
+    path = handler.path
+    control_calls.append((method, path, body))
+    if path == '/sessions/runners/heartbeat':
+        return {'runner': {'runnerId': body['runnerId'], 'desiredVersion': 0, 'desiredSettings': {'platforms': []}}}
+    if path == '/code/commands/next':
+        return {'command': None}
+    if path == '/sessions/lease':
+        if step_state:
+            return {'session': None, 'reason': 'no_candidates'}
+        step_secret.append(body['secret'])
+        step_state.update(runner=body['runnerId'], status='offered', hostRef=None)
+        return {'session': step_session(body['runnerId']), 'reason': 'leased'}
+    parts = path.split('/')
+    if len(parts) < 3 or parts[2] != step_id or not step_state:
+        return None
+    action = parts[3] if len(parts) > 3 else None
+    if action in ('transcript', 'conversation', 'huggingface-access', 'stream'):
+        return None
+    if action == 'launch-connections':
+        return {'connections': []}
+    if action == 'attach':
+        step_state['hostRef'] = body['hostRef']
+    if action == 'release':
+        step_state['status'] = 'released'
+        step_released.set()
+    session = step_session(step_state['runner'], step_state['status'], step_state['hostRef'])
+    return {'session': session, **({'prompt': 'Reply done.'} if action == 'attach' else {})}
 # The top-level keys and tool types fleet/src/codex-relay.ts admits: a Codex that sends others fails here.
 KEYS = {'model', 'instructions', 'input', 'tools', 'tool_choice', 'parallel_tool_calls', 'reasoning',
         'store', 'stream', 'include', 'prompt_cache_key', 'text', 'client_metadata'}
@@ -68,6 +134,22 @@ def environ(pid):
 class Main(http.server.BaseHTTPRequestHandler):
     """Main as the machine sees it: managed enrollment, and the relay's /codex-model route."""
 
+    def reply(self, value):
+        if value is None:
+            self.send_response(404)
+            self.end_headers()
+            return
+        raw = json.dumps(value).encode()
+        self.send_response(200)
+        self.send_header('content-type', 'application/json')
+        self.send_header('content-length', str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+    def controlled(self):
+        return (self.headers.get('authorization') == 'Bearer ' + control_token and
+                self.headers.get('x-merv-project-id') == 'project_workflow_gate')
+
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get('content-length', '0'))) or b'{}')
         if self.path == '/sessions/runners/enroll':
@@ -75,8 +157,41 @@ class Main(http.server.BaseHTTPRequestHandler):
                     self.headers.get('x-merv-project-id') == 'project_workflow_gate' and
                     isinstance(body.get('workerNonce'), str) and len(body['workerNonce']) == 64):
                 enrolled.set()
-            self.send_response(503)
+                return self.reply({'controlToken': control_token})
+            self.send_response(401)
             self.end_headers()
+            return
+        stepped = step_secret and self.headers.get('authorization') == 'Bearer ' + step_secret[0]
+        if self.path == '/mcp' and stepped:
+            # Merv's MCP server, which the step's Codex requires: a handshake and no tools.
+            if 'id' not in body:
+                self.send_response(202)
+                self.end_headers()
+                return
+            result = ({'protocolVersion': body['params']['protocolVersion'], 'capabilities': {'tools': {}},
+                       'serverInfo': {'name': 'merv', 'version': 'gate'}} if body['method'] == 'initialize'
+                      else {'tools': []} if body['method'] == 'tools/list' else {})
+            return self.reply({'jsonrpc': '2.0', 'id': body['id'], 'result': result})
+        if not self.path.startswith('/codex-model/'):
+            if not self.controlled():
+                self.send_response(401)
+                self.end_headers()
+                return
+            return self.reply(control_reply(self, 'POST', body))
+        # The step's Codex, with the bearer its runner leased it with: one closing answer.
+        if stepped:
+            step_calls.append((self.path, sorted(body)))
+            step_relayed.set()
+            events = [{'type': 'response.created', 'response': {'id': 'resp_step'}},
+                      {'type': 'response.output_item.done', 'output_index': 0, 'item': {
+                          'type': 'message', 'role': 'assistant', 'id': 'msg_step',
+                          'content': [{'type': 'output_text', 'text': 'done'}]}},
+                      {'type': 'response.completed', 'response': {'id': 'resp_step', 'usage': {
+                          'input_tokens': 1, 'output_tokens': 1, 'total_tokens': 2}}}]
+            self.send_response(200)
+            self.send_header('content-type', 'text/event-stream')
+            self.end_headers()
+            self.wfile.write(''.join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
             return
         current_credential = self.headers.get('authorization') == 'Bearer ' + session
         relay_credentials.append(current_credential)
@@ -111,7 +226,17 @@ class Main(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(''.join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
 
+    def do_DELETE(self):
+        self.send_response(405)
+        self.end_headers()
+
     def do_GET(self):
+        if self.path == '/mcp':
+            self.send_response(405)  # no server-initiated stream
+            self.end_headers()
+            return
+        if self.path.startswith('/sessions/') and self.controlled():
+            return self.reply(control_reply(self, 'GET', None))
         calls.append((self.command, self.path, [], set()))
         self.send_response(404)
         self.end_headers()
@@ -141,6 +266,8 @@ base = f'http://127.0.0.1:{server.server_port}'
 filename, refused = supervise({'modelApiKey': model_key})
 refused_output = b''.join(refused.communicate(timeout=30))
 assert refused.returncode != 0 and not enrolled.is_set() and not filename.exists()
+original_launcher = LAUNCHER.read_bytes()
+LAUNCHER.write_text(UNATTESTED)
 filename, parent = supervise({'workInstanceId': work_instance})
 try:
     assert enrolled.wait(30), 'fixed workflow supervisor did not reach managed enrollment'
@@ -149,7 +276,27 @@ try:
     command = Path(f'/proc/{parent.pid}/cmdline').read_bytes()
     assert command.split(b'\x00')[:2] == [b'/usr/local/bin/node', b'/opt/merv/runner/smoke-supervisor.mjs']
     assert enrollment.encode() not in command + environ(parent.pid)
+    assert control_token.encode() not in command + environ(parent.pid)
+    assert step_released.wait(120), 'the work host ran no step through to its release: ' + json.dumps(
+        [(m, p) for m, p, _ in control_calls][-12:])
+    assert step_relayed.is_set(), "the step's Codex never called the relay with its own session bearer"
+    assert all(p == '/codex-model/responses' and set(k) <= KEYS for p, k in step_calls), step_calls
+    presences = [b for m, p, b in control_calls if p == '/sessions/runners/heartbeat']
+    # Exactly its enrolment: the Code driver took the work-host config, and the hosted profile.
+    assert presences and all(b['capabilities'] == ['code.v2', 'workflow.workhost.1'] and
+                             [x['name'] for x in b['platforms']] == ['hosted-codex'] for b in presences), presences
+    [leased] = [b for m, p, b in control_calls if p == '/sessions/lease'][:1]
+    assert leased['platform']['name'] == 'hosted-codex'
+    retained = Path('/workspace/assignments') / hashlib.sha256(work_instance.encode()).hexdigest()
+    launch = json.loads(LAUNCH_RECORD.read_text())
+    # What the probed launcher's own attestation requires of the launch, met by the runner.
+    assert launch['cwd'] == str(retained) and launch['argv'][:3] == ['--', '/opt/merv/bin/codex', 'exec']
+    assert [launch['argv'][i + 1] for i, v in enumerate(launch['argv'][:-1]) if v == '-C'] == [str(retained)]
+    attached = [b for m, p, b in control_calls if p == f'/sessions/{step_id}/attach']
+    assert attached and attached[0]['hostRef'].startswith('launch_')
 finally:
+    LAUNCHER.write_bytes(original_launcher)
+    LAUNCH_RECORD.unlink(missing_ok=True)
     if parent.poll() is None:
         os.killpg(parent.pid, signal.SIGTERM)
     try:
@@ -274,7 +421,7 @@ assert control.returncode == 0 and outside_path.read_text() == 'control\n'
 outside_path.unlink()
 
 request_keys, transcripts, sandbox_results = set(), [], []
-secret_values = [enrollment, model_key, session, hf_token]
+secret_values = [enrollment, model_key, session, hf_token, control_token, *step_secret]
 try:
     normal_sandbox, _ = checked_launch()
     sandbox_results.append(normal_sandbox)
@@ -309,7 +456,7 @@ for secret in secret_values:
 sandboxed = all(sandbox_results)
 print(json.dumps({
     'gate': 'linux-workflow-dispatch', 'fixedSupervisor': True, 'bootstrapWithModelKeyRefused': True,
-    'managedEnrollmentReached': True, 'workHostBootstrapEnrolled': True, 'bootstrapRemoved': True, 'noCredentialInArgvOrEnvironment': True,
+    'managedEnrollmentReached': True, 'workHostBootstrapEnrolled': True, 'workHostStepRan': True, 'bootstrapRemoved': True, 'noCredentialInArgvOrEnvironment': True,
     'codexCalledOnlyTheRelay': True, 'codexRequestKeys': sorted(request_keys),
     'noCredentialFileInCodexHome': True, 'shellNetworkOn': True, 'hfTokenInheritedByShell': True, 'hfTokenAbsentFromArgsConfigAndLogs': True, 'codexSandboxOnHost': sandboxed,
     **({'sessionBearerUnreadableFromShell': True} if sandboxed else {}),

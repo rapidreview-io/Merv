@@ -145,7 +145,8 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
         createAttempted: false,
         createdAt: new Date(now).toISOString(),
         updatedAt: new Date(now).toISOString(),
-        deadlineAt: new Date(now + 3_600_000).toISOString(),
+        // Fleet's limit, as deployed: a day.
+        deadlineAt: new Date(now + Math.min(input.seconds ?? 3600, 86_400) * 1000).toISOString(),
         retryAt: null,
         failures: 0,
         error: null,
@@ -364,8 +365,8 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   assert.deepEqual(f.allocations[0]?.owner, { kind: 'workflow', id: 'work:task_a' });
-  // A two-hour step, and ten minutes more for its machine to start and stop.
-  assert.equal(f.allocations[0]?.seconds, 130 * 60);
+  // A host for several of the item's steps: a day, which Fleet caps at its own limit.
+  assert.equal(f.allocations[0]?.seconds, 86_400);
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   f.allocations[0]!.phase = 'released';
@@ -1043,6 +1044,37 @@ test('a work host waits for capture and acknowledgement, idles a bounded time, a
   assert.equal(await f.owner().observe(allocation), 'finished');
 });
 
+test('a settled work host without a whole step left stops at once, so the next step gets a fresh one', async (t) => {
+  const f = await fixture(t);
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  const settled = (closedAt: string) =>
+    f.inspections.set(allocation.id, {
+      runnerId: 'managed-machine',
+      enrollmentExpiresAt,
+      session: {
+        id: 'session_a',
+        instanceId: 'task_a',
+        expectedRevision: 0,
+        status: 'released',
+        closedAt,
+        outcome: 'completed',
+        releaseAcknowledged: true,
+        capturePending: false,
+      },
+    });
+  const now = Date.parse(allocation.createdAt); // the fixture's clock has not moved
+  settled(allocation.createdAt);
+  assert.equal(await f.owner().observe(allocation), 'running');
+  // A two-hour step and five minutes to stop no longer fit before its deadline.
+  allocation.deadlineAt = new Date(now + (120 + 5) * 60_000 - 1).toISOString();
+  assert.equal(await f.owner().observe(allocation), 'finished');
+  // A step under way keeps it: Sessions ends that step five minutes before the machine.
+  f.inspections.get(allocation.id)!.session!.status = 'active';
+  assert.equal(await f.owner().observe(allocation), 'running');
+});
+
 test('a missing model key serves nothing, and the adapter still starts', async (t) => {
   const f = await fixture(t);
   delete process.env[f.modelEnv];
@@ -1406,6 +1438,8 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
   );
   let now = Date.now();
   let lostReply = false;
+  /** How many of the next machines made never become ready. */
+  let stuck = 0;
   const stopped = new Set<string>();
   const bootstraps = new Map<string, string>();
   const runtimeHandles = new Map<string, SandboxRuntimeHandle>();
@@ -1418,10 +1452,11 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     async provision(_projectId, operationKey) {
       let handle = creates.get(operationKey);
       if (!handle) {
+        const ready = !stuck || !stuck--;
         handle = {
           sandboxId: `sbx_workflow_${creates.size + 1}`,
-          state: 'ready',
-          ready: true,
+          state: ready ? 'ready' : 'provisioning',
+          ready,
           deleted: false,
           leaseExpiresAt: new Date(now + 3_600_000).toISOString(),
           revision: 1,
@@ -1535,6 +1570,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     creates,
     launches,
     lostReply: () => lostReply,
+    stick: (machines: number) => (stuck = machines),
     advance: (ms: number) => (now += ms),
   };
 }
@@ -1728,6 +1764,33 @@ for (const workerCount of [1, 3]) {
   test(`real Fleet runs ${workerCount} managed assignments in two projects alongside an external runner`, (t) =>
     managedFleetScenario(t, workerCount));
 }
+
+test('a work host whose first machine never becomes ready gets another, where its runner enrolls', async (t) => {
+  const h = await hosted(t, 1);
+  const caller = await h.project('Stuck machine');
+  await h.sessions.dispatch.setDispatch(caller, { enabled: true });
+  await h.start(caller);
+  h.stick(1);
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  await h.fleet.tick(); // Reserve and provision a machine whose agent never connects.
+  h.advance(60_000);
+  await h.fleet.tick(); // Stop it a minute on.
+  h.advance(2000);
+  await h.fleet.tick(); // Provision another under a new key.
+  await h.fleet.tick(); // Launch on it.
+  assert.deepEqual([...h.stopped], ['sbx_workflow_1']);
+  const current = await h.fleet.inspectOwned(h.adapter, allocation!.id);
+  assert.deepEqual(
+    [current.runtime?.sandboxId, current.epoch, [...h.launches.keys()]],
+    ['sbx_workflow_2', allocation!.epoch, ['sbx_workflow_2']],
+  );
+  const bootstrap = JSON.parse(h.bootstraps.get('sbx_workflow_2')!);
+  const enrolled = await h.sessions.managed.enroll(bootstrap.enrollmentToken, {
+    workerNonce: randomBytes(32).toString('hex'),
+  });
+  assert.ok(enrolled.controlToken);
+});
 
 test('real Fleet acts as and bills the project owner, whoever switched it on, and stops them once they may not write', async (t) => {
   const h = await hosted(t, 1);

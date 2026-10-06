@@ -66,8 +66,8 @@ GATES = {  # name: (docker run flags, mount targets, command, expected gate, rep
 LANE_GATES = {'worker': ['linux-pi-gate.py'], 'boundary': list(GATES)}
 GATE_FACTS, GATE_FALSE = {'prestarted', 'codexSandboxOnHost'}, {'actualProtectedWorkflow', 'cloudflareEvidence'}
 RECORDED = ('plan', 'preflight', 'build', 'gates', 'push', 'catalog', 'progress', 'finish')
-STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'note', 'finish',
-         'status', 'guard', 'abandon', 'mint_canary', 'pins'}
+STEPS = {'preflight', 'build', 'gates', 'push', 'catalog', 'drain', 'native', 'switch', 'canary', 'stage', 'note',
+         'finish', 'status', 'guard', 'abandon', 'mint_canary', 'pins'}
 # One row from Main's database, read only unless MERV_W is set; {s} is Main's schema.
 MAIN_READ = r'''import pg from 'pg';
 const c=new pg.Client({connectionString:process.env.MERV_DB_URL});await c.connect();const w=!!process.env.MERV_W;
@@ -330,9 +330,58 @@ def with_releases(raw, releases):
         return raw
     profiles = json.loads(env_value(raw, RUNTIMES).strip("'"))
     need(all(m['provider'] in releases for m in profiles), 'no release for every machine in ' + RUNTIMES)
+    return with_machines(raw, releases)
+
+
+def with_machines(raw, releases):
+    """The env file naming releases[provider] for each machine of MERV_FLEET_RUNTIMES on those apps."""
+    profiles = json.loads(env_value(raw, RUNTIMES).strip("'"))
     for machine in profiles:
-        machine['releaseId'] = releases[machine['provider']]
+        machine['releaseId'] = releases.get(machine['provider'], machine['releaseId'])
     return with_env(raw, RUNTIMES, "'" + json.dumps(profiles, separators=(',', ':')) + "'")
+
+
+def recreate(raw, want, backup=None):
+    """Writes `want` over the env file `raw` and recreates Main on its own image, which must render it
+    and take its pins; restores `raw` on failure. `backup` keeps `raw` for a later process."""
+    need(not main_release_running(), 'a Main release job is running')
+    state = inspect(MAIN)
+    image, directory = state['Image'], state['Config']['Labels']['com.docker.compose.project.working_dir']
+    if backup and not backup.exists():
+        atomic(backup, raw)
+    env = dict(os.environ, MERV_TS_IMAGE=image)
+    up = ['docker', 'compose', '-f', 'compose.yml', 'up', '-d', '--force-recreate']
+    atomic(ENV, want)
+    try:
+        # The image's own render refuses a bad env before Main is recreated on it.
+        run(['docker', 'compose', '-f', 'compose.yml', 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'node',
+             'control', '/app/deploy/render-config.mjs', '/tmp/hosted-release-render.json'], env=env,
+            cwd=directory, timeout=120)
+        run(up, env=env, cwd=directory, timeout=240)
+        healthy(MAIN, 60, 4)
+        need(inspect(MAIN)['Image'] == image and pins(env_of(MAIN)) == pins(file_env(want)),
+             'Main did not take the release')
+    except BaseException:
+        atomic(ENV, raw)
+        run(up, env=env, cwd=directory, timeout=240)
+        raise
+    return {'changed': True, 'image': image, 'envSha256Before': sha(raw), 'envSha256After': sha(ENV.read_bytes())}
+
+
+def staging(releases):
+    """On the staging host, as root: `ssh <host> sudo -n python3 - staging '<releases>'` with this file on
+    stdin. Points staging Main's machines on these apps ({provider: releaseId}) at their releases and
+    recreates Main, as `switch` does on production, under the host's maintenance lock."""
+    need(releases and all(re.fullmatch(r'rt1_[0-9a-f]{64}', r) for r in releases.values()), 'invalid release id')
+    MAINTENANCE.parent.mkdir(parents=True, exist_ok=True)
+    with MAINTENANCE.open('a') as maintenance:
+        need(locked(maintenance, 1200), 'deployment or recovery snapshot held the maintenance lock for 20 minutes')
+        raw = ENV.read_bytes()
+        need(set(releases) & set(machines(file_env(raw))), 'staging Main runs no machine on these apps')
+        want = with_machines(raw, releases)
+        if want == raw and pins(env_of(MAIN)) == pins(file_env(raw)):
+            return {'changed': False}
+        return recreate(raw, want)
 
 
 def with_release(doc, entry, keep=KEEP, protect=()):
@@ -614,15 +663,14 @@ class Step:
             subprocess.run(['docker', 'logout', 'registry.cloudflare.com'], env=env, capture_output=True)
             shutil.rmtree(config, ignore_errors=True)
 
-    def catalog(self, arg):
-        """Adds the release, an entry per live app, to both Sandboxes services, keeping earlier releases,
-        and recreates them. {"restore": true} puts back the file this run replaced, for a restore that failed."""
+    def sandboxes_file(self):
+        """The Sandboxes Compose file, and how to make a version of it live in both services."""
         labels = inspect(CONTROL)['Config']['Labels']
         path, project = Path(labels['com.docker.compose.project.config_files']), labels['com.docker.compose.project']
         need(path.is_file(), 'catalog file is not a single file')
         need(not main_release_running(), 'a Main release job is running')
         up = ['docker', 'compose', '-p', project, '-f', path, 'up', '-d', '--no-deps', 'control', 'pipelines-worker']
-        mode, backup = stat.S_IMODE(path.stat().st_mode), self.run / 'catalog.before'
+        mode = stat.S_IMODE(path.stat().st_mode)
 
         def apply(raw):
             atomic(path, raw, mode)
@@ -632,20 +680,21 @@ class Step:
             for name in (CONTROL, PIPELINE):
                 need(inspect(name)['State']['Running'] and json.loads(env_of(name)[CATALOG]) == expected,
                      'catalog not live in ' + name)
-        if arg.get('restore'):
-            if backup.exists():
-                apply(backup.read_bytes())
-            self.note({'catalogBroken': False})
-            return {'restored': backup.exists()}
+        return path, apply
+
+    def add_releases(self, arg, backup, broken=lambda: None):
+        """Adds arg's entries (each one release id arg['releases'] names) to both services' catalogs,
+        keeping earlier releases, and recreates them once nothing is in flight; restores on failure."""
+        path, apply = self.sandboxes_file()
         entries, releases = arg['entries'], arg['releases']
-        need(release_ids(entries) == [releases[e['provider']] for e in entries] and
-             releases[PROVIDER] == arg['releaseId'], 'Sandboxes derives a different release id')
+        need(release_ids(entries) == [releases[e['provider']] for e in entries],
+             'Sandboxes derives a different release id')
         raw = path.read_bytes()
         doc, changed = json.loads(raw), False
         for entry in entries:
-            doc, added = with_release(doc, entry, protect=arg['protect'])
+            doc, added = with_release(doc, entry, protect=arg.get('protect', ()))
             changed = changed or added
-        result = {'releaseId': arg['releaseId'], 'releases': releases, 'digest': entries[0]['image_digest'],
+        result = {'releases': releases, 'digest': entries[0]['image_digest'],
                   'size': len(json.loads(doc['services']['control']['environment'][CATALOG]))}
         if not changed and all(json.loads(env_of(c)[CATALOG]) == json.loads(doc['services']['control']['environment']
                                                                               [CATALOG]) for c in (CONTROL, PIPELINE)):
@@ -659,10 +708,33 @@ class Step:
             try:
                 apply(raw)
             except BaseException as error:
-                self.note({'catalogBroken': True})
+                broken()
                 raise RuntimeError(f'catalog restore failed too: {error}') from None
             raise
         return {**result, 'changed': True, 'sha256Before': sha(raw), 'sha256After': sha(path.read_bytes())}
+
+    def catalog(self, arg):
+        """Adds the release, an entry per live app, to both Sandboxes services, keeping earlier releases,
+        and recreates them. {"restore": true} puts back the file this run replaced, for a restore that failed."""
+        backup = self.run / 'catalog.before'
+        if arg.get('restore'):
+            if backup.exists():
+                self.sandboxes_file()[1](backup.read_bytes())
+            self.note({'catalogBroken': False})
+            return {'restored': backup.exists()}
+        need(arg['releases'][PROVIDER] == arg['releaseId'], 'Sandboxes derives a different release id')
+        result = self.add_releases(arg, backup, lambda: self.note({'catalogBroken': True}))
+        return {'releaseId': arg['releaseId'], **result}
+
+    def stage(self, arg):
+        """Once the release has passed: its copy for each staging app (arg's entries) that Sandboxes serves,
+        added as `catalog` adds the live apps'. Nothing here can roll the release back; staging Main is
+        switched by the driver on the staging host."""
+        served = {p['name'] for p in json.loads(env_of(CONTROL)['SANDBOXES_PROVIDERS'])}
+        entries = [e for e in arg['entries'] if e['provider'] in served]
+        need(entries, 'Sandboxes serves no staging app')
+        releases = {e['provider']: arg['releases'][e['provider']] for e in entries}
+        return self.add_releases({'entries': entries, 'releases': releases}, self.run / 'stage.before')
 
     def drain(self, _):
         """Waits until nothing is in flight and no Pi machine is up, releasing each idle one at every
@@ -684,28 +756,7 @@ class Step:
         want = with_releases(raw, releases)
         if want == raw and pins(env_of(MAIN)) == pins(file_env(raw)):
             return {'changed': False}
-        need(not main_release_running(), 'a Main release job is running')
-        state = inspect(MAIN)
-        image, directory = state['Image'], state['Config']['Labels']['com.docker.compose.project.working_dir']
-        if not (self.run / 'env.before').exists():
-            atomic(self.run / 'env.before', raw)
-        env = dict(os.environ, MERV_TS_IMAGE=image)
-        up = ['docker', 'compose', '-f', 'compose.yml', 'up', '-d', '--force-recreate']
-        atomic(ENV, want)
-        try:
-            # The image's own render refuses a bad env before Main is recreated on it.
-            run(['docker', 'compose', '-f', 'compose.yml', 'run', '--rm', '--no-deps', '-T', '--entrypoint', 'node',
-                 'control', '/app/deploy/render-config.mjs', '/tmp/hosted-release-render.json'], env=env,
-                cwd=directory, timeout=120)
-            run(up, env=env, cwd=directory, timeout=240)
-            healthy(MAIN, 60, 4)
-            need(inspect(MAIN)['Image'] == image and pins(env_of(MAIN)) == pins(file_env(want)),
-                 'Main did not take the release')
-        except BaseException:
-            atomic(ENV, raw)
-            run(up, env=env, cwd=directory, timeout=240)
-            raise
-        return {'changed': True, 'image': image, 'envSha256Before': sha(raw), 'envSha256After': sha(ENV.read_bytes())}
+        return recreate(raw, want, self.run / 'env.before')
 
     def canary(self, arg):
         """One real Pi turn as the canary reader on Standard; proves the release served it and its
@@ -768,7 +819,7 @@ class Step:
         """Closes the run: the new pins (on success), the guard, the backups, the marker."""
         if arg.get('state'):
             atomic(HOME / 'state.json', json.dumps(arg['state']).encode())
-        for name in ('catalog.before', 'env.before'):  # they hold secrets
+        for name in ('catalog.before', 'stage.before', 'env.before'):  # they hold secrets
             if (self.run / name).exists():
                 subprocess.run(['shred', '-u', self.run / name], capture_output=True)
         if owner() == self.run.name:  # the guard timer is the open run's
@@ -927,4 +978,12 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    if sys.argv[1:2] == ['staging']:  # on the staging host
+        os.umask(0o077)
+        try:
+            print(json.dumps(staging(json.loads(sys.argv[2]))), flush=True)
+        except Exception as error:
+            print(json.dumps({'error': str(error)[-1500:]}), flush=True)
+            sys.exit(1)
+    else:
+        main()

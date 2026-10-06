@@ -47,8 +47,11 @@ const workflowConfig = z
 export type FleetWorkflowConfig = z.input<typeof workflowConfig>;
 
 const ownerKind = 'workflow';
-/** A step's wall-clock cap; its machine is rented ten minutes longer, within Fleet's limit. */
+/** A step's wall-clock cap. A work host is rented for a day (Fleet caps it at its own limit), for
+ *  several steps: Sessions starts a step on it only with the whole step and five minutes to stop
+ *  left, and a settled host short of that stops, so the next step gets a fresh host. */
 const stepSeconds = 120 * 60;
+const hostSeconds = 86_400;
 const workHostCapability = 'workflow.workhost.1';
 /** How long a work host waits, its last step settled, for the next step of its work item. */
 const workIdleMs = 300_000;
@@ -595,6 +598,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       // metered its tokens. An acknowledged host waits a bounded idle time for the next step.
       const closed = session.status === 'released' || session.status === 'expired';
       if (!closed || session.capturePending) return 'running';
+      if (Date.parse(a.deadlineAt) - this.clock() < (stepSeconds + 300) * 1000) return 'finished';
       const idle = session.releaseAcknowledged ? workIdleMs : releaseAckGraceMs;
       return this.clock() - Date.parse(session.closedAt!) >= idle ? 'finished' : 'running';
     }
@@ -701,6 +705,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || failed.has(projectId)) continue;
       const owner = workOwner(id);
+      // Accepted: machines the retired per-step owner (`<instance>:<revision>`) rented do not count,
+      // so work it exhausted gets one more two-rental window; grants index this list as it is.
       const attempts = allocations.filter((a) => a.projectId === projectId && a.owner.id === owner);
       // A new task revision has a new id. For this exact revision, stop paying for
       // repeated machines that never claimed work.
@@ -720,7 +726,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
           {
             requestId: `wf:${digest({ id: owner, generation })}`,
             owner: { kind: ownerKind, id: owner },
-            seconds: stepSeconds + 600,
+            seconds: hostSeconds,
           },
         );
       } catch (error) {
