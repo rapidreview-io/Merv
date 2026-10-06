@@ -159,7 +159,7 @@ export function Transcript({ pi }: { pi: Conversation }) {
   // stays in its card while the conversation is open.
   const told = snapshot?.commands.map((_, at, all) => receiptOf(all, at)) ?? [];
   const carded = (proposal: PiProposal) =>
-    !!proposing?.proposals?.includes(proposal) || proposal.id in localResults;
+    !!proposing?.proposals?.some(({ id }) => id === proposal.id) || proposal.id in localResults;
   return (
     <div
       className="pi-messages"

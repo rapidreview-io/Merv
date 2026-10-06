@@ -2404,6 +2404,63 @@ test('how a run came out is said once, in its card or on a quiet line, never as 
   assert.match(lines()[0].querySelector('.json')!.textContent!, /Seed sweep.*planned/);
 });
 
+test('a call run before Pi kept what Run told is still a receipt, read from the sentence Run wrote then', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const created = JSON.stringify({ id: 'task_1', title: 'Seed sweep', state: 'planned' });
+  // Pi kept only when each ran and whether it was refused: no `told`, no `said`.
+  const proposals = [
+    { id: 'pip_task', name: 'task.create', input: {}, act: { title: 'New task' }, at: 'then' },
+    { id: 'pip_halt', name: 'session.halt', input: {}, act: { title: 'Halt lease' }, at: 'then' },
+    { id: 'pip_read', name: 'artifact.read', input: {}, act: { title: 'Read file' }, at: 'then' },
+    { id: 'pip_list', name: 'task.list', input: {}, act: { title: 'List tasks' }, at: 'then' },
+  ].map((call, index) => ({
+    ...call,
+    ran: { at: `then${index}`, ok: call.name !== 'session.halt' },
+  }));
+  const turn = (id: string, asked: string, answer: string) =>
+    command(id, 'completed', [
+      { role: 'user', text: asked },
+      { role: 'assistant', text: answer },
+    ]);
+  const next = { id: 'pip_next', name: 'research.advance', input: {}, at: 'later' };
+  const state = snapshot(conversation(), [
+    { ...command('c1', 'completed', [{ role: 'user', text: 'Make the task' }]), proposals },
+    turn('c2', `Ran task.create: ${created}`, 'Created.'),
+    turn('c3', 'session.halt was refused: Actor lacks admin permission', 'Ask an admin.'),
+    turn('c4', 'Ran artifact.read; its result is shown only to me.', 'Downloaded.'),
+    turn('c5', 'Ran task.list: {"count":2}. Re-read task.list for current details.', 'Two.'),
+    turn('c6', 'Ran the numbers again: anything new?', 'Nothing yet.'),
+    { ...command('c7', 'completed', [{ role: 'assistant', text: 'Next?' }]), proposals: [next] },
+  ]);
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  await open();
+  const lines = () => [...document.querySelectorAll('.pi-receipt')];
+  assert.deepEqual(
+    lines().map((line) => line.querySelector('.pi-receipt-line')!.textContent),
+    [
+      'RanNew taskResult',
+      'RefusedHalt lease·Actor lacks admin permission',
+      'RanRead file',
+      'RanList tasksResult',
+    ],
+  );
+  assert.deepEqual(
+    [...document.querySelectorAll('.pi-message--user')].map((message) => message.textContent),
+    ['YouMake the task', 'YouRan the numbers again: anything new?'],
+  );
+  // The result is what the sentence said, without the receipt's pointer to read on.
+  await act(async () => lines()[0].querySelector('summary')!.click());
+  await act(async () => lines()[3].querySelector('summary')!.click());
+  await settle(10);
+  assert.match(lines()[0].querySelector('.json')!.textContent!, /Seed sweep.*planned/);
+  assert.doesNotMatch(lines()[3].textContent!, /Re-read/);
+  assert.match(lines()[3].querySelector('.json')!.textContent!, /count.*2/);
+});
+
 let go = (_path: string) => {};
 /** Hands the test the router's own way to go elsewhere, as a link in the page would. */
 function Navigator() {
