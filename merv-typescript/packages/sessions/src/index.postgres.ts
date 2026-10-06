@@ -8,6 +8,143 @@ import { withoutTriggers } from '@merv/contracts';
 /** The retired plan ids query, quoted for the EXECUTE strings version 9 needs for optional tables. */
 const quotedPlanTaskIds = retiredPlanTaskIds.replaceAll("'", "''");
 
+/**
+ * sessions@13: one thread per worker of a stage, replacing `agents` and `session_conversations`.
+ * Production pins the text by its digest once released: never edit it after.
+ *
+ * Every agent became a thread with its id (its Scope actor's `agent_id` names it and is
+ * immutable), so a session's `agentId` is its `thread_id`; a session from before agents gets its actor's
+ * thread (`thr_<actor>`): its own, as each such session had an actor of its own. The thread's actor is the sessions' `actor_id`, which an agent's sessions
+ * shared. A thread whose actor Scope revoked, or that has no key and no live session, is retired;
+ * of a key's other threads the one with the newest session holds the key and the rest are
+ * `superseded`, as that session's close would have made them. The conversation a key's row kept
+ * moves onto the thread it named. Neither the `agents` rows nor their actors are needed again.
+ *
+ * Read-only counts to take on production first (and back up):
+ *   SELECT count(*) AS sessions,
+ *          count(DISTINCT session_json::jsonb->>'agentId') AS agent_threads,
+ *          count(*) FILTER (WHERE session_json::jsonb->>'agentId' IS NULL) AS pre_agent_threads,
+ *          count(*) FILTER (WHERE status IN ('offered','active')) AS live
+ *     FROM worker_sessions;
+ *   SELECT status, count(*) FROM agents GROUP BY status;
+ *   SELECT count(*) AS agents_without_sessions FROM agents a WHERE NOT EXISTS
+ *     (SELECT 1 FROM worker_sessions s WHERE s.session_json::jsonb->>'agentId' = a.id);
+ *   SELECT count(*) AS rows, count(sha256) AS conversations, count(uploaded_at) AS uploaded
+ *     FROM session_conversations;
+ *   SELECT count(*) AS sessions_without_state_role_or_time FROM worker_sessions
+ *    WHERE session_json::jsonb#>>'{execution,state}' IS NULL OR session_json::jsonb->>'role' IS NULL
+ *       OR session_json::jsonb->>'createdAt' IS NULL;  -- their threads read '' there
+ *   SELECT count(*) AS keys_with_rival_threads FROM (
+ *     SELECT s.project_id, s.session_json::jsonb#>>'{continuity,key}' FROM worker_sessions s
+ *       JOIN actors a ON a.id = s.actor_id
+ *      WHERE a.active = 1 AND s.session_json::jsonb#>>'{continuity,key}' IS NOT NULL
+ *      GROUP BY 1, 2 HAVING count(DISTINCT s.actor_id) > 1) k;
+ */
+const threadsMigration = `
+CREATE TABLE session_threads (
+  _merv_rowid BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  continuity_key TEXT CHECK(length(continuity_key) BETWEEN 1 AND 512),
+  instance_id TEXT NOT NULL, state TEXT NOT NULL, role TEXT NOT NULL,
+  actor_id TEXT NOT NULL UNIQUE REFERENCES actors(id),
+  status TEXT NOT NULL CHECK(status IN ('open','dormant','retired')),
+  retired_reason TEXT CHECK((status = 'retired') = (retired_reason IS NOT NULL)),
+  harness TEXT CHECK(harness IN ('claude','codex')),
+  conversation_id TEXT,
+  sha256 TEXT CHECK(sha256 ~ '^[0-9a-f]{64}$'),
+  size BIGINT CHECK(size > 0 AND size <= 67108864),
+  uploaded_at TEXT,
+  latest_session_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  CHECK((harness IS NULL) = (sha256 IS NULL) AND (sha256 IS NULL) = (size IS NULL) AND
+        (size IS NULL) = (conversation_id IS NULL) AND (uploaded_at IS NULL OR sha256 IS NOT NULL))
+);
+CREATE TEMP TABLE thread_visits ON COMMIT DROP AS
+  SELECT s.id, s._merv_rowid AS seq, s.project_id, s.instance_id, s.actor_id,
+         s.status IN ('offered','active') AS live,
+         COALESCE(x.j->>'agentId', 'thr_' || s.actor_id) AS thread_id,
+         x.j#>>'{continuity,key}' AS continuity_key, COALESCE(x.j#>>'{execution,state}', '') AS state,
+         COALESCE(x.j->>'role', '') AS role, COALESCE(x.j->>'createdAt', '') AS created_at,
+         COALESCE(x.j->>'closedAt', x.j->>'createdAt', '') AS touched
+    FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x;
+INSERT INTO session_threads(id,project_id,continuity_key,instance_id,state,role,actor_id,status,
+  retired_reason,latest_session_id,created_at,updated_at)
+SELECT f.thread_id, f.project_id, f.continuity_key, f.instance_id, f.state, f.role, f.actor_id,
+       CASE WHEN a.active = 0 OR (f.continuity_key IS NULL AND NOT l.live) THEN 'retired'
+            WHEN l.live THEN 'open' ELSE 'dormant' END,
+       CASE WHEN a.active = 0 OR (f.continuity_key IS NULL AND NOT l.live) THEN
+         COALESCE((SELECT e.data_json::jsonb->>'reason' FROM events e WHERE e.project_id = f.project_id
+           AND e.subject_id = f.thread_id AND e.type = 'agent.retired' ORDER BY e.id DESC LIMIT 1), 'retired') END,
+       CASE WHEN l.live THEN NULL ELSE l.id END, f.created_at, l.touched
+  FROM (SELECT DISTINCT ON (thread_id) * FROM thread_visits ORDER BY thread_id, seq) f
+  JOIN (SELECT DISTINCT ON (thread_id) thread_id, id, live, seq, touched FROM thread_visits
+         ORDER BY thread_id, seq DESC) l ON l.thread_id = f.thread_id
+  JOIN actors a ON a.id = f.actor_id;
+UPDATE session_threads t SET status = 'retired', retired_reason = 'superseded'
+ WHERE t.status <> 'retired' AND t.continuity_key IS NOT NULL AND EXISTS (
+   SELECT 1 FROM session_threads o JOIN thread_visits v ON v.thread_id = o.id
+    WHERE o.project_id = t.project_id AND o.continuity_key = t.continuity_key AND o.id <> t.id
+      AND o.status <> 'retired'
+      AND v.seq > (SELECT max(seq) FROM thread_visits w WHERE w.thread_id = t.id));
+DO $threads$
+BEGIN
+  IF to_regclass('session_conversations') IS NOT NULL THEN
+    EXECUTE 'UPDATE session_threads t SET harness = c.harness, conversation_id = c.conversation_id,
+      sha256 = c.sha256, size = c.size, uploaded_at = c.uploaded_at, updated_at = c.updated_at,
+      latest_session_id = c.session_id
+      FROM session_conversations c WHERE c.agent_id = t.id AND c.project_id = t.project_id';
+  END IF;
+END $threads$;
+CREATE UNIQUE INDEX session_threads_key ON session_threads(project_id, continuity_key)
+  WHERE status <> 'retired' AND continuity_key IS NOT NULL;
+CREATE INDEX session_threads_dormant ON session_threads(updated_at) WHERE status = 'dormant';
+CREATE INDEX session_threads_latest ON session_threads(latest_session_id);
+CREATE OR REPLACE FUNCTION session_threads_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF TG_OP = 'DELETE' OR OLD.status = 'retired' OR NEW.id IS DISTINCT FROM OLD.id OR
+     NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.continuity_key IS DISTINCT FROM OLD.continuity_key OR
+     NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.state IS DISTINCT FROM OLD.state OR
+     NEW.role IS DISTINCT FROM OLD.role OR NEW.actor_id IS DISTINCT FROM OLD.actor_id OR
+     NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+    RAISE EXCEPTION USING MESSAGE = 'A thread keeps its identity, and a retired one is final', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER session_threads_guard BEFORE UPDATE OR DELETE ON session_threads
+FOR EACH ROW EXECUTE FUNCTION session_threads_guard();
+ALTER TABLE worker_sessions ADD COLUMN thread_id TEXT REFERENCES session_threads(id);
+${withoutTriggers(
+  'worker_sessions',
+  ['worker_sessions_immutable', 'worker_sessions_agent_immutable'],
+  'UPDATE worker_sessions s SET thread_id = v.thread_id FROM thread_visits v WHERE v.id = s.id;',
+)}
+ALTER TABLE worker_sessions ALTER COLUMN thread_id SET NOT NULL;
+CREATE INDEX worker_sessions_thread ON worker_sessions(thread_id);
+DROP TRIGGER worker_sessions_agent_immutable ON worker_sessions;
+DROP FUNCTION worker_sessions_agent_immutable_guard();
+CREATE FUNCTION worker_sessions_thread_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF NEW.thread_id IS DISTINCT FROM OLD.thread_id THEN
+    RAISE EXCEPTION USING MESSAGE = 'A session''s thread is immutable', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+CREATE TRIGGER worker_sessions_thread_immutable BEFORE UPDATE ON worker_sessions
+FOR EACH ROW EXECUTE FUNCTION worker_sessions_thread_immutable_guard();
+DROP TABLE IF EXISTS session_conversations;
+DROP TABLE IF EXISTS agents;
+DROP FUNCTION IF EXISTS agents_no_delete_guard(), agents_immutable_guard();
+DO $threads$
+BEGIN
+  IF to_regclass('component_migrations') IS NOT NULL THEN
+    DELETE FROM component_migrations WHERE component IN ('agents', 'session_conversations');
+  END IF;
+END $threads$;
+`;
 /** Published PostgreSQL migrations. Production pins each text by its digest: never edit one. */
 export const postgresMigrations: Record<number, string> = {
   1: `
@@ -339,4 +476,5 @@ FOR EACH ROW EXECUTE FUNCTION session_managed_assignment_guard();
   // Every lease reads the closes in its backoff window, and every board read those since its
   // deferral window: both ask by close time, which no other index orders.
   12: `CREATE INDEX session_usage_closed ON session_usage(closed_at);`,
+  13: threadsMigration,
 };

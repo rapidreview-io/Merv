@@ -183,7 +183,7 @@ const view = (s: Session) => {
     instanceId: s.instanceId,
     expectedRevision: s.expectedRevision,
     runnerId: s.runnerId,
-    ...(s.agentId ? { agentId: s.agentId, agentSessionId: s.agentSessionId } : {}),
+    ...(s.threadId ? { threadId: s.threadId } : {}),
     status: s.status,
     closeReason: s.closeReason,
     hostRef: s.hostRef,
@@ -1233,16 +1233,15 @@ export class MachineRunner implements Runner {
   private finalLaunches: RunnerSnapshot['launches'] = [];
   private summaries(): RunnerSnapshot['launches'] {
     return this.ledger.list().map((r) => {
-      const session = r.metadata.session as unknown as SessionView | undefined;
+      const session = r.metadata.session as unknown as
+        (SessionView & { agentId?: string }) | undefined;
       const workspace = this.driverOf(r)?.get(r.id);
       return {
         id: r.id,
         sessionId: r.sessionId,
-        ...(session?.agentId
-          ? {
-              agentId: session?.agentId,
-              agentSessionId: session?.agentSessionId,
-            }
+        // A launch recorded before threads names its agent, which became its thread.
+        ...(session?.threadId || session?.agentId
+          ? { threadId: session.threadId ?? session.agentId! }
           : {}),
         status: r.status,
         platform: String(r.metadata.platform ?? ''),

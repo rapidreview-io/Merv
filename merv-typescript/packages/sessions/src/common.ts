@@ -31,6 +31,7 @@ export function ordinary(caller: Caller): void {
 export interface Row {
   id: string;
   project_id: string;
+  thread_id: string;
   owner_hash: string;
   token_hash: string;
   fingerprint: string;

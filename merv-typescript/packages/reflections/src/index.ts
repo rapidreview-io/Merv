@@ -460,7 +460,7 @@ export const reflectionsPlugin = {
       );
       yield () => service.close();
       // A restart makes new lens instances: each perspective's author still takes its own up again.
-      yield ctx.sessions.conversations.register(LENS_WORKFLOW.name, ({ data, role }) =>
+      yield ctx.sessions.threads.register(LENS_WORKFLOW.name, ({ data, role }) =>
         JSON.stringify([LENS_WORKFLOW.name, data.reflectionId, data.perspective, role]),
       );
       yield ctx.provide('reflections', service);

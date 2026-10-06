@@ -127,6 +127,7 @@ interface ReceiptRow {
 }
 export interface SessionRow {
   id: string;
+  thread_id: string;
   session_json: string;
 }
 interface Hooks {
@@ -707,13 +708,12 @@ export class SessionDispatch {
           'Automatic dispatch request already used with different input',
           409,
         );
+        const replay = (await tx.get<SessionRow>(
+          'SELECT thread_id,session_json FROM worker_sessions WHERE id=?',
+          old.session_id,
+        ))!;
         return {
-          session: JSON.parse(
-            (await tx.get<SessionRow>(
-              'SELECT session_json FROM worker_sessions WHERE id=?',
-              old.session_id,
-            ))!.session_json,
-          ),
+          session: { ...JSON.parse(replay.session_json), threadId: replay.thread_id },
           reason: await decided('replayed'),
         };
       }

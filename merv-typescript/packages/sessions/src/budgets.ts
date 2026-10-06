@@ -203,19 +203,19 @@ export async function halt(
     if (!input.sessionId) await set(ctx, caller, { enabled: false }, tx);
     const rows = input.sessionId
       ? await tx.all<SessionRow>(
-          'SELECT id,session_json FROM worker_sessions WHERE project_id=? AND id=?',
+          'SELECT id,thread_id,session_json FROM worker_sessions WHERE project_id=? AND id=?',
           caller.projectId,
           input.sessionId,
         )
       : await tx.all<SessionRow>(
-          "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
+          "SELECT id,thread_id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
           caller.projectId,
         );
     if (input.sessionId)
       check(rows.length, 'session_not_found', 'Session not found in this project', 404);
     let halted = 0;
     for (const row of rows) {
-      const session: Session = JSON.parse(row.session_json);
+      const session: Session = { ...JSON.parse(row.session_json), threadId: row.thread_id };
       if (session.status !== 'offered' && session.status !== 'active') continue;
       if (!(await ctx.hooks.close(session, input.reason ?? 'operator_halt', tx))) continue;
       halted++;

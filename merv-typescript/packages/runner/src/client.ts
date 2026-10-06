@@ -75,8 +75,7 @@ const sessionSchema = z
   .object({
     id: z.string().regex(/^session_[A-Za-z0-9_-]+$/),
     projectId: label,
-    agentId: label.optional(),
-    agentSessionId: label.optional(),
+    threadId: label.optional(),
     instanceId: label,
     runnerId: label,
     hostRef: z.string().min(1).max(1024).nullable(),

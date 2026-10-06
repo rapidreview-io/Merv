@@ -5,6 +5,7 @@ import type {
   WorkflowDispatchCandidate,
 } from '@merv/contracts/types';
 import type { RunningPhrase } from '@merv/contracts/running';
+import type { AgentStreamEvent } from '@merv/contracts/agent-stream';
 
 export interface SessionWorkspaceRecord {
   attachment: SessionWorkspace;
@@ -189,8 +190,7 @@ export interface StuckReport {
 }
 
 export interface SessionSummary {
-  agentId?: string;
-  agentSessionId?: string;
+  threadId?: string;
   actorId?: string;
   id: string;
   instanceId: string;
@@ -221,14 +221,14 @@ export interface SessionSummary {
   workspace?: SessionWorkspaceRecord;
 }
 
+/** A thread as the Agents page lists it: the agent of one stage, by its first runner. */
 export interface AgentSummary {
   id: string;
+  /** Its latest visit's session. */
   sessionId: string;
   actorId: string;
   name: string;
   status: 'active' | 'retired';
-  contextEpoch: number;
-  persistent: boolean;
   currentExecutionId: string | null;
   currentAssignment: { label: string; name: string; role: SessionRole } | null;
   createdAt: string;
@@ -277,6 +277,53 @@ export interface AgentObservation {
     totalCalls: number;
   };
   tokenAccounting: { kind: 'estimate'; method: string };
+}
+
+/**
+ * The worker that owns one stage of one work item for one role: its continuity key's holder, with
+ * the attribution actor and saved conversation. `live` while a visit holds its lease, `dormant`
+ * while it waits for its work to come back, `retired` once superseded, swept or closed for good.
+ */
+export interface ThreadView {
+  id: string;
+  instanceId: string;
+  state: string;
+  role: string;
+  status: 'live' | 'dormant' | 'retired';
+  /** Oldest first. */
+  visits: VisitView[];
+}
+/** One session of a thread: its lease, credential and launch. */
+export interface VisitView {
+  sessionId: string;
+  status: 'offered' | 'active' | 'released' | 'expired';
+  offeredAt: string;
+  startedAt?: string;
+  endedAt?: string;
+  /** The close outcome, e.g. submitted, crash_loop. */
+  outcome?: string;
+  /** The close code, e.g. local_process_exit_code_70. */
+  why?: string;
+  /** False when it ended before the agent process ran: a failed launch. */
+  launched: boolean;
+  /** It continued the thread's conversation. */
+  resumed: boolean;
+  harness?: 'claude' | 'codex';
+  runnerId?: string;
+  /** For a live visit. */
+  liveness?: LeaseLiveness;
+  /** Its live stream, or its stored transcript, holds what the agent did. */
+  hasConversation: boolean;
+}
+/** A thread's conversation, an operator's read: each visit's events, oldest visit first. */
+export interface ThreadConversation {
+  threadId: string;
+  visits: {
+    sessionId: string;
+    /** `stream` while its live stream is kept; `transcript` once only its stored copy is. */
+    from: 'stream' | 'transcript' | 'none';
+    events: AgentStreamEvent[];
+  }[];
 }
 
 export interface UsageTotals {

@@ -77,7 +77,7 @@ function status(over: Record<string, unknown> = {}) {
     sessions: [
       {
         id: 'sess_1',
-        agentId: 'agent_1',
+        threadId: 'agent_1',
         instanceId: 'wf_1',
         expectedRevision: 3,
         label: 'Work: Sweep weight decay',
@@ -102,8 +102,6 @@ function status(over: Record<string, unknown> = {}) {
         actorId: 'actor_worker',
         name: 'Weight-decay researcher',
         status: 'active',
-        contextEpoch: 1,
-        persistent: false,
         currentExecutionId: 'sess_1',
         currentAssignment: {
           label: 'Work: Sweep weight decay',
@@ -670,7 +668,7 @@ test('an agent a runner started is named for that runner, as the Runners table n
           machine: { ...base.runners[0].machine, hostname: 'Gurals-MacBook-Pro.local' },
         },
       ],
-      sessions: [{ ...base.sessions[0], agentId: 'agent_mac' }],
+      sessions: [{ ...base.sessions[0], threadId: 'agent_mac' }],
       agents: [
         { ...agent('agent_mac', runner), currentExecutionId: 'sess_1' },
         agent('agent_qa', 'qa-launcher'),

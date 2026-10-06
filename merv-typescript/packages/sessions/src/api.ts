@@ -16,6 +16,7 @@ export type SessionRoutes = Pick<
   | 'authenticate'
   | 'managed'
   | 'observations'
+  | 'threads'
   | 'dispatch'
   | 'offer'
   | 'list'
@@ -88,6 +89,9 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
   if (observationRoute && req.method === 'GET')
     return await sessions.observations.read(caller, pathSegment(observationRoute[1]!));
+  const conversationRoute = /^\/sessions\/threads\/([^/]+)\/conversation$/.exec(path);
+  if (conversationRoute && req.method === 'GET')
+    return await sessions.threads.conversation(caller, pathSegment(conversationRoute[1]!));
   if (path === '/sessions/status' && req.method === 'GET')
     return await sessions.dispatch.projectStatus(caller);
   if (path === '/sessions/dispatch' && req.method === 'PUT')
@@ -249,6 +253,17 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
     const events = /^\/sessions\/(session_[^/]+)\/events$/.exec(path);
     if (events && req.method === 'GET')
       return await agentEvents(req, res, r, pathSegment(events[1]!), sessions.streams);
+    if (path === '/sessions/threads' && req.method === 'GET') {
+      const query = [...r.url.searchParams.keys()];
+      check(
+        query.length === 1 && query[0] === 'instanceId',
+        'invalid_input',
+        'The threads route takes exactly instanceId=<id>',
+      );
+      const instanceId = r.url.searchParams.get('instanceId')!;
+      const caller = await r.caller();
+      return { threads: await read(() => sessions.threads.list(caller, instanceId)) };
+    }
     if ([...r.url.searchParams].length)
       throw new MervError('invalid_input', 'Session routes do not accept query parameters');
     return req.method === 'GET'

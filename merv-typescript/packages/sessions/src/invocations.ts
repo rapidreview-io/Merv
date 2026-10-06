@@ -175,9 +175,7 @@ export class SessionInvocations implements SessionInvocationPolicy {
         projectId: caller.projectId,
         session: Object.freeze({
           id: prepared.session.id,
-          ...(prepared.session.agentSessionId
-            ? { agentSessionId: prepared.session.agentSessionId }
-            : {}),
+          threadId: prepared.session.threadId,
           invocationId,
         }),
       }),

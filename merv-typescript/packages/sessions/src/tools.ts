@@ -173,6 +173,18 @@ export const sessionsToolsPlugin = {
       }),
     );
     ctx.effect(() =>
+      ctx.tools.register({
+        name: 'session.threads',
+        description:
+          'Anyone who may read the work item, never a leased worker: the threads of one workflow instanceId, the worker of each stage and role, oldest first. Each has its state, role and status (live, dormant or retired) and its visits, oldest first: each session’s status, when it was offered, started and ended, its outcome and close code (why), whether it launched or resumed the thread’s conversation, its harness and runner.',
+        readOnly: true,
+        inputSchema: z.object({ instanceId: z.string().min(1).max(200) }).strict(),
+        handler: async (caller: Caller, input: { instanceId: string }) => ({
+          threads: await sessions.threads.list(caller, input.instanceId),
+        }),
+      }),
+    );
+    ctx.effect(() =>
       ctx.tools.contributeInstructions(
         "To steer an assigned agent, use session.find with the work's instanceId to find its current session, then session.message with that sessionId. Messages address sessions, not the work itself. Read the session's messages and responses with session.messages. A queued message has not necessarily been received or acted on, and an ended session cannot receive it. A worker may acknowledge with a reply, which is not proof that a correction was incorporated. Messaging does not stop compute or change an approved plan. For work that should end, use the existing halt and terminal work actions, then create replacement work with better instructions if appropriate; preserve and refer to the earlier evidence. session.stuck says why work is not moving and returns Merv's own guidance on it.",
       ),

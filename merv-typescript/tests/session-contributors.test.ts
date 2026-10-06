@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resolutionFixture } from './fixtures/resolution.js';
+import { fixtureThread } from './fixtures/threads.js';
 
 test('Sessions retains writing contributors by instance and revision', async (t) => {
   const f = await resolutionFixture(t);
@@ -15,10 +16,11 @@ test('Sessions retains writing contributors by instance and revision', async (t)
       ['other', 'other-unit', 0, false],
     ] as const) {
       await tx.run(
-        "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,'released',?)",
+        "INSERT INTO worker_sessions(id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,'released',?)",
         id,
         f.admin.projectId,
         producer.id,
+        await fixtureThread(tx, f.admin.projectId, producer.id),
         instanceId,
         revision,
         id,

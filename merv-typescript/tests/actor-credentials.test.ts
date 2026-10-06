@@ -436,7 +436,7 @@ test('session actor creation and role updates retain the authorized delegation a
       otherSource,
       {
         sessionId: 'foreign-session',
-        agentId: 'foreign-agent',
+        threadId: 'foreign-thread',
         name: 'Foreign reader',
         role: 'reader',
       },
@@ -472,17 +472,17 @@ test('session actors refuse malformed lease and agent identities before any writ
       sql.get<{ n: number }>('SELECT count(*)::int AS n FROM actors WHERE session_id IS NOT NULL'),
     ))!.n;
   for (const input of [
-    { agentId: { x: 1 } },
-    { agentId: '' },
-    { agentId: 'a'.repeat(201) },
+    { threadId: { x: 1 } },
+    { threadId: '' },
+    { threadId: 'a'.repeat(201) },
     { sessionId: 's'.repeat(201) },
   ])
     await assert.rejects(create(input), { code: 'invalid_session_actor' });
   assert.equal(await count(), 0);
   const plain = await create({});
-  assert.equal('agentId' in plain, false);
-  const agent = await create({ sessionId: 'session-agent', agentId: 'a'.repeat(200) });
-  assert.equal(agent.agentId, 'a'.repeat(200));
+  assert.equal('threadId' in plain, false);
+  const agent = await create({ sessionId: 'session-agent', threadId: 'a'.repeat(200) });
+  assert.equal(agent.threadId, 'a'.repeat(200));
   const stored = await f.state.read((sql) =>
     sql.all<{ agent_id: string | null }>(
       'SELECT agent_id FROM actors WHERE id IN (?,?) ORDER BY session_id',

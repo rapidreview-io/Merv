@@ -168,10 +168,10 @@ test('an offer cannot name an agent, and the agent administration and continuing
   const named = await f.http('/sessions/offer', f.boot.token, {
     ...input,
     requestId: 'named',
-    agentId: session.agentId,
+    agentId: session.threadId,
   });
   assert.deepEqual([named.status, named.body.error.code], [400, 'invalid_session_offer']);
-  const agentRoute = `/sessions/agents/${session.agentId}`;
+  const agentRoute = `/sessions/agents/${session.threadId}`;
   for (const [path, method] of [
     ['/sessions/agents', 'GET'],
     [agentRoute, 'GET'],
@@ -213,7 +213,6 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   assert.equal(found.current.id, issued.session.id);
   assert.deepEqual(Object.keys(found.current).sort(), [
     'actorId',
-    'agentId',
     'closedAt',
     'createdAt',
     'expectedRevision',
@@ -221,6 +220,7 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
     'instanceId',
     'role',
     'status',
+    'threadId',
   ]);
   const sent = (
     await f.app.ctx.tools.invoke('session.message', f.source, {
@@ -934,7 +934,7 @@ test('project observers see real MCP call metadata and failures, without worker 
     name: 'Observer',
     role: 'reader',
   });
-  const path = `/sessions/agents/${offer.session.agentId}/observation`;
+  const path = `/sessions/agents/${offer.session.threadId}/observation`;
   const response = await f.http(path, reader.token);
   assert.equal(response.status, 200);
   await f.app.setEnabled('sessions-tools', false);
@@ -945,7 +945,7 @@ test('project observers see real MCP call metadata and failures, without worker 
   const observe = (token: string) =>
     f.http('/tools/ui.read', token, {
       rowId: 'sessions',
-      params: { agentId: offer.session.agentId },
+      params: { agentId: offer.session.threadId },
     });
   const tool = await observe(reader.token);
   assert.equal(tool.status, 200);
@@ -954,7 +954,7 @@ test('project observers see real MCP call metadata and failures, without worker 
     response.body,
     'the UI-owned read works without Sessions tools and returns the same observation',
   );
-  assert.equal(response.body.agent.id, offer.session.agentId);
+  assert.equal(response.body.agent.id, offer.session.threadId);
   assert.equal(response.body.agent.currentExecutionId, offer.session.id);
   assert.deepEqual(
     response.body.toolCalls.map((call: any) => call.status),
@@ -1025,7 +1025,7 @@ test('mounted tool errors and invalid output envelopes are recorded as failed ca
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
   malformed = true;
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
-  const result = await f.app.ctx.sessions.observations.read(f.source, offered.session.agentId!);
+  const result = await f.app.ctx.sessions.observations.read(f.source, offered.session.threadId);
   assert.deepEqual(
     result.toolCalls.map((call) => call.status),
     ['failed', 'failed'],

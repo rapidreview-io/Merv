@@ -41,6 +41,8 @@ import type {
   SessionStatus,
   SessionsProjectStatus,
   StuckReport,
+  ThreadConversation,
+  ThreadView,
   UsageRollup,
   SessionPlatform,
   SessionRole,
@@ -69,8 +71,11 @@ export type {
   StuckItem,
   StuckKind,
   StuckReport,
+  ThreadConversation,
+  ThreadView,
   UsageRollup,
   UsageTotals,
+  VisitView,
 } from './models.js';
 export type {
   ManagedBoundSession,
@@ -81,31 +86,11 @@ export type {
 } from './managed-types.js';
 export type { RunnerPlatform, SessionUsageReport, SessionWorkspace } from '@merv/contracts';
 
-/**
- * The agent of one offer, or of the sessions that resume its conversation. `persistent` and a
- * `contextEpoch` above 0 survive only on rows of the retired continuing agents.
- */
-export interface Agent {
-  id: string;
-  sessionId: string;
-  actorId: string;
-  projectId: string;
-  source: DelegationSource;
-  runnerId: string;
-  name: string;
-  persistent: boolean;
-  status: 'active' | 'retired';
-  contextEpoch: number;
-  createdAt: string;
-  retiredAt: string | null;
-}
-
 /** Assignment execution. Its id remains fixed for evidence and late-call fencing. */
 export interface Session {
   id: string;
-  agentId?: string;
-  agentSessionId?: string;
-  contextEpoch?: number;
+  /** The thread this session is a visit of: its `worker_sessions.thread_id`, never its JSON. */
+  threadId: string;
   projectId: string;
   actorId: string;
   source: DelegationSource;
@@ -159,7 +144,7 @@ export type ContinuityProvider = (unit: Readonly<ContinuityUnit>) => string | nu
 export type SessionLookup = Pick<
   Session,
   | 'id'
-  | 'agentId'
+  | 'threadId'
   | 'actorId'
   | 'instanceId'
   | 'expectedRevision'
@@ -321,13 +306,18 @@ export interface Sessions {
   readonly running: SessionRunningReads;
   /** Fleet's managed runners: their enrollment, credentials and model authority. */
   readonly managed: ManagedRunners;
-  /** What each agent did, as metadata only. */
+  /** What each thread's agent did, as metadata only, named by the thread's id. */
   readonly observations: {
     read(caller: Caller, agentId: string): Promise<AgentObservation>;
   };
-  readonly conversations: {
+  /** The workers of each stage: continuity, and the threads a work item's page reads. */
+  readonly threads: {
     /** Keys `workflow`'s sessions for continuity, one provider per workflow, until disposed. */
     register(workflow: string, provider: ContinuityProvider): () => void;
+    /** Every thread with a visit on the work item, for anyone who may read it; never a worker. */
+    list(caller: Caller, instanceId: string): Promise<ThreadView[]>;
+    /** An operator's read of what the thread's agent did, visit by visit. */
+    conversation(caller: Caller, threadId: string): Promise<ThreadConversation>;
   };
   /** Retained producers only; their delegation is historical, never current authority. */
   contributors(

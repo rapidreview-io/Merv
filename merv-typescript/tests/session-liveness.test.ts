@@ -1079,6 +1079,7 @@ test('the assembled application offers the stuck report as a read tool and the g
       ['session.observe', true],
       ['session.release_hold', false],
       ['session.stuck', true],
+      ['session.threads', true],
     ],
   );
   const task = await currentTask(app.ctx, owner, {

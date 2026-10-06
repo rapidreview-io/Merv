@@ -202,7 +202,7 @@ test('each part Sessions exposes keeps its entry checks: no managed runner, noth
   await assert.rejects(sessions.running.marks(caller), unavailable);
   await assert.rejects(sessions.managed.authenticate('mr_x'), unavailable);
   await assert.rejects(sessions.streams.append(caller, {}), unavailable);
-  assert.throws(() => sessions.conversations.register('w', () => null), unavailable);
+  assert.throws(() => sessions.threads.register('w', () => null), unavailable);
   assert.throws(() => sessions.managed.registerValidator({} as never), unavailable);
   await state.close();
 });

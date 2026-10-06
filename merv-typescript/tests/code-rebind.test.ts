@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { digest, type Caller, type WorkflowDefinition, type WorkflowPolicy } from '@merv/contracts';
 import type { FaultPoint } from '@merv/code/store/operations';
 import { codeStoreFixture, faultAt, git, gitSource } from './fixtures/code-store.js';
+import { fixtureThread } from './fixtures/threads.js';
 
 const OLD = 'operator-repository';
 const NEW = 'operator-repository-two';
@@ -223,11 +224,15 @@ async function hosted(t: TestContext, fault?: (point: FaultPoint) => void) {
         name: sessionId,
         role: 'producer',
       });
+      const thread = await f.state.transaction((tx) =>
+        fixtureThread(tx, human.projectId, issued.actor.id),
+      );
       await write(
-        'INSERT INTO worker_sessions (id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+        'INSERT INTO worker_sessions (id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
         sessionId,
         human.projectId,
         issued.actor.id,
+        thread,
         sessionId,
         '1',
         'another-source-authority',

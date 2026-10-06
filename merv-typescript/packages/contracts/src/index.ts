@@ -34,7 +34,7 @@ export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
 export type * from './running.js';
 export type * from './agent-stream.js';
-export { AGENT_EVENT_TEXT } from './agent-stream.js';
+export { AGENT_EVENT_TEXT, claudeEvents, codexEvents, readLine } from './agent-stream.js';
 export {
   runningKeyPattern,
   runningKey,
@@ -728,7 +728,8 @@ export interface Caller {
   /** Server-authenticated leased worker. Invocation ids are minted by Sessions, never tools. */
   session?: {
     id: string;
-    agentSessionId?: string;
+    /** The thread this visit belongs to, whose actor the worker acts as. */
+    threadId?: string;
     invocationId?: string;
   };
   conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
@@ -999,12 +1000,12 @@ export interface Scope {
   registerManagedRunnerAuthority(authority: ManagedRunnerAuthority): () => void;
   createSessionActor(
     source: DelegationSource,
-    input: { sessionId: string; agentId?: string; role: Exclude<Role, 'operator'>; name: string },
+    input: { sessionId: string; threadId?: string; role: Exclude<Role, 'operator'>; name: string },
     tx: Transaction,
   ): Promise<Actor>;
-  /** Changes an agent's role within what `source` may delegate. Scope does not know who owns an
-   * agent: the caller must already have proven it controls this one (Sessions: the agent an
-   * offer creates, or resumes for the same source). */
+  /** Changes a thread's actor's role within what `source` may delegate. Scope does not know who
+   * owns a thread: the caller must already have proven it controls this one (Sessions: the thread
+   * an offer opens, or resumes for the same source). */
   setAgentRole(
     source: DelegationSource,
     actorId: string,

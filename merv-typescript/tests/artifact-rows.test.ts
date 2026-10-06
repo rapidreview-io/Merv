@@ -246,7 +246,7 @@ test('execution outputs are what this session created as this actor, oldest firs
   const first: Caller = { ...f.caller, session: { id: 'ses_first' } };
   const second: Caller = {
     ...f.caller,
-    session: { id: 'ses_second', agentSessionId: 'ses_agent' },
+    session: { id: 'ses_second', threadId: 'thr_agent' },
   };
   const other: Caller = { ...f.caller, actorId: peer, session: { id: 'ses_first' } };
   for (const [n, caller] of [first, second, other, f.caller, first, second].entries())

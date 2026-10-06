@@ -102,7 +102,8 @@ export class SessionTranscripts {
         session.execution.workflow,
         session.role,
         session.runnerId,
-        session.agentId ?? null,
+        // agent_id predates threads: an agent's id is its thread's.
+        session.threadId,
         session.hostRef,
         session.id,
         input.sha256,

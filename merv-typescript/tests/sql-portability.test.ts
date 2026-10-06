@@ -21,14 +21,12 @@ import { postgresMigrations as migrations15 } from '../packages/scope/src/index.
 import { postgresMigrations as migrations16 } from '../packages/scope/src/memberships.postgres.js';
 import { postgresMigrations as migrations17 } from '../packages/scope/src/project-context.postgres.js';
 import { postgresMigrations as migrations18 } from '../packages/scope/src/user-keys.postgres.js';
-import { postgresMigrations as migrations19 } from '../packages/sessions/src/agents.postgres.js';
 import { postgresMigrations as migrations20 } from '../packages/sessions/src/dispatch.postgres.js';
 import { postgresMigrations as migrations21 } from '../packages/sessions/src/index.postgres.js';
 import { managedNoncePostgresMigration } from '../packages/sessions/src/managed-nonce.postgres.js';
 import { postgresMigrations as migrations22 } from '../packages/sessions/src/observations.postgres.js';
 import { postgresMigrations as migrations26 } from '../packages/sessions/src/transcripts.postgres.js';
 import { postgresMigrations as migrations27 } from '../packages/sessions/src/stream.postgres.js';
-import { postgresMigrations as migrations28 } from '../packages/sessions/src/conversations.postgres.js';
 import { postgresMigrations as migrations23 } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as migrations24 } from '../packages/workflows/src/index.postgres.js';
 import {
@@ -56,14 +54,12 @@ const nativeMigrations: Record<string, Record<number, string>> = {
   'packages/scope/src/memberships.ts': migrations16,
   'packages/scope/src/project-context.ts': migrations17,
   'packages/scope/src/user-keys.ts': migrations18,
-  'packages/sessions/src/agents.ts': migrations19,
   'packages/sessions/src/dispatch.ts': migrations20,
   'packages/sessions/src/index.ts': migrations21,
   'packages/sessions/src/managed-nonce.ts': { 8: managedNoncePostgresMigration },
   'packages/sessions/src/observations.ts': migrations22,
   'packages/sessions/src/transcripts.ts': migrations26,
   'packages/sessions/src/stream.ts': migrations27,
-  'packages/sessions/src/conversations.ts': migrations28,
   'packages/tasks/src/index.ts': migrations23,
   'packages/workflows/src/index.ts': migrations24,
 };
@@ -110,7 +106,7 @@ test('every native migration file is listed here', () => {
 
 test('domain migrations are PostgreSQL without SQLite constructs', () => {
   const all = migrations();
-  assert.equal(all.length, 112);
+  assert.equal(all.length, 111);
   all.push(
     ...[
       { owner: 'fleet', version: fleetMigration.version, postgres: fleetMigration.sql },
@@ -170,13 +166,14 @@ test('all native domain migrations execute on PostgreSQL and retain provenance, 
     }
     if (migration.owner === 'packages/sessions/src/index.ts' && migration.version === 1) {
       await client.query(
-        "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES('old','project','actor','work-old',0,'owner','runner','old','old-hash','old-input','released','{}')",
+        "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES('old','project','actor','work-old',0,'owner','runner','old','old-hash','old-input','released','{\"role\":\"producer\",\"createdAt\":\"2026-01-01\",\"execution\":{\"state\":\"working\"}}')",
       );
     }
   }
-  // Native ALTER preserves old executions and allows a stable actor to undertake new work.
+  // Native ALTER preserves old executions and allows a stable actor to undertake new work; the
+  // old one became a thread of its own.
   await client.query(
-    "INSERT INTO worker_sessions(id,project_id,actor_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) VALUES('new','project','actor','work-new',0,'owner','runner','new','new-hash','new-input','active','{}')",
+    "INSERT INTO worker_sessions(id,project_id,actor_id,thread_id,instance_id,revision,owner_hash,runner_id,request_id,token_hash,fingerprint,status,session_json) SELECT 'new','project','actor',thread_id,'work-new',0,'owner','runner','new','new-hash','new-input','active','{}' FROM worker_sessions WHERE id='old'",
   );
   assert.deepEqual(
     (await client.query('SELECT id FROM worker_sessions ORDER BY _merv_rowid')).rows.map(
