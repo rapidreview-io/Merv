@@ -71,7 +71,7 @@ async function registered(stop: (close: () => Promise<void>) => void) {
   } as unknown as State;
   for (const start of [
     () => recorder.migrate('legacy-foundation-import', legacyFoundationImportMigrations),
-    () => new FleetService(recorder, {} as never, undefined).initialize(),
+    () => new FleetService(recorder, {} as never, {} as never).initialize(),
     // The Fleet workflow owner's start(), only where it is enabled: the census app leaves it off.
     () => recorder.migrate('fleet_workflow', modelMigrations),
     // Native Sandboxes is configured per deployment; the default census app leaves it off.

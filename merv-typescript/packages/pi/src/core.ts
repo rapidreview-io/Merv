@@ -41,8 +41,6 @@ export const equal = (left: string, right: string) =>
   left.length === right.length && timingSafeEqual(Buffer.from(left), Buffer.from(right));
 /** Fleet reserves within a second of a send, so a request queued this long waits for capacity. */
 const queuedMs = 3000;
-/** A next slot proves ready within this, or the move fails and the current one serves on (T6). */
-export const readyMs = 180_000;
 /** The host's slots: C serves new turns, N starts to replace it, D finishes C's claimed turns. */
 export const roles = ['current', 'next', 'draining'] as const;
 type Role = (typeof roles)[number];
@@ -426,7 +424,7 @@ export class PiCore {
       : this.config.machines[0].key;
   }
   movingSince(next: PiNextSlot): string {
-    return new Date(Date.parse(next.readyBy) - readyMs).toISOString();
+    return new Date(Date.parse(next.readyBy) - this.fleet.readyWindowMs).toISOString();
   }
   /** What the person waits on now, from the turn, its machine and what the worker last reported. */
   stage(

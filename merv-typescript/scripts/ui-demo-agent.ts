@@ -227,7 +227,6 @@ export async function seedAgent(app: Awaited<ReturnType<typeof createApp>>, url:
     inject: ['state', 'scope'],
     async apply(ctx: Context) {
       const fleet = new FleetService(ctx.state, ctx.scope, new Machines(), {
-        enabled: true,
         pollIntervalMs: 1000,
         hostProjectId: host.project.id,
       });

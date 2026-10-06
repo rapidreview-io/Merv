@@ -336,8 +336,8 @@ test('a new machine that never proves ready fails the move, and the current one 
   await f.fleet.tick();
   const token = await f.token(late.allocationId);
   const { probe } = await f.pi.next(token, { workerId: 'worker_late' });
-  // A probe echoed after its time proves nothing.
-  f.advance(180_000);
+  // A probe echoed after its time, Fleet's whole window to make a machine ready, proves nothing.
+  f.advance(360_000);
   await assert.rejects(
     f.pi.next(token, { workerId: 'worker_late', probe }),
     code('pi_runtime_stale'),
@@ -1025,6 +1025,35 @@ test('pi@4 keeps what Run told the agent on calls that ran before Pi kept it, re
       ...(proposals && { proposals }),
     })),
   );
+});
+
+test('a move waits while Fleet replaces new machines that never connect, and cuts over to the one that does', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 3600 } });
+  const conversation = await f.create();
+  const bound = await f.claimed(await f.send(conversation));
+  await f.finish(bound);
+  await f.pi.setMachine(f.operator, { machine: 'large' });
+  const next = (await f.host(bound.work.command)).next!;
+  // Fleet gives each machine a minute to connect and replaces it, up to three: the third is
+  // judged about 186 s after the first was created, past the three minutes Pi used to allow.
+  f.runtimes.stuck = 2;
+  await f.fleet.tick();
+  for (const retry of [2000, 4000]) {
+    f.advance(60_000);
+    await f.fleet.tick();
+    f.advance(retry);
+    await f.fleet.tick();
+    await f.pi.tick();
+  }
+  assert.deepEqual(f.runtimes.stopped, ['sbx_2', 'sbx_3']);
+  f.advance(60_000);
+  await f.fleet.tick();
+  await f.pi.tick();
+  assert.equal((await f.host(bound.work.command)).next?.allocationId, next.allocationId);
+  const { reply } = await cutOver(f, await f.host(bound.work.command));
+  assert.deepEqual(reply, { work: null });
+  const host = await f.host(bound.work.command);
+  assert.deepEqual([host.current?.machine, host.next], ['large', null]);
 });
 
 test('a machine whose agent never connects is replaced and the turn runs on the next; when none does, the turn ends as no machine', async (t) => {

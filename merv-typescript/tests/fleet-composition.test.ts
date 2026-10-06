@@ -25,7 +25,10 @@ test('Fleet is optional and its row and controls install without research or Ses
   ctx.provide('scope', scope);
   ctx.provide('ui', ui);
   ctx.provide('tools', tools);
-  ctx.provide('sandboxes', {} as Sandboxes);
+  // Sandboxes protects a runtime, which no project here is connected to.
+  ctx.provide('sandboxes', {
+    runtimes: { connected: () => false, profiles: [] },
+  } as unknown as Sandboxes);
   const boot = await scope.credentials.bootstrap({
     projectName: 'Fleet optional composition',
     actorName: 'Operator',
@@ -47,7 +50,7 @@ test('Fleet is optional and its row and controls install without research or Ses
       requestId: 'request',
       owner: { kind: 'chat', id: 'conversation' },
     }),
-    { code: 'fleet_disabled' },
+    { code: 'fleet_owner_unavailable' },
   );
   const row = ui.rows().find((row) => row.id === 'fleet')!;
   assert.ok(row);

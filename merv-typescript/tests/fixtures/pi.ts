@@ -155,7 +155,6 @@ export async function fixture(
       scope,
       runtimes,
       {
-        enabled: true,
         globalLimit: options.machines ?? 8,
         projectLimit: options.machines ?? 8,
         allocationTimeoutSeconds: 3600,

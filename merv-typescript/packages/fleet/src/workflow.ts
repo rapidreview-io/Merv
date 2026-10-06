@@ -25,20 +25,18 @@ import { hostedCodexCapabilities, hostedCodexPlatform } from './hosted-codex.js'
 import { codexModelRelay, hostedGrant, modelBudgetStatus, setDailyTokens } from './codex-relay.js';
 import { modelMigrations } from './schema.js';
 
-/** A deployment opt-in. Fleet still owns all machine limits and lifecycle transitions. */
+/** Loading the adapter is the switch. Fleet still owns all machine limits and lifecycle. */
 const workflowConfig = z
   .object({
-    enabled: z.boolean().default(false),
+    /** Ignored: configurations rendered before still carry it. */
+    enabled: z.boolean().optional(),
     /** Whose choice of Fleet it serves: sign-in identities as 'issuer subject', or '*' for all. */
     people: z
       .array(z.string().regex(/^(\*|\S+ \S+)$/))
-      .max(100)
-      .default([]),
-    modelApiKeyEnv: z
-      .string()
-      .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
-      .optional(),
-    baseUrl: z.string().url().max(2048).optional(),
+      .min(1)
+      .max(100),
+    modelApiKeyEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+    baseUrl: z.string().url().max(2048),
     maxAgents: z.number().int().min(1).max(64).default(10),
     dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
@@ -138,7 +136,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     private readonly fleet: Fleet,
     private readonly sessions: Sessions,
     private readonly scope: Scope,
-    config: FleetWorkflowConfig = {},
+    config: FleetWorkflowConfig,
     private readonly clock: () => number = Date.now,
     private readonly state: State,
   ) {
@@ -149,15 +147,14 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Fleet workflow configuration is invalid',
     );
     this.config = parsed.data;
-    if (this.config.enabled)
-      check(
-        this.config.people.length && this.config.modelApiKeyEnv && this.config.baseUrl,
-        'invalid_fleet_workflow_config',
-        'Enabled Fleet workflow needs its people, a model key and API URL',
-      );
+    // Sessions starts a step on a host only with the whole step and five minutes to stop left.
+    check(
+      fleet.allocationSeconds >= stepSeconds + 300,
+      'invalid_fleet_workflow_config',
+      `Fleet rents machines for less than a workflow step: allocationTimeoutSeconds must be at least ${stepSeconds + 300}`,
+    );
   }
   async start(): Promise<void> {
-    if (!this.config.enabled) return;
     await this.state.migrate('fleet_workflow', modelMigrations);
     check(
       !this.closed && !this.timer,
@@ -232,7 +229,6 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** The managed worker's or project's current Fleet director's budget, without private counts. */
   async modelBudget(caller: Caller) {
-    if (!this.config.enabled) return null;
     await this.scope.require(caller, 'read');
     let person: string;
     if (caller.session) {
@@ -424,11 +420,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       'Worker sessions cannot inspect project retry status',
       403,
     );
-    if (!this.config.enabled || !targets.length) return [];
+    if (!targets.length) return [];
     return await this.retryState(caller, targets);
   }
   async retry(caller: Caller, raw: RetryInput) {
-    check(this.config.enabled, 'fleet_unavailable', 'Managed Fleet is unavailable', 503);
     const parsed = retryInput.safeParse(raw);
     check(parsed.success, 'invalid_retry', 'Retry needs an exact revision, reason and requestId');
     const input = parsed.data;
@@ -559,7 +554,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   async bootstrap(a: FleetAllocation): Promise<string> {
     const workInstanceId = workId(a);
     check(
-      this.accepted(a) && workInstanceId && this.config.baseUrl,
+      this.accepted(a) && workInstanceId,
       'fleet_workflow_source',
       'Fleet workflow allocation is unavailable',
       403,
@@ -624,7 +619,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   }
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */
   reconcile(): Promise<void> {
-    if (!this.config.enabled || this.closed) return Promise.resolve();
+    if (this.closed) return Promise.resolve();
     return (this.pending ??= this.reconcileOnce().finally(() => {
       this.pending = undefined;
     }));
@@ -635,7 +630,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
   private async reconcileOnce(): Promise<void> {
     // The key stays on Main for the relay; without it no machine is rented to call the model.
     check(
-      process.env[this.config.modelApiKeyEnv!],
+      process.env[this.config.modelApiKeyEnv],
       'fleet_workflow_secret',
       'Fleet model key is unavailable',
       503,
@@ -764,7 +759,7 @@ declare module 'cordis' {
 export const fleetWorkflowPlugin = {
   name: 'merv-fleet-workflow',
   inject: ['fleet', 'sessions', 'scope', 'api', 'state', 'tools'],
-  async apply(ctx: Context, config: FleetWorkflowConfig = {}) {
+  async apply(ctx: Context, config: FleetWorkflowConfig) {
     const adapter = new FleetWorkflowAdapter(
       ctx.fleet,
       ctx.sessions,
@@ -776,70 +771,66 @@ export const fleetWorkflowPlugin = {
     await adapter.start();
     ctx.effect(() => () => adapter.close());
     // The provider key stays on Main: hosted Codex calls the model through this relay.
-    if (adapter.config.enabled) {
-      const relay = codexModelRelay(ctx.state, {
-        providerKey: () => process.env[adapter.config.modelApiKeyEnv!] ?? '',
-        dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
-        authorize: (token) => adapter.modelGrant(token),
-      });
-      ctx.effect(() => {
-        const model = ctx.fleet.modelRelay(relay);
-        const unmount = ctx.api.mount('/codex-model', model.handle, { public: true });
-        return () => {
-          unmount();
-          model.close();
-        };
-      });
-      // A person's own daily limit: only they, signed in, read or change it, never an agent.
-      const person = (caller: Caller) => {
-        requireHuman(
-          caller,
-          'fleet_forbidden',
-          'Only you, signed in, can see or change your daily tokens',
-        );
-        return personKey(caller.human, caller);
+    const relay = codexModelRelay(ctx.state, {
+      providerKey: () => process.env[adapter.config.modelApiKeyEnv] ?? '',
+      dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
+      authorize: (token) => adapter.modelGrant(token),
+    });
+    ctx.effect(() => {
+      const model = ctx.fleet.modelRelay(relay);
+      const unmount = ctx.api.mount('/codex-model', model.handle, { public: true });
+      return () => {
+        unmount();
+        model.close();
       };
-      ctx.effect(() =>
-        ctx.tools.register({
-          name: 'fleet.daily_tokens',
-          conversation: 'never' as const,
-          description:
-            'Your own daily limit of model tokens for Fleet workers, and what they used today (UTC). Only you, signed in, can change it.',
-          inputSchema: z
-            .object({ tokens: z.number().int().min(1).max(1_000_000_000).optional() })
-            .strict(),
-          handler: async (caller: Caller, input: { tokens?: number }) => {
-            const who = person(caller);
-            if (input.tokens !== undefined) await setDailyTokens(ctx.state, who, input.tokens);
-            return await modelBudgetStatus(ctx.state, who, adapter.config.dailyTokensPerPerson);
-          },
-        }),
+    });
+    // A person's own daily limit: only they, signed in, read or change it, never an agent.
+    const person = (caller: Caller) => {
+      requireHuman(
+        caller,
+        'fleet_forbidden',
+        'Only you, signed in, can see or change your daily tokens',
       );
-      ctx.effect(() =>
-        ctx.tools.register({
-          name: 'fleet.workflow_retry_status',
-          description:
-            'Read why managed Fleet stopped renting for one exact workflow revision after unclaimed machines. This does not change any allocation or dispatch state.',
-          readOnly: true,
-          inputSchema: retryInput.pick({ instanceId: true, expectedRevision: true }),
-          handler: async (
-            caller: Caller,
-            input: { instanceId: string; expectedRevision: number },
-          ) => (await adapter.retryStatus(caller, [input]))[0],
-        }),
-      );
-      ctx.effect(() =>
-        ctx.tools.register({
-          name: 'fleet.workflow_retry',
-          act: { title: 'Retry on Fleet' },
-          conversation: 'propose' as const,
-          description:
-            'Project administrator only. After two created but unclaimed Fleet machines exhaust one exact workflow revision, record a reason and open one more bounded two-attempt window. Prior allocations and the grant remain auditable. A stable requestId makes uncertain retries idempotent; active or stale work is refused. Capacity, wallet and model budgets still govern renting.',
-          inputSchema: retryInput,
-          handler: async (caller: Caller, input: RetryInput) => await adapter.retry(caller, input),
-        }),
-      );
-    }
+      return personKey(caller.human, caller);
+    };
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'fleet.daily_tokens',
+        conversation: 'never' as const,
+        description:
+          'Your own daily limit of model tokens for Fleet workers, and what they used today (UTC). Only you, signed in, can change it.',
+        inputSchema: z
+          .object({ tokens: z.number().int().min(1).max(1_000_000_000).optional() })
+          .strict(),
+        handler: async (caller: Caller, input: { tokens?: number }) => {
+          const who = person(caller);
+          if (input.tokens !== undefined) await setDailyTokens(ctx.state, who, input.tokens);
+          return await modelBudgetStatus(ctx.state, who, adapter.config.dailyTokensPerPerson);
+        },
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'fleet.workflow_retry_status',
+        description:
+          'Read why managed Fleet stopped renting for one exact workflow revision after unclaimed machines. This does not change any allocation or dispatch state.',
+        readOnly: true,
+        inputSchema: retryInput.pick({ instanceId: true, expectedRevision: true }),
+        handler: async (caller: Caller, input: { instanceId: string; expectedRevision: number }) =>
+          (await adapter.retryStatus(caller, [input]))[0],
+      }),
+    );
+    ctx.effect(() =>
+      ctx.tools.register({
+        name: 'fleet.workflow_retry',
+        act: { title: 'Retry on Fleet' },
+        conversation: 'propose' as const,
+        description:
+          'Project administrator only. After two created but unclaimed Fleet machines exhaust one exact workflow revision, record a reason and open one more bounded two-attempt window. Prior allocations and the grant remain auditable. A stable requestId makes uncertain retries idempotent; active or stale work is refused. Capacity, wallet and model budgets still govern renting.',
+        inputSchema: retryInput,
+        handler: async (caller: Caller, input: RetryInput) => await adapter.retry(caller, input),
+      }),
+    );
     ctx.provide('fleetWorkflow', adapter);
   },
 };

@@ -47,6 +47,7 @@ async function status(t: TestContext) {
     session: async () => ({ id: 'session-1', projectId: 'project-a', assignment: {} }),
   } as unknown as Sessions;
   const fleet = {
+    allocationSeconds: 86_400,
     registerOwner: () => () => undefined,
     list: async (caller: Caller, limit: number) => {
       assert.equal(caller, person);
@@ -78,7 +79,6 @@ async function status(t: TestContext) {
     sessions,
     {} as Scope,
     {
-      enabled: true,
       people: ['*'],
       // Unset, so the adapter's first pass rents nothing.
       modelApiKeyEnv: 'MERV_FLEET_STATUS_TEST_UNSET',
