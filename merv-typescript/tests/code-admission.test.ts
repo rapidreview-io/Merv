@@ -410,6 +410,37 @@ test('sizes, counts, modes, paths, links and deny globs are findings that name a
   ]);
 });
 
+test('a fresh tree too large or with too many entries to parse is a finding naming it', async (t) => {
+  const f = await fixture(t);
+  const base = f.source.commit({ 'README.md': 'base\n' });
+  f.keep(base);
+  const file = f.blob('content\n');
+  const tree = (commit: string) => f.source.git('rev-parse', `${commit}^{tree}`);
+  // 100,001 short names: under 32 MiB, over the entry cap.
+  const many = f.crafted(
+    Array.from(
+      { length: 100_001 },
+      (_, i) => ['100644', 'blob', file, `f${i}`] as [string, string, string, string],
+    ),
+    base,
+  );
+  assert.deepEqual((await f.judge(f.source.bundle(many, [base]))).findings, [
+    { rule: 'tree_size', path: null, oid: tree(many) },
+  ]);
+  // 82,000 long names: under the entry cap, over 32 MiB.
+  const wide = f.crafted(
+    Array.from(
+      { length: 82_000 },
+      (_, i) =>
+        ['100644', 'blob', file, String(i).padStart(400, 'n')] as [string, string, string, string],
+    ),
+    base,
+  );
+  assert.deepEqual((await f.judge(f.source.bundle(wide, [base]))).findings, [
+    { rule: 'tree_size', path: null, oid: tree(wide) },
+  ]);
+});
+
 test('the deny-glob matcher knows literals, ?, * within a segment and ** across segments', () => {
   const table: [glob: string, path: string, matches: boolean][] = [
     ['.env', '.env', true],

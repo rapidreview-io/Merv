@@ -66,6 +66,9 @@ export class AdmissionRejected extends MervError {
 const MAX_FINDINGS = 200;
 const MAX_HEADER_BYTES = 256 * 1024;
 const MAX_TREE_BYTES = 256 * 1024 * 1024;
+/** One fresh tree is parsed whole, an object per entry: these bound what that may cost. */
+const MAX_ONE_TREE_BYTES = 32 * 1024 * 1024;
+const MAX_TREE_ENTRIES = 100_000;
 const MAX_TREE_VISITS = 2_000_000;
 const MAX_SYMLINK_BYTES = 4096;
 const MAX_NAME_BYTES = 255;
@@ -203,10 +206,15 @@ type KeptTree = { trees: string[]; links: string[]; inside: TreeEntry[] };
  */
 const keptTreeMemo = new Map<string, KeptTree>();
 const MAX_KEPT_MEMO = 50_000;
-function parseTree(content: Buffer, format: ObjectFormat): TreeEntry[] | null {
+function parseTree(
+  content: Buffer,
+  format: ObjectFormat,
+  limit = Infinity,
+): TreeEntry[] | null | 'too_large' {
   const width = format === 'sha1' ? 20 : 32;
   const entries: TreeEntry[] = [];
   for (let at = 0; at < content.length;) {
+    if (entries.length >= limit) return 'too_large';
     const space = content.indexOf(0x20, at);
     const zero = content.indexOf(0x00, space);
     if (space < 0 || zero < 0 || zero + 1 + width > content.length) return null;
@@ -439,7 +447,8 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   };
 
   for (const [oid, object] of fresh)
-    if (object.size > limits.blobBytes)
+    if (object.type === 'tree' && object.size > MAX_ONE_TREE_BYTES) found('tree_size', null, oid);
+    else if (object.size > limits.blobBytes)
       found(object.type === 'blob' ? 'blob_size' : 'object_size', null, oid);
   const freshTrees = fresh.filter(([, object]) => object.type === 'tree');
   if (freshTrees.reduce((sum, [, object]) => sum + object.size, 0) > MAX_TREE_BYTES)
@@ -450,8 +459,9 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   await read(
     freshTrees.map(([oid]) => oid),
     (oid, content) => {
-      const entries = parseTree(content, header.objectFormat);
-      if (entries) trees.set(oid, entries);
+      const entries = parseTree(content, header.objectFormat, MAX_TREE_ENTRIES);
+      if (entries === 'too_large') found('tree_size', null, oid);
+      else if (entries) trees.set(oid, entries);
       else found('tree_malformed', null, oid);
     },
   );
@@ -529,7 +539,8 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
     await read(
       level.filter((oid) => !memo.has(oid)),
       (oid, content) => {
-        const entries = parseTree(content, header.objectFormat) ?? [];
+        const parsed = parseTree(content, header.objectFormat);
+        const entries = Array.isArray(parsed) ? parsed : [];
         memo.set(oid, {
           trees: entries.filter((entry) => entry.mode === '40000').map((entry) => entry.oid),
           links: entries.filter((entry) => entry.mode === '120000').map((entry) => entry.oid),
