@@ -55,7 +55,7 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
     source = options.source,
   ) {
     const runnerId = request();
-    await host.sessions.heartbeatRunner(source, {
+    await host.sessions.dispatch.heartbeatRunner(source, {
       runnerId,
       machine: {
         hostname: 'current-work-test',

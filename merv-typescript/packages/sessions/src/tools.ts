@@ -45,7 +45,7 @@ export const sessionsToolsPlugin = {
           'Project admin only, never a leased worker. Set a budget on the project, or with instanceId on that instance and its dependency closure. Give maxWallMinutes or maxTokens; null clears a dimension and an omitted one is kept. A reached budget only pauses automatic dispatch with reason budget_exceeded: nothing running is stopped and people can still begin work by hand. Raising or clearing it resumes dispatch. Setting the same values again changes nothing. Only wall-clock is measured by Merv; a token budget trusts unverified self-reports and is judged only while every session in its scope that was activated reported usage — otherwise it pauses automatic dispatch with reason usage_unavailable until the report arrives or that bound is cleared. An instance budget whose dependency closure is too large to walk cannot be judged either: it pauses every automatic offer with reason usage_unavailable until its bounds are cleared. A budget covers worker sessions only, never the charges of a remote job.',
         inputSchema: budgetSchema,
         handler: async (caller: Caller, input: SessionBudgetInput) =>
-          await sessions.setBudget(caller, input),
+          await sessions.dispatch.setBudget(caller, input),
       }),
     );
     ctx.effect(() =>
@@ -55,7 +55,7 @@ export const sessionsToolsPlugin = {
           'Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.',
         readOnly: true,
         inputSchema: z.object({}).strict(),
-        handler: async (caller: Caller) => await sessions.stuck(caller),
+        handler: async (caller: Caller) => await sessions.dispatch.stuck(caller),
       }),
     );
     ctx.effect(() =>
@@ -65,8 +65,10 @@ export const sessionsToolsPlugin = {
         description:
           'Project admin only, never a leased worker. Let automatic dispatch offer a held target again, after its cause is fixed: resets the failed-attempt count of one instance revision (instanceId and expectedRevision from a dispatch_held item of session.stuck) and records the reason. Idempotent by requestId; the same requestId with different input is request_conflict. hold_not_found when nothing is counted against the target, hold_not_held when it is still being retried. To not run the work at all, end or revise the record instead: a hold names one revision.',
         inputSchema: releaseHoldSchema,
-        handler: async (caller: Caller, input: Parameters<Sessions['releaseHold']>[1]) =>
-          await sessions.releaseHold(caller, input),
+        handler: async (
+          caller: Caller,
+          input: Parameters<Sessions['dispatch']['releaseHold']>[1],
+        ) => await sessions.dispatch.releaseHold(caller, input),
       }),
     );
     // The project controls a person uses from the Sessions page, as tools.
@@ -77,8 +79,10 @@ export const sessionsToolsPlugin = {
           "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its longest-standing signed-in operator), whoever changed either.",
         conversation: 'propose',
         inputSchema: dispatchSchema,
-        handler: async (caller: Caller, input: Parameters<Sessions['setDispatch']>[1]) =>
-          await sessions.setDispatch(caller, input),
+        handler: async (
+          caller: Caller,
+          input: Parameters<Sessions['dispatch']['setDispatch']>[1],
+        ) => await sessions.dispatch.setDispatch(caller, input),
       }),
     );
     ctx.effect(() =>
@@ -89,7 +93,7 @@ export const sessionsToolsPlugin = {
         conversation: 'propose',
         inputSchema: haltSchema,
         handler: async (caller: Caller, input: { sessionId?: string; reason?: string }) =>
-          await sessions.halt(caller, input),
+          await sessions.dispatch.halt(caller, input),
       }),
     );
     ctx.effect(() =>
@@ -159,7 +163,7 @@ export const sessionsToolsPlugin = {
         readOnly: true,
         inputSchema: z.object({ agentId: z.string().min(1).max(200) }).strict(),
         handler: async (caller: Caller, input: { agentId: string }) =>
-          await sessions.agentObservation(caller, input.agentId),
+          await sessions.observations.read(caller, input.agentId),
       }),
     );
     ctx.effect(() =>

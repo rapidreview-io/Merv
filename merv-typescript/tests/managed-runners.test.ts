@@ -21,7 +21,6 @@ import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { CredentialStore, tokenDigest } from '@merv/identity/credentials';
-import type { SessionDispatch } from '../packages/sessions/src/dispatch.js';
 import { countWrites, openState } from './fixtures/state.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
@@ -247,7 +246,7 @@ async function fixture(
   let current = true,
     admits = true,
     retired = false;
-  const validator: Parameters<LeasedSessions['registerManagedValidator']>[0] = {
+  const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
     retired: async () => retired,
@@ -265,7 +264,7 @@ async function fixture(
         : []),
     ],
   };
-  sessions.registerManagedValidator(validator);
+  sessions.managed.registerValidator(validator);
   t.after(async () => {
     await sessions.close();
     await events.close();
@@ -288,9 +287,9 @@ async function fixture(
     expiresAt: new Date((options.clock?.() ?? Date.now()) + 3_600_000).toISOString(),
   };
   const workerNonce = randomBytes(32).toString('hex');
-  const enrollment = await sessions.ensureManagedEnrollment(input);
-  const enrolled = await sessions.enrollManaged(enrollment.enrollmentToken, { workerNonce });
-  const caller = await sessions.authenticateManaged(enrolled.controlToken);
+  const enrollment = await sessions.managed.ensure(input);
+  const enrolled = await sessions.managed.enroll(enrollment.enrollmentToken, { workerNonce });
+  const caller = await sessions.managed.authenticate(enrolled.controlToken);
   const runnerId = `managed-${allocationId}`;
   const heartbeat = (capacity: number) => ({
     runnerId,
@@ -340,7 +339,7 @@ async function fixture(
           clock: options.clock,
         }),
       );
-      sessions.registerManagedValidator(validator);
+      sessions.managed.registerValidator(validator);
       return sessions;
     },
     caller,
@@ -354,21 +353,21 @@ test('managed enrollment is stable, hashed at rest, pinned on heartbeat and deni
   const f = await fixture(t);
   const writes = countWrites(f.state);
   const beforeAuthentication = writes();
-  await f.sessions.authenticateManaged(f.enrolled.controlToken);
+  await f.sessions.managed.authenticate(f.enrolled.controlToken);
   assert.equal(writes(), beforeAuthentication);
   assert.match(f.enrollment.enrollmentToken, /^me_[0-9a-f]{64}$/);
   assert.match(f.enrolled.controlToken, /^mr_[0-9a-f]{64}$/);
   assert.equal(
-    (await f.sessions.ensureManagedEnrollment(f.input)).enrollmentToken,
+    (await f.sessions.managed.ensure(f.input)).enrollmentToken,
     f.enrollment.enrollmentToken,
   );
   assert.equal(
-    (await f.sessions.enrollManaged(f.enrollment.enrollmentToken, { workerNonce: f.workerNonce }))
+    (await f.sessions.managed.enroll(f.enrollment.enrollmentToken, { workerNonce: f.workerNonce }))
       .controlToken,
     f.enrolled.controlToken,
   );
   await assert.rejects(
-    f.sessions.enrollManaged(f.enrollment.enrollmentToken, { runnerId: 'injected' }),
+    f.sessions.managed.enroll(f.enrollment.enrollmentToken, { runnerId: 'injected' }),
     { code: 'invalid_managed_enrollment' },
   );
   const row = await f.state.read((tx) =>
@@ -382,19 +381,19 @@ test('managed enrollment is stable, hashed at rest, pinned on heartbeat and deni
   assert.equal(JSON.stringify(row).includes(f.workerNonce), false);
   assert.equal(JSON.stringify(row).includes(f.enrolled.controlToken), false);
   assert.equal(JSON.stringify(row).includes(f.enrollment.enrollmentToken), false);
-  assert.deepEqual(await f.sessions.inspectManaged(f.input.allocationId, 1), {
+  assert.deepEqual(await f.sessions.managed.inspect(f.input.allocationId, 1), {
     runnerId: null,
     enrollmentExpiresAt: row.enrollment_expires_at,
     session: null,
   });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  assert.equal((await f.sessions.inspectManaged(f.input.allocationId, 1))?.runnerId, f.runnerId);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  assert.equal((await f.sessions.managed.inspect(f.input.allocationId, 1))?.runnerId, f.runnerId);
   await assert.rejects(
-    f.sessions.heartbeatRunner(f.caller, { ...f.heartbeat(1), runnerId: 'other' }),
+    f.sessions.dispatch.heartbeatRunner(f.caller, { ...f.heartbeat(1), runnerId: 'other' }),
     { code: 'managed_runner_conflict' },
   );
   await assert.rejects(
-    f.sessions.heartbeatRunner(f.caller, {
+    f.sessions.dispatch.heartbeatRunner(f.caller, {
       ...f.heartbeat(1),
       platforms: [{ ...profile, model: 'wrong' }],
     }),
@@ -417,21 +416,21 @@ test('managed enrollment is stable, hashed at rest, pinned on heartbeat and deni
 test('lost enrollment response replays the same control after restart; changed nonce conflicts', async (t) => {
   const f = await fixture(t);
   const changed = { workerNonce: randomBytes(32).toString('hex') };
-  await assert.rejects(f.sessions.enrollManaged(f.enrollment.enrollmentToken, changed), {
+  await assert.rejects(f.sessions.managed.enroll(f.enrollment.enrollmentToken, changed), {
     code: 'managed_binding_conflict',
     status: 409,
   });
   const restarted = await f.restart();
-  const replay = await restarted.enrollManaged(f.enrollment.enrollmentToken, {
+  const replay = await restarted.managed.enroll(f.enrollment.enrollmentToken, {
     workerNonce: f.workerNonce,
   });
   assert.equal(replay.controlToken, f.enrolled.controlToken);
-  await assert.rejects(restarted.enrollManaged(f.enrollment.enrollmentToken, changed), {
+  await assert.rejects(restarted.managed.enroll(f.enrollment.enrollmentToken, changed), {
     code: 'managed_binding_conflict',
     status: 409,
   });
   assert.equal(
-    (await restarted.authenticateManaged(replay.controlToken)).managed?.credentialHash,
+    (await restarted.managed.authenticate(replay.controlToken)).managed?.credentialHash,
     f.caller.managed?.credentialHash,
   );
 });
@@ -439,7 +438,7 @@ test('lost enrollment response replays the same control after restart; changed n
 test('only an admitted enrollment pins the nonce and control identity once', async (t) => {
   const f = await fixture(t);
   const allocationId = randomUUID();
-  const { enrollmentToken } = await f.sessions.ensureManagedEnrollment({
+  const { enrollmentToken } = await f.sessions.managed.ensure({
     ...f.input,
     allocationId,
   });
@@ -454,14 +453,14 @@ test('only an admitted enrollment pins the nonce and control identity once', asy
   assert.equal(before?.worker_nonce_hash, null);
   f.admits(false);
   await assert.rejects(
-    f.sessions.enrollManaged(enrollmentToken, {
+    f.sessions.managed.enroll(enrollmentToken, {
       workerNonce: f.workerNonce,
     }),
     { code: 'managed_not_admitted' },
   );
   assert.deepEqual(await binding(), before);
   f.admits(true);
-  const enrolled = await f.sessions.enrollManaged(enrollmentToken, {
+  const enrolled = await f.sessions.managed.enroll(enrollmentToken, {
     workerNonce: f.workerNonce,
   });
   assert.equal(
@@ -480,7 +479,7 @@ test('only an admitted enrollment pins the nonce and control identity once', asy
     { code: 'state_constraint' },
   );
   assert.equal(
-    (await f.sessions.authenticateManaged(enrolled.controlToken)).managed?.allocationId,
+    (await f.sessions.managed.authenticate(enrolled.controlToken)).managed?.allocationId,
     allocationId,
   );
 });
@@ -496,7 +495,7 @@ test('enrollment rejects absent, malformed and extra nonce fields', async (t) =>
     null,
     [],
   ]) {
-    await assert.rejects(f.sessions.enrollManaged(f.enrollment.enrollmentToken, input), {
+    await assert.rejects(f.sessions.managed.enroll(f.enrollment.enrollmentToken, input), {
       code: 'invalid_managed_enrollment',
     });
   }
@@ -506,13 +505,13 @@ test('enrollment retries fail closed after allocation expiry or source revocatio
   let now = Date.now();
   const f = await fixture(t, { clock: () => now });
   const allocationId = randomUUID();
-  const { enrollmentToken } = await f.sessions.ensureManagedEnrollment({
+  const { enrollmentToken } = await f.sessions.managed.ensure({
     ...f.input,
     allocationId,
   });
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
-    f.sessions.enrollManaged(enrollmentToken, {
+    f.sessions.managed.enroll(enrollmentToken, {
       workerNonce: f.workerNonce,
     }),
     (error: any) => error?.status === 401 || error?.status === 403,
@@ -526,7 +525,7 @@ test('enrollment retries fail closed after allocation expiry or source revocatio
   assert.equal(unbound?.worker_nonce_hash, null);
   now += 3_600_001;
   await assert.rejects(
-    f.sessions.enrollManaged(f.enrollment.enrollmentToken, {
+    f.sessions.managed.enroll(f.enrollment.enrollmentToken, {
       workerNonce: f.workerNonce,
     }),
     { code: 'unauthorized' },
@@ -535,52 +534,52 @@ test('enrollment retries fail closed after allocation expiry or source revocatio
 
 test('managed lease binds once, replays after admission closes, and rejects another session', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const first = f.lease();
-  const result = await f.sessions.lease(f.caller, first);
+  const result = await f.sessions.dispatch.lease(f.caller, first);
   assert.ok(result.session, result.reason);
   const bound = result.session;
-  assert.equal((await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.id, bound.id);
+  assert.equal((await f.sessions.managed.inspect(f.input.allocationId, 1))?.session?.id, bound.id);
   assert.equal(
-    (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.releaseAcknowledged,
+    (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session?.releaseAcknowledged,
     false,
   );
   assert.equal((await f.sessions.get(f.caller, bound.id)).id, bound.id);
   await assert.rejects(f.sessions.get(f.caller, 'session_wrong'), { code: 'session_forbidden' });
   // A runner whose lease reply was lost still offers its slot, then replays the lease below.
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await assert.rejects(f.sessions.heartbeatRunner(f.caller, f.heartbeat(2)), {
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await assert.rejects(f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(2)), {
     code: 'managed_capacity',
   });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(0));
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(0));
   f.admits(false);
-  assert.equal((await f.sessions.lease(f.caller, first)).session?.id, bound.id);
-  assert.equal((await f.sessions.lease(f.caller, f.lease())).session, null);
+  assert.equal((await f.sessions.dispatch.lease(f.caller, first)).session?.id, bound.id);
+  assert.equal((await f.sessions.dispatch.lease(f.caller, f.lease())).session, null);
   await f.sessions.release(f.caller, { sessionId: bound.id, runnerId: f.runnerId });
   assert.equal((await f.sessions.get(f.caller, bound.id)).status, 'released');
   assert.equal(
-    (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.status,
+    (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session?.status,
     'released',
   );
   assert.equal(
-    (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.releaseAcknowledged,
+    (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session?.releaseAcknowledged,
     true,
   );
   f.current(false);
-  await assert.rejects(f.sessions.authenticateManaged(f.enrolled.controlToken), {
+  await assert.rejects(f.sessions.managed.authenticate(f.enrolled.controlToken), {
     code: 'managed_revoked',
   });
-  await assert.rejects(f.sessions.lease(f.caller, first), { code: 'managed_revoked' });
+  await assert.rejects(f.sessions.dispatch.lease(f.caller, first), { code: 'managed_revoked' });
 });
 
 test('a failure on one rented machine holds its target back on the next, and a released machine leaves the Runners list', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
-  const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+  const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   assert.ok(bound);
   await f.sessions.release(f.caller, {
     sessionId: bound.id,
@@ -589,29 +588,29 @@ test('a failure on one rented machine holds its target back on the next, and a r
   });
   // Fleet's next machine for the same source is a new runner with no history of its own.
   const allocationId = randomUUID();
-  const enrollment = await f.sessions.ensureManagedEnrollment({ ...f.input, allocationId });
-  const enrolled = await f.sessions.enrollManaged(enrollment.enrollmentToken, {
+  const enrollment = await f.sessions.managed.ensure({ ...f.input, allocationId });
+  const enrolled = await f.sessions.managed.enroll(enrollment.enrollmentToken, {
     workerNonce: randomBytes(32).toString('hex'),
   });
-  const caller = await f.sessions.authenticateManaged(enrolled.controlToken);
+  const caller = await f.sessions.managed.authenticate(enrolled.controlToken);
   const runnerId = `managed-${allocationId}`;
-  await f.sessions.heartbeatRunner(caller, { ...f.heartbeat(1), runnerId });
-  assert.deepEqual(await f.sessions.lease(caller, { ...f.lease(), runnerId }), {
+  await f.sessions.dispatch.heartbeatRunner(caller, { ...f.heartbeat(1), runnerId });
+  assert.deepEqual(await f.sessions.dispatch.lease(caller, { ...f.lease(), runnerId }), {
     session: null,
     reason: 'retry_backoff',
   });
-  const listed = (await f.sessions.projectStatus(f.owner)).runners.map((r) => r.runnerId);
+  const listed = (await f.sessions.dispatch.projectStatus(f.owner)).runners.map((r) => r.runnerId);
   assert.ok(listed.includes(runnerId));
   assert.ok(!listed.includes(f.runnerId), 'a machine whose release was acknowledged is gone');
 });
 
 test('rented machines never exhaust a project’s own runners, and another project’s runner of the same name stays its own', async (t) => {
   const f = await fixture(t);
-  const dispatcher = (f.sessions as unknown as { dispatcher: SessionDispatch }).dispatcher;
+  const dispatcher = f.sessions.dispatch;
   const machines = (caller: Caller) =>
     f.state.transaction(async (tx) => (await dispatcher.running(caller, tx)).machines.live);
   const listed = async (caller: Caller) =>
-    (await f.sessions.projectStatus(caller)).runners.map((runner) => runner.runnerId);
+    (await f.sessions.dispatch.projectStatus(caller)).runners.map((runner) => runner.runnerId);
   // A thousand of the project's own runners, long gone.
   await f.state.transaction((tx) =>
     tx.run(
@@ -620,12 +619,12 @@ test('rented machines never exhaust a project’s own runners, and another proje
     ),
   );
   // Fleet's own caps bound the machines it rents, so the project's limit is not theirs.
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   const own = { ...f.heartbeat(1), runnerId: 'own' };
-  await assert.rejects(f.sessions.heartbeatRunner(f.owner, own), { code: 'runner_limit' });
+  await assert.rejects(f.sessions.dispatch.heartbeatRunner(f.owner, own), { code: 'runner_limit' });
   // Only the project's own rows count against it: 999 of them and one rented leave room.
   await f.state.transaction((tx) => tx.run("DELETE FROM session_runners WHERE id='runner_old_1'"));
-  await f.sessions.heartbeatRunner(f.owner, own);
+  await f.sessions.dispatch.heartbeatRunner(f.owner, own);
   // A live rented machine is listed, and is not one of the project's own machines.
   assert.ok((await listed(f.owner)).includes(f.runnerId));
   assert.equal(await machines(f.owner), 1);
@@ -637,7 +636,10 @@ test('rented machines never exhaust a project’s own runners, and another proje
     projectId: other.project.id,
     credentialId: other.credential.id,
   };
-  await f.sessions.heartbeatRunner(otherOwner, { ...f.heartbeat(1), runnerId: f.runnerId });
+  await f.sessions.dispatch.heartbeatRunner(otherOwner, {
+    ...f.heartbeat(1),
+    runnerId: f.runnerId,
+  });
   assert.equal(await machines(otherOwner), 1, 'another project’s machine is never rented');
   await f.state.transaction((tx) =>
     tx.run(
@@ -653,13 +655,13 @@ test('rented machines never exhaust a project’s own runners, and another proje
 
 test('a machine a release retired mid-step closes its session as machine_retired, which counts against nothing', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   const target = await f.handle.start(f.source, {
     workflow: 'managed-test',
     requestId: randomUUID(),
   });
-  const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+  const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   assert.ok(bound);
   f.retire();
   await f.sessions.sweep();
@@ -677,20 +679,20 @@ test('a machine a release retired mid-step closes its session as machine_retired
 
 test('own machines give a managed runner no new work, and the session it holds runs to release', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true, ownMachines: true });
-  assert.equal((await f.sessions.projectStatus(f.owner)).dispatch.fleet, true);
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true, ownMachines: true });
+  assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).dispatch.fleet, true);
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
-  assert.deepEqual(await f.sessions.lease(f.caller, f.lease()), {
+  assert.deepEqual(await f.sessions.dispatch.lease(f.caller, f.lease()), {
     session: null,
     reason: 'dispatch_disabled',
   });
-  await f.sessions.setDispatch(f.owner, { ownMachines: false });
+  await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: false });
   const request = f.lease();
-  const bound = (await f.sessions.lease(f.caller, request)).session!;
+  const bound = (await f.sessions.dispatch.lease(f.caller, request)).session!;
   assert.ok(bound);
   await f.sessions.authenticate(request.secret);
-  await f.sessions.setDispatch(f.owner, { ownMachines: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { ownMachines: true });
   await f.sessions.sweep();
   assert.equal((await f.sessions.get(f.caller, bound.id)).status, 'active');
   await f.sessions.release(f.caller, { sessionId: bound.id, runnerId: f.runnerId });
@@ -709,18 +711,18 @@ test('a person’s source enrolls a managed runner that leases as that person', 
   const source = await f.scope.delegationSource(owner);
   const allocationId = randomUUID();
   const runnerId = `managed-${allocationId}`;
-  const { enrollmentToken } = await f.sessions.ensureManagedEnrollment({
+  const { enrollmentToken } = await f.sessions.managed.ensure({
     ...f.input,
     allocationId,
     source,
   });
-  const enrolled = await f.sessions.enrollManaged(enrollmentToken, { workerNonce: f.workerNonce });
-  const managed = await f.sessions.authenticateManaged(enrolled.controlToken);
+  const enrolled = await f.sessions.managed.enroll(enrollmentToken, { workerNonce: f.workerNonce });
+  const managed = await f.sessions.managed.authenticate(enrolled.controlToken);
   assert.equal(managed.projectId, project.id);
-  await f.sessions.heartbeatRunner(managed, { ...f.heartbeat(1), runnerId });
-  await f.sessions.setDispatch(owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(managed, { ...f.heartbeat(1), runnerId });
+  await f.sessions.dispatch.setDispatch(owner, { enabled: true });
   const target = await f.handle.start(owner, { workflow: 'managed-test', requestId: randomUUID() });
-  const leased = await f.sessions.lease(managed, { ...f.lease(), runnerId });
+  const leased = await f.sessions.dispatch.lease(managed, { ...f.lease(), runnerId });
   assert.ok(leased.session, leased.reason);
   assert.deepEqual([leased.session.instanceId, leased.session.source], [target.id, source]);
 });
@@ -728,28 +730,33 @@ test('a person’s source enrolls a managed runner that leases as that person', 
 test('a hosted step ends five minutes before its machine, and a machine with under ten left starts none', async (t) => {
   let now = Date.now();
   const f = await fixture(t, { clock: () => now });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   // The machine runs until its allocation's end, fixed at enrollment an hour from now.
   now = Date.parse(f.input.expiresAt) - 599_999;
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await assert.rejects(f.sessions.lease(f.caller, f.lease()), { code: 'managed_expiring' });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await assert.rejects(f.sessions.dispatch.lease(f.caller, f.lease()), {
+    code: 'managed_expiring',
+  });
   // With ten minutes left it does start, and its step, whatever the runner asked, ends at five.
   now -= 1;
-  const { session } = await f.sessions.lease(f.caller, { ...f.lease(), hardDeadlineSeconds: 3600 });
+  const { session } = await f.sessions.dispatch.lease(f.caller, {
+    ...f.lease(),
+    hardDeadlineSeconds: 3600,
+  });
   assert.ok(session);
   assert.equal(Date.parse(session.hardDeadline), Date.parse(f.input.expiresAt) - 300_000);
 });
 
 test('the sweep ends a bound session once its machine is no longer current', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
-  assert.ok((await f.sessions.lease(f.caller, request)).session);
+  assert.ok((await f.sessions.dispatch.lease(f.caller, request)).session);
   await f.sessions.authenticate(request.secret);
-  const bound = async () => (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session;
+  const bound = async () => (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session;
   await f.sessions.sweep();
   assert.equal((await bound())?.status, 'active');
   f.current(false);
@@ -760,11 +767,11 @@ test('the sweep ends a bound session once its machine is no longer current', asy
 
 test('managed Code v2 runner attaches its bound checkout using its verified source capability', async (t) => {
   const f = await fixture(t, { codeWorkspace: true });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
-  const leased = await f.sessions.lease(f.caller, request);
+  const leased = await f.sessions.dispatch.lease(f.caller, request);
   assert.ok(leased.session, leased.reason);
   const session = leased.session;
   const checkout = {
@@ -788,12 +795,12 @@ test('managed Code v2 runner attaches its bound checkout using its verified sour
   await f.sessions.authenticate(request.secret);
   assert.equal((await f.sessions.get(f.caller, session.id)).status, 'active');
   assert.equal(
-    (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.capturePending,
+    (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session?.capturePending,
     true,
   );
   await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
   assert.equal(
-    (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.capturePending,
+    (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session?.capturePending,
     true,
   );
 });
@@ -802,11 +809,11 @@ test('managed inspection does not hold a released disposable read-only checkout 
   for (const mode of ['ephemeral', 'retained'] as const) {
     await t.test(mode, async (subtest) => {
       const f = await fixture(subtest, { reviewWorkspace: mode });
-      await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-      await f.sessions.setDispatch(f.owner, { enabled: true });
+      await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+      await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
       await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
       const request = f.lease();
-      const leased = await f.sessions.lease(f.caller, request);
+      const leased = await f.sessions.dispatch.lease(f.caller, request);
       const session = leased.session!;
       assert.ok(session, leased.reason);
       const checkout = {
@@ -829,7 +836,7 @@ test('managed inspection does not hold a released disposable read-only checkout 
         sessionId: session.id,
         runnerId: f.runnerId,
       });
-      const inspected = (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session;
+      const inspected = (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session;
       assert.equal(inspected?.status, 'released');
       assert.equal(inspected?.releaseAcknowledged, true);
       assert.equal(inspected?.capturePending, mode === 'retained');
@@ -854,17 +861,17 @@ test('managed inspection holds a released session for its declared transcript fo
         }),
         stored: async (namespace, hash) => stored.get(`${namespace}/${hash}`) ?? null,
       };
-      await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-      await f.sessions.setDispatch(f.owner, { enabled: true });
+      await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+      await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
       await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
       const request = f.lease();
-      const leased = await f.sessions.lease(f.caller, request);
+      const leased = await f.sessions.dispatch.lease(f.caller, request);
       assert.ok(leased.session, leased.reason);
       const control = { sessionId: leased.session.id, runnerId: f.runnerId };
       await f.sessions.attach(f.caller, { ...control, hostRef: 'launch-managed' });
       await f.sessions.authenticate(request.secret);
       const pending = async () =>
-        (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session?.capturePending;
+        (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session?.capturePending;
       // No checkout and nothing declared: nothing is owed.
       assert.equal(await pending(), false);
       const transcript = {
@@ -877,7 +884,7 @@ test('managed inspection holds a released session for its declared transcript fo
       };
       await f.sessions.transcript(f.caller, transcript);
       await f.sessions.release(f.caller, control);
-      const released = (await f.sessions.inspectManaged(f.input.allocationId, 1))?.session;
+      const released = (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session;
       assert.deepEqual(
         [released?.status, released?.releaseAcknowledged, released?.capturePending],
         ['released', true, true],
@@ -904,12 +911,12 @@ test('managed inspection holds a released session for its declared transcript fo
 
 test('two concurrent managed lease requests create at most one bound session', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const [a, b] = await Promise.all([
-    f.sessions.lease(f.caller, f.lease()),
-    f.sessions.lease(f.caller, f.lease()),
+    f.sessions.dispatch.lease(f.caller, f.lease()),
+    f.sessions.dispatch.lease(f.caller, f.lease()),
   ]);
   assert.equal([a, b].filter((result) => result.session).length, 1);
   const bound = await f.state.read((tx) =>
@@ -923,11 +930,13 @@ test('two concurrent managed lease requests create at most one bound session', a
 
 test('cancelled admission cannot create a new managed claim', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   f.admits(false);
-  await assert.rejects(f.sessions.lease(f.caller, f.lease()), { code: 'managed_not_admitted' });
+  await assert.rejects(f.sessions.dispatch.lease(f.caller, f.lease()), {
+    code: 'managed_not_admitted',
+  });
   const row = await f.state.read((tx) =>
     tx.get<{ bound_session_id: string | null }>(
       'SELECT bound_session_id FROM session_managed_runners WHERE allocation_id=?',
@@ -942,11 +951,11 @@ test('revoking the captured source credential ends managed authority', async (t)
   const f = await fixture(t);
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
-    f.sessions.authenticateManaged(f.enrolled.controlToken),
+    f.sessions.managed.authenticate(f.enrolled.controlToken),
     (error: any) => error?.status === 401 || error?.status === 403,
   );
   await assert.rejects(
-    f.sessions.heartbeatRunner(f.caller, f.heartbeat(1)),
+    f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1)),
     (error: any) => error?.status === 401 || error?.status === 403,
   );
 });
@@ -954,13 +963,13 @@ test('revoking the captured source credential ends managed authority', async (t)
 test('a hosted session’s model grant holds while it is live or just handed off, and never activates it', async (t) => {
   let now = Date.now();
   const f = await fixture(t, { clock: () => now });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
-  const { session } = await f.sessions.lease(f.caller, request);
+  const { session } = await f.sessions.dispatch.lease(f.caller, request);
   assert.ok(session);
-  const grant = await f.sessions.managedModelGrant(request.secret);
+  const grant = await f.sessions.managed.modelGrant(request.secret);
   assert.deepEqual(grant, {
     id: session.id,
     projectId: f.source.projectId,
@@ -973,11 +982,11 @@ test('a hosted session’s model grant holds while it is live or just handed off
     ).toISOString(),
   });
   assert.equal((await f.sessions.get(f.caller, session.id)).status, 'offered');
-  assert.deepEqual(await f.sessions.managedModelGrant(session.id), grant);
+  assert.deepEqual(await f.sessions.managed.modelGrant(session.id), grant);
   // A session no managed runner holds, a stopped allocation and a source without read get none.
-  await assert.rejects(f.sessions.managedModelGrant(secret()), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.modelGrant(secret()), { code: 'unauthorized' });
   f.current(false);
-  await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'managed_revoked' });
+  await assert.rejects(f.sessions.managed.modelGrant(request.secret), { code: 'managed_revoked' });
   f.current(true);
   const worker = await f.sessions.authenticate(request.secret);
   const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
@@ -999,27 +1008,27 @@ test('a hosted session’s model grant holds while it is live or just handed off
   assert.equal((await f.sessions.get(f.caller, session.id)).closeReason, 'handoff');
   // Codex writes its closing turn after the handoff: the runner's minute of grace.
   now += 59_000;
-  assert.deepEqual(await f.sessions.managedModelGrant(request.secret), grant);
-  assert.deepEqual(await f.sessions.managedModelGrant(session.id), grant);
+  assert.deepEqual(await f.sessions.managed.modelGrant(request.secret), grant);
+  assert.deepEqual(await f.sessions.managed.modelGrant(session.id), grant);
   // A relay validating an admitted stream by session id still depends on its original credential.
   await new CredentialStore(f.state, () => now).revoke(tokenDigest(request.secret), 'sessions');
-  await assert.rejects(f.sessions.managedModelGrant(session.id), { code: 'unauthorized' });
-  await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.modelGrant(session.id), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.modelGrant(request.secret), { code: 'unauthorized' });
   now += 2_000;
-  await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.modelGrant(request.secret), { code: 'unauthorized' });
 });
 
 test('a model grant ends when the managed source loses read', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
-  assert.ok((await f.sessions.lease(f.caller, request)).session);
-  await f.sessions.managedModelGrant(request.secret);
+  assert.ok((await f.sessions.dispatch.lease(f.caller, request)).session);
+  await f.sessions.managed.modelGrant(request.secret);
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
-    f.sessions.managedModelGrant(request.secret),
+    f.sessions.managed.modelGrant(request.secret),
     (error: any) => error?.status === 401 || error?.status === 403,
   );
 });
@@ -1036,10 +1045,10 @@ for (const sourceKind of [undefined, 'human', 'key', 'service-human', 'service-k
         return token;
       },
     };
-    await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-    await f.sessions.setDispatch(f.owner, { enabled: true });
+    await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+    await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
     await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
-    const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+    const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
     assert.ok(bound);
     const input = { sessionId: bound.id, runnerId: f.runnerId, hostRef: 'hf-host' };
     await assert.rejects(f.sessions.huggingface(f.caller, input), { code: 'host_conflict' });
@@ -1093,10 +1102,10 @@ test('sealed review gets no HF account credential', async (t) => {
       assert.fail('sealed review read a secret');
     },
   };
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
-  const bound = (await f.sessions.lease(f.caller, f.lease())).session!;
+  const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   assert.ok(bound);
   const input = { sessionId: bound.id, runnerId: f.runnerId, hostRef: 'sealed-host' };
   const workspace = {
@@ -1126,10 +1135,10 @@ for (const sourceKind of ['human', 'key', 'service-human', 'service-key'] as con
         return { token: 'opaque-test', endpoint: 'https://merv.example/hf' };
       },
     };
-    await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-    await f.sessions.setDispatch(f.owner, { enabled: true });
+    await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+    await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
     await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
-    const session = (await f.sessions.lease(f.caller, f.lease())).session!;
+    const session = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
     const input = { sessionId: session.id, runnerId: f.runnerId, hostRef: 'hf-proxy-host' };
     await assert.rejects(f.sessions.huggingfaceAccess(f.caller, input), { code: 'host_conflict' });
     await f.sessions.attach(f.caller, input);
@@ -1192,10 +1201,10 @@ const nativeConnection = {
 };
 async function attachedNative(t: TestContext, options: Parameters<typeof fixture>[1] = {}) {
   const f = await fixture(t, options);
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
-  const session = (await f.sessions.lease(f.caller, f.lease())).session!;
+  const session = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   const input = { sessionId: session.id, runnerId: f.runnerId, hostRef: 'native-host' };
   const workspace = options.reviewWorkspace
     ? {
@@ -1338,8 +1347,8 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
       { name: 'sandboxes', url: 'https://sandbox.invalid/mcp', bearer: 'private-phase-connection' },
     ];
   });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   // A second ready unit must never be selected, even after the pinned work ends.
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: 'foreign-unit' });
   const sessions: string[] = [],
@@ -1347,7 +1356,7 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
     tokens: string[] = [];
   for (let phase = 0; phase < 4; phase++) {
     const request = f.lease();
-    const result = await f.sessions.lease(f.caller, request);
+    const result = await f.sessions.dispatch.lease(f.caller, request);
     assert.ok(result.session, result.reason);
     const session = result.session;
     assert.equal(session.instanceId, f.workTarget!.id);
@@ -1358,19 +1367,19 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
     assert.equal(session.role, phase % 2 ? 'reviewer' : 'producer');
     assert.equal(session.source.kind, phase % 2 ? 'service' : 'actor');
     assert.equal(
-      (await f.sessions.lease(f.caller, request)).session?.id,
+      (await f.sessions.dispatch.lease(f.caller, request)).session?.id,
       session.id,
       'exact request replays',
     );
-    assert.equal((await f.sessions.lease(f.caller, f.lease())).reason, 'capacity_full');
+    assert.equal((await f.sessions.dispatch.lease(f.caller, f.lease())).reason, 'capacity_full');
     sessions.push(session.id);
     actors.push(session.actorId);
     tokens.push(request.secret);
     if (phase) {
-      await assert.rejects(f.sessions.managedModelGrant(tokens[phase - 1]!), {
+      await assert.rejects(f.sessions.managed.modelGrant(tokens[phase - 1]!), {
         code: 'unauthorized',
       });
-      await assert.rejects(f.sessions.managedModelGrant(sessions[phase - 1]!), {
+      await assert.rejects(f.sessions.managed.modelGrant(sessions[phase - 1]!), {
         code: 'unauthorized',
       });
     }
@@ -1410,7 +1419,7 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
       ),
     );
     assert.equal(
-      (await f.sessions.lease(f.caller, f.lease())).reason,
+      (await f.sessions.dispatch.lease(f.caller, f.lease())).reason,
       'capacity_full',
       'closure alone cannot reuse a process',
     );
@@ -1420,7 +1429,7 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
   assert.equal(new Set(sessions).size, 4);
   assert.equal(new Set(actors).size, 4);
   assert.equal(
-    (await f.sessions.lease(f.caller, f.lease())).session,
+    (await f.sessions.dispatch.lease(f.caller, f.lease())).session,
     null,
     'never lease the unrelated work',
   );
@@ -1466,11 +1475,11 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
 test('work host keeps capture and transcript barriers, settings, source authority and global capacity', async (t) => {
   let now = Date.now();
   const f = await fixture(t, { workHost: true, codeWorkspace: true, clock: () => now });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  const presence = await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const presence = await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   const concurrent = await Promise.all([
-    f.sessions.lease(f.caller, f.lease()),
-    f.sessions.lease(f.caller, f.lease()),
+    f.sessions.dispatch.lease(f.caller, f.lease()),
+    f.sessions.dispatch.lease(f.caller, f.lease()),
   ]);
   assert.equal(concurrent.filter((x) => x.session).length, 1);
   const session = concurrent.find((x) => x.session)!.session!;
@@ -1505,10 +1514,10 @@ test('work host keeps capture and transcript barriers, settings, source authorit
   };
   await f.sessions.transcript(f.caller, transcript);
   await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
-  assert.equal((await f.sessions.lease(f.caller, f.lease())).reason, 'capacity_full');
+  assert.equal((await f.sessions.dispatch.lease(f.caller, f.lease())).reason, 'capacity_full');
   await f.sessions.workspaceResult(f.caller, { ...control, workspace });
   assert.equal(
-    (await f.sessions.lease(f.caller, f.lease())).reason,
+    (await f.sessions.dispatch.lease(f.caller, f.lease())).reason,
     'capacity_full',
     'transcript still owed',
   );
@@ -1516,35 +1525,35 @@ test('work host keeps capture and transcript barriers, settings, source authorit
   // free again rather than held to its deadline.
   now += 31 * 60_000;
   assert.equal(
-    (await f.sessions.inspectManaged(f.input.allocationId, 1))!.session!.capturePending,
+    (await f.sessions.managed.inspect(f.input.allocationId, 1))!.session!.capturePending,
     false,
     'an owed transcript holds a work host only for the grace',
   );
   stored.set(`transcripts-${session.projectId}/${transcript.sha256}`, 10);
   await f.sessions.transcript(f.caller, { ...transcript, deliver: true });
   assert.equal(
-    (await f.sessions.inspectManaged(f.input.allocationId, 1))!.session!.capturePending,
+    (await f.sessions.managed.inspect(f.input.allocationId, 1))!.session!.capturePending,
     false,
   );
   // A settings hold is checked under the one host presence, including later phase sources.
-  await f.sessions.setRunnerSettings(f.owner, {
+  await f.sessions.dispatch.setRunnerSettings(f.owner, {
     runnerId: presence.id,
     settings: { platforms: [{ name: profile.name, enabled: false, parallelism: 1 }] },
   });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
-  assert.equal((await f.sessions.lease(f.caller, f.lease())).reason, 'platform_disabled');
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  assert.equal((await f.sessions.dispatch.lease(f.caller, f.lease())).reason, 'platform_disabled');
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
-  await assert.rejects(f.sessions.lease(f.caller, f.lease()), (error: any) =>
+  await assert.rejects(f.sessions.dispatch.lease(f.caller, f.lease()), (error: any) =>
     [401, 403].includes(error.status),
   );
 });
 
 test('revoking the host sponsor ends its review phase and never restores old producer credentials', async (t) => {
   const f = await fixture(t, { workHost: true });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   const firstRequest = f.lease();
-  const first = (await f.sessions.lease(f.caller, firstRequest)).session!;
+  const first = (await f.sessions.dispatch.lease(f.caller, firstRequest)).session!;
   const worker = await f.sessions.authenticate(firstRequest.secret);
   const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
   await f.sessions.invocations.run(prepared, (caller) =>
@@ -1563,26 +1572,28 @@ test('revoking the host sponsor ends its review phase and never restores old pro
   );
   await f.sessions.release(f.caller, { sessionId: first.id, runnerId: f.runnerId });
   const nextRequest = f.lease();
-  const next = (await f.sessions.lease(f.caller, nextRequest)).session!;
+  const next = (await f.sessions.dispatch.lease(f.caller, nextRequest)).session!;
   assert.equal(next.role, 'reviewer');
-  assert.equal((await f.sessions.managedModelGrant(nextRequest.secret)).id, next.id);
+  assert.equal((await f.sessions.managed.modelGrant(nextRequest.secret)).id, next.id);
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
-  await assert.rejects(f.sessions.managedModelGrant(nextRequest.secret), (error: any) =>
+  await assert.rejects(f.sessions.managed.modelGrant(nextRequest.secret), (error: any) =>
     [401, 403].includes(error.status),
   );
-  await assert.rejects(f.sessions.authenticateManaged(f.enrolled.controlToken), (error: any) =>
+  await assert.rejects(f.sessions.managed.authenticate(f.enrolled.controlToken), (error: any) =>
     [401, 403].includes(error.status),
   );
   // Its old producer credential is still revoked; changing source never transfers it.
-  await assert.rejects(f.sessions.managedModelGrant(firstRequest.secret), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.modelGrant(firstRequest.secret), {
+    code: 'unauthorized',
+  });
 });
 
 test('a work host offers its review phase a checkout under the reviewer', async (t) => {
   const f = await fixture(t, { workHost: true, codeWorkspace: true });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   const firstRequest = f.lease();
-  const first = (await f.sessions.lease(f.caller, firstRequest)).session!;
+  const first = (await f.sessions.dispatch.lease(f.caller, firstRequest)).session!;
   const control = { sessionId: first.id, runnerId: f.runnerId, hostRef: 'phase-one' };
   const workspace = {
     repositoryId: 'repo',
@@ -1612,7 +1623,7 @@ test('a work host offers its review phase a checkout under the reviewer', async 
   );
   await f.sessions.release(f.caller, { sessionId: first.id, runnerId: f.runnerId });
   await f.sessions.workspaceResult(f.caller, { ...control, workspace });
-  const next = await f.sessions.lease(f.caller, f.lease());
+  const next = await f.sessions.dispatch.lease(f.caller, f.lease());
   assert.equal(next.session?.role, 'reviewer', next.reason);
 });
 
@@ -1650,11 +1661,11 @@ test('work-host Code transfers use only the unfinished assignment, including clo
     await core.close();
     rmSync(root, { recursive: true, force: true });
   });
-  await f.sessions.setDispatch(f.owner, { enabled: true });
-  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   const request = f.lease();
-  const first = (await f.sessions.lease(f.caller, request)).session!;
-  const caller = await f.sessions.authenticateManaged(f.enrolled.controlToken);
+  const first = (await f.sessions.dispatch.lease(f.caller, request)).session!;
+  const caller = await f.sessions.managed.authenticate(f.enrolled.controlToken);
   assert.equal(caller.managed!.boundSessionId, first.id);
   const read = (who: Caller, sessionId = first.id) =>
     store.export(who, { sessionId, head, haves: [head] });
@@ -1697,9 +1708,9 @@ test('work-host Code transfers use only the unfinished assignment, including clo
   // Closure does not revoke the supervisor's owed final transfer before settlement.
   assert.equal((await store.beginUpload(caller, final)).status, 'completed');
   assert.equal(finalized, 1);
-  const second = (await f.sessions.lease(f.caller, f.lease())).session!;
+  const second = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   assert.ok(second);
-  const successor = await f.sessions.authenticateManaged(f.enrolled.controlToken);
+  const successor = await f.sessions.managed.authenticate(f.enrolled.controlToken);
   assert.equal(successor.managed!.boundSessionId, second.id);
   await assert.rejects(read(caller), { code: 'unauthorized' });
   await assert.rejects(store.beginUpload(caller, final), { code: 'unauthorized' });

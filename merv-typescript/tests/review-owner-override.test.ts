@@ -73,7 +73,7 @@ async function fixture(t: TestContext) {
   /** A worker whose every lease `source` directs. */
   const worker = async (source: Caller) => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
-    await sessions.heartbeatRunner(source, {
+    await sessions.dispatch.heartbeatRunner(source, {
       runnerId: 'external',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],

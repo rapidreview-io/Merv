@@ -29,7 +29,7 @@ export async function systemStatus(caller: Caller, sessions: Sessions) {
       ...(await sessions.statusSections(caller, null)),
     };
   }
-  const project = await sessions.projectStatus(caller, true);
+  const project = await sessions.dispatch.projectStatus(caller, true);
   const blockers = project.stuck as StuckReport;
   const sections = await sessions.statusSections(caller, project);
   return {

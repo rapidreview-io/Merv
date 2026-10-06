@@ -16,7 +16,7 @@ async function runner(
   source: Caller,
   runnerId = 'external',
 ) {
-  await app.ctx.sessions.heartbeatRunner(source, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(source, {
     runnerId,
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],

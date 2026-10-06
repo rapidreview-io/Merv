@@ -35,14 +35,14 @@ async function fixture(t: TestContext) {
     credentialId: boot.credential.id,
   };
   const source = await app.ctx.scope.delegationSource(owner);
-  app.ctx.sessions.registerManagedValidator({
+  app.ctx.sessions.managed.registerValidator({
     current: async (binding) =>
       binding.allocationId === 'allocation-api' &&
       binding.epoch === 1 &&
       binding.source.actorId === owner.actorId,
     admits: async () => true,
   });
-  const enrollment = await app.ctx.sessions.ensureManagedEnrollment({
+  const enrollment = await app.ctx.sessions.managed.ensure({
     allocationId: 'allocation-api',
     epoch: 1,
     source,
@@ -269,7 +269,7 @@ test('enrollment rejects spoofed fields and managed caller cannot reach registry
     f.projectId,
   );
   assert.equal(enrolled.status, 200);
-  const caller = await f.app.ctx.sessions.authenticateManaged(enrolled.body.controlToken);
+  const caller = await f.app.ctx.sessions.managed.authenticate(enrolled.body.controlToken);
   await assert.rejects(f.app.ctx.scope.delegationSource(caller), {
     code: 'managed_runner_forbidden',
   });
@@ -326,9 +326,6 @@ async function credentialGate(t: TestContext) {
   const sessions = {
     ...Object.fromEntries(
       [
-        'describe',
-        'lease',
-        'heartbeatRunner',
         'get',
         'attach',
         'heartbeat',
@@ -338,15 +335,22 @@ async function credentialGate(t: TestContext) {
         'huggingfaceAccess',
         'launchConnections',
         'transcript',
-        'projectStatus',
         'assignAgent',
         'releaseAgentAssignment',
         'resetAgentContext',
       ].map((name) => [name, reach(`sessions.${name}`)]),
     ),
     authenticate: reach('sessions.authenticate', session),
-    authenticateManaged: reach('sessions.authenticateManaged', managed),
-    enrollManaged: reach('sessions.enrollManaged', { controlToken: 'mr_new' }),
+    dispatch: Object.fromEntries(
+      ['lease', 'heartbeatRunner', 'projectStatus'].map((name) => [
+        name,
+        reach(`sessions.dispatch.${name}`),
+      ]),
+    ),
+    managed: {
+      authenticate: reach('sessions.managed.authenticate', managed),
+      enroll: reach('sessions.managed.enroll', { controlToken: 'mr_new' }),
+    },
     agentSelf: async (token: string) => {
       reached.push('sessions.agentSelf');
       if (!token.startsWith('ms_')) throw new MervError('unauthorized', 'Invalid agent key', 401);
@@ -440,8 +444,8 @@ const ownersPresent: GateRow[] = [
   // A managed runner reaches exactly its control routes.
   ...(
     [
-      ['POST', '/sessions/runners/heartbeat', 'sessions.heartbeatRunner'],
-      ['POST', '/sessions/lease', 'sessions.lease'],
+      ['POST', '/sessions/runners/heartbeat', 'sessions.dispatch.heartbeatRunner'],
+      ['POST', '/sessions/lease', 'sessions.dispatch.lease'],
       ['GET', '/sessions/session_1', 'sessions.get'],
       ['POST', '/sessions/session_1/attach', 'sessions.attach'],
       ['POST', '/sessions/session_1/heartbeat', 'sessions.heartbeat'],
@@ -544,7 +548,7 @@ const ownersPresent: GateRow[] = [
     method: 'POST',
     path: '/sessions/runners/enroll',
     body: {},
-    reaches: 'sessions.enrollManaged',
+    reaches: 'sessions.managed.enroll',
   },
   ...(
     [
@@ -683,7 +687,7 @@ async function checkRows(
       // An absent owner is never asked; authentication may have run first.
       else
         assert.ok(
-          result.reached.every((owner) => owner === 'sessions.authenticateManaged'),
+          result.reached.every((owner) => owner === 'sessions.managed.authenticate'),
           `${label} reached ${result.reached}`,
         );
     }

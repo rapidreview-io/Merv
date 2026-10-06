@@ -215,7 +215,7 @@ const runner = new MachineRunner(
 );
 try {
   await runner.start();
-  await app.ctx.sessions.setDispatch(source, { enabled: true });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
   const deadline = Date.now() + 12 * 60_000;
   let last = '';
   while (true) {
@@ -242,7 +242,7 @@ try {
     assert.ok(snapshot.launches.length <= 3, 'Repeated failed launches');
     await delay(1000);
   }
-  await app.ctx.sessions.setDispatch(source, { enabled: false });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
   await runner.stop();
   const sessions = (await app.ctx.sessions.list(source)).sort(
     (a, b) => a.expectedRevision - b.expectedRevision,

@@ -127,7 +127,7 @@ export async function exerciseRuntime(start) {
 
     work = currentWork(app.ctx, { directory: workDirectory, source: owner });
     const held = new Map();
-    await app.ctx.sessions.heartbeatRunner(owner, {
+    await app.ctx.sessions.dispatch.heartbeatRunner(owner, {
       runnerId: 'external',
       machine: { hostname: 'acceptance', system: process.platform, architecture: process.arch },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -371,7 +371,7 @@ export async function exerciseRuntime(start) {
     assert.equal(retained.assignments.length, 2);
     assert.equal((await app.ctx.research.get(owner, research.id)).reflectionId, reflection.id);
     assert.equal((await app.ctx.reflections.get(owner, reflection.id)).lenses.length, 5);
-    const dispatch = (await app.ctx.sessions.projectStatus(owner)).dispatch;
+    const dispatch = (await app.ctx.sessions.dispatch.projectStatus(owner)).dispatch;
     assert.equal(dispatch.enabled, false, 'Synthetic project must never enable dispatch');
     return {
       projectId: owner.projectId,

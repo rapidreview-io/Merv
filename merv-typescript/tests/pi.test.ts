@@ -33,20 +33,22 @@ const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
 test('Pi offers and runs system.status in a conversation', async (t) => {
   const f = await fixture(t);
   const sessions = {
-    projectStatus: async (caller: Caller) => {
-      assert.equal(caller.projectId, f.operator.projectId);
-      return {
-        observedAt: '2026-09-26T00:00:00Z',
-        dispatch: { enabled: false, ownMachines: true, fleet: false },
-        runnerTotal: 0,
-        runners: [],
-        liveSessionCount: 0,
-        sessionTotal: 0,
-        sessions: [],
-        queueTotal: 0,
-        queue: [],
-        stuck: { total: 0, counts: {}, items: [], truncated: false },
-      };
+    dispatch: {
+      projectStatus: async (caller: Caller) => {
+        assert.equal(caller.projectId, f.operator.projectId);
+        return {
+          observedAt: '2026-09-26T00:00:00Z',
+          dispatch: { enabled: false, ownMachines: true, fleet: false },
+          runnerTotal: 0,
+          runners: [],
+          liveSessionCount: 0,
+          sessionTotal: 0,
+          sessions: [],
+          queueTotal: 0,
+          queue: [],
+          stuck: { total: 0, counts: {}, items: [], truncated: false },
+        };
+      },
     },
     statusSections: async () => ({}),
   } as unknown as Sessions;

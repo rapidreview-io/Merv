@@ -194,7 +194,7 @@ test(
       }
     };
     await runner.start();
-    await app.ctx.sessions.setDispatch(source, { enabled: true });
+    await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
     await until(() => reportAttempts > 0, 'First final capture reaches reporting');
     const first = (await app.ctx.sessions.list(source))[0];
     assert.equal((await app.ctx.workflows.get(source, target.id)).state, 'second');
@@ -405,7 +405,7 @@ test(
       rmSync(directory, { recursive: true, force: true });
     });
     // Dispatch first: the runner's first lease finds the work, rather than a decline it backs off.
-    await app.ctx.sessions.setDispatch(source, { enabled: true });
+    await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
     await runner.start();
     await runner.tick();
     assert.equal(lostAttach, true);
@@ -413,7 +413,7 @@ test(
     assert.ok(offered.workspace?.attachment);
     assert.equal(offered.workspace.result, null);
     assert.equal(offered.activatedAt, null);
-    await app.ctx.sessions.setDispatch(source, { enabled: false });
+    await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
     await runner.stop();
     assert.equal(lostRelease, true);
     assert.equal(

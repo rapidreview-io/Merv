@@ -81,7 +81,7 @@ try {
   sourceToken = boot.token;
   const source = await app.ctx.scope.delegationSource(caller);
   const allocationId = `local_${run}`;
-  app.ctx.sessions.registerManagedValidator({
+  app.ctx.sessions.managed.registerValidator({
     current: async (binding) =>
       binding.allocationId === allocationId &&
       binding.epoch === 1 &&
@@ -90,7 +90,7 @@ try {
       binding.source.actorId === caller.actorId,
     admits: async (id, epoch) => id === allocationId && epoch === 1,
   });
-  const { enrollmentToken } = await app.ctx.sessions.ensureManagedEnrollment({
+  const { enrollmentToken } = await app.ctx.sessions.managed.ensure({
     allocationId,
     epoch: 1,
     source,
@@ -132,7 +132,7 @@ try {
     checks: ['The shell reports UID 12001.', 'The calculation returns 42.'],
     requestId: run,
   });
-  await app.ctx.sessions.setDispatch(caller, { enabled: true });
+  await app.ctx.sessions.dispatch.setDispatch(caller, { enabled: true });
   // This app's Fleet workflow owner is off, so nothing else makes the relay's tables.
   await app.ctx.state.migrate('fleet_workflow', modelMigrations);
   const relay = codexModelRelay(app.ctx.sessions, app.ctx.state, {

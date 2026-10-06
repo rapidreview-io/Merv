@@ -190,7 +190,7 @@ async function fixture(t: TestContext, store: 's3' | 'disk' | 'none' = 's3') {
           platforms: [{ ...profile, parallelism: managed ? 1 : 4 }],
           capacity: managed ? 1 : 4,
         });
-        await app.ctx.sessions.setDispatch(owner, { enabled: true });
+        await app.ctx.sessions.dispatch.setDispatch(owner, { enabled: true });
         await start();
         const input = {
           runnerId,
@@ -475,13 +475,13 @@ test('the runner that held a session declares after it closed; every other calle
 test('a managed runner declares and delivers for its bound session after release, and no other', async (t) => {
   const f = await fixture(t);
   const a = await f.project('Managed');
-  f.app.ctx.sessions.registerManagedValidator({
+  f.app.ctx.sessions.managed.registerValidator({
     current: async () => true,
     admits: async () => true,
     retired: async () => false,
   });
   const allocationId = randomUUID();
-  const { enrollmentToken } = await f.app.ctx.sessions.ensureManagedEnrollment({
+  const { enrollmentToken } = await f.app.ctx.sessions.managed.ensure({
     allocationId,
     epoch: 1,
     source: await f.app.ctx.scope.delegationSource(a.owner),
@@ -490,7 +490,7 @@ test('a managed runner declares and delivers for its bound session after release
     capabilities: [],
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
-  const { controlToken } = await f.app.ctx.sessions.enrollManaged(enrollmentToken, {
+  const { controlToken } = await f.app.ctx.sessions.managed.enroll(enrollmentToken, {
     workerNonce: randomBytes(32).toString('hex'),
   });
   const runnerId = `managed-${allocationId}`;

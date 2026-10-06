@@ -181,7 +181,7 @@ test(
       rmSync(directory, { recursive: true, force: true });
     });
     await runner.start();
-    await app.ctx.sessions.setDispatch(source, { enabled: true });
+    await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
     const deadline = Date.now() + 25_000;
     while (true) {
       await runner.tick();
@@ -208,7 +208,7 @@ test(
     assert.ok(dropped);
     assert.equal(git('rev-parse', 'HEAD'), initial);
     assert.equal(git('status', '--porcelain'), '');
-    const status = await app.ctx.sessions.projectStatus(source);
+    const status = await app.ctx.sessions.dispatch.projectStatus(source);
     assert.equal(status.sessions[0].workspace?.result?.headOid, workspace.result!.headOid);
     const db = await app.ctx.state.read(
       async (sql) =>

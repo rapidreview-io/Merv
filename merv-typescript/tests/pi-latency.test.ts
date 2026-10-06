@@ -214,8 +214,8 @@ test(
       });
     await task();
     await task();
-    await sessions.setDispatch(operator, { enabled: true });
-    await sessions.heartbeatRunner(producer, {
+    await sessions.dispatch.setDispatch(operator, { enabled: true });
+    await sessions.dispatch.heartbeatRunner(producer, {
       runnerId: 'latency-runner',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 2 }],
@@ -260,7 +260,7 @@ test(
       };
     };
     const lease = () =>
-      sessions.lease(producer, {
+      sessions.dispatch.lease(producer, {
         runnerId: 'latency-runner',
         requestId: randomUUID(),
         secret: `ms_${randomBytes(32).toString('base64url')}`,

@@ -257,11 +257,11 @@ test('Git attachment and final capture are immutable, replayable and independent
     oldRow,
   );
   assert.deepEqual(
-    (await f.app.ctx.sessions.projectStatus(f.source)).sessions[0].workspace,
+    (await f.app.ctx.sessions.dispatch.projectStatus(f.source)).sessions[0].workspace,
     closed.workspace,
   );
   assert.equal(
-    (await f.app.ctx.sessions.projectStatus(f.source)).sessions[0].workspaceMode,
+    (await f.app.ctx.sessions.dispatch.projectStatus(f.source)).sessions[0].workspaceMode,
     'persistent',
   );
   assert.deepEqual((await f.app.ctx.sessions.list(f.source))[0].workspace, closed.workspace);

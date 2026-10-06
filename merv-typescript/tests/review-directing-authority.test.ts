@@ -47,7 +47,7 @@ async function fixture(t: TestContext) {
   /** A worker identity whose every lease is directed by `source`. */
   const worker = async (source: Caller) => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
-    await app.ctx.sessions.heartbeatRunner(source, {
+    await app.ctx.sessions.dispatch.heartbeatRunner(source, {
       runnerId: 'external',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],

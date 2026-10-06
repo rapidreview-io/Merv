@@ -90,7 +90,7 @@ async function fixture(t: TestContext) {
   const issue = async (role: 'operator' | 'producer' | 'reviewer' | 'reader'): Promise<Caller> => {
     const issued = await scope.issueActor(source, { name: role, role });
     if (role === 'operator')
-      await sessions.heartbeatRunner(
+      await sessions.dispatch.heartbeatRunner(
         {
           projectId: source.projectId,
           actorId: issued.actor.id,
@@ -269,7 +269,7 @@ async function fixture(t: TestContext) {
     return next;
   };
   const heartbeat = (caller: Caller) =>
-    sessions.heartbeatRunner(caller, {
+    sessions.dispatch.heartbeatRunner(caller, {
       runnerId: 'assignment-test',
       machine: { hostname: 'test', system: process.platform, architecture: process.arch },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 1 }],

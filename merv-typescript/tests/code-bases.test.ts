@@ -266,12 +266,12 @@ test('admission absence, capacity and budgets wait visibly without consuming att
   assert.equal(base.attempts, 0);
   f.advance(60_000);
   await f.state.transaction((tx) => f.sessions.serviceWork.settle(tx, other, 'completed'));
-  await f.sessions.setBudget(f.admin, { maxWallMinutes: 1 });
+  await f.sessions.dispatch.setBudget(f.admin, { maxWallMinutes: 1 });
   await f.bases.work(f.projectId);
   base = (await f.state.read((sql) => f.bases.find(sql, f.projectId, [a, b])))!;
   assert.equal(base.blocker, 'budget_exceeded');
   assert.equal(base.attempts, 0);
-  await f.sessions.setBudget(f.admin, { maxWallMinutes: null });
+  await f.sessions.dispatch.setBudget(f.admin, { maxWallMinutes: null });
   f.advance(6000);
   await f.bases.work(f.projectId);
   assert.equal(

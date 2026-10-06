@@ -200,7 +200,7 @@ test(
       rmSync(directory, { recursive: true, force: true });
     });
     await runner.start();
-    await app.ctx.sessions.setDispatch(source, { enabled: true });
+    await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
     const deadline = Date.now() + 30_000;
     while (true) {
       await runner.tick();

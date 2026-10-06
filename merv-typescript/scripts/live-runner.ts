@@ -49,7 +49,7 @@ try {
   });
   await runner.start();
   assert.equal(runner.snapshot().launches.length, 0, 'Dispatch defaults off');
-  await app.ctx.sessions.setDispatch(source, { enabled: true });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
   const deadline = Date.now() + 12 * 60_000;
   let last = '';
   while ((await app.ctx.tasks.get(source, task.id)).workflow.state !== 'done') {
@@ -72,7 +72,7 @@ try {
     );
     await delay(1000);
   }
-  await app.ctx.sessions.setDispatch(source, { enabled: false });
+  await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
   await runner.tick();
   await runner.stop();
   await app.ctx.sessions.sweep();

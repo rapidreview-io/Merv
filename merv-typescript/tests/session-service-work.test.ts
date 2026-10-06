@@ -73,7 +73,8 @@ async function fixture(t: TestContext, dispatchByDefault?: boolean) {
   const settle = (value = input, outcome: 'completed' | 'failed' | 'expired' = 'completed') =>
     state.transaction((tx) => sessions.serviceWork.settle(tx, value, outcome));
   const usage = (instanceId?: string) => sessions.usage(caller, instanceId ? { instanceId } : {});
-  if (dispatchByDefault === undefined) await sessions.setDispatch(caller, { enabled: true });
+  if (dispatchByDefault === undefined)
+    await sessions.dispatch.setDispatch(caller, { enabled: true });
   return {
     state,
     scope,
@@ -176,7 +177,7 @@ test('shared wall time is charged once per project and fully to immutable roots;
   await f.settle(first);
   assert.equal((await f.usage()).totals.wallMs, 60_000);
   for (const root of f.roots) assert.equal((await f.usage(root.id)).totals.wallMs, 60_000);
-  await f.sessions.setBudget(f.caller, { instanceId: f.roots[0]!.id, maxWallMinutes: 1 });
+  await f.sessions.dispatch.setBudget(f.caller, { instanceId: f.roots[0]!.id, maxWallMinutes: 1 });
   const retry = {
     ...f.input,
     operationId: 'next',
@@ -189,10 +190,13 @@ test('shared wall time is charged once per project and fully to immutable roots;
     ))!.n,
     1,
   );
-  await f.sessions.setBudget(f.caller, { instanceId: f.roots[0]!.id, maxWallMinutes: null });
-  await f.sessions.setDispatch(f.caller, { enabled: false });
+  await f.sessions.dispatch.setBudget(f.caller, {
+    instanceId: f.roots[0]!.id,
+    maxWallMinutes: null,
+  });
+  await f.sessions.dispatch.setDispatch(f.caller, { enabled: false });
   assert.deepEqual(await f.admit(retry), { admitted: false, reason: 'dispatch_disabled' });
-  await f.sessions.setDispatch(f.caller, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.caller, { enabled: true });
   assert.equal((await f.admit(retry)).admitted, true);
   await f.settle(retry);
 });
@@ -230,7 +234,7 @@ test('service admission follows the dispatcher: no dispatch row means dispatchBy
   assert.equal((await on.admit()).admitted, true);
   const off = await fixture(t, false);
   assert.deepEqual(await off.admit(), { admitted: false, reason: 'dispatch_disabled' });
-  await on.sessions.setDispatch(on.caller, { enabled: false });
+  await on.sessions.dispatch.setDispatch(on.caller, { enabled: false });
   const other = { ...on.input, operationId: 'two' };
   assert.deepEqual(await on.admit(other), { admitted: false, reason: 'dispatch_disabled' });
 });

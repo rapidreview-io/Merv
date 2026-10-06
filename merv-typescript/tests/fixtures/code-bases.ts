@@ -72,7 +72,7 @@ export async function baseFixture(t: TestContext, enabled = true) {
   const boot = await scope.bootstrap({ projectName: 'Bases', actorName: 'Owner' });
   const PROJECT = boot.project.id;
   const admin = { projectId: PROJECT, actorId: boot.actor.id, credentialId: boot.credential.id };
-  await sessions.setDispatch(admin, { enabled: true });
+  await sessions.dispatch.setDispatch(admin, { enabled: true });
   const repositories = new CodeRepositories({
     root: join(root, 'code'),
     quotaBytes: 1024 * 1024 * 1024,

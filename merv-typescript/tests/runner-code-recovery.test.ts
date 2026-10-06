@@ -151,7 +151,7 @@ test(
         };
         if (value.command) {
           lost = true;
-          await app.ctx.sessions.setDispatch(source, { enabled: false });
+          await app.ctx.sessions.dispatch.setDispatch(source, { enabled: false });
           await app.ctx.sessions.release(source, {
             sessionId: value.command.sessionId,
             runnerId: value.command.runnerId,
@@ -198,7 +198,7 @@ test(
       }
     });
     await runner.start();
-    await app.ctx.sessions.setDispatch(source, { enabled: true });
+    await app.ctx.sessions.dispatch.setDispatch(source, { enabled: true });
     const deadline = Date.now() + 30_000;
     while (!lost || !completionAttempts) {
       await runner.tick();

@@ -636,7 +636,7 @@ test('Tasks sessions are admitted by fixed producer and reviewer policies, witho
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
-  await sessions.heartbeatRunner(operator, {
+  await sessions.dispatch.heartbeatRunner(operator, {
     runnerId: 'test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],

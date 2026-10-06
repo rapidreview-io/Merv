@@ -85,6 +85,8 @@ export class ManagedRunnerBindings {
     private clock: () => number,
     private secretEnv: string | undefined,
     private credentials: CredentialStore,
+    /** Refuses once Sessions has closed. */
+    private available: () => void,
   ) {}
 
   /** Whether Fleet rents machines for this server's automatic work at all. */
@@ -95,6 +97,7 @@ export class ManagedRunnerBindings {
     return !!this.validator?.serves?.(projectId);
   }
   registerValidator(validator: ManagedRunnerValidator): () => void {
+    this.available();
     check(
       !this.validator,
       'managed_validator_registered',
@@ -161,6 +164,7 @@ export class ManagedRunnerBindings {
     );
   }
   async ensure(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }> {
+    this.available();
     const parsed = enrollment.safeParse(input);
     check(parsed.success, 'invalid_managed_enrollment', 'Managed enrollment identity is invalid');
     const value = parsed.data as ManagedEnrollmentInput;
@@ -248,6 +252,7 @@ export class ManagedRunnerBindings {
     input: unknown,
     projectId?: unknown,
   ): Promise<{ controlToken: string }> {
+    this.available();
     const parsed = z
       .object({ workerNonce: z.string().regex(/^[0-9a-f]{64}$/) })
       .strict()
@@ -328,6 +333,7 @@ export class ManagedRunnerBindings {
     } as Caller;
   }
   async authenticate(token: string): Promise<Caller> {
+    this.available();
     check(
       typeof token === 'string' && /^mr_[0-9a-f]{64}$/.test(token),
       'unauthorized',
@@ -364,6 +370,7 @@ export class ManagedRunnerBindings {
    *  id: live, or closed by its own handoff within the runner's grace so Codex finishes its
    *  closing turn. Reading it never activates an offered session. */
   async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
+    this.available();
     return await this.state.snapshot(() =>
       this.state.transaction(async (tx) => {
         const bearer = sessionSecretPattern.test(tokenOrSessionId);
@@ -700,6 +707,7 @@ export class ManagedRunnerBindings {
     epoch: number,
     transaction?: Transaction,
   ): Promise<ManagedRunnerInspection | null> {
+    this.available();
     check(
       typeof allocationId === 'string' &&
         allocationId.length > 0 &&

@@ -130,44 +130,47 @@ async function fixture(t: TestContext) {
     projectId: boot.project.id,
     credentialId: issued.credential.id,
   };
-  await sessions.setDispatch(owner, { enabled: true });
+  await sessions.dispatch.setDispatch(owner, { enabled: true });
   return { sessions, source, owner, hosted, scratch, local };
 }
 
 test('work that names a workspace driver is offered only to a runner that advertises it, and the rest of the queue still reaches the others', async (t) => {
   const f = await fixture(t);
   // A legacy runner sends the closed heartbeat it always sent, and it is still accepted.
-  const legacy = await f.sessions.heartbeatRunner(f.source, presence('legacy'));
+  const legacy = await f.sessions.dispatch.heartbeatRunner(f.source, presence('legacy'));
   assert.equal((legacy as { capabilities?: string[] }).capabilities, undefined);
-  const stored = await f.sessions.heartbeatRunner(f.source, presence('modern', ['code.v2']));
+  const stored = await f.sessions.dispatch.heartbeatRunner(
+    f.source,
+    presence('modern', ['code.v2']),
+  );
   assert.deepEqual((stored as { capabilities?: string[] }).capabilities, ['code.v2']);
   await assert.rejects(
-    f.sessions.heartbeatRunner(f.source, presence('bad', ['Not A Capability'])),
+    f.sessions.dispatch.heartbeatRunner(f.source, presence('bad', ['Not A Capability'])),
     (error: unknown) => error instanceof MervError && error.code === 'invalid_runner',
   );
 
   const first = await f.hosted.start(f.source, { workflow: 'hosted', requestId: request() });
   const plain = await f.scratch.start(f.source, { workflow: 'scratch', requestId: request() });
-  const taken = await f.sessions.lease(f.source, auto('legacy'));
+  const taken = await f.sessions.dispatch.lease(f.source, auto('legacy'));
   assert.equal(taken.session?.instanceId, plain.id, 'the driver-free work behind it is offered');
-  assert.deepEqual(await f.sessions.lease(f.source, auto('legacy')), {
+  assert.deepEqual(await f.sessions.dispatch.lease(f.source, auto('legacy')), {
     session: null,
     reason: 'runner_incompatible',
   });
-  const status = await f.sessions.projectStatus(f.owner);
+  const status = await f.sessions.dispatch.projectStatus(f.owner);
   assert.equal(
     status.runners.find((runner) => runner.runnerId === 'legacy')?.lastDecision,
     'runner_incompatible',
   );
-  const offered = await f.sessions.lease(f.source, auto('modern'));
+  const offered = await f.sessions.dispatch.lease(f.source, auto('modern'));
   assert.equal(offered.session?.instanceId, first.id);
   assert.equal(offered.session?.execution.policy.workspace?.mode, 'persistent');
 });
 
 test('a hand offer requires the driver before leasing and attachment rechecks the capability', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, presence('legacy'));
-  await f.sessions.heartbeatRunner(f.source, presence('modern', ['code.v2']));
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence('legacy'));
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence('modern', ['code.v2']));
   const workspace = {
     repositoryId: 'repository',
     workspaceId: 'workspace',
@@ -195,7 +198,7 @@ test('a hand offer requires the driver before leasing and attachment rechecks th
       continue;
     }
     const session = await offered;
-    await f.sessions.heartbeatRunner(f.source, presence(runnerId));
+    await f.sessions.dispatch.heartbeatRunner(f.source, presence(runnerId));
     await assert.rejects(
       f.sessions.attach(f.source, {
         sessionId: session.id,
@@ -205,7 +208,7 @@ test('a hand offer requires the driver before leasing and attachment rechecks th
       }),
       { code: 'runner_incompatible' },
     );
-    await f.sessions.heartbeatRunner(f.source, presence(runnerId, ['code.v2']));
+    await f.sessions.dispatch.heartbeatRunner(f.source, presence(runnerId, ['code.v2']));
     const attach = f.sessions.attach(f.source, {
       sessionId: session.id,
       runnerId,
@@ -218,19 +221,25 @@ test('a hand offer requires the driver before leasing and attachment rechecks th
 
 test('work on the runner’s own repository goes to a runner.2 only when it names git.local', async (t) => {
   const f = await fixture(t);
-  await f.sessions.heartbeatRunner(f.source, presence('bare', ['runner.2']));
-  await f.sessions.heartbeatRunner(f.source, presence('repository', ['git.local', 'runner.2']));
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence('bare', ['runner.2']));
+  await f.sessions.dispatch.heartbeatRunner(
+    f.source,
+    presence('repository', ['git.local', 'runner.2']),
+  );
   // A runner from before `runner.2` does not say, so it is still trusted to have one.
-  await f.sessions.heartbeatRunner(f.source, presence('older'));
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence('older'));
   const first = await f.local.start(f.source, { workflow: 'local', requestId: request() });
   const second = await f.local.start(f.source, { workflow: 'local', requestId: request() });
-  assert.deepEqual(await f.sessions.lease(f.source, auto('bare')), {
+  assert.deepEqual(await f.sessions.dispatch.lease(f.source, auto('bare')), {
     session: null,
     reason: 'runner_incompatible',
   });
   assert.equal(
-    (await f.sessions.lease(f.source, auto('repository'))).session?.instanceId,
+    (await f.sessions.dispatch.lease(f.source, auto('repository'))).session?.instanceId,
     first.id,
   );
-  assert.equal((await f.sessions.lease(f.source, auto('older'))).session?.instanceId, second.id);
+  assert.equal(
+    (await f.sessions.dispatch.lease(f.source, auto('older'))).session?.instanceId,
+    second.id,
+  );
 });

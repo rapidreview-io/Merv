@@ -38,7 +38,7 @@ test('file upload uses normal MCP session authority and returns a verified small
     credentialId: boot.credential.id,
   };
   await waitForManagedCode(app.ctx.codeWork, owner);
-  await app.ctx.sessions.heartbeatRunner(owner, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(owner, {
     runnerId: 'file-test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -72,7 +72,7 @@ test('file upload uses normal MCP session authority and returns a verified small
   assert.ok(JSON.stringify(receipt).length < 1000);
   assert.equal('content' in receipt, false);
   assert.equal(
-    (await app.ctx.sessions.agentObservation(owner, agent.id)).toolCalls[0]!.tool,
+    (await app.ctx.sessions.observations.read(owner, agent.id)).toolCalls[0]!.tool,
     'artifact.create',
   );
   await app.ctx.sessions.releaseAgentAssignment(token, execution.id);

@@ -28,7 +28,7 @@ import { boundProject } from './fixtures/code-binding.js';
 
 async function fixture(t: TestContext, human = false) {
   const f = await resolutionFixture(t, { human });
-  await f.sessions.setDispatch(f.admin, { enabled: true });
+  await f.sessions.dispatch.setDispatch(f.admin, { enabled: true });
   const core = await createService(new CoreCodeService(f.state, f.scope, {}));
   const code = await createService(
     new CodeService(f.state, f.scope, f.sessions, f.workflows, core),
@@ -708,7 +708,9 @@ test('Code unload preserves existing blockers and refuses new work', async (t) =
   assert.ok(
     decision.providerBlockers.some((blocker) => blocker.related.some((record) => record.id === id)),
   );
-  assert.ok((await f.sessions.stuck(f.admin)).items.some((item) => item.instanceId === waiter.id));
+  assert.ok(
+    (await f.sessions.dispatch.stuck(f.admin)).items.some((item) => item.instanceId === waiter.id),
+  );
   await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
     code: 'dependencies_pending',
   });
@@ -762,7 +764,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
       ),
     );
   }
-  const stuck = await f.sessions.stuck(f.admin);
+  const stuck = await f.sessions.dispatch.stuck(f.admin);
   assert.ok(
     stuck.items.some((item) => item.instanceId === waiters[0].id && item.why.includes(task.id)),
   );
@@ -928,7 +930,7 @@ async function deliver(f: Fixture, taskId: string) {
     actorId: identity.actor.id,
     credentialId: identity.credential.id,
   };
-  await f.sessions.heartbeatRunner(runner, {
+  await f.sessions.dispatch.heartbeatRunner(runner, {
     runnerId: 'runner',
     machine: { hostname: 'runner', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -1025,7 +1027,7 @@ test('a research consolidation is delivered, and no contributor or directing aut
     actorId: other.actor.id,
     credentialId: other.credential.id,
   };
-  await f.sessions.heartbeatRunner(independent, {
+  await f.sessions.dispatch.heartbeatRunner(independent, {
     runnerId: 'other',
     machine: { hostname: 'other', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -1105,7 +1107,7 @@ test('Fleet’s review director, vouched for by the owner every consolidation ex
     kind: 'service',
     vouchedBy: await f.scope.delegationSource(f.admin),
   });
-  await f.sessions.heartbeatRunner(director, {
+  await f.sessions.dispatch.heartbeatRunner(director, {
     runnerId: 'fleet',
     machine: { hostname: 'fleet', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -1262,7 +1264,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     actorId: identity.actor.id,
     credentialId: identity.credential.id,
   };
-  await f.sessions.heartbeatRunner(runner, {
+  await f.sessions.dispatch.heartbeatRunner(runner, {
     runnerId: 'round-runner',
     machine: { hostname: 'rounds', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -1279,7 +1281,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     actorId: reviewerIdentity.actor.id,
     credentialId: reviewerIdentity.credential.id,
   };
-  await f.sessions.heartbeatRunner(reviewer, {
+  await f.sessions.dispatch.heartbeatRunner(reviewer, {
     runnerId: 'round-reviewer',
     machine: { hostname: 'rounds', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],
@@ -1437,7 +1439,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     ),
   );
   assert.ok(
-    (await f.sessions.stuck(f.admin)).items.some(
+    (await f.sessions.dispatch.stuck(f.admin)).items.some(
       (item) => item.instanceId === waiter.id && item.why.includes('suspended'),
     ),
   );
@@ -1603,7 +1605,7 @@ for (const verdict of ['pass', 'fail'] as const)
       actorId: issued.actor.id,
       credentialId: issued.credential.id,
     };
-    await f.sessions.heartbeatRunner(runner, {
+    await f.sessions.dispatch.heartbeatRunner(runner, {
       runnerId: 'runner',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 4 }],
@@ -1680,7 +1682,7 @@ for (const verdict of ['pass', 'fail'] as const)
       actorId: reviewerIdentity.actor.id,
       credentialId: reviewerIdentity.credential.id,
     };
-    await f.sessions.heartbeatRunner(reviewer, {
+    await f.sessions.dispatch.heartbeatRunner(reviewer, {
       runnerId: 'reviewer',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 4 }],
@@ -1793,7 +1795,7 @@ test('project writers lease a service task as producers and mark_failed suspends
     await f.workflows.leaseRole(runner, { instanceId: task.id, expectedRevision: 0 }),
     'producer',
   );
-  await f.sessions.heartbeatRunner(runner, {
+  await f.sessions.dispatch.heartbeatRunner(runner, {
     runnerId: 'runner',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 4 }],
@@ -2070,7 +2072,7 @@ test('budget admission reaches the stuck report and consumes neither launch hold
   assert.equal(base.blocker, 'budget_exceeded');
   const blockers = await f.workflows.blockers(f.admin, waiter.id);
   assert.equal(blockers[0]!.code, 'code_base_admission');
-  const stuck = await f.sessions.stuck(f.admin);
+  const stuck = await f.sessions.dispatch.stuck(f.admin);
   assert.ok(
     stuck.items.some(
       (item) =>

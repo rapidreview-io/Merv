@@ -1,6 +1,6 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
-import { safeCount, workName, workNameOf } from './common.js';
+import { ordinary as unmanaged, safeCount, text, workName, workNameOf } from './common.js';
 import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
@@ -65,6 +65,8 @@ export class AgentObservations {
     private state: State,
     private scope: Scope,
     private clock: () => number,
+    /** Refuses once Sessions has closed. */
+    private available: () => void,
   ) {
     this.initialize = async () => {
       await state.migrate('session_tool_calls', [
@@ -170,6 +172,13 @@ export class AgentObservations {
   }
 
   async read(caller: Caller, agentId: string): Promise<AgentObservation> {
+    unmanaged(caller);
+    this.available();
+    check(
+      text(agentId, 200),
+      'invalid_agent',
+      'An agent identifier of 1–200 characters is required',
+    );
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);

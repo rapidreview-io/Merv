@@ -86,7 +86,7 @@ test('a machine that cannot reach Code defers its lease instead of failing it', 
   );
   t.after(async () => await runner.stop());
   await runner.start();
-  await sessions.setDispatch(owner, { enabled: true });
+  await sessions.dispatch.setDispatch(owner, { enabled: true });
 
   const stored = async (): Promise<Session[]> =>
     (

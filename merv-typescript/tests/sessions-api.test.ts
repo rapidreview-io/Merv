@@ -1077,7 +1077,7 @@ test('mounted tool errors and invalid output envelopes are recorded as failed ca
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
   malformed = true;
   assert.equal((await client.callTool({ name: '_remote.inspect', arguments: {} })).isError, true);
-  const result = await f.app.ctx.sessions.agentObservation(f.source, offered.session.agentId!);
+  const result = await f.app.ctx.sessions.observations.read(f.source, offered.session.agentId!);
   assert.deepEqual(
     result.toolCalls.map((call) => call.status),
     ['failed', 'failed'],

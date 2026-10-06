@@ -330,23 +330,20 @@ export interface Sessions {
     caller: Caller,
     project: SessionsProjectStatus | null,
   ): Promise<Record<string, unknown>>;
-  registerManagedValidator(validator: ManagedRunnerValidator): () => void;
-  ensureManagedEnrollment(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
-  /** `projectId`: the runner's selected project, refused unless it is the binding's. */
-  enrollManaged(
-    token: string,
-    input: unknown,
-    projectId?: unknown,
-  ): Promise<{ controlToken: string }>;
-  authenticateManaged(token: string): Promise<Caller>;
-  /** Server-only: a hosted session's model authority for Main's relay, by bearer or session id. */
-  managedModelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant>;
-  /** Server-only allocation observation for Fleet; never an agent endpoint or tool. */
-  inspectManaged(
-    allocationId: string,
-    epoch: number,
-    tx?: Transaction,
-  ): Promise<ManagedRunnerInspection | null>;
+  /** Project dispatch: its switch, budgets, holds, runners and the automatic leases they take. */
+  readonly dispatch: SessionDispatchControls;
+  /** The Running page's Sessions lane. */
+  readonly running: SessionRunningReads;
+  /** Fleet's managed runners: their enrollment, credentials and model authority. */
+  readonly managed: ManagedRunners;
+  /** What each agent did, as metadata only. */
+  readonly observations: {
+    read(caller: Caller, agentId: string): Promise<AgentObservation>;
+  };
+  readonly conversations: {
+    /** Keys `workflow`'s sessions for continuity, one provider per workflow, until disposed. */
+    register(workflow: string, provider: ContinuityProvider): () => void;
+  };
   /** Retained producers only; their delegation is historical, never current authority. */
   contributors(
     projectId: string,
@@ -377,28 +374,6 @@ export interface Sessions {
     sessionId: string,
     tx?: Transaction,
   ): Promise<SessionWorkspaceObservation>;
-  /** With `report`, `stuck` carries the whole of what `stuck` would read, at the same moment. */
-  projectStatus(caller: Caller, report?: boolean): Promise<SessionsProjectStatus>;
-  /**
-   * The Running page's Sessions lane: a node for every offered or active lease of the project,
-   * whoever offered it, with where it runs and the work it is on. Read-only, never for a
-   * leased worker or a managed runner, like every read below.
-   */
-  running(caller: Caller): Promise<RunningNodes>;
-  /**
-   * What dispatch holds back, as marks on that work, and the lane's own line about dispatch
-   * and machines. A narrow reading of the stuck rules, never the whole analysis: a hold is
-   * marked for every reader, and what the queue holds is told to an operator only.
-   */
-  runningMarks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }>;
-  /** A lease's sidebar, any status; null for a lease the project does not hold. */
-  runningPanel(
-    caller: Caller,
-    sessionId: string,
-    route?: WorkRoute,
-  ): Promise<RunningPanelPart | null>;
-  /** The Sessions section of the given work's sidebar: the live leases on those instances. */
-  runningWork(caller: Caller, instanceIds: readonly string[]): Promise<RunningSection[]>;
   /**
    * The live sessions of a project whose execution policy holds a workspace on `driver`,
    * whoever offered them. It is scoped by the project rather than by a caller's delegation
@@ -406,37 +381,12 @@ export interface Sessions {
    * administrator asking for it happens to own.
    */
   holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]>;
-  agentObservation(caller: Caller, agentId: string): Promise<AgentObservation>;
   /** Operator messages to a live session, read and acknowledged by its worker. */
   readonly messaging: SessionMessaging;
   findSession(
     caller: Caller,
     instanceId: string,
   ): Promise<{ current: SessionLookup | null; latest: SessionLookup | null }>;
-  setDispatch(
-    caller: Caller,
-    input: Partial<Pick<DispatchState, 'enabled' | 'ownMachines'>>,
-  ): Promise<DispatchState>;
-  halt(
-    caller: Caller,
-    input?: { sessionId?: string; reason?: string },
-  ): Promise<{ halted: number }>;
-  lease(
-    caller: Caller,
-    input: AutomaticLease,
-  ): Promise<{ session: Session | null; reason: string }>;
-  /** Server-only: every project with dispatch on Fleet's machines, as its owner. The billing
-   * rule: Fleet acts as, and charges the person-day budget of, the project's owner
-   * (`Scope.projectOwners`), never whoever switched dispatch; a project without one is not
-   * served, and its queued work shows `no_live_runner`. */
-  servedSources(): Promise<{ projectId: string; source: DelegationSource }[]>;
-  /** Advisory, source-scoped automatic work for a prospective profile; no runner is required. */
-  dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand>;
-  heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence>;
-  setRunnerSettings(
-    caller: Caller,
-    input: { runnerId: string; settings: RunnerSettings },
-  ): Promise<RunnerPresence>;
   offer(caller: Caller, input: SessionOffer): Promise<Session>;
   list(caller: Caller): Promise<Session[]>;
   get(caller: Caller, sessionId: string): Promise<Session>;
@@ -462,9 +412,7 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & SessionTranscriptDeclaration,
   ): Promise<SessionTranscript>;
-  /** Runner-only, live or just closed: one batch of what its agent printed (SessionStreamBatch). */
-  stream(caller: Caller, input: unknown): Promise<{ until: number; seq: number }>;
-  /** What the events route reads of agents' live streams: operator authority, events, wakes. */
+  /** Agents' live streams: what the runner sends, and what the events route reads. */
   readonly streams: SessionStreamReads;
   /** Runner-only: the conversation the session kept, declared and delivered as a transcript is. */
   conversation(
@@ -476,8 +424,6 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & { hostRef: string },
   ): Promise<{ url: string; expiresAt: string }>;
-  /** Keys `workflow`'s sessions for continuity, one provider per workflow, until disposed. */
-  registerContinuity(workflow: string, provider: ContinuityProvider): () => void;
   heartbeat(caller: Caller, input: SessionControl): Promise<Session>;
   release(
     caller: Caller,
@@ -492,6 +438,42 @@ export interface Sessions {
   ): Promise<Session>;
   /** Open to leased workers too: a worker may read what the work it is on cost. */
   usage(caller: Caller, input?: UsageQuery): Promise<UsageRollup>;
+  /** First MCP authentication activates the offered lease using metadata only. */
+  authenticate(token: string): Promise<Caller>;
+  /** The caller's own session, rechecking its credential without activating an offer. */
+  session(caller: Caller, tx?: Transaction): Promise<Session>;
+  /** The tool policy the registry admits each leased worker's MCP call through. */
+  readonly invocations: SessionInvocationPolicy;
+  sweep(): Promise<void>;
+}
+/** Sessions' project dispatch; every read and control but a runner's refuses a managed runner. */
+export interface SessionDispatchControls {
+  /** With `report`, `stuck` carries the whole of what `stuck` would read, at the same moment. */
+  projectStatus(caller: Caller, report?: boolean): Promise<SessionsProjectStatus>;
+  setDispatch(
+    caller: Caller,
+    input: Partial<Pick<DispatchState, 'enabled' | 'ownMachines'>>,
+  ): Promise<DispatchState>;
+  halt(
+    caller: Caller,
+    input?: { sessionId?: string; reason?: string },
+  ): Promise<{ halted: number }>;
+  lease(
+    caller: Caller,
+    input: AutomaticLease,
+  ): Promise<{ session: Session | null; reason: string }>;
+  /** Server-only: every project with dispatch on Fleet's machines, as its owner. The billing
+   * rule: Fleet acts as, and charges the person-day budget of, the project's owner
+   * (`Scope.projectOwners`), never whoever switched dispatch; a project without one is not
+   * served, and its queued work shows `no_live_runner`. */
+  servedSources(): Promise<{ projectId: string; source: DelegationSource }[]>;
+  /** Advisory, source-scoped automatic work for a prospective profile; no runner is required. */
+  dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand>;
+  heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence>;
+  setRunnerSettings(
+    caller: Caller,
+    input: { runnerId: string; settings: RunnerSettings },
+  ): Promise<RunnerPresence>;
   /** Everything that stopped moving and why, for anyone who may read the project but no leased worker. */
   stuck(caller: Caller): Promise<StuckReport>;
   /** Only a project admin who is not a leased worker lets a held target be offered again. */
@@ -501,13 +483,39 @@ export interface Sessions {
   ): Promise<DispatchHold>;
   /** Only a project admin who is not a leased worker sets what pauses automatic dispatch. */
   setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus>;
-  /** First MCP authentication activates the offered lease using metadata only. */
+}
+export interface SessionRunningReads {
+  /**
+   * The Running page's Sessions lane: a node for every offered or active lease of the project,
+   * whoever offered it, with where it runs and the work it is on. Read-only, never for a
+   * leased worker or a managed runner, like every read here.
+   */
+  nodes(caller: Caller): Promise<RunningNodes>;
+  /**
+   * What dispatch holds back, as marks on that work, and the lane's own line about dispatch
+   * and machines. A narrow reading of the stuck rules, never the whole analysis: a hold is
+   * marked for every reader, and what the queue holds is told to an operator only.
+   */
+  marks(caller: Caller): Promise<{ marks: RunningMark[]; summary: RunningSummary }>;
+  /** A lease's sidebar, any status; null for a lease the project does not hold. */
+  panel(caller: Caller, sessionId: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
+  /** The Sessions section of the given work's sidebar: the live leases on those instances. */
+  work(caller: Caller, instanceIds: readonly string[]): Promise<RunningSection[]>;
+}
+export interface ManagedRunners {
+  registerValidator(validator: ManagedRunnerValidator): () => void;
+  ensure(input: ManagedEnrollmentInput): Promise<{ enrollmentToken: string }>;
+  /** `projectId`: the runner's selected project, refused unless it is the binding's. */
+  enroll(token: string, input: unknown, projectId?: unknown): Promise<{ controlToken: string }>;
   authenticate(token: string): Promise<Caller>;
-  /** The caller's own session, rechecking its credential without activating an offer. */
-  session(caller: Caller, tx?: Transaction): Promise<Session>;
-  /** The tool policy the registry admits each leased worker's MCP call through. */
-  readonly invocations: SessionInvocationPolicy;
-  sweep(): Promise<void>;
+  /** Server-only: a hosted session's model authority for Main's relay, by bearer or session id. */
+  modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant>;
+  /** Server-only allocation observation for Fleet; never an agent endpoint or tool. */
+  inspect(
+    allocationId: string,
+    epoch: number,
+    tx?: Transaction,
+  ): Promise<ManagedRunnerInspection | null>;
 }
 export interface SessionMessaging {
   message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
@@ -564,6 +572,8 @@ export interface DispatchDemand {
 
 /** What the events route reads of agents' live streams: operator authority, events, wakes. */
 export interface SessionStreamReads {
+  /** Runner-only, live or just closed: one batch of what its agent printed (SessionStreamBatch). */
+  append(caller: Caller, input: unknown): Promise<{ until: number; seq: number }>;
   authorize(caller: Caller, sessionId: string): Promise<{ growing: boolean }>;
   /** Whether a session `authorize` admitted may still grow, without reading authority again. */
   growing(sessionId: string, projectId: string): Promise<boolean>;

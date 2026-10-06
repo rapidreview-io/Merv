@@ -237,7 +237,7 @@ async function main() {
   });
 
   // Real local session/registry calls using disposable demo data, not live agent processes.
-  await app.ctx.sessions.heartbeatRunner(owner, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(owner, {
     runnerId: 'local-demo',
     machine: { hostname: 'mac-studio', system: process.platform, architecture: process.arch },
     platforms: [{ name: 'demo', harness: 'codex', enabled: true, parallelism: 4 }],

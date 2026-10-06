@@ -176,7 +176,7 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
   };
   const sessions = async (): Promise<Session[]> => await app.ctx.sessions.list(source);
   const enabled = async (value: boolean) =>
-    await app.ctx.sessions.setDispatch(source, { enabled: value });
+    await app.ctx.sessions.dispatch.setDispatch(source, { enabled: value });
   return {
     app,
     source,
@@ -440,7 +440,7 @@ test(
     assert.equal(runner.snapshot().launches.length, 1);
     assert.ok(runner.snapshot().launches.some((launch) => !terminal(launch.status)));
     outage = false;
-    await f.app.ctx.sessions.halt(f.source);
+    await f.app.ctx.sessions.dispatch.halt(f.source);
     await until(
       () => runner.snapshot().launches.every((launch) => terminal(launch.status)),
       runner,
@@ -468,7 +468,7 @@ test(
     await f.enabled(true);
     await until(() => childResults(f.runnerDirectory).length === 1, runner, 'holding worker');
     // The server ends the session, as a landed handoff does; the runner never releases it.
-    await f.app.ctx.sessions.halt(f.source);
+    await f.app.ctx.sessions.dispatch.halt(f.source);
     await until(
       async () => (await f.app.ctx.sessions.usage(f.source)).totals.reportedSessions === 1,
       runner,
@@ -631,12 +631,12 @@ for (const linger of [false, true])
         enabled: true,
         parallelism: 1,
       };
-      const unregister = f.app.ctx.sessions.registerManagedValidator({
+      const unregister = f.app.ctx.sessions.managed.registerValidator({
         current: async (binding) => binding.allocationId === allocationId,
         admits: async () => true,
       });
       t.after(unregister);
-      const enrollment = await f.app.ctx.sessions.ensureManagedEnrollment({
+      const enrollment = await f.app.ctx.sessions.managed.ensure({
         allocationId,
         epoch: 1,
         source: await f.app.ctx.scope.delegationSource(f.source),
@@ -645,7 +645,7 @@ for (const linger of [false, true])
         capabilities: [],
         expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
       });
-      const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {
+      const control = await f.app.ctx.sessions.managed.enroll(enrollment.enrollmentToken, {
         workerNonce: randomBytes(32).toString('hex'),
       });
       process.env[f.credentialEnv] = control.controlToken;
@@ -670,7 +670,7 @@ for (const linger of [false, true])
       await f.enabled(true);
       await until(
         async () =>
-          (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.outcome ===
+          (await f.app.ctx.sessions.managed.inspect(allocationId, 1))?.session?.outcome ===
           'completed',
         runner,
         'completed managed handoff',
@@ -699,7 +699,7 @@ for (const linger of [false, true])
       await until(() => releases.length === 1, runner, 'first managed release attempt');
       assert.equal(runner.snapshot().launches[0]?.releasePending, true);
       assert.equal(
-        (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
+        (await f.app.ctx.sessions.managed.inspect(allocationId, 1))?.session?.releaseAcknowledged,
         false,
       );
       await until(() => releases.length === 2, runner, 'retried managed release acknowledgement');
@@ -710,7 +710,7 @@ for (const linger of [false, true])
       assert.deepEqual(releases, [acknowledgement, acknowledgement]);
       assert.equal(runner.snapshot().launches[0]?.releasePending, false);
       assert.equal(
-        (await f.app.ctx.sessions.inspectManaged(allocationId, 1))?.session?.releaseAcknowledged,
+        (await f.app.ctx.sessions.managed.inspect(allocationId, 1))?.session?.releaseAcknowledged,
         true,
       );
       await runner.tick();
@@ -744,7 +744,7 @@ test(
       current: async (binding: { allocationId: string }) => binding.allocationId === allocationId,
       admits: async () => true,
     };
-    let unregister = f.app.ctx.sessions.registerManagedValidator(validator);
+    let unregister = f.app.ctx.sessions.managed.registerValidator(validator);
     t.after(() => unregister());
     // As every managed machine runs: one isolated Codex assignment, advertising its enrolment.
     f.config.oneAssignment = true;
@@ -758,7 +758,7 @@ test(
         parallelism: 1,
       },
     ];
-    const enrollment = await f.app.ctx.sessions.ensureManagedEnrollment({
+    const enrollment = await f.app.ctx.sessions.managed.ensure({
       allocationId,
       epoch: 1,
       source: await f.app.ctx.scope.delegationSource(f.source),
@@ -767,7 +767,7 @@ test(
       capabilities: [],
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
-    const control = await f.app.ctx.sessions.enrollManaged(enrollment.enrollmentToken, {
+    const control = await f.app.ctx.sessions.managed.enroll(enrollment.enrollmentToken, {
       workerNonce: randomBytes(32).toString('hex'),
     });
     process.env[f.credentialEnv] = control.controlToken;
@@ -786,7 +786,7 @@ test(
       assert.equal(runner.snapshot().state, 'offline', id);
       await f.app.setEnabled(id, true);
       // A restarted Sessions has lost Fleet's stand-in validator.
-      if (id === 'sessions') unregister = f.app.ctx.sessions.registerManagedValidator(validator);
+      if (id === 'sessions') unregister = f.app.ctx.sessions.managed.registerValidator(validator);
       skew += 15_000;
       await runner.tick();
       assert.equal(runner.snapshot().state, online, id);
@@ -827,7 +827,7 @@ test(
     await runner.start();
     await f.enabled(true);
     await until(() => childResults(f.runnerDirectory).length === 1, runner, 'holding worker');
-    await f.app.ctx.sessions.halt(f.source);
+    await f.app.ctx.sessions.dispatch.halt(f.source);
     await until(
       () => runner.snapshot().launches.every((launch) => terminal(launch.status)),
       runner,
@@ -997,7 +997,7 @@ test(
     assert.equal(replacement.snapshot().launches[0].sessionId, sessionId);
     assert.ok(!terminal(replacement.snapshot().launches[0].status));
     assert.equal((await f.app.ctx.workflows.workStarts(f.source, f.task.id)).length, 1);
-    await f.app.ctx.sessions.halt(f.source);
+    await f.app.ctx.sessions.dispatch.halt(f.source);
     await until(
       () => replacement.snapshot().launches.every((launch) => terminal(launch.status)),
       replacement,

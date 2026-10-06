@@ -426,7 +426,7 @@ test('A final capture of a session halted before any host attached is failed, no
     false,
     'A session no runner attached worked from no commit',
   );
-  await f.app.ctx.sessions.halt(f.source, { sessionId: session.id });
+  await f.app.ctx.sessions.dispatch.halt(f.source, { sessionId: session.id });
   assert.equal((await f.app.ctx.codeWork.capture(f.reader, ref)).status, 'failed');
 });
 

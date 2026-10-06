@@ -21,60 +21,62 @@ test('system status reports authoritative dispatch, waiting work, and unusable w
     assert.equal(candidate.projectId, 'project-a');
   };
   const sessions = {
-    projectStatus: async (candidate: Caller) => {
-      onlyProject(candidate);
-      return {
-        observedAt: '2026-09-26T00:00:00Z',
-        dispatch: { enabled: true, ownMachines: false, fleet: true },
-        runnerTotal: 1,
-        runners: [
-          {
-            runnerId: 'runner',
-            live: false,
-            capacity: 1,
-            lastSeenAt: 'before',
-            lastDecision: null,
-            secret: 'omit',
-          },
-        ],
-        liveSessionCount: 0,
-        sessionTotal: 0,
-        sessions: [],
-        queueTotal: 1,
-        queue: [
-          {
-            instanceId: 'task-1',
-            expectedRevision: 2,
-            workflow: 'task',
-            label: 'Task',
-            role: 'producer',
-            updatedAt: 'before',
-            workspace: { mode: 'git' },
-            secret: 'omit',
-          },
-        ],
-        stuck: {
-          total: 1,
-          counts: { work_blocked: 1, dispatch_failing: 1 },
-          items: [
+    dispatch: {
+      projectStatus: async (candidate: Caller) => {
+        onlyProject(candidate);
+        return {
+          observedAt: '2026-09-26T00:00:00Z',
+          dispatch: { enabled: true, ownMachines: false, fleet: true },
+          runnerTotal: 1,
+          runners: [
             {
-              kind: 'work_blocked',
-              instanceId: 'task-1',
-              code: 'runner_incompatible',
-              why: 'Fleet cannot supply local Git',
-              next: 'Start a project runner',
-            },
-            {
-              kind: 'dispatch_failing',
-              instanceId: 'task-2',
-              code: 'retrying',
-              why: 'Failed at https://private.example/secret?token=abc',
-              next: 'Retry shortly',
+              runnerId: 'runner',
+              live: false,
+              capacity: 1,
+              lastSeenAt: 'before',
+              lastDecision: null,
+              secret: 'omit',
             },
           ],
-          truncated: false,
-        },
-      };
+          liveSessionCount: 0,
+          sessionTotal: 0,
+          sessions: [],
+          queueTotal: 1,
+          queue: [
+            {
+              instanceId: 'task-1',
+              expectedRevision: 2,
+              workflow: 'task',
+              label: 'Task',
+              role: 'producer',
+              updatedAt: 'before',
+              workspace: { mode: 'git' },
+              secret: 'omit',
+            },
+          ],
+          stuck: {
+            total: 1,
+            counts: { work_blocked: 1, dispatch_failing: 1 },
+            items: [
+              {
+                kind: 'work_blocked',
+                instanceId: 'task-1',
+                code: 'runner_incompatible',
+                why: 'Fleet cannot supply local Git',
+                next: 'Start a project runner',
+              },
+              {
+                kind: 'dispatch_failing',
+                instanceId: 'task-2',
+                code: 'retrying',
+                why: 'Failed at https://private.example/secret?token=abc',
+                next: 'Retry shortly',
+              },
+            ],
+            truncated: false,
+          },
+        };
+      },
     },
     statusSections: async () => ({}),
   } as unknown as Sessions;
@@ -103,18 +105,20 @@ test('system.status is a read-only conversation tool and project access is check
   });
   tools.registerCallerRules('conversation', conversationRules);
   const sessions = {
-    projectStatus: async () => ({
-      observedAt: 'now',
-      dispatch: { enabled: false, ownMachines: true, fleet: false },
-      runners: [],
-      runnerTotal: 0,
-      liveSessionCount: 0,
-      sessionTotal: 0,
-      sessions: [],
-      queue: [],
-      queueTotal: 0,
-      stuck: { total: 0, counts: {}, items: [], truncated: false },
-    }),
+    dispatch: {
+      projectStatus: async () => ({
+        observedAt: 'now',
+        dispatch: { enabled: false, ownMachines: true, fleet: false },
+        runners: [],
+        runnerTotal: 0,
+        liveSessionCount: 0,
+        sessionTotal: 0,
+        sessions: [],
+        queue: [],
+        queueTotal: 0,
+        stuck: { total: 0, counts: {}, items: [], truncated: false },
+      }),
+    },
     statusSections: async () => ({}),
   } as unknown as Sessions;
   sessionsToolsPlugin.apply({

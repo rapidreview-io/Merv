@@ -307,7 +307,10 @@ try {
       await work.close();
     }
     if (automatic)
-      assert.equal((await app.ctx.sessions.projectStatus(await source())).dispatch.enabled, false);
+      assert.equal(
+        (await app.ctx.sessions.dispatch.projectStatus(await source())).dispatch.enabled,
+        false,
+      );
     assert.equal(
       (await app.ctx.tasks.get(await source(), task.id)).workflow.state,
       phase === 'producer' ? 'in_review' : 'done',

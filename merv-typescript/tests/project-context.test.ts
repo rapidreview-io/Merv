@@ -519,7 +519,7 @@ test('Task contexts freeze the Problem at lease offer, carry it once, and retain
     credentialId: boot.credential.id,
   };
   await waitForManagedCode(app.ctx.codeWork, source);
-  await app.ctx.sessions.heartbeatRunner(source, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(source, {
     runnerId: 'context-test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'codex', harness: 'codex', enabled: true, parallelism: 1 }],

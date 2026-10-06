@@ -270,9 +270,9 @@ export async function seedGit(
   (code as any).publicationHost.mirror = () => transport;
   git(source, ['push', '--quiet', published, `${main}:refs/heads/main`]);
 
-  await ctx.sessions.setDispatch(operator, { enabled: true });
+  await ctx.sessions.dispatch.setDispatch(operator, { enabled: true });
   const heartbeat = async (caller: Caller) =>
-    await ctx.sessions.heartbeatRunner(caller, buildMachine);
+    await ctx.sessions.dispatch.heartbeatRunner(caller, buildMachine);
   await heartbeat(operator);
   // A runner belongs to the authority that registered it and a review is offered by the
   // reviewing authority, so the same machine announces itself under that one as well.

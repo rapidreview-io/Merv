@@ -50,7 +50,7 @@ async function fixture(t: TestContext) {
   t.after(() => {
     for (const lease of held.values()) lease.driver?.dispose();
   });
-  await app.ctx.sessions.heartbeatRunner(source, {
+  await app.ctx.sessions.dispatch.heartbeatRunner(source, {
     runnerId: 'test',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],

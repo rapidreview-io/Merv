@@ -45,7 +45,15 @@ import type {
 } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
 import { lastActivity, type AgentObservations } from './observations.js';
-import { isoNow, liveTargets, ownerOf, readFirst, targetKey, workNameOf } from './common.js';
+import {
+  isoNow,
+  liveTargets,
+  ordinary as unmanaged,
+  ownerOf,
+  readFirst,
+  targetKey,
+  workNameOf,
+} from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
 
 const label = z
@@ -269,6 +277,8 @@ interface DispatchRow {
 }
 interface Hooks {
   managed: ManagedRunnerBindings;
+  /** Refuses once Sessions has closed. */
+  available(): void;
   /** Whether a project nobody has switched runs its automatic work. */
   byDefault: boolean;
   prepare(caller: Caller): Promise<void>;
@@ -403,6 +413,11 @@ export class SessionDispatch {
       );
     };
   }
+  /** An entry point's first checks: Sessions is open, and the caller is no managed runner. */
+  private enter(caller?: Caller): void {
+    this.hooks.available();
+    if (caller) unmanaged(caller);
+  }
   private async ordinary(caller: Caller, permission: 'read' | 'admin', tx: Transaction) {
     check(
       !caller.session,
@@ -471,6 +486,7 @@ export class SessionDispatch {
     return { ...next, fleet: old.fleet, updatedAt: time, updatedBy: caller.actorId };
   }
   async setDispatch(caller: Caller, input: DispatchChange): Promise<DispatchState> {
+    this.enter(caller);
     caller = structuredClone(caller);
     const parsed = dispatchSchema.safeParse(input);
     check(parsed.success, 'invalid_dispatch', 'Dispatch accepts enabled, ownMachines or both');
@@ -492,6 +508,7 @@ export class SessionDispatch {
    * request id, so setting what is already set records nothing and answers the same.
    */
   async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
+    this.enter(caller);
     caller = structuredClone(caller);
     const parsed = budgetSchema.safeParse(input);
     check(
@@ -556,6 +573,7 @@ export class SessionDispatch {
     caller: Caller,
     input: { sessionId?: string; reason?: string } = {},
   ): Promise<{ halted: number }> {
+    this.enter(caller);
     caller = structuredClone(caller);
     const parsed = haltSchema.safeParse(input);
     check(parsed.success, 'invalid_halt', 'Halt accepts an optional session and bounded reason');
@@ -764,6 +782,7 @@ export class SessionDispatch {
     caller: Caller,
     input: { instanceId: string; expectedRevision: number; reason: string; requestId: string },
   ): Promise<DispatchHold> {
+    this.enter(caller);
     caller = structuredClone(caller);
     const parsed = releaseHoldSchema.safeParse(input);
     check(
@@ -814,6 +833,7 @@ export class SessionDispatch {
     });
   }
   async heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence> {
+    this.enter();
     caller = structuredClone(caller);
     const parsed = heartbeatSchema.safeParse(input);
     check(
@@ -886,6 +906,7 @@ export class SessionDispatch {
     caller: Caller,
     input: { runnerId: string; settings: RunnerSettings },
   ): Promise<RunnerPresence> {
+    this.enter(caller);
     caller = structuredClone(caller);
     const parsed = z
       .object({ runnerId: label, settings: settingsSchema })
@@ -1046,6 +1067,7 @@ export class SessionDispatch {
   }
   /** Every project Fleet serves, as its owner (see `Sessions.servedSources`). */
   async servedSources(): Promise<{ projectId: string; source: DelegationSource }[]> {
+    this.enter();
     const rows = await this.state.read((sql) =>
       sql.all<{ project_id: string; enabled: number; own_machines: number }>(
         'SELECT project_id,enabled,own_machines FROM project_session_dispatch',
@@ -1059,6 +1081,7 @@ export class SessionDispatch {
   }
   /** A read-only hint for a configured source and a prospective runner profile. */
   async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
+    this.enter(caller);
     caller = structuredClone(caller);
     const parsed = demandSchema.safeParse(input);
     check(parsed.success, 'invalid_dispatch_demand', 'Demand requires a valid runner profile');
@@ -1349,6 +1372,7 @@ export class SessionDispatch {
     };
   }
   async stuck(caller: Caller): Promise<StuckReport> {
+    this.enter(caller);
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.ordinary(caller, 'read', tx);
@@ -1363,6 +1387,7 @@ export class SessionDispatch {
   }
   /** With `report`, `stuck` is the whole report session.stuck reads, from the same moment. */
   async projectStatus(caller: Caller, report = false): Promise<SessionsProjectStatus> {
+    this.enter(caller);
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       const actor = await this.ordinary(caller, 'read', tx);
@@ -1714,6 +1739,7 @@ export class SessionDispatch {
     caller: Caller,
     input: AutomaticLease,
   ): Promise<{ session: Session | null; reason: string }> {
+    this.enter();
     caller = structuredClone(caller);
     const parsed = leaseSchema.safeParse(input);
     check(

@@ -109,7 +109,7 @@ async function fixture(t: TestContext) {
   };
   const task = await currentTask(app.ctx, await source(), taskInput);
   async function offer(target = task, requestId = randomUUID(), secret = freshSecret()) {
-    await app.ctx.sessions.heartbeatRunner(await source(), {
+    await app.ctx.sessions.dispatch.heartbeatRunner(await source(), {
       runnerId: 'test-runner',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
       platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
