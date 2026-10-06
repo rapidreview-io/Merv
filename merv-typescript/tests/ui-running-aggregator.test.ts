@@ -800,6 +800,32 @@ test('actions are sent only when allowed, for a registered tool, with small JSON
   assert.deepEqual(crowded.lanes.sessions.summaries, []);
 });
 
+test('a value is the kind its first key names, and a later key never rescues a bad one', () => {
+  // Words without a link are not a link's words, and keys of no kind make no value.
+  assert.equal(phraseOf([{ text: 'orphan' }]), null);
+  // A bad mono is not read as the state beside it, nor a bad ago as the since beside it.
+  assert.equal(phraseOf([{ mono: '', state: 'running' }]), null);
+  assert.equal(phraseOf([{ ago: 'nope', since: '2026-10-06T00:00:00Z' }]), null);
+  // Keys of no kind are dropped from a good one, as before.
+  assert.deepEqual(phraseOf([{ state: 'running', ago: 'nope' }]), [{ state: 'running' }]);
+  assert.deepEqual(phraseOf([{ link: { key: 'work:a' }, text: 'Open →' }]), [
+    { link: { key: 'work:a' }, text: 'Open' },
+  ]);
+  // A stream item with a bad mark is not read as the call beside it.
+  const at = '2026-10-06T00:00:00Z';
+  const stream = sectionOf({
+    title: 'Calls',
+    place: 'activity',
+    kind: 'stream',
+    total: 2,
+    items: [
+      { mark: 5, call: 'c', state: 'running', at, ms: 1 },
+      { call: 'c', state: 'running', at, ms: null },
+    ],
+  }) as { items: unknown[] } | null;
+  assert.deepEqual(stream?.items, [{ call: 'c', state: 'running', at, ms: null }]);
+});
+
 test('sections that break the contract or say nothing are left out, row by row where a row breaks it', () => {
   const frame = { title: 'Checks', place: 'content' as const };
   assert.equal(sectionOf({ ...frame, kind: 'text', text: '  \n ' }), null);

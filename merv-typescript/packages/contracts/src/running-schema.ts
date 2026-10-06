@@ -28,6 +28,19 @@ const kept = <T extends z.ZodTypeAny>(item: T, max: number) =>
     .max(max)
     .transform((items) => items.filter((value) => value !== undefined));
 
+/**
+ * A part is the kind its first present key names, read with that kind's keys alone: a part
+ * that is not good as that kind is not rescued by a later key, and keys of no kind make none.
+ */
+const byFirstKey = <T extends z.ZodTypeAny>(kinds: [string, ...string[]][], schema: T) =>
+  z.preprocess((value) => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+    const part = value as Record<string, unknown>;
+    const keys = kinds.find(([first]) => first in part) ?? [];
+    return Object.fromEntries(
+      keys.filter((name) => name in part).map((name) => [name, part[name]]),
+    );
+  }, schema) as unknown as z.ZodType<z.output<T>, z.ZodTypeDef, z.input<T>>;
 const words = (max: number) => z.string().max(max).refine(visible);
 const instant = z
   .string()
@@ -90,53 +103,66 @@ export const runningTarget = z.preprocess(
  * writes the words for each and ticks every clock on the server's time, so an owner sends
  * instants and never '3 min ago'.
  */
-export const runningValue = z.union([
-  /** Words, as written. */
-  z.string().max(1000),
-  /**
-   * Machine text such as a branch or a tool name, sent whole. The shell prints an id or a
-   * digest inside it by its head and its tail, and keeps all of it for the hover title and,
-   * in a facts row, for the copy control.
-   */
-  z.object({ mono: words(400) }),
-  /** A state word; `in_review` reads 'in review'. Drawn in ink; red only on a row that needs a person. */
-  z.object({ state: words(64) }),
-  /** How long ago ('6 min ago'), with the moment in its title. */
-  z.object({ ago: instant }),
-  /** How long since, ticking ('22m'). With `of` seconds it reads against a cap ('12m of 60m'). */
-  z.object({ since: instant, of: z.number().finite().min(0).optional() }).transform(lean),
-  /** Time left ('34m left'). With `of` seconds granted it reads '34m left · of 4h'. */
-  z.object({ until: instant, of: z.number().finite().min(0).optional() }).transform(lean),
-  /** A count. With `of` it reads out of a whole ('2 of 4'). */
-  z.object({ count: count(), of: count().optional() }).transform(lean),
-  /** Spent so far, against a cap and per hour ('$2.10 of $8 · $2.49/h'). A rate of zero reads 'free'. */
-  z
-    .object({
-      money: runningMoney.nullable(),
-      of: runningMoney.nullable().optional(),
-      rate: runningMoney.nullable().optional(),
-    })
-    .transform(lean),
-  /**
-   * A person or an agent. The shell names it with the one actor-name rule (actor.list, which
-   * only an operator may read). `prefix` goes before a name ('with '). `unnamed` stands in
-   * when the reader cannot see one ('claimed'). With neither, an unnamed actor renders
-   * nothing. The id is only for the lookup and is never printed.
-   */
-  z
-    .object({
-      actor: words(200),
-      prefix: z.string().max(40).optional(),
-      unnamed: words(60).optional(),
-    })
-    .transform(({ actor, prefix, unnamed }) =>
-      lean({ actor, prefix: prefix || undefined, unnamed }),
-    ),
-  /** Words that go somewhere. A link that goes nowhere this page may send a reader still says its words. */
-  z
-    .object({ link: lenient(runningTarget), text: linkText(200) })
-    .transform(({ link, text }) => (link ? { link, text } : text)),
-]);
+export const runningValue = byFirstKey(
+  [
+    ['mono'],
+    ['state'],
+    ['ago'],
+    ['since', 'of'],
+    ['until', 'of'],
+    ['count', 'of'],
+    ['money', 'of', 'rate'],
+    ['actor', 'prefix', 'unnamed'],
+    ['link', 'text'],
+  ],
+  z.union([
+    /** Words, as written. */
+    z.string().max(1000),
+    /**
+     * Machine text such as a branch or a tool name, sent whole. The shell prints an id or a
+     * digest inside it by its head and its tail, and keeps all of it for the hover title and,
+     * in a facts row, for the copy control.
+     */
+    z.object({ mono: words(400) }),
+    /** A state word; `in_review` reads 'in review'. Drawn in ink; red only on a row that needs a person. */
+    z.object({ state: words(64) }),
+    /** How long ago ('6 min ago'), with the moment in its title. */
+    z.object({ ago: instant }),
+    /** How long since, ticking ('22m'). With `of` seconds it reads against a cap ('12m of 60m'). */
+    z.object({ since: instant, of: z.number().finite().min(0).optional() }).transform(lean),
+    /** Time left ('34m left'). With `of` seconds granted it reads '34m left · of 4h'. */
+    z.object({ until: instant, of: z.number().finite().min(0).optional() }).transform(lean),
+    /** A count. With `of` it reads out of a whole ('2 of 4'). */
+    z.object({ count: count(), of: count().optional() }).transform(lean),
+    /** Spent so far, against a cap and per hour ('$2.10 of $8 · $2.49/h'). A rate of zero reads 'free'. */
+    z
+      .object({
+        money: runningMoney.nullable(),
+        of: runningMoney.nullable().optional(),
+        rate: runningMoney.nullable().optional(),
+      })
+      .transform(lean),
+    /**
+     * A person or an agent. The shell names it with the one actor-name rule (actor.list, which
+     * only an operator may read). `prefix` goes before a name ('with '). `unnamed` stands in
+     * when the reader cannot see one ('claimed'). With neither, an unnamed actor renders
+     * nothing. The id is only for the lookup and is never printed.
+     */
+    z
+      .object({
+        actor: words(200),
+        prefix: z.string().max(40).optional(),
+        unnamed: words(60).optional(),
+      })
+      .transform(({ actor, prefix, unnamed }) =>
+        lean({ actor, prefix: prefix || undefined, unnamed }),
+      ),
+    /** Words that go somewhere. A link that goes nowhere this page may send a reader still says its words. */
+    z
+      .object({ link: lenient(runningTarget), text: linkText(200) })
+      .transform(({ link, text }) => (link ? { link, text } : text)),
+  ]),
+);
 /** Words and facts read in order, at most sixteen. The owner writes its own separators (' · '). */
 export const runningPhrase = z.array(runningValue).max(16);
 
@@ -341,15 +367,21 @@ export const runningLinkRow = z
   })
   .transform(lean);
 /** A Merv call, or a quiet marker between calls. The shell pins running calls first, collapses repeats and marks silences. */
-export const runningStreamItem = z.union([
-  z.object({ mark: runningPhrase.min(1), at: instant }),
-  z.object({
-    call: words(200),
-    state: z.enum(['running', 'succeeded', 'failed', 'interrupted']),
-    at: instant,
-    ms: z.number().finite().nullable(),
-  }),
-]);
+export const runningStreamItem = byFirstKey(
+  [
+    ['mark', 'at'],
+    ['call', 'state', 'at', 'ms'],
+  ],
+  z.union([
+    z.object({ mark: runningPhrase.min(1), at: instant }),
+    z.object({
+      call: words(200),
+      state: z.enum(['running', 'succeeded', 'failed', 'interrupted']),
+      at: instant,
+      ms: z.number().finite().nullable(),
+    }),
+  ]),
+);
 /** One session of the live view: its words, its times and the route that reads its stream. */
 const agentSession: z.ZodType<AgentStreamSession, z.ZodTypeDef, AgentStreamSession> = z
   .object({
