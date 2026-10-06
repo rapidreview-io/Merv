@@ -1,6 +1,6 @@
 # @merv/reflections
 
-Reflections judges the project's live research. A wave opens five independent lens workflows (evidence, theory, methods, synthesis and next steps), then one synthesis of their reports with a change specification, which an independent reviewer approves or returns. That reviewer also updates the paper's Methods and Results. While a wave is open, new tasks and experiments wait; work already started continues. See [Reflections over live research](../../docs/REFLECTIONS.md).
+Reflections judges the project's live research. A wave opens five independent lens workflows (evidence, theory, methods, synthesis and next steps), then one synthesis of their reports with a change specification, which an independent reviewer approves or returns. That reviewer also updates the paper's Methods and Results. While a wave is open, new tasks and experiments wait; work already started continues. The pause is the `reflection` definition's `blocksStarts: ['task', 'experiment']`, which Workflows applies to every start, so Reflections calls neither Tasks nor Experiments. See [Reflections over live research](../../docs/REFLECTIONS.md).
 
 ## Where it sits
 
@@ -12,8 +12,6 @@ flowchart LR
   subgraph logic["Research logic"]
     reflections["Reflections<br/><small>lens waves</small>"]
     research["Research<br/><small>cycle coordinator</small>"]
-    tasks["Tasks"]
-    experiments["Experiments"]
     paper["Paper<br/><small>living paper</small>"]
   end
   subgraph foundations["Foundations"]
@@ -30,9 +28,7 @@ flowchart LR
   end
   worker -- "calls reflection.* tools" --> reflections
   research -- "creates reflection wave" --> reflections
-  reflections -- "pauses new starts" --> tasks
-  reflections -- "pauses new starts" --> experiments
-  reflections -- "registers wave, lens workflows" --> workflows
+  reflections -- "registers wave, lens workflows; an open wave blocks task and experiment starts" --> workflows
   reflections -- "requests synthesis review" --> reviews
   reflections -- "registers three recipes" --> contextBuilder
   reflections -- "applies paper changes" --> paper
