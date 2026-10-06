@@ -65,9 +65,13 @@ export const AnsiText = ({ text }: { text: string }) => (
 
 /** How long text must stand unchanged before it is coloured again: a block streaming in is not. */
 const STILL_MS = 300;
-/** The colours of the code drawn last, by language and text, done off the page's thread. */
-const colours = offThread<{ code: string; lang: string }, Piece[][] | null>((job) =>
-  colour(job.code, job.lang),
+/**
+ * The colours of the code drawn last, by language and text, done off the page's thread. Where
+ * the worker fails, code stands plain: a grammar on the page's thread has no clock.
+ */
+const colours = offThread<{ code: string; lang: string }, Piece[][] | null>(
+  (job) => colour(job.code, job.lang),
+  { fallback: false },
 );
 
 /**

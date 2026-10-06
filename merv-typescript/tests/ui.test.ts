@@ -684,6 +684,18 @@ test('a hashed asset is gzipped once, and a HEAD is gzipped never', async (t) =>
   assert.equal(head.body, undefined);
   write('assets/app-2.js', 'after');
   assert.equal(await read('assets/app-2.js'), 'after');
+  // What was gzipped once is sent without reading the disk again.
+  rmSync(join(directory, 'assets/app-1.js'));
+  assert.equal(await read('assets/app-1.js'), 'first');
+  // The page is never an asset: no path under assets/ reaches it, nor is cached a year.
+  for (const path of ['assets/app', 'assets/missing/', 'assets%2F..%2Findex.html']) {
+    const answer = await get(path);
+    assert.equal(answer.status, 404, path);
+    assert.doesNotMatch(answer.headers['cache-control']!, /immutable/, path);
+  }
+  write('index.html', 'three');
+  assert.equal(await read('index.html'), 'three');
+  assert.equal(await read('some/route'), 'three');
 });
 
 test('an unbuilt bundle reports itself instead of a blank page', async (t) => {

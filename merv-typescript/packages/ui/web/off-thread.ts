@@ -4,14 +4,25 @@
  * thousands of `*` or of links that never close in one paragraph, and a grammar is on some lines
  * of code. A job the worker has not done in READ_MS stands undone (null), and a new worker takes
  * the next. That clock runs only while the worker works, never while it, or a grammar a job
- * needs, still downloads, so a slow download gives up nothing. Where no worker starts, as in a
- * test's DOM, `here` does each job in the page.
+ * needs, still downloads; a grammar that has not come in LOAD_MS leaves its job undone. Where the
+ * page has no workers, as in a test's DOM, `here` does each job in the page. Where a worker fails
+ * to start or dies, as a stale tab's does once a deploy removed its script, so does `here` unless
+ * the jobs may only be done off the page (`fallback: false`): those then stand undone.
+ * What was done is remembered by key, the most recent first, up to KEEP of them and KEEP_CHARS of
+ * keys, so every length of a block streamed in is not kept.
  */
 const READ_MS = 2000;
+const LOAD_MS = 15_000;
+const KEEP = 500;
+const KEEP_CHARS = 2_000_000;
 
-export function offThread<Message, Result>(here: (message: Message) => Promise<Result>) {
+export function offThread<Message, Result>(
+  here: (message: Message) => Promise<Result>,
+  { fallback = true }: { fallback?: boolean } = {},
+) {
   /** The results of the jobs done last, by key; null for one not done in time. */
   const results = new Map<string, Result | null>();
+  let chars = 0;
   /** The jobs to do, oldest first, each with whoever still waits for it. */
   const waiting = new Map<string, { message: Message; waiters: Set<() => void> }>();
   /** Undefined until one starts; null once none could. */
@@ -22,9 +33,15 @@ export function offThread<Message, Result>(here: (message: Message) => Promise<R
   const inPage = () => worker === null || typeof Worker === 'undefined';
 
   function keep(key: string, result: Result | null): void {
-    results.delete(key);
+    if (results.delete(key)) chars -= key.length;
     results.set(key, result);
-    if (results.size > 500) results.delete(results.keys().next().value!);
+    chars += key.length;
+    // The newest stays, however large, so whoever waits for it is answered.
+    while (results.size > KEEP || (chars > KEEP_CHARS && results.size > 1)) {
+      const oldest = results.keys().next().value!;
+      results.delete(oldest);
+      chars -= oldest.length;
+    }
   }
 
   /** The oldest job someone still waits for, done in the worker, or in the page where none runs. */
@@ -55,18 +72,21 @@ export function offThread<Message, Result>(here: (message: Message) => Promise<R
         worker = null;
       }
     if (inPage()) {
+      if (worker === null && !fallback) return done(null);
       here(message).then(done, () => done(null));
       return;
     }
-    const time = () =>
-      (timer = setTimeout(() => {
+    const time = (ms = READ_MS) => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
         worker?.terminate();
         worker = undefined;
         done(null);
-      }, READ_MS));
+      }, ms);
+    };
     worker!.onmessage = (event: MessageEvent<Result | 'loaded' | 'loading'>) => {
-      // The worker fetches what this job needs: the clock waits for it.
-      if (event.data === 'loading') return clearTimeout(timer);
+      // The worker fetches what this job needs: the clock waits for it, generously.
+      if (event.data === 'loading') return time(LOAD_MS);
       if (event.data !== 'loaded') return done(event.data);
       loaded = true;
       time();

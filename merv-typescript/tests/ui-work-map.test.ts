@@ -1093,6 +1093,69 @@ test('a held card’s mark carries its owner’s release: it asks why, sends a f
   assert.ok(reads('ui.running') > boards, 'a release reads the board again');
 });
 
+test('a hold’s release stays in the sidebar under its owner’s own red line, and asks for a reason before it sends', async (t) => {
+  t.after(unmount);
+  drawn();
+  const given = board();
+  const held = given.lanes.work.nodes.find(({ key }) => key === 'work:wf_table')!;
+  held.attention = {
+    says: ['No independent reviewer can take it'],
+    who: 'An operator adds a reviewer',
+    action: {
+      label: 'Release hold',
+      verb: 'start',
+      tool: 'session.release_hold',
+      input: { instanceId: 'wf_table', expectedRevision: 3 },
+      allowed: true,
+      guard: { title: 'Release this hold?', consequence: 'Dispatch offers this work again.' },
+      ask: { field: 'reason', label: 'Reason' },
+      requestId: true,
+    },
+  };
+  answers(given, {
+    'work:wf_table': {
+      key: 'work:wf_table',
+      observedAt: given.observedAt,
+      header: {
+        kind: 'Task',
+        title: 'Sensitivity table',
+        says: ['Ready'],
+        attention: { says: ['No independent reviewer can take it'], who: 'An operator' },
+      },
+      sections: [],
+      actions: [],
+      live: false,
+    },
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/session.release_hold', (_, input) => {
+    sent.push(input);
+    return { body: { result: { instanceId: 'wf_table', revision: 3, attempts: 0, heldAt: null } } };
+  });
+  await mount(page());
+  await press(card('work:wf_table'));
+  assert.equal($('.running-says')!.textContent, 'No independent reviewer can take it');
+  await press(button('Release hold', $('.running-panel-head')!)!);
+  const reason = $('.guard')!.querySelector<HTMLInputElement>('input')!;
+  assert.equal(reason.value, '');
+  const confirm = () => button('Release hold', $('.guard')!)!;
+  assert.equal(confirm().disabled, true, 'no reason, no release');
+  const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')!.set!;
+  const type = async (text: string) =>
+    await act(async () => {
+      set.call(reason, text);
+      reason.dispatchEvent(new window.Event('input', { bubbles: true }));
+    });
+  await type('   ');
+  assert.equal(confirm().disabled, true, 'spaces are no reason');
+  await press(confirm());
+  assert.equal(sent.length, 0);
+  await type('Reviewer added');
+  assert.equal(confirm().disabled, false);
+  await press(confirm());
+  assert.equal(sent[0]!.reason, 'Reviewer added');
+});
+
 test('a link that is a fact’s whole value is a target of its own; one inside a sentence stays text', async (t) => {
   t.after(unmount);
   drawn();

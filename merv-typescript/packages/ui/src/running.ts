@@ -345,10 +345,18 @@ export function compose(parts: readonly { owner: string; sections: unknown }[]):
     .map(({ section }) => section);
 }
 
-/** Among a node's own attention and the marks on it, a person's need outranks a quiet line. */
-const strongest = (candidates: (RunningAttention | undefined)[]) => {
-  const present = candidates.filter((candidate) => candidate !== undefined);
-  return present.find(needsPerson) ?? present[0];
+/**
+ * Among a node's own attention and the marks on it, a person's need outranks a quiet line. A
+ * control offered by a line that lost, such as a hold's release, is carried onto the winner
+ * where it offers none of its own, so it is never lost with the line.
+ */
+const strongest = (candidates: (RunningAttention | undefined)[], tools: ReadonlySet<string>) => {
+  const present = candidates
+    .filter((candidate) => candidate !== undefined)
+    .map((candidate) => offered(candidate, tools));
+  const winner = present.find(needsPerson) ?? present[0];
+  const action = !winner?.action && present.find((candidate) => candidate.action)?.action;
+  return action ? { ...winner!, action } : winner;
 };
 
 /**
@@ -549,8 +557,8 @@ export async function runningBoard(sources: RunningSources, caller: Caller): Pro
     if (onBoard.has(at)) marked.set(at, [...(marked.get(at) ?? []), attention]);
   }
   for (const node of remaining) {
-    const attention = strongest([node.attention, ...(marked.get(node.key) ?? [])]);
-    if (attention) node.attention = offered(attention, names);
+    const attention = strongest([node.attention, ...(marked.get(node.key) ?? [])], names);
+    if (attention) node.attention = attention;
     const took = absorbed.get(node.key);
     if (took?.length) node.aliases = took;
     else delete node.aliases;
