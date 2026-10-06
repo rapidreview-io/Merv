@@ -81,11 +81,17 @@ commit, so changing the project base cannot rewrite work already pinned to an ol
 Connection, retained server history, accepted changes and remote publication remain visible
 as distinct states. Connecting a repository is not approval to merge a research outcome.
 
+Its one setting is `repositories.autoMerge`: automatic merging of several accepted commits
+into one base is on unless it is set to `false`.
+
 Review provenance is read through the Reviews service rather than its private tables.
 
 The adapter owns research unit declarations, dependency-derived pins, acceptance bodies and
 hashes, reviewed rounds, resolution provenance, and publication obligations. Its records
 compose Code's generic workspace and retained-commit API; Code receives commit identities
-and durable repository holds, without interpreting research workflow state.
+and durable repository holds, without interpreting research workflow state. The unit policy
+holds its durable records rather than extending them, and reads each unit through them with
+its publication enforcement and derived base. `@merv/code-work/models` holds the portable read
+models, among them publications and capture refs, which the browser and Experiments import.
 
 See the [ownership boundary and upgrade behavior](../../docs/CODE_WORK_BOUNDARY.md).
