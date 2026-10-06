@@ -391,3 +391,17 @@ test('a download asked for again while it is being made is the same export, not 
     await read(f, 'ses_1', one);
   }
 });
+
+test('locks an export killed mid-write left behind do not refuse every later export', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  const first = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in first));
+  // The server died while Git wrote the bundle and the export ref: both lock files remain.
+  writeFileSync(join(f.paths.exports, `${first.exportId}.bundle.lock`), '');
+  writeFileSync(join(f.paths.repository, `refs/merv/exports/${first.exportId}.lock`), '');
+  await f.open();
+  const again = await download(f, 'ses_1', []);
+  assert.ok(!('upToDate' in again));
+  await read(f, 'ses_1', again);
+});

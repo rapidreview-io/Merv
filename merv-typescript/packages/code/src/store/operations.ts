@@ -1028,6 +1028,10 @@ export class CodeStore {
       // Whatever this session held is given back before the next is measured: one download at
       // a time is all a session ever costs, whether or not this Code is the one that wrote it.
       this.exports.delete(exportId);
+      // This session's exports run one at a time on the one server writing this root, so a
+      // lock still on its bundle or refs is what a killed Git child or server left behind.
+      await rm(`${file}.lock`, { force: true });
+      await this.clearRefLocks(paths.repository, [ref, `${ref}-second`]);
       await rm(file, { force: true });
       await git.run(['update-ref', '-d', ref], { env });
       await git.run(['update-ref', '-d', `${ref}-second`], { env });
