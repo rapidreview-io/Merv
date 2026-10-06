@@ -462,6 +462,48 @@ test('workflow bounds created but unclaimed retries across restart without block
   assert.equal(f.allocations[4]?.owner.id, 'task_b:2');
 });
 
+test('a retry window counts only the machines its renting counts, when a config change left a work host behind', async (t) => {
+  const f = await fixture(t);
+  const target = { instanceId: 'flipped', expectedRevision: 2 };
+  f.demand([target]);
+  await f.adapter.reconcile();
+  // A work host rented for this instance before reuse was switched off.
+  f.allocations.unshift({
+    ...f.allocations[0]!,
+    id: 'flt_old_work_host',
+    owner: { kind: 'workflow', id: 'work:flipped' },
+  });
+  const fail = (a: FleetAllocation) => {
+    a.createAttempted = true;
+    a.runtime = machine;
+    a.phase = 'released';
+    a.updatedAt = new Date(Date.parse(a.createdAt)).toISOString();
+  };
+  fail(f.allocations[0]!);
+  fail(f.allocations[1]!);
+  f.advance(60_000);
+  await f.adapter.reconcile();
+  fail(f.allocations[2]!);
+  f.advance(60_000);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 3);
+  const grant = await f.adapter.retry(f.caller, {
+    ...target,
+    reason: 'The image is fixed; retry this revision once more.',
+    requestId: 'after-flip',
+  });
+  assert.equal(grant.priorAllocations, 2);
+  // The reopened window is bounded at two more unclaimed machines.
+  for (let rented = 4; rented <= 5; rented++) {
+    await f.adapter.reconcile();
+    assert.equal(f.allocations.length, rented);
+    fail(f.allocations[rented - 1]!);
+    f.advance(60_000);
+  }
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 5);
+});
+
 test(
   'an administrator can reopen only an exhausted exact revision with a retained idempotent grant',
   { timeout: 15_000 },
@@ -1422,6 +1464,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     app,
     start: (caller: Caller, requestId = randomUUID()) =>
       workflow.start(caller, { workflow: 'hosted-bridge', requestId }),
+    runtimes,
     stopped,
     bootstraps,
     creates,
@@ -2030,4 +2073,37 @@ test('a fresh work host rented for a review is kept while the review waits for i
   assert.equal(await f.owner().observe(allocation), 'running', 'the review still wants it');
   f.demand([], `review:${f.caller.projectId}`);
   assert.equal(await f.owner().observe(allocation), 'finished');
+  // Demand from other instances is theirs: it does not keep this work host up.
+  f.demand([{ instanceId: 'task_other', expectedRevision: 0 }]);
+  f.demand([{ instanceId: 'task_other', expectedRevision: 1 }], `review:${f.caller.projectId}`);
+  assert.equal(await f.owner().observe(allocation), 'finished');
+});
+
+test('a halted allocation relays no model calls while its stop stalls', async (t) => {
+  const h = await hosted(t, 1);
+  const caller = await h.project('Halted');
+  await h.sessions.setDispatch(caller, { enabled: true });
+  await delivered(h, caller, 'halted');
+  await h.adapter.start();
+  const [allocation] = await h.fleet.listOwned(h.adapter, []);
+  await h.fleet.tick();
+  await h.fleet.tick();
+  const machine = await boot(h, allocation!);
+  const relay = codexModelRelay(h.sessions, h.state, {
+    providerKey: () => 'k',
+    dailyTokensPerPerson: 20_000_000,
+    authorize: (token) => h.adapter.modelGrant(token),
+  });
+  const grant = (await relay.authority!.authorize(machine.secret)) as ManagedModelGrant;
+  await relay.authority!.validate(grant);
+  // The provider cannot stop the machine, so its allocation stays open with intent stop.
+  h.runtimes.stop = async () => {
+    throw new Error('provider down');
+  };
+  await h.fleet.cancel(caller, allocation!.id);
+  await h.fleet.tick();
+  const halted = await h.fleet.inspectOwned(h.adapter, allocation!.id);
+  assert.deepEqual([halted.intent, halted.phase === 'released'], ['stop', false]);
+  await assert.rejects(relay.authority!.validate(grant));
+  await assert.rejects(relay.authority!.authorize(machine.secret));
 });

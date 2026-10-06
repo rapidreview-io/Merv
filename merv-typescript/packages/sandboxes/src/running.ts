@@ -315,13 +315,15 @@ export function machineNodes(machines: SandboxMachines | null, now: number): Run
   };
 }
 
-/** The lane's own line: what the drawn sandboxes cost an hour together, in their one currency. */
+/** The lane's own line: what the rented sandboxes cost an hour together, in their one currency.
+ * A failed machine and one being deleted are drawn, but no longer rented. */
 export function machinesSummary(
   machines: SandboxMachines | null,
   now: number,
 ): RunningSummary | null {
   if (!machines) return null;
   const rates = drawn(machines, now)
+    .filter(({ state }) => LEASED.has(state))
     .map(({ rate }) => rate)
     .filter((rate) => rate !== null);
   const currency = rates[0]?.currency;

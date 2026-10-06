@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Build and deploy one immutable merv-typescript release on the production VM.
-//   node deploy/release.mjs [--host ResearchSuite_Control] [--public https://origin]
+//   node deploy/release.mjs [--public https://origin] [--host HOST]
 //                           [--sandboxes <committed Python checkout>] [--dry-run] [--resume <release-id>] [--skip-hosted] [--no-rollback]
 // Local: allowlisted source archive + manifest (git sha + content hash) → scp to the VM.
 // VM (root, detached): extract under /opt/merv-typescript/releases/<id>, docker build with the
@@ -24,7 +24,7 @@ const { values: args, tokens } = parseArgs({
   tokens: true,
   options: {
     help: { type: 'boolean' },
-    host: { type: 'string', default: 'ResearchSuite_Control' },
+    host: { type: 'string' },
     public: { type: 'string', default: 'https://experiments.rapidreview.io' },
     sandboxes: { type: 'string' },
     resume: { type: 'string' },
@@ -35,7 +35,7 @@ const { values: args, tokens } = parseArgs({
 });
 if (args.help) {
   console.log(
-    'Usage: node deploy/release.mjs [--host HOST] [--public ORIGIN] [--sandboxes PATH] [--dry-run] [--resume RELEASE] [--skip-hosted] [--no-rollback]',
+    'Usage: node deploy/release.mjs [--public ORIGIN] [--host HOST] [--sandboxes PATH] [--dry-run] [--resume RELEASE] [--skip-hosted] [--no-rollback]',
   );
   process.exit(0);
 }
@@ -54,16 +54,34 @@ const sandboxes = (() => {
     throw new Error('--sandboxes must name a Git checkout directory');
   return path;
 })();
-const host = args.host;
 const dryRun = args['dry-run'];
 const noRollback = args['no-rollback'];
 const resume = args.resume;
 const PRODUCTION = 'https://experiments.rapidreview.io';
-const PUBLIC = args.public;
+// Each known origin is served by exactly one VM, so a release can never reach one VM while
+// checking and logging against the other's origin.
+const HOSTS = {
+  [PRODUCTION]: 'ResearchSuite_Control',
+  'https://rp-control-dev.eastus2.cloudapp.azure.com': 'azureuser@dev-experiments.rapidreview.io',
+};
 // The origin is interpolated into the remote job's approved-origin check, so it is an origin
-// and nothing else: no path, no credentials, no shell metacharacters.
-if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/.test(PUBLIC))
-  throw new Error(`--public must be an https origin without a path, got ${PUBLIC}`);
+// and nothing else: no path, no credentials, no shell metacharacters. `https://x:443/` is `https://x`.
+const PUBLIC = (() => {
+  const value = args.public ?? PRODUCTION;
+  const url = URL.canParse(value) ? new URL(value) : null;
+  const origin = url?.origin ?? '';
+  if (!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/.test(origin) || `${origin}/` !== url.href)
+    throw new Error(`--public must be an https origin without a path, got ${value}`);
+  return origin;
+})();
+const host = (() => {
+  const known = HOSTS[PUBLIC];
+  if (known && (args.host ?? known) !== known)
+    throw new Error(`--public ${PUBLIC} is served by --host ${known}, not ${args.host}`);
+  if (!known && (!args.host || Object.values(HOSTS).includes(args.host)))
+    throw new Error(`--public ${PUBLIC} needs its own --host, not one serving another origin`);
+  return known ?? args.host;
+})();
 // A staging deploy never appends to the production release log.
 const RELEASES = PUBLIC === PRODUCTION ? 'deploy/RELEASES.md' : 'deploy/STAGING_RELEASES.md';
 const ssh = (script, opts = {}) =>
@@ -106,17 +124,11 @@ fi
 mkdir -p "$BK" && chmod 700 "$BK" && cp -p /etc/merv/typescript.env "$BK/" && chmod 600 "$BK/typescript.env"
 printf '{"previousImage":"%s","previousImageId":"%s","previousComposeFiles":"%s/compose.yml","newImage":"%s","publicRoutesChanged":false,"automaticRollbackAllowed":${!noRollback}}\\n' "$PREV" "$PREV_ID" "$PREV_DIR" "$IMG" > "$BK/rollback.json"
 printf '{"release":"%s","image":"%s","imageId":"%s","nodeImage":"%s","archiveSha256":"%s","buildAndCompiledCli":"passed"}\\n' "${release}" "$IMG" "$IMAGE_ID" "${NODE_IMAGE}" "${archiveSha256}" > build-manifest.json
-(cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml up -d) > deploy.log 2>&1
-H=starting; R=0
-for i in $(seq 1 60); do
-  H=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null || echo starting)
-  R=$(docker inspect --format '{{.RestartCount}}' merv-typescript-control-1 2>/dev/null || echo 0)
-  [ "$H" = healthy ] && break
-  [ "$R" -ge 3 ] && break
-  sleep 5
-done
-if [ "$H" != healthy ]; then
-  # A schema cutover may make the previous image unsafe. Leave it stopped when requested.
+# Until the new container is healthy, any failure (a failed compose up included) ends here.
+# A schema cutover may make the previous image unsafe: --no-rollback leaves it stopped.
+rollback() {
+  trap - EXIT
+  set +e
   LOG=$(docker logs --tail 200 merv-typescript-control-1 2>&1 | grep -vE 'ExperimentalWarning|trace-warnings' | tail -n 2 | tr -d '\\\\"' | tr '\\n' ' ')
   if [ "${noRollback ? '1' : '0'}" = 1 ]; then
     (cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml down) > rollback.log 2>&1
@@ -134,7 +146,19 @@ if [ "$H" != healthy ]; then
   printf '{"release":"%s","image":"%s","imageId":"%s","rolledBack":true,"containerHealth":"%s","restarts":"%s","previousImage":"%s","previousHealth":"%s","log":"%s"}\\n' \\
     "${release}" "$IMG" "$IMAGE_ID" "$H" "$R" "$PREV" "$P" "$LOG" > deploy-status.json
   exit 1
-fi
+}
+H=not-started; R=0
+trap rollback EXIT
+(cd source/deploy && MERV_TS_IMAGE="$IMG" docker compose -f compose.yml up -d) > deploy.log 2>&1
+for i in $(seq 1 60); do
+  H=$(docker inspect --format '{{.State.Health.Status}}' merv-typescript-control-1 2>/dev/null || echo starting)
+  R=$(docker inspect --format '{{.RestartCount}}' merv-typescript-control-1 2>/dev/null || echo 0)
+  [ "$H" = healthy ] && break
+  [ "$R" -ge 3 ] && break
+  sleep 5
+done
+[ "$H" = healthy ] || rollback
+trap - EXIT
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 HEALTH=$(code http://127.0.0.1:3081/health)
 UI=$(code http://127.0.0.1:3081/ui/)

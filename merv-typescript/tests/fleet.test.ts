@@ -937,6 +937,33 @@ test('a person’s machines stop renting once today’s compute is spent; anothe
   assert.equal((await f.ask('c_1')).person, undefined);
 });
 
+test('a request queued before its person’s compute was spent is refused, not admitted, once it is', async (t) => {
+  const f = await capped(t, { projectLimit: 1 });
+  f.price(3);
+  const first = await f.ask('a_1');
+  await f.fleet.tick();
+  const queued = await f.ask('a_2');
+  await f.fleet.tick();
+  assert.equal((await f.get(queued.id)).phase, 'queued');
+  // Fifty minutes at $3 an hour is past the $2 cap; the slot frees only afterwards.
+  f.advance(50 * 60_000);
+  await f.fleet.cancel(f.caller, first.id);
+  await f.fleet.tick();
+  f.runtimes.confirmStopped('sbx_1');
+  await f.fleet.tick();
+  await f.fleet.tick();
+  const refused = await f.get(queued.id);
+  assert.deepEqual(
+    [refused.phase, refused.intent, refused.error, refused.runtime],
+    ['released', 'stop', 'wallet_refused', null],
+  );
+  assert.deepEqual(f.runtimes.createKeys, [`${first.id}:create`]);
+  // Another person's request takes the slot.
+  const other = await f.ask('b_1');
+  await f.fleet.tick();
+  assert.equal((await f.get(other.id)).phase, 'provisioning');
+});
+
 test('today’s compute counts open machines to now at the price they were reserved at, and never a request without a machine', async (t) => {
   const f = await capped(t);
   f.price(1);

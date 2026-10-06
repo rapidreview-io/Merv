@@ -23,7 +23,7 @@ import { runningBoard, runningPanel, type RunningSources } from '@merv/ui/runnin
 import { SandboxService, sandboxesPlugin, sandboxTools } from '../packages/sandboxes/src/index.js';
 import { sandboxesToolsPlugin } from '../packages/sandboxes/src/tools.js';
 import { sandboxesUiPlugin } from '../packages/sandboxes/src/ui.js';
-import { machineNodes, machinePanel } from '../packages/sandboxes/src/running.js';
+import { machineNodes, machinePanel, machinesSummary } from '../packages/sandboxes/src/running.js';
 import { createApp } from './fixtures/app.js';
 
 /**
@@ -451,6 +451,36 @@ test("the lane's own line is what the sandboxes drawn cost per hour together", a
       actions: [],
       owner: 'sandboxes',
     },
+  ]);
+});
+
+test('the hourly total counts only machines the service still rents, never failed or leaving ones', () => {
+  const now = Date.parse('2026-09-30T12:00:00Z');
+  const row = (id: string, state: string, amount: string) => ({
+    id,
+    state,
+    hourly_price: { currency: 'USD', amount },
+    updated_at: new Date(now - 60_000).toISOString(),
+  });
+  const summary = machinesSummary(
+    {
+      observedAt: new Date(now).toISOString(),
+      failed: false,
+      freshForMs: 60_000,
+      rows: [
+        row('sbx_ready', 'ready', '4.05'),
+        row('sbx_arriving', 'provisioning', '1.00'),
+        row('sbx_lost', 'unknown', '0.50'),
+        // Drawn, but no longer billed: a failure, and a machine on its way out.
+        row('sbx_failed', 'failed', '32.40'),
+        row('sbx_leaving', 'deleting', '8.10'),
+      ],
+    },
+    now,
+  );
+  assert.deepEqual(summary?.says, [
+    'Sandboxes ',
+    { money: null, rate: { amount: '5.5500', currency: 'USD' } },
   ]);
 });
 

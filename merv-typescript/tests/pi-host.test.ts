@@ -666,6 +666,35 @@ test('a machine in use near its deadline hands over to a fresh one of its kind w
   assert.equal((await nearDeadline()).host.next?.machine, 'large');
 });
 
+test('a deadline handover Fleet refuses is a failed move, tried again only after a cooldown', async (t) => {
+  const f = await fixture(t, { pi: { idleTimeoutSeconds: 3600 } });
+  const [a, b] = [await f.create(), await f.create()];
+  const bound = await f.claimed(await f.send(a));
+  await f.finish(bound);
+  // The person's compute is spent: every new rental is refused.
+  let refused = 0;
+  f.fleet.request = async () => {
+    refused++;
+    throw new MervError('fleet_compute_cap', "Today's compute is used up", 429);
+  };
+  f.advance(3_600_000 - 15 * 60_000 + 1000);
+  const sent = await f.send(a);
+  await f.pi.tick();
+  await f.pi.tick();
+  const { host } = await f.pi.snapshot(f.operator, a.id);
+  assert.deepEqual(
+    [host.moving, host.lastMove?.by, host.lastMove?.outcome, host.lastMove?.reason],
+    [null, 'deadline', 'failed', 'spending limit'],
+  );
+  assert.equal(refused, 1);
+  // The machine still serves the host: another conversation's turn is placed on it too.
+  assert.equal((await f.send(b)).runtimeId, sent.runtimeId);
+  assert.equal(sent.runtimeId, bound.work.command.runtimeId);
+  f.advance(5 * 60_000);
+  await f.pi.tick();
+  assert.equal(refused, 2);
+});
+
 test('picking the current machine while a move starts cancels the move', async (t) => {
   const f = await fixture(t);
   const bound = await f.claimed(await f.send(await f.create()));

@@ -88,6 +88,8 @@ async function fixture(
     progressFailures?: number[];
     /** The answer's words, streamed 10 ms apart. */
     paced?: string[];
+    /** The first reply's tool call arguments, streamed 10 ms apart, with no words. */
+    pacedCall?: string[];
     /** One model call each, before the answer: a text and a tool call. */
     sections?: string[];
   } = {},
@@ -149,6 +151,46 @@ async function fixture(
         assert.ok(!JSON.stringify(body).includes('private-auth'));
         modelRequests.push(body);
         if (options.modelError) return json({ error: { message: 'private-auth' } }, 503);
+        if (options.pacedCall && modelRequests.length === 1) {
+          const parts = options.pacedCall;
+          const item = { ...call, arguments: parts.join('') };
+          const frame = (event: object) =>
+            new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`);
+          const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+              controller.enqueue(frame({ type: 'response.created', response: { id: 'resp_1' } }));
+              controller.enqueue(
+                frame({
+                  type: 'response.output_item.added',
+                  output_index: 0,
+                  item: { ...item, arguments: '' },
+                }),
+              );
+              for (const delta of parts) {
+                controller.enqueue(
+                  frame({ type: 'response.function_call_arguments.delta', output_index: 0, delta }),
+                );
+                await new Promise((resolve) => setTimeout(resolve, 10));
+              }
+              controller.enqueue(
+                frame({ type: 'response.output_item.done', output_index: 0, item }),
+              );
+              controller.enqueue(
+                frame({
+                  type: 'response.completed',
+                  response: {
+                    id: 'resp_1',
+                    status: 'completed',
+                    output: [item],
+                    usage: { input_tokens: 1, output_tokens: 1 },
+                  },
+                }),
+              );
+              controller.close();
+            },
+          });
+          return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
+        }
         if (options.paced) {
           const words = options.paced;
           const item = message(words.join(''));
@@ -968,6 +1010,19 @@ test('streamed words reach Main within about 100 ms, a few requests a second, al
       gapsMs: sent.slice(1).map(({ at }, index) => at - sent[index].at),
     }),
   );
+});
+
+test('a tool call written without words still tells Main the turn is moving, about once a second', async () => {
+  // About 1.2 s of arguments: '{' then spaces, then '}'.
+  const app = await fixture({ pacedCall: ['{', ...Array(118).fill(' '), '}'] });
+  await app.run();
+  assert.deepEqual(app.failures, []);
+  const events = (app.progress as { type: string; text: string }[][]).flat();
+  const moving = events.filter((event) => event.type === 'progress');
+  assert.ok(moving.length >= 1 && moving.length <= 2, `${moving.length} progress events`);
+  assert.ok(moving.every((event) => event.text === 'Writing a tool call'));
+  assert.deepEqual(app.completions[0].messages, [{ role: 'assistant', text: 'Finished' }]);
+  assert.equal(app.completions[0].outcomes.length, 1);
 });
 
 test('oversized worker responses cancel their streams', async () => {

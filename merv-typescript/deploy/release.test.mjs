@@ -18,8 +18,18 @@ const render = new Function(
   `${definition}\nreturn remoteJob;`,
 );
 
-for (const noRollback of [false, true])
-  test(`unhealthy release ${noRollback ? 'stops without rollback' : 'restores previous image'}`, () => {
+const failures = [
+  { name: 'unhealthy release restores previous image', noRollback: false },
+  { name: 'unhealthy release stops without rollback', noRollback: true },
+  // grep -v finds nothing to keep, which once ended the job under set -e before any rollback.
+  {
+    name: 'unhealthy release with only filtered log lines restores previous image',
+    logs: 'x ExperimentalWarning',
+  },
+  { name: 'failed compose up restores previous image', composeFails: true },
+];
+for (const { name, noRollback = false, logs = 'startup failed', composeFails = false } of failures)
+  test(name, () => {
     const dir = mkdtempSync(join(tmpdir(), 'merv-release-fault-'));
     try {
       mkdirSync(join(dir, 'source', 'deploy'), { recursive: true });
@@ -32,30 +42,34 @@ for (const noRollback of [false, true])
         release: 'test',
         archiveSha256: 'a'.repeat(64),
       });
-      const start = job.indexOf('if [ "$H" != healthy ]; then');
+      // From the build manifest through the health wait and its failure handling.
+      const start = job.indexOf(
+        '\nprintf \'{"release":"%s","image":"%s","imageId":"%s","nodeImage"',
+      );
       const end = job.indexOf('\ncode() {', start);
       assert.ok(start > 0 && end > start);
-      const failure = job.slice(start, end);
       const script = `
 set -euo pipefail
-IMG=merv-typescript:test; IMAGE_ID=sha256:123456789abc; H=unhealthy; R=3
+IMG=merv-typescript:test; IMAGE_ID=sha256:123456789abc
 PREV=merv-typescript:old; PREV_DIR="$PWD/previous"
 COMMANDS="$PWD/commands.txt"; RESTORED="$PWD/restored"
 docker() {
-  if [ "$1" = logs ]; then echo 'startup failed'; return; fi
+  if [ "$1" = logs ]; then echo ${JSON.stringify(logs)}; return; fi
   if [ "$1" = inspect ]; then
-    if [ -f "$RESTORED" ]; then echo healthy; else echo unhealthy; fi
+    if [ "$3" = '{{.RestartCount}}' ]; then echo 3;
+    elif [ -f "$RESTORED" ]; then echo healthy; else echo unhealthy; fi
     return
   fi
   if [ "$1" = compose ]; then
-    printf '%s\\n' "$*" >> "$COMMANDS"
-    if [ "${'$'}*" = 'compose -f compose.yml up -d' ]; then touch "$RESTORED"; fi
+    printf '%s %s\\n' "$(basename "$PWD")" "$*" >> "$COMMANDS"
+    if [ "$4" = up ] && [ "$PWD" = "$PREV_DIR" ]; then touch "$RESTORED";
+    elif [ "$4" = up ] && ${composeFails ? 'true' : 'false'}; then return 1; fi
     return
   fi
   return 1
 }
 sleep() { :; }
-${failure}
+${job.slice(start, end)}
 `;
       const result = spawnSync('bash', ['-c', script], {
         cwd: dir,
@@ -66,14 +80,15 @@ ${failure}
       const commands = readFileSync(join(dir, 'commands.txt'), 'utf8');
       const status = JSON.parse(readFileSync(join(dir, 'deploy-status.json'), 'utf8'));
       if (noRollback) {
-        assert.match(commands, /compose -f compose\.yml down/);
-        assert.doesNotMatch(commands, /up -d/);
+        assert.match(commands, /deploy compose -f compose\.yml down/);
+        assert.doesNotMatch(commands, /previous compose/);
         assert.equal(status.noRollback, true);
         assert.equal(status.rolledBack, false);
       } else {
-        assert.match(commands, /compose -f compose\.yml up -d/);
+        assert.match(commands, /previous compose -f compose\.yml up -d/);
         assert.equal(status.rolledBack, true);
         assert.equal(status.previousImage, 'merv-typescript:old');
+        assert.equal(status.previousHealth, 'healthy');
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -82,7 +97,7 @@ ${failure}
 
 const sandboxDefinition = source.slice(
   source.indexOf('const sandboxes ='),
-  source.indexOf('const host = args.host;'),
+  source.indexOf("const dryRun = args['dry-run'];"),
 );
 const validateSandboxes = new Function(
   'args',

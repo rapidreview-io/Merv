@@ -653,6 +653,38 @@ test('a role change ends the running turn, the next offers the new role’s tool
   );
 });
 
+test('a call that returns after its turn ended leaves nothing of the turn in memory', async (t) => {
+  const f = await fixture(t);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let started!: () => void;
+  const running = new Promise<void>((resolve) => (started = resolve));
+  t.after(
+    f.tools.register({
+      name: 'probe.held',
+      description: 'A read that waits',
+      readOnly: true,
+      inputSchema: z.object({}).strict(),
+      handler: async () => {
+        started();
+        await held;
+        throw new MervError('invalid_input', 'Refused after the turn ended', 400);
+      },
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const { token, input } = await f.begun(human);
+  const call = f.pi.tool(token, { ...input, name: 'probe.held', input: {} }).catch(() => null);
+  await running;
+  await f.pi.stop(human, input.conversationId);
+  release();
+  await call;
+  const memory = f.pi as unknown as Record<'progressAt' | 'refusals', Map<string, unknown>>;
+  const turn = `${input.conversationId}:${input.commandId}`;
+  assert.deepEqual([memory.progressAt.has(turn), memory.refusals.has(turn)], [false, false]);
+});
+
 test('an exact repeated proposal in one turn keeps one Run action and one mutation', async (t) => {
   const f = await fixture(t);
   let mutations = 0;

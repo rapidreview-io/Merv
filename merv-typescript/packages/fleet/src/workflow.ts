@@ -200,6 +200,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // A missing model key leaves demand unserved, never the server down.
     await this.reconcile().catch(() => undefined);
   }
+  /** What a target's machines are rented under: its instance's work host, or its revision. */
+  private allocationOwner(id: string): string {
+    return this.config.reuseWorkHosts ? `work:${id.slice(0, id.lastIndexOf(':'))}` : id;
+  }
   /** Revocation is fenced by each allocation's own source; a new director lets work finish. */
   private accepted(a: FleetAllocation): boolean {
     return a.owner.kind === ownerKind;
@@ -370,7 +374,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
   ) {
     const ids = targets.map(targetId);
     const allocations = (
-      await this.fleet.listOwned(this, [...ids, ...targets.map((t) => `work:${t.instanceId}`)])
+      await this.fleet.listOwned(
+        this,
+        ids.map((id) => this.allocationOwner(id)),
+      )
     ).filter((a) => a.projectId === caller.projectId);
     const grants = await this.retryGrants([caller.projectId]);
     const latest = new Map(
@@ -386,9 +393,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     return await Promise.all(
       targets.map(async ({ instanceId, expectedRevision }) => {
         const id = targetId({ instanceId, expectedRevision });
-        const attempts = allocations.filter(
-          (a) => a.owner.id === id || a.owner.id === `work:${instanceId}`,
-        );
+        // Exactly the machines renting counts, so a grant's prior count is the same list's.
+        const attempts = allocations.filter((a) => a.owner.id === this.allocationOwner(id));
         const prior = grants.get(grantKey(caller.projectId, id))?.prior_allocations;
         const { unclaimed, cooldownUntil: until } = await this.streak(attempts, prior);
         const cooldownUntil = until > this.clock() ? new Date(until).toISOString() : null;
@@ -546,6 +552,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       return (
         this.accepted(a) &&
         a.phase !== 'released' &&
+        a.intent !== 'stop' &&
         a.deadlineAt > new Date(this.clock()).toISOString() &&
         a.epoch === binding.epoch &&
         a.profileId === binding.runtimeProfileId &&
@@ -622,11 +629,13 @@ export class FleetWorkflowAdapter implements FleetOwner {
     }
     // A one-assignment supervisor that has not claimed work when its enrollment lapses never will.
     if (observed && Date.parse(observed.enrollmentExpiresAt) <= this.clock()) return 'finished';
-    // A work host is rented under the owner for its reviews too, which only the reviewer sees.
+    // A work host is rented under the owner for its reviews too, which only the reviewer sees;
+    // it is wanted only for its own instance.
     let wanted = false;
     for (const director of workId(a) ? [a.source, await this.reviewer(a.source)] : [a.source])
-      wanted ||= !!(await this.sessions.dispatchDemand(sourceCaller(director), demandInput))
-        .candidates.length;
+      wanted ||= (
+        await this.sessions.dispatchDemand(sourceCaller(director), demandInput)
+      ).candidates.some((c) => !workId(a) || c.instanceId === workId(a));
     // Counted from the launch, or the runner's enrollment. Work claimed after the first read
     // keeps its machine; a claim after the second is refused once the stop commits.
     const grace = observed?.runnerId ? emptyRunnerGraceMs : startupGraceMs;
@@ -737,9 +746,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
     let grants: Map<string, RetryGrant> | undefined;
     for (const { projectId, source, id } of queue) {
       if (!slots || covered.has(id) || failed.has(projectId)) continue;
-      const allocationOwnerId = this.config.reuseWorkHosts
-        ? `work:${id.slice(0, id.lastIndexOf(':'))}`
-        : id;
+      const allocationOwnerId = this.allocationOwner(id);
       const attempts = allocations.filter(
         (a) => a.projectId === projectId && a.owner.id === allocationOwnerId,
       );
