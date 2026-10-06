@@ -3,7 +3,7 @@ import { createServer } from 'node:http';
 import test from 'node:test';
 import { once } from 'node:events';
 import { runPiWorker } from '../packages/pi/src/worker.js';
-import { ModelRelay } from '../packages/fleet/src/model-relay.js';
+import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig } from '../packages/pi/src/relay.js';
 import { piResponsesSchema, validPiPayload } from '../packages/pi/src/relay-schema.js';
 import { piInstructions } from '../packages/pi/src/prompt.js';
@@ -11,7 +11,8 @@ import { researchGuide } from '../packages/research/src/guide.js';
 import type { PiBootstrap, PiCompletion, PiWork } from '../packages/pi/src/types.js';
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */
-const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
+const piRelay = (config: PiRelayConfig & RelayTuning) =>
+  new ModelRelay(piModelRelay(config), config);
 
 const workerToken = `piw_flt_fixture.${'a'.repeat(43)}`;
 const modelToken = `pir_${'b'.repeat(43)}`;

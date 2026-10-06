@@ -4,8 +4,6 @@ import {
   canonical,
   check,
   digest,
-  hostedCodexCapabilities,
-  hostedCodexPlatform,
   MervError,
   recorded,
   sourceCaller,
@@ -17,19 +15,15 @@ import {
   requireHuman,
 } from '@merv/contracts';
 import type {
-  ManagedModelGrant,
   ManagedRunnerBindingIdentity,
   Sessions,
   SessionsProjectStatus,
 } from '@merv/sessions/types';
-import type { Fleet, FleetAllocation, FleetOwner } from './types.js';
+import type { Fleet, FleetAllocation, FleetOwner, ManagedModelGrant } from './types.js';
 import { personKey } from './model-ledger.js';
-import {
-  codexModelRelay,
-  modelBudgetStatus,
-  modelMigrations,
-  setDailyTokens,
-} from './codex-relay.js';
+import { hostedCodexCapabilities, hostedCodexPlatform } from './hosted-codex.js';
+import { codexModelRelay, hostedGrant, modelBudgetStatus, setDailyTokens } from './codex-relay.js';
+import { modelMigrations } from './schema.js';
 
 /** A deployment opt-in. Fleet still owns all machine limits and lifecycle transitions. */
 const workflowConfig = z
@@ -49,8 +43,6 @@ const workflowConfig = z
       .optional(),
     baseUrl: z.string().url().max(2048).optional(),
     maxAgents: z.number().int().min(1).max(64).default(10),
-    /** A step's wall-clock cap; its machine is rented ten minutes longer, within Fleet's limit. */
-    stepMinutes: z.number().int().min(10).max(1430).default(120),
     dailyTokensPerPerson: z.number().int().min(1).default(20_000_000),
     pollIntervalMs: z.number().int().min(1000).max(60_000).default(5000),
   })
@@ -58,6 +50,8 @@ const workflowConfig = z
 export type FleetWorkflowConfig = z.input<typeof workflowConfig>;
 
 const ownerKind = 'workflow';
+/** A step's wall-clock cap; its machine is rented ten minutes longer, within Fleet's limit. */
+const stepSeconds = 120 * 60;
 const workHostCapability = 'workflow.workhost.1';
 const workIdleMs = 300_000;
 const workId = (a: FleetAllocation) =>
@@ -228,11 +222,12 @@ export class FleetWorkflowAdapter implements FleetOwner {
       who,
     );
   }
-  /** A hosted session's model grant, charged to the person its machine was rented for. */
+  /** The one grant of hosted Codex's model, by session bearer or id, charged to the person its
+   *  machine was rented for. */
   async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
-    const grant = await this.sessions.managed.modelGrant(tokenOrSessionId);
-    const { person } = await this.fleet.inspectOwned(this, grant.allocationId);
-    return { ...grant, person: person ?? grant.person };
+    const bound = await this.sessions.managed.boundSession(tokenOrSessionId);
+    const { person } = await this.fleet.inspectOwned(this, bound.allocationId);
+    return hostedGrant(bound, person, this.clock());
   }
   /** The managed worker's or project's current Fleet director's budget, without private counts. */
   async modelBudget(caller: Caller) {
@@ -558,7 +553,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
         a.epoch === binding.epoch &&
         a.profileId === binding.runtimeProfileId &&
         workId(a) === binding.workInstanceId &&
-        (!binding.workInstanceId || binding.stepSeconds === this.config.stepMinutes * 60) &&
+        (!binding.workInstanceId || binding.stepSeconds === stepSeconds) &&
         (!binding.workInstanceId ||
           (this.config.reuseWorkHosts &&
             this.config.reusableRuntimeProfileIds.includes(a.profileId))) &&
@@ -584,9 +579,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       runtimeProfileId: a.profileId,
       platform: hostedCodexPlatform,
       capabilities: [...hostedCodexCapabilities, ...(workId(a) ? [workHostCapability] : [])],
-      ...(workId(a)
-        ? { workInstanceId: workId(a)!, stepSeconds: this.config.stepMinutes * 60 }
-        : {}),
+      ...(workId(a) ? { workInstanceId: workId(a)!, stepSeconds } : {}),
       expiresAt: a.deadlineAt,
     });
     return JSON.stringify({
@@ -770,7 +763,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
           {
             requestId: `wf:${digest({ id: allocationOwnerId, generation })}`,
             owner: { kind: ownerKind, id: allocationOwnerId },
-            seconds: this.config.stepMinutes * 60 + 600,
+            seconds: stepSeconds + 600,
           },
         );
       } catch (error) {
@@ -821,7 +814,7 @@ export const fleetWorkflowPlugin = {
     ctx.effect(() => () => adapter.close());
     // The provider key stays on Main: hosted Codex calls the model through this relay.
     if (adapter.config.enabled) {
-      const relay = codexModelRelay(ctx.sessions, ctx.state, {
+      const relay = codexModelRelay(ctx.state, {
         providerKey: () => process.env[adapter.config.modelApiKeyEnv!] ?? '',
         dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
         authorize: (token) => adapter.modelGrant(token),

@@ -19,7 +19,7 @@ import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions } from '@merv/sessions';
 import { FleetService } from '@merv/fleet';
 import type { SandboxRuntimes, SandboxRuntimeHandle } from '@merv/sandboxes';
-import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/contracts';
+import { hostedCodexCapabilities, hostedCodexPlatform } from '@merv/fleet/hosted-codex';
 import { FleetWorkflowAdapter } from '../packages/fleet/src/workflow.js';
 import { openState } from './fixtures/state.js';
 

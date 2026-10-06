@@ -79,14 +79,7 @@ export {
   workLink,
 } from './running.js';
 export * as runningSchema from './running-schema.js';
-export {
-  codexHandoffGraceMs,
-  hostedCodexCapabilities,
-  hostedCodexPlatform,
-  MAX_TRANSCRIPT_BYTES,
-  RUNNER_HARNESSES,
-  sessionSecretPattern,
-} from './session-inputs.js';
+export { MAX_TRANSCRIPT_BYTES, RUNNER_HARNESSES, sessionSecretPattern } from './session-inputs.js';
 export { WorkspaceDeferred } from './workspace-driver.js';
 export type {
   CheckoutSlotClaim,

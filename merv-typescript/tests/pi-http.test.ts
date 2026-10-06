@@ -4,13 +4,14 @@ import { MervError, type Caller, type Principal, type Scope } from '@merv/contra
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
 import { PiHttp } from '../packages/pi/src/api.js';
-import { ModelRelay } from '../packages/fleet/src/model-relay.js';
+import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
 import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
 import { PiStreams } from '../packages/pi/src/stream.js';
 import type { PiService } from '../packages/pi/src/service.js';
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */
-const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
+const piRelay = (config: PiRelayConfig & RelayTuning) =>
+  new ModelRelay(piModelRelay(config), config);
 
 const workerToken = 'piw_http-fixture';
 const modelToken = `pir_${'h'.repeat(43)}`;

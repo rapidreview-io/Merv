@@ -11,7 +11,6 @@ import { boundProject } from './fixtures/code-binding.js';
 import {
   createService,
   MervError,
-  digest,
   type Caller,
   type WorkflowPolicy,
   type WorkflowWorkspacePolicy,
@@ -960,7 +959,7 @@ test('revoking the captured source credential ends managed authority', async (t)
   );
 });
 
-test('a hosted session’s model grant holds while it is live or just handed off, and never activates it', async (t) => {
+test('a managed runner’s bound session reads while it is live or handed off, and never activates it', async (t) => {
   let now = Date.now();
   const f = await fixture(t, { clock: () => now });
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
@@ -969,24 +968,23 @@ test('a hosted session’s model grant holds while it is live or just handed off
   const request = f.lease();
   const { session } = await f.sessions.dispatch.lease(f.caller, request);
   assert.ok(session);
-  const grant = await f.sessions.managed.modelGrant(request.secret);
-  assert.deepEqual(grant, {
-    id: session.id,
+  const bound = await f.sessions.managed.boundSession(request.secret);
+  assert.deepEqual(bound, {
+    sessionId: session.id,
     projectId: f.source.projectId,
     allocationId: f.input.allocationId,
-    // Keyed as Pi keys a person; this source is an issued actor, not a member.
-    person: digest({ projectId: f.source.projectId, actorId: f.source.actorId }),
-    model: profile.model,
     expiresAt: new Date(
       Math.min(Date.parse(session.hardDeadline), Date.parse(f.input.expiresAt)),
     ).toISOString(),
   });
   assert.equal((await f.sessions.get(f.caller, session.id)).status, 'offered');
-  assert.deepEqual(await f.sessions.managed.modelGrant(session.id), grant);
+  assert.deepEqual(await f.sessions.managed.boundSession(session.id), bound);
   // A session no managed runner holds, a stopped allocation and a source without read get none.
-  await assert.rejects(f.sessions.managed.modelGrant(secret()), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.boundSession(secret()), { code: 'unauthorized' });
   f.current(false);
-  await assert.rejects(f.sessions.managed.modelGrant(request.secret), { code: 'managed_revoked' });
+  await assert.rejects(f.sessions.managed.boundSession(request.secret), {
+    code: 'managed_revoked',
+  });
   f.current(true);
   const worker = await f.sessions.authenticate(request.secret);
   const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
@@ -1005,30 +1003,30 @@ test('a hosted session’s model grant holds while it is live or just handed off
     ),
   );
   await f.sessions.release(f.caller, { sessionId: session.id, runnerId: f.runnerId });
-  assert.equal((await f.sessions.get(f.caller, session.id)).closeReason, 'handoff');
-  // Codex writes its closing turn after the handoff: the runner's minute of grace.
+  const closed = await f.sessions.get(f.caller, session.id);
+  assert.equal(closed.closeReason, 'handoff');
+  // Codex writes its closing turn after the handoff; Fleet decides how long it may.
   now += 59_000;
-  assert.deepEqual(await f.sessions.managed.modelGrant(request.secret), grant);
-  assert.deepEqual(await f.sessions.managed.modelGrant(session.id), grant);
+  const handedOff = { ...bound, handedOffAt: closed.closedAt };
+  assert.deepEqual(await f.sessions.managed.boundSession(request.secret), handedOff);
+  assert.deepEqual(await f.sessions.managed.boundSession(session.id), handedOff);
   // A relay validating an admitted stream by session id still depends on its original credential.
   await new CredentialStore(f.state, () => now).revoke(tokenDigest(request.secret), 'sessions');
-  await assert.rejects(f.sessions.managed.modelGrant(session.id), { code: 'unauthorized' });
-  await assert.rejects(f.sessions.managed.modelGrant(request.secret), { code: 'unauthorized' });
-  now += 2_000;
-  await assert.rejects(f.sessions.managed.modelGrant(request.secret), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.boundSession(session.id), { code: 'unauthorized' });
+  await assert.rejects(f.sessions.managed.boundSession(request.secret), { code: 'unauthorized' });
 });
 
-test('a model grant ends when the managed source loses read', async (t) => {
+test('a bound session ends when the managed source loses read', async (t) => {
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
   assert.ok((await f.sessions.dispatch.lease(f.caller, request)).session);
-  await f.sessions.managed.modelGrant(request.secret);
+  await f.sessions.managed.boundSession(request.secret);
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
-    f.sessions.managed.modelGrant(request.secret),
+    f.sessions.managed.boundSession(request.secret),
     (error: any) => error?.status === 401 || error?.status === 403,
   );
 });
@@ -1376,10 +1374,10 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
     actors.push(session.actorId);
     tokens.push(request.secret);
     if (phase) {
-      await assert.rejects(f.sessions.managed.modelGrant(tokens[phase - 1]!), {
+      await assert.rejects(f.sessions.managed.boundSession(tokens[phase - 1]!), {
         code: 'unauthorized',
       });
-      await assert.rejects(f.sessions.managed.modelGrant(sessions[phase - 1]!), {
+      await assert.rejects(f.sessions.managed.boundSession(sessions[phase - 1]!), {
         code: 'unauthorized',
       });
     }
@@ -1574,16 +1572,16 @@ test('revoking the host sponsor ends its review phase and never restores old pro
   const nextRequest = f.lease();
   const next = (await f.sessions.dispatch.lease(f.caller, nextRequest)).session!;
   assert.equal(next.role, 'reviewer');
-  assert.equal((await f.sessions.managed.modelGrant(nextRequest.secret)).id, next.id);
+  assert.equal((await f.sessions.managed.boundSession(nextRequest.secret)).sessionId, next.id);
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
-  await assert.rejects(f.sessions.managed.modelGrant(nextRequest.secret), (error: any) =>
+  await assert.rejects(f.sessions.managed.boundSession(nextRequest.secret), (error: any) =>
     [401, 403].includes(error.status),
   );
   await assert.rejects(f.sessions.managed.authenticate(f.enrolled.controlToken), (error: any) =>
     [401, 403].includes(error.status),
   );
   // Its old producer credential is still revoked; changing source never transfers it.
-  await assert.rejects(f.sessions.managed.modelGrant(firstRequest.secret), {
+  await assert.rejects(f.sessions.managed.boundSession(firstRequest.secret), {
     code: 'unauthorized',
   });
 });

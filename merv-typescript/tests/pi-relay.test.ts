@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { ModelRelay } from '../packages/fleet/src/model-relay.js';
+import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.js';
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
 import { MervError, type Scope } from '@merv/contracts';
@@ -17,7 +17,8 @@ import {
 import { moveTool, type PiMoveContext } from '../packages/pi/src/moves.js';
 
 /** Pi's relay hooks over the shared core, as the API mounts them. */
-const piRelay = (config: PiRelayConfig) => new ModelRelay(piModelRelay(config));
+const piRelay = (config: PiRelayConfig & RelayTuning) =>
+  new ModelRelay(piModelRelay(config), config);
 
 const token = `pir_${'a'.repeat(43)}`;
 const request = {
@@ -41,7 +42,7 @@ const grant = (): PiRelayGrant => ({
 const eventStream = (data = 'data: {"type":"response.completed"}\n\n') =>
   new Response(data, { headers: { 'content-type': 'text/event-stream', 'x-private': 'secret' } });
 
-async function fixture(overrides: Partial<PiRelayConfig> = {}) {
+async function fixture(overrides: Partial<PiRelayConfig & RelayTuning> = {}) {
   let currentGrant = grant();
   let revoked = false;
   const upstreamCalls: { url: string; init: RequestInit }[] = [];
@@ -748,7 +749,7 @@ test('a frame that quotes an error type in its content streams', async (t) => {
 
 test('an authority or ledger that cannot answer is unavailable, not a refusal', async (t) => {
   const down = () => new MervError('database_unavailable', 'private database failure', 503);
-  const cases: [string, Partial<PiRelayConfig>, number, string][] = [
+  const cases: [string, Partial<PiRelayConfig & RelayTuning>, number, string][] = [
     [
       'authorize down',
       { authority: { authorize: async () => Promise.reject(down()), validate: async () => {} } },
