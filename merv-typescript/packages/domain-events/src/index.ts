@@ -5,6 +5,7 @@ import {
   createService,
   check,
   digest,
+  type Sql,
   type State,
   type DomainEvents,
   type EventConsumer,
@@ -22,6 +23,15 @@ type Progress = {
 };
 
 const NAME = /^[a-z][a-z0-9_.-]{0,127}$/;
+
+/** Whether an event `consumer` subscribes to lies past `after`, up to `through`. */
+const due = async (sql: Sql, consumer: EventConsumer, after: number, through: number) =>
+  !!(await sql.get(
+    `SELECT 1 AS due FROM events WHERE id>? AND id<=? AND type IN (${consumer.types.map(() => '?').join(',')}) LIMIT 1`,
+    after,
+    through,
+    ...consumer.types,
+  ));
 
 /** Local async handlers commit their effects and durable event cursor together. */
 export class DurableEvents implements DomainEvents {
@@ -172,24 +182,54 @@ export class DurableEvents implements DomainEvents {
     this.retryAt = Infinity;
     if (!consumers.length) return false;
     // Advisory and lock-free: skip a consumer only when a snapshot taken after this pass began
-    // shows it waiting on a retry or already past every committed event. The locked
-    // transaction below still decides everything it delivers.
-    const { head, progress } = await this.state.read(async (sql) => ({
+    // shows it waiting on a retry or already past every committed event, and find those with
+    // nothing they subscribe to before the head. The locked transactions below still decide
+    // everything they deliver or pass.
+    const { head, progress, quiet } = await this.state.read(async (sql) => {
       // Inside this read scope, eventHead reuses the same connection.
-      head: await this.state.eventHead(),
-      progress: new Map(
+      const head = await this.state.eventHead();
+      const progress = new Map(
         (
           await sql.all<Pick<Progress, 'id' | 'cursor' | 'retry_at'>>(
             'SELECT id, cursor, retry_at FROM event_consumers',
           )
         ).map((row) => [row.id, row]),
-      ),
-    }));
+      );
+      const quiet: EventConsumer[] = [];
+      for (const consumer of consumers) {
+        const seen = progress.get(consumer.id);
+        if (seen && seen.retry_at <= Date.now() && seen.cursor < head)
+          if (!(await due(sql, consumer, seen.cursor, head))) quiet.push(consumer);
+      }
+      return { head, progress, quiet };
+    });
+    // They pass the events they do not subscribe to together, in one transaction, rather than
+    // in one each.
+    const passed = new Set<string>();
+    if (quiet.length)
+      await this.state.transaction(async (tx) => {
+        for (const consumer of quiet) {
+          const row = await tx.get<Progress>(
+            'SELECT * FROM event_consumers WHERE id=?',
+            consumer.id,
+          );
+          if (!row || row.retry_at > Date.now() || (await due(tx, consumer, row.cursor, head)))
+            continue;
+          if (row.cursor < head)
+            await tx.run(
+              'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
+              head,
+              consumer.id,
+            );
+          passed.add(consumer.id);
+        }
+      });
     let backlog = false;
     for (const consumer of consumers) {
       const seen = progress.get(consumer.id);
       if (seen && seen.retry_at > Date.now()) this.retryAt = Math.min(this.retryAt, seen.retry_at);
       if (seen && (seen.retry_at > Date.now() || seen.cursor >= head)) continue;
+      if (passed.has(consumer.id)) continue;
       for (let count = 0; count < 100; count++) {
         if (this.closed || this.consumers.get(consumer.id) !== consumer) break;
         let attemptedCursor: number | undefined;

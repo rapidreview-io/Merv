@@ -782,7 +782,14 @@ test('a publication main overtook wakes an automatic cycle to inject its success
       unitId: taskId,
     }),
   );
-  await f.pump();
+  // The cycle's deferred advance commits after the delivery that woke it, so its successor's
+  // start is delivered in a later pass.
+  const deadline = Date.now() + 5000;
+  do {
+    await f.pump();
+    if ((await f.research.get(f.owner, cycle.id)).automation!.blocker) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } while (Date.now() < deadline);
   const record = await f.research.get(f.owner, cycle.id);
   assert.equal(record.workflow.state, 'consolidating');
   assert.equal(record.integrations.length, 2, 'the stale publication woke the cycle');

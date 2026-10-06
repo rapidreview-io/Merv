@@ -936,6 +936,58 @@ test('idle consumers and consumers in backoff take no writer transactions', asyn
   }
 });
 
+test('consumers pass the events none of them subscribes to in one writer transaction', async () => {
+  const state = await openState(':memory:');
+  const events = await createService(new DurableEvents(state));
+  const transaction = state.transaction.bind(state);
+  const handled: number[] = [];
+  let transactions = 0;
+  try {
+    for (let i = 0; i < 6; i++)
+      await events.subscribe({
+        id: `quiet-${i}`,
+        types: ['probe.created'],
+        from: 'beginning',
+        handle(event) {
+          if (i === 0) handled.push(event.id);
+        },
+      });
+    await events.drain();
+    const noise = () =>
+      transaction(async (tx) => {
+        for (let i = 0; i < 3; i++)
+          await state.appendEvent(tx, {
+            projectId: 'p',
+            actorId: 'a',
+            subjectId: 's',
+            type: 'probe.noise',
+            data: {},
+          });
+      });
+    // A pass the commit wakes may already have run; either way, at most one for all six.
+    state.transaction = (fn) => (transactions++, transaction(fn));
+    await noise();
+    await events.drain();
+    assert.ok(transactions <= 2, `${transactions} transactions`);
+    transactions = 0;
+    await noise();
+    await events.drain();
+    assert.ok(transactions <= 2, `${transactions} transactions`);
+    const head = await state.eventHead();
+    assert.ok((await events.status()).every((consumer) => consumer.cursor === head));
+    // A subscribed event past the noise is still delivered.
+    state.transaction = transaction;
+    const { id } = await emitProbe(state);
+    await events.drain();
+    assert.deepEqual(handled, [id]);
+    assert.ok((await events.status()).every((consumer) => consumer.cursor === id));
+  } finally {
+    state.transaction = transaction;
+    await events.close();
+    await state.close();
+  }
+});
+
 test('the safety wakeup delivers a commit made through another State connection', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-events-other-'));
   const state = await openState(directory);
