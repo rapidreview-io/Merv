@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workflows — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "workflows",
+        "name": "Workflows",
+        "group": "foundation",
+        "tagline": "Keeps track of where each piece of work stands and which moves are allowed next.",
+        "analogy": {
+          "icon": "🚦",
+          "text": "A board game with a rulebook. Each piece sits on one square, and the rulebook says which moves are allowed from there. Every move is written in a logbook, so you can always see how the game got here."
+        },
+        "why": [
+          "Tasks, experiments and other work all need the same thing: **steps**, allowed moves, and a record of who moved what. Workflows does it once for all of them.",
+          "A move, its history line and its announcement are saved **together**, so a crash never leaves work half-moved.",
+          "Every move raises a counter. Someone acting on an old view of the work is refused, so two people can't both win."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "asks what to do next",
+            "detail": "An agent asks Workflows what it may do now, then uses the begin tool to start its step and get its full assignment.",
+            "page": null
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "registers its steps",
+            "detail": "Tasks registers its map of steps here and keeps its own commands. Experiments, Reflections, Research and Knowledge do the same."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "says what must finish first",
+            "detail": "Experiments uses Workflows for its steps and to record which other work must finish before it can go on."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "hands ready work to agents",
+            "detail": "Sessions asks Workflows which steps are ready for a worker, leases one out, and checks every tool call against it."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "both",
+            "says": "registers; follows each move",
+            "detail": "Code Work registers with Workflows and reacts to every recorded move to keep the Git work in step."
+          },
+          {
+            "id": "sandboxes",
+            "name": "Sandboxes",
+            "dir": "both",
+            "says": "follows each move",
+            "detail": "Sandboxes watches every move, so a step's computers move forward with it and close when the work ends."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "saves every move",
+            "detail": "State stores the steps, the history and each move in the database, all in one go."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "checks who may act",
+            "detail": "Scope says whether a caller may read the project, or raise a step's limit."
+          }
+        ],
+        "story": {
+          "title": "One piece of work moving forward",
+          "steps": [
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "Tasks registers its **program**: the steps a task can be in and the moves allowed between them."
+            },
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "A new task starts. Workflows puts it on its first step and writes that in its history."
+            },
+            {
+              "from": "sessions",
+              "to": "self",
+              "text": "Sessions asks which steps are ready for a worker. Workflows lists them, skipping any still waiting on other work."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The worker agent asks what to do next and **begins** its step. Workflows hands it the full assignment."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "When the work moves on, Workflows checks the move is allowed, then saves the new step, the history line and an announcement together."
+            },
+            {
+              "from": "self",
+              "to": "code-work",
+              "text": "Code Work hears about the move and updates the Git work tied to it."
+            },
+            {
+              "from": "self",
+              "to": "sandboxes",
+              "text": "Sandboxes hears too. When the work has ended, it closes the computer access it had given."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Program",
+            "meaning": "A map of steps and allowed moves, registered by a plugin like Tasks."
+          },
+          { "term": "Instance", "meaning": "One piece of work walking through a program." },
+          {
+            "term": "Transition",
+            "meaning": "One move from a step to another, saved with who made it."
+          },
+          {
+            "term": "Revision",
+            "meaning": "A counter that goes up with every move, so actions based on an old view are refused."
+          },
+          {
+            "term": "Dependency",
+            "meaning": "Other work that must finish first before this one can go on."
+          }
+        ],
+        "not": [
+          "It doesn't know what a task or an experiment is. The research plugins, like **Tasks**, keep their own rules and checks.",
+          "It doesn't start agents or hand out keys. **Sessions** leases work to agents.",
+          "It doesn't store files or verdicts. **Artifacts** and **Reviews** do that."
+        ],
+        "readme": "../../packages/workflows/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

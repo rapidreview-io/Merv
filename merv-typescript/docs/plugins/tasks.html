@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tasks — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "tasks",
+        "name": "Tasks",
+        "group": "research",
+        "tagline": "A piece of work with a clear goal, done by one agent and checked by another.",
+        "analogy": {
+          "icon": "📋",
+          "text": "A homework assignment with a grading rubric. The assignment says what to do and lists the checks. You hand in your work, and a **different** person grades it against the checks: pass, fix it, or fail."
+        },
+        "why": [
+          "Agents make mistakes, so nothing counts as done until **someone else** has reviewed it.",
+          "The goal and the checks are written down **before** work starts and can't be changed later, so nobody can move the goalposts.",
+          "Everything handed in is kept as evidence, so you can always see why a task passed."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "page": null,
+            "dir": "in",
+            "says": "does the work and hands it in",
+            "detail": "An AI agent picks up the task, does the work, and submits evidence for every check."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "out",
+            "says": "asks for an independent check",
+            "detail": "Every hand-in becomes a review request. A different agent or person gives the verdict."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "follows its steps",
+            "detail": "Workflows keeps track of where the task is: working, in review, done or failed, and who may move it next."
+          },
+          {
+            "id": "context-builder",
+            "name": "Context Builder",
+            "dir": "out",
+            "says": "packs what the agent needs",
+            "detail": "Before an agent starts, Context Builder gathers the brief, the paper and earlier feedback into one package."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "keeps the evidence",
+            "detail": "Files and results the agent hands in are stored for good, so the review always sees exactly what was submitted."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "out",
+            "says": "gives it a code workspace",
+            "detail": "When a task changes code, Code Work gives the agent a Git workspace and keeps every commit."
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "kind": "research",
+            "dir": "in",
+            "says": "creates tasks from the plan",
+            "detail": "When a research plan is approved, Research turns each planned step into a task."
+          },
+          {
+            "id": "paper",
+            "name": "Paper",
+            "kind": "research",
+            "dir": "out",
+            "says": "reads the latest paper",
+            "detail": "Agents get the current state of the research paper so their work fits what is already known."
+          }
+        ],
+        "story": {
+          "title": "The life of one task",
+          "steps": [
+            {
+              "from": "research",
+              "to": "self",
+              "text": "Research creates a task: a **goal** and a numbered list of **checks**, locked once written."
+            },
+            {
+              "from": "self",
+              "to": "workflows",
+              "text": "Tasks starts the task's **workflow**. It is now waiting for someone to work on it."
+            },
+            {
+              "from": "self",
+              "to": "context-builder",
+              "text": "An agent is assigned. Context Builder packs the brief, the paper and any earlier feedback."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The **worker agent** does the work and hands it in, with evidence for every check."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "The evidence is saved for good as **artifacts**, so it can never quietly change."
+            },
+            {
+              "from": "self",
+              "to": "reviews",
+              "text": "Tasks asks Reviews for an **independent check**. The worker can't review their own work."
+            },
+            {
+              "from": "reviews",
+              "to": "self",
+              "text": "The verdict comes back: **pass** finishes the task, **needs changes** sends it back to work, **fail** closes it."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Brief",
+            "meaning": "The goal plus the numbered checks. Written once, never edited."
+          },
+          {
+            "term": "Delivery",
+            "meaning": "What the agent hands in: its evidence for every check."
+          },
+          { "term": "Verdict", "meaning": "The reviewer's answer: pass, needs changes, or fail." },
+          {
+            "term": "Revision",
+            "meaning": "A counter that goes up each time the task moves, so stale actions are refused."
+          }
+        ],
+        "not": [
+          "It doesn't run code or rent computers. **Code Work** and **Sandboxes** do that.",
+          "It doesn't decide who reviews or how verdicts are stored. **Reviews** owns that.",
+          "It doesn't plan the research. **Research** decides which tasks to create."
+        ],
+        "readme": "../../packages/tasks/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Runner — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "runner",
+        "name": "Runner",
+        "group": "foundation",
+        "tagline": "A small program on an agent's computer that starts one agent and looks after it.",
+        "analogy": {
+          "icon": "🧑‍🍳",
+          "text": "A kitchen shift manager. They take one order from the front desk, set up a clean station and put one cook to work. They watch until the dish is done, then clean up and report back, even if the power went out halfway."
+        },
+        "why": [
+          "Something has to actually start the AI agent (Codex or Claude Code) on a machine and keep it running for exactly its job.",
+          "Machines crash. The runner writes down what it plans **before** it starts anything, so after a restart it never runs the same job twice.",
+          "When a job ends, several things are owed: the result, the code, the log. The runner settles each one **exactly once**."
+        ],
+        "neighbors": [
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "out",
+            "says": "leases work, reports back",
+            "detail": "The runner talks to Sessions over the web: it leases work, streams the agent's events and reports the result."
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "out",
+            "says": "starts and supervises it",
+            "detail": "The runner launches one agent process per lease and stops it at its deadline.",
+            "page": null
+          },
+          {
+            "id": "code",
+            "name": "Code",
+            "dir": "out",
+            "says": "prepares the workspace",
+            "detail": "Code's workspace driver gives the agent a fresh Git checkout and captures its work."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "out",
+            "says": "passes on code commands",
+            "detail": "Commits the agent makes are sent on to Code Work on the server."
+          },
+          {
+            "id": "fleet",
+            "name": "Fleet",
+            "dir": "in",
+            "says": "rents its machine",
+            "detail": "On hosted machines, Fleet rents the computer and starts the runner on it."
+          },
+          {
+            "id": "blobstore",
+            "name": "Blob store",
+            "kind": "outside",
+            "dir": "out",
+            "says": "receives transcripts",
+            "detail": "The agent's printed output goes straight to storage through a one-time upload link.",
+            "page": null
+          }
+        ],
+        "story": {
+          "title": "One launch, start to end",
+          "steps": [
+            {
+              "from": "fleet",
+              "to": "self",
+              "text": "On a hosted machine, Fleet rents the computer and starts the runner. A runner can also run on a person's own computer."
+            },
+            {
+              "from": "self",
+              "to": "sessions",
+              "text": "The runner asks Sessions for a job and gets a **lease**."
+            },
+            {
+              "from": "self",
+              "to": "code",
+              "text": "Code's driver prepares a fresh **workspace** for the job. Work without code just gets an empty folder."
+            },
+            {
+              "from": "self",
+              "to": "worker",
+              "text": "The runner writes its plan in its **ledger**, then launches the agent."
+            },
+            {
+              "from": "self",
+              "to": "sessions",
+              "text": "While the agent works, the runner streams its events and keeps the session alive."
+            },
+            {
+              "from": "self",
+              "to": "code-work",
+              "text": "The agent ends or hits its deadline. The runner reports the outcome, then hands in the agent's code."
+            },
+            {
+              "from": "self",
+              "to": "blobstore",
+              "text": "Last, it uploads the agent's printed output as the **transcript**."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Lease", "meaning": "Permission from Sessions to run one job." },
+          {
+            "term": "Ledger",
+            "meaning": "A small private database on the machine where the runner writes its plans before acting."
+          },
+          {
+            "term": "Workspace driver",
+            "meaning": "The part that sets up the agent's working folder and cleans it up afterwards."
+          },
+          {
+            "term": "Guardian",
+            "meaning": "A helper process that owns exactly one agent and makes sure it really stops."
+          }
+        ],
+        "not": [
+          "It doesn't choose the job. **Sessions** picks it and hands out the lease.",
+          "It doesn't rent machines. **Fleet** does that for hosted runners.",
+          "It doesn't run Git itself. **Code**'s workspace driver does."
+        ],
+        "readme": "../../packages/runner/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

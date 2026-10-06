@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Feed — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "feed",
+        "name": "Feed",
+        "group": "foundation",
+        "tagline": "A project message board where people and agents post notes that never change.",
+        "analogy": {
+          "icon": "📌",
+          "text": "A noticeboard in a lab. Anyone allowed can pin a note and attach references to files. Notes are never edited, and next to the board hangs a log of what happened in the project."
+        },
+        "why": [
+          "People and agents need a place to share short updates beside the research work.",
+          "Posts **never change**, so the record of who said what can be trusted.",
+          "An **activity** list shows the project's recent events in one place."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "posts notes",
+            "detail": "A working agent can post a message that points to up to ten stored files.",
+            "page": null
+          },
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "reads the Feed page",
+            "detail": "People read the posts and the activity list in the browser.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "out",
+            "says": "registers its tools",
+            "detail": "Feed adds tools to post, read and list posts, and to read activity."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "checks permissions",
+            "detail": "Checks who may post or read, again before every retry."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "checks attached files",
+            "detail": "Each attached file must exist in the same project."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "saves posts and events",
+            "detail": "A post, its activity event and its request record are saved together, all or nothing."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "out",
+            "says": "adds the Feed page",
+            "detail": "Feed adds its own page to the web app."
+          }
+        ],
+        "story": {
+          "title": "One post",
+          "steps": [
+            {
+              "from": "worker",
+              "to": "api",
+              "text": "An agent sends a **post**: a message and a few file references."
+            },
+            { "from": "api", "to": "self", "text": "The tool registry hands the post to Feed." },
+            {
+              "from": "self",
+              "to": "scope",
+              "text": "Feed checks that the agent may post in this project."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "Each attached reference is checked: the file must exist in the same project."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "The post and its **activity** event are saved together. Sending the same request again returns the same post."
+            },
+            { "from": "person", "to": "ui", "text": "A person opens the Feed page." },
+            {
+              "from": "ui",
+              "to": "self",
+              "text": "The page reads the posts in order, a page at a time, and the project's recent activity."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Post",
+            "meaning": "A message with an author, a time and up to ten file references. It never changes."
+          },
+          {
+            "term": "Activity",
+            "meaning": "The project's lasting log of events, read page by page."
+          },
+          {
+            "term": "Off by default",
+            "meaning": "Feed is turned off until an operator turns it on."
+          }
+        ],
+        "not": [
+          "It doesn't drive any work. No step in **Tasks**, **Workflows** or **Reviews** reads it.",
+          "It doesn't store files. **Artifacts** does; a post only points to them."
+        ],
+        "readme": "../../packages/feed/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

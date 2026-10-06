@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UI — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "ui",
+        "name": "UI",
+        "group": "foundation",
+        "tagline": "The web app frame: a sidebar and Running page that every plugin draws into.",
+        "analogy": {
+          "icon": "🏬",
+          "text": "A shopping mall. The mall provides the hallways, the directory and the doors. Each shop decides what it shows, and when a shop leaves, its name disappears from the directory."
+        },
+        "why": [
+          "Each plugin shows its own pages, so the frame does not need to know about every plugin.",
+          "When a plugin is turned off, its pages vanish right away.",
+          "The browser uses the **same tools** as agents, so people and agents see the same facts."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "opens the web app",
+            "detail": "Your browser loads the app from the server, then reads everything through tools.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "out",
+            "says": "serves the app and tools",
+            "detail": "API serves the built app and runs the tools the page calls."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "reads open gates",
+            "detail": "UI reads each unfinished workflow's gate to show what needs you."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "adds a row and Running part",
+            "detail": "Tasks adds its sidebar row and its part of the Running page."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "adds a row and Running part",
+            "detail": "Experiments adds its sidebar row and its part of the Running page."
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "kind": "research",
+            "dir": "in",
+            "says": "adds its pages",
+            "detail": "Research adds the Work page and the research cycles page."
+          },
+          {
+            "id": "paper",
+            "name": "Paper",
+            "kind": "research",
+            "dir": "in",
+            "says": "adds the Paper page",
+            "detail": "Paper adds its own page to the sidebar."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "in",
+            "says": "adds a row and Running part",
+            "detail": "Foundations add pages too, such as Code Work with its row and Running part."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "adds a row and Running part",
+            "detail": "Sessions adds its sidebar row and its part of the Running page."
+          }
+        ],
+        "story": {
+          "title": "Opening the app",
+          "steps": [
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "When the server starts, each plugin registers its sidebar **row** and its part of the **Running** page."
+            },
+            {
+              "from": "code-work",
+              "to": "self",
+              "text": "Foundations like Code Work do the same. Turning a plugin off removes its row at once."
+            },
+            {
+              "from": "person",
+              "to": "api",
+              "text": "You open the app, and your browser loads it from the server."
+            },
+            {
+              "from": "api",
+              "to": "self",
+              "text": "The page asks UI for the sidebar rows and for what Home shows."
+            },
+            {
+              "from": "self",
+              "to": "workflows",
+              "text": "UI reads where every unfinished piece of work stands, so Home can show what needs you."
+            },
+            {
+              "from": "person",
+              "to": "api",
+              "text": "Clicking a row opens its page, which reads that plugin's own tools."
+            },
+            {
+              "from": "self",
+              "to": "person",
+              "text": "The Running page shows live work, each part filled in by the plugin that owns it."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Row",
+            "meaning": "One entry in the sidebar, with its page, added by a plugin."
+          },
+          {
+            "term": "Running page",
+            "meaning": "A live view of work under way, built from parts each plugin adds."
+          },
+          {
+            "term": "Home",
+            "meaning": "The start page: the project, its work and what is waiting on you."
+          },
+          {
+            "term": "Shell",
+            "meaning": "The frame around every page: the sidebar and the navigation."
+          }
+        ],
+        "not": [
+          "It owns no research or work records. Plugins like **Tasks** and **Experiments** keep their own.",
+          "It doesn't decide what a work state means. Each row's owner explains its own states.",
+          "Its page-reading tools are for the browser only. No **Pi** conversation is offered them."
+        ],
+        "readme": "../../packages/ui/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

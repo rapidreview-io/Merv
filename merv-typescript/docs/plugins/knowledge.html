@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Knowledge — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "knowledge",
+        "name": "Knowledge",
+        "group": "research",
+        "tagline": "A read-only index that lists the project's work and looks up any reference.",
+        "analogy": {
+          "icon": "📇",
+          "text": "A library catalog. It doesn't own any books, but it can list what the library holds. Give it a call number and it finds exactly that book, or tells you it isn't there."
+        },
+        "why": [
+          "Records live in many different plugins, so agents need **one place** to list the project's tasks and experiments.",
+          "A reference should lead to exactly one record, with no guessing and never from another project.",
+          "It only **reads**, so it can never change the records it shows."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "asks for the project's records",
+            "detail": "An agent asks for the project's introduction plus every task and experiment, in one read.",
+            "page": null
+          },
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "looks up references",
+            "detail": "The Paper page in the browser uses Knowledge to look up the references it shows.",
+            "page": null
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "checks who may read",
+            "detail": "Scope checks that the caller may read the project, and gives the project record."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "out",
+            "says": "reads task records",
+            "detail": "Knowledge lists each task with its basic details, never the files behind it."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "out",
+            "says": "reads experiments",
+            "detail": "Knowledge lists each experiment with its basic details."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "finds work items",
+            "detail": "Tasks, experiments, reflection waves and research cycles are found through their workflow records."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "looks up stored files",
+            "detail": "References to stored files and results are checked against Artifacts."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "out",
+            "says": "looks up reviews",
+            "detail": "References to reviews are checked against Reviews."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "out",
+            "says": "looks up code snapshots",
+            "detail": "When Code Work is loaded, references to saved code are looked up there too."
+          }
+        ],
+        "story": {
+          "title": "Two typical reads",
+          "steps": [
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "A worker agent asks for the project's records."
+            },
+            {
+              "from": "self",
+              "to": "scope",
+              "text": "Knowledge checks that the agent may read this project, and gets its **Introduction**."
+            },
+            { "from": "self", "to": "tasks", "text": "It lists every task in the project..." },
+            {
+              "from": "self",
+              "to": "experiments",
+              "text": "...and every experiment. Only the basic details, never file contents."
+            },
+            {
+              "from": "person",
+              "to": "self",
+              "text": "Later, the Paper page asks about a list of **references**, some with a kind in front and some bare IDs."
+            },
+            {
+              "from": "self",
+              "to": "workflows",
+              "text": "For a bare ID, Knowledge asks Workflows first..."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "...then Artifacts, Reviews and Code Work in turn. It never guesses from how an ID looks."
+            },
+            {
+              "from": "self",
+              "to": "person",
+              "text": "Each reference comes back in order as **resolved**, **missing** or **unsupported**."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Reference",
+            "meaning": "A pointer to one record, such as a task, an experiment, a file or a review."
+          },
+          {
+            "term": "Bare ID",
+            "meaning": "An ID with no kind in front. Knowledge asks each owner in turn who holds it."
+          },
+          {
+            "term": "Resolved",
+            "meaning": "Found. The other answers are missing (nobody holds it) and unsupported (a kind it cannot look up)."
+          },
+          {
+            "term": "Project record",
+            "meaning": "The project's details and Introduction, plus the basic details of every task and experiment."
+          }
+        ],
+        "not": [
+          "It doesn't own the records. **Tasks**, **Experiments**, **Artifacts**, **Reviews** and **Code Work** keep their own.",
+          "It doesn't say what to do next. **Workflows** gives the gates and next steps.",
+          "It doesn't judge research claims. **Reviews** and **Reflections** do the judging."
+        ],
+        "readme": "../../packages/knowledge/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

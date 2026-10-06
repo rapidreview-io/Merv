@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Scope — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "scope",
+        "name": "Scope",
+        "group": "foundation",
+        "tagline": "Decides who belongs to each project and what each person or agent may do.",
+        "analogy": {
+          "icon": "🔑",
+          "text": "The front office of a club. It keeps the member list, hands out key cards and knows which rooms each card opens. When a member is removed, the office tells everyone who needs to know."
+        },
+        "why": [
+          "Every action in Merv needs a yes or no: is this caller allowed to do this, in this project?",
+          "People, AI agents and services all act in projects. Scope keeps one record of who they are and which **role** each has.",
+          "When someone loses access, other plugins must clean up. Scope announces it as an **event** so they can."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "manages members and keys",
+            "detail": "In Settings, a person sees their account, their own keys and the project's members.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "both",
+            "says": "checks every caller",
+            "detail": "The API asks Scope who each caller is. Scope adds its account and project pages to the API."
+          },
+          {
+            "id": "identity",
+            "name": "Identity",
+            "dir": "out",
+            "says": "checks keys are still live",
+            "detail": "Whether a key still works is decided by Identity's shared key list."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "saves members and roles",
+            "detail": "Projects, members, agents and their roles are saved through State."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "checks agent permissions",
+            "detail": "Sessions asks Scope before an agent session may act in a project."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "asks \"may they do this?\"",
+            "detail": "Research plugins like Tasks ask Scope before letting a caller read or change anything."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "out",
+            "says": "hears when an actor is removed",
+            "detail": "When an actor is removed, Reviews lets go of the reviews that actor was holding."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "out",
+            "says": "hears about new projects",
+            "detail": "When a project is created, Code Work hears about it and sets up its code storage."
+          }
+        ],
+        "story": {
+          "title": "Is this caller allowed?",
+          "steps": [
+            {
+              "from": "person",
+              "to": "api",
+              "text": "A person clicks a button in Merv. The request goes to the API."
+            },
+            {
+              "from": "api",
+              "to": "self",
+              "text": "The API asks Scope: who is this caller, and in which project?"
+            },
+            {
+              "from": "self",
+              "to": "identity",
+              "text": "If the caller used a key, Scope checks in Identity's list that the key still works."
+            },
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "Tasks asks Scope: may this caller **write** here?"
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "Scope looks up the caller's membership and **role**."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "The role allows writing, so Scope says yes. Otherwise the action would be refused."
+            },
+            {
+              "from": "person",
+              "to": "self",
+              "text": "Later, an owner removes an agent. Scope marks it inactive, which ends all its keys."
+            },
+            {
+              "from": "self",
+              "to": "reviews",
+              "text": "Scope announces the removal. Reviews hears it and lets go of what that agent was holding."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Actor",
+            "meaning": "A non-human member of a project, like an AI agent or a service."
+          },
+          {
+            "term": "Role",
+            "meaning": "What kind of member someone is. It decides which permissions they have."
+          },
+          {
+            "term": "Permission",
+            "meaning": "A kind of action a role allows, such as read, write or review."
+          },
+          {
+            "term": "Membership",
+            "meaning": "The record that someone belongs to a project, with one role."
+          },
+          {
+            "term": "Delegation",
+            "meaning": "Letting an agent act on someone else's behalf for a while."
+          }
+        ],
+        "not": [
+          "It doesn't check sign-in tokens or keep the key list. **Identity** does that.",
+          "It doesn't run agents. **Sessions** does, and asks Scope for permission.",
+          "It doesn't answer web requests on its own. The **API** does, and asks Scope about each caller."
+        ],
+        "readme": "../../packages/scope/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

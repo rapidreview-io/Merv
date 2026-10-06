@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nisa — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "nisa",
+        "name": "Nisa",
+        "group": "foundation",
+        "tagline": "Gives every agent search over RapidReview's index of arXiv research papers.",
+        "analogy": {
+          "icon": "📚",
+          "text": "A librarian on the phone. You ask about a topic, and they read you titles, authors and short passages from the papers they hold. You never walk into the library yourself."
+        },
+        "why": [
+          "Agents should base research on **real papers**, not on what they remember.",
+          "Strict checks on every search keep the answers predictable and sized for an agent to read.",
+          "It limits how many searches run at once, so one project can't use up everyone's turn."
+        ],
+        "neighbors": [
+          {
+            "id": "pi",
+            "name": "Pi",
+            "dir": "in",
+            "says": "searches during chats",
+            "detail": "Pi offers the five searches in every conversation, run as the person."
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "searches during work",
+            "detail": "Agents working on tasks and experiments can search too, even in sealed reviews.",
+            "page": null
+          },
+          {
+            "id": "mcp",
+            "name": "MCP client",
+            "kind": "person",
+            "dir": "in",
+            "says": "lists and calls the tools",
+            "detail": "An outside agent program connected to Merv sees the same five read-only tools.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "both",
+            "says": "registers and runs the tools",
+            "detail": "The tool registry is Nisa's only way in: it lists the five tools and passes calls to Nisa."
+          },
+          {
+            "id": "rapidreview",
+            "name": "RapidReview",
+            "kind": "outside",
+            "dir": "out",
+            "says": "answers each search",
+            "detail": "Nisa sends every search to RapidReview's service with one shared key for the whole deployment.",
+            "page": null
+          }
+        ],
+        "story": {
+          "title": "One literature search",
+          "steps": [
+            {
+              "from": "pi",
+              "to": "api",
+              "text": "In a chat, the agent asks for papers on a topic."
+            },
+            {
+              "from": "api",
+              "to": "self",
+              "text": "The tool registry checks the caller and hands the call to Nisa."
+            },
+            {
+              "from": "self",
+              "to": "rapidreview",
+              "text": "Nisa checks the input strictly, waits its turn if many searches are running, and sends the query to RapidReview."
+            },
+            {
+              "from": "rapidreview",
+              "to": "self",
+              "text": "Papers come back: titles, authors, year, citation counts and short snippets."
+            },
+            {
+              "from": "self",
+              "to": "api",
+              "text": "Nisa keeps only a fixed set of fields and trims the answer to a size the agent can read."
+            },
+            {
+              "from": "api",
+              "to": "pi",
+              "text": "The registry checks the caller again and returns the papers."
+            },
+            {
+              "from": "worker",
+              "to": "api",
+              "text": "Worker agents use the same five tools, for example to read passages inside one paper."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Keyword search", "meaning": "Finds papers that contain your words." },
+          {
+            "term": "Semantic search",
+            "meaning": "Finds papers that match your meaning, even with different words."
+          },
+          {
+            "term": "Excerpts",
+            "meaning": "Short passages from inside one paper that match your terms."
+          },
+          {
+            "term": "Dormant",
+            "meaning": "Off until an operator adds the key. Until then, nothing changes."
+          }
+        ],
+        "not": [
+          "It doesn't search the general internet. **Web** does.",
+          "It doesn't touch the project's own paper. **Paper** does.",
+          "It doesn't answer questions about papers. The agent reads the results and answers with its own model."
+        ],
+        "readme": "../../packages/nisa/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

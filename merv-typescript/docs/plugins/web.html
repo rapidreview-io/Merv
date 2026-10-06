@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Web — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "web",
+        "name": "Web",
+        "group": "foundation",
+        "tagline": "Gives agents internet search and page reading, with daily limits on spending.",
+        "analogy": {
+          "icon": "🌐",
+          "text": "A research assistant with a prepaid card. They search the internet through one trusted service, and switch to a backup if it cannot serve. The card has a daily limit, so nobody can run up the bill."
+        },
+        "why": [
+          "Agents sometimes need **current facts** from the internet, not just research papers.",
+          "Each search costs money, so **daily limits** per project and per deployment cap the spending.",
+          "Pages are read by an outside service, never fetched by Merv, so a link can't reach Merv's private network."
+        ],
+        "neighbors": [
+          {
+            "id": "pi",
+            "name": "Pi",
+            "dir": "in",
+            "says": "searches during chats",
+            "detail": "Pi offers web search in every conversation. A chat may read only pages its own searches found."
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "searches during work",
+            "detail": "Only workers whose machine already has internet get these tools. Sealed reviews do not.",
+            "page": null
+          },
+          {
+            "id": "mcp",
+            "name": "MCP client",
+            "kind": "person",
+            "dir": "in",
+            "says": "lists and calls the tools",
+            "detail": "An outside agent program connected to Merv sees the same tools.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "both",
+            "says": "registers and runs the tools",
+            "detail": "The tool registry is Web's only way in: it lists the tools and passes calls to Web."
+          },
+          {
+            "id": "tavily",
+            "name": "Tavily",
+            "kind": "outside",
+            "dir": "out",
+            "says": "searches and reads pages",
+            "detail": "Tavily is asked first for every search, and it is the only way a page is read.",
+            "page": null
+          },
+          {
+            "id": "openai",
+            "name": "OpenAI",
+            "kind": "outside",
+            "dir": "out",
+            "says": "backup search",
+            "detail": "If Tavily has no key, refuses it or its plan is used up, OpenAI's web search answers instead.",
+            "page": null
+          }
+        ],
+        "story": {
+          "title": "One web search",
+          "steps": [
+            { "from": "pi", "to": "api", "text": "In a chat, the agent asks to search the web." },
+            {
+              "from": "api",
+              "to": "self",
+              "text": "The tool registry checks the caller and hands the call to Web."
+            },
+            {
+              "from": "self",
+              "to": "tavily",
+              "text": "Web checks the project's **daily budget**, tidies the inputs and asks **Tavily**."
+            },
+            {
+              "from": "self",
+              "to": "openai",
+              "text": "If Tavily can't serve, OpenAI's hosted web search answers instead: the **fallback**."
+            },
+            {
+              "from": "self",
+              "to": "api",
+              "text": "Results are trimmed to a size the model can read and returned with their links."
+            },
+            {
+              "from": "pi",
+              "to": "api",
+              "text": "The agent asks to read one of the pages its search found."
+            },
+            {
+              "from": "self",
+              "to": "tavily",
+              "text": "Tavily reads the page. A page the chat never searched for is refused, so nothing leaks to an unknown address."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Fallback", "meaning": "The backup search used when Tavily can't serve." },
+          {
+            "term": "Daily budget",
+            "meaning": "How many provider calls a project, and the whole deployment, may make each day."
+          },
+          { "term": "Extract", "meaning": "Reading one page's text, always through Tavily." },
+          {
+            "term": "Dormant",
+            "meaning": "Off until an operator adds a key. Until then, nothing changes."
+          }
+        ],
+        "not": [
+          "It doesn't search research papers. **Nisa** does.",
+          "It doesn't fetch pages itself. **Tavily** reads them for it.",
+          "It doesn't choose which agents get it. **Pi** and **Runner** decide what each agent is offered."
+        ],
+        "readme": "../../packages/web/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

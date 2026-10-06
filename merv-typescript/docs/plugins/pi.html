@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pi — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "pi",
+        "name": "Pi",
+        "group": "foundation",
+        "tagline": "The AI assistant you chat with on the Agent page, acting with your permissions.",
+        "analogy": {
+          "icon": "🧑‍💼",
+          "text": "A personal assistant who borrows your keycard. They can look things up and do small jobs for you. For anything big, they write it on a card, and it only happens if **you** press Run."
+        },
+        "why": [
+          "People need a simple way to ask about the project and get things done by chatting.",
+          "The assistant acts as **you**, with exactly your permissions, so it can never do more than you could.",
+          "Actions that can't be undone, spend money or change access wait for your OK."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "both",
+            "says": "chats and presses Run",
+            "detail": "You send messages on the Agent page and approve the actions Pi proposes. Each conversation is private to you.",
+            "page": null
+          },
+          {
+            "id": "pi-agent",
+            "name": "Pi agent",
+            "kind": "person",
+            "dir": "both",
+            "says": "works through each turn",
+            "detail": "The agent program runs on a rented machine. It picks up each turn and works through it.",
+            "page": null
+          },
+          {
+            "id": "fleet",
+            "name": "Fleet",
+            "dir": "out",
+            "says": "rents the machine",
+            "detail": "Fleet starts the hosted machine that the Pi agent runs on."
+          },
+          {
+            "id": "model",
+            "name": "Model provider",
+            "kind": "outside",
+            "dir": "out",
+            "says": "answers through the relay",
+            "detail": "The agent's model calls go through Pi's relay to the provider, so the rented machine never holds a model key.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "out",
+            "says": "runs tools as you",
+            "detail": "Tools the agent picks run on the server through the tool registry, as the person who sent the message."
+          },
+          {
+            "id": "identity",
+            "name": "Identity",
+            "dir": "out",
+            "says": "issues worker passes",
+            "detail": "Identity issues the passes the hosted agent uses to reach Pi."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "out",
+            "says": "shows the Agent page",
+            "detail": "Pi adds the Agent page to the web app, only when Pi is turned on."
+          }
+        ],
+        "story": {
+          "title": "One message to Pi",
+          "steps": [
+            {
+              "from": "person",
+              "to": "self",
+              "text": "You type a message on the Agent page. It becomes a **turn**."
+            },
+            {
+              "from": "self",
+              "to": "fleet",
+              "text": "Pi runs its agent on a hosted machine that it rents through Fleet."
+            },
+            {
+              "from": "pi-agent",
+              "to": "self",
+              "text": "The Pi agent on that machine picks up the turn."
+            },
+            {
+              "from": "self",
+              "to": "model",
+              "text": "The agent's model calls go through Pi's **relay** to the model provider."
+            },
+            {
+              "from": "self",
+              "to": "api",
+              "text": "When the model picks a tool, it runs on the server **as you**, with your permissions."
+            },
+            {
+              "from": "self",
+              "to": "person",
+              "text": "A risky call comes back as a **proposal** card. Nothing happens unless you press **Run**."
+            },
+            {
+              "from": "self",
+              "to": "person",
+              "text": "The answer streams back to your page as it is written."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Conversation",
+            "meaning": "Your private chat with Pi. It acts only with your permissions."
+          },
+          {
+            "term": "Turn",
+            "meaning": "One message from you and everything the agent does to answer it."
+          },
+          {
+            "term": "Proposal",
+            "meaning": "An action Pi suggests but can't do alone. It runs once, as you, if you press Run."
+          },
+          {
+            "term": "Relay",
+            "meaning": "The middle step between the agent and the model, so the rented machine never holds the key."
+          }
+        ],
+        "not": [
+          "It doesn't own machines. **Fleet** rents and starts them.",
+          "It doesn't define the tools. Each plugin registers its own tools with **API**.",
+          "It doesn't work on tasks and experiments. Those agents are started by **Sessions** and **Runner**."
+        ],
+        "readme": "../../packages/pi/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>
