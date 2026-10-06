@@ -637,8 +637,12 @@ test('an agent may only propose deciding as owner, and the person’s Run takes 
   await f.pi.complete(keyed.token, f.completion(keyed.input));
   const run = (caller: Caller, proposalId: string) =>
     f.pi.run(caller, { id: input.conversationId, commandId: input.commandId, proposalId });
-  // Run pressed with the person's key is not the person.
-  await assert.rejects(run(key, onKey), { code: 'review_independence' });
+  // Run pressed with the person's key is not the person: the agent is told it was refused.
+  assert.match(((await run(key, onKey)) as { told: string }).told, /^review\.start was refused: /);
+  const kept = (await f.pi.snapshot(key, input.conversationId)).commands
+    .find(({ id }) => id === input.commandId)!
+    .proposals!.find(({ id }) => id === onKey)!.ran;
+  assert.deepEqual([kept?.ok, kept?.code], [false, 'review_independence']);
   assert.equal((await reviews.get(owner, review.id)).status, 'requested');
   await assert.rejects(run(owner, onKey), { code: 'pi_proposal_ran' });
   const retry = await f.begun(owner);
