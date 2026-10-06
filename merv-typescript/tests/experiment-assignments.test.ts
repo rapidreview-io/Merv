@@ -1,6 +1,7 @@
 import type { TaskDelivery } from '@merv/tasks/types';
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import { currentTask, currentWork } from './fixtures/current-work.js';
+import { git } from './fixtures/code-store.js';
 import { nativeWorkFixture } from './fixtures/native-work.js';
 import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
@@ -1700,7 +1701,7 @@ test('a results review whose final capture never landed takes the last admitted 
   assert.equal((await f.code.unit(f.source, pending.id)).acceptance?.reference, unit.canonicalHead);
 });
 
-test('a final capture Code admitted stays pending until the machine posts it, though the writer has closed', async (t) => {
+test("a final capture Code admitted is the review's, though the machine died before it posted the result", async (t) => {
   const f = await fixture(t);
   const experiment = await f.running();
   const lease = await f.work.lease(experiment);
@@ -1735,7 +1736,8 @@ test('a final capture Code admitted stays pending until the machine posts it, th
     (caller, input) => f.experiments.transition(caller, input as never),
   );
   // The session left uncommitted work: Code admits the final capture of it, which closes the
-  // writer, and the machine has not yet posted the session's result.
+  // writer, and the machine dies before it posts the session's result. A fence would do
+  // nothing to a closed writer, so Code's own record of that capture must stand for it.
   writeFileSync(join(lease.workspace.path, 'final.txt'), 'final\n');
   const posted = t.mock.method(f.sessions, 'workspaceResult', async () => {});
   await f.work.release(lease);
@@ -1743,10 +1745,16 @@ test('a final capture Code admitted stays pending until the machine posts it, th
   const unit = await f.code.unit(f.source, pending.id);
   assert.equal(unit.writerState, 'closed');
   assert.notEqual(unit.canonicalHead, lease.workspace.snapshot!.headOid);
-  // Nobody fenced this writer: the capture is the machine's to post, not one read from the head.
-  await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
-    code: 'experiment_capture_pending',
+  const tree = git(lease.workspace.path, ['rev-parse', `${unit.canonicalHead}^{tree}`]);
+  const capture = await f.code.capture(f.source, {
+    kind: 'session-final',
+    sessionId: lease.session.id,
   });
+  assert.equal(capture.status, 'ready');
+  assert.equal(capture.workspace?.headOid, unit.canonicalHead);
+  assert.equal(capture.workspace?.treeOid, tree);
+  const offered = await f.offer(pending, await f.issue('operator'));
+  assert.equal(offered.session.execution.references.code, unit.canonicalHead);
 });
 
 test('a fenced results review whose session admitted no commit reviews the head the fence kept', async (t) => {

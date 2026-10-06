@@ -74,17 +74,21 @@ export class CodeCaptureReader {
         );
         return { ...settled, ref };
       }
-      if (fenced && observation.workspace?.attachment.headOid === fenced.head) {
-        // No commit of this session holds the head the fence kept, and that head is the one it
-        // attached at, so the session left the checkout where it found it: its capture is that
-        // checkout. A head that moved without a commit was moved by an admitted final capture,
-        // whose result the machine still posts, so the capture stays pending until it does.
+      if (
+        fenced &&
+        observation.workspace &&
+        ('treeOid' in fenced || observation.workspace.attachment.headOid === fenced.headOid)
+      ) {
+        // No commit of this session holds the head the writer closed at. Either Code admitted
+        // this session's final capture there, and its own record of that upload names the head
+        // and tree, whether or not the machine lived to post the result; or the head is the one
+        // the session attached at, so it left the checkout where it found it.
         const { attachment } = observation.workspace;
         return {
           ref,
           status: 'ready',
           provenance: observation.provenance,
-          workspace: attachment,
+          workspace: { ...attachment, ...fenced },
           attachedBaseOid: attachment.baseOid,
           observedAt: observation.observedAt,
           eventId: observation.eventId,
@@ -183,15 +187,16 @@ export class CodeCaptureReader {
     return tx ? await read(tx) : await this.state.read(read);
   }
   /**
-   * A writer an operator fenced never hands over its final capture. The session's newest commit
-   * that Code admitted, which is the head the fence kept, then stands for that capture; with no
-   * such commit, the head the fence kept stands for it, which is the base if nothing moved it.
+   * Where a closed writer left this session, read from Code's own records. The session's newest
+   * commit that Code admitted at the head stands for its capture; else the final upload that
+   * moved the head there, with its tree; else the head alone, which is the base if nothing moved
+   * it. An operator's fence and a final admission both close the writer.
    */
   private async fencedHead(
     projectId: string,
     { instanceId, sessionId }: CodeCapture['provenance'],
     tx?: Transaction,
-  ): Promise<{ commandId: string } | { head: string } | null> {
+  ): Promise<{ commandId: string } | { headOid: string; treeOid?: string } | null> {
     const read = async (sql: Sql) => {
       const writer = await this.writers.row(sql, projectId, instanceId);
       if (writer?.writer_state !== 'closed' || writer.writer_session_id !== sessionId) return null;
@@ -201,7 +206,23 @@ export class CodeCaptureReader {
         sessionId,
         writer.head_oid,
       );
-      return row ? { commandId: row.id } : { head: writer.head_oid ?? this.writers.base(writer) };
+      if (row) return { commandId: row.id };
+      const final = writer.head_operation_id
+        ? await sql.get<{ payload_json: string }>(
+            "SELECT payload_json FROM code_operations WHERE id=? AND project_id=? AND kind='upload'",
+            writer.head_operation_id,
+            projectId,
+          )
+        : undefined;
+      const upload = final && (JSON.parse(final.payload_json) as Record<string, unknown>);
+      return upload &&
+        upload.kind === 'final' &&
+        upload.sessionId === sessionId &&
+        typeof upload.tip === 'string' &&
+        upload.tip === writer.head_oid &&
+        typeof upload.treeOid === 'string'
+        ? { headOid: upload.tip, treeOid: upload.treeOid }
+        : { headOid: writer.head_oid ?? this.writers.base(writer) };
     };
     return tx ? await read(tx) : await this.state.read(read);
   }
