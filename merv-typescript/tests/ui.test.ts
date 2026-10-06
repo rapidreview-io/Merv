@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
+import { gunzipSync } from 'node:zlib';
 import { join } from 'node:path';
 import test from 'node:test';
 import { z } from 'zod';
@@ -131,6 +132,7 @@ function raw(url: string, path: string, headers: Record<string, string> = {}, me
     status: number;
     headers: Record<string, string | string[] | undefined>;
     body: string;
+    bytes: Buffer;
   }>((resolve, reject) => {
     const req = request({ host: base.hostname, port: base.port, path, method, headers }, (res) => {
       const chunks: Buffer[] = [];
@@ -140,6 +142,7 @@ function raw(url: string, path: string, headers: Record<string, string> = {}, me
           status: res.statusCode ?? 0,
           headers: res.headers,
           body: Buffer.concat(chunks).toString('utf8'),
+          bytes: Buffer.concat(chunks),
         }),
       );
     });
@@ -373,6 +376,12 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   assert.equal(script.status, 200);
   assert.match(String(script.headers['content-type']), /javascript/);
   assert.match(String(script.headers['cache-control']), /immutable/);
+  assert.equal(script.headers['content-encoding'], undefined);
+  // A browser that takes gzip is sent text gzipped: the parser's worker alone is 115 kB.
+  const packed = await raw(url, '/ui/assets/app.js', { 'accept-encoding': 'gzip, deflate, br' });
+  assert.equal(packed.headers['content-encoding'], 'gzip');
+  assert.match(String(packed.headers.vary), /accept-encoding/i);
+  assert.equal(gunzipSync(packed.bytes).toString('utf8'), script.body);
   assert.equal((await raw(url, '/ui/missing.css')).status, 404);
   // Dot segments, encoded or not, normalize away before routing: no longer a UI path, and nothing
   // serves the path they leave.

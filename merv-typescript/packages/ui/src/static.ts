@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
+import { promisify } from 'node:util';
+import { gzip } from 'node:zlib';
 import type { MountHandler } from '@merv/api/types';
 
 const types: Record<string, string> = {
@@ -14,6 +16,9 @@ const types: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.txt': 'text/plain; charset=utf-8',
 };
+/** Text shrinks to a fraction gzipped; images and fonts are compressed already. */
+const compressible = /^(text\/|application\/json|image\/svg)/;
+const packed = promisify(gzip);
 
 /** Serves a built browser bundle under /ui; routes without an extension fall back to index.html. */
 export function serveBundle(root: string): MountHandler {
@@ -49,11 +54,19 @@ export function serveBundle(root: string): MountHandler {
     if (!file.startsWith(`${base}${sep}`)) return problem(404, 'not_found', 'Unknown UI path');
     try {
       const bytes = await readFile(file);
-      return send(200, bytes, {
-        'content-type': types[extname(file)] ?? 'application/octet-stream',
+      const type = types[extname(file)] ?? 'application/octet-stream';
+      const headers = {
+        'content-type': type,
         'cache-control': relative.startsWith('assets/')
           ? 'public, max-age=31536000, immutable'
           : 'no-cache',
+      };
+      if (!compressible.test(type)) return send(200, bytes, headers);
+      const zipped = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
+      return send(200, zipped ? await packed(bytes) : bytes, {
+        ...headers,
+        vary: 'accept-encoding',
+        ...(zipped && { 'content-encoding': 'gzip' }),
       });
     } catch {
       return spa
