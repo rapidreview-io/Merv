@@ -20,7 +20,7 @@ import {
 } from './protocol.js';
 import { parseCodeInput } from '../input.js';
 import type { CodeRepositories } from './repository.js';
-import { validRetentionRef, retainedRef, resultRef, workRef } from './refs.js';
+import { validRetentionRef, retainedRef, workRef } from './refs.js';
 
 /** What the server publishes a ref to, or why it publishes nothing. */
 export type MirrorTarget = { repository: string } | { blocked: string };
@@ -63,8 +63,8 @@ export const defaultMirrorConfig: CodeMirrorConfig = {
 const MAX_BACKOFF_MS = 3600_000;
 const WARNINGS = 20;
 const PRINCIPAL = 'system:code';
-// Kinds are persisted in code_operations rows: `mirror-accepted` publishes a unit's resultRef.
-const kinds = ['mirror-work', 'mirror-accepted', 'mirror-base', 'mirror-retained'] as const;
+// Kinds are persisted in code_operations rows.
+const kinds = ['mirror-work', 'mirror-base', 'mirror-retained'] as const;
 export type MirrorKind = (typeof kinds)[number];
 /** Where a ref of Code's own repository is published under. */
 const published = (ref: string) => ref.replace(/^refs\/merv\//, 'refs/heads/merv/');
@@ -114,9 +114,7 @@ export async function enqueueMirror(
       ? `refs/merv/bases/${unitId}`
       : kind === 'mirror-work'
         ? workRef(unitId)
-        : kind === 'mirror-retained'
-          ? retainedRef(unitId)
-          : resultRef(unitId));
+        : retainedRef(unitId));
   check(
     validRetentionRef(ref),
     'invalid_ref',
@@ -221,7 +219,7 @@ export class CodeMirrorService {
           const due: MirrorRow[] = await this.state.read(
             async (sql) =>
               await sql.all<MirrorRow>(
-                `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base','mirror-retained') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) AND created_at<=?
+                `SELECT ${columns} FROM code_operations WHERE status='prepared' AND kind IN ('mirror-work','mirror-base','mirror-retained') AND phase IN ('queued','retry_wait','running') AND (next_at IS NULL OR next_at<=?) AND created_at<=?
               ${cursor ? "AND (COALESCE(next_at,''),created_at,id) > (?,?,?)" : ''}
               ORDER BY COALESCE(next_at,''),created_at,id LIMIT 50`,
                 at,
@@ -262,7 +260,7 @@ export class CodeMirrorService {
     const rows = await this.state.read(
       async (sql) =>
         await sql.all<MirrorRow>(
-          `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('mirror-work','mirror-accepted','mirror-base','mirror-retained') ORDER BY created_at,id LIMIT 200`,
+          `SELECT ${columns} FROM code_operations WHERE project_id=? AND status='prepared' AND kind IN ('mirror-work','mirror-base','mirror-retained') ORDER BY created_at,id LIMIT 200`,
           projectId,
         ),
     );

@@ -30,8 +30,7 @@ Retention uses an opaque key, so separate review rounds of one work item cannot 
 each other's commits. Its default refs use `refs/merv/retained/`. A consumer can supply a
 validated technical ref name; Code Work supplies the existing `refs/merv/accepted/`
 destination for final acceptance, preserving local and mirrored branch names. Historical
-`accept-ref` journals are all complete; the `mirror-accepted` rows they queued are still
-published.
+`accept-ref` journals are all complete, and so are the `mirror-accepted` rows they queued.
 
 Unfinished research merges and publications project persistent repository holds through
 Code's transactional hold API. Research-owned SQL triggers maintain those projections in

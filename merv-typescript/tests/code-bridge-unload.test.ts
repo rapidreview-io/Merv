@@ -84,7 +84,7 @@ test(
     const unit = await mirrorWork.start(caller, { workflow: 'mirror-work', requestId: 'work' });
     await ctx.state.transaction(async (tx) => {
       await bridge.declareUnit(caller, unit.id, tx);
-      await enqueueMirror(tx, caller.projectId, 'mirror-accepted', unit.id, head);
+      await enqueueMirror(tx, caller.projectId, 'mirror-work', unit.id, head);
     });
     let pushes = 0;
     // The real mirror pass and its journal run; only the remote endpoint is replaced.
@@ -133,7 +133,7 @@ test(
     assert.deepEqual(await core.github.status(caller), githubStatus);
     const journal = await ctx.state.read((sql) =>
       sql.get<{ status: string; phase: string }>(
-        "SELECT status,phase FROM code_operations WHERE kind='mirror-accepted'",
+        "SELECT status,phase FROM code_operations WHERE kind='mirror-work'",
       ),
     );
     assert.deepEqual(journal && { ...journal }, { status: 'completed', phase: 'mirrored' });

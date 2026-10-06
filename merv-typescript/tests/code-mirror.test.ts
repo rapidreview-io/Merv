@@ -302,38 +302,77 @@ test('a quarantined unit and an unlinked project publish nothing, and neither is
   assert.deepEqual(f.remote.refs(), [`refs/heads/merv/work/${f.unitId} ${one}`]);
 });
 
-test('an accepted commit is created on the repository, never moved, and blocks if another one is there', async (t) => {
+test('a base commit is created on the repository, never moved, and blocks if another one is there', async (t) => {
   const f = await mirrored(t);
   await f.lease('session-1');
   const one = f.source.commit({ 'a.txt': 'one\n' });
   await f.upload('final', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
   await f.step();
 
-  // An accepted ref an earlier acceptance journal made, still waiting to be published, as
-  // production retains it: the local ref exists and its mirror-accepted row is prepared.
-  git(f.paths.repository, ['update-ref', `refs/merv/accepted/${f.unitId}`, one]);
-  await f.state.transaction(
-    async (tx) => await enqueueMirror(tx, f.admin.projectId, 'mirror-accepted', f.unitId, one),
-  );
+  const key = 'base_fixture';
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'INSERT INTO code_reference_eligibility(project_id,ref_key,blocked_reason) VALUES(?,?,NULL)',
+      f.admin.projectId,
+      `mirror-base:${key}`,
+    );
+    await enqueueMirror(tx, f.admin.projectId, 'mirror-base', key, one);
+  });
   await f.step();
-  assert.ok(f.refs().includes(`refs/merv/accepted/${f.unitId} ${one}`), JSON.stringify(f.refs()));
-  assert.ok(f.remote.refs().includes(`refs/heads/merv/accepted/${f.unitId} ${one}`));
+  assert.ok(f.remote.refs().includes(`refs/heads/merv/bases/${key} ${one}`));
   const pushed = f.remote.pushes.length;
   await f.step();
-  assert.equal(f.remote.pushes.length, pushed, 'an accepted ref is published exactly once');
+  assert.equal(f.remote.pushes.length, pushed, 'a base ref is published exactly once');
 
-  // An accepted ref is created, never moved: asked for another commit, it blocks.
+  // A base ref is created, never moved: asked for another commit, it blocks.
   const other = f.source.commit({ 'a.txt': 'other\n' });
   await f.state.transaction(
-    async (tx) => await enqueueMirror(tx, f.admin.projectId, 'mirror-accepted', f.unitId, other),
+    async (tx) => await enqueueMirror(tx, f.admin.projectId, 'mirror-base', key, other),
   );
   await f.step();
-  assert.equal(f.remote.pushes.length, pushed, 'nothing is pushed over an accepted ref');
-  assert.ok(f.remote.refs().includes(`refs/heads/merv/accepted/${f.unitId} ${one}`));
+  assert.equal(f.remote.pushes.length, pushed, 'nothing is pushed over a base ref');
+  assert.ok(f.remote.refs().includes(`refs/heads/merv/bases/${key} ${one}`));
   assert.deepEqual(
     (await f.status()).blockedRefs.map((ref) => [ref.code, ref.ref]),
-    [['code_mirror_diverged', `refs/merv/accepted/${f.unitId}`]],
+    [['code_mirror_diverged', `refs/merv/bases/${key}`]],
   );
+});
+
+test('a mirror-accepted row an earlier acceptance journal left prepared is neither published nor listed', async (t) => {
+  const f = await mirrored(t);
+  await f.lease('session-1');
+  const one = f.source.commit({ 'a.txt': 'one\n' });
+  await f.upload('final', 'session-1', 1, f.root, f.source.bundle(one, [f.root]));
+  await f.step();
+  const pushed = f.remote.pushes.length;
+  const pending = (await f.status()).pending;
+  const ref = `refs/merv/accepted/${f.unitId}`;
+  git(f.paths.repository, ['update-ref', ref, one]);
+  await f.state.transaction(async (tx) => {
+    const at = new Date().toISOString();
+    await tx.run(
+      `INSERT INTO code_operations (id,project_id,principal_scope,request_id,kind,input_hash,payload_json,status,created_at,unit_id,phase,next_at,updated_at)
+      VALUES ('cop_legacy_accepted',?,'system:code',?,'mirror-accepted','hash',?,'prepared',?,?,'queued',?,?)`,
+      f.admin.projectId,
+      `mirror-accepted:${f.unitId}:${one}`,
+      JSON.stringify({
+        format: 1,
+        source: 'mirror',
+        kind: 'mirror-accepted',
+        unitId: f.unitId,
+        ref,
+        tip: one,
+      }),
+      at,
+      f.unitId,
+      at,
+      at,
+    );
+  });
+  await f.step();
+  assert.equal(f.remote.pushes.length, pushed);
+  assert.ok(!f.remote.refs().some((line) => line.startsWith('refs/heads/merv/accepted/')));
+  assert.equal((await f.status()).pending, pending);
 });
 test('with the repository away for the whole run, every generation still works, hands over and is accepted', async (t) => {
   const f = await mirrored(t);
