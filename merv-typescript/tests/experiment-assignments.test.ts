@@ -1770,6 +1770,21 @@ test("a final capture Code admitted is the review's, though the machine died bef
   assert.equal(capture.status, 'ready');
   assert.equal(capture.workspace?.headOid, unit.canonicalHead);
   assert.equal(capture.workspace?.treeOid, tree);
+  // Its changes are the admitted head's from the base, not the head the session attached at.
+  const [base, head] = [capture.workspace!.baseOid, unit.canonicalHead!];
+  const numstat = git(lease.workspace.path, ['diff', '--numstat', base, head])
+    .trim()
+    .split('\n')
+    .map((line) => line.split('\t').map(Number));
+  assert.deepEqual(capture.workspace?.stats, {
+    commitCount: Number(
+      git(lease.workspace.path, ['rev-list', '--count', `${base}..${head}`]).trim(),
+    ),
+    filesChanged: numstat.length,
+    insertions: numstat.reduce((sum, [added]) => sum + added!, 0),
+    deletions: numstat.reduce((sum, [, removed]) => sum + removed!, 0),
+  });
+  assert.notEqual(capture.workspace?.stats.filesChanged, 0);
   const offered = await f.offer(pending, await f.issue('operator'));
   assert.equal(offered.session.execution.references.code, unit.canonicalHead);
 });

@@ -10,6 +10,7 @@ import {
   type Scope,
   type Sql,
   type State,
+  type SessionWorkspace,
   type Transaction,
 } from '@merv/contracts';
 import {
@@ -32,6 +33,7 @@ import type { WriterFence } from '../writers.js';
 import { admit, AdmissionRejected, bundleHeader, defaultLimits } from './admission.js';
 import { enqueueMirror } from './mirror.js';
 import { workRef } from './refs.js';
+import { diffStats } from '../driver/git.js';
 import {
   CodeRepositories,
   diskBytes,
@@ -376,6 +378,22 @@ export class CodeReceiver {
   /** Whether the project's repository holds this commit. */
   async contains(projectId: string, oid: string): Promise<boolean> {
     return !(await this.owned(() => this.absent(projectId, [oid]))).size;
+  }
+
+  /** How far `head` is from `base` in the project's repository, as a workspace snapshot says. */
+  async stats(projectId: string, base: string, head: string): Promise<SessionWorkspace['stats']> {
+    return await this.owned(() =>
+      diffStats(
+        async (args) =>
+          (
+            await this.repositories.git.run(args, {
+              env: this.repositories.environment(projectId),
+            })
+          ).stdout.toString('utf8'),
+        base,
+        head,
+      ),
+    );
   }
 
   /** Which of these commits the project's repository does not hold, asked in one Git call. */

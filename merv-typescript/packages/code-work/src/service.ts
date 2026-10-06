@@ -176,7 +176,13 @@ export class CodeService implements Code {
   async initialize(): Promise<void> {
     await this.commands.initialize();
     const { state, scope, sessions, utility, repositories } = this;
-    this.captureReader = new CodeCaptureReader(state, scope, sessions, this.writerStore);
+    this.captureReader = new CodeCaptureReader(
+      state,
+      scope,
+      sessions,
+      this.writerStore,
+      async (projectId, base, head) => await this.store?.stats(projectId, base, head),
+    );
     try {
       this.unitStore = await createService(
         new CodeUnitService(

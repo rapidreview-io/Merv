@@ -10,6 +10,7 @@ import {
   idSchema,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
+import type { SessionWorkspace } from '@merv/contracts';
 import type {
   CheckedCodeCapture,
   CodeCapture,
@@ -54,6 +55,12 @@ export class CodeCaptureReader {
     private scope: Scope,
     private sessions: Sessions,
     private writers: CodeWriterService,
+    /** Code's own count of the changes from `base` to `head`, where it keeps the repository. */
+    private stats: (
+      projectId: string,
+      base: string,
+      head: string,
+    ) => Promise<SessionWorkspace['stats'] | undefined>,
   ) {}
   async capture(caller: Caller, value: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture> {
     check(!this.closed, 'code_unavailable', 'Code capture reader is unavailable', 503);
@@ -83,12 +90,21 @@ export class CodeCaptureReader {
         // this session's final capture there, and its own record of that upload names the head
         // and tree, whether or not the machine lived to post the result; or the head is the one
         // the session attached at, so it left the checkout where it found it.
-        const { attachment } = observation.workspace;
+        // Its changes are counted again at the head Code admitted; a merge the session attached
+        // in is not known to be pending there.
+        const { pendingMerge: _merge, ...attachment } = observation.workspace.attachment;
+        const stats =
+          'treeOid' in fenced
+            ? await this.stats(caller.projectId, attachment.baseOid, fenced.headOid)
+            : undefined;
         return {
           ref,
           status: 'ready',
           provenance: observation.provenance,
-          workspace: { ...attachment, ...fenced },
+          workspace:
+            'treeOid' in fenced
+              ? { ...attachment, ...fenced, ...(stats && { stats }) }
+              : observation.workspace.attachment,
           attachedBaseOid: attachment.baseOid,
           observedAt: observation.observedAt,
           eventId: observation.eventId,
