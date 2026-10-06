@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Actor, Caller } from '@merv/contracts';
 import { ToolRegistry, describeTool } from '../packages/api/src/registry.js';
+import { text } from '../packages/nisa/src/normalize.js';
 import { conversationUse } from '../packages/pi/src/conversation-rules.js';
 import { USER_AGENT } from '../packages/nisa/src/client.js';
 import { NisaService } from '../packages/nisa/src/index.js';
@@ -853,4 +854,8 @@ test('the render composes Nisa into Main, where MCP clients list and call it', a
   const result = JSON.parse((called.content as { text: string }[])[0].text) as NisaPaper;
   assert.equal(result.identifier, 'arxiv:2303.08774');
   assert.equal(fake.seen[0].headers.authorization, `Bearer ${key}`);
+});
+
+test('text cut to nothing is empty, not a bare ellipsis', () => {
+  assert.deepEqual([text('an excerpt', 0), text('an excerpt', 1), text('ab', 2)], ['', 'a…', 'ab']);
 });

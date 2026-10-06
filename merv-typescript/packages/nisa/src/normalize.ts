@@ -16,7 +16,8 @@ const PAPER_AUTHORS = 100;
 
 /** Text as Nisa sent it, without control characters other than line breaks and tabs: its first `max` characters, then '…' when cut. */
 export const text = (value: unknown, max: number): string =>
-  ellipsis(cleanText(value, Number.MAX_SAFE_INTEGER).trim(), max + 1);
+  // sized() may search down to nothing, which is empty, not a bare '…'.
+  max > 0 ? ellipsis(cleanText(value, Number.MAX_SAFE_INTEGER).trim(), max + 1) : '';
 const integer = (value: unknown): number | null =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
 const score = (value: unknown): number | null =>
