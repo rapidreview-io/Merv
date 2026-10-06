@@ -10,6 +10,8 @@ import {
 } from '@merv/contracts';
 
 export const evidenceByteLimit = 64_000;
+/** The result files one attempt's exhibit pins. */
+export const RESULT_FILES = 100;
 function error(condition: unknown, message: string): asserts condition {
   check(condition, 'invalid_experiment_evidence', message);
 }
@@ -262,7 +264,10 @@ export function buildMetricsExhibit(input: {
 }): MetricsExhibit {
   // Built from sealed result slots, whose key already makes each path unique.
   const value = input;
-  error(value.sources.length <= 100, 'An exhibit pins at most 100 result files');
+  error(
+    value.sources.length <= RESULT_FILES,
+    `An exhibit pins at most ${RESULT_FILES} result files`,
+  );
   const resultFiles = [...value.sources]
     .sort((a, b) => compare(a.path, b.path))
     .map((source) => {
@@ -294,7 +299,11 @@ export function buildMetricsExhibit(input: {
   };
 }
 
-/** Canonical pretty JSON: sorted UTF-16 object keys, original arrays/scalars, one trailing newline. */
+/**
+ * Canonical pretty JSON: sorted UTF-16 object keys, original arrays/scalars, one trailing newline.
+ * An array of scalars is one compact line, so per-example scores cost their own bytes, not a
+ * line each.
+ */
 export function exhibitBytes(exhibit: MetricsExhibit): Buffer {
   const value = safeJson(exhibit, true);
   const pretty = (item: Json, depth = 0): string => {
@@ -302,9 +311,9 @@ export function exhibitBytes(exhibit: MetricsExhibit): Buffer {
     const pad = '  '.repeat(depth),
       inner = `${pad}  `;
     if (Array.isArray(item))
-      return item.length
+      return item.some((child) => child !== null && typeof child === 'object')
         ? `[\n${item.map((child) => `${inner}${pretty(child, depth + 1)}`).join(',\n')}\n${pad}]`
-        : '[]';
+        : JSON.stringify(item);
     const keys = Object.keys(item).sort(compare);
     return keys.length
       ? `{\n${keys.map((key) => `${inner}${JSON.stringify(key)}: ${pretty(item[key], depth + 1)}`).join(',\n')}\n${pad}}`
