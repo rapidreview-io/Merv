@@ -5,19 +5,15 @@ import {
   replayed,
   clip,
   visible,
-  canonical,
-  mapAsync,
   MervError,
   check,
   digest,
-  newId,
   sessionSecretPattern,
   type Caller,
   type DelegationSource,
   type Scope,
   type State,
   type Transaction,
-  type WorkflowProvidedBlocker,
   type Workflows,
   type WorkflowDispatchCandidate,
 } from '@merv/contracts';
@@ -29,21 +25,13 @@ import type {
   RunnerHeartbeat,
   RunnerPlatform,
   RunnerPresence,
-  RunnerSettings,
   Session,
   SessionOffer,
-  SessionSummary,
-  SessionBudgetInput,
   DispatchDemand,
   DispatchDemandInput,
-  SessionsProjectStatus,
-  BudgetStatus,
-  StuckItem,
-  StuckKind,
   StuckReport,
 } from './types.js';
-import { budgetStatuses, publicBudget } from './usage.js';
-import { lastActivity, type AgentObservations } from './observations.js';
+import type { AgentObservations } from './observations.js';
 import {
   isoNow,
   liveTargets,
@@ -51,36 +39,16 @@ import {
   ownerOf,
   readFirst,
   targetKey,
-  workNameOf,
 } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
-import { capabilitiesSchema, label, platformTuning, runnerPlatformSchema } from './rules.js';
+import { label, runnerPlatformSchema } from './rules.js';
+import { withholds } from './budgets.js';
+import { heartbeatSchema, type RunnerRow } from './runners.js';
+import { backoffMs, deferredReasons, type Failure } from './stuck.js';
+import * as budgets from './budgets.js';
+import * as runners from './runners.js';
+import * as stuck from './stuck.js';
 
-const platformsSchema = z
-  .array(runnerPlatformSchema)
-  .max(32)
-  .refine(
-    (items) => new Set(items.map((item) => item.name)).size === items.length,
-    'Platform names must be distinct',
-  );
-const settingsSchema = z
-  .object({
-    platforms: z
-      .array(z.object(platformTuning).strict())
-      .max(32)
-      .refine((items) => new Set(items.map((item) => item.name)).size === items.length),
-  })
-  .strict();
-const heartbeatSchema = z
-  .object({
-    runnerId: label,
-    machine: z.object({ hostname: label, system: label, architecture: label }).strict(),
-    platforms: platformsSchema,
-    capacity: z.number().int().min(0).max(256),
-    appliedVersion: z.number().int().nonnegative().safe().optional(),
-    capabilities: capabilitiesSchema.optional(),
-  })
-  .strict();
 const demandSchema = z
   .object({ platform: runnerPlatformSchema, capabilities: heartbeatSchema.shape.capabilities })
   .strict();
@@ -93,27 +61,6 @@ const leaseSchema = z
     hardDeadlineSeconds: z.number().int().min(300).max(604800).optional(),
   })
   .strict();
-export const budgetSchema = z
-  .object({
-    instanceId: z.string().min(1).max(200).optional(),
-    maxWallMinutes: z.number().int().min(1).max(5_256_000).nullable().optional(),
-    maxTokens: z.number().int().min(1).max(1e13).nullable().optional(),
-  })
-  .strict()
-  .refine((input) => input.maxWallMinutes !== undefined || input.maxTokens !== undefined);
-/** How long a runner's last heartbeat keeps it present. */
-export const freshForMs = 45_000;
-const backoffMs = 30_000;
-type Failure = Pick<Session, 'instanceId' | 'expectedRevision' | 'outcome' | 'closedAt'>;
-type Close = Failure & Pick<Session, 'id' | 'deferral'>;
-const rented =
-  'SELECT 1 FROM session_managed_runners m WHERE m.project_id=r.project_id AND m.runner_id=r.runner_id';
-/**
- * A budget stops new automatic offers when a bound is reached, and also when a token
- * bound cannot be judged: spending nobody reported must not pass as spending that stayed low.
- */
-const withholds = (budget: { exceeded: unknown[]; unavailable: unknown[] }) =>
-  budget.exceeded.length > 0 || budget.unavailable.length > 0;
 /** The closes that count against a target: its process failed to launch or to stay up. */
 export const failureReasons = new Set([
   'host_failed',
@@ -121,47 +68,6 @@ export const failureReasons = new Set([
   'workspace_failed',
   'launch_failed',
 ]);
-/**
- * The closes that count against nobody: the machine was ready and willing, and the place this
- * work's history lives was away, busy or full. No hold can form from them; they only space the
- * attempts out, exactly as a failure's backoff does.
- */
-const deferredReasons = new Set(['preparation_deferred', 'machine_retired']);
-/** How long three deferred closes in a row must run before an operator is told about them. */
-const deferredRun = 3;
-const deferredSinceMs = 7 * 24 * 3600_000;
-
-/** The latest closes, not the latest deferred closes: one other outcome breaks the run.
- * Callers supply the targets their own read admits; this does not load or authorize work. */
-function deferredRuns<T extends Failure>(
-  closes: T[],
-  waiting: { has(key: string): boolean },
-  failing: ReadonlySet<string>,
-  since: string,
-): Map<string, T[]> {
-  const runs = new Map<string, T[]>();
-  for (const close of closes) {
-    const key = targetKey(close);
-    if (!close.closedAt || close.closedAt <= since || !waiting.has(key) || failing.has(key))
-      continue;
-    const run = runs.get(key) ?? [];
-    run.push(close);
-    runs.set(key, run);
-  }
-  for (const [key, run] of runs) {
-    const last = run
-      .sort((a, b) => (a.closedAt! < b.closedAt! ? 1 : a.closedAt === b.closedAt ? 0 : -1))
-      .slice(0, deferredRun);
-    if (
-      last.length < deferredRun ||
-      !last.every((close) => deferredReasons.has(close.outcome ?? ''))
-    )
-      runs.delete(key);
-    else runs.set(key, last);
-  }
-  return runs;
-}
-
 /**
  * Refusals that say who asked, what they sent or what raced, never that the offer cannot be
  * built. Counting them would let a revoked key, a replayed secret or a lost race hold every
@@ -180,16 +86,6 @@ const uncountedOfferCodes = new Set([
   'nested_session_offer',
   'agent_busy',
 ]);
-/** session.dispatch: whether automatic work runs, and whether only on the project's own machines. */
-export const dispatchSchema = z
-  .object({ enabled: z.boolean().optional(), ownMachines: z.boolean().optional() })
-  .strict()
-  .refine((input) => input.enabled !== undefined || input.ownMachines !== undefined);
-type DispatchChange = z.infer<typeof dispatchSchema>;
-/** session.halt: one session, or every one in the project with automatic dispatch off. */
-export const haltSchema = z
-  .object({ sessionId: label.optional(), reason: label.optional() })
-  .strict();
 export const releaseHoldSchema = z
   .object({
     instanceId: z.string().min(1).max(200),
@@ -198,21 +94,7 @@ export const releaseHoldSchema = z
     requestId: z.string().min(1),
   })
   .strict();
-interface RunnerRow {
-  id: string;
-  project_id: string;
-  owner_hash: string;
-  runner_id: string;
-  source_json: string;
-  presence_json: string;
-  desired_version: number;
-  settings_json: string;
-  last_seen_at: string;
-  last_decision: DispatchDecision | null;
-  last_decision_at: string | null;
-  decision_since: string | null;
-}
-interface HoldRow {
+export interface HoldRow {
   instance_id: string;
   revision: number;
   attempts: number;
@@ -244,15 +126,9 @@ interface ReceiptRow {
   platform_json: string;
   runner_ref: string;
 }
-interface SessionRow {
+export interface SessionRow {
   id: string;
   session_json: string;
-}
-interface DispatchRow {
-  enabled: number;
-  own_machines: number;
-  updated_at: string;
-  updated_by: string;
 }
 interface Hooks {
   managed: ManagedRunnerBindings;
@@ -265,119 +141,27 @@ interface Hooks {
   /** Close a live session; false when its record had already moved and the reconcile closed it. */
   close(session: Session, reason: string, tx: Transaction): Promise<boolean>;
 }
-/** The order a stuck report lists its kinds in, and the keys of its counts. */
-const stuckKinds: StuckKind[] = [
-  'session_idle',
-  'dispatch_held',
-  'dispatch_failing',
-  'work_blocked',
-  'work_deferred',
-  'ready_quiet',
-  'dispatch_disabled',
-  'no_live_runner',
-  'runner_refusing',
-];
-const localGitWhy =
-  'This step requires a runner’s local Git repository. Fleet machines do not have that repository, and no live project-owned runner is available.';
-const localGitNext =
-  'Start a project-owned runner with the repository, or prepare hosted Code and create replacement work using it. Preparing Code does not change this existing work’s frozen workspace policy.';
-/** This diagnosis is specific to Fleet's known inability to supply a local checkout. */
-function localGitBlocked(
-  queue: readonly WorkflowDispatchCandidate[],
-  fleet: boolean,
-  ownRunnerLive: boolean,
-): WorkflowDispatchCandidate[] {
-  return fleet && !ownRunnerLive
-    ? queue.filter((item) => item.workspace.mode !== 'none' && item.workspace.driver === undefined)
-    : [];
-}
-const stuckLimit = 200;
-/** Why queued work does not start: the first of the reading's stalls. */
-export type DispatchStall = 'dispatch_disabled' | 'no_live_runner' | 'runner_refusing';
-/**
- * What the Running board reads of dispatch, as codes and counts that running.ts words. These
- * come from the same reading as session.stuck, read narrowly for a page that polls: see
- * SessionDispatch.running.
- */
-export interface DispatchReading {
-  /**
-   * An operator may pause, start and halt, and is the one told what the queue holds: how much
-   * waits and why, what is still retried or put off, and which ready work nobody took.
-   */
-  operator: boolean;
-  dispatch: DispatchState;
-  /** Fleet rents machines for this project's automatic work. */
-  fleet: boolean;
-  /** Any runner is present, the project's own or Fleet's: the Sessions page's running or waiting. */
-  present: boolean;
-  /** The project's own live runners and their free slots; the machines Fleet rents are Fleet's. */
-  machines: { live: number; free: number };
-  /** Queued steps, for an operator; null for anyone else. */
-  waiting: number | null;
-  /** A machine Fleet rents is named as one; its hostname says nothing. */
-  stall: { code: DispatchStall; machine?: string; rented?: true } | null;
-  /**
-   * Targets whose launches failed at their current revision: held, for every reader; still
-   * retried, for an operator, and only while the scan still offers them.
-   */
-  failures: { instanceId: string; attempts: number; held: boolean }[];
-  /**
-   * Targets the last machines to take them could not prepare, three closes running, for an
-   * operator, while the scan still offers them.
-   */
-  deferred: { instanceId: string; attempts: number }[];
-  /** Ready work waiting beyond quietReadySeconds, or immediately incompatible with Fleet; operator only. */
-  quiet: {
-    instanceId: string;
-    since: string;
-    code:
-      | 'queued'
-      | 'budget_exceeded'
-      | 'usage_unavailable'
-      | 'awaiting_operator'
-      | 'runner_incompatible';
-  }[];
-}
-/** A runner as the dispatch reading holds it: whether Fleet rents it, and its live leases. */
-type Runner = RunnerPresence & { rented: boolean; busy: number };
-type Admissible = Awaited<ReturnType<SessionDispatch['candidates']>>;
-/** One reading of why admitted work does not move; see SessionDispatch.reading. */
-interface Reading {
-  dispatch: DispatchState;
-  /** Fleet rents machines for this project's automatic work. */
-  fleet: boolean;
-  runners: Runner[];
-  /** The queue's length, by the scan; none without it. */
-  queued: number;
-  /** Failing targets at their record's current revision that no live session holds. */
-  holds: HoldRow[];
-  /** Admitted work no live session holds, by targetKey. */
-  waiting: Map<string, WorkflowDispatchCandidate>;
-  /** Targets the last machines to take them could not prepare, three closes running. */
-  deferred: Map<string, Close[]>;
-  /** Ready work waiting beyond quietReadySeconds, or immediately incompatible with Fleet. */
-  quiet: { item: WorkflowDispatchCandidate; code: DispatchReading['quiet'][number]['code'] }[];
-  /** Why queued work does not start, in this order; nothing while nothing is queued. */
-  stalls: (
-    | { code: 'dispatch_disabled' }
-    | { code: 'no_live_runner' }
-    | { code: 'runner_refusing'; runner: Runner }
-  )[];
-}
-/**
- * Whether a runner takes any work at all: some platform it advertises is on, on the machine
- * and in its server-owned settings, and it has applied the settings last published.
- * admitRunner's rule, asked of the runner rather than of one lease request.
- */
-const takesWork = (runner: RunnerPresence) =>
-  runner.desiredVersion <= (runner.appliedVersion ?? 0) &&
-  runner.platforms.some((platform) => {
-    const desired = runner.desiredSettings.platforms.find((item) => item.name === platform.name);
-    return (
-      platform.enabled && desired?.enabled !== false && (runner.desiredVersion === 0 || !!desired)
-    );
-  });
-
+/** What budgets.ts, runners.ts and stuck.ts read of the dispatch that runs them. */
+export type DispatchContext = Pick<
+  SessionDispatch,
+  | 'state'
+  | 'scope'
+  | 'workflows'
+  | 'observations'
+  | 'hooks'
+  | 'clock'
+  | 'thresholds'
+  | 'enter'
+  | 'ordinary'
+  | 'candidates'
+  | 'dispatch'
+  | 'presence'
+>;
+/** A module's function run on one dispatch, which it takes as its first argument. */
+const bound =
+  <A extends unknown[], R>(ctx: DispatchContext, run: (ctx: DispatchContext, ...args: A) => R) =>
+  (...args: A) =>
+    run(ctx, ...args);
 /** An offer for one candidate that cannot be built; the queue moves past it. */
 class PoisonedOffer extends Error {
   constructor(
@@ -402,13 +186,13 @@ export class SessionDispatch {
     return keys;
   }
   constructor(
-    private state: State,
-    private scope: Scope,
-    private workflows: Workflows,
-    private observations: AgentObservations,
-    private hooks: Hooks,
-    private clock: () => number,
-    private thresholds: StuckReport['thresholds'],
+    readonly state: State,
+    readonly scope: Scope,
+    readonly workflows: Workflows,
+    readonly observations: AgentObservations,
+    readonly hooks: Hooks,
+    readonly clock: () => number,
+    readonly thresholds: StuckReport['thresholds'],
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {
@@ -418,11 +202,11 @@ export class SessionDispatch {
     );
   }
   /** An entry point's first checks: Sessions is open, and the caller is no managed runner. */
-  private enter(caller?: Caller): void {
+  enter(caller?: Caller): void {
     this.hooks.available();
     if (caller) unmanaged(caller);
   }
-  private async ordinary(caller: Caller, permission: 'read' | 'admin', tx: Transaction) {
+  async ordinary(caller: Caller, permission: 'read' | 'admin', tx: Transaction) {
     check(
       !caller.session,
       'forbidden',
@@ -431,249 +215,29 @@ export class SessionDispatch {
     );
     return await this.scope.require(caller, permission, tx);
   }
-  /** Whether the caller's own runner last said it has a capability. No presence means no. */
-  async capable(
-    caller: Caller,
-    runnerId: string,
-    capability: string,
-    tx: Transaction,
-  ): Promise<boolean> {
-    const runner = await tx.get<RunnerRow>(
-      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-      (await ownerOf(this.scope, caller, tx)).hash,
-      runnerId,
-    );
-    return (
-      !!runner &&
-      ((JSON.parse(runner.presence_json) as RunnerHeartbeat).capabilities ?? []).includes(
-        capability,
-      )
-    );
+  // The two the modules read of each other through DispatchContext, typed here so that it is not
+  // circular.
+  dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
+    return budgets.dispatch(this, projectId, tx);
   }
-  async dispatch(projectId: string, tx: Transaction): Promise<DispatchState> {
-    const row = await tx.get<DispatchRow>(
-      'SELECT * FROM project_session_dispatch WHERE project_id=?',
-      projectId,
-    );
-    return {
-      enabled: row ? !!row.enabled : this.hooks.byDefault,
-      ownMachines: !!row?.own_machines,
-      fleet: this.hooks.managed.validating,
-      updatedAt: row?.updated_at ?? null,
-      updatedBy: row?.updated_by ?? null,
-    };
+  presence(row: RunnerRow, tx: Transaction): Promise<RunnerPresence> {
+    return runners.presence(this, row, tx);
   }
-  private async set(caller: Caller, to: DispatchChange, tx: Transaction): Promise<DispatchState> {
-    const old = await this.dispatch(caller.projectId, tx);
-    const next = {
-      enabled: to.enabled ?? old.enabled,
-      ownMachines: to.ownMachines ?? old.ownMachines,
-    };
-    if (next.enabled === old.enabled && next.ownMachines === old.ownMachines) return old;
-    const time = isoNow(this.clock);
-    await tx.run(
-      'INSERT INTO project_session_dispatch(project_id,enabled,own_machines,updated_at,updated_by) VALUES(?,?,?,?,?) ON CONFLICT(project_id) DO UPDATE SET enabled=excluded.enabled,own_machines=excluded.own_machines,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
-      caller.projectId,
-      next.enabled ? 1 : 0,
-      next.ownMachines ? 1 : 0,
-      time,
-      caller.actorId,
-    );
-    // Switching dispatch off and on is the human go-ahead for the whole project: every
-    // count starts afresh, where session.release_hold restarts one target.
-    if (next.enabled !== old.enabled)
-      await tx.run(
-        'UPDATE session_dispatch_holds SET attempts=0,held_at=NULL WHERE project_id=?',
-        caller.projectId,
-      );
-    await recorded(this.state, tx, caller, 'session.dispatch_changed', caller.projectId, next);
-    return { ...next, fleet: old.fleet, updatedAt: time, updatedBy: caller.actorId };
-  }
-  async setDispatch(caller: Caller, input: DispatchChange): Promise<DispatchState> {
-    this.enter(caller);
-    caller = structuredClone(caller);
-    const parsed = dispatchSchema.safeParse(input);
-    check(parsed.success, 'invalid_dispatch', 'Dispatch accepts enabled, ownMachines or both');
-    return await this.state.transaction(async (tx) => {
-      await this.ordinary(caller, 'admin', tx);
-      return await this.set(caller, parsed.data, tx);
-    });
-  }
-  private async budgets(caller: Caller, tx: Transaction, only?: string[]) {
-    return await budgetStatuses(
-      tx,
-      caller.projectId,
-      async (instanceId) => await this.workflows.dependencyClosure(caller, instanceId, tx),
-      only,
-    );
-  }
-  /**
-   * A state-set command like the dispatch switch: it is idempotent by value, not by a
-   * request id, so setting what is already set records nothing and answers the same.
-   */
-  async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
-    this.enter(caller);
-    caller = structuredClone(caller);
-    const parsed = budgetSchema.safeParse(input);
-    check(
-      parsed.success,
-      'invalid_budget',
-      'A budget names at least one of maxWallMinutes and maxTokens, each a positive bound or null',
-    );
-    const { instanceId, maxWallMinutes, maxTokens } = parsed.data;
-    return await this.state.transaction(async (tx) => {
-      await this.ordinary(caller, 'admin', tx);
-      if (instanceId !== undefined) await this.workflows.get(caller, instanceId, tx);
-      const scopeId = instanceId ?? caller.projectId;
-      const old = await tx.get<{ max_wall_ms: number | null; max_tokens: number | null }>(
-        'SELECT max_wall_ms,max_tokens FROM session_budgets WHERE project_id=? AND scope_id=?',
-        caller.projectId,
-        scopeId,
-      );
-      const next = {
-        maxWallMs:
-          maxWallMinutes === undefined
-            ? (old?.max_wall_ms ?? null)
-            : maxWallMinutes === null
-              ? null
-              : maxWallMinutes * 60_000,
-        maxTokens: maxTokens === undefined ? (old?.max_tokens ?? null) : maxTokens,
-      };
-      check(
-        old || Object.values(next).some((value) => value !== null),
-        'budget_not_found',
-        'There is no budget here to clear',
-        404,
-      );
-      if (
-        !old ||
-        Number(old.max_wall_ms ?? -1) !== (next.maxWallMs ?? -1) ||
-        Number(old.max_tokens ?? -1) !== (next.maxTokens ?? -1)
-      ) {
-        await tx.run(
-          'INSERT INTO session_budgets(project_id,scope_id,max_wall_ms,max_tokens,updated_at,updated_by) VALUES(?,?,?,?,?,?) ON CONFLICT(project_id,scope_id) DO UPDATE SET max_wall_ms=excluded.max_wall_ms,max_tokens=excluded.max_tokens,updated_at=excluded.updated_at,updated_by=excluded.updated_by',
-          caller.projectId,
-          scopeId,
-          next.maxWallMs,
-          next.maxTokens,
-          isoNow(this.clock),
-          caller.actorId,
-        );
-        await recorded(this.state, tx, caller, 'session.budget_changed', scopeId, {
-          scopeId,
-          ...next,
-        });
-      }
-      return publicBudget((await this.budgets(caller, tx, [scopeId]))[0]!);
-    });
-  }
-  /** Budgets a usage read shows: the project's, and the one on the instance it asked about. */
-  async budgetsFor(caller: Caller, tx: Transaction, instanceId?: string): Promise<BudgetStatus[]> {
-    return (
-      await this.budgets(caller, tx, [caller.projectId, ...(instanceId ? [instanceId] : [])])
-    ).map(publicBudget);
-  }
-  async halt(
-    caller: Caller,
-    input: { sessionId?: string; reason?: string } = {},
-  ): Promise<{ halted: number }> {
-    this.enter(caller);
-    caller = structuredClone(caller);
-    const parsed = haltSchema.safeParse(input);
-    check(parsed.success, 'invalid_halt', 'Halt accepts an optional session and bounded reason');
-    input = parsed.data;
-    return await this.state.transaction(async (tx) => {
-      await this.ordinary(caller, 'admin', tx);
-      if (!input.sessionId) await this.set(caller, { enabled: false }, tx);
-      const rows = input.sessionId
-        ? await tx.all<SessionRow>(
-            'SELECT id,session_json FROM worker_sessions WHERE project_id=? AND id=?',
-            caller.projectId,
-            input.sessionId,
-          )
-        : await tx.all<SessionRow>(
-            "SELECT id,session_json FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')",
-            caller.projectId,
-          );
-      if (input.sessionId)
-        check(rows.length, 'session_not_found', 'Session not found in this project', 404);
-      let halted = 0;
-      for (const row of rows) {
-        const session: Session = JSON.parse(row.session_json);
-        if (session.status !== 'offered' && session.status !== 'active') continue;
-        if (!(await this.hooks.close(session, input.reason ?? 'operator_halt', tx))) continue;
-        halted++;
-        await recorded(this.state, tx, caller, 'session.halted', session.id, {
-          sessionId: session.id,
-          reason: input.reason ?? 'operator_halt',
-        });
-      }
-      return { halted };
-    });
-  }
-  /** Whether the key a runner registered with may still read the project. */
-  async authorized(sourceJson: string, tx: Transaction): Promise<boolean> {
-    try {
-      await this.scope.requireDelegation(JSON.parse(sourceJson), 'read', tx);
-      return true;
-    } catch (error) {
-      if (error instanceof MervError && (error.status === 401 || error.status === 403))
-        return false;
-      throw error;
-    }
-  }
-  private async presence(row: RunnerRow, tx: Transaction): Promise<RunnerPresence> {
-    // Only a runner heard from lately can be live, so only its key is checked.
-    const live =
-      Date.parse(row.last_seen_at) + freshForMs > this.clock() &&
-      (await this.authorized(row.source_json, tx));
-    return {
-      ...JSON.parse(row.presence_json),
-      id: row.id,
-      lastSeenAt: row.last_seen_at,
-      live,
-      desiredVersion: row.desired_version,
-      desiredSettings: JSON.parse(row.settings_json),
-      lastDecision: row.last_decision ?? null,
-      lastDecisionAt: row.last_decision_at ?? null,
-      decisionSince: row.decision_since ?? null,
-    };
-  }
-  private fresh(at: string | null, ms: number): boolean {
-    return at !== null && Date.parse(at) + ms > this.clock();
-  }
-  /**
-   * The answer this runner's last lease request received, kept where the runner is. A
-   * repeated answer keeps the moment it was first given, so a refusal says how long it has
-   * held. A runner that was already repeating its answer before the moment was kept starts
-   * counting now, or its refusal would stay silent. One statement: every right-hand side
-   * reads the row as it was.
-   */
-  private async decided(
-    ownerHash: string,
-    runnerId: string,
-    decision: DispatchDecision,
-    tx: Transaction,
-  ): Promise<void> {
-    const time = isoNow(this.clock);
-    const old = await tx.get<RunnerRow>(
-      'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-      ownerHash,
-      runnerId,
-    );
-    // The same answer is refreshed at most every 15 s, so an idle poll writes nothing.
-    if (old?.last_decision === decision && this.fresh(old.last_decision_at, 15_000)) return;
-    await tx.run(
-      'UPDATE session_runners SET decision_since=CASE WHEN last_decision=? THEN COALESCE(decision_since,?) ELSE ? END,last_decision=?,last_decision_at=? WHERE owner_hash=? AND runner_id=?',
-      decision,
-      time,
-      time,
-      decision,
-      time,
-      ownerHash,
-      runnerId,
-    );
-  }
+  // Run on this dispatch as their context: the switch, budgets and halt (budgets.ts), runner
+  // presence and settings (runners.ts), and why admitted work does not move (stuck.ts).
+  readonly setDispatch = bound(this, budgets.setDispatch);
+  private readonly budgets = bound(this, budgets.budgets);
+  readonly setBudget = bound(this, budgets.setBudget);
+  readonly budgetsFor = bound(this, budgets.budgetsFor);
+  readonly halt = bound(this, budgets.halt);
+  readonly capable = bound(this, runners.capable);
+  readonly authorized = bound(this, runners.authorized);
+  private readonly decided = bound(this, runners.decided);
+  readonly heartbeatRunner = bound(this, runners.heartbeatRunner);
+  readonly setRunnerSettings = bound(this, runners.setRunnerSettings);
+  readonly stuck = bound(this, stuck.stuck);
+  readonly projectStatus = bound(this, stuck.projectStatus);
+  readonly running = bound(this, stuck.running);
   /**
    * One more failed attempt on a target. Answers the hold only when this attempt is the one
    * that reached the cap, so its event is recorded once.
@@ -836,126 +400,7 @@ export class SessionDispatch {
       );
     });
   }
-  async heartbeatRunner(caller: Caller, input: RunnerHeartbeat): Promise<RunnerPresence> {
-    this.enter();
-    caller = structuredClone(caller);
-    const parsed = heartbeatSchema.safeParse(input);
-    check(
-      parsed.success,
-      'invalid_runner',
-      'Runner heartbeat must use the closed machine, platform and capacity schema',
-    );
-    input = parsed.data;
-    return await readFirst(this.state, async (tx) => {
-      const managed = !!caller.managed;
-      const source = managed ? await this.hooks.managed.heartbeat(caller, input, tx) : caller;
-      // A runner is a durable presence that will take work: registering one is a write, or a
-      // review for Fleet's review director, which takes only reviews.
-      await this.scope.require(source, source.service ? 'review' : 'write', tx);
-      const owner = await ownerOf(this.scope, source, tx);
-      const old = await tx.get<RunnerRow>(
-        'SELECT * FROM session_runners WHERE owner_hash=? AND runner_id=?',
-        owner.hash,
-        input.runnerId,
-      );
-      check(
-        (input.appliedVersion ?? 0) <= (old?.desired_version ?? 0),
-        'invalid_settings_version',
-        'Runner cannot acknowledge unpublished settings',
-      );
-      const id = old?.id ?? newId('runner'),
-        time = isoNow(this.clock);
-      // Fresh for 45 s, an unchanged presence (parsed, so the same text) is recorded every 10 s.
-      if (old?.presence_json === JSON.stringify(input) && this.fresh(old.last_seen_at, 10_000))
-        return await this.presence(old, tx);
-      if (old)
-        await tx.run(
-          'UPDATE session_runners SET presence_json=?,last_seen_at=? WHERE id=?',
-          JSON.stringify(input),
-          time,
-          id,
-        );
-      else {
-        // A machine Fleet rents is a new runner each time; Fleet's own caps bound those.
-        check(
-          managed ||
-            (await tx.get<{ n: number }>(
-              `SELECT COUNT(*) AS n FROM session_runners r WHERE project_id=? AND NOT EXISTS (${rented})`,
-              source.projectId,
-            ))!.n < 1000,
-          'runner_limit',
-          'Project runner limit reached',
-          409,
-        );
-        await tx.run(
-          'INSERT INTO session_runners(id,project_id,owner_hash,runner_id,source_json,presence_json,settings_json,last_seen_at) VALUES(?,?,?,?,?,?,?,?)',
-          id,
-          source.projectId,
-          owner.hash,
-          input.runnerId,
-          JSON.stringify(owner.source),
-          JSON.stringify(input),
-          JSON.stringify({ platforms: [] }),
-          time,
-        );
-        await recorded(this.state, tx, source, 'session.runner_registered', id, { runnerRef: id });
-      }
-      return await this.presence(
-        (await tx.get<RunnerRow>('SELECT * FROM session_runners WHERE id=?', id))!,
-        tx,
-      );
-    });
-  }
-  async setRunnerSettings(
-    caller: Caller,
-    input: { runnerId: string; settings: RunnerSettings },
-  ): Promise<RunnerPresence> {
-    this.enter(caller);
-    caller = structuredClone(caller);
-    const parsed = z
-      .object({ runnerId: label, settings: settingsSchema })
-      .strict()
-      .safeParse(input);
-    check(
-      parsed.success,
-      'invalid_runner_settings',
-      'Runner settings accept only named platform tuning',
-    );
-    input = parsed.data;
-    return await this.state.transaction(async (tx) => {
-      await this.ordinary(caller, 'admin', tx);
-      const row = await tx.get<RunnerRow>(
-        'SELECT * FROM session_runners WHERE id=? AND project_id=?',
-        input.runnerId,
-        caller.projectId,
-      );
-      check(row, 'runner_not_found', 'Runner not found in this project', 404);
-      const platforms = (JSON.parse(row.presence_json) as RunnerHeartbeat).platforms;
-      check(
-        input.settings.platforms.every((item) =>
-          platforms.some((platform) => platform.name === item.name),
-        ),
-        'unknown_platform',
-        'Runner settings may tune only an advertised platform',
-      );
-      if (canonical(JSON.parse(row.settings_json)) !== canonical(input.settings)) {
-        await tx.run(
-          'UPDATE session_runners SET settings_json=?,desired_version=desired_version+1 WHERE id=?',
-          JSON.stringify(input.settings),
-          row.id,
-        );
-        await recorded(this.state, tx, caller, 'session.runner_settings_changed', row.id, {
-          runnerRef: row.id,
-          desiredVersion: row.desired_version + 1,
-        });
-      }
-      return await this.presence(
-        (await tx.get<RunnerRow>('SELECT * FROM session_runners WHERE id=?', row.id))!,
-        tx,
-      );
-    });
-  }
-  private async candidates(caller: Caller, tx: Transaction) {
+  async candidates(caller: Caller, tx: Transaction) {
     const live = await liveTargets(tx, caller.projectId);
     const all = await this.workflows.dispatchCandidates(caller, tx);
     const queue = all.filter((item) => item.role !== 'operator' && !live.has(targetKey(item)));
@@ -1131,503 +576,6 @@ export class SessionDispatch {
       platform,
       new Date(this.clock() - backoffMs).toISOString(),
     );
-  }
-  /**
-   * The most recently seen runners, which is where every live one is, each with whether Fleet
-   * rents it and, while it is fresh, the leases it holds.
-   */
-  private async runners(projectId: string, tx: Transaction): Promise<Runner[]> {
-    const rows = await tx.all<RunnerRow & { busy: number; rented: boolean }>(
-      `SELECT r.*,CASE WHEN r.last_seen_at>? THEN (SELECT COUNT(*) FROM worker_sessions s WHERE (s.owner_hash=r.owner_hash OR EXISTS (SELECT 1 FROM session_managed_assignments a JOIN session_managed_runners m ON m.allocation_id=a.allocation_id WHERE a.session_id=s.id AND m.project_id=r.project_id AND m.runner_id=r.runner_id)) AND s.runner_id=r.runner_id AND s.status IN ('offered','active')) ELSE 0 END AS busy,
-        EXISTS (${rented}) AS rented
-        FROM session_runners r WHERE r.project_id=? AND NOT EXISTS (${rented} AND m.runner_released_at IS NOT NULL) ORDER BY r.last_seen_at DESC,r.id LIMIT 100`,
-      new Date(this.clock() - freshForMs).toISOString(),
-      projectId,
-    );
-    return await mapAsync(rows, async (row) => ({
-      ...(await this.presence(row, tx)),
-      busy: Number(row.busy),
-      rented: row.rented,
-    }));
-  }
-  /**
-   * Why admitted work does not move, read once for attention() and running(), on the caller's
-   * transaction. `admissible` is the candidate scan, run as the reader; without it (a reader the
-   * queue is not told to) nothing is said of the queue, only of the holds. Only reads.
-   */
-  private async reading(
-    projectId: string,
-    tx: Transaction,
-    admissible: Admissible | null,
-  ): Promise<Reading> {
-    const now = this.clock();
-    const dispatch = await this.dispatch(projectId, tx);
-    const fleet = this.hooks.managed.serves(projectId);
-    const runners = await this.runners(projectId, tx);
-    const live = runners.filter((runner) => runner.live);
-    // A held target is read at the record's current revision where no session holds it, so
-    // every reader sees the same red.
-    const unheld = await tx.all<HoldRow>(
-      `SELECT h.* FROM session_dispatch_holds h WHERE h.project_id=? AND h.attempts>0
-        AND NOT EXISTS (SELECT 1 FROM worker_sessions l WHERE l.project_id=h.project_id AND l.instance_id=h.instance_id AND l.revision=h.revision AND l.status IN ('offered','active'))`,
-      projectId,
-    );
-    const at = await this.workflows.revisions(
-      projectId,
-      unheld.map((row) => row.instance_id),
-      tx,
-    );
-    const holds = unheld.filter((row) => at.get(row.instance_id)?.revision === row.revision);
-    const read = { dispatch, fleet, runners, holds };
-    if (!admissible)
-      return { ...read, queued: 0, waiting: new Map(), deferred: new Map(), quiet: [], stalls: [] };
-    const { all, live: leased, queue, spent, unaccounted } = admissible;
-    // A target with a live session is being tried right now, so it is not waiting on anyone.
-    const waiting = new Map(
-      all
-        .filter((item) => item.role !== 'operator' && !leased.has(targetKey(item)))
-        .map((item) => [targetKey(item), item]),
-    );
-    const failing = new Set(
-      holds.map((row) => `${row.instance_id}:${row.revision}`).filter((key) => waiting.has(key)),
-    );
-    const recent = new Date(now - deferredSinceMs).toISOString();
-    // A target nobody could prepare a checkout for is not failing and is never held, so no
-    // counter would ever show it. A run of deferred closes is what says it is not simply
-    // quiet: where that work's history lives has been away, busy or full since then. The
-    // closes are read from their usage rows; only a deferred one's lease is parsed, for why.
-    const deferred = deferredRuns(
-      await tx.all<Close>(
-        `SELECT u.session_id AS id,u.instance_id AS "instanceId",u.revision AS "expectedRevision",u.outcome,u.closed_at AS "closedAt",
-          CASE WHEN u.outcome='preparation_deferred' THEN s.session_json::jsonb #> '{deferral}' END AS deferral
-          FROM session_usage u JOIN worker_sessions s ON s.id=u.session_id WHERE u.project_id=? AND u.closed_at>?`,
-        projectId,
-        recent,
-      ),
-      waiting,
-      failing,
-      recent,
-    );
-    const incompatible = new Set(
-      localGitBlocked(
-        dispatch.enabled ? queue : [],
-        fleet && !dispatch.ownMachines,
-        live.some((runner) => !runner.rented),
-      ).map(targetKey),
-    );
-    const quiet = all.flatMap((item) => {
-      const key = targetKey(item),
-        step = item.role === 'operator';
-      // With dispatch off, one dispatch_disabled item says why all of them wait.
-      if (
-        leased.has(key) ||
-        failing.has(key) ||
-        deferred.has(key) ||
-        (!incompatible.has(key) &&
-          Date.parse(item.updatedAt) + this.thresholds.quietReadySeconds * 1000 > now) ||
-        (!step && !dispatch.enabled)
-      )
-        return [];
-      const code = step
-        ? 'awaiting_operator'
-        : incompatible.has(key)
-          ? 'runner_incompatible'
-          : unaccounted.has(item.instanceId)
-            ? 'usage_unavailable'
-            : spent.has(item.instanceId)
-              ? 'budget_exceeded'
-              : 'queued';
-      return [{ item, code } as const];
-    });
-    // Why the queue does not start; where Fleet rents for this project, its machines are the
-    // runners that take the work.
-    const refusing = (runner: Runner) =>
-      (runner.lastDecision === 'settings_pending' || runner.lastDecision === 'platform_disabled') &&
-      !!runner.decisionSince &&
-      Date.parse(runner.decisionSince) + this.thresholds.refusalSeconds * 1000 <= now;
-    const stalls: Reading['stalls'] = !queue.length
-      ? []
-      : !dispatch.enabled
-        ? [{ code: 'dispatch_disabled' }]
-        : [
-            ...(live.length || fleet ? [] : [{ code: 'no_live_runner' as const }]),
-            ...live
-              .filter(refusing)
-              .map((runner) => ({ code: 'runner_refusing' as const, runner })),
-          ];
-    return { ...read, queued: queue.length, waiting, deferred, quiet, stalls };
-  }
-  /**
-   * Everything that stopped moving, derived from the rows at the moment of the read: the
-   * dispatch reading, with the idle sessions and the blockers owners published. It only
-   * reads: a session idle here is reported whether or not the sweep has marked it, and the
-   * mark itself stays the sweep's. The words in `why` and `next` are advice; what they
-   * describe is enforced by the transaction that leases, closes or releases.
-   */
-  private async attention(
-    projectId: string,
-    tx: Transaction,
-    reading: Reading,
-    facts: {
-      activity: Map<string, string>;
-      blockers: WorkflowProvidedBlocker[];
-    },
-  ): Promise<StuckReport> {
-    const now = this.clock(),
-      observedAt = isoNow(this.clock),
-      limits = this.thresholds;
-    const { runners, dispatch, waiting, deferred, quiet } = reading;
-    const { activity } = facts;
-    const older = (since: string, seconds: number) => Date.parse(since) + seconds * 1000 <= now;
-    const items: StuckItem[] = [];
-    const add = (item: Omit<StuckItem, 'forSeconds'>) =>
-      items.push({
-        ...item,
-        forSeconds: Math.max(0, Math.floor((now - Date.parse(item.since)) / 1000)),
-      });
-    for (const session of await tx.all<
-      Pick<Session, 'id' | 'instanceId' | 'expectedRevision' | 'activatedAt'> & { label: string }
-    >(
-      `SELECT s.id,s.instance_id AS "instanceId",s.revision AS "expectedRevision",x.j #>> '{activatedAt}' AS "activatedAt",x.j #>> '{assignment,label}' AS label
-        FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x WHERE s.project_id=? AND s.status='active'`,
-      projectId,
-    )) {
-      const since = lastActivity(session, activity.get(session.id));
-      if (since === null || !older(since, limits.idleNoticeSeconds)) continue;
-      add({
-        kind: 'session_idle',
-        instanceId: session.instanceId,
-        expectedRevision: session.expectedRevision,
-        sessionId: session.id,
-        label: session.label,
-        since,
-        code: 'idle',
-        why: 'No recent Merv activity: the session is alive and has made no Merv tool call since then. That is not evidence the work is stuck — it may be computing locally, waiting on a remote job or using another service, none of which the server sees.',
-        next: `Check the worker before acting. Nothing closes a session for silence; it ends at its lease deadline, or when an admin halts it with POST /sessions/${encodeURIComponent(session.id)}/halt {}. Halting the worker does not stop a remote job it started, and the retry may start that job again.`,
-      });
-    }
-    for (const row of reading.holds) {
-      const item = waiting.get(`${row.instance_id}:${row.revision}`);
-      if (!item) continue;
-      add({
-        kind: row.held_at ? 'dispatch_held' : 'dispatch_failing',
-        instanceId: row.instance_id,
-        expectedRevision: row.revision,
-        ...(row.last_session_id ? { sessionId: row.last_session_id } : {}),
-        label: item.label,
-        since: row.held_at ?? row.first_at,
-        code: row.last_code,
-        attempts: row.attempts,
-        why: row.last_message,
-        next: row.held_at
-          ? 'Fix the cause, then an admin calls session.release_hold; or end or revise the record, because a hold names one revision. The hold stops automatic offers only: an offer made by hand still runs, and its failure counts.'
-          : `Nothing yet: automatic dispatch tries again after ${backoffMs / 1000} seconds and holds the target at ${limits.maxLaunchFailures} failed attempts.`,
-      });
-    }
-    // Work its owner refuses to lease never becomes a candidate, so nothing above or below can
-    // see it. What the refusing plugin published is the only trace, and it is read from
-    // Workflows' own rows, so it is still here when that plugin is not.
-    for (const blocker of facts.blockers)
-      add({
-        kind: 'work_blocked',
-        instanceId: blocker.instanceId,
-        since: blocker.since,
-        code: blocker.code,
-        why: blocker.message,
-        next: blocker.next,
-      });
-    for (const [key, last] of deferred) {
-      const item = waiting.get(key)!,
-        newest = last[0];
-      add({
-        kind: 'work_deferred',
-        instanceId: item.instanceId,
-        expectedRevision: item.expectedRevision,
-        sessionId: newest.id,
-        label: item.label,
-        since: last[last.length - 1].closedAt!,
-        code: newest.deferral?.cause ?? 'preparation_deferred',
-        attempts: last.length,
-        why: `The last ${last.length} machines that took this work could not prepare its checkout and put it off (${newest.deferral?.code ?? 'preparation_deferred'}). Nothing counts that against the work, so it is offered again and again.`,
-        next: 'Look at where this work’s history lives: with Code’s own repository that is code.status, whose store, operations and mirror say whether it is unavailable, busy or full. Nothing here is held; the offers resume by themselves once it answers.',
-      });
-    }
-    for (const { item, code } of quiet) {
-      const { instanceId, expectedRevision, label, updatedAt: since } = item;
-      if (code === 'runner_incompatible')
-        add({
-          kind: 'work_blocked',
-          instanceId,
-          expectedRevision,
-          label,
-          since,
-          code,
-          why: localGitWhy,
-          next: localGitNext,
-        });
-      else
-        add({
-          kind: 'ready_quiet',
-          instanceId,
-          expectedRevision,
-          label,
-          since,
-          code,
-          why: 'This step is ready and no session holds it. The clock is the record’s last revision change, so a step released after a long session is quiet at once.',
-          next:
-            code === 'awaiting_operator'
-              ? 'It is an operator’s step: no runner is ever offered it. workflow.status_and_next on the instance names the action.'
-              : code === 'usage_unavailable'
-                ? 'A budget covers it that cannot be judged: a session in its scope was activated and reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
-                : code === 'budget_exceeded'
-                  ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
-                  : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
-        });
-    }
-    for (const stall of reading.stalls)
-      if (stall.code === 'dispatch_disabled')
-        add({
-          kind: 'dispatch_disabled',
-          since: dispatch.updatedAt ?? observedAt,
-          code: 'dispatch_disabled',
-          why: `${reading.queued} queued step${reading.queued === 1 ? ' waits' : 's wait'} while automatic dispatch is off.`,
-          next: 'An admin turns it on with PUT /sessions/dispatch {"enabled":true}. Work can still be offered by hand.',
-        });
-      else if (stall.code === 'no_live_runner')
-        add({
-          kind: 'no_live_runner',
-          since: runners[0]?.lastSeenAt ?? observedAt,
-          code: 'no_live_runner',
-          why: runners.length
-            ? `Dispatch is on and work is queued, but no authorized runner has been seen in the last ${freshForMs / 1000} seconds.`
-            : 'Dispatch is on and work is queued, but no runner has ever registered in this project.',
-          next:
-            dispatch.fleet && !dispatch.ownMachines
-              ? 'Fleet serves a project as its owner, its longest-standing signed-in operator, while they may write and Fleet lists them; otherwise start a runner on a machine that holds a write key of this project.'
-              : 'Start a runner on a machine that holds a write key of this project.',
-        });
-      else {
-        const { runner } = stall,
-          code = runner.lastDecision;
-        add({
-          kind: 'runner_refusing',
-          runnerRef: runner.id,
-          label: runner.runnerId,
-          since: runner.decisionSince!,
-          code: code!,
-          why:
-            code === 'settings_pending'
-              ? `The runner has applied settings version ${runner.appliedVersion ?? 0} but version ${runner.desiredVersion} is published; it is offered nothing until it acknowledges them.`
-              : 'Every lease request of this runner names a platform that is disabled on the machine or in its server-owned settings.',
-          next:
-            code === 'settings_pending'
-              ? `Restart the runner so it applies them, or an admin publishes them again with PUT /sessions/runners/${runner.id}/settings.`
-              : `Enable the platform on the machine, or an admin enables it with PUT /sessions/runners/${runner.id}/settings.`,
-        });
-      }
-    const counts = Object.fromEntries(stuckKinds.map((kind) => [kind, 0])) as Record<
-      StuckKind,
-      number
-    >;
-    for (const item of items) counts[item.kind]++;
-    const subject = (item: StuckItem) => item.instanceId ?? item.runnerRef ?? '';
-    items.sort(
-      (a, b) =>
-        stuckKinds.indexOf(a.kind) - stuckKinds.indexOf(b.kind) ||
-        (a.since < b.since ? -1 : a.since > b.since ? 1 : 0) ||
-        (subject(a) < subject(b) ? -1 : subject(a) > subject(b) ? 1 : 0),
-    );
-    return {
-      observedAt,
-      thresholds: { ...limits },
-      // A target still being retried needs nobody yet, so it is listed but not counted.
-      total: items.length - counts.dispatch_failing,
-      counts,
-      items: items.slice(0, stuckLimit),
-      truncated: items.length > stuckLimit,
-    };
-  }
-  async stuck(caller: Caller): Promise<StuckReport> {
-    this.enter(caller);
-    caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
-      await this.ordinary(caller, 'read', tx);
-      const admissible = await this.candidates(caller, tx);
-      return await this.attention(
-        caller.projectId,
-        tx,
-        await this.reading(caller.projectId, tx, admissible),
-        {
-          activity: await this.observations.activity(tx, caller.projectId),
-          blockers: await this.workflows.blockers(caller, undefined, tx),
-        },
-      );
-    });
-  }
-  /** With `report`, `stuck` is the whole report session.stuck reads, from the same moment. */
-  async projectStatus(caller: Caller, report = false): Promise<SessionsProjectStatus> {
-    this.enter(caller);
-    caller = structuredClone(caller);
-    return await this.state.transaction(async (tx) => {
-      const actor = await this.ordinary(caller, 'read', tx);
-      const activity = await this.observations.activity(tx, caller.projectId);
-      const sessions: SessionSummary[] = (
-        await tx.all<
-          SessionRow & {
-            label: string;
-            name: string;
-            workflow: string | null;
-            workspace_mode: SessionSummary['workspaceMode'] | null;
-            runner_ref: string | null;
-            platform_json: string | null;
-            attachment_json: string | null;
-            result_json: string | null;
-          }
-        >(
-          // A frozen assignment can be half a megabyte: the 200 rows are chosen first, and each is
-          // parsed once, in SQL, and sent without its assignment, execution, lease and source.
-          `SELECT s.id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
-            ${workNameOf('x.j')} AS name,x.j #>> '{execution,workflow}' AS workflow,x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
-            FROM (SELECT * FROM worker_sessions WHERE project_id=? ORDER BY CASE WHEN status IN ('offered','active') THEN 0 ELSE 1 END,_merv_rowid DESC LIMIT 200) s
-            CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
-            LEFT JOIN session_workspaces w ON w.session_id=s.id ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s._merv_rowid DESC`,
-          caller.projectId,
-        )
-      ).map((row) => {
-        const session: Omit<Session, 'assignment' | 'execution'> = JSON.parse(row.session_json);
-        const lastActivityAt =
-          session.status === 'active' ? lastActivity(session, activity.get(session.id)) : null;
-        // Quiet from the moment the idle clock passed its notice; nothing is stored for it.
-        const quietAt = lastActivityAt
-          ? Date.parse(lastActivityAt) + this.thresholds.idleNoticeSeconds * 1000
-          : Infinity;
-        const quietSince = quietAt <= this.clock() ? new Date(quietAt).toISOString() : null;
-        return {
-          id: session.id,
-          agentId: session.agentId,
-          agentSessionId: session.agentSessionId,
-          actorId: session.actorId,
-          instanceId: session.instanceId,
-          ...(row.workflow ? { workflow: row.workflow } : {}),
-          expectedRevision: session.expectedRevision,
-          role: session.role,
-          status: session.status,
-          label: row.label,
-          name: row.name,
-          runnerRef: row.runner_ref,
-          hostRef: session.hostRef,
-          platform: row.platform_json ? JSON.parse(row.platform_json) : null,
-          createdAt: session.createdAt,
-          activatedAt: session.activatedAt,
-          expiresAt: session.expiresAt,
-          closedAt: session.closedAt,
-          closeReason: session.closeReason,
-          outcome: session.outcome ?? null,
-          lastActivityAt,
-          quietSince,
-          workspaceMode: row.workspace_mode ?? 'none',
-          ...(row.attachment_json === null
-            ? {}
-            : {
-                workspace: {
-                  attachment: JSON.parse(row.attachment_json),
-                  result: row.result_json === null ? null : JSON.parse(row.result_json),
-                },
-              }),
-        };
-      });
-      const counts = (await tx.get<{ live: number; total: number }>(
-        "SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN status IN ('offered','active') THEN 1 ELSE 0 END),0) AS live FROM worker_sessions WHERE project_id=?",
-        caller.projectId,
-      ))!;
-      const runnerTotal = (await tx.get<{ n: number }>(
-        'SELECT COUNT(*) AS n FROM session_runners WHERE project_id=?',
-        caller.projectId,
-      ))!.n;
-      const admissible = await this.candidates(caller, tx);
-      const { queue, retriesExhausted, budgets } = admissible;
-      const reading = await this.reading(caller.projectId, tx, admissible);
-      const stuck = await this.attention(caller.projectId, tx, reading, {
-        activity,
-        blockers: await this.workflows.blockers(caller, undefined, tx),
-      });
-      return {
-        // One transaction, one moment: agents cannot report a lease the leases do not.
-        agents: await this.observations.summaries(tx, caller.projectId),
-        observedAt: stuck.observedAt,
-        liveSessionCount: counts.live,
-        sessionTotal: counts.total,
-        runnerTotal,
-        canManage: actor.role === 'operator',
-        dispatch: reading.dispatch,
-        runners: reading.runners.map(({ busy: _busy, rented: _rented, ...runner }) => runner),
-        sessions,
-        queue: queue.slice(0, 200),
-        queueTotal: queue.length,
-        budgets: budgets.map(publicBudget),
-        retriesExhausted,
-        stuck: report ? stuck : { total: stuck.total, counts: stuck.counts },
-      };
-    });
-  }
-  /**
-   * The dispatch reading for the Running board, read narrowly because the page polls. Nothing
-   * decodes a whole lease. What the queue holds comes from the candidate scan, which runs each
-   * domain's lease rule as the viewer, and a domain refuses most viewers: a reader would count
-   * none of the queue and a producer only their own share. So the scan runs for an operator
-   * alone, who is told how much waits and why, what is still retried or put off, and which
-   * ready work nobody took; nobody else pays for it. Only reads, on the caller's snapshot.
-   */
-  async running(caller: Caller, tx: Transaction): Promise<DispatchReading> {
-    const operator = (await this.ordinary(caller, 'read', tx)).role === 'operator';
-    const admissible = operator ? await this.candidates(caller, tx) : null;
-    const { dispatch, fleet, runners, queued, holds, deferred, quiet, stalls } = await this.reading(
-      caller.projectId,
-      tx,
-      admissible,
-    );
-    const live = runners.filter((runner) => runner.live);
-    const own = live.filter((runner) => !runner.rented);
-    const offered = new Set(admissible?.all.map((item) => targetKey(item)));
-    const [stall] = stalls;
-    return {
-      operator,
-      dispatch,
-      fleet,
-      present: live.length > 0,
-      machines: {
-        live: own.length,
-        free: own
-          .filter(takesWork)
-          .reduce((free, runner) => free + Math.max(0, runner.capacity - runner.busy), 0),
-      },
-      waiting: admissible ? queued : null,
-      // A machine Fleet rents is named as one; its hostname says nothing.
-      stall: !stall
-        ? null
-        : stall.code !== 'runner_refusing'
-          ? { code: stall.code }
-          : stall.runner.rented
-            ? { code: stall.code, rented: true }
-            : { code: stall.code, machine: stall.runner.machine.hostname },
-      // Held, for every reader; still retried, for an operator, while the scan still offers it.
-      failures: holds
-        .filter((row) => row.held_at || offered.has(`${row.instance_id}:${row.revision}`))
-        .map((row) => ({
-          instanceId: row.instance_id,
-          attempts: row.attempts,
-          held: !!row.held_at,
-        })),
-      deferred: [...deferred.values()].map((last) => ({
-        instanceId: last[0].instanceId,
-        attempts: last.length,
-      })),
-      quiet: quiet.map(({ item, code }) => ({
-        instanceId: item.instanceId,
-        since: item.updatedAt,
-        code,
-      })),
-    };
   }
   private async admitRunner(
     ownerHash: string,

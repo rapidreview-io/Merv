@@ -24,7 +24,9 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { AgentEvent, AgentStreamSession } from '@merv/contracts';
-import { freshForMs, type DispatchReading, type SessionDispatch } from './dispatch.js';
+import type { SessionDispatch } from './dispatch.js';
+import { freshForMs } from './runners.js';
+import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
 import { ordinary as unmanaged, text, workNameOf } from './common.js';
 import { platformPhrase } from './rules.js';
