@@ -1,7 +1,7 @@
 import { useRef } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
-import { EXPERIMENT_ROLES } from '@merv/experiments/rules';
+import { EXPERIMENT_ROLES, roleRank } from '@merv/experiments/rules';
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useTool } from '../api';
 import { CodeBlock } from '../code-block';
@@ -44,6 +44,9 @@ export function EvidenceFiles({
     role,
     evidence.filter((item) => item.role === role),
   ]);
+  // A role the domain no longer writes is still on the record, so it keeps a band of its own, last.
+  const retained = evidence.filter((item) => roleRank(item.role) === EXPERIMENT_ROLES.length);
+  if (retained.length) bands.push(['other retained files', retained]);
   return (
     <div className="stack">
       {bands

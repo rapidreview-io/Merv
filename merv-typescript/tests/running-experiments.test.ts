@@ -15,7 +15,12 @@ import {
   type WorkflowHistoryEntry,
 } from '@merv/contracts';
 import type { Experiment, ExperimentAttach } from '@merv/experiments/types';
-import { enteredAgain, experimentNode, type ExperimentStanding } from '@merv/experiments/running';
+import {
+  enteredAgain,
+  experimentNode,
+  experimentPanel,
+  type ExperimentStanding,
+} from '@merv/experiments/running';
 import { citedEvidence, feasibilityStatement } from './feasibility-fixture.js';
 import { createApp } from './fixtures/app.js';
 import { reviewedFindings } from './fixtures/task-evidence.js';
@@ -522,6 +527,47 @@ test('a planned experiment’s sidebar draws its ladder without running a check,
   assert.deepEqual(
     [sidebar.route, sidebar.live, sidebar.actions],
     [`/experiments/${experiment.id}`, false, []],
+  );
+});
+
+test('evidence under a role the domain no longer writes is listed after every known role', () => {
+  const file = (role: string, sequence: number) => ({
+    role,
+    sequence,
+    current: true,
+    attemptIndex: 1,
+    artifactId: `art_${role}`,
+    path: `${role}.md`,
+    createdAt: '2026-09-25T10:00:00.000Z',
+  });
+  const panel = experimentPanel({
+    standing: {
+      id: 'exp',
+      name: 'ablate-depth',
+      state: 'planned',
+      updatedAt: '2026-09-25T10:00:00.000Z',
+      idleSince: '2026-09-25T10:05:00.000Z',
+      again: false,
+      blocked: false,
+      lease: null,
+      dependencies: [],
+      review: null,
+      exhausted: false,
+    },
+    experiment: {
+      intent: 'Does depth matter?',
+      ownerId: 'act_owner',
+      attempt: { index: 1 },
+      evidence: [file('retired', 1), file('report', 2), file('plan', 3)],
+    } as unknown as Experiment,
+    graph: { nodes: [{}], edges: [], state: 'planned', dependencies: [] } as never,
+    route: () => null,
+  });
+  const evidence = panel.sections.find((section) => section.title === 'Evidence');
+  assert.ok(evidence?.kind === 'links');
+  assert.deepEqual(
+    evidence.rows.map((row) => row.kind),
+    ['Plan', 'Report', 'Retired'],
   );
 });
 

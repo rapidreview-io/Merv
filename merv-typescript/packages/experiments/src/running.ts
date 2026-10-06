@@ -15,7 +15,7 @@ import {
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import type { Experiment } from './models.js';
-import { EXPERIMENT_ROLES } from './rules.js';
+import { roleRank } from './rules.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
 
 /**
@@ -214,11 +214,7 @@ export function experimentPanel(input: {
   );
   const evidence = experiment.evidence
     .filter((item) => item.current && item.attemptIndex === experiment.attempt.index)
-    .sort(
-      (a, b) =>
-        EXPERIMENT_ROLES.indexOf(a.role) - EXPERIMENT_ROLES.indexOf(b.role) ||
-        a.sequence - b.sequence,
-    );
+    .sort((a, b) => roleRank(a.role) - roleRank(b.role) || a.sequence - b.sequence);
   const files = evidence.slice(0, EVIDENCE_ROWS);
   const count = (drawn: number, total: number): RunningPhrase =>
     drawn < total ? [{ count: drawn, of: total }] : [{ count: total }];
