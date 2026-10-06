@@ -1782,9 +1782,7 @@
       "requires": [
         "state",
         "scope",
-        "workflows"
-      ],
-      "optional": [
+        "workflows",
         "domainEvents",
         "paper",
         "reflections",
@@ -1793,6 +1791,7 @@
         "artifacts",
         "codeWork"
       ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true,
@@ -3524,37 +3523,37 @@
     {
       "from": "research",
       "to": "domainEvents",
-      "optional": true
+      "optional": false
     },
     {
       "from": "research",
       "to": "paper",
-      "optional": true
+      "optional": false
     },
     {
       "from": "research",
       "to": "reflections",
-      "optional": true
+      "optional": false
     },
     {
       "from": "research",
       "to": "tasks",
-      "optional": true
+      "optional": false
     },
     {
       "from": "research",
       "to": "experiments",
-      "optional": true
+      "optional": false
     },
     {
       "from": "research",
       "to": "artifacts",
-      "optional": true
+      "optional": false
     },
     {
       "from": "research",
       "to": "codeWork",
-      "optional": true
+      "optional": false
     },
     {
       "from": "merv-research-tools",

@@ -11,7 +11,7 @@
   "serverPlugins": 69,
   "machinePlugins": 1,
   "directDependencyCount": 196,
-  "optionalDependencyCount": 26,
+  "optionalDependencyCount": 19,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -662,9 +662,7 @@
       "requires": [
         "state",
         "scope",
-        "workflows"
-      ],
-      "optional": [
+        "workflows",
         "domainEvents",
         "paper",
         "reflections",
@@ -673,6 +671,7 @@
         "artifacts",
         "codeWork"
       ],
+      "optional": [],
       "kind": "service",
       "runtime": "server",
       "defaultConfiguration": true

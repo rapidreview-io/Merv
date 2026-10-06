@@ -2,16 +2,21 @@
   "plugins": [
     {
       "id": "research-tools",
-      "name": "@merv/research/tools"
+      "name": "@merv/research/tools",
+      "required": false,
+      "disabled": true
     },
     {
       "id": "research-ui",
       "name": "@merv/research/ui",
-      "required": false
+      "required": false,
+      "disabled": true
     },
     {
       "id": "research",
-      "name": "@merv/research"
+      "name": "@merv/research",
+      "required": false,
+      "disabled": true
     },
     {
       "id": "paper-tools",

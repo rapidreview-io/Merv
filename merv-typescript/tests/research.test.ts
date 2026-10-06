@@ -14,7 +14,7 @@ import type { ResearchDigest, ResearchRecord } from '../packages/research/src/ty
 import { createApp } from './fixtures/app.js';
 import { boundProject } from './fixtures/code-binding.js';
 import { gitSource, importBundle } from './fixtures/code-store.js';
-import { hostedCode, type Main } from './fixtures/research.js';
+import { hostedCode, providersOf, type Main } from './fixtures/research.js';
 import { publicationBlockers, type PublicationStanding } from '@merv/code-work/unit-store';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -30,18 +30,10 @@ async function fixture(t: TestContext, store = false) {
       !entry.id.endsWith('-ui'),
   );
   let app = await createApp({ directory, config });
-  const service = async (digests = true) => {
-    const research = await createService(
-      new ResearchService(app.ctx.state, app.ctx.scope, app.ctx.workflows),
+  const service = async () =>
+    await createService(
+      new ResearchService(app.ctx.state, app.ctx.scope, app.ctx.workflows, providersOf(app.ctx)),
     );
-    research.bindPaper(app.ctx.paper);
-    research.bindReflections(app.ctx.reflections);
-    research.bindTasks(app.ctx.tasks);
-    research.bindExperiments(app.ctx.experiments);
-    if (digests) research.bindArtifacts(app.ctx.artifacts);
-    research.bindCode(app.ctx.codeWork);
-    return research;
-  };
   let research = await service(),
     sequence = 0;
   const boot = await app.ctx.scope.credentials.bootstrap({
@@ -165,16 +157,10 @@ async function fixture(t: TestContext, store = false) {
     artifact,
     reflect,
     finish,
-    /** The same storage with Artifacts unbound or bound again, as when a plugin is unloaded. */
-    async rebind(digests: boolean) {
-      research.close();
-      research = await service(digests);
-    },
-    /** This service is not the plugin's, so what Cordis would rebind for it is rebound here. */
+    /** Code unloaded or loaded again; this service holds the Code work it was handed. */
     async code(enabled: boolean) {
       await app.setEnabled('code', enabled);
-      const bound = research.bindCode(app.ctx.codeWork);
-      if (!enabled) bound();
+      if (enabled) research.providers.code = app.ctx.codeWork;
     },
     async restart() {
       research.close();
@@ -265,13 +251,9 @@ test('a failed Research activation holds nothing that blocks the next one', asyn
         : Reflect.get(workflows, key),
   });
   const activate = async (workflows = f.app.ctx.workflows) => {
-    const research = await createService(
-      new ResearchService(f.app.ctx.state, f.app.ctx.scope, workflows),
+    return await createService(
+      new ResearchService(f.app.ctx.state, f.app.ctx.scope, workflows, providersOf(f.app.ctx)),
     );
-    research.bindPaper(f.app.ctx.paper);
-    research.bindReflections(f.app.ctx.reflections);
-    research.bindTasks(f.app.ctx.tasks);
-    return research;
   };
   await assert.rejects(activate(refusing), /registration refused/);
   const restarted = await activate();
@@ -313,8 +295,11 @@ test('an empty research cycle completes after approved reflection without consol
   );
   await assert.rejects(async () => await f.advance(record), { code: 'reflection_not_approved' });
   await f.reflect(record);
+  // Completing needs no Knowledge, and composes the cycle's digest.
+  await f.app.setEnabled('knowledge', false);
   record = await f.advance(record);
   assert.equal(record.workflow.state, 'complete');
+  assert.ok(record.digest);
   // New cycles observe failed outcomes instead of requiring successful experiments.
   assert.equal(record.workflow.version, 6);
   assert.equal(
@@ -875,29 +860,22 @@ test('a digest stays within its bound by leaving entries out and counting them',
   assert.equal(digest.tasks.length + digest.carriedOver.length + digest.omitted, 120);
 });
 
-test('ending and completing never wait for a digest; the successor composes it late', async (t) => {
+test('a cycle that ended before digests existed is digested late by its successor', async (t) => {
   const f = await fixture(t);
-  await f.rebind(false);
-  const end = async (name: string) => {
-    const cycle = await f.research.create(f.owner, { name, requestId: f.id() });
-    return await f.research.end(f.owner, {
-      researchId: cycle.id,
-      expectedRevision: cycle.workflow.revision,
-      outcome: 'abandoned',
-      reason: 'Nothing was worth selecting.',
-      requestId: f.id(),
-    });
-  };
-  const first = await end('Undigested');
+  const cycle = await f.research.create(f.owner, { name: 'Undigested', requestId: f.id() });
+  // Ended by its workflow alone, as research.end did before it composed digests.
+  await f.research.handle!.transition(f.owner, {
+    instanceId: cycle.id,
+    expectedRevision: cycle.workflow.revision,
+    action: 'abandon',
+    input: { outcome: 'abandoned', reason: 'Nothing was worth selecting.' },
+    data: { reason: 'Nothing was worth selecting.' },
+    requestId: f.id(),
+  });
+  const first = await f.research.get(f.owner, cycle.id);
   assert.equal(first.workflow.state, 'abandoned');
   assert.equal(first.digest, null);
-  // The caller asked for the digest to be carried forward, so here its absence is refused.
   const following = { name: 'Successor', previousCycleId: first.id, requestId: 'follow-first' };
-  await assert.rejects(async () => await f.research.create(f.owner, following), {
-    code: 'artifacts_unavailable',
-  });
-  assert.equal((await f.research.list(f.owner)).length, 1);
-  await f.rebind(true);
   // Any writer may follow a finished cycle: the digest is the server's composition, not theirs.
   const writer = await f.issue('producer');
   const successor = await f.research.create(writer, following);
@@ -1629,17 +1607,9 @@ test('what would refuse the plan is reported before the advance, and skip is alw
     assert.deepEqual(await counts(f), before);
   };
 
-  f.research.bindTasks(f.app.ctx.tasks)();
-  await refused('tasks_unavailable');
-  f.research.bindTasks(f.app.ctx.tasks);
-  f.research.bindExperiments(f.app.ctx.experiments)();
-  await refused('experiments_unavailable');
-  f.research.bindExperiments(f.app.ctx.experiments);
-
   // Another wave pauses the very starts the plan needs.
   await f.app.ctx.reflections.create(f.owner, { requestId: f.id() });
   await refused('reflection_open');
-  f.research.bindTasks(f.app.ctx.tasks)();
   const skipped = await f.research.advance(f.owner, command('skip'));
   assert.equal(skipped.workflow.state, 'complete');
   assert.equal(skipped.successorId, null);
@@ -1727,31 +1697,6 @@ test('a plan at its size limits is created whole, and a taken experiment name re
     assert.ok(text.endsWith(`item ${item.key}.`));
     assert.ok(text.length > 5000 && text.length < 16000);
   }
-});
-
-test('a capability replaced while the plan is being created invalidates the whole advance', async (t) => {
-  const f = await fixture(t);
-  const { record, command } = await reflected(f, planned());
-  const before = await counts(f);
-  const input = command('create');
-  const tasks = f.app.ctx.tasks;
-  let entered = false;
-  f.research.bindTasks({
-    ...tasks,
-    serviceTasks: (provider) => tasks.serviceTasks(provider),
-    create: async (...args) => {
-      const task = await tasks.create(...args);
-      // Reflections was read earlier in this advance; what it said may no longer hold.
-      if (!entered) f.research.bindReflections(f.app.ctx.reflections);
-      entered = true;
-      return task;
-    },
-  });
-  await assert.rejects(f.research.advance(f.owner, input), { code: 'reflections_unavailable' });
-  assert.deepEqual(await counts(f), before);
-  assert.equal((await f.research.get(f.owner, record.id)).workflow.state, 'reflecting');
-  const done = await f.research.advance(f.owner, input);
-  assert.ok(done.successorId);
 });
 
 const harnessPlan = (): Extract<ChangeSpec, { version: 3 }> => ({
