@@ -70,7 +70,8 @@ and rebinding restrictions when an integration is unloaded. Reattachment rebuild
 research state.
 
 `repositories.root`, `quotaBytes` and `reservedFreeBytes` belong to the core configuration.
-`finalizeGraceSeconds` also belongs to Code, so every writer uses the same timeout.
+The writer grace (900 s; tests pass `finalizeGraceSeconds` to the constructor) also belongs to
+Code, so every writer uses the same timeout.
 Code builds the repository journal and its mirror, and the integration opens them with
 `openStore`, lending the callbacks only it can answer, and closes them when it unloads.
 Import maintenance (every 300 s), drain timing (45 s) and mirroring (every 30 s) run on

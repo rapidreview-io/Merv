@@ -20,6 +20,7 @@ import type { Reflection } from '@merv/reflections/types';
 import { ArtifactStore } from '@merv/artifacts';
 import { DiskBlobs } from '@merv/blobs';
 import { ReviewService } from '@merv/reviews';
+import { actorPermissionsChanged } from '@merv/reviews/claims';
 import { reviewToolsPlugin } from '@merv/reviews/tools';
 import { createApp } from './fixtures/app.js';
 import { fixture as piFixture } from './fixtures/pi.js';
@@ -539,7 +540,7 @@ test('the database admits an excluded reviewer only on an owner override, and re
       }),
   );
   await state.transaction(
-    async (tx) => await (f.reviews as ReviewService).actorPermissionsChanged(event, tx),
+    async (tx) => await actorPermissionsChanged(f.reviews as ReviewService, event, tx),
   );
   const released = await f.reviews.get(f.founder, reviewId);
   assert.deepEqual(

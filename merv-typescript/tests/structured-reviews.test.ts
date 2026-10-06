@@ -9,6 +9,7 @@ import { ProjectScope } from '@merv/scope';
 import { DiskBlobs } from '@merv/blobs';
 import { ArtifactStore } from '@merv/artifacts';
 import { ReviewService } from '@merv/reviews';
+import { actorRevoked } from '@merv/reviews/claims';
 import { digest, type ReviewInput, type ReviewRequest, type ReviewSubmit } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 import { ownReviews } from './fixtures/review-verdict.js';
@@ -422,7 +423,7 @@ test('revoking a reviewer preserves the v2 snapshot while replacement claims fen
     const event = (await f.state.events(f.operator.projectId)).findLast(
       (item) => item.type === 'actor.revoked',
     )!;
-    await f.state.transaction(async (tx) => await f.reviews.actorRevoked(event, tx));
+    await f.state.transaction(async (tx) => await actorRevoked(f.reviews, event, tx));
     const recovered = await f.reviews.get(replacement, requested.id);
     assert.equal(recovered.formatVersion, 2);
     assert.equal(recovered.snapshotHash, requested.snapshotHash);

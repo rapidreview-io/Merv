@@ -24,19 +24,26 @@ import type {
   ReflectionReview,
   ReflectionSubmit,
 } from './types.js';
-import type { ReflectionService } from './index.js';
-import { paperReview, submitted, summarized, type Submission, type WaveRow } from './program.js';
+import type { ReflectionsContext } from './index.js';
+import {
+  admit,
+  paperReview,
+  submitted,
+  summarized,
+  type Submission,
+  type WaveRow,
+} from './program.js';
 
 // The commands that move a wave: a lens report, the synthesis, ending a wave and the review
-// verdict. ReflectionService (index.ts) runs these as its own methods.
+// verdict. Each runs on ReflectionService (index.ts) as its ReflectionsContext.
 /** The caller's own text evidence, with the text it holds. */
 export async function author(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   id: string,
   tx: Transaction,
 ): Promise<ArtifactContent> {
-  const artifact = await this.artifacts.get(caller, id, tx);
+  const artifact = await ctx.artifacts.get(caller, id, tx);
   check(
     artifact.createdBy === caller.actorId,
     'artifact_author_required',
@@ -45,12 +52,12 @@ export async function author(
   );
   if (caller.session)
     check(
-      (await this.artifacts.executionOutputs(caller, tx)).some((a) => a.id === id),
+      (await ctx.artifacts.executionOutputs(caller, tx)).some((a) => a.id === id),
       'artifact_execution_required',
       'Evidence must be authored in this execution',
       403,
     );
-  const read = await this.artifacts.read(caller, id, undefined, tx);
+  const read = await ctx.artifacts.read(caller, id, undefined, tx);
   check(
     read.encoding === 'utf8' && visible(read.content),
     'reflection_text_required',
@@ -63,7 +70,7 @@ export async function author(
  * text is never parsed, so prose can never become work by resembling a plan.
  */
 export async function plan(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   { artifact, content }: ArtifactContent,
   tx: Transaction,
@@ -79,7 +86,7 @@ export async function plan(
   const plan = parseChangeSpec(content);
   // Work carried into the next cycle becomes its prerequisite, so it has to be real work here.
   for (const { workflowId } of plan.carriedOver) {
-    const carried = await this.workflows.get(caller, workflowId, tx).catch((error: unknown) => {
+    const carried = await ctx.workflows.get(caller, workflowId, tx).catch((error: unknown) => {
       if (error instanceof MervError && error.code === 'not_found') return undefined;
       throw error;
     });
@@ -92,28 +99,28 @@ export async function plan(
   return plan;
 }
 export async function submitLens(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   input: ReflectionLensSubmit,
   transaction?: Transaction,
 ): Promise<ReflectionLens> {
   ({ caller, input } = structuredClone({ caller, input }));
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'write', tx);
-    return await this.command(caller, 'submit_lens', input, tx, async () => {
-      const lens = await this.lensRow(caller, input.lensId, tx);
-      const snapshot = await this.workflows.get(caller, lens.id, tx);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'write', tx);
+    return await ctx.command(caller, 'submit_lens', input, tx, async () => {
+      const lens = await ctx.lensRow(caller, input.lensId, tx);
+      const snapshot = await ctx.workflows.get(caller, lens.id, tx);
       const context = { caller, snapshot, tx };
-      await this.admit(context);
+      await admit(ctx, context);
       check(
         snapshot.revision === input.expectedRevision,
         'revision_conflict',
         'Lens changed; refresh its assignment',
         409,
       );
-      const { artifact, content } = await this.author(caller, input.artifactId, tx);
+      const { artifact, content } = await author(ctx, caller, input.artifactId, tx);
       summarized(content);
-      await this.moved(
+      await ctx.moved(
         caller,
         {
           instanceId: lens.id,
@@ -131,11 +138,11 @@ export async function submitLens(
         JSON.stringify(artifact),
         lens.id,
       );
-      const wave = await this.row(caller, lens.reflection_id, tx);
-      const children = await this.lensRows(wave, tx);
+      const wave = await ctx.row(caller, lens.reflection_id, tx);
+      const children = await ctx.lensRows(wave, tx);
       if (children.length === 5 && children.every((child) => child.artifact)) {
-        const parent = await this.workflows.get(caller, wave.id, tx);
-        await this.moved(
+        const parent = await ctx.workflows.get(caller, wave.id, tx);
+        await ctx.moved(
           caller,
           {
             instanceId: wave.id,
@@ -147,27 +154,27 @@ export async function submitLens(
           tx,
         );
       }
-      await recorded(this.state, tx, caller, 'reflection.lens_submitted', lens.id, {
+      await recorded(ctx.state, tx, caller, 'reflection.lens_submitted', lens.id, {
         reflectionId: wave.id,
         attempt: wave.attempt,
         artifactId: artifact.id,
       });
-      return await this.lens(caller, lens.id, tx);
+      return await ctx.lens(caller, lens.id, tx);
     });
   });
 }
 export async function submit(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   input: ReflectionSubmit,
   transaction?: Transaction,
 ): Promise<Reflection> {
   ({ caller, input } = structuredClone({ caller, input }));
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'write', tx);
-    return await this.command(caller, 'submit', input, tx, async () => {
-      const wave = await this.row(caller, input.reflectionId, tx);
-      const snapshot = await this.workflows.get(caller, wave.id, tx);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'write', tx);
+    return await ctx.command(caller, 'submit', input, tx, async () => {
+      const wave = await ctx.row(caller, input.reflectionId, tx);
+      const snapshot = await ctx.workflows.get(caller, wave.id, tx);
       // A wave that moved on answers with the conflict, not with the next state's rules.
       check(
         snapshot.revision === input.expectedRevision,
@@ -181,24 +188,24 @@ export async function submit(
         'Reflection is under review; synthesis returns only with the verdict',
         409,
       );
-      await this.admit({ caller, snapshot, tx });
+      await admit(ctx, { caller, snapshot, tx });
       check(
         input.reportArtifactId !== input.changeSpecArtifactId,
         'distinct_evidence_required',
         'Report and change specification must be distinct artifacts',
       );
-      const report = await this.author(caller, input.reportArtifactId, tx);
-      const changeSpec = await this.author(caller, input.changeSpecArtifactId, tx);
+      const report = await author(ctx, caller, input.reportArtifactId, tx);
+      const changeSpec = await author(ctx, caller, input.changeSpecArtifactId, tx);
       const submission: Submission = {
         report: report.artifact,
         changeSpec: changeSpec.artifact,
         producerId: caller.actorId,
       };
-      const plan = await this.plan(caller, changeSpec, tx, snapshot.data.requirePlan === true);
-      if (plan) submission.plan = plan;
+      const planned = await plan(ctx, caller, changeSpec, tx, snapshot.data.requirePlan === true);
+      if (planned) submission.plan = planned;
       // Synthesis opens only by the join, which found all five of these complete.
-      const lenses = await this.lensRows(wave, tx);
-      const next = await this.moved(
+      const lenses = await ctx.lensRows(wave, tx);
+      const next = await ctx.moved(
         caller,
         {
           instanceId: wave.id,
@@ -211,7 +218,7 @@ export async function submit(
         snapshot,
       );
       const pinnedInputIds = lenses.map((lens) => (JSON.parse(lens.artifact!) as Artifact).id);
-      const review = await this.reviews.request(
+      const review = await ctx.reviews.request(
         caller,
         {
           subjectId: wave.id,
@@ -236,7 +243,7 @@ export async function submit(
                 .map((row) => row.source_actor_id)
                 .filter((id): id is string => typeof id === 'string'),
               ...(caller.session
-                ? [wave.owner_id, (await this.scope.authorityActor(caller, tx)).id]
+                ? [wave.owner_id, (await ctx.scope.authorityActor(caller, tx)).id]
                 : []),
             ]),
           ],
@@ -252,22 +259,22 @@ export async function submit(
         review.id,
         wave.id,
       );
-      await recorded(this.state, tx, caller, 'reflection.submitted', wave.id, {
+      await recorded(ctx.state, tx, caller, 'reflection.submitted', wave.id, {
         reviewId: review.id,
         attempt: wave.attempt,
       });
-      return await this.get(caller, wave.id, tx);
+      return await ctx.get(caller, wave.id, tx);
     });
   });
 }
 /** Only the owner or an operator ends a wave, and never a worker assigned to it. */
 export async function ender(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   wave: WaveRow,
   tx: Transaction,
 ): Promise<void> {
-  const actor = await this.scope.require(caller, 'write', tx);
+  const actor = await ctx.scope.require(caller, 'write', tx);
   check(
     !caller.session && (actor.id === wave.owner_id || actor.role === 'operator'),
     'forbidden',
@@ -276,22 +283,22 @@ export async function ender(
   );
 }
 export async function end(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   input: ReflectionEnd,
   transaction?: Transaction,
 ): Promise<Reflection> {
   ({ caller, input } = structuredClone({ caller, input }));
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'write', tx);
-    return await this.command(caller, 'end', input, tx, async () => {
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'write', tx);
+    return await ctx.command(caller, 'end', input, tx, async () => {
       check(
         typeof input.reason === 'string' && visible(input.reason) && input.reason.length <= 16000,
         'invalid_reason',
         'A specific reason of 1–16000 characters is required to end a wave',
       );
-      const wave = await this.row(caller, input.reflectionId, tx);
-      await this.moved(
+      const wave = await ctx.row(caller, input.reflectionId, tx);
+      await ctx.moved(
         caller,
         {
           instanceId: wave.id,
@@ -303,10 +310,10 @@ export async function end(
         },
         tx,
       );
-      for (const lens of await this.lensRows(wave, tx)) {
-        const snapshot = await this.workflows.get(caller, lens.id, tx);
+      for (const lens of await ctx.lensRows(wave, tx)) {
+        const snapshot = await ctx.workflows.get(caller, lens.id, tx);
         if (snapshot.state === 'reflecting')
-          await this.moved(
+          await ctx.moved(
             caller,
             {
               instanceId: lens.id,
@@ -318,32 +325,32 @@ export async function end(
           );
       }
       await tx.run('UPDATE reflections SET abandoned=? WHERE id=?', now(), wave.id);
-      const review = wave.review_id && (await this.reviews.get(caller, wave.review_id, tx));
+      const review = wave.review_id && (await ctx.reviews.get(caller, wave.review_id, tx));
       if (review && ['requested', 'started'].includes(review.status))
-        await this.reviews.supersede(caller, review.id, tx);
-      await recorded(this.state, tx, caller, 'reflection.abandoned', wave.id, {
+        await ctx.reviews.supersede(caller, review.id, tx);
+      await recorded(ctx.state, tx, caller, 'reflection.abandoned', wave.id, {
         reason: input.reason,
       });
-      return await this.get(caller, wave.id, tx);
+      return await ctx.get(caller, wave.id, tx);
     });
   });
 }
 export async function submitReview(
-  this: ReflectionService,
+  ctx: ReflectionsContext,
   caller: Caller,
   input: ReflectionReview,
   tx: Transaction,
 ): Promise<Reflection> {
-  await this.scope.require(caller, 'review', tx);
+  await ctx.scope.require(caller, 'review', tx);
   if (input.paperChanges !== undefined)
     input = {
       ...input,
-      paperChanges: this.paper.parseChanges(input.paperChanges),
+      paperChanges: ctx.paper.parseChanges(input.paperChanges),
     };
-  return await this.command(caller, 'review', input, tx, async () => {
-    const review = await this.reviews.get(caller, input.reviewId, tx);
-    const wave = await this.row(caller, review.subjectId, tx);
-    const { state } = await this.workflows.get(caller, wave.id, tx);
+  return await ctx.command(caller, 'review', input, tx, async () => {
+    const review = await ctx.reviews.get(caller, input.reviewId, tx);
+    const wave = await ctx.row(caller, review.subjectId, tx);
+    const { state } = await ctx.workflows.get(caller, wave.id, tx);
     check(
       wave.review_id === review.id && state === 'in_review',
       'stale_review',
@@ -366,7 +373,7 @@ export async function submitReview(
           : 'revise_synthesis';
     // The transition checks the revision and runs the review action's check: admit(), with the
     // reviewer's independence, then the verdict and its paper changes.
-    const next = await this.moved(
+    const next = await ctx.moved(
       caller,
       {
         instanceId: wave.id,
@@ -377,16 +384,16 @@ export async function submitReview(
       },
       tx,
     );
-    await this.reviews.submit(caller, input, tx);
+    await ctx.reviews.submit(caller, input, tx);
     if (input.paperChanges !== undefined)
-      await this.paper.applyReview(caller, paperReview(wave, review, input), tx);
+      await ctx.paper.applyReview(caller, paperReview(wave, review, input), tx);
     if (route === 'approved') {
       const approved: ApprovedReflection = {
         id: wave.id,
         projectId: wave.project_id,
         revision: next.revision,
         ...submitted(wave)!,
-        lenses: (await this.lensRows(wave, tx)).map((lens) => ({
+        lenses: (await ctx.lensRows(wave, tx)).map((lens) => ({
           id: lens.id,
           perspective: lens.perspective,
           artifact: JSON.parse(lens.artifact!) as Artifact,
@@ -404,7 +411,7 @@ export async function submitReview(
     } else {
       const feedback = [
         ...(JSON.parse(wave.feedback) as unknown[]),
-        await this.reviews.get(caller, review.id, tx),
+        await ctx.reviews.get(caller, review.id, tx),
       ];
       await tx.run(
         'UPDATE reflections SET feedback=?,attempt=attempt+? WHERE id=?',
@@ -413,16 +420,16 @@ export async function submitReview(
         wave.id,
       );
       if (route === 'reflecting')
-        await this.createLenses(caller, await this.row(caller, wave.id, tx), tx);
+        await ctx.createLenses(caller, await ctx.row(caller, wave.id, tx), tx);
     }
     await recorded(
-      this.state,
+      ctx.state,
       tx,
       caller,
       `reflection.${route === 'approved' ? 'approved' : 'returned'}`,
       wave.id,
       { reviewId: review.id, returnTo: route },
     );
-    return await this.get(caller, wave.id, tx);
+    return await ctx.get(caller, wave.id, tx);
   });
 }

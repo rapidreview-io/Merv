@@ -16,30 +16,32 @@ import {
   type WorkflowSnapshot,
 } from '@merv/contracts';
 import type { TaskCheckpoint, TaskCheckpointInput } from './types.js';
-import type { TaskLeaseRow, TaskRow, TaskService } from './index.js';
+import type { TaskLeaseRow, TaskRow, TasksContext } from './index.js';
 import { serviceOwned } from './workflow.js';
+import { assignment, contextType, projectContext } from './context.js';
+import { reviewCommit } from './policy.js';
 
 // A task's lease hooks and checkpoints: who may hold the lease, what it pins and the checkpoints
-// it freezes, and the checkpoints its worker saves. TaskService (index.ts) runs these as its own
-// methods.
+// it freezes, and the checkpoints its worker saves. Each runs on TaskService
+// (index.ts) as its TasksContext.
 
 export function leaseHooks(
-  this: TaskService,
+  ctx: TasksContext,
 ): NonNullable<NonNullable<WorkflowPolicy['assignments']>[number]['lease']> {
   return reviewedLeaseHooks({
-    reviews: this.reviews,
-    artifacts: this.artifacts,
+    reviews: ctx.reviews,
+    artifacts: ctx.artifacts,
     excluded: excludedFromReview,
-    label: async ({ caller, snapshot, tx }) => (await this.row(tx, caller, snapshot.id)).title,
+    label: async ({ caller, snapshot, tx }) => (await ctx.row(tx, caller, snapshot.id)).title,
     role: async (context): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> =>
-      await this.leaseRole(context),
-    acquire: async (context) => await this.acquireLease(context),
+      await leaseRole(ctx, context),
+    acquire: async (context) => await acquireLease(ctx, context),
     review: async ({ caller, snapshot, tx }) =>
-      snapshot.state === 'in_review' ? (await this.row(tx, caller, snapshot.id)).review_id : null,
+      snapshot.state === 'in_review' ? (await ctx.row(tx, caller, snapshot.id)).review_id : null,
     lease: async ({ caller, snapshot, tx }) =>
-      await this.currentLease(caller, snapshot.id, snapshot.revision, tx),
+      await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx),
     captures: async ({ caller, snapshot, tx }) =>
-      await this.captureArtifactIds(caller.projectId, snapshot.id, tx),
+      await ctx.captureArtifactIds(caller.projectId, snapshot.id, tx),
   });
 }
 
@@ -49,16 +51,16 @@ export function leaseHooks(
  * and the person the limit waits for may still end the task.
  */
 export async function leasedClaim(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   snapshot: WorkflowSnapshot,
   tx: Transaction,
 ) {
-  this.registration(snapshot.version);
+  ctx.registration(snapshot.version);
   if (caller.session) return;
-  const limit = (
-    await this.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
-  ).get(snapshot.id)!;
+  const limit = (await ctx.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)).get(
+    snapshot.id,
+  )!;
   check(
     limit.from === snapshot.state && limit.exhausted,
     'leased_review_required',
@@ -68,18 +70,18 @@ export async function leasedClaim(
 }
 
 export async function leaseRole(
-  this: TaskService,
+  ctx: TasksContext,
   { caller, snapshot, tx }: WorkflowCheckContext,
 ): Promise<Role> {
   check(!caller.session, 'forbidden', 'A leased worker cannot delegate another assignment', 403);
-  const row = await this.row(tx, caller, snapshot.id);
+  const row = await ctx.row(tx, caller, snapshot.id);
   if (snapshot.state === 'in_progress') {
-    await this.scope.require(caller, 'write', tx);
+    await ctx.scope.require(caller, 'write', tx);
     // Version 6 is created only by the service binding; its runner remains a producer.
     if (row.producer_id !== caller.actorId && !serviceOwned(snapshot.version))
-      await this.scope.require(caller, 'admin', tx);
-    await this.code.requireLeasable(caller, { unitId: snapshot.id, writer: true }, tx);
-    this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'work');
+      await ctx.scope.require(caller, 'admin', tx);
+    await ctx.code.requireLeasable(caller, { unitId: snapshot.id, writer: true }, tx);
+    contextType(ctx, { type: row.type_name, typeVersion: row.type_version }, 'work');
     return 'producer';
   }
   check(
@@ -88,8 +90,8 @@ export async function leaseRole(
     'Task has no review to lease',
     409,
   );
-  await this.scope.require(caller, 'review', tx);
-  const review = await this.reviews.get(caller, row.review_id, tx);
+  await ctx.scope.require(caller, 'review', tx);
+  const review = await ctx.reviews.get(caller, row.review_id, tx);
   check(
     review.status === 'requested' && review.subjectRevision === snapshot.revision,
     'review_unavailable',
@@ -97,49 +99,54 @@ export async function leaseRole(
     409,
   );
   check(directsIndependently(review, caller.actorId), ...NOT_INDEPENDENT);
-  await this.reviewCommit(caller, snapshot, review, tx);
-  this.contextType({ type: row.type_name, typeVersion: row.type_version }, 'review');
+  await reviewCommit(ctx, caller, snapshot, review, tx);
+  contextType(ctx, { type: row.type_name, typeVersion: row.type_version }, 'review');
   return 'reviewer';
 }
 
 export async function currentLease(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   taskId: string,
   revision: number,
   tx: Transaction,
 ): Promise<TaskLeaseRow> {
   check(caller.session, 'stale_lease', 'This task operation requires its lease worker', 403);
-  const [lease] = await leaseRows<TaskLeaseRow['details']>(tx, {
-    projectId: caller.projectId,
-    id: caller.session.id,
-    instanceIds: [taskId],
-    revision,
-    actorId: caller.actorId,
-    active: true,
-  });
+  const [lease] = await leaseRows<TaskLeaseRow['details']>(
+    tx,
+    {
+      projectId: caller.projectId,
+      id: caller.session.id,
+      instanceIds: [taskId],
+      revision,
+      actorId: caller.actorId,
+      active: true,
+    },
+    'full',
+  );
   check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
   return lease;
 }
 
 export async function acquireLease(
-  this: TaskService,
+  ctx: TasksContext,
   context: WorkflowCheckContext & { source: Caller; leaseId: string },
 ): Promise<Data> {
   const { caller, source, snapshot, tx, leaseId } = context;
   // workflows.offerLease ran lease.role(source) in this transaction just before this hook,
   // matched the worker's role to it and checked worker.session.id === leaseId.
-  const row = await this.row(tx, caller, snapshot.id);
+  const row = await ctx.row(tx, caller, snapshot.id);
   const purpose = snapshot.state === 'in_review' ? 'review' : 'work';
   // The base is fixed with the lease it serves: Workflows reads references() right after
   // this hook in the same transaction, and a refused offer takes the pin back with it.
   if (purpose === 'work') {
-    await this.code.pinBase(source, { unitId: snapshot.id, leaseId, writer: true }, tx);
+    await ctx.code.pinBase(source, { unitId: snapshot.id, leaseId, writer: true }, tx);
   }
   const review =
-    purpose === 'review' ? await this.reviews.start(caller, row.review_id!, tx) : undefined;
-  const type = this.contextType({ type: row.type_name, typeVersion: row.type_version }, purpose);
-  const checkpoints = await this.checkpointRows(
+    purpose === 'review' ? await ctx.reviews.start(caller, row.review_id!, tx) : undefined;
+  const type = contextType(ctx, { type: row.type_name, typeVersion: row.type_version }, purpose);
+  const checkpoints = await checkpointRows(
+    ctx,
     caller,
     snapshot.id,
     purpose,
@@ -157,7 +164,7 @@ export async function acquireLease(
     ]),
   ];
   // The authenticated source approves existing task continuity evidence exactly once.
-  const pinnedArtifacts = await this.artifacts.getAll(source, ids, tx);
+  const pinnedArtifacts = await ctx.artifacts.getAll(source, ids, tx);
   const receipt: Data = {
     leaseId,
     taskId: snapshot.id,
@@ -166,8 +173,8 @@ export async function acquireLease(
     purpose,
     reviewId: review?.id ?? null,
     claimId: review?.claimId ?? null,
-    project: await this.projectContext(source, tx),
-    paper: (await this.paper.contextInput(
+    project: await projectContext(ctx, source, tx),
+    paper: (await ctx.paper.contextInput(
       source,
       type.definition.recipe.maxChars,
       tx,
@@ -188,7 +195,7 @@ export async function acquireLease(
 }
 
 export async function leaseArtifactIds(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   lease: TaskLeaseRow,
   tx: Transaction,
@@ -196,8 +203,8 @@ export async function leaseArtifactIds(
   return [
     ...new Set([
       ...lease.details.pinnedArtifacts.map((artifact) => artifact.id),
-      ...((await this.captureArtifactIds(caller.projectId, lease.instance_id, tx)) ?? []),
-      ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
+      ...((await ctx.captureArtifactIds(caller.projectId, lease.instance_id, tx)) ?? []),
+      ...(await ctx.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
     ]),
   ].sort();
 }
@@ -207,7 +214,7 @@ export async function leaseArtifactIds(
  * in two reads for all of them, where `row` and `unleased` look for them.
  */
 export async function prepareTasks(
-  this: TaskService,
+  ctx: TasksContext,
   {
     caller,
     tx,
@@ -220,28 +227,28 @@ export async function prepareTasks(
     caller.projectId,
     ...ids,
   ))
-    await this.state.remember(`tasks:row:${caller.projectId}:${row.id}`, async () => row);
+    await ctx.state.remember(`tasks:row:${caller.projectId}:${row.id}`, async () => row);
   if (caller.session) return;
   const held = new Set(
     (
-      await leaseRows<TaskLeaseRow['details']>(tx, {
-        projectId: caller.projectId,
-        instanceIds: ids,
-        active: true,
-      })
+      await leaseRows(
+        tx,
+        { projectId: caller.projectId, instanceIds: ids, active: true },
+        { detail: 'purpose' },
+      )
     )
-      .filter((lease) => lease.details.purpose === 'work')
+      .filter((lease) => lease.detail === 'work')
       .map((lease) => `${lease.instance_id}:${lease.revision}`),
   );
   for (const { id, revision } of snapshots)
-    await this.state.remember(`tasks:leased:${caller.projectId}:${id}:${revision}`, async () =>
+    await ctx.state.remember(`tasks:leased:${caller.projectId}:${id}:${revision}`, async () =>
       held.has(`${id}:${revision}`),
     );
 }
 
 /** An interactive delivery yields to a worker that holds the revision, as every domain's submission does. */
 export async function unleased(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   taskId: string,
   revision: number,
@@ -250,15 +257,14 @@ export async function unleased(
   if (caller.session) return;
   const key = `tasks:leased:${caller.projectId}:${taskId}:${revision}`;
   check(
-    !(await this.state.remember(key, async () =>
+    !(await ctx.state.remember(key, async () =>
       (
-        await leaseRows<TaskLeaseRow['details']>(tx, {
-          projectId: caller.projectId,
-          instanceIds: [taskId],
-          revision,
-          active: true,
-        })
-      ).some((lease) => lease.details.purpose === 'work'),
+        await leaseRows(
+          tx,
+          { projectId: caller.projectId, instanceIds: [taskId], revision, active: true },
+          { detail: 'purpose' },
+        )
+      ).some((lease) => lease.detail === 'work'),
     )),
     'task_leased',
     'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
@@ -267,7 +273,7 @@ export async function unleased(
 }
 
 export async function isProducer(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   row: TaskRow,
   snapshot: WorkflowSnapshot,
@@ -275,23 +281,23 @@ export async function isProducer(
 ): Promise<boolean> {
   if (!caller.session) return row.producer_id === caller.actorId;
   return (
-    (await this.currentLease(caller, row.id, snapshot.revision, tx)).details.purpose === 'work'
+    (await currentLease(ctx, caller, row.id, snapshot.revision, tx)).details.purpose === 'work'
   );
 }
 
 export async function producerOrAdmin(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   row: TaskRow,
   snapshot: WorkflowSnapshot,
   tx: Transaction,
 ): Promise<void> {
-  if (!(await this.isProducer(caller, row, snapshot, tx)))
-    await this.scope.require(caller, 'admin', tx);
+  if (!(await isProducer(ctx, caller, row, snapshot, tx)))
+    await ctx.scope.require(caller, 'admin', tx);
 }
 
 export async function checkpointRows(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   taskId: string,
   purpose: 'work' | 'review',
@@ -322,7 +328,7 @@ export async function checkpointRows(
  * its own, citing only artifacts the lease admits; anyone else sees them all.
  */
 export async function visibleCheckpoints(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   taskId: string,
   purpose: 'work' | 'review',
@@ -330,7 +336,8 @@ export async function visibleCheckpoints(
   revision: number,
   tx: Transaction,
 ): Promise<TaskCheckpoint[]> {
-  const checkpoints = await this.checkpointRows(
+  const checkpoints = await checkpointRows(
+    ctx,
     caller,
     taskId,
     purpose,
@@ -340,10 +347,10 @@ export async function visibleCheckpoints(
     caller.session ? caller.actorId : undefined,
   );
   if (!caller.session) return checkpoints;
-  const lease = await this.currentLease(caller, taskId, revision, tx);
+  const lease = await currentLease(ctx, caller, taskId, revision, tx);
   const frozen = lease.details.checkpoints;
   const frozenIds = new Set(frozen.map((checkpoint) => checkpoint.id));
-  const allowed = new Set(await this.leaseArtifactIds(caller, lease, tx));
+  const allowed = new Set(await leaseArtifactIds(ctx, caller, lease, tx));
   return [...frozen, ...checkpoints.filter((checkpoint) => !frozenIds.has(checkpoint.id))].map(
     (checkpoint) => ({
       ...checkpoint,
@@ -353,17 +360,17 @@ export async function visibleCheckpoints(
 }
 
 export async function checkpoint(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskCheckpointInput,
 ): Promise<TaskCheckpoint> {
   caller = structuredClone(caller);
   input = plain<TaskCheckpointInput>(input);
-  return await this.state.transaction(async (tx) => {
+  return await ctx.state.transaction(async (tx) => {
     // The committed answer replays even after the task moved on; the assignment is
     // checked only for a checkpoint that has yet to be written.
-    return await this.command(tx, caller, input.requestId, 'checkpoint', input, async () => {
-      const { task, review } = await this.assignment(caller, input, tx);
+    return await ctx.command(tx, caller, input.requestId, 'checkpoint', input, async () => {
+      const { task, review } = await assignment(ctx, caller, input, tx);
       check(
         typeof input.notes === 'string' && visible(input.notes) && input.notes.length <= 16000,
         'invalid_checkpoint',
@@ -379,9 +386,10 @@ export async function checkpoint(
       );
       if (caller.session) {
         const allowed = new Set(
-          await this.leaseArtifactIds(
+          await leaseArtifactIds(
+            ctx,
             caller,
-            await this.currentLease(caller, task.id, task.workflow.revision, tx),
+            await currentLease(ctx, caller, task.id, task.workflow.revision, tx),
             tx,
           ),
         );
@@ -392,7 +400,7 @@ export async function checkpoint(
           403,
         );
       }
-      await this.artifacts.getMany(caller, artifactIds, tx);
+      await ctx.artifacts.getMany(caller, artifactIds, tx);
       const result: TaskCheckpoint = {
         id: newId('checkpoint'),
         taskId: task.id,
@@ -415,7 +423,7 @@ export async function checkpoint(
         result.reviewId,
         JSON.stringify(result),
       );
-      await recorded(this.state, tx, caller, 'task.checkpoint_saved', task.id, {
+      await recorded(ctx.state, tx, caller, 'task.checkpoint_saved', task.id, {
         checkpointId: result.id,
         purpose: input.purpose,
         revision: result.revision,

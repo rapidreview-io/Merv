@@ -1,4 +1,5 @@
 import {
+  bound,
   mapAsync,
   childRequest,
   createService,
@@ -23,7 +24,6 @@ import { CheckedTransitions } from '@merv/workflows/rules';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
-import { z } from 'zod';
 import type { Paper } from '@merv/paper/types';
 import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
 import type {} from '@merv/sessions/types';
@@ -50,18 +50,31 @@ const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesiz
  * return the next synthesis waits for a human, who reviews it by hand or allows another round.
  */
 export const REFLECTION_LIMITS = { reviewReturns: 2 };
-const configuration = z
-  .object({
-    limits: z
-      .object({
-        reviewReturns: z.number().int().min(1).max(1000).default(REFLECTION_LIMITS.reviewReturns),
-      })
-      .strict()
-      .default({}),
-  })
-  .strict()
-  .default({});
 
+/** What the modules (program.ts, commands.ts, running.ts) read of the service. */
+export type ReflectionsContext = Pick<
+  ReflectionService,
+  | 'artifacts'
+  | 'checked'
+  | 'command'
+  | 'contexts'
+  | 'createLenses'
+  | 'get'
+  | 'lens'
+  | 'lensRow'
+  | 'lensRows'
+  | 'limits'
+  | 'moved'
+  | 'once'
+  | 'paper'
+  | 'read'
+  | 'reviews'
+  | 'row'
+  | 'scope'
+  | 'state'
+  | 'wave'
+  | 'workflows'
+>;
 /** Domain composition only: every runnable stage is an ordinary registered workflow node. */
 export class ReflectionService implements Reflections {
   /** One per published version: an instance moves only through the version it began on. */
@@ -91,7 +104,10 @@ export class ReflectionService implements Reflections {
       for (const definition of [LENS_WORKFLOW, REFLECTION_WORKFLOW])
         this.handles.set(
           `${definition.name}@${definition.version}`,
-          await this.workflows.register(definition, this.policy(definition === LENS_WORKFLOW)),
+          await this.workflows.register(
+            definition,
+            program.policy(this, definition === LENS_WORKFLOW),
+          ),
         );
       this.releaseOwner = this.reviews.registerSubmitOwner({
         id: 'reflections',
@@ -101,7 +117,7 @@ export class ReflectionService implements Reflections {
             review.subjectId,
             review.projectId,
           )),
-        submit: async (caller, input, tx) => await this.submitReview(caller, input, tx),
+        submit: async (caller, input, tx) => await commands.submitReview(this, caller, input, tx),
         // A rejected report goes back to synthesis, or to the lenses for five new reports.
         returns: async () => [
           { value: 'synthesizing', label: 'Synthesis, for a revised report' },
@@ -372,33 +388,13 @@ export class ReflectionService implements Reflections {
     }
   }
   // The policy and lease hooks of both workflows (program.ts), the lens, synthesis, end and
-  // review commands (commands.ts) and the Running page (running.ts) run as this service's own
-  // methods.
-  readonly records = program.records;
-  readonly current = program.current;
-  readonly activeLease = program.activeLease;
-  readonly lease = program.lease;
-  readonly owned = program.owned;
-  readonly assignmentInputs = program.assignmentInputs;
-  readonly distinctAuthor = program.distinctAuthor;
-  readonly independent = program.independent;
-  readonly admit = program.admit;
-  readonly inputs = program.inputs;
-  readonly references = program.references;
-  readonly build = program.build;
-  readonly execution = program.execution;
-  readonly hooks = program.hooks;
-  readonly policy = program.policy;
-  readonly author = commands.author;
-  readonly plan = commands.plan;
-  readonly submitLens = commands.submitLens;
-  readonly submit = commands.submit;
-  readonly ender = commands.ender;
-  readonly end = commands.end;
-  readonly submitReview = commands.submitReview;
-  readonly runningFacts = running.runningFacts;
-  readonly running = running.running;
-  readonly runningPanel = running.runningPanel;
+  // review commands (commands.ts) and the Running page (running.ts) run on this service as their
+  // ReflectionsContext; the Reflections contract's share of them is bound here.
+  readonly submitLens = bound(this, commands.submitLens);
+  readonly submit = bound(this, commands.submit);
+  readonly end = bound(this, commands.end);
+  readonly running = bound(this, running.running);
+  readonly runningPanel = bound(this, running.runningPanel);
   async open(caller: Caller, transaction?: Transaction): Promise<string | undefined> {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
@@ -439,9 +435,17 @@ export class ReflectionService implements Reflections {
 }
 export const reflectionsPlugin = {
   name: 'merv-reflections',
-  inject: ['state', 'scope', 'artifacts', 'paper', 'workflows', 'reviews', 'contextBuilder'],
-  Config: configuration,
-  async apply(ctx: Context, config: z.infer<typeof configuration>) {
+  inject: [
+    'state',
+    'scope',
+    'artifacts',
+    'paper',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'sessions',
+  ],
+  async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
         new ReflectionService(
@@ -452,19 +456,14 @@ export const reflectionsPlugin = {
           ctx.workflows,
           ctx.reviews,
           ctx.contextBuilder,
-          config.limits,
         ),
       );
       yield () => service.close();
-      yield ctx.provide('reflections', service);
-    });
-    // A restart makes new lens instances: each perspective's author still takes its own up again.
-    ctx.inject(['sessions'], (ctx) => {
-      ctx.effect(() =>
-        ctx.sessions.conversations.register(LENS_WORKFLOW.name, ({ data, role }) =>
-          JSON.stringify([LENS_WORKFLOW.name, data.reflectionId, data.perspective, role]),
-        ),
+      // A restart makes new lens instances: each perspective's author still takes its own up again.
+      yield ctx.sessions.conversations.register(LENS_WORKFLOW.name, ({ data, role }) =>
+        JSON.stringify([LENS_WORKFLOW.name, data.reflectionId, data.perspective, role]),
       );
+      yield ctx.provide('reflections', service);
     });
   },
 };

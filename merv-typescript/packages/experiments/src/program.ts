@@ -1,4 +1,3 @@
-import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { requireDependencies } from '@merv/workflows/rules';
 import {
@@ -16,7 +15,7 @@ import {
   reviewedLeaseHooks,
   type LeaseRow as WorkflowLeaseRow,
 } from '@merv/workflows/lease-rows';
-import { grant, literal, reference, target, CheckedTransitions } from '@merv/workflows/rules';
+import { grant, literal, reference, target } from '@merv/workflows/rules';
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { postgresMigrations } from './program.postgres.js';
 import {
@@ -24,17 +23,11 @@ import {
   clip,
   digest,
   type Artifact,
-  type Artifacts,
   type Caller,
-  type ContextBuilder,
   type ContextInput,
   type ContextItem,
-  type ContextRegistration,
   type Data,
   type ReviewRequest,
-  type Reviews,
-  type Scope,
-  type State,
   type ContextRecipeDefinition,
   type Transaction,
   type WorkflowAssignmentRule,
@@ -44,12 +37,11 @@ import {
   type WorkflowExecutionReferences,
   type WorkflowPolicy,
   type WorkflowSnapshot,
-  type Workflows,
   type WorkflowTransition,
 } from '@merv/contracts';
-import type { Paper } from '@merv/paper/types';
+import type { ExperimentsContext } from './index.js';
 import { artifactItem, textItem } from '@merv/context-builder/artifact-item';
-import type { Code, CodeCapture } from '@merv/code-work/types';
+import type { CodeCapture } from '@merv/code-work/types';
 import type {
   Experiment,
   ExperimentAttempt,
@@ -60,7 +52,7 @@ import type {
 import type { FeasibilityStatement } from './evidence.js';
 
 const activeStates = ['planned', 'design_review', 'running', 'experiment_review'] as const;
-type ActiveState = (typeof activeStates)[number];
+export type ActiveState = (typeof activeStates)[number];
 export const reviewing = (state: string) =>
   state === 'design_review' || state === 'experiment_review';
 export const producing = (state: string) => state === 'planned' || state === 'running';
@@ -455,1196 +447,1198 @@ function execution(state: ActiveState, version: number): WorkflowExecutionPolicy
   };
 }
 
+// The experiment program: the workflow, context and lease rules of every current contract. It
+// never launches or authenticates a session. Each runs on ExperimentService (index.ts) as its
+// ExperimentsContext: the records and evidence these rules read, with one set of dependencies
+// and one lifecycle.
+
+/** Migrates the lease table, then registers every recipe and current workflow version. */
+export async function register(ctx: ExperimentsContext): Promise<void> {
+  await ctx.state.migrate('experiment_program', postgresMigrations);
+  try {
+    for (const recipe of EXPERIMENT_RECIPES)
+      ctx.contexts.set(
+        activeStates.find((state) => recipeNames[state] === recipe.name)!,
+        await ctx.contextBuilder.register(recipe),
+      );
+    for (const version of Object.keys(programVersions).map(Number))
+      ctx.handles.set(
+        version,
+        await ctx.workflows.register({ ...EXPERIMENT_WORKFLOW, version }, policy(ctx, version)),
+      );
+  } catch (error) {
+    unregister(ctx);
+    throw error;
+  }
+}
+
+export function unregister(ctx: ExperimentsContext): void {
+  for (const handle of ctx.handles.values()) handle.dispose();
+  ctx.handles.clear();
+  for (const context of ctx.contexts.values()) context.dispose();
+  ctx.contexts.clear();
+}
+
+export function handleFor(ctx: ExperimentsContext, version: number) {
+  programContract(version);
+  const handle = ctx.handles.get(version);
+  check(
+    handle,
+    'experiment_version_unavailable',
+    'The experiment program version is unavailable',
+    503,
+  );
+  return handle;
+}
+
 /**
- * The experiment program: the workflow, context and lease rules of every current contract. It
- * never launches or authenticates a session. ExperimentService extends it with the records and
- * evidence these rules read, so both share one set of dependencies and one lifecycle.
+ * Takes an owner edge whose exit checks the calling command has just run in this transaction,
+ * so the edge's guard does not run them again. Every other path to the edge is still guarded.
  */
-export abstract class ExperimentProgram {
-  protected closed = false;
-  protected sandboxes?: Pick<Sandboxes, 'captures'>;
-  private handles = new Map<number, Awaited<ReturnType<Workflows['register']>>>();
-  private contexts = new Map<ActiveState, ContextRegistration>();
-  /** The owner edge each transaction's command is taking after running its exit checks itself. */
-  private checked = new CheckedTransitions();
-
-  constructor(
-    protected readonly state: State,
-    protected readonly scope: Scope,
-    protected readonly artifacts: Artifacts,
-    protected readonly workflows: Workflows,
-    protected readonly reviews: Reviews,
-    private readonly contextBuilder: ContextBuilder,
-    protected readonly code: Code,
-    protected readonly paper: Paper,
-    private readonly limits = EXPERIMENT_LIMITS,
-  ) {}
-
-  /** Domain records only. Never evaluate guidance or render context in this read. */
-  abstract get(caller: Caller, experimentId: string, tx?: Transaction): Promise<Experiment>;
-  /** Exit readiness belongs to the record/evidence owner. context.transition names the edge. */
-  protected abstract checkAction(context: WorkflowCheckContext): Promise<unknown>;
-
-  /** Migrates the lease table, then registers every recipe and current workflow version. */
-  protected async register(): Promise<void> {
-    await this.state.migrate('experiment_program', postgresMigrations);
-    try {
-      for (const recipe of EXPERIMENT_RECIPES)
-        this.contexts.set(
-          activeStates.find((state) => recipeNames[state] === recipe.name)!,
-          await this.contextBuilder.register(recipe),
-        );
-      for (const version of Object.keys(programVersions).map(Number))
-        this.handles.set(
-          version,
-          await this.workflows.register({ ...EXPERIMENT_WORKFLOW, version }, this.policy(version)),
-        );
-    } catch (error) {
-      this.unregister();
-      throw error;
-    }
-  }
-
-  protected unregister(): void {
-    for (const handle of this.handles.values()) handle.dispose();
-    this.handles.clear();
-    for (const context of this.contexts.values()) context.dispose();
-    this.contexts.clear();
-  }
-
-  protected handleFor(version: number) {
-    programContract(version);
-    const handle = this.handles.get(version);
-    check(
-      handle,
-      'experiment_version_unavailable',
-      'The experiment program version is unavailable',
-      503,
-    );
-    return handle;
-  }
-
-  /**
-   * Takes an owner edge whose exit checks the calling command has just run in this transaction,
-   * so the edge's guard does not run them again. Every other path to the edge is still guarded.
-   */
-  protected async move(
-    caller: Caller,
-    experiment: Experiment,
-    transition: Omit<WorkflowTransition, 'instanceId'>,
-    tx: Transaction,
-  ) {
-    const { id, revision, version } = experiment.workflow;
-    const data = {
-      ...transition.data,
-      ...epochAfter(experiment, transition.action, experiment.attempt.index),
-    };
-    return await this.checked.take(
+export async function move(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  transition: Omit<WorkflowTransition, 'instanceId'>,
+  tx: Transaction,
+) {
+  const { id, revision, version } = experiment.workflow;
+  const data = {
+    ...transition.data,
+    ...epochAfter(experiment, transition.action, experiment.attempt.index),
+  };
+  return await ctx.checked.take(tx, { instanceId: id, revision, action: transition.action }, () =>
+    handleFor(ctx, version).transition(
+      caller,
+      { instanceId: experiment.id, ...transition, data },
       tx,
-      { instanceId: id, revision, action: transition.action },
-      () =>
-        this.handleFor(version).transition(
-          caller,
-          { instanceId: experiment.id, ...transition, data },
-          tx,
-        ),
-    );
-  }
+    ),
+  );
+}
 
-  protected revision(experiment: Experiment, expected: number): void {
-    check(
-      Number.isSafeInteger(expected) && experiment.workflow.revision === expected,
-      'revision_conflict',
-      'The experiment changed; read its current revision',
-      409,
-    );
-  }
+export function revision(ctx: ExperimentsContext, experiment: Experiment, expected: number): void {
+  check(
+    Number.isSafeInteger(expected) && experiment.workflow.revision === expected,
+    'revision_conflict',
+    'The experiment changed; read its current revision',
+    409,
+  );
+}
 
-  /** The review edge a verdict takes from the stage it assessed. */
-  protected route(stage: 'design' | 'results', input: ExperimentReview): string {
+/** The review edge a verdict takes from the stage it assessed. */
+export function route(
+  ctx: ExperimentsContext,
+  stage: 'design' | 'results',
+  input: ExperimentReview,
+): string {
+  check(
+    REVIEW_VERDICTS.includes(input.verdict),
+    'invalid_verdict',
+    'A supported review verdict is required',
+  );
+  if (input.verdict === 'pass') {
     check(
-      REVIEW_VERDICTS.includes(input.verdict),
-      'invalid_verdict',
-      'A supported review verdict is required',
-    );
-    if (input.verdict === 'pass') {
-      check(
-        input.returnTo === undefined,
-        'invalid_review_return',
-        'Passing reviews do not accept returnTo',
-      );
-      return stage === 'design' ? 'approve_design' : 'accept_results';
-    }
-    if (stage === 'design') {
-      check(
-        input.returnTo === undefined || input.returnTo === 'planned',
-        'invalid_review_return',
-        'A rejected design returns only to planned',
-      );
-      return 'revise_design';
-    }
-    check(
-      input.returnTo === 'planned' || input.returnTo === 'running',
+      input.returnTo === undefined,
       'invalid_review_return',
-      'Both negative attempt verdicts require returnTo planned or running',
+      'Passing reviews do not accept returnTo',
     );
-    return input.returnTo === 'planned' ? 'revise_plan' : 'revise_execution';
+    return stage === 'design' ? 'approve_design' : 'accept_results';
   }
-
-  /** The checked experiment. Guidance's callbacks each ask; one snapshot reads it once. */
-  protected async current({ caller, snapshot, tx }: WorkflowCheckContext): Promise<Experiment> {
-    const key = `experiments:get:${caller.projectId}:${snapshot.id}`;
-    return structuredClone(await this.state.remember(key, () => this.get(caller, snapshot.id, tx)));
-  }
-
-  private async facts(context: WorkflowCheckContext): Promise<Experiment> {
-    check(!this.closed, 'experiment_unavailable', 'The experiment program is unavailable', 503);
-    const experiment = await this.current(context);
+  if (stage === 'design') {
     check(
-      experiment.workflow.revision === context.snapshot.revision &&
-        experiment.workflow.state === context.snapshot.state,
-      'revision_conflict',
-      'The experiment assignment changed',
+      input.returnTo === undefined || input.returnTo === 'planned',
+      'invalid_review_return',
+      'A rejected design returns only to planned',
+    );
+    return 'revise_design';
+  }
+  check(
+    input.returnTo === 'planned' || input.returnTo === 'running',
+    'invalid_review_return',
+    'Both negative attempt verdicts require returnTo planned or running',
+  );
+  return input.returnTo === 'planned' ? 'revise_plan' : 'revise_execution';
+}
+
+/** The checked experiment. Guidance's callbacks each ask; one snapshot reads it once. */
+export async function current(
+  ctx: ExperimentsContext,
+  { caller, snapshot, tx }: WorkflowCheckContext,
+): Promise<Experiment> {
+  const key = `experiments:get:${caller.projectId}:${snapshot.id}`;
+  return structuredClone(await ctx.state.remember(key, () => ctx.get(caller, snapshot.id, tx)));
+}
+
+export async function facts(
+  ctx: ExperimentsContext,
+  context: WorkflowCheckContext,
+): Promise<Experiment> {
+  check(!ctx.closed, 'experiment_unavailable', 'The experiment program is unavailable', 503);
+  const experiment = await current(ctx, context);
+  check(
+    experiment.workflow.revision === context.snapshot.revision &&
+      experiment.workflow.state === context.snapshot.state,
+    'revision_conflict',
+    'The experiment assignment changed',
+    409,
+  );
+  return experiment;
+}
+
+/** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
+export async function activeLease(
+  ctx: ExperimentsContext,
+  experiment: LeaseTarget,
+  tx: Transaction,
+): Promise<LeaseRow | undefined> {
+  const { projectId, id, workflow } = experiment;
+  const lease = await ctx.state.remember(
+    `experiments:lease:${projectId}:${id}:${workflow.revision}`,
+    async () =>
+      (
+        await leaseRows<LeaseRow['details']>(
+          tx,
+          { projectId, instanceIds: [id], revision: workflow.revision, active: true },
+          'full',
+        )
+      )[0],
+  );
+  // A copy: what the lease froze is the caller's to read, not the cached row's.
+  return lease && structuredClone(lease);
+}
+
+/** The caller's live lease on this revision; without `attempt`, at whichever attempt it holds. */
+export async function leaseOf(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: LeaseTarget,
+  tx: Transaction,
+): Promise<LeaseRow> {
+  check(
+    caller.session,
+    'stale_lease',
+    'This operation requires the current experiment worker',
+    403,
+  );
+  const lease = await activeLease(ctx, experiment, tx);
+  check(
+    lease &&
+      lease.id === caller.session.id &&
+      lease.actor_id === caller.actorId &&
+      (!experiment.attempt || lease.details.attemptIndex === experiment.attempt.index) &&
+      lease.state === experiment.workflow.state,
+    'stale_lease',
+    'The worker no longer owns this exact experiment assignment',
+    409,
+  );
+  return lease;
+}
+
+/** Interactive production is fenced while a lease owns the current node. Terminal administration is separate. */
+export async function assertProducer(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<void> {
+  await ctx.scope.require(caller, 'write', tx);
+  check(
+    producing(experiment.workflow.state),
+    'experiment_not_writable',
+    'Evidence work is available only during planning or execution',
+    409,
+  );
+  if (caller.session) await leaseOf(ctx, caller, experiment, tx);
+  else {
+    if (caller.actorId !== experiment.ownerId) await ctx.scope.require(caller, 'admin', tx);
+    check(
+      !(await activeLease(ctx, experiment, tx)),
+      'experiment_leased',
+      'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
       409,
     );
-    return experiment;
   }
-
-  /** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
-  private async activeLease(
-    experiment: LeaseTarget,
-    tx: Transaction,
-  ): Promise<LeaseRow | undefined> {
-    const { projectId, id, workflow } = experiment;
-    const lease = await this.state.remember(
-      `experiments:lease:${projectId}:${id}:${workflow.revision}`,
-      async () =>
-        (
-          await leaseRows<LeaseRow['details']>(tx, {
-            projectId,
-            instanceIds: [id],
-            revision: workflow.revision,
-            active: true,
-          })
-        )[0],
+  if (experiment.workflow.state === 'running') {
+    approvedPlan(ctx, experiment);
+    requireDependencies(
+      (await ctx.workflows.prerequisites(caller, [experiment.id], tx)).get(experiment.id)!,
     );
-    // A copy: what the lease froze is the caller's to read, not the cached row's.
-    return lease && structuredClone(lease);
   }
+}
 
-  /** The caller's live lease on this revision; without `attempt`, at whichever attempt it holds. */
-  private async lease(caller: Caller, experiment: LeaseTarget, tx: Transaction): Promise<LeaseRow> {
-    check(
-      caller.session,
-      'stale_lease',
-      'This operation requires the current experiment worker',
-      403,
-    );
-    const lease = await this.activeLease(experiment, tx);
-    check(
-      lease &&
-        lease.id === caller.session.id &&
-        lease.actor_id === caller.actorId &&
-        (!experiment.attempt || lease.details.attemptIndex === experiment.attempt.index) &&
-        lease.state === experiment.workflow.state,
-      'stale_lease',
-      'The worker no longer owns this exact experiment assignment',
-      409,
-    );
-    return lease;
-  }
-
-  /** Interactive production is fenced while a lease owns the current node. Terminal administration is separate. */
-  protected async assertProducer(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.scope.require(caller, 'write', tx);
+/** Ending work is explicit administration, independent of production readiness or prerequisites. */
+export async function assertAdministration(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<void> {
+  await ctx.scope.require(caller, 'write', tx);
+  if (caller.session) {
     check(
       producing(experiment.workflow.state),
-      'experiment_not_writable',
-      'Evidence work is available only during planning or execution',
-      409,
+      'forbidden',
+      'Review workers cannot end an experiment',
+      403,
     );
-    if (caller.session) await this.lease(caller, experiment, tx);
-    else {
-      if (caller.actorId !== experiment.ownerId) await this.scope.require(caller, 'admin', tx);
-      check(
-        !(await this.activeLease(experiment, tx)),
-        'experiment_leased',
-        'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
-        409,
-      );
-    }
-    if (experiment.workflow.state === 'running') {
-      this.approvedPlan(experiment);
-      requireDependencies(
-        (await this.workflows.prerequisites(caller, [experiment.id], tx)).get(experiment.id)!,
-      );
-    }
+    await leaseOf(ctx, caller, experiment, tx);
+  } else if (caller.actorId !== experiment.ownerId) {
+    await ctx.scope.require(caller, 'admin', tx);
   }
+}
 
-  /** Ending work is explicit administration, independent of production readiness or prerequisites. */
-  protected async assertAdministration(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<void> {
-    await this.scope.require(caller, 'write', tx);
-    if (caller.session) {
-      check(
-        producing(experiment.workflow.state),
-        'forbidden',
-        'Review workers cannot end an experiment',
-        403,
-      );
-      await this.lease(caller, experiment, tx);
-    } else if (caller.actorId !== experiment.ownerId) {
-      await this.scope.require(caller, 'admin', tx);
-    }
-  }
+export function approvedPlan(ctx: ExperimentsContext, experiment: Experiment): string[] {
+  const submission = approvedSubmission(
+    experiment,
+    'Execution requires this attempt’s exact approved design submission',
+  );
+  const plans = submission.evidence
+    .filter((evidence) => evidence.role === 'plan')
+    .map((evidence) => evidence.artifactId);
+  check(plans.length > 0, 'approved_plan_required', 'The approved design has no pinned plan', 409);
+  // The admitted feasibility statement travels with the plan, so the running worker and the
+  // results reviewer see the budget the design was approved under. It is not required here:
+  // submission and the design review are the gates, and this runs only after both.
+  const feasibility = submission.evidence
+    .filter((evidence) => evidence.role === 'feasibility')
+    .map((evidence) => evidence.artifactId);
+  return [...new Set([...plans, ...feasibility, ...submission.figureIds])];
+}
 
-  private approvedPlan(experiment: Experiment): string[] {
-    const submission = approvedSubmission(
-      experiment,
-      'Execution requires this attempt’s exact approved design submission',
-    );
-    const plans = submission.evidence
-      .filter((evidence) => evidence.role === 'plan')
-      .map((evidence) => evidence.artifactId);
-    check(
-      plans.length > 0,
-      'approved_plan_required',
-      'The approved design has no pinned plan',
-      409,
-    );
-    // The admitted feasibility statement travels with the plan, so the running worker and the
-    // results reviewer see the budget the design was approved under. It is not required here:
-    // submission and the design review are the gates, and this runs only after both.
-    const feasibility = submission.evidence
-      .filter((evidence) => evidence.role === 'feasibility')
-      .map((evidence) => evidence.artifactId);
-    return [...new Set([...plans, ...feasibility, ...submission.figureIds])];
-  }
+/** The current review, pinned to this exact submission. Its code capture is read separately. */
+export async function reviewOf(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<ReviewRequest> {
+  check(
+    experiment.reviewId && reviewing(experiment.workflow.state),
+    'stale_review',
+    'The experiment has no current review assignment',
+    409,
+  );
+  const review = await ctx.reviews.get(caller, experiment.reviewId, tx);
+  check(
+    review.subjectId === experiment.id &&
+      review.subjectRevision === experiment.workflow.revision &&
+      reviewedSubmission(experiment, review.id),
+    'stale_review',
+    'This review must pin the exact current submission and attempt',
+    409,
+  );
+  return review;
+}
 
-  /** The current review, pinned to this exact submission. Its code capture is read separately. */
-  private async review(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<ReviewRequest> {
-    check(
-      experiment.reviewId && reviewing(experiment.workflow.state),
-      'stale_review',
-      'The experiment has no current review assignment',
-      409,
-    );
-    const review = await this.reviews.get(caller, experiment.reviewId, tx);
-    check(
-      review.subjectId === experiment.id &&
-        review.subjectRevision === experiment.workflow.revision &&
-        reviewedSubmission(experiment, review.id),
-      'stale_review',
-      'This review must pin the exact current submission and attempt',
-      409,
-    );
-    return review;
-  }
+/**
+ * The commit a results review pins: the producing session's final capture, resolved by its
+ * immutable reference even after its handoff. A machine that died before handing that capture
+ * over leaves its writer for an operator to fence; Code then answers with the last commit it
+ * admitted from that session, which is what the fence kept.
+ */
+export async function reviewCapture(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<CodeCapture | null> {
+  if (experiment.workflow.state !== 'experiment_review') return null;
+  const submission = experiment.submissions.find((entry) => entry.reviewId === experiment.reviewId);
+  check(
+    submission?.stage === 'results' &&
+      submission.codeCaptureRef?.kind === 'session-final' &&
+      submission.codeCaptureRef.sessionId === submission.sessionId,
+    'experiment_capture_required',
+    'The result submission must pin its producing session capture',
+    409,
+  );
+  const checked = await ctx.code.checkCapture(
+    caller,
+    submission.codeCaptureRef,
+    {
+      unitId: experiment.id,
+      revision: submission.subjectRevision - 1,
+      workflow: runningNode,
+      sessionId: submission.sessionId,
+      actorId: submission.producerId,
+    },
+    tx,
+  );
+  check(
+    checked.status !== 'foreign',
+    'experiment_capture_provenance',
+    'The code capture must belong to the exact producing experiment node',
+    409,
+  );
+  check(
+    checked.status === 'ready',
+    'experiment_capture_pending',
+    'The producing worker must stop and report its final Git capture before review, or an operator fences its writer with code.unit.fence',
+    409,
+  );
+  return checked.capture;
+}
 
-  /**
-   * The commit a results review pins: the producing session's final capture, resolved by its
-   * immutable reference even after its handoff. A machine that died before handing that capture
-   * over leaves its writer for an operator to fence; Code then answers with the last commit it
-   * admitted from that session, which is what the fence kept.
-   */
-  private async reviewCapture(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<CodeCapture | null> {
-    if (experiment.workflow.state !== 'experiment_review') return null;
-    const submission = experiment.submissions.find(
-      (entry) => entry.reviewId === experiment.reviewId,
-    );
+/**
+ * A verdict's own checks, made after its review is pinned and Reviews has checked the
+ * submission: it names that review at the current revision, and it routes to this edge.
+ */
+export async function checkReview(
+  ctx: ExperimentsContext,
+  { caller, tx, input: proposed, transition }: WorkflowCheckContext,
+  experiment: Experiment,
+  pinned: ReviewRequest,
+): Promise<void> {
+  const input = proposed as unknown as ExperimentReview;
+  if (input.expectedRevision !== undefined) revision(ctx, experiment, input.expectedRevision);
+  await ctx.scope.require(caller, 'review', tx);
+  const review =
+    input.reviewId === pinned.id ? pinned : await ctx.reviews.get(caller, input.reviewId, tx);
+  check(
+    experiment.reviewId === review.id,
+    'stale_review',
+    'This review no longer belongs to the current submission',
+    409,
+  );
+  revision(ctx, experiment, input.expectedRevision);
+  const submission = reviewedSubmission(experiment, review.id)!;
+  check(
+    submission.subjectRevision === review.subjectRevision &&
+      submission.producerId === review.producerId,
+    'stale_review',
+    'The review must pin this exact attempt and submission',
+    409,
+  );
+  check(
+    digest([
+      ...new Set([...submission.evidence.map((e) => e.artifactId), ...submission.figureIds]),
+    ]) === digest(review.artifactIds),
+    'stale_review',
+    'Review evidence differs from the sealed submission',
+    409,
+  );
+  const action = route(ctx, submission.stage, input);
+  // Reviews holds the criterion to met with some pinned evidence; only Experiments knows
+  // which artifact is the statement, and a finding citing the plan alone has not read it.
+  const statement = submission.evidence.find((e) => e.role === 'feasibility');
+  if (input.verdict === 'pass' && submission.stage === 'design' && statement)
     check(
-      submission?.stage === 'results' &&
-        submission.codeCaptureRef?.kind === 'session-final' &&
-        submission.codeCaptureRef.sessionId === submission.sessionId,
-      'experiment_capture_required',
-      'The result submission must pin its producing session capture',
-      409,
+      input.findings
+        ?.find((finding) => finding.criterionNumber === feasibilityCriterion)
+        ?.evidenceIds.includes(statement.artifactId),
+      'feasibility_not_cited',
+      `A passing design review cites the feasibility statement ${statement.artifactId} in the finding for criterion ${feasibilityCriterion}`,
     );
-    const checked = await this.code.checkCapture(
+  if (input.paperChanges !== undefined)
+    await ctx.paper.checkReview(
       caller,
-      submission.codeCaptureRef,
       {
-        unitId: experiment.id,
-        revision: submission.subjectRevision - 1,
-        workflow: runningNode,
-        sessionId: submission.sessionId,
-        actorId: submission.producerId,
+        ...input.paperChanges,
+        source: { kind: 'experiment', id: experiment.id, revision: review.subjectRevision },
+        reviewId: review.id,
+        verdict: input.verdict,
+        evidenceIds: review.artifactIds,
       },
       tx,
     );
+  check(
+    !transition || action === transition,
+    'invalid_review_return',
+    'The verdict does not select this transition',
+  );
+}
+
+export async function admit(
+  ctx: ExperimentsContext,
+  context: WorkflowCheckContext,
+): Promise<{ experiment: Experiment; review: ReviewRequest | null }> {
+  const experiment = await facts(ctx, context);
+  if (producing(context.snapshot.state)) {
+    await assertProducer(ctx, context.caller, experiment, context.tx);
+    await requireBase(ctx, context);
+    return { experiment, review: null };
+  }
+  await ctx.scope.require(context.caller, 'review', context.tx);
+  const review = await reviewOf(ctx, context.caller, experiment, context.tx);
+  await reviewCapture(ctx, context.caller, experiment, context.tx);
+  if (context.caller.session) {
+    const lease = await leaseOf(ctx, context.caller, experiment, context.tx);
     check(
-      checked.status !== 'foreign',
-      'experiment_capture_provenance',
-      'The code capture must belong to the exact producing experiment node',
+      lease.review_id === review.id && lease.claim_id === review.claimId,
+      'stale_claim',
+      'The session no longer owns its pinned claim',
       409,
     );
-    check(
-      checked.status === 'ready',
-      'experiment_capture_pending',
-      'The producing worker must stop and report its final Git capture before review, or an operator fences its writer with code.unit.fence',
-      409,
-    );
-    return checked.capture;
-  }
+    await ctx.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
+  } else if (review.status === 'requested')
+    await ctx.reviews.checkStart(context.caller, review.id, context.tx);
+  else await ctx.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
+  return { experiment, review };
+}
 
-  /**
-   * A verdict's own checks, made after its review is pinned and Reviews has checked the
-   * submission: it names that review at the current revision, and it routes to this edge.
-   */
-  private async checkReview(
-    { caller, tx, input: proposed, transition }: WorkflowCheckContext,
-    experiment: Experiment,
-    pinned: ReviewRequest,
-  ): Promise<void> {
-    const input = proposed as unknown as ExperimentReview;
-    if (input.expectedRevision !== undefined) this.revision(experiment, input.expectedRevision);
-    await this.scope.require(caller, 'review', tx);
-    const review =
-      input.reviewId === pinned.id ? pinned : await this.reviews.get(caller, input.reviewId, tx);
-    check(
-      experiment.reviewId === review.id,
-      'stale_review',
-      'This review no longer belongs to the current submission',
-      409,
-    );
-    this.revision(experiment, input.expectedRevision);
-    const submission = reviewedSubmission(experiment, review.id)!;
-    check(
-      submission.subjectRevision === review.subjectRevision &&
-        submission.producerId === review.producerId,
-      'stale_review',
-      'The review must pin this exact attempt and submission',
-      409,
-    );
-    check(
-      digest([
-        ...new Set([...submission.evidence.map((e) => e.artifactId), ...submission.figureIds]),
-      ]) === digest(review.artifactIds),
-      'stale_review',
-      'Review evidence differs from the sealed submission',
-      409,
-    );
-    const action = this.route(submission.stage, input);
-    // Reviews holds the criterion to met with some pinned evidence; only Experiments knows
-    // which artifact is the statement, and a finding citing the plan alone has not read it.
-    const statement = submission.evidence.find((e) => e.role === 'feasibility');
-    if (input.verdict === 'pass' && submission.stage === 'design' && statement)
-      check(
-        input.findings
-          ?.find((finding) => finding.criterionNumber === feasibilityCriterion)
-          ?.evidenceIds.includes(statement.artifactId),
-        'feasibility_not_cited',
-        `A passing design review cites the feasibility statement ${statement.artifactId} in the finding for criterion ${feasibilityCriterion}`,
-      );
-    if (input.paperChanges !== undefined)
-      await this.paper.checkReview(
-        caller,
-        {
-          ...input.paperChanges,
-          source: { kind: 'experiment', id: experiment.id, revision: review.subjectRevision },
-          reviewId: review.id,
-          verdict: input.verdict,
-          evidenceIds: review.artifactIds,
-        },
-        tx,
-      );
-    check(
-      !transition || action === transition,
-      'invalid_review_return',
-      'The verdict does not select this transition',
-    );
-  }
+/**
+ * Refuses producing work whose base Code cannot derive, with Code's own blocker code. This
+ * only reads: it runs under lease admission, the dispatch candidate scan and every
+ * assignment check. The refusal makes the experiment no candidate at all, so it is never
+ * launched and never held; Code publishes the reason where status and the stuck report look.
+ */
+export async function requireBase(
+  ctx: ExperimentsContext,
+  { caller, snapshot, tx }: WorkflowCheckContext,
+): Promise<void> {
+  await ctx.code.requireLeasable(
+    caller,
+    { unitId: snapshot.id, writer: snapshot.state === 'running' },
+    tx,
+  );
+}
 
-  private async admit(
-    context: WorkflowCheckContext,
-  ): Promise<{ experiment: Experiment; review: ReviewRequest | null }> {
-    const experiment = await this.facts(context);
-    if (producing(context.snapshot.state)) {
-      await this.assertProducer(context.caller, experiment, context.tx);
-      await this.requireBase(context);
-      return { experiment, review: null };
-    }
-    await this.scope.require(context.caller, 'review', context.tx);
-    const review = await this.review(context.caller, experiment, context.tx);
-    await this.reviewCapture(context.caller, experiment, context.tx);
-    if (context.caller.session) {
-      const lease = await this.lease(context.caller, experiment, context.tx);
-      check(
-        lease.review_id === review.id && lease.claim_id === review.claimId,
-        'stale_claim',
-        'The session no longer owns its pinned claim',
-        409,
-      );
-      await this.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
-    } else if (review.status === 'requested')
-      await this.reviews.checkStart(context.caller, review.id, context.tx);
-    else await this.reviews.checkSubmit(context.caller, review.id, undefined, context.tx);
-    return { experiment, review };
-  }
+export function eligibleRecovery(
+  ctx: ExperimentsContext,
+  experiment: Experiment,
+): ExperimentEvidence[] {
+  return currentEvidence(experiment, rolesFor(experiment.workflow.state));
+}
 
-  /**
-   * Refuses producing work whose base Code cannot derive, with Code's own blocker code. This
-   * only reads: it runs under lease admission, the dispatch candidate scan and every
-   * assignment check. The refusal makes the experiment no candidate at all, so it is never
-   * launched and never held; Code publishes the reason where status and the stuck report look.
-   */
-  private async requireBase({ caller, snapshot, tx }: WorkflowCheckContext): Promise<void> {
-    await this.code.requireLeasable(
-      caller,
-      { unitId: snapshot.id, writer: snapshot.state === 'running' },
-      tx,
-    );
-  }
+/** Only associations selected before this worker's offer can exempt old output authorship. */
+export async function pinnedRecovery(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<ExperimentEvidence[]> {
+  await ctx.scope.require(caller, 'read', tx);
+  if (!caller.session) return [];
+  return (await leaseOf(ctx, caller, experiment, tx)).details.recovery;
+}
 
-  private eligibleRecovery(experiment: Experiment): ExperimentEvidence[] {
-    return currentEvidence(experiment, rolesFor(experiment.workflow.state));
-  }
+/** Whether this session is the worker holding the experiment's live lease. */
+export async function holds(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<boolean> {
+  return (await activeLease(ctx, experiment, tx))?.id === caller.session?.id;
+}
 
-  /** Only associations selected before this worker's offer can exempt old output authorship. */
-  protected async pinnedRecovery(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<ExperimentEvidence[]> {
-    await this.scope.require(caller, 'read', tx);
-    if (!caller.session) return [];
-    return (await this.lease(caller, experiment, tx)).details.recovery;
-  }
-
-  /** Whether this session is the worker holding the experiment's live lease. */
-  protected async holds(caller: Caller, experiment: Experiment, tx: Transaction): Promise<boolean> {
-    return (await this.activeLease(experiment, tx))?.id === caller.session?.id;
-  }
-
-  protected async allowedArtifacts(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<string[]> {
-    await this.scope.require(caller, 'read', tx);
-    if (caller.session) {
-      const lease = await this.lease(caller, experiment, tx);
-      return [
-        ...new Set([
-          ...lease.details.artifacts.map((artifact) => artifact.id),
-          ...(experiment.captureArtifactIds ?? []),
-          ...(await this.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
-        ]),
-      ].sort();
-    }
+export async function allowedArtifacts(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<string[]> {
+  await ctx.scope.require(caller, 'read', tx);
+  if (caller.session) {
+    const lease = await leaseOf(ctx, caller, experiment, tx);
     return [
       ...new Set([
-        ...this.inputIds(await this.inputs(caller, experiment, tx)),
+        ...lease.details.artifacts.map((artifact) => artifact.id),
         ...(experiment.captureArtifactIds ?? []),
-      ]),
-    ];
-  }
-
-  /** Every caller has already passed this review's capture gate in the same transaction. */
-  private async inputs(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<FrozenInputs> {
-    const state = experiment.workflow.state;
-    const review = reviewing(state) ? await this.review(caller, experiment, tx) : null;
-    const feedbackReviews = await this.feedbackReviews(caller, experiment, tx);
-    // Authors only: a reviewer already reads the current attempt's rejections in previousReviews
-    // and judges this submission, not the verdicts earlier attempts received.
-    const history = reviewHistory(
-      reviewing(state) ? [] : await this.rejectedRounds(caller, experiment, tx),
-      REVIEW_HISTORY_CHARS,
-    );
-    const selected = reviewing(state)
-      ? review!.artifactIds
-      : this.eligibleRecovery(experiment).flatMap((evidence) => [
-          evidence.artifactId,
-          ...evidence.figureIds,
-        ]);
-    const approvedArtifacts =
-      state === 'running' || state === 'experiment_review' ? this.approvedPlan(experiment) : [];
-    const approvedIds = new Set(approvedArtifacts);
-    // Current review evidence remains inline. Feedback artifacts and producing recovery from a
-    // previous round stay available through artifact.read, without quoting their old bodies.
-    // A results review pins the approved design again; its body already appears in approvedPlan.
-    const priorIds = new Set(feedbackReviews.flatMap((prior) => prior.artifactIds));
-    const evidenceArtifacts = [
-      ...new Set(
-        selected.filter((id) => !approvedIds.has(id) && (reviewing(state) || !priorIds.has(id))),
-      ),
-    ];
-    const historicalArtifacts = [
-      ...new Set([...feedbackReviews.flatMap((prior) => prior.artifactIds), ...selected]),
-    ].filter((id) => !evidenceArtifacts.includes(id) && !approvedArtifacts.includes(id));
-    const historicalReferences = await mapAsync(historicalArtifacts, async (id) => {
-      const artifact = await this.artifacts.get(caller, id, tx);
-      return {
-        id: artifact.id,
-        title: artifact.title,
-        hash: artifact.hash,
-        mediaType: artifact.mediaType,
-        size: artifact.size,
-      };
-    });
-    // Paper writes the Introduction from the Problem, whose sections `paper` carries.
-    const { summary: _summary, ...project } = await this.scope.project(caller, tx);
-    return {
-      experiment: own({
-        id: experiment.id,
-        name: experiment.name,
-        intent: experiment.intent,
-        details: experiment.details,
-        ownerId: experiment.ownerId,
-        project,
-        workspace: 'git',
-        codeCapture: await this.reviewCapture(caller, experiment, tx),
-        paperChangesFormat: {
-          documents: [
-            {
-              kind: 'methods or results',
-              expectedRevision: 0,
-              changes: [
-                { id: 'section-id', title: 'Section title', content: 'Changed section text' },
-              ],
-            },
-          ],
-        },
-        ...(state === 'planned' ? { feasibilityFormat } : {}),
-        // Its notes are the feedback section's, which embeds the newest few.
-        attempt: { ...experiment.attempt, feedback: undefined },
-        workflow: experiment.workflow,
-        selectedEvidence: experiment.evidence.filter((evidence) =>
-          selected.includes(evidence.artifactId),
-        ),
-      }),
-      paper: await this.paper.contextInput(caller, CONTEXT_CHARS, tx),
-      approvedArtifacts,
-      evidenceArtifacts,
-      historicalArtifacts,
-      review,
-      feedback: own({
-        interruptions: experiment.attempt.feedback
-          .slice(-FEEDBACK_KEPT)
-          .map((note) => clip(note, FEEDBACK_CHARS)),
-        ...(experiment.attempt.feedback.length > FEEDBACK_KEPT
-          ? { earlierInterruptions: experiment.attempt.feedback.length - FEEDBACK_KEPT }
-          : {}),
-        previousReviews: feedbackReviews,
-        ...(historicalReferences.length ? { artifactReferences: historicalReferences } : {}),
-        ...(history.rounds.length ? { history } : {}),
-        recovery: review?.recovery ?? null,
-      }),
-    };
-  }
-
-  /**
-   * Every rejected submission of this experiment, oldest first. A design rejection opens a new
-   * attempt that names only the review that caused it, so the rounds before it are read from the
-   * submissions, which name every review the experiment ever had.
-   */
-  private async rejectedRounds(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<{ review: ReviewRequest; label: string }[]> {
-    const rounds = await mapAsync(
-      [...experiment.submissions].sort((a, b) => a.subjectRevision - b.subjectRevision),
-      async (submission) => ({
-        review: await this.reviews.get(caller, submission.reviewId, tx),
-        label: `${submission.stage} attempt ${submission.attemptIndex} round ${submission.round}`,
-      }),
-    );
-    return rounds.filter(
-      ({ review }) => review.status === 'submitted' && review.verdict !== 'pass',
-    );
-  }
-
-  private async feedbackReviews(
-    caller: Caller,
-    experiment: Experiment,
-    tx: Transaction,
-  ): Promise<ReviewRequest[]> {
-    const ids = experiment.attempt.feedbackReviewIds;
-    return await mapAsync([...new Set(ids)], async (id) => {
-      const review = await this.reviews.get(caller, id, tx);
-      check(
-        review.subjectId === experiment.id &&
-          review.status === 'submitted' &&
-          review.verdict !== 'pass' &&
-          review.subjectRevision < experiment.workflow.revision &&
-          experiment.submissions.some((submission) => submission.reviewId === id),
-        'stale_feedback',
-        'Recovery must reference an exact prior rejected submission',
-        409,
-      );
-      return review;
-    });
-  }
-
-  private inputIds(inputs: FrozenInputs): string[] {
-    return [
-      ...new Set([
-        ...inputs.approvedArtifacts,
-        ...inputs.evidenceArtifacts,
-        ...inputs.historicalArtifacts,
+        ...(await ctx.artifacts.executionOutputs(caller, tx)).map((artifact) => artifact.id),
       ]),
     ].sort();
   }
+  return [
+    ...new Set([
+      ...inputIds(ctx, await inputsOf(ctx, caller, experiment, tx)),
+      ...(experiment.captureArtifactIds ?? []),
+    ]),
+  ];
+}
 
-  /**
-   * A derived base is only ever read here. Until a lease has pinned one there is none to name:
-   * an interactive producer has no checkout, and a leased one always finds its pin.
-   */
-  private async pinnedBase({
-    caller,
-    snapshot,
-    tx,
-  }: WorkflowCheckContext): Promise<{ base?: string }> {
-    const pin = await this.code.basePin(caller, snapshot.id, tx);
-    return pin ? { base: pin.reference } : {};
-  }
-
-  private async references(context: WorkflowCheckContext): Promise<WorkflowExecutionReferences> {
-    const { experiment } = await this.admit(context);
-    const review = experiment.reviewId
-      ? await this.reviews.get(context.caller, experiment.reviewId, context.tx)
-      : null;
+/** Every caller has already passed this review's capture gate in the same transaction. */
+export async function inputsOf(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<FrozenInputs> {
+  const state = experiment.workflow.state;
+  const review = reviewing(state) ? await reviewOf(ctx, caller, experiment, tx) : null;
+  const feedbackReviews = await feedbackOf(ctx, caller, experiment, tx);
+  // Authors only: a reviewer already reads the current attempt's rejections in previousReviews
+  // and judges this submission, not the verdicts earlier attempts received.
+  const history = reviewHistory(
+    reviewing(state) ? [] : await rejectedRounds(ctx, caller, experiment, tx),
+    REVIEW_HISTORY_CHARS,
+  );
+  const selected = reviewing(state)
+    ? review!.artifactIds
+    : eligibleRecovery(ctx, experiment).flatMap((evidence) => [
+        evidence.artifactId,
+        ...evidence.figureIds,
+      ]);
+  const approvedArtifacts =
+    state === 'running' || state === 'experiment_review' ? approvedPlan(ctx, experiment) : [];
+  const approvedIds = new Set(approvedArtifacts);
+  // Current review evidence remains inline. Feedback artifacts and producing recovery from a
+  // previous round stay available through artifact.read, without quoting their old bodies.
+  // A results review pins the approved design again; its body already appears in approvedPlan.
+  const priorIds = new Set(feedbackReviews.flatMap((prior) => prior.artifactIds));
+  const evidenceArtifacts = [
+    ...new Set(
+      selected.filter((id) => !approvedIds.has(id) && (reviewing(state) || !priorIds.has(id))),
+    ),
+  ];
+  const historicalArtifacts = [
+    ...new Set([...feedbackReviews.flatMap((prior) => prior.artifactIds), ...selected]),
+  ].filter((id) => !evidenceArtifacts.includes(id) && !approvedArtifacts.includes(id));
+  const historicalReferences = await mapAsync(historicalArtifacts, async (id) => {
+    const artifact = await ctx.artifacts.get(caller, id, tx);
     return {
-      // The native Sandboxes work kind an experiment binds compute under.
-      computeKind: 'experiment',
-      ...(context.snapshot.state === 'running' ? await this.pinnedBase(context) : {}),
-      ...(context.snapshot.state === 'experiment_review'
-        ? {
-            code: (await this.reviewCapture(context.caller, experiment, context.tx))!.workspace!
-              .headOid,
-          }
-        : {}),
-      artifacts: await this.allowedArtifacts(context.caller, experiment, context.tx),
-      dependencies: (context.dependencies ?? []).map((dependency) => dependency.id).sort(),
-      reviews: [
-        ...new Set(
-          [
-            experiment.reviewId,
-            experiment.attempt.approvedReviewId,
-            ...(await this.feedbackReviews(context.caller, experiment, context.tx)).map(
-              (prior) => prior.id,
-            ),
-            ...(await this.rejectedRounds(context.caller, experiment, context.tx)).map(
-              (round) => round.review.id,
-            ),
-          ].filter((id): id is string => !!id),
-        ),
-      ],
-      ...(review ? { reviewId: review.id } : {}),
-      ...(review?.claimId && review.reviewerId === context.caller.actorId
-        ? { claimId: review.claimId }
-        : {}),
+      id: artifact.id,
+      title: artifact.title,
+      hash: artifact.hash,
+      mediaType: artifact.mediaType,
+      size: artifact.size,
     };
-  }
-
-  private async build(context: WorkflowCheckContext) {
-    const { experiment, review } = await this.admit(context);
-    const state = context.snapshot.state as ActiveState;
-    let inputs: FrozenInputs;
-    if (context.caller.session) {
-      inputs = (await this.lease(context.caller, experiment, context.tx)).details.inputs;
-      const historical = new Set(inputs.historicalArtifacts);
-      const owned = this.eligibleRecovery(experiment).filter(
-        (evidence) => evidence.createdBy === context.caller.actorId,
-      );
-      const allowed = new Set(await this.allowedArtifacts(context.caller, experiment, context.tx));
-      inputs.evidenceArtifacts = [
-        ...new Set([
-          ...inputs.evidenceArtifacts,
-          ...owned
-            .flatMap((evidence) => [evidence.artifactId, ...evidence.figureIds])
-            .filter((id) => !historical.has(id)),
-        ]),
-      ].filter((id) => allowed.has(id) && !inputs.approvedArtifacts.includes(id));
-    } else inputs = await this.inputs(context.caller, experiment, context.tx);
-    const records = new Map(
-      [
-        ...experiment.submissions.flatMap((submission) => submission.evidence),
-        ...experiment.evidence,
-      ].map((evidence) => [evidence.artifactId, evidence]),
-    );
-    // Figures are images: listed for the reader to open, never read into the context.
-    const figures = new Set([
-      ...experiment.submissions.flatMap((submission) => submission.figureIds),
-      ...[...records.values()].flatMap((evidence) => evidence.figureIds),
-    ]);
-    // The generated metrics exhibit has its own section, where it is listed and never embedded.
-    const exhibit =
-      state === 'experiment_review'
-        ? (inputs.experiment as { selectedEvidence?: ExperimentEvidence[] }).selectedEvidence?.find(
-            (item) =>
-              item.role === 'exhibit' &&
-              item.systemGenerated &&
-              inputs.evidenceArtifacts.includes(item.artifactId),
-          )?.artifactId
-        : undefined;
-    const artifactItems = async (ids: string[], priority: number) =>
-      (await this.artifacts.getAll(context.caller, ids, context.tx)).map(
-        (artifact): ContextItem => {
-          const id = artifact.id;
-          const record = records.get(id);
-          return artifactItem(artifact, {
-            priority,
-            ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
-            ...(record
-              ? { note: `${record.role} ${record.path}` }
-              : figures.has(id)
-                ? { note: 'figure' }
-                : {}),
-          });
-        },
-      );
-    const stateRef = { tool: 'experiment.get_state', input: { experimentId: experiment.id } };
-    const evidence = inputs.evidenceArtifacts.filter((id) => id !== exhibit);
-    const sources: Record<string, ContextInput> = {
-      experiment: {
-        items: [
-          textItem(
-            `experiment:${experiment.id}`,
-            experiment.name,
-            JSON.stringify(inputs.experiment),
-            {
-              embed: 'always',
-              refs: [stateRef],
-            },
-          ),
-        ],
-      },
-      projectPaper: inputs.paper,
-      feedback: {
-        items: [
-          textItem(
-            `feedback:${experiment.id}`,
-            'Previous reviews, interruptions and recovery',
-            JSON.stringify(inputs.feedback),
-            { priority: 700, refs: [stateRef] },
-          ),
-        ],
-      },
-      ...(inputs.approvedArtifacts.length
-        ? { approvedPlan: { items: await artifactItems(inputs.approvedArtifacts, 900) } }
-        : {}),
-      ...(evidence.length ? { evidence: { items: await artifactItems(evidence, 800) } } : {}),
-      ...(state === 'experiment_review'
-        ? {
-            exhibitReference: {
-              items: exhibit
-                ? await artifactItems([exhibit], 0)
-                : [
-                    textItem(
-                      `exhibit:${experiment.id}`,
-                      'Metrics exhibit',
-                      'Any metrics exhibit is included with the selected evidence above.',
-                    ),
-                  ],
-            },
-          }
-        : {}),
-      ...(inputs.review
-        ? {
-            assessment: {
-              items: [
-                textItem(
-                  `review:${inputs.review.id}`,
-                  'Pinned review and numbered criteria',
-                  JSON.stringify(inputs.review),
-                  {
-                    embed: 'always',
-                    refs: [{ tool: 'review.get', input: { reviewId: inputs.review.id } }],
-                  },
-                ),
-              ],
-            },
-          }
-        : {}),
-    };
-    const recipe = this.contexts.get(state);
-    check(recipe, 'experiment_unavailable', 'This experiment recipe is unavailable', 503);
-    const gitInstruction =
-      state === 'running'
-        ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
-        : state === 'experiment_review'
-          ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
-          : '\nThis experiment will execute in a configured private Git workspace; planning and design review use scratch space.';
-    const needsClaim = review?.status === 'requested';
-    const instruction = needsClaim
-      ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
-      : handoff(state);
-    const speedGuidance =
-      state === 'planned'
-        ? ' Prioritize fast experiment completion. Plan batching, multiple GPUs or concurrent independent jobs for execution after approval when they save time, within the authorized budget and scientific requirements. Avoid duplicating the same work.'
-        : state === 'running'
-          ? ' Prioritize fast experiment completion. Balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and scientific requirements. Parallel independent work is encouraged; avoid duplicating the same work.'
-          : '';
-    const preview = await recipe.preview(
-      context.caller,
-      {
-        subject: {
-          id: experiment.id,
-          revision: experiment.workflow.revision,
-          ...(review?.claimId ? { claimId: review.claimId } : {}),
-        },
-        inputs: sources,
-      },
-      context.tx,
-    );
-    return {
-      role: reviewing(state) ? 'reviewer' : 'producer',
-      label: `${recipeNames[state]}: ${experiment.name}`,
+  });
+  // Paper writes the Introduction from the Problem, whose sections `paper` carries.
+  const { summary: _summary, ...project } = await ctx.scope.project(caller, tx);
+  return {
+    experiment: own({
+      id: experiment.id,
       name: experiment.name,
-      brief:
-        `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
-        computeGuidance(state === 'running' ? 'execute' : 'check'),
-      references: [
-        { kind: 'experiment', id: experiment.id, label: experiment.name },
-        ...preview.sources.map((artifact) => ({
-          kind: 'artifact',
-          id: artifact.id,
-          label: artifact.title,
-        })),
-        ...(await mapAsync(inputs.historicalArtifacts, async (id) => {
-          const artifact = await this.artifacts.get(context.caller, id, context.tx);
-          return { kind: 'artifact' as const, id: artifact.id, label: artifact.title };
-        })),
-      ],
-      handoff: {
-        instruction,
-        tools: reviewing(state)
-          ? needsClaim
-            ? ['review.start', 'workflow.assignment']
-            : ['review.submit']
-          : ['experiment.attach', 'experiment.transition'],
+      intent: experiment.intent,
+      details: experiment.details,
+      ownerId: experiment.ownerId,
+      project,
+      workspace: 'git',
+      codeCapture: await reviewCapture(ctx, caller, experiment, tx),
+      paperChangesFormat: {
+        documents: [
+          {
+            kind: 'methods or results',
+            expectedRevision: 0,
+            changes: [
+              { id: 'section-id', title: 'Section title', content: 'Changed section text' },
+            ],
+          },
+        ],
       },
-      execution: { readOnly: reviewing(state), tools: [] },
-      context: preview,
-    };
-  }
+      ...(state === 'planned' ? { feasibilityFormat } : {}),
+      // Its notes are the feedback section's, which embeds the newest few.
+      attempt: { ...experiment.attempt, feedback: undefined },
+      workflow: experiment.workflow,
+      selectedEvidence: experiment.evidence.filter((evidence) =>
+        selected.includes(evidence.artifactId),
+      ),
+    }),
+    paper: await ctx.paper.contextInput(caller, CONTEXT_CHARS, tx),
+    approvedArtifacts,
+    evidenceArtifacts,
+    historicalArtifacts,
+    review,
+    feedback: own({
+      interruptions: experiment.attempt.feedback
+        .slice(-FEEDBACK_KEPT)
+        .map((note) => clip(note, FEEDBACK_CHARS)),
+      ...(experiment.attempt.feedback.length > FEEDBACK_KEPT
+        ? { earlierInterruptions: experiment.attempt.feedback.length - FEEDBACK_KEPT }
+        : {}),
+      previousReviews: feedbackReviews,
+      ...(historicalReferences.length ? { artifactReferences: historicalReferences } : {}),
+      ...(history.rounds.length ? { history } : {}),
+      recovery: review?.recovery ?? null,
+    }),
+  };
+}
 
-  private async leaseRole(
-    context: WorkflowCheckContext,
-  ): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> {
-    check(!context.caller.session, 'forbidden', 'A leased worker cannot delegate work', 403);
-    const experiment = await this.facts(context);
-    if (producing(context.snapshot.state)) {
-      await this.assertProducer(context.caller, experiment, context.tx);
-      await this.requireBase(context);
-      return 'producer';
-    }
-    await this.scope.require(context.caller, 'review', context.tx);
-    const review = await this.review(context.caller, experiment, context.tx);
-    await this.reviewCapture(context.caller, experiment, context.tx);
+/**
+ * Every rejected submission of this experiment, oldest first. A design rejection opens a new
+ * attempt that names only the review that caused it, so the rounds before it are read from the
+ * submissions, which name every review the experiment ever had.
+ */
+export async function rejectedRounds(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<{ review: ReviewRequest; label: string }[]> {
+  const rounds = await mapAsync(
+    [...experiment.submissions].sort((a, b) => a.subjectRevision - b.subjectRevision),
+    async (submission) => ({
+      review: await ctx.reviews.get(caller, submission.reviewId, tx),
+      label: `${submission.stage} attempt ${submission.attemptIndex} round ${submission.round}`,
+    }),
+  );
+  return rounds.filter(({ review }) => review.status === 'submitted' && review.verdict !== 'pass');
+}
+
+export async function feedbackOf(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experiment: Experiment,
+  tx: Transaction,
+): Promise<ReviewRequest[]> {
+  const ids = experiment.attempt.feedbackReviewIds;
+  return await mapAsync([...new Set(ids)], async (id) => {
+    const review = await ctx.reviews.get(caller, id, tx);
     check(
-      review.status === 'requested' && !(await this.activeLease(experiment, context.tx)),
-      'review_unavailable',
-      'This review is already reserved or claimed',
+      review.subjectId === experiment.id &&
+        review.status === 'submitted' &&
+        review.verdict !== 'pass' &&
+        review.subjectRevision < experiment.workflow.revision &&
+        experiment.submissions.some((submission) => submission.reviewId === id),
+      'stale_feedback',
+      'Recovery must reference an exact prior rejected submission',
       409,
     );
-    // A source may have directed a prior producer session, but never directs the review of
-    // work it produced itself. The rest of independence belongs to the new worker.
-    check(directsIndependently(review, context.caller.actorId), ...NOT_INDEPENDENT);
-    return 'reviewer';
-  }
+    return review;
+  });
+}
 
-  private leaseHooks(): NonNullable<WorkflowAssignmentRule['lease']> {
-    return reviewedLeaseHooks({
-      reviews: this.reviews,
-      artifacts: this.artifacts,
-      excluded: excludedFromReview,
-      label: async (context) => (await this.facts(context)).name,
-      review: async (context) => {
-        const experiment = await this.facts(context);
-        return reviewing(experiment.workflow.state) ? experiment.reviewId : null;
-      },
-      // The lease of the attempt the facts name: Workflows admitted the step just before.
-      lease: async (context) =>
-        await this.lease(context.caller, await this.facts(context), context.tx),
-      captures: async (context, lease) =>
-        (await this.sandboxes?.captures(
-          context.caller.projectId,
-          context.snapshot.id,
-          context.tx,
-          captureEpochs(
-            await this.attemptRevisions(
-              context.snapshot.id,
-              lease.details.attemptIndex,
-              context.tx,
-            ),
-            context.snapshot,
+export function inputIds(ctx: ExperimentsContext, inputs: FrozenInputs): string[] {
+  return [
+    ...new Set([
+      ...inputs.approvedArtifacts,
+      ...inputs.evidenceArtifacts,
+      ...inputs.historicalArtifacts,
+    ]),
+  ].sort();
+}
+
+/**
+ * A derived base is only ever read here. Until a lease has pinned one there is none to name:
+ * an interactive producer has no checkout, and a leased one always finds its pin.
+ */
+export async function pinnedBase(
+  ctx: ExperimentsContext,
+  { caller, snapshot, tx }: WorkflowCheckContext,
+): Promise<{ base?: string }> {
+  const pin = await ctx.code.basePin(caller, snapshot.id, tx);
+  return pin ? { base: pin.reference } : {};
+}
+
+export async function references(
+  ctx: ExperimentsContext,
+  context: WorkflowCheckContext,
+): Promise<WorkflowExecutionReferences> {
+  const { experiment } = await admit(ctx, context);
+  const review = experiment.reviewId
+    ? await ctx.reviews.get(context.caller, experiment.reviewId, context.tx)
+    : null;
+  return {
+    // The native Sandboxes work kind an experiment binds compute under.
+    computeKind: 'experiment',
+    ...(context.snapshot.state === 'running' ? await pinnedBase(ctx, context) : {}),
+    ...(context.snapshot.state === 'experiment_review'
+      ? {
+          code: (await reviewCapture(ctx, context.caller, experiment, context.tx))!.workspace!
+            .headOid,
+        }
+      : {}),
+    artifacts: await allowedArtifacts(ctx, context.caller, experiment, context.tx),
+    dependencies: (context.dependencies ?? []).map((dependency) => dependency.id).sort(),
+    reviews: [
+      ...new Set(
+        [
+          experiment.reviewId,
+          experiment.attempt.approvedReviewId,
+          ...(await feedbackOf(ctx, context.caller, experiment, context.tx)).map(
+            (prior) => prior.id,
           ),
-        )) ?? [],
-      role: async (context) => await this.leaseRole(context),
-      acquire: async (context) => {
-        await this.leaseRole({ ...context, caller: context.source });
-        const experiment = await this.facts(context);
-        check(
-          context.caller.session?.id === context.leaseId &&
-            context.source.projectId === context.caller.projectId,
-          'invalid_lease',
-          'The offered experiment worker must match its source and lease',
-          403,
-        );
-        // The first producing lease fixes the base, and it is normally the planner's; a later
-        // one reads the same pin back, so execution inherits what the plan was written against.
-        // A refused offer takes the pin back with its transaction.
-        if (producing(context.snapshot.state)) {
-          // Only execution has a checkout, so only its lease is a writer generation.
-          await this.code.pinBase(
-            context.source,
-            {
-              unitId: experiment.id,
-              leaseId: context.leaseId,
-              writer: context.snapshot.state === 'running',
-            },
-            context.tx,
-          );
+          ...(await rejectedRounds(ctx, context.caller, experiment, context.tx)).map(
+            (round) => round.review.id,
+          ),
+        ].filter((id): id is string => !!id),
+      ),
+    ],
+    ...(review ? { reviewId: review.id } : {}),
+    ...(review?.claimId && review.reviewerId === context.caller.actorId
+      ? { claimId: review.claimId }
+      : {}),
+  };
+}
+
+export async function build(ctx: ExperimentsContext, context: WorkflowCheckContext) {
+  const { experiment, review } = await admit(ctx, context);
+  const state = context.snapshot.state as ActiveState;
+  let inputs: FrozenInputs;
+  if (context.caller.session) {
+    inputs = (await leaseOf(ctx, context.caller, experiment, context.tx)).details.inputs;
+    const historical = new Set(inputs.historicalArtifacts);
+    const owned = eligibleRecovery(ctx, experiment).filter(
+      (evidence) => evidence.createdBy === context.caller.actorId,
+    );
+    const allowed = new Set(await allowedArtifacts(ctx, context.caller, experiment, context.tx));
+    inputs.evidenceArtifacts = [
+      ...new Set([
+        ...inputs.evidenceArtifacts,
+        ...owned
+          .flatMap((evidence) => [evidence.artifactId, ...evidence.figureIds])
+          .filter((id) => !historical.has(id)),
+      ]),
+    ].filter((id) => allowed.has(id) && !inputs.approvedArtifacts.includes(id));
+  } else inputs = await inputsOf(ctx, context.caller, experiment, context.tx);
+  const records = new Map(
+    [
+      ...experiment.submissions.flatMap((submission) => submission.evidence),
+      ...experiment.evidence,
+    ].map((evidence) => [evidence.artifactId, evidence]),
+  );
+  // Figures are images: listed for the reader to open, never read into the context.
+  const figures = new Set([
+    ...experiment.submissions.flatMap((submission) => submission.figureIds),
+    ...[...records.values()].flatMap((evidence) => evidence.figureIds),
+  ]);
+  // The generated metrics exhibit has its own section, where it is listed and never embedded.
+  const exhibit =
+    state === 'experiment_review'
+      ? (inputs.experiment as { selectedEvidence?: ExperimentEvidence[] }).selectedEvidence?.find(
+          (item) =>
+            item.role === 'exhibit' &&
+            item.systemGenerated &&
+            inputs.evidenceArtifacts.includes(item.artifactId),
+        )?.artifactId
+      : undefined;
+  const artifactItems = async (ids: string[], priority: number) =>
+    (await ctx.artifacts.getAll(context.caller, ids, context.tx)).map((artifact): ContextItem => {
+      const id = artifact.id;
+      const record = records.get(id);
+      return artifactItem(artifact, {
+        priority,
+        ...(figures.has(id) || id === exhibit ? { embed: 'never' as const } : {}),
+        ...(record
+          ? { note: `${record.role} ${record.path}` }
+          : figures.has(id)
+            ? { note: 'figure' }
+            : {}),
+      });
+    });
+  const stateRef = { tool: 'experiment.get_state', input: { experimentId: experiment.id } };
+  const evidence = inputs.evidenceArtifacts.filter((id) => id !== exhibit);
+  const sources: Record<string, ContextInput> = {
+    experiment: {
+      items: [
+        textItem(
+          `experiment:${experiment.id}`,
+          experiment.name,
+          JSON.stringify(inputs.experiment),
+          {
+            embed: 'always',
+            refs: [stateRef],
+          },
+        ),
+      ],
+    },
+    projectPaper: inputs.paper,
+    feedback: {
+      items: [
+        textItem(
+          `feedback:${experiment.id}`,
+          'Previous reviews, interruptions and recovery',
+          JSON.stringify(inputs.feedback),
+          { priority: 700, refs: [stateRef] },
+        ),
+      ],
+    },
+    ...(inputs.approvedArtifacts.length
+      ? { approvedPlan: { items: await artifactItems(inputs.approvedArtifacts, 900) } }
+      : {}),
+    ...(evidence.length ? { evidence: { items: await artifactItems(evidence, 800) } } : {}),
+    ...(state === 'experiment_review'
+      ? {
+          exhibitReference: {
+            items: exhibit
+              ? await artifactItems([exhibit], 0)
+              : [
+                  textItem(
+                    `exhibit:${experiment.id}`,
+                    'Metrics exhibit',
+                    'Any metrics exhibit is included with the selected evidence above.',
+                  ),
+                ],
+          },
         }
-        let review: ReviewRequest | null = null;
-        if (reviewing(context.snapshot.state)) {
-          const pinned = await this.review(context.caller, experiment, context.tx);
-          await this.reviewCapture(context.caller, experiment, context.tx);
-          review = await this.reviews.start(context.caller, pinned.id, context.tx);
+      : {}),
+    ...(inputs.review
+      ? {
+          assessment: {
+            items: [
+              textItem(
+                `review:${inputs.review.id}`,
+                'Pinned review and numbered criteria',
+                JSON.stringify(inputs.review),
+                {
+                  embed: 'always',
+                  refs: [{ tool: 'review.get', input: { reviewId: inputs.review.id } }],
+                },
+              ),
+            ],
+          },
         }
-        const inputs = await this.inputs(context.caller, experiment, context.tx);
-        const artifacts = await this.artifacts.getAll(
+      : {}),
+  };
+  const recipe = ctx.contexts.get(state);
+  check(recipe, 'experiment_unavailable', 'This experiment recipe is unavailable', 503);
+  const gitInstruction =
+    state === 'running'
+      ? '\nExecute code in the configured private Git checkout. Retain experiment outputs through the declared artifact tools. After submit_results, stop: the Runner will capture the final code before independent review becomes eligible.'
+      : state === 'experiment_review'
+        ? '\nThe read-only checkout is pinned to the exact final producing-session Git capture in your context. Inspect and verify that code against the approved plan and retained results; do not substitute another branch or a newer head.'
+        : '\nThis experiment will execute in a configured private Git workspace; planning and design review use scratch space.';
+  const needsClaim = review?.status === 'requested';
+  const instruction = needsClaim
+    ? 'Call review.start to claim this exact review, then refresh workflow.assignment for the new claim. Reading or beginning the assignment does not claim it.'
+    : handoff(state);
+  const speedGuidance =
+    state === 'planned'
+      ? ' Prioritize fast experiment completion. Plan batching, multiple GPUs or concurrent independent jobs for execution after approval when they save time, within the authorized budget and scientific requirements. Avoid duplicating the same work.'
+      : state === 'running'
+        ? ' Prioritize fast experiment completion. Balance GPU utilization and cost, using batching, multiple GPUs or concurrent independent run jobs when they save time, within the authorized budget and scientific requirements. Parallel independent work is encouraged; avoid duplicating the same work.'
+        : '';
+  const preview = await recipe.preview(
+    context.caller,
+    {
+      subject: {
+        id: experiment.id,
+        revision: experiment.workflow.revision,
+        ...(review?.claimId ? { claimId: review.claimId } : {}),
+      },
+      inputs: sources,
+    },
+    context.tx,
+  );
+  return {
+    role: reviewing(state) ? 'reviewer' : 'producer',
+    label: `${recipeNames[state]}: ${experiment.name}`,
+    name: experiment.name,
+    brief:
+      `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
+      computeGuidance(state === 'running' ? 'execute' : 'check'),
+    references: [
+      { kind: 'experiment', id: experiment.id, label: experiment.name },
+      ...preview.sources.map((artifact) => ({
+        kind: 'artifact',
+        id: artifact.id,
+        label: artifact.title,
+      })),
+      ...(await mapAsync(inputs.historicalArtifacts, async (id) => {
+        const artifact = await ctx.artifacts.get(context.caller, id, context.tx);
+        return { kind: 'artifact' as const, id: artifact.id, label: artifact.title };
+      })),
+    ],
+    handoff: {
+      instruction,
+      tools: reviewing(state)
+        ? needsClaim
+          ? ['review.start', 'workflow.assignment']
+          : ['review.submit']
+        : ['experiment.attach', 'experiment.transition'],
+    },
+    execution: { readOnly: reviewing(state), tools: [] },
+    context: preview,
+  };
+}
+
+export async function leaseRole(
+  ctx: ExperimentsContext,
+  context: WorkflowCheckContext,
+): Promise<'operator' | 'producer' | 'reviewer' | 'reader'> {
+  check(!context.caller.session, 'forbidden', 'A leased worker cannot delegate work', 403);
+  const experiment = await facts(ctx, context);
+  if (producing(context.snapshot.state)) {
+    await assertProducer(ctx, context.caller, experiment, context.tx);
+    await requireBase(ctx, context);
+    return 'producer';
+  }
+  await ctx.scope.require(context.caller, 'review', context.tx);
+  const review = await reviewOf(ctx, context.caller, experiment, context.tx);
+  await reviewCapture(ctx, context.caller, experiment, context.tx);
+  check(
+    review.status === 'requested' && !(await activeLease(ctx, experiment, context.tx)),
+    'review_unavailable',
+    'This review is already reserved or claimed',
+    409,
+  );
+  // A source may have directed a prior producer session, but never directs the review of
+  // work it produced itself. The rest of independence belongs to the new worker.
+  check(directsIndependently(review, context.caller.actorId), ...NOT_INDEPENDENT);
+  return 'reviewer';
+}
+
+export function leaseHooks(ctx: ExperimentsContext): NonNullable<WorkflowAssignmentRule['lease']> {
+  return reviewedLeaseHooks({
+    reviews: ctx.reviews,
+    artifacts: ctx.artifacts,
+    excluded: excludedFromReview,
+    label: async (context) => (await facts(ctx, context)).name,
+    review: async (context) => {
+      const experiment = await facts(ctx, context);
+      return reviewing(experiment.workflow.state) ? experiment.reviewId : null;
+    },
+    // The lease of the attempt the facts name: Workflows admitted the step just before.
+    lease: async (context) =>
+      await leaseOf(ctx, context.caller, await facts(ctx, context), context.tx),
+    captures: async (context, lease) =>
+      (await ctx.sandboxes?.captures(
+        context.caller.projectId,
+        context.snapshot.id,
+        context.tx,
+        captureEpochs(
+          await attemptRevisions(ctx, context.snapshot.id, lease.details.attemptIndex, context.tx),
+          context.snapshot,
+        ),
+      )) ?? [],
+    role: async (context) => await leaseRole(ctx, context),
+    acquire: async (context) => {
+      await leaseRole(ctx, { ...context, caller: context.source });
+      const experiment = await facts(ctx, context);
+      check(
+        context.caller.session?.id === context.leaseId &&
+          context.source.projectId === context.caller.projectId,
+        'invalid_lease',
+        'The offered experiment worker must match its source and lease',
+        403,
+      );
+      // The first producing lease fixes the base, and it is normally the planner's; a later
+      // one reads the same pin back, so execution inherits what the plan was written against.
+      // A refused offer takes the pin back with its transaction.
+      if (producing(context.snapshot.state)) {
+        // Only execution has a checkout, so only its lease is a writer generation.
+        await ctx.code.pinBase(
           context.source,
-          this.inputIds(inputs),
+          {
+            unitId: experiment.id,
+            leaseId: context.leaseId,
+            writer: context.snapshot.state === 'running',
+          },
           context.tx,
         );
-        const recovery = reviewing(context.snapshot.state) ? [] : this.eligibleRecovery(experiment);
-        const receipt: Data = {
-          leaseId: context.leaseId,
-          experimentId: experiment.id,
-          revision: context.snapshot.revision,
-          attemptIndex: experiment.attempt.index,
-          state: context.snapshot.state,
-          actorId: context.caller.actorId,
-          sourceActorId: context.source.actorId,
-          reviewId: review?.id ?? null,
-          claimId: review?.claimId ?? null,
-        };
-        await insertLease(context.tx, {
-          id: context.leaseId,
-          projectId: context.caller.projectId,
-          snapshot: context.snapshot,
-          actorId: context.caller.actorId,
-          sourceActorId: context.source.actorId,
-          reviewId: review?.id ?? null,
-          claimId: review?.claimId ?? null,
-          receipt,
-          details: { attemptIndex: experiment.attempt.index, artifacts, recovery, inputs },
-        });
-        return receipt;
-      },
-    });
-  }
+      }
+      let review: ReviewRequest | null = null;
+      if (reviewing(context.snapshot.state)) {
+        const pinned = await reviewOf(ctx, context.caller, experiment, context.tx);
+        await reviewCapture(ctx, context.caller, experiment, context.tx);
+        review = await ctx.reviews.start(context.caller, pinned.id, context.tx);
+      }
+      const inputs = await inputsOf(ctx, context.caller, experiment, context.tx);
+      const artifacts = await ctx.artifacts.getAll(
+        context.source,
+        inputIds(ctx, inputs),
+        context.tx,
+      );
+      const recovery = reviewing(context.snapshot.state) ? [] : eligibleRecovery(ctx, experiment);
+      const receipt: Data = {
+        leaseId: context.leaseId,
+        experimentId: experiment.id,
+        revision: context.snapshot.revision,
+        attemptIndex: experiment.attempt.index,
+        state: context.snapshot.state,
+        actorId: context.caller.actorId,
+        sourceActorId: context.source.actorId,
+        reviewId: review?.id ?? null,
+        claimId: review?.claimId ?? null,
+      };
+      await insertLease(context.tx, {
+        id: context.leaseId,
+        projectId: context.caller.projectId,
+        snapshot: context.snapshot,
+        actorId: context.caller.actorId,
+        sourceActorId: context.source.actorId,
+        reviewId: review?.id ?? null,
+        claimId: review?.claimId ?? null,
+        receipt,
+        details: { attemptIndex: experiment.attempt.index, artifacts, recovery, inputs },
+      });
+      return receipt;
+    },
+  });
+}
 
-  /** The revisions an attempt ran through, as captureEpochs reads them. */
-  private async attemptRevisions(id: string, index: number, tx: Transaction) {
-    const row = (await tx.get<{ started_revision: number; ended_revision: number | null }>(
-      'SELECT started_revision,ended_revision FROM experiment_attempts WHERE experiment_id=? AND attempt_index=?',
-      id,
-      index,
-    ))!;
-    return {
-      index,
-      startedRevision: Number(row.started_revision),
-      endedRevision: row.ended_revision === null ? null : Number(row.ended_revision),
-    };
-  }
+/** The revisions an attempt ran through, as captureEpochs reads them. */
+export async function attemptRevisions(
+  ctx: ExperimentsContext,
+  id: string,
+  index: number,
+  tx: Transaction,
+) {
+  const row = (await tx.get<{ started_revision: number; ended_revision: number | null }>(
+    'SELECT started_revision,ended_revision FROM experiment_attempts WHERE experiment_id=? AND attempt_index=?',
+    id,
+    index,
+  ))!;
+  return {
+    index,
+    startedRevision: Number(row.started_revision),
+    endedRevision: row.ended_revision === null ? null : Number(row.ended_revision),
+  };
+}
 
-  private policy(version: number): WorkflowPolicy {
-    const argumentsFor = (context: WorkflowCheckContext): Data => ({
-      experimentId: context.snapshot.id,
-      expectedRevision: context.snapshot.revision,
-    });
-    const action = (
-      name: string,
-      states: string[],
-      instruction: string,
-      requiresDependencies = false,
-    ) => ({
-      name,
-      states,
-      transitions: [name],
-      tool: 'experiment.transition',
-      instruction,
-      requiresDependencies,
-      // Ending or retrying takes a reason under evidence; the guidance says so before the call.
-      ...(['retry_running', 'abandon', 'mark_failed'].includes(name)
-        ? { requiredInput: ['evidence'] }
-        : {}),
-      suggested: !['retry_running', 'abandon', 'mark_failed'].includes(name),
-      arguments: (context: WorkflowCheckContext): Data => ({
-        ...argumentsFor(context),
-        transition: name,
-      }),
-      check: async (context: WorkflowCheckContext) => {
-        if (!this.checked.found(context)) await this.checkAction({ ...context, transition: name });
+export function policy(ctx: ExperimentsContext, version: number): WorkflowPolicy {
+  const argumentsFor = (context: WorkflowCheckContext): Data => ({
+    experimentId: context.snapshot.id,
+    expectedRevision: context.snapshot.revision,
+  });
+  const action = (
+    name: string,
+    states: string[],
+    instruction: string,
+    requiresDependencies = false,
+  ) => ({
+    name,
+    states,
+    transitions: [name],
+    tool: 'experiment.transition',
+    instruction,
+    requiresDependencies,
+    // Ending or retrying takes a reason under evidence; the guidance says so before the call.
+    ...(['retry_running', 'abandon', 'mark_failed'].includes(name)
+      ? { requiredInput: ['evidence'] }
+      : {}),
+    suggested: !['retry_running', 'abandon', 'mark_failed'].includes(name),
+    arguments: (context: WorkflowCheckContext): Data => ({
+      ...argumentsFor(context),
+      transition: name,
+    }),
+    check: async (context: WorkflowCheckContext) => {
+      if (!ctx.checked.found(context)) await ctx.checkAction({ ...context, transition: name });
+    },
+  });
+  const lease = leaseHooks(ctx);
+  return {
+    successStates: ['complete'],
+    dependencyFailureAction: 'mark_failed',
+    limits: [
+      {
+        name: 'design_rounds',
+        from: 'design_review',
+        actions: ['revise_design'],
+        max: ctx.limits.designRounds,
       },
-    });
-    const lease = this.leaseHooks();
-    return {
-      successStates: ['complete'],
-      dependencyFailureAction: 'mark_failed',
-      limits: [
-        {
-          name: 'design_rounds',
-          from: 'design_review',
-          actions: ['revise_design'],
-          max: this.limits.designRounds,
-        },
-        {
-          name: 'result_rounds',
-          from: 'experiment_review',
-          actions: ['revise_plan', 'revise_execution'],
-          max: this.limits.resultRounds,
-        },
-      ],
-      assignments: activeStates.map((state) => ({
-        state,
-        // A plan is written against its inputs, so planning waits for the tasks the
-        // experiment depends on, as running does (founder, 2026-09-18: an experiment
-        // depends on tasks, never on another experiment).
-        ...(['planned', 'running'].includes(state) ? { requiresDependencies: true } : {}),
-        check: async (context) => {
-          await this.admit(context);
-        },
-        build: async (context) => await this.build(context),
-        references: async (context) => await this.references(context),
-        execution: execution(state, version),
-        lease,
-      })),
-      describe: async (context) => {
-        const experiment = await this.facts(context);
-        const review = experiment.reviewId
-          ? await this.reviews.get(context.caller, experiment.reviewId, context.tx)
-          : null;
-        const state = context.snapshot.state as ActiveState;
-        return {
-          label: experiment.name,
-          owner: {
-            actorId: experiment.ownerId,
-            asks: {
-              submit_design: 'Submit the design for review',
-              submit_results: 'Submit the results for review',
-            },
+      {
+        name: 'result_rounds',
+        from: 'experiment_review',
+        actions: ['revise_plan', 'revise_execution'],
+        max: ctx.limits.resultRounds,
+      },
+    ],
+    assignments: activeStates.map((state) => ({
+      state,
+      // A plan is written against its inputs, so planning waits for the tasks the
+      // experiment depends on, as running does (founder, 2026-09-18: an experiment
+      // depends on tasks, never on another experiment).
+      ...(['planned', 'running'].includes(state) ? { requiresDependencies: true } : {}),
+      check: async (context) => {
+        await admit(ctx, context);
+      },
+      build: async (context) => await build(ctx, context),
+      references: async (context) => await references(ctx, context),
+      execution: execution(state, version),
+      lease,
+    })),
+    describe: async (context) => {
+      const experiment = await facts(ctx, context);
+      const review = experiment.reviewId
+        ? await ctx.reviews.get(context.caller, experiment.reviewId, context.tx)
+        : null;
+      const state = context.snapshot.state as ActiveState;
+      return {
+        label: experiment.name,
+        owner: {
+          actorId: experiment.ownerId,
+          asks: {
+            submit_design: 'Submit the design for review',
+            submit_results: 'Submit the results for review',
           },
-          gate:
-            state === 'planned'
-              ? 'design_required'
-              : state === 'running'
-                ? 'execution_evidence_required'
-                : review?.status === 'requested'
-                  ? 'review_required'
-                  : 'independent_review',
-          waiting: producing(state)
-            ? handoff(state)
-            : 'Wait for an independent reviewer to assess the exact pinned submission. Producer evidence stays immutable while its review is pending.',
-          references: [
-            ...(context.dependencies ?? []).map((dependency) => ({
-              kind: 'workflow',
-              id: dependency.id,
-              label: `Prerequisite: ${dependency.name || dependency.id}`,
-            })),
-            ...(experiment.reviewId
-              ? [
-                  {
-                    kind: 'review',
-                    id: experiment.reviewId,
-                    label: 'Current or previous independent review',
-                  },
-                ]
-              : []),
-            ...(experiment.attempt.approvedSubmissionId
-              ? [
-                  {
-                    kind: 'submission',
-                    id: experiment.attempt.approvedSubmissionId,
-                    label: 'Exact approved design',
-                  },
-                ]
-              : []),
-          ],
-        };
-      },
-      actions: [
-        action('submit_design', ['planned'], handoff('planned'), true),
-        action('submit_results', ['running'], handoffs.running, true),
-        action(
-          'retry_running',
-          ['running'],
-          'For an infrastructure interruption, retain a specific reason and recover completed work before rerunning. This preserves the attempt and approved plan.',
-        ),
-        action(
-          'abandon',
-          [...activeStates],
-          'End this experiment as abandoned with a specific reason; unfinished review ownership is closed and evidence remains retained.',
-        ),
-        action(
-          'mark_failed',
-          [...activeStates],
-          'End this experiment as failed with a specific reason; do not confuse this owner action with a reviewer returning work for correction.',
-        ),
-        ...(['design_review', 'experiment_review'] as const).flatMap((state) =>
-          reviewActions<WorkflowCheckContext>({
-            names: { submit: `submit_${state}`, start: `start_${state}` },
-            states: [state],
-            transitions:
-              state === 'design_review'
-                ? ['approve_design', 'revise_design']
-                : ['accept_results', 'revise_plan', 'revise_execution'],
-            instructions: {
-              submit: handoff(state),
-              start: 'Claim the exact current independent review, then refresh its assignment.',
-            },
-            reviews: this.reviews,
-            // The submit check pins the same review and gates its capture, so this only names it.
-            current: async (context) =>
-              await this.review(context.caller, await this.facts(context), context.tx),
-            submit: async (context) => {
-              const experiment = await this.facts(context);
-              const review = await this.review(context.caller, experiment, context.tx);
-              await this.reviewCapture(context.caller, experiment, context.tx);
-              await this.reviews.checkSubmit(
-                context.caller,
-                review.id,
-                context.input as unknown as ExperimentReview | undefined,
-                context.tx,
-              );
-              if (context.input) await this.checkReview(context, experiment, review);
-            },
-            start: async (context, review) => {
-              await this.reviewCapture(context.caller, await this.facts(context), context.tx);
-              check(
-                !context.input?.reviewId || context.input.reviewId === review.id,
-                'stale_review',
-                'The current review is required',
-                409,
-              );
-            },
-          }),
-        ),
-      ],
-    };
-  }
+        },
+        gate:
+          state === 'planned'
+            ? 'design_required'
+            : state === 'running'
+              ? 'execution_evidence_required'
+              : review?.status === 'requested'
+                ? 'review_required'
+                : 'independent_review',
+        waiting: producing(state)
+          ? handoff(state)
+          : 'Wait for an independent reviewer to assess the exact pinned submission. Producer evidence stays immutable while its review is pending.',
+        references: [
+          ...(context.dependencies ?? []).map((dependency) => ({
+            kind: 'workflow',
+            id: dependency.id,
+            label: `Prerequisite: ${dependency.name || dependency.id}`,
+          })),
+          ...(experiment.reviewId
+            ? [
+                {
+                  kind: 'review',
+                  id: experiment.reviewId,
+                  label: 'Current or previous independent review',
+                },
+              ]
+            : []),
+          ...(experiment.attempt.approvedSubmissionId
+            ? [
+                {
+                  kind: 'submission',
+                  id: experiment.attempt.approvedSubmissionId,
+                  label: 'Exact approved design',
+                },
+              ]
+            : []),
+        ],
+      };
+    },
+    actions: [
+      action('submit_design', ['planned'], handoff('planned'), true),
+      action('submit_results', ['running'], handoffs.running, true),
+      action(
+        'retry_running',
+        ['running'],
+        'For an infrastructure interruption, retain a specific reason and recover completed work before rerunning. This preserves the attempt and approved plan.',
+      ),
+      action(
+        'abandon',
+        [...activeStates],
+        'End this experiment as abandoned with a specific reason; unfinished review ownership is closed and evidence remains retained.',
+      ),
+      action(
+        'mark_failed',
+        [...activeStates],
+        'End this experiment as failed with a specific reason; do not confuse this owner action with a reviewer returning work for correction.',
+      ),
+      ...(['design_review', 'experiment_review'] as const).flatMap((state) =>
+        reviewActions<WorkflowCheckContext>({
+          names: { submit: `submit_${state}`, start: `start_${state}` },
+          states: [state],
+          transitions:
+            state === 'design_review'
+              ? ['approve_design', 'revise_design']
+              : ['accept_results', 'revise_plan', 'revise_execution'],
+          instructions: {
+            submit: handoff(state),
+            start: 'Claim the exact current independent review, then refresh its assignment.',
+          },
+          reviews: ctx.reviews,
+          // The submit check pins the same review and gates its capture, so this only names it.
+          current: async (context) =>
+            await reviewOf(ctx, context.caller, await facts(ctx, context), context.tx),
+          submit: async (context) => {
+            const experiment = await facts(ctx, context);
+            const review = await reviewOf(ctx, context.caller, experiment, context.tx);
+            await reviewCapture(ctx, context.caller, experiment, context.tx);
+            await ctx.reviews.checkSubmit(
+              context.caller,
+              review.id,
+              context.input as unknown as ExperimentReview | undefined,
+              context.tx,
+            );
+            if (context.input) await checkReview(ctx, context, experiment, review);
+          },
+          start: async (context, review) => {
+            await reviewCapture(ctx, context.caller, await facts(ctx, context), context.tx);
+            check(
+              !context.input?.reviewId || context.input.reviewId === review.id,
+              'stale_review',
+              'The current review is required',
+              409,
+            );
+          },
+        }),
+      ),
+    ],
+  };
 }

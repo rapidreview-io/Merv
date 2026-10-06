@@ -434,7 +434,8 @@ test('review submission retains the decision checked before a pending validation
     requestId: 'stable-decision',
   };
   const input = { ...original };
-  const checkSubmit = f.reviews.checkSubmit.bind(f.reviews);
+  // Submit's own check reads the row first: the pause comes once that read has returned.
+  const row = f.reviews.row.bind(f.reviews);
   let enter!: () => void, release!: () => void;
   const entered = new Promise<void>((resolve) => {
     enter = resolve;
@@ -442,8 +443,11 @@ test('review submission retains the decision checked before a pending validation
   const waiting = new Promise<void>((resolve) => {
     release = resolve;
   });
-  t.mock.method(f.reviews, 'checkSubmit', async (...args: Parameters<typeof checkSubmit>) => {
-    const result = await checkSubmit(...args);
+  let paused = false;
+  t.mock.method(f.reviews, 'row', async (...args: Parameters<typeof row>) => {
+    const result = await row(...args);
+    if (paused) return result;
+    paused = true;
     enter();
     await waiting;
     return result;

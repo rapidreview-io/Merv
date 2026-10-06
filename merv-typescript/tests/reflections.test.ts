@@ -24,7 +24,7 @@ import {
   REFLECTION_CRITERIA,
 } from '../packages/reflections/src/definitions.js';
 const token = () => `ms_${randomBytes(32).toString('base64url')}`;
-async function fixture(t: TestContext, reflections?: object) {
+async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-reflection-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
@@ -37,8 +37,6 @@ async function fixture(t: TestContext, reflections?: object) {
       !entry.id.endsWith('-api') &&
       !entry.id.endsWith('-ui'),
   );
-  if (reflections)
-    config.plugins.find((entry: { id: string }) => entry.id === 'reflections').config = reflections;
   const app = await createApp({ directory, config });
   t.after(async () => {
     await app.stop();
@@ -928,7 +926,7 @@ test('a standalone wave names no lineage, and a digest that does not fit is omit
 });
 
 test('a reflection returned as often as its limit allows opens no more lenses and can still be approved', async (t) => {
-  const f = await fixture(t, { limits: { reviewReturns: 1 } });
+  const f = await fixture(t);
   const reviewer = await f.actor('Reviewer', 'reviewer');
   let wave = await f.synthesize(
     await f.lenses(await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' })),
@@ -938,11 +936,12 @@ test('a reflection returned as often as its limit allows opens no more lenses an
   wave = await f.verdict(wave, reviewer, false, 'reflecting');
   assert.equal(wave.attempt, 2);
   wave = await f.synthesize(await f.lenses(wave));
+  wave = await f.synthesize(await f.verdict(wave, reviewer, false, 'synthesizing'));
   const guidance = await f.app.ctx.workflows.evaluate(f.owner, wave.id);
   assert.equal(guidance.currentGate, 'loop_limit_reached');
   assert.deepEqual(
     guidance.limits.map((limit) => [limit.name, limit.actions, limit.used, limit.max]),
-    [['review_returns', ['revise_synthesis', 'restart_lenses'], 1, 1]],
+    [['review_returns', ['revise_synthesis', 'restart_lenses'], 2, 2]],
   );
   const instances = (await f.app.ctx.workflows.list(f.owner)).length;
   for (const returnTo of ['reflecting', 'synthesizing'])
@@ -957,11 +956,6 @@ test('a reflection returned as often as its limit allows opens no more lenses an
     [wave.attempt, wave.workflow, wave.lenses, null],
   );
   assert.equal((await f.verdict(wave, reviewer, true)).workflow.state, 'approved');
-});
-
-test('the reflection limit is validated as plugin configuration before anything is published', async (t) => {
-  for (const config of [{ limits: { reviewReturns: 0 } }, { limits: { rounds: 2 } }, { cap: 2 }])
-    await assert.rejects(async () => await fixture(t, config));
 });
 
 test('leased lens calls use exact execution evidence, retain context through release and recover independent review claims', async (t) => {

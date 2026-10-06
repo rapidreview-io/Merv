@@ -36,7 +36,7 @@ flowchart LR
   reflections -- "applies paper changes" --> paper
   reflections -- "imports @merv/experiments/rules" --> experiments
   reflections -- "reads reports" --> artifacts
-  reflections -. "registers lens continuity" .-> sessions
+  reflections -- "registers lens continuity" --> sessions
   reflections -- "injects" --> scope
   reflections -- "registers /reflections page" --> ui
   reflections -- "injects" --> state
@@ -45,7 +45,7 @@ flowchart LR
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
 ```
 
-Reflections is the judging step of each research cycle, built from two workflows it registers, `reflection` and `reflection.lens`. Research opens the wave once the cycle's work has finished, and turns the approved change specification into the next cycle's tasks and experiments; the dotted arrow is an optional binding.
+Reflections is the judging step of each research cycle, built from two workflows it registers, `reflection` and `reflection.lens`. Research opens the wave once the cycle's work has finished, and turns the approved change specification into the next cycle's tasks and experiments.
 
 ## Surface
 

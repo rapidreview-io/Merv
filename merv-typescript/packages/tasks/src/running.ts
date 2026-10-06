@@ -23,7 +23,7 @@ import {
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { composedBrief } from './evidence.js';
-import type { TaskLeaseRow, TaskRow, TaskService } from './index.js';
+import type { TaskRow, TasksContext } from './index.js';
 import { roundsFrom, TASK_WORKFLOW, taskVersions } from './workflow.js';
 
 /**
@@ -334,7 +334,7 @@ export function taskPanel(
   };
 }
 
-// TaskService's reads for the board and the sidebar, which it runs as its own methods.
+// TaskService's reads for the board and the sidebar, each run on it as its TasksContext.
 
 /** A record another plugin answers 404 for is simply not there to speak of. */
 const absent = (error: unknown): null => {
@@ -360,21 +360,21 @@ interface RunningTaskRow {
  * the prerequisites and review rounds of every task are each read once for all of them.
  */
 export async function running(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   include: Iterable<string> = [],
 ): Promise<RunningNode[]> {
   caller = structuredClone(caller);
   const held = [...new Set([...include].filter((key) => keyKind(key) === 'work').map(keyId))];
-  return await this.state.snapshot(
+  return await ctx.state.snapshot(
     async () =>
-      await this.state.transaction(async (tx) => {
-        await this.scope.require(caller, 'read', tx);
+      await ctx.state.transaction(async (tx) => {
+        await ctx.scope.require(caller, 'read', tx);
         const ids = [
-          ...(await this.workflows.open('task', caller.projectId, tx)).map((w) => w.id),
+          ...(await ctx.workflows.open('task', caller.projectId, tx)).map((w) => w.id),
           ...held,
         ];
-        const at = await this.workflows.revisions(caller.projectId, ids, tx);
+        const at = await ctx.workflows.revisions(caller.projectId, ids, tx);
         const rows = (
           await tx.all<Pick<RunningTaskRow, 'id' | 'title' | 'review_id'>>(
             `SELECT id,title,review_id FROM tasks WHERE project_id=? AND id IN (${ids.map(() => '?').join(',') || 'NULL'}) ORDER BY created_at,id`,
@@ -385,18 +385,18 @@ export async function running(
           const w = at.get(row.id);
           return w ? [{ ...row, version: w.version, state: w.state, revision: w.revision }] : [];
         });
-        const leases = await this.liveLeases(caller, tx);
+        const leases = await liveLeases(ctx, caller, tx);
         const blocked = new Set(
-          (await this.workflows.blockers(caller, undefined, tx)).map(
+          (await ctx.workflows.blockers(caller, undefined, tx)).map(
             (blocker) => blocker.instanceId,
           ),
         );
-        const waitsOn = await this.workflows.prerequisites(
+        const waitsOn = await ctx.workflows.prerequisites(
           caller,
           rows.map((row) => row.id),
           tx,
         );
-        const rounds = await this.workflows.limitStatusOf(
+        const rounds = await ctx.workflows.limitStatusOf(
           caller,
           rows
             .filter((row) => taskVersions[row.version] && row.state === roundsFrom(row.version))
@@ -408,7 +408,8 @@ export async function running(
           rows.filter((row) => taskVersions[row.version] || held.includes(row.id)),
           async (row) =>
             taskNode(
-              await this.standing(
+              await standing(
+                ctx,
                 caller,
                 row,
                 waitsOn.get(row.id) ?? [],
@@ -425,57 +426,64 @@ export async function running(
 
 /** A task's Running sidebar, whatever its state, so an open sidebar outlives the card. */
 export async function runningPanel(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   taskId: string,
   route: WorkRoute = () => undefined,
 ): Promise<RunningPanelPart | null> {
   caller = structuredClone(caller);
-  return await this.state.snapshot(async () => {
-    const read = await this.state.transaction(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
+  return await ctx.state.snapshot(async () => {
+    const read = await ctx.state.transaction(async (tx) => {
+      await ctx.scope.require(caller, 'read', tx);
       const row = await tx.get<TaskRow>(
         'SELECT * FROM tasks WHERE id=? AND project_id=?',
         taskId,
         caller.projectId,
       );
       if (!row) return null;
-      const record = await this.projectRecord(caller, row, tx);
+      const record = await ctx.projectRecord(caller, row, tx);
       const { version, state, revision } = record.workflow;
-      const standing = await this.standing(
+      const facts = await standing(
+        ctx,
         caller,
         { id: row.id, title: row.title, review_id: row.review_id, version, state, revision },
         record.dependencies,
-        await this.liveLeases(caller, tx, taskId),
-        (await this.workflows.blockers(caller, taskId, tx)).length > 0,
+        await liveLeases(ctx, caller, tx, taskId),
+        (await ctx.workflows.blockers(caller, taskId, tx)).length > 0,
         tx,
       );
-      const brief = await this.artifacts.get(caller, record.briefId, tx).catch((error) => {
+      const brief = await ctx.artifacts.get(caller, record.briefId, tx).catch((error) => {
         if (error instanceof MervError && error.status === 404) return null;
         throw error;
       });
-      return { record, standing, brief };
+      return { record, standing: facts, brief };
     });
     if (!read) return null;
     // The ladder is Workflows' own read of this snapshot, so it runs after the one above.
-    const graph = await this.process(caller, taskId);
+    const graph = await ctx.process(caller, taskId);
     return taskPanel(read.standing, read.record, graph, read.brief, route);
   });
 }
 
 /** The purpose of each live lease, by task and the revision it was offered for. */
 export async function liveLeases(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   tx: Transaction,
   taskId?: string,
 ): Promise<Map<string, 'work' | 'review'>> {
-  const rows = await leaseRows<TaskLeaseRow['details']>(tx, {
-    projectId: caller.projectId,
-    ...(taskId === undefined ? { workflows: [TASK_WORKFLOW.name] } : { instanceIds: [taskId] }),
-    active: true,
-  });
-  return new Map(rows.map((row) => [`${row.instance_id}@${row.revision}`, row.details.purpose]));
+  const rows = await leaseRows(
+    tx,
+    {
+      projectId: caller.projectId,
+      ...(taskId === undefined ? { workflows: [TASK_WORKFLOW.name] } : { instanceIds: [taskId] }),
+      active: true,
+    },
+    { detail: 'purpose' },
+  );
+  return new Map(
+    rows.map((row) => [`${row.instance_id}@${row.revision}`, row.detail as 'work' | 'review']),
+  );
 }
 
 /**
@@ -484,11 +492,11 @@ export async function liveLeases(
  * hold leaves the task drawn without it, rather than taking every other task with it.
  */
 export async function standing(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   row: RunningTaskRow,
   dependencies: TaskStanding['dependencies'],
-  leases: Awaited<ReturnType<TaskService['liveLeases']>>,
+  leases: Awaited<ReturnType<typeof liveLeases>>,
   blocked: boolean,
   tx: Transaction,
   counted?: ReadonlyMap<string, WorkflowLimitStatus>,
@@ -499,10 +507,10 @@ export async function standing(
       ? null
       : counted
         ? (counted.get(row.id) ?? null)
-        : (await this.workflows.limitStatusOf(caller, [row.id], 'review_rounds', tx)).get(row.id)!;
+        : (await ctx.workflows.limitStatusOf(caller, [row.id], 'review_rounds', tx)).get(row.id)!;
   const review =
     row.state === 'in_review' && row.review_id
-      ? await this.reviews.get(caller, row.review_id, tx).catch(absent)
+      ? await ctx.reviews.get(caller, row.review_id, tx).catch(absent)
       : null;
   return {
     id: row.id,

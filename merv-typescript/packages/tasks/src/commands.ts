@@ -36,12 +36,15 @@ import type {
   TaskReissue,
   TaskReview,
 } from './types.js';
-import type { TaskService } from './index.js';
+import type { TasksContext } from './index.js';
 import { producing, serviceOwned, taskVersion } from './workflow.js';
 import { rejectReviewReturn } from './policy.js';
+import { contextInputs, contextType, newestType } from './context.js';
+import { isProducer, producerOrAdmin, unleased } from './lease.js';
+import { reviewAction } from './policy.js';
 
 // Creating a task, and the commands that move it: delivery, reissue, failure and review, with
-// the guards each runs. TaskService (index.ts) runs these as its own methods.
+// the guards each runs. Each runs on TaskService (index.ts) as its TasksContext.
 
 /** Rejected rounds a task remembers; later ones push the oldest out, which no repair still needs. */
 const REJECTED_REVIEWS_KEPT = 50;
@@ -69,7 +72,7 @@ function sameRevision(snapshot: WorkflowSnapshot, input: Data | undefined, messa
 const MAX_CHECKS = 200;
 
 export async function createTask(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskCreate,
   transaction?: Transaction,
@@ -78,12 +81,12 @@ export async function createTask(
   caller = structuredClone(caller);
   input = plain<TaskCreate>(input);
   const body = service ? { input, service } : input;
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'write', tx);
-    return await this.command(tx, caller, input.requestId, 'create', body, async () => {
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'write', tx);
+    return await ctx.command(tx, caller, input.requestId, 'create', body, async () => {
       const typeName = input.type ?? 'task.work',
-        typeVersion = input.typeVersion ?? this.newestType(typeName);
-      const type = this.types.get(`${typeName}@${typeVersion}`)?.definition;
+        typeVersion = input.typeVersion ?? newestType(ctx, typeName);
+      const type = ctx.types.get(`${typeName}@${typeVersion}`)?.definition;
       check(
         type?.kind === 'work',
         'task_type_unavailable',
@@ -96,27 +99,27 @@ export async function createTask(
         'invalid_workspace',
         'New tasks always use Git. Omit workspace or use git, and use dependsOn for accepted code dependencies; baseTaskId is retired.',
       );
-      await this.code.ensureRepository(caller, tx);
+      await ctx.code.ensureRepository(caller, tx);
       check(
-        await this.code.hosted(caller, tx),
+        await ctx.code.hosted(caller, tx),
         'code_store_required',
         'Import the existing project repository into Code before creating work',
         409,
       );
-      const contextInputs = input.contextInputs ?? {};
+      const inputIds = input.contextInputs ?? {};
       check(
-        contextInputs && typeof contextInputs === 'object' && !Array.isArray(contextInputs),
+        inputIds && typeof inputIds === 'object' && !Array.isArray(inputIds),
         'invalid_context',
         'Context inputs must map section keys to artifact IDs',
       );
       const custom = type.recipe.sections.filter((s) => !RESERVED_CONTEXT_INPUTS.has(s.key));
       check(
-        Object.keys(contextInputs).every((key) => custom.some((s) => s.key === key)),
+        Object.keys(inputIds).every((key) => custom.some((s) => s.key === key)),
         'invalid_context',
         'Unknown or reserved task context input',
       );
       for (const section of custom) {
-        const ids = Object.hasOwn(contextInputs, section.key) ? contextInputs[section.key] : [];
+        const ids = Object.hasOwn(inputIds, section.key) ? inputIds[section.key] : [];
         check(
           Array.isArray(ids) &&
             ids.every((id) => typeof id === 'string' && id.length > 0) &&
@@ -129,7 +132,7 @@ export async function createTask(
           'context_missing',
           `Missing required context: ${section.key}`,
         );
-        await this.artifacts.getAll(caller, ids, tx);
+        await ctx.artifacts.getAll(caller, ids, tx);
       }
       // The brief renders the title and each check on its own numbered line.
       const line = (value: unknown) =>
@@ -161,13 +164,13 @@ export async function createTask(
         // A brief rendered here is checked as written: its input is plain text, without NUL or
         // a lone surrogate, so it reads back unchanged. It is the producer's own text document.
         content = renderBrief({ ...input, checks }, true);
-        brief = await this.artifacts.create(
+        brief = await ctx.artifacts.create(
           caller,
           { title: composedBriefTitle(input.title), content },
           tx,
         );
       } else {
-        brief = await this.artifacts.get(caller, input.briefId, tx);
+        brief = await ctx.artifacts.get(caller, input.briefId, tx);
         check(
           brief.createdBy === caller.actorId,
           'forbidden',
@@ -179,7 +182,7 @@ export async function createTask(
           'invalid_brief',
           'The brief must be a nonempty text document',
         );
-        const document = await this.artifacts.read(caller, brief.id, undefined, tx);
+        const document = await ctx.artifacts.read(caller, brief.id, undefined, tx);
         check(
           document.encoding === 'utf8',
           'invalid_brief',
@@ -200,9 +203,9 @@ export async function createTask(
         'The pinned brief must contain the task goal and every Done-when check',
       );
       // Once Code keeps the project's history, new Git work lives there and nowhere else.
-      const version = taskVersion(this.artifacts.largeUploadAvailable, !!service);
+      const version = taskVersion(ctx.artifacts.largeUploadAvailable, !!service);
       const workflow = await (
-        await this.registration(version)
+        await ctx.registration(version)
       ).start(
         caller,
         {
@@ -235,22 +238,22 @@ export async function createTask(
         now(),
         typeName,
         typeVersion,
-        JSON.stringify(contextInputs),
+        JSON.stringify(inputIds),
       );
-      await this.code.declareUnit(caller, workflow.id, tx, service?.baseReference);
-      await recorded(this.state, tx, caller, 'task.created', workflow.id, {
+      await ctx.code.declareUnit(caller, workflow.id, tx, service?.baseReference);
+      await recorded(ctx.state, tx, caller, 'task.created', workflow.id, {
         briefId: brief.id,
         evidenceVersion: 2,
       });
-      const task = await this.hydrate(caller, await this.row(tx, caller, workflow.id), tx);
+      const task = await ctx.hydrate(caller, await ctx.row(tx, caller, workflow.id), tx);
       // Render what every work context embeds, or the task could never begin. A session's
       // lease is on its own task, so the check reads as the session's actor.
       const { session: _session, ...owner } = caller;
       const subject = { id: task.id, revision: task.workflow.revision };
-      const inputs = await this.contextInputs(owner, task, 'work', undefined, tx);
+      const inputs = await contextInputs(ctx, owner, task, 'work', undefined, tx);
       // The brief is rendered as the text in hand rather than read back.
       if (inputs.brief) inputs.brief.items[0].body = { text: content };
-      await this.contextType(task, 'work')
+      await contextType(ctx, task, 'work')
         .context.preview(owner, { subject, inputs }, tx)
         .catch((error: unknown) => {
           check(
@@ -267,11 +270,11 @@ export async function createTask(
 
 /** With a proposed delivery, answers the commit and confirmations it checked, for reuse. */
 export async function checkDelivery(
-  this: TaskService,
+  ctx: TasksContext,
   { caller, snapshot: current, tx, input: proposed }: WorkflowCheckContext,
 ): Promise<
   | {
-      commit: Awaited<ReturnType<TaskService['deliveredCommit']>>;
+      commit: Awaited<ReturnType<typeof deliveredCommit>>;
       confirmations: TaskConfirmation[];
     }
   | undefined
@@ -282,15 +285,15 @@ export async function checkDelivery(
     'Agent conversations direct tasks; a worker must submit the delivery',
     403,
   );
-  await this.scope.require(caller, 'write', tx);
-  const row = await this.row(tx, caller, current.id);
+  await ctx.scope.require(caller, 'write', tx);
+  const row = await ctx.row(tx, caller, current.id);
   check(
-    await this.isProducer(caller, row, current, tx),
+    await isProducer(ctx, caller, row, current, tx),
     'forbidden',
     'Only this task’s producer may submit its delivery',
     403,
   );
-  await this.unleased(caller, row.id, current.revision, tx);
+  await unleased(ctx, caller, row.id, current.revision, tx);
   check(
     current.state === 'in_progress',
     'invalid_transition',
@@ -308,7 +311,7 @@ export async function checkDelivery(
     'invalid_delivery',
     'Delivery requires a list of distinct artifacts',
   );
-  const commit = await this.deliveredCommit(caller, current, input.commandId, tx);
+  const commit = await deliveredCommit(ctx, caller, current, input.commandId, tx);
   // No task's brief is a delivery, this task's least of all; nor is a record Merv rendered
   // for an earlier delivery, which every delivery records in history. A Git task that
   // delivers its commit alone names no artifact to look up.
@@ -320,7 +323,7 @@ export async function checkDelivery(
       ...input.artifactIds,
     );
     check(briefs.length === 0, 'invalid_delivery', 'A task brief cannot serve as a delivery');
-    const rendered = await this.workflows.moves(
+    const rendered = await ctx.workflows.moves(
       caller.projectId,
       {
         action: 'submit_delivery',
@@ -335,8 +338,8 @@ export async function checkDelivery(
       'A confirmation sheet or commit record Merv rendered for a delivery cannot serve as evidence',
     );
   }
-  const artifacts = await this.artifacts.getAll(caller, input.artifactIds, tx);
-  const captures = new Set((await this.captureArtifactIds(caller.projectId, row.id, tx)) ?? []);
+  const artifacts = await ctx.artifacts.getAll(caller, input.artifactIds, tx);
+  const captures = new Set((await ctx.captureArtifactIds(caller.projectId, row.id, tx)) ?? []);
   check(
     artifacts.every(
       (item) => (item.createdBy === caller.actorId || captures.has(item.id)) && item.size > 0,
@@ -361,7 +364,7 @@ export async function checkDelivery(
  * what stops a successor from delivering its predecessor's commit.
  */
 export async function deliveredCommit(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   snapshot: WorkflowSnapshot,
   commandId: unknown,
@@ -373,7 +376,7 @@ export async function deliveredCommit(
     'A Git task delivers this worker’s own successful code.commit; only a leased worker can obtain one',
     409,
   );
-  const checked = await this.code.checkCapture(
+  const checked = await ctx.code.checkCapture(
     caller,
     { kind: 'code-commit', commandId },
     {
@@ -407,13 +410,13 @@ export async function deliveredCommit(
 }
 
 export async function checkReissue(
-  this: TaskService,
+  ctx: TasksContext,
   { caller, snapshot: current, tx, input }: WorkflowCheckContext,
 ): Promise<void> {
-  await this.scope.require(caller, 'write', tx);
-  const row = await this.row(tx, caller, current.id);
+  await ctx.scope.require(caller, 'write', tx);
+  const row = await ctx.row(tx, caller, current.id);
   sameTask(current, input);
-  await this.producerOrAdmin(caller, row, current, tx);
+  await producerOrAdmin(ctx, caller, row, current, tx);
   check(
     !input || (typeof input.reason === 'string' && input.reason.trim()),
     'invalid_reason',
@@ -426,7 +429,7 @@ export async function checkReissue(
     409,
   );
   sameRevision(current, input, 'Task revision changed; refresh the task before reissuing review');
-  const previous = await this.reviews.get(caller, row.review_id, tx);
+  const previous = await ctx.reviews.get(caller, row.review_id, tx);
   check(
     previous.status === 'requested' || previous.status === 'started',
     'review_closed',
@@ -442,12 +445,12 @@ export async function checkReissue(
 }
 
 export async function checkFailure(
-  this: TaskService,
+  ctx: TasksContext,
   { caller, snapshot, tx, input }: WorkflowCheckContext,
 ): Promise<void> {
-  await this.scope.require(caller, 'write', tx);
-  const row = await this.row(tx, caller, snapshot.id);
-  await this.producerOrAdmin(caller, row, snapshot, tx);
+  await ctx.scope.require(caller, 'write', tx);
+  const row = await ctx.row(tx, caller, snapshot.id);
+  await producerOrAdmin(ctx, caller, row, snapshot, tx);
   sameTask(snapshot, input);
   check(
     snapshot.state === 'in_progress' || snapshot.state === 'in_review',
@@ -464,7 +467,7 @@ export async function checkFailure(
   );
   if (snapshot.state === 'in_review') {
     check(row.review_id, 'stale_review', 'The task has no current review', 409);
-    const review = await this.reviews.get(caller, row.review_id, tx);
+    const review = await ctx.reviews.get(caller, row.review_id, tx);
     check(
       review.status === 'requested' || review.status === 'started',
       'review_closed',
@@ -479,7 +482,7 @@ export async function checkFailure(
  * it, and the command answers with the task as it then stands.
  */
 export async function taskCommand(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   transaction: Transaction | undefined,
   permission: 'write' | 'review',
@@ -487,11 +490,11 @@ export async function taskCommand(
   input: { requestId: string },
   run: (tx: Transaction) => Promise<string>,
 ): Promise<Task> {
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, permission, tx);
-    return await this.command(tx, caller, input.requestId, operation, input, async () => {
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, permission, tx);
+    return await ctx.command(tx, caller, input.requestId, operation, input, async () => {
       const taskId = await run(tx);
-      return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
+      return await ctx.hydrate(caller, await ctx.row(tx, caller, taskId), tx);
     });
   });
 }
@@ -502,7 +505,7 @@ export async function taskCommand(
  * again in this transaction, and only that run takes it instead of checking twice.
  */
 export async function advance(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   current: WorkflowSnapshot,
   transition: Omit<WorkflowTransition, 'instanceId' | 'expectedRevision'> & {
@@ -511,36 +514,38 @@ export async function advance(
   tx: Transaction,
   checked?: unknown,
 ): Promise<WorkflowSnapshot> {
-  const moved = await this.checked.take(
+  const moved = await ctx.checked.take(
     tx,
     { instanceId: current.id, revision: current.revision, action: transition.action },
     () =>
-      this.registration(current.version).transition(
-        caller,
-        { instanceId: current.id, expectedRevision: current.revision, ...transition },
-        tx,
-      ),
+      ctx
+        .registration(current.version)
+        .transition(
+          caller,
+          { instanceId: current.id, expectedRevision: current.revision, ...transition },
+          tx,
+        ),
     checked,
   );
   return moved;
 }
 
 export async function markFailed(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskMarkFailed,
   transaction?: Transaction,
 ): Promise<Task> {
   ({ caller, input } = structuredClone({ caller, input }));
-  return await this.taskCommand(caller, transaction, 'write', 'mark_failed', input, async (tx) => {
+  return await taskCommand(ctx, caller, transaction, 'write', 'mark_failed', input, async (tx) => {
     check(
       Number.isSafeInteger(input.expectedRevision) && input.expectedRevision >= 0,
       'invalid_revision',
       'Expected revision must be a nonnegative integer',
     );
-    const row = await this.row(tx, caller, input.taskId);
-    const current = await this.workflows.get(caller, row.id, tx);
-    await this.checkFailure({ caller, snapshot: current, tx, input: { ...input } });
+    const row = await ctx.row(tx, caller, input.taskId);
+    const current = await ctx.workflows.get(caller, row.id, tx);
+    await checkFailure(ctx, { caller, snapshot: current, tx, input: { ...input } });
     const reviewId = current.state === 'in_review' ? row.review_id : null;
     const failure: TaskFailure = {
       reason: input.reason,
@@ -548,7 +553,8 @@ export async function markFailed(
       createdAt: now(),
       reviewId,
     };
-    await this.advance(
+    await advance(
+      ctx,
       caller,
       current,
       {
@@ -564,9 +570,9 @@ export async function markFailed(
       tx,
       true,
     );
-    if (reviewId) await this.reviews.supersede(caller, reviewId, tx);
+    if (reviewId) await ctx.reviews.supersede(caller, reviewId, tx);
     await recorded(
-      this.state,
+      ctx.state,
       tx,
       caller,
       serviceOwned(current.version) ? 'task.suspended' : 'task.failed',
@@ -578,7 +584,7 @@ export async function markFailed(
 }
 
 export async function submitDelivery(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskDelivery,
 ): Promise<Task> {
@@ -590,18 +596,19 @@ export async function submitDelivery(
     'Agent conversations direct tasks; a worker must submit the delivery',
     403,
   );
-  return await this.taskCommand(
+  return await taskCommand(
+    ctx,
     caller,
     undefined,
     'write',
     'submit_delivery',
     input,
     async (tx) => {
-      const row = await this.row(tx, caller, input.taskId);
+      const row = await ctx.row(tx, caller, input.taskId);
       const checks: string[] = JSON.parse(row.checks);
-      const current = await this.workflows.get(caller, row.id, tx);
-      this.registration(current.version);
-      const delivered = (await this.checkDelivery({
+      const current = await ctx.workflows.get(caller, row.id, tx);
+      ctx.registration(current.version);
+      const delivered = (await checkDelivery(ctx, {
         caller,
         snapshot: current,
         tx,
@@ -610,7 +617,7 @@ export async function submitDelivery(
       const commit = delivered.commit;
       // Reviews pins artifacts and knows nothing of commits, so the commit enters the review
       // as a rendered record: pinned and hashed like any evidence, and citable by a finding.
-      const codeArtifact = await this.artifacts.create(
+      const codeArtifact = await ctx.artifacts.create(
         caller,
         {
           title: clip(`Delivered commit: ${row.title}`, 300),
@@ -624,7 +631,7 @@ export async function submitDelivery(
           ? { ...item, evidenceIds: [codeArtifact.id] }
           : item,
       );
-      const assessment = await this.artifacts.create(
+      const assessment = await ctx.artifacts.create(
         caller,
         {
           title: clip(`Delivery confirmations: ${row.title}`, 300),
@@ -640,7 +647,8 @@ export async function submitDelivery(
         headOid: commit.workspace.headOid,
         treeOid: commit.workspace.treeOid ?? null,
       };
-      const moved = await this.advance(
+      const moved = await advance(
+        ctx,
         caller,
         current,
         {
@@ -659,7 +667,7 @@ export async function submitDelivery(
         tx,
         delivered,
       );
-      const review = await this.reviews.request(
+      const review = await ctx.reviews.request(
         caller,
         {
           subjectId: row.id,
@@ -671,13 +679,13 @@ export async function submitDelivery(
           // A service owns the task but never directs a worker. Reviews retains the
           // authenticated runner source as the delivery's administrative authority.
           administrativeActorId: serviceOwned(current.version)
-            ? (await this.scope.authorityActor(caller, tx)).id
+            ? (await ctx.scope.authorityActor(caller, tx)).id
             : row.producer_id,
           // Captures are service-authored evidence, already checked as owned by this task.
           // Pin them through Reviews' ordinary input contract rather than changing authorship.
           pinnedInputIds: [
             ...(caller.session ? [row.brief_id] : []),
-            ...((await this.captureArtifactIds(caller.projectId, row.id, tx)) ?? []).filter((id) =>
+            ...((await ctx.captureArtifactIds(caller.projectId, row.id, tx)) ?? []).filter((id) =>
               input.artifactIds.includes(id),
             ),
           ],
@@ -685,7 +693,7 @@ export async function submitDelivery(
           ...(caller.session
             ? {
                 excludedActorIds: [
-                  ...new Set([row.producer_id, (await this.scope.authorityActor(caller, tx)).id]),
+                  ...new Set([row.producer_id, (await ctx.scope.authorityActor(caller, tx)).id]),
                 ],
               }
             : {}),
@@ -703,7 +711,7 @@ export async function submitDelivery(
         row.id,
         caller.projectId,
       );
-      await recorded(this.state, tx, caller, 'task.delivery_submitted', row.id, {
+      await recorded(ctx.state, tx, caller, 'task.delivery_submitted', row.id, {
         reviewId: review.id,
         snapshotHash: review.snapshotHash,
         artifactIds: deliveryIds,
@@ -715,22 +723,23 @@ export async function submitDelivery(
 }
 
 export async function reissueReview(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskReissue,
 ): Promise<Task> {
   ({ caller, input } = structuredClone({ caller, input }));
-  return await this.taskCommand(caller, undefined, 'write', 'reissue_review', input, async (tx) => {
-    const row = await this.row(tx, caller, input.taskId);
-    const current = await this.workflows.get(caller, row.id, tx);
+  return await taskCommand(ctx, caller, undefined, 'write', 'reissue_review', input, async (tx) => {
+    const row = await ctx.row(tx, caller, input.taskId);
+    const current = await ctx.workflows.get(caller, row.id, tx);
     check(
       row.review_id,
       'invalid_transition',
       'Only a task awaiting review can reissue its review',
       409,
     );
-    const previous = await this.reviews.get(caller, row.review_id, tx);
-    const moved = await this.advance(
+    const previous = await ctx.reviews.get(caller, row.review_id, tx);
+    const moved = await advance(
+      ctx,
       caller,
       current,
       {
@@ -741,8 +750,8 @@ export async function reissueReview(
       },
       tx,
     );
-    await this.reviews.supersede(caller, previous.id, tx);
-    const review = await this.reviews.reissue(
+    await ctx.reviews.supersede(caller, previous.id, tx);
+    const review = await ctx.reviews.reissue(
       caller,
       {
         reviewId: previous.id,
@@ -757,7 +766,7 @@ export async function reissueReview(
       row.id,
       caller.projectId,
     );
-    await recorded(this.state, tx, caller, 'task.review_reissued', row.id, {
+    await recorded(ctx.state, tx, caller, 'task.review_reissued', row.id, {
       previousReviewId: previous.id,
       reviewId: review.id,
       reason: input.reason,
@@ -768,7 +777,7 @@ export async function reissueReview(
 }
 
 export async function submitReview(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskReview,
   transaction?: Transaction,
@@ -781,16 +790,17 @@ export async function submitReview(
     'paper_edits_unavailable',
     'Only experiment and reflection reviewers update the paper with a verdict',
   );
-  return await this.taskCommand(
+  return await taskCommand(
+    ctx,
     caller,
     transaction,
     'review',
     'submit_review',
     input,
     async (tx) => {
-      const review = await this.reviews.get(caller, input.reviewId, tx);
-      const row = await this.row(tx, caller, review.subjectId);
-      const current = await this.workflows.get(caller, row.id, tx);
+      const review = await ctx.reviews.get(caller, input.reviewId, tx);
+      const row = await ctx.row(tx, caller, review.subjectId);
+      const current = await ctx.workflows.get(caller, row.id, tx);
       check(
         row.review_id === review.id,
         'stale_review',
@@ -815,9 +825,10 @@ export async function submitReview(
         `Expected revision ${input.expectedRevision}, found ${current.revision}`,
         409,
       );
-      await this.reviews.checkSubmit(caller, input.reviewId, input, tx);
-      const action = await this.reviewAction({ caller, snapshot: current, tx }, input.verdict);
-      const moved = await this.advance(
+      await ctx.reviews.checkSubmit(caller, input.reviewId, input, tx);
+      const action = await reviewAction(ctx, { caller, snapshot: current, tx }, input.verdict);
+      const moved = await advance(
+        ctx,
         caller,
         current,
         {
@@ -879,7 +890,7 @@ export async function submitReview(
         tx,
         review,
       );
-      const submitted = await this.reviews.submit(
+      const submitted = await ctx.reviews.submit(
         caller,
         {
           reviewId: input.reviewId,
@@ -895,7 +906,7 @@ export async function submitReview(
       );
       // Acceptance records the exact reviewed commit in the same transaction.
       if (input.verdict === 'pass')
-        await this.code.acceptUnit(
+        await ctx.code.acceptUnit(
           caller,
           {
             unitId: row.id,
@@ -908,7 +919,7 @@ export async function submitReview(
           },
           tx,
         );
-      await recorded(this.state, tx, caller, 'task.review_applied', row.id, {
+      await recorded(ctx.state, tx, caller, 'task.review_applied', row.id, {
         reviewId: submitted.id,
         verdict: submitted.verdict,
         action,

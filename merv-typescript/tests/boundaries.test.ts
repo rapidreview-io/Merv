@@ -116,7 +116,16 @@ const capabilities: Record<string, readonly string[]> = {
     'codeWork',
   ],
   paper: ['state', 'scope', 'artifacts'],
-  reflections: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
+  reflections: [
+    'state',
+    'scope',
+    'artifacts',
+    'workflows',
+    'reviews',
+    'contextBuilder',
+    'paper',
+    'sessions',
+  ],
   workflows: ['state', 'scope'],
   reviews: ['state', 'scope', 'artifacts', 'domainEvents'],
   tasks: [
@@ -162,8 +171,6 @@ const optionalCapabilities: Record<string, readonly string[]> = {
   // connection. Research integration owns project checks; Code is an independent utility.
   codeWork: ['sandboxes'],
   experiments: ['sandboxes'],
-  // A lens's continuity key, registered while Sessions is loaded; without it no session runs.
-  reflections: ['sessions'],
   // Sessions admits session callers in whichever tool registry is loaded; with none there
   // is no tool call to admit, and the registry refuses session callers until it registers.
   // Transcripts go to Blobs while it is loaded; without it a runner is told to retry.

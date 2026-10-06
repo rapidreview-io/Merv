@@ -45,9 +45,7 @@ async function assembled(t: TestContext) {
           ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
           : entry.id === 'ui'
             ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry.id === 'experiments'
-              ? { ...entry, config: { limits: { designRounds: 1 } } }
-              : entry,
+            : entry,
       ) as never,
     },
   });
@@ -398,6 +396,20 @@ test('a review state says who holds the review, and rounds used up need a person
   } as ReviewApplication);
   assert.equal(experiment.workflow.state, 'planned');
   experiment = await f.design(experiment);
+  // Every other round the default allows is used too.
+  for (let round = 1; round < 4; round++) {
+    const again = await f.app.ctx.reviews.start(f.reviewer.caller, experiment.reviewId!);
+    experiment = await f.app.ctx.experiments.submitReview(f.reviewer.caller, {
+      ...reviewedFindings(again),
+      reviewId: again.id,
+      claimId: again.claimId!,
+      verdict: 'needs_changes',
+      notes: 'The baseline is not described.',
+      expectedRevision: experiment.workflow.revision,
+      requestId: f.request(),
+    } as ReviewApplication);
+    experiment = await f.design(experiment);
+  }
   board = await f.board();
   assert.deepEqual(node(board, work(experiment.id))?.attention, {
     says: ['Out of review rounds'],
@@ -411,8 +423,8 @@ test('a review state says who holds the review, and rounds used up need a person
     { since: (await f.app.ctx.reviews.get(f.operator, experiment.reviewId!)).createdAt },
   ]);
 
-  // The design came back once and now passes: its first run is not a second one, though
-  // the attempt it runs was opened by the return.
+  // The design came back four times and now passes: its first run is not a second one, though
+  // the attempt it runs was opened by the last return.
   const second = await f.app.ctx.reviews.start(f.reviewer.caller, experiment.reviewId!);
   const current = await f.get(experiment);
   const reviewed = reviewedFindings(second) as { findings?: { criterionNumber: number }[] };
@@ -429,7 +441,7 @@ test('a review state says who holds the review, and rounds used up need a person
     expectedRevision: current.workflow.revision,
     requestId: f.request(),
   } as ReviewApplication);
-  assert.deepEqual([experiment.workflow.state, experiment.attempt.previousIndex], ['running', 1]);
+  assert.deepEqual([experiment.workflow.state, experiment.attempt.previousIndex], ['running', 4]);
   const runner = await f.app.ctx.sessions.authenticate(await f.offer(experiment));
   assert.deepEqual(node(await f.board(), work(experiment.id))?.lines, [['Running']]);
 

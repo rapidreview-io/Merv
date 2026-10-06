@@ -16,11 +16,11 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import { ownField } from './findings.js';
-import type { ReviewService } from './index.js';
+import type { ReviewsContext } from './index.js';
 import { hydrate, type ReviewRow } from './rows.js';
 
 // Requesting a review, reissuing it at a new revision and superseding it: the producer's and the
-// administrator's side of a review. ReviewService (index.ts) runs these as its own methods.
+// administrator's side of a review. Each runs on ReviewService (index.ts) as its ReviewsContext.
 /**
  * A bounded list field read without invoking accessors and copied as plain JSON: a proxy,
  * getter or sparse array is refused with `code`, and so is any item `valid` refuses.
@@ -78,7 +78,7 @@ function requiredCriteria(input: ReviewInput): number[] | undefined {
 }
 
 export async function request(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   input: ReviewInput,
   transaction?: Transaction,
@@ -89,9 +89,9 @@ export async function request(
   contributorExclusions(input);
   requiredCriteria(input);
   input = plain<ReviewInput>(input);
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'write', tx);
-    const authority = await this.scope.authorityActor(caller, tx);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'write', tx);
+    const authority = await ctx.scope.authorityActor(caller, tx);
     check(
       input.producerId === caller.actorId || authority.role === 'operator',
       'forbidden',
@@ -105,28 +105,29 @@ export async function request(
       'Review administrative ownership must follow its authenticated source',
       403,
     );
-    return await this.saveRequest(caller, input, tx, authority.id);
+    return await saveRequest(ctx, caller, input, tx, authority.id);
   });
 }
 
 export async function reissue(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   input: { reviewId: string; subjectRevision: number; requestId: string },
   transaction?: Transaction,
 ): Promise<ReviewRequest> {
   ({ caller, input } = structuredClone({ caller, input }));
-  return await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'write', tx);
-    const row = await this.row(tx, caller, input.reviewId);
-    const directing = await this.requireAdministration(caller, row, tx);
+  return await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'write', tx);
+    const row = await ctx.row(tx, caller, input.reviewId);
+    const directing = await requireAdministration(ctx, caller, row, tx);
     check(
       row.status !== 'submitted',
       'review_closed',
       'Submitted review evidence cannot be reissued',
       409,
     );
-    return await this.saveRequest(
+    return await saveRequest(
+      ctx,
       caller,
       {
         ...(row.provenance_json
@@ -157,12 +158,12 @@ export async function reissue(
 
 /** Refuses all but the review's owner or an operator; returns the caller's directing authority. */
 export async function requireAdministration(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   row: ReviewRow,
   tx: Transaction,
 ): Promise<string> {
-  const authority = await this.scope.authorityActor(caller, tx);
+  const authority = await ctx.scope.authorityActor(caller, tx);
   check(
     row.producer_id === caller.actorId ||
       row.administrative_actor_id === authority.id ||
@@ -175,7 +176,7 @@ export async function requireAdministration(
 }
 
 export async function saveRequest(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   input: ReviewInput,
   tx: Transaction,
@@ -192,7 +193,7 @@ export async function saveRequest(
   if (excludedActorIds !== undefined) input = { ...input, excludedActorIds };
   const required = requiredCriteria(input);
   if (required !== undefined) input = { ...input, requiredCriteria: required };
-  return await this.command(tx, caller, input.requestId, 'request', input, async () => {
+  return await ctx.command(tx, caller, input.requestId, 'request', input, async () => {
     check(
       typeof input.subjectId === 'string' && visible(input.subjectId),
       'invalid_subject',
@@ -242,7 +243,7 @@ export async function saveRequest(
       'invalid_artifacts',
       'Review requires authored output as well as any pinned inputs',
     );
-    const manifest = await this.artifacts.getAll(caller, input.artifactIds, tx);
+    const manifest = await ctx.artifacts.getAll(caller, input.artifactIds, tx);
     // Exclusions name contributors: authors of retained evidence, the record's owner, or
     // the authority that directed the submitting worker.
     check(
@@ -266,7 +267,7 @@ export async function saveRequest(
       403,
     );
     const provenance = input.provenanceOwner
-      ? await this.certificate(input.provenanceOwner, caller.projectId, input.subjectId, tx)
+      ? await ctx.certificate(input.provenanceOwner, caller.projectId, input.subjectId, tx)
       : undefined;
     const id = newId('review');
     const createdAt = now();
@@ -307,31 +308,31 @@ export async function saveRequest(
       ...(required === undefined ? [] : [JSON.stringify(required)]),
       ...(provenance ? [canonical(provenance)] : []),
     );
-    await recorded(this.state, tx, caller, 'review.requested', id, {
+    await recorded(ctx.state, tx, caller, 'review.requested', id, {
       subjectId: input.subjectId,
       subjectRevision: input.subjectRevision,
       snapshotHash,
       ...(excludedActorIds === undefined ? {} : { excludedActorIds }),
       ...(required === undefined ? {} : { requiredCriteria: required }),
     });
-    return hydrate(await this.row(tx, caller, id));
+    return hydrate(await ctx.row(tx, caller, id));
   });
 }
 
 export async function supersede(
-  this: ReviewService,
+  ctx: ReviewsContext,
   caller: Caller,
   reviewId: string,
   transaction?: Transaction,
 ): Promise<void> {
   caller = structuredClone(caller);
-  await inTransaction(this.state, transaction, async (tx) => {
-    await this.scope.require(caller, 'write', tx);
-    const row = await this.row(tx, caller, reviewId);
-    await this.requireAdministration(caller, row, tx);
+  await inTransaction(ctx.state, transaction, async (tx) => {
+    await ctx.scope.require(caller, 'write', tx);
+    const row = await ctx.row(tx, caller, reviewId);
+    await requireAdministration(ctx, caller, row, tx);
     if (row.status === 'superseded') return;
     check(row.status !== 'submitted', 'review_closed', 'A submitted verdict is immutable', 409);
     await tx.run("UPDATE reviews SET status = 'superseded' WHERE id = ?", reviewId);
-    await recorded(this.state, tx, caller, 'review.superseded', reviewId, {});
+    await recorded(ctx.state, tx, caller, 'review.superseded', reviewId, {});
   });
 }

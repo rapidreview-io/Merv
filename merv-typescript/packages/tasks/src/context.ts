@@ -23,7 +23,7 @@ import { computeGuidance } from '@merv/sandboxes/compute-capability';
 import { artifactItem, textItem } from '@merv/context-builder/artifact-item';
 import { renderBrief } from './evidence.js';
 import type { Task, TaskContext } from './types.js';
-import type { TaskRow, TaskService } from './index.js';
+import type { TaskRow, TasksContext } from './index.js';
 import {
   GIT_CLAIM,
   GIT_DELIVERY,
@@ -31,9 +31,17 @@ import {
   serviceOwned,
   SOURCE_VERIFICATION,
 } from './workflow.js';
+import {
+  currentLease,
+  isProducer,
+  leaseArtifactIds,
+  producerOrAdmin,
+  visibleCheckpoints,
+} from './lease.js';
+import { reviewCommit } from './policy.js';
 
-// A task's work and review contexts, and the assignment each of its states offers. TaskService
-// (index.ts) runs these as its own methods.
+// A task's work and review contexts, and the assignment each of its states offers. Each runs
+// on TaskService (index.ts) as its TasksContext.
 
 /**
  * What the earlier rounds may add to the optional feedback section. The section is dropped whole
@@ -90,16 +98,16 @@ const ITEM_RULES: Record<string, Pick<ContextItem, 'embed' | 'priority'>> = {
 };
 
 export async function context(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskContext,
 ): Promise<ContextPackage> {
   ({ caller, input } = structuredClone({ caller, input }));
   // The preview reads artifact bytes under the writer lock. The Context Builder README gives
   // the seam that moves them out: a lock-free preview between two short transactions.
-  return await this.state.transaction(async (tx) => {
-    const { task, review } = await this.assignment(caller, input, tx);
-    const type = this.contextType(task, input.purpose);
+  return await ctx.state.transaction(async (tx) => {
+    const { task, review } = await assignment(ctx, caller, input, tx);
+    const type = contextType(ctx, task, input.purpose);
     const subject = {
       id: task.id,
       revision: task.workflow.revision,
@@ -110,7 +118,7 @@ export async function context(
     if (previous) return previous;
     const preview = await type.context.preview(
       caller,
-      { subject, inputs: await this.contextInputs(caller, task, input.purpose, review, tx) },
+      { subject, inputs: await contextInputs(ctx, caller, task, input.purpose, review, tx) },
       tx,
     );
     return await type.context.build(caller, { requestId: input.requestId, preview }, tx);
@@ -121,9 +129,9 @@ export async function context(
  * A task created without an explicit version takes the newest recipe published for its type;
  * an existing task keeps the version it was created with, whose recipe stays registered.
  */
-export function newestType(this: TaskService, name: string): number {
+export function newestType(ctx: TasksContext, name: string): number {
   let newest = 1;
-  for (const key of this.types.keys()) {
+  for (const key of ctx.types.keys()) {
     const at = key.lastIndexOf('@');
     if (key.slice(0, at) === name) newest = Math.max(newest, Number(key.slice(at + 1)));
   }
@@ -135,12 +143,12 @@ export function newestType(this: TaskService, name: string): number {
  * every task is reviewed with task.review@5.
  */
 export function contextType(
-  this: TaskService,
+  ctx: TasksContext,
   task: Pick<Task, 'type' | 'typeVersion'>,
   purpose: 'work' | 'review',
 ) {
   const work = `${task.type}@${task.typeVersion}`;
-  const type = this.types.get(purpose === 'work' ? work : 'task.review@5');
+  const type = ctx.types.get(purpose === 'work' ? work : 'task.review@5');
   check(type, 'task_type_unavailable', 'Task context recipe is unavailable', 503);
   return type;
 }
@@ -148,24 +156,24 @@ export function contextType(
 /** The project, without its Introduction: Paper writes it from the Problem, whose sections
  * the paper's own items carry. */
 export async function projectContext(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   tx: Transaction,
 ): Promise<Data> {
-  const project = await this.scope.project(caller, tx);
+  const project = await ctx.scope.project(caller, tx);
   return { id: project.id, name: project.name, contextRevision: project.contextRevision ?? 0 };
 }
 
 /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */
 export async function contextInputs(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   task: Task,
   purpose: 'work' | 'review',
   review: ReviewRequest | undefined,
   tx: Transaction,
 ): Promise<Record<string, ContextInput>> {
-  const type = this.contextType(task, purpose);
+  const type = contextType(ctx, task, purpose);
   // Reverse links change when downstream work is added, independently of this assignment. The
   // checks reach a worker in the brief and a reviewer in the criteria, the goal in the brief,
   // the last round's notes in the feedback, and the delivery's confirmations in its pinned
@@ -186,8 +194,7 @@ export async function contextInputs(
   const { revisionContext: _feedback, ...data } = reviewData;
   const rendered =
     purpose === 'work' &&
-    (await this.artifacts.get(caller, task.briefId, tx)).hash ===
-      sha256Hex(renderBrief(task, true));
+    (await ctx.artifacts.get(caller, task.briefId, tx)).hash === sha256Hex(renderBrief(task, true));
   const assignmentTask =
     purpose === 'work'
       ? { ...work, ...(rendered ? {} : { acceptanceChecks }), workflow: { ...workflow, data } }
@@ -195,13 +202,13 @@ export async function contextInputs(
   // Worker contexts retain the offer's Introduction and paper even if they later change.
   const receipt = caller.session
     ? (JSON.parse(
-        (await this.currentLease(caller, task.id, task.workflow.revision, tx)).receipt,
+        (await currentLease(ctx, caller, task.id, task.workflow.revision, tx)).receipt,
       ) as Data)
     : null;
-  const project = receipt?.project ?? (await this.projectContext(caller, tx));
+  const project = receipt?.project ?? (await projectContext(ctx, caller, tx));
   const projectPaper = receipt
     ? (receipt.paper as unknown as ContextInput)
-    : await this.paper.contextInput(caller, type.definition.recipe.maxChars, tx);
+    : await ctx.paper.contextInput(caller, type.definition.recipe.maxChars, tx);
   const taskMetadata =
     JSON.stringify(assignmentTask) +
     `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}`;
@@ -228,7 +235,7 @@ export async function contextInputs(
       brief: { artifactIds: [task.briefId] },
     };
     if (typeof task.workflow.data.revisionContext === 'string') {
-      const previous = task.reviewId ? await this.reviews.get(caller, task.reviewId, tx) : null;
+      const previous = task.reviewId ? await ctx.reviews.get(caller, task.reviewId, tx) : null;
       const earlier = reviewHistory(
         await mapAsync(
           (Array.isArray(task.workflow.data.rejectedReviewIds)
@@ -236,7 +243,7 @@ export async function contextInputs(
             : []
           ).filter((id) => id !== task.reviewId),
           async (id) => {
-            const review = await this.reviews.get(caller, id, tx);
+            const review = await ctx.reviews.get(caller, id, tx);
             return { review, label: `Submitted evidence: ${review.artifactIds.join(', ')}` };
           },
         ),
@@ -260,7 +267,8 @@ export async function contextInputs(
       };
     }
   }
-  const checkpoints = await this.visibleCheckpoints(
+  const checkpoints = await visibleCheckpoints(
+    ctx,
     caller,
     task.id,
     purpose,
@@ -291,7 +299,7 @@ export async function contextInputs(
       type.definition.recipe.sections.some((section) => section.key === key),
     ),
   );
-  return await this.contextItems(caller, task, inputs, type, tx);
+  return await contextItems(ctx, caller, task, inputs, type, tx);
 }
 
 /**
@@ -299,7 +307,7 @@ export async function contextInputs(
  * item named by its title, embedded as ITEM_RULES says.
  */
 export async function contextItems(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   task: Task,
   inputs: Record<string, Source>,
@@ -328,7 +336,7 @@ export async function contextItems(
               }),
             ]
           : await mapAsync(input.artifactIds, async (id) =>
-              artifactItem(await this.artifacts.get(caller, id, tx), {
+              artifactItem(await ctx.artifacts.get(caller, id, tx), {
                 id: `${key}:${id}`,
                 ...rule,
               }),
@@ -339,9 +347,10 @@ export async function contextItems(
 }
 
 /** Admission uses domain facts only: never hydrate/evaluate here, which would recurse. */
-export async function workflowAssignmentFacts(this: TaskService, context: WorkflowCheckContext) {
+export async function workflowAssignmentFacts(ctx: TasksContext, context: WorkflowCheckContext) {
   const purpose = context.snapshot.state === 'in_review' ? ('review' as const) : ('work' as const);
-  const facts = await this.assignmentFacts(
+  const facts = await assignmentFacts(
+    ctx,
     context.caller,
     {
       taskId: context.snapshot.id,
@@ -355,26 +364,26 @@ export async function workflowAssignmentFacts(this: TaskService, context: Workfl
   // An assignment check may answer 503 as a blocker, so the Code gates live here and never in
   // the action rules a bare task.get evaluates: a stored Git task stays readable while Code is unavailable.
   if (facts.review)
-    await this.reviewCommit(context.caller, facts.workflow, facts.review, context.tx);
+    await reviewCommit(ctx, context.caller, facts.workflow, facts.review, context.tx);
   else {
-    await this.code.requireLeasable(
+    await ctx.code.requireLeasable(
       context.caller,
       { unitId: facts.workflow.id, writer: true },
       context.tx,
     );
   }
-  this.contextType({ type: facts.row.type_name, typeVersion: facts.row.type_version }, purpose);
+  contextType(ctx, { type: facts.row.type_name, typeVersion: facts.row.type_version }, purpose);
   return { ...facts, purpose };
 }
 
 export async function workflowAssignment(
-  this: TaskService,
+  ctx: TasksContext,
   context: WorkflowCheckContext,
 ): Promise<WorkflowAssignmentContent> {
   const { caller, tx } = context;
-  const { row, review, purpose } = await this.workflowAssignmentFacts(context);
-  const task = await this.hydrate(caller, row, tx);
-  const type = this.contextType(task, purpose);
+  const { row, review, purpose } = await workflowAssignmentFacts(ctx, context);
+  const task = await ctx.hydrate(caller, row, tx);
+  const type = contextType(ctx, task, purpose);
   const subject: ContextBuild['subject'] = {
     id: task.id,
     revision: task.workflow.revision,
@@ -384,12 +393,12 @@ export async function workflowAssignment(
     caller,
     {
       subject,
-      inputs: await this.contextInputs(caller, task, purpose, review, tx),
+      inputs: await contextInputs(ctx, caller, task, purpose, review, tx),
     },
     tx,
   );
   const needsClaim = purpose === 'review' && review?.status === 'requested';
-  const assisting = purpose === 'work' && !(await this.isProducer(caller, row, task.workflow, tx));
+  const assisting = purpose === 'work' && !(await isProducer(ctx, caller, row, task.workflow, tx));
   const instruction = assisting
     ? 'Support the assigned producer using this task context and save useful checkpoints. Only the assigned producer may submit the delivery; return your evidence to that producer.'
     : needsClaim
@@ -440,14 +449,14 @@ export async function workflowAssignment(
 }
 
 export async function workflowExecutionReferences(
-  this: TaskService,
+  ctx: TasksContext,
   { caller, snapshot, tx, dependencies }: WorkflowCheckContext,
 ): Promise<WorkflowExecutionReferences> {
-  const row = await this.row(tx, caller, snapshot.id);
-  const review = row.review_id ? await this.reviews.get(caller, row.review_id, tx) : undefined;
+  const row = await ctx.row(tx, caller, snapshot.id);
+  const review = row.review_id ? await ctx.reviews.get(caller, row.review_id, tx) : undefined;
   const contextInputs = JSON.parse(row.context_inputs) as Record<string, string[]>;
   const lease = caller.session
-    ? await this.currentLease(caller, snapshot.id, snapshot.revision, tx)
+    ? await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx)
     : null;
   return {
     // The native Sandboxes work kind a task binds compute under.
@@ -455,11 +464,11 @@ export async function workflowExecutionReferences(
     // Conflict resolution is service work: it gets no compute.
     ...(serviceOwned(snapshot.version) ? { computeProfile: 'none' } : {}),
     artifacts: lease
-      ? await this.leaseArtifactIds(caller, lease, tx)
+      ? await leaseArtifactIds(ctx, caller, lease, tx)
       : [
           ...new Set([
             row.brief_id,
-            ...((await this.captureArtifactIds(caller.projectId, row.id, tx)) ?? []),
+            ...((await ctx.captureArtifactIds(caller.projectId, row.id, tx)) ?? []),
             ...(JSON.parse(row.delivery_ids) as string[]),
             ...Object.values(contextInputs).flat(),
             ...(review?.artifactIds ?? []),
@@ -469,9 +478,9 @@ export async function workflowExecutionReferences(
     // What the runner bases the checkout on: the reviewer's on exactly the delivered commit, a
     // based producer's on the commit its accepted prerequisite delivered.
     ...(snapshot.state === 'in_review' && review
-      ? { code: await this.reviewCommit(caller, snapshot, review, tx) }
-      : await this.pinnedBase(caller, snapshot, tx)),
-    ...((await this.isProducer(caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
+      ? { code: await reviewCommit(ctx, caller, snapshot, review, tx) }
+      : await pinnedBase(ctx, caller, snapshot, tx)),
+    ...((await isProducer(ctx, caller, row, snapshot, tx)) ? { producerTaskId: row.id } : {}),
     ...(review ? { reviewId: review.id } : {}),
     ...(review?.status === 'started' && review.reviewerId === caller.actorId && review.claimId
       ? { claimId: review.claimId }
@@ -484,17 +493,17 @@ export async function workflowExecutionReferences(
  * an interactive producer has no checkout, and a leased one always finds its pin.
  */
 export async function pinnedBase(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   snapshot: WorkflowSnapshot,
   tx: Transaction,
 ): Promise<{ base?: string }> {
-  const pin = await this.code.basePin(caller, snapshot.id, tx);
+  const pin = await ctx.code.basePin(caller, snapshot.id, tx);
   return pin ? { base: pin.reference } : {};
 }
 
 export async function assignmentFacts(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: Omit<TaskContext, 'requestId'>,
   tx: Transaction,
@@ -508,15 +517,15 @@ export async function assignmentFacts(
     'Agent conversations direct tasks; a worker must produce the work',
     403,
   );
-  await this.scope.require(caller, input.purpose === 'review' ? 'review' : 'write', tx);
+  await ctx.scope.require(caller, input.purpose === 'review' ? 'review' : 'write', tx);
   check(
     input.purpose === 'review' || input.purpose === 'work',
     'invalid_context',
     'Unknown context purpose',
   );
-  const row = await this.row(tx, caller, input.taskId);
-  const workflow = known ?? (await this.workflows.get(caller, row.id, tx));
-  this.registration(workflow.version);
+  const row = await ctx.row(tx, caller, input.taskId);
+  const workflow = known ?? (await ctx.workflows.get(caller, row.id, tx));
+  ctx.registration(workflow.version);
   check(
     workflow.revision === input.expectedRevision,
     'revision_conflict',
@@ -530,10 +539,10 @@ export async function assignmentFacts(
       'Task is not awaiting review',
       409,
     );
-    const review = await this.reviews.get(caller, row.review_id, tx);
+    const review = await ctx.reviews.get(caller, row.review_id, tx);
     if (allowUnclaimedReview) {
       // Activation is not a claim. An eligible reviewer may inspect the open pinned request.
-      await this.reviews.checkStart(caller, review.id, tx);
+      await ctx.reviews.checkStart(caller, review.id, tx);
       check(
         review.subjectRevision === workflow.revision,
         'stale_claim',
@@ -554,7 +563,7 @@ export async function assignmentFacts(
         'Assignment must identify the current review claim',
         409,
       );
-      await this.reviews.checkSubmit(caller, review.id, undefined, tx);
+      await ctx.reviews.checkSubmit(caller, review.id, undefined, tx);
     }
     return { row, workflow, review };
   }
@@ -564,19 +573,19 @@ export async function assignmentFacts(
     'Task is not awaiting producer work',
     409,
   );
-  await this.producerOrAdmin(caller, row, workflow, tx);
+  await producerOrAdmin(ctx, caller, row, workflow, tx);
   check(input.claimId === undefined, 'invalid_context', 'Producer work does not use review claims');
   return { row, workflow };
 }
 
 export async function assignment(
-  this: TaskService,
+  ctx: TasksContext,
   caller: Caller,
   input: TaskContext,
   tx: Transaction,
 ): Promise<{ task: Task; review?: ReviewRequest }> {
-  const { row, review } = await this.assignmentFacts(caller, input, tx);
+  const { row, review } = await assignmentFacts(ctx, caller, input, tx);
   if (input.purpose === 'work')
-    requireDependencies((await this.workflows.prerequisites(caller, [row.id], tx)).get(row.id)!);
-  return { task: await this.hydrate(caller, row, tx), review };
+    requireDependencies((await ctx.workflows.prerequisites(caller, [row.id], tx)).get(row.id)!);
+  return { task: await ctx.hydrate(caller, row, tx), review };
 }
