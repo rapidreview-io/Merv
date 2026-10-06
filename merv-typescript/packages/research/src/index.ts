@@ -337,9 +337,9 @@ export class ResearchService implements Research {
       row.id,
     );
     const workflow = await this.workflows.get(caller, row.id, tx);
-    const selected = (await this.workflows.dependencies(caller, row.id, tx)).dependencies.filter(
-      (item) => !children.includes(item.id),
-    );
+    const selected = (await this.workflows.prerequisites(caller, [row.id], tx))
+      .get(row.id)!
+      .filter((item) => !children.includes(item.id));
     return {
       ...record,
       automation: automatic
@@ -620,9 +620,9 @@ export class ResearchService implements Research {
     }
     if (stage === 'researching') {
       const selection = new Set(record.researchDependencies);
-      const pending = (
-        await this.workflows.dependencies(caller, record.id, tx)
-      ).dependencies.filter((item) => selection.has(item.id) && !item.settled && !item.failed);
+      const pending = (await this.workflows.prerequisites(caller, [record.id], tx))
+        .get(record.id)!
+        .filter((item) => selection.has(item.id) && !item.settled && !item.failed);
       check(
         !pending.length,
         'dependencies_pending',
@@ -692,9 +692,9 @@ export class ResearchService implements Research {
     };
     if (stage === 'reflecting') return judged('complete', 'inject');
     const taskId = record.integrations.at(-1)!;
-    const task = (await this.workflows.dependencies(caller, record.id, tx)).dependencies.find(
-      (item) => item.id === taskId,
-    )!;
+    const task = (await this.workflows.prerequisites(caller, [record.id], tx))
+      .get(record.id)!
+      .find((item) => item.id === taskId)!;
     if (task.failed) {
       check(
         choice.retryIntegration,
@@ -1037,9 +1037,9 @@ export class ResearchService implements Research {
   ): Promise<Artifact | null> {
     if (record.digest) return record.digest;
     const children = this.children(record);
-    const selected = (await this.workflows.dependencies(caller, record.id, tx)).dependencies.filter(
-      (item) => !children.includes(item.id),
-    );
+    const selected = (await this.workflows.prerequisites(caller, [record.id], tx))
+      .get(record.id)!
+      .filter((item) => !children.includes(item.id));
     const needed: (keyof Capabilities)[] = [
       'artifacts',
       ...(selected.some((item) => item.workflow === 'task') ? (['tasks'] as const) : []),
@@ -1688,9 +1688,9 @@ export class ResearchService implements Research {
           remaining.delete(id);
           continue;
         }
-        const failed = (await this.workflows.dependencies(caller, id, tx)).dependencies.filter(
-          (item) => item.failed,
-        );
+        const failed = (await this.workflows.prerequisites(caller, [id], tx))
+          .get(id)!
+          .filter((item) => item.failed);
         if (!failed.length) continue;
         // Work between the selection and the failed input is not the cycle's own to reflect on.
         const after = record.researchDependencies.includes(id)

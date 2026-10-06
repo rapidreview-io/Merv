@@ -150,6 +150,7 @@ import type {
   WorkflowExecutionTarget,
   WorkflowHistoryEntry,
   WorkflowSnapshot,
+  WorkflowTransitionCount,
   WorkflowWorkspacePolicy,
 } from './workflow-models.js';
 export type {
@@ -158,6 +159,7 @@ export type {
   WorkflowExecutionTarget,
   WorkflowHistoryEntry,
   WorkflowSnapshot,
+  WorkflowTransitionCount,
   WorkflowWorkspacePolicy,
 } from './workflow-models.js';
 export type {
@@ -1727,7 +1729,7 @@ export interface WorkflowEvaluationInput {
   action?: string;
   input?: Data;
 }
-/** An instance as get() reads it, with its workStarts() and dependencies(). */
+/** An instance as get() reads it, with its workStarts() and both directions of its edges. */
 export interface WorkflowRecord {
   snapshot: WorkflowSnapshot;
   workStarts: WorkflowWorkStart[];
@@ -1802,6 +1804,12 @@ export interface Workflows {
     instanceIds: readonly string[],
     tx?: Transaction,
   ): Promise<Map<string, Omit<WorkflowSnapshot, 'data'>>>;
+  /** How often each instance made each move, without the moves' data, in one read per batch. */
+  transitionCounts(
+    projectId: string,
+    instanceIds: readonly string[],
+    tx?: Transaction,
+  ): Promise<Map<string, WorkflowTransitionCount[]>>;
   moves(
     projectId: string,
     match: { action: string; keys: readonly string[]; values: readonly string[] },
@@ -1843,23 +1851,10 @@ export interface Workflows {
     input: WorkflowExtendLimit,
     tx?: Transaction,
   ): Promise<WorkflowLimitStatus>;
-  limitStatus(
-    caller: Caller,
-    instanceId: string,
-    name: string,
-    tx?: Transaction,
-  ): Promise<WorkflowLimitStatus>;
-  dependencies(
-    caller: Caller,
-    instanceId: string,
-    tx?: Transaction,
-  ): Promise<{
-    dependencies: WorkflowDependency[];
-    dependents: WorkflowDependency[];
-  }>;
   /**
-   * get(), workStarts() and dependencies() of each of several instances, for a list of records,
-   * in a fixed number of reads however many. An id the project does not hold is left out.
+   * get(), workStarts(), prerequisites() and what depends on each of several instances, for a
+   * list of records, in a fixed number of reads however many. An id the project does not hold
+   * is left out.
    */
   records(
     caller: Caller,
@@ -1867,9 +1862,9 @@ export interface Workflows {
     tx?: Transaction,
   ): Promise<Map<string, WorkflowRecord>>;
   /**
-   * What each of several instances depends on, for a view of many that draws prerequisites
-   * only: each one's `dependencies` as dependencies() reads it, without what depends on it,
-   * in a fixed number of reads. An id the project does not hold depends on nothing.
+   * What each of several instances depends on, without what depends on it, in a fixed number
+   * of reads. An id the project does not hold depends on nothing; `requireDependencies` from
+   * `@merv/workflows/rules` refuses work whose prerequisites have not all settled.
    */
   prerequisites(
     caller: Caller,
@@ -1877,8 +1872,8 @@ export interface Workflows {
     tx?: Transaction,
   ): Promise<Map<string, WorkflowDependency[]>>;
   /**
-   * limitStatus of one limit for each of several instances, in a fixed number of reads per
-   * definition. An instance whose definition has no such limit is left out, not refused.
+   * Where one named loop limit stands for each of several instances, in a fixed number of reads
+   * per definition. An instance whose definition has no such limit is left out, not refused.
    */
   limitStatusOf(
     caller: Caller,
@@ -1886,7 +1881,6 @@ export interface Workflows {
     name: string,
     tx?: Transaction,
   ): Promise<Map<string, WorkflowLimitStatus>>;
-  checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void>;
   /**
    * The instance, everything it transitively depends on, and the children their policies
    * declare: the grouping a research cycle's usage and budget are read over.

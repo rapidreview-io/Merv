@@ -26,6 +26,14 @@ export interface WorkflowHistoryEntry {
   createdAt: string;
 }
 
+/** A move as history records it, and how many times the instance made it. */
+export type WorkflowTransitionCount = Pick<
+  WorkflowHistoryEntry,
+  'action' | 'fromState' | 'toState'
+> & {
+  count: number;
+};
+
 export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
 type WorkflowWorkspaceBase = 'central' | `reference:${string}`;
 /** Checkout intent only. References are resolved and Git facts verified by workspace preparation. */

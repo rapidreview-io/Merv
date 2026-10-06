@@ -440,9 +440,9 @@ test('two automatic waves preserve dependencies and lineage, then stop at the co
   assert.equal(second.previousCycleId, first.id);
   const work = Object.fromEntries(second.origin!.items.map((item) => [item.key, item.id]));
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, work.trial)).dependencies.map(
-      (item) => item.id,
-    ),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [work.trial]))
+      .get(work.trial)!
+      .map((item) => item.id),
     [work.input],
   );
   await f.failTask(work.input);

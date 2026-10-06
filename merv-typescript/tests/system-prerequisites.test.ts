@@ -1,3 +1,4 @@
+import { requireDependencies } from '@merv/workflows/rules';
 import { historicalTask } from './fixtures/historical-task.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -67,13 +68,17 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
     dependencies: [upstream.id],
   };
   for (let i = 0; i < 2; i++) await f.state.transaction((tx) => capability.replace(input, tx));
-  const edges = (await f.workflows.dependencies(f.admin, waiter.id)).dependencies;
+  const edges = (await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!;
   assert.equal(edges.length, 1);
   assert.equal(edges[0].kind, 'system');
   assert.equal(edges[0].owner, 'code');
-  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
-    code: 'dependencies_pending',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!),
+    {
+      code: 'dependencies_pending',
+    },
+  );
   await handle.transition(f.admin, {
     instanceId: upstream.id,
     action: 'fail',
@@ -92,14 +97,14 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
   await f.state.transaction((tx) =>
     f.workflows.systemPrerequisites('other').replace({ ...input, dependencies: [] }, tx),
   );
-  assert.equal((await f.workflows.dependencies(f.admin, waiter.id)).dependencies.length, 1);
+  assert.equal((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!.length, 1);
   await handle.addDependencies(f.admin, {
     instanceId: waiter.id,
     expectedRevision: 0,
     dependsOn: [upstream.id],
     requestId: 'declared',
   });
-  assert.equal((await f.workflows.dependencies(f.admin, waiter.id)).dependencies.length, 2);
+  assert.equal((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!.length, 2);
   await handle.addDependencies(f.admin, {
     instanceId: waiter.id,
     expectedRevision: 1,
@@ -107,9 +112,12 @@ test('provider prerequisites gate work without declaring failure', async (t) => 
     drop: [upstream.id],
     requestId: 'drop-declared',
   });
-  assert.equal((await f.workflows.dependencies(f.admin, waiter.id)).dependencies[0].kind, 'system');
+  assert.equal(
+    (await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)![0].kind,
+    'system',
+  );
   await f.state.transaction((tx) => capability.replace({ ...input, dependencies: [] }, tx));
-  await f.workflows.checkDependencies(f.admin, waiter.id);
+  requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!);
 });
 
 test('dependency messages judge failure over every edge and name each target once', async (t) => {
@@ -123,11 +131,15 @@ test('dependency messages judge failure over every edge and name each target onc
     dependencies: [upstream.id],
   };
   await f.state.transaction((tx) => f.workflows.systemPrerequisites('code').replace(input, tx));
-  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
-    code: 'dependencies_pending',
-    message:
-      'Work is waiting on unfinished dependencies: prerequisite Upstream (working, required by code).',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!),
+    {
+      code: 'dependencies_pending',
+      message:
+        'Work is waiting on unfinished dependencies: prerequisite Upstream (working, required by code).',
+    },
+  );
   // The provider's edge comes first; the declared one to the same target is the one named.
   await handle.addDependencies(f.admin, {
     instanceId: waiter.id,
@@ -136,23 +148,33 @@ test('dependency messages judge failure over every edge and name each target onc
     requestId: 'declared',
   });
   assert.deepEqual(
-    (await f.workflows.dependencies(f.admin, waiter.id)).dependencies.map((item) => item.kind),
+    (await f.workflows.prerequisites(f.admin, [waiter.id]))
+      .get(waiter.id)!
+      .map((item) => item.kind),
     ['system', undefined],
   );
-  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
-    code: 'dependencies_pending',
-    message: 'Work is waiting on unfinished dependencies: prerequisite Upstream (working).',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!),
+    {
+      code: 'dependencies_pending',
+      message: 'Work is waiting on unfinished dependencies: prerequisite Upstream (working).',
+    },
+  );
   await handle.transition(f.admin, {
     instanceId: upstream.id,
     action: 'fail',
     expectedRevision: 0,
     requestId: 'fail',
   });
-  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
-    code: 'dependency_failed',
-    message: 'A dependency has ended without succeeding: prerequisite Upstream (failed).',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!),
+    {
+      code: 'dependency_failed',
+      message: 'A dependency has ended without succeeding: prerequisite Upstream (failed).',
+    },
+  );
   const decision = await f.workflows.evaluate(f.admin, waiter.id);
   assert.equal(decision.currentGate, 'dependency_failed');
   assert.equal(
@@ -179,7 +201,7 @@ test('provider prerequisites are a set: replacing restores it by value', async (
       ),
     );
   const held = async () =>
-    (await f.workflows.dependencies(f.admin, waiter.id)).dependencies.map((item) => item.id);
+    (await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!.map((item) => item.id);
   // A to B and back to A at one revision: the last value wins, whatever was asked before.
   await replace([a.id]);
   await replace([b.id]);

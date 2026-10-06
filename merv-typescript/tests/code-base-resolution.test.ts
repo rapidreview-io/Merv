@@ -1,3 +1,4 @@
+import { requireDependencies } from '@merv/workflows/rules';
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import { pendingMerge, verifyResolution } from '../packages/code/src/pending-merge.js';
 import assert from 'node:assert/strict';
@@ -575,7 +576,8 @@ test('a resolution title names the contributing work on an intermediate union wi
   assert.match(task.goal, /\bD \(wf_/);
   assert.ok(!task.goal.includes('Implement'));
   assert.deepEqual(
-    (await f.workflows.dependencies(f.admin, waiter.id)).dependencies
+    (await f.workflows.prerequisites(f.admin, [waiter.id]))
+      .get(waiter.id)!
       .filter((edge) => edge.kind === 'system')
       .map((edge) => edge.id),
     [task.id],
@@ -709,9 +711,13 @@ test('Code unload preserves existing blockers and refuses new work', async (t) =
     decision.providerBlockers.some((blocker) => blocker.related.some((record) => record.id === id)),
   );
   assert.ok((await f.sessions.stuck(f.admin)).items.some((item) => item.instanceId === waiter.id));
-  await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
-    code: 'dependencies_pending',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!),
+    {
+      code: 'dependencies_pending',
+    },
+  );
   await assert.rejects(
     f.tasks.create(f.admin, {
       title: 'Note',
@@ -745,14 +751,20 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
   assert.equal(status.status, 'ready');
   const superset = await f.waiter([f.left, f.right, f.extra]);
   for (const waiter of [...waiters, superset]) {
-    const edges = (await f.workflows.dependencies(f.admin, waiter.id)).dependencies;
+    const edges = (await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!;
     assert.deepEqual(
       edges.filter((edge) => edge.kind === 'system').map((edge) => edge.id),
       [task.id],
     );
-    await assert.rejects(f.workflows.checkDependencies(f.admin, waiter.id), {
-      code: 'dependencies_pending',
-    });
+    await assert.rejects(
+      async () =>
+        requireDependencies(
+          (await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!,
+        ),
+      {
+        code: 'dependencies_pending',
+      },
+    );
     const blockers = await f.workflows.blockers(f.admin, waiter.id);
     assert.ok(
       blockers.some(
@@ -781,7 +793,7 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
   assert.equal((await f.record())!.result?.commit, resolved);
   const future = await f.waiter();
   for (const waiter of [...waiters, future]) {
-    await f.workflows.checkDependencies(f.admin, waiter.id);
+    requireDependencies((await f.workflows.prerequisites(f.admin, [waiter.id])).get(waiter.id)!);
     const pinned = await f.state.transaction((tx) =>
       f.code.pinBase(f.admin, { unitId: waiter.id, leaseId: waiter.id }, tx),
     );
@@ -792,9 +804,9 @@ test('one resolution task serves concurrent, indirect, and future waiters', asyn
       [f.left.id, f.right.id].sort(),
     );
     assert.equal(
-      (await f.workflows.dependencies(f.admin, waiter.id)).dependencies.filter(
-        (edge) => edge.kind === 'system',
-      ).length,
+      (await f.workflows.prerequisites(f.admin, [waiter.id]))
+        .get(waiter.id)!
+        .filter((edge) => edge.kind === 'system').length,
       1,
     );
   }
@@ -850,9 +862,9 @@ test('conflict recovery creates and links the task atomically', async (t) => {
     1,
   );
   assert.equal(
-    (await f.workflows.dependencies(f.admin, waiter.id)).dependencies.filter(
-      (item) => item.kind === 'system',
-    )[0].id,
+    (await f.workflows.prerequisites(f.admin, [waiter.id]))
+      .get(waiter.id)!
+      .filter((item) => item.kind === 'system')[0].id,
     record.resolutionTaskId,
   );
   await assert.rejects(
@@ -1204,9 +1216,9 @@ test('derivation ignores a system edge below a code-less success', async (t) => 
   assert.equal(status.status, 'blocked');
   if (status.status === 'blocked') assert.equal(status.blockers[0].code, 'code_merge_conflict');
   assert.equal(
-    (await f.workflows.dependencies(f.admin, waiter.id)).dependencies.filter(
-      (edge) => edge.kind === 'system',
-    )[0].id,
+    (await f.workflows.prerequisites(f.admin, [waiter.id]))
+      .get(waiter.id)!
+      .filter((edge) => edge.kind === 'system')[0].id,
     resolutionId,
   );
   assert.equal((await f.state.read((sql) => f.bases.records(sql, f.admin.projectId))).length, 1);
@@ -1407,7 +1419,8 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
         f.code.reconcileAll(),
       ]);
       assert.deepEqual(
-        (await f.workflows.dependencies(f.admin, future.id)).dependencies
+        (await f.workflows.prerequisites(f.admin, [future.id]))
+          .get(future.id)!
           .filter((edge) => edge.kind === 'system')
           .map((edge) => edge.id),
         [taskId],

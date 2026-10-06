@@ -1,3 +1,4 @@
+import { requireDependencies } from '@merv/workflows/rules';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { delegationEnd, type Caller, type Sql } from '@merv/contracts';
@@ -102,7 +103,7 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
       .map((index) => index.name),
     ['wf_dependencies_source', 'wf_dependencies_target'],
   );
-  const read = (await f.workflows.dependencies(f.admin, b.id)).dependencies;
+  const read = (await f.workflows.prerequisites(f.admin, [b.id])).get(b.id)!;
   assert.deepEqual(read, [
     {
       id: a.id,
@@ -116,9 +117,12 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
       failed: false,
     },
   ]);
-  await assert.rejects(f.workflows.checkDependencies(f.admin, b.id), {
-    code: 'dependencies_pending',
-  });
+  await assert.rejects(
+    async () => requireDependencies((await f.workflows.prerequisites(f.admin, [b.id])).get(b.id)!),
+    {
+      code: 'dependencies_pending',
+    },
+  );
   await assert.rejects(
     f.state.transaction((tx) =>
       tx.run(
@@ -139,7 +143,7 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
     expectedRevision: 0,
     requestId: 'finish-a',
   });
-  await f.workflows.checkDependencies(f.admin, b.id);
+  requireDependencies((await f.workflows.prerequisites(f.admin, [b.id])).get(b.id)!);
   await handle.transition(f.admin, {
     instanceId: b.id,
     action: 'fail',
@@ -158,7 +162,7 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
       tx,
     ),
   );
-  assert.equal((await f.workflows.dependencies(f.admin, c.id)).dependencies.length, 3);
+  assert.equal((await f.workflows.prerequisites(f.admin, [c.id])).get(c.id)!.length, 3);
   await handle.addDependencies(f.admin, {
     instanceId: c.id,
     expectedRevision: 0,
@@ -166,7 +170,7 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
     drop: [b.id],
     requestId: 'drop',
   });
-  const remaining = (await f.workflows.dependencies(f.admin, c.id)).dependencies;
+  const remaining = (await f.workflows.prerequisites(f.admin, [c.id])).get(c.id)!;
   assert.equal(remaining.length, 2);
   assert.equal(remaining.find((edge) => edge.id === b.id)!.kind, 'system');
   assert.equal((await f.workflows.evaluate(f.admin, c.id)).currentGate, 'dependencies_pending');
@@ -176,7 +180,7 @@ test('workflow prerequisites upgrade populated v6 dependencies without changing 
     dependsOn: [b.id],
     requestId: 'add',
   });
-  assert.equal((await f.workflows.dependencies(f.admin, c.id)).dependencies.length, 3);
+  assert.equal((await f.workflows.prerequisites(f.admin, [c.id])).get(c.id)!.length, 3);
 });
 
 test('service actor guards upgrade populated scope v7 and retain ordinary credentials and indexes', async (t) => {

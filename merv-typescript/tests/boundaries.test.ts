@@ -227,9 +227,10 @@ const sharedContract = (specifier: string) =>
     contractsRuntimeExports.has(specifier.slice('@merv/contracts/'.length)));
 
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
- * limits, and review independence and history. */
+ * limits, review independence and history, and the prerequisite guard. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
+  '@merv/workflows/rules',
   '@merv/experiments/rules',
   '@merv/reviews/rules',
   '@merv/reflections/names',

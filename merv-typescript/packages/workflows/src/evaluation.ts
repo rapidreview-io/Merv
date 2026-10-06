@@ -16,7 +16,7 @@ import type {
 } from '@merv/contracts';
 import { identifier, toolName, valid } from './definition.js';
 import { freezeData, workflowJson } from './json.js';
-import { requireDependencies } from './dependencies.js';
+import { requireDependencies } from './rules.js';
 import { validateExecution } from './execution.js';
 import { limitMessage, validateLimits } from './limits.js';
 

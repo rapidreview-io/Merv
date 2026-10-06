@@ -1,4 +1,5 @@
 import { excludedFromReview, requireDirecting, reviewHistory } from '@merv/reviews/rules';
+import { requireDependencies } from '@merv/workflows/rules';
 import {
   check,
   CheckedTransitions,
@@ -508,7 +509,9 @@ export class TaskService implements Tasks {
   private async leasedClaim(caller: Caller, snapshot: WorkflowSnapshot, tx: Transaction) {
     this.registration(snapshot.version);
     if (caller.session) return;
-    const limit = await this.workflows.limitStatus(caller, snapshot.id, 'review_rounds', tx);
+    const limit = (
+      await this.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
+    ).get(snapshot.id)!;
     check(
       limit.from === snapshot.state && limit.exhausted,
       'leased_review_required',
@@ -891,12 +894,9 @@ export class TaskService implements Tasks {
                     403,
                   );
                   await this.scope.require(caller, 'admin', tx);
-                  const limit = await this.workflows.limitStatus(
-                    caller,
-                    snapshot.id,
-                    'review_rounds',
-                    tx,
-                  );
+                  const limit = (
+                    await this.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
+                  ).get(snapshot.id)!;
                   check(
                     !limit.exhausted,
                     'workflow_limit_exhausted',
@@ -1008,12 +1008,10 @@ export class TaskService implements Tasks {
     verdict: 'pass' | 'needs_changes' | 'fail',
   ): Promise<string> {
     if (verdict === 'needs_changes' && serviceOwned(context.snapshot.version)) {
-      const limit = await this.workflows.limitStatus(
-        context.caller,
-        context.snapshot.id,
-        'review_rounds',
-        context.tx,
-      );
+      const { caller, snapshot, tx } = context;
+      const limit = (
+        await this.workflows.limitStatusOf(caller, [snapshot.id], 'review_rounds', tx)
+      ).get(snapshot.id)!;
       if (limit.exhausted) return 'revise_suspended';
     }
     return { pass: 'accept', needs_changes: 'revise', fail: 'fail_review' }[verdict];
@@ -2185,7 +2183,8 @@ export class TaskService implements Tasks {
     tx: Transaction,
   ): Promise<{ task: Task; review?: ReviewRequest }> {
     const { row, review } = await this.assignmentFacts(caller, input, tx);
-    if (input.purpose === 'work') await this.workflows.checkDependencies(caller, row.id, tx);
+    if (input.purpose === 'work')
+      requireDependencies((await this.workflows.prerequisites(caller, [row.id], tx)).get(row.id)!);
     return { task: await this.hydrate(caller, row, tx), review };
   }
   async checkpoint(caller: Caller, input: TaskCheckpointInput): Promise<TaskCheckpoint> {
@@ -2409,7 +2408,9 @@ export class TaskService implements Tasks {
         ? null
         : counted
           ? (counted.get(row.id) ?? null)
-          : await this.workflows.limitStatus(caller, row.id, 'review_rounds', tx);
+          : (await this.workflows.limitStatusOf(caller, [row.id], 'review_rounds', tx)).get(
+              row.id,
+            )!;
     const review =
       row.state === 'in_review' && row.review_id
         ? await this.reviews.get(caller, row.review_id, tx).catch(absent)

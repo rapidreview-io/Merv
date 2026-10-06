@@ -519,14 +519,16 @@ test('dependency facts survive provider unload and restart', async () => {
     const a = await f.create(),
       b = await f.create(a.id);
     await f.app.setEnabled('tasks', false);
-    const persisted = await f.app.ctx.workflows.dependencies(f.producer.caller, b.id);
+    const persisted = (await f.app.ctx.workflows.prerequisites(f.producer.caller, [b.id])).get(
+      b.id,
+    )!;
     assert.deepEqual(
-      persisted.dependencies.map((item) => item.id),
+      persisted.map((item) => item.id),
       [a.id],
     );
     const unavailable = await f.app.ctx.workflows.evaluate(f.producer.caller, b.id);
     assert.equal(unavailable.available, false);
-    assert.deepEqual(unavailable.dependencies, persisted.dependencies);
+    assert.deepEqual(unavailable.dependencies, persisted);
     await f.app.setEnabled('tasks', true);
     await assertWaiting(f, b);
     await f.verdict(await f.deliver(a), 'pass');
@@ -535,7 +537,7 @@ test('dependency facts survive provider unload and restart', async () => {
     restarted = await createApp({ directory: f.directory });
     assert.deepEqual(await restarted.ctx.tasks.get(f.producer.caller, b.id), ready);
     assert.deepEqual(
-      (await restarted.ctx.workflows.dependencies(f.producer.caller, b.id)).dependencies,
+      (await restarted.ctx.workflows.prerequisites(f.producer.caller, [b.id])).get(b.id)!,
       ready.dependencies,
     );
     await restarted.setEnabled('workflows', false);

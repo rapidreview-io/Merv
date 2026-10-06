@@ -16,22 +16,20 @@ import type {
   WorkflowProvidedBlockerInput,
   WorkflowPinned,
   WorkflowRelations,
+  WorkflowTransitionCount,
 } from '@merv/contracts';
 import { readBlockers, replaceBlockers } from './blockers.js';
 import { persistContract, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';
 import { validatePolicy } from './evaluation.js';
 import { readWorkStarts } from './assignments.js';
-import { limitStatus, limitStatusOf } from './limits.js';
+import { limitStatusOf } from './limits.js';
 import {
   attachDependencies,
   dependents,
   instanceRelations,
   normalizeDependencies,
   prerequisites,
-  prerequisitesOf,
-  relations,
-  requireDependencies,
 } from './dependencies.js';
 import { batches, type InstanceRow, type Registration } from './engine.js';
 import { WorkflowCommands } from './commands.js';
@@ -193,6 +191,32 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     });
   }
 
+  async transitionCounts(projectId: string, instanceIds: readonly string[], tx?: Transaction) {
+    this.assertOpen();
+    return await this.read(tx, async (tx) => {
+      const found = new Map(instanceIds.map((id) => [id, [] as WorkflowTransitionCount[]]));
+      for (const part of batches([...found.keys()]))
+        for (const row of await tx.all<{
+          instance_id: string;
+          action: string;
+          from_state: string | null;
+          to_state: string;
+          n: number;
+        }>(
+          `SELECT instance_id,action,from_state,to_state,COUNT(*) AS n FROM wf_history WHERE project_id=? AND instance_id IN (${part.map(() => '?').join(',')}) GROUP BY instance_id,action,from_state,to_state`,
+          projectId,
+          ...part,
+        ))
+          found.get(row.instance_id)!.push({
+            action: row.action,
+            fromState: row.from_state,
+            toState: row.to_state,
+            count: Number(row.n),
+          });
+      return found;
+    });
+  }
+
   async moves(
     projectId: string,
     match: { action: string; keys: readonly string[]; values: readonly string[] },
@@ -250,33 +274,6 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
           },
         ]),
       );
-    });
-  }
-
-  async limitStatus(
-    caller: Caller,
-    instanceId: string,
-    name: string,
-    tx?: Transaction,
-  ): Promise<WorkflowLimitStatus> {
-    return await this.reading(caller, tx, async (tx, caller) => {
-      const snapshot = await this.readSnapshot(tx, caller.projectId, instanceId);
-      const limit = this.definition(snapshot.workflow, snapshot.version).policy?.limits?.find(
-        (item) => item.name === name,
-      );
-      check(limit, 'unknown_limit', 'This workflow has no such limit', 404);
-      return await limitStatus(tx, limit, instanceId);
-    });
-  }
-
-  async dependencies(
-    caller: Caller,
-    instanceId: string,
-    tx?: Transaction,
-  ): ReturnType<Workflows['dependencies']> {
-    return await this.reading(caller, tx, async (tx, caller) => {
-      await this.readSnapshot(tx, caller.projectId, instanceId);
-      return await relations(tx, this.contracts, caller.projectId, instanceId);
     });
   }
 
@@ -408,14 +405,6 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
         instanceRelations(tx, this.contracts, projectId, instanceId),
       ),
     );
-  }
-
-  /** Reads only what the instance depends on, never what depends on it. */
-  async checkDependencies(caller: Caller, instanceId: string, tx?: Transaction): Promise<void> {
-    await this.reading(caller, tx, async (tx, caller) => {
-      await this.readSnapshot(tx, caller.projectId, instanceId);
-      requireDependencies(await prerequisitesOf(tx, caller.projectId, instanceId));
-    });
   }
 
   /**

@@ -298,7 +298,7 @@ test('an empty research cycle completes after approved reflection without consol
   record = await f.advance(record);
   assert.equal(record.workflow.state, 'reflecting');
   assert.equal(
-    (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies[0].id,
+    (await f.app.ctx.workflows.prerequisites(f.owner, [record.id])).get(record.id)![0].id,
     record.reflectionId,
   );
   assert.equal(
@@ -313,7 +313,10 @@ test('an empty research cycle completes after approved reflection without consol
   assert.equal(record.workflow.state, 'complete');
   // New cycles observe failed outcomes instead of requiring successful experiments.
   assert.equal(record.workflow.version, 6);
-  assert.equal((await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.length, 1);
+  assert.equal(
+    (await f.app.ctx.workflows.prerequisites(f.owner, [record.id])).get(record.id)!.length,
+    1,
+  );
   assert.ok(!f.app.status().some(({ id }) => id.startsWith('consolidation')));
   await assert.rejects(async () => await f.advance(record), { code: 'research_complete' });
   assert.equal((await f.app.ctx.paper.read(f.owner)).proposals.length, 0);
@@ -411,9 +414,9 @@ test('accepted code of a retired instance is history no cycle integrates', async
   const moved = await advance();
   assert.equal(moved.workflow.state, 'consolidating');
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, moved.integrations[0]!)).dependencies.map(
-      (d) => d.id,
-    ),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [moved.integrations[0]!]))
+      .get(moved.integrations[0]!)!
+      .map((d) => d.id),
     [accepted.id],
   );
   // With nothing else unpublished, the cycle completes at approval as if main held it all.
@@ -455,14 +458,14 @@ test('accepted code main lacks injects one consolidation task marked to publish,
   );
   assert.equal(task.checks.length, 3);
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, taskId)).dependencies.map((d) => d.id),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [taskId])).get(taskId)!.map((d) => d.id),
     [accepted.id],
   );
   // The task is a child the cycle waits on, not part of the wave it reflected over.
   assert.ok(
-    (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.some(
-      (d) => d.id === taskId,
-    ),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [record.id]))
+      .get(record.id)!
+      .some((d) => d.id === taskId),
   );
   assert.deepEqual(moved.researchDependencies, []);
   assert.deepEqual(
@@ -536,7 +539,10 @@ test('a publication main overtook injects a successor task on what main lacks no
   const [, second] = again.integrations;
   assert.deepEqual(published, [first, second]);
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, second)).dependencies.map((d) => d.id).sort(),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [second]))
+      .get(second)!
+      .map((d) => d.id)
+      .sort(),
     [accepted.id, first].sort(),
   );
   assert.equal((await advanced(f, record.id)).at(-1).to, 'consolidating');
@@ -792,21 +798,15 @@ test('a digest reads selected experiments only and preserves chronological recor
     throw new Error('No all-tasks scan');
   });
   // A target may have both declared and provider-owned edges; retain one record.
-  const dependencies = f.app.ctx.workflows.dependencies.bind(f.app.ctx.workflows);
+  const prerequisites = f.app.ctx.workflows.prerequisites.bind(f.app.ctx.workflows);
   t.mock.method(
     f.app.ctx.workflows,
-    'dependencies',
-    async (...args: Parameters<typeof dependencies>) => {
-      const result = await dependencies(...args);
-      return args[1] === cycle.id
-        ? {
-            ...result,
-            dependencies: [
-              ...result.dependencies,
-              { ...result.dependencies[0], kind: 'system' as const, owner: 'test-provider' },
-            ],
-          }
-        : result;
+    'prerequisites',
+    async (...args: Parameters<typeof prerequisites>) => {
+      const result = await prerequisites(...args);
+      const edges = result.get(cycle.id);
+      if (edges) edges.push({ ...edges[0]!, kind: 'system' as const, owner: 'test-provider' });
+      return result;
     },
   );
   const reads = t.mock.method(f.app.ctx.experiments, 'get');
@@ -1078,7 +1078,8 @@ test('research owner authorization, project scoping, selected prerequisite succe
   const widened = await replan([selected.id, spare.id]);
   assert.deepEqual(widened.progress, { settled: 0, total: 2 });
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies
+    (await f.app.ctx.workflows.prerequisites(f.owner, [record.id]))
+      .get(record.id)!
       .map((item) => item.id)
       .sort(),
     [selected.id, spare.id].sort(),
@@ -1099,7 +1100,9 @@ test('research owner authorization, project scoping, selected prerequisite succe
   );
   record = await replan([selected.id]);
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, record.id)).dependencies.map((i) => i.id),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [record.id]))
+      .get(record.id)!
+      .map((i) => i.id),
     [selected.id],
   );
   await handle.transition(f.owner, {
@@ -1459,7 +1462,7 @@ test('completing a cycle with nextWave create opens the approved plan as work an
     [...Object.values(ids), carried.id].sort(),
   );
   const depends = async (id: string) =>
-    (await f.app.ctx.workflows.dependencies(f.owner, id)).dependencies.map((entry) => entry.id);
+    (await f.app.ctx.workflows.prerequisites(f.owner, [id])).get(id)!.map((entry) => entry.id);
   assert.deepEqual((await depends(ids.ordering)).sort(), [ids.corpus, ids.harness].sort());
   assert.deepEqual(await depends(ids.writeup), [ids.ordering]);
   const writeup = await f.app.ctx.tasks.get(f.owner, ids.writeup);
@@ -1774,9 +1777,9 @@ test('a plan creates only managed Git work atomically and replayably', async (t)
   assert.equal(experiment.workflow.version, 36);
   assert.equal(experiment.workflow.data.baseTaskId, undefined);
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, experiment.id)).dependencies.map(
-      (item) => item.id,
-    ),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [experiment.id]))
+      .get(experiment.id)!
+      .map((item) => item.id),
     [coded.id],
   );
   assert.equal(
@@ -1829,9 +1832,9 @@ test('a materialised hosted experiment waits on its hosted task and pins no base
   // base: automatic-base 'one accepted commit becomes the base...' pins it from an acceptance,
   // and runner-code-v2-integration accepts a hosted task's commit in Code end to end.
   assert.deepEqual(
-    (await f.app.ctx.workflows.dependencies(f.owner, experiment.id)).dependencies.map(
-      (dependency) => dependency.id,
-    ),
+    (await f.app.ctx.workflows.prerequisites(f.owner, [experiment.id]))
+      .get(experiment.id)!
+      .map((dependency) => dependency.id),
     [task.id],
   );
 });
