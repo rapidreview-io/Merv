@@ -8,6 +8,34 @@ no-store`. PUT accepts `{token}`; no browser or MCP endpoint reads a token back.
 The Settings → Session form uses a masked input, clears it on submission, and
 never persists it in browser storage.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    browser["Browser person"]
+    workerAgent["Worker agent"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    secrets["Secrets<br/><small>Hugging Face token and broker</small>"]:::self
+    api["API"]
+    sessions["Sessions"]
+    state["State"]
+  end
+  subgraph externalLayer["External"]
+    huggingFace["Hugging Face"]
+  end
+  browser -- "HTTP /secrets/huggingface" --> api
+  workerAgent -- "HTTP /hf" --> api
+  secrets -- "mounts /secrets, /hf" --> api
+  secrets -- "injects" --> state
+  sessions -- "authorizes HF grants" --> secrets
+  secrets -- "proxies downloads" --> huggingFace
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+```
+
+A person stores the token once through Settings; after that only the `/hf` broker uses it. Each worker request there is authorized by Sessions, and Secrets adds the account's token on the way to Hugging Face.
+
 The deployment environment variable `MERV_SECRETS_ENCRYPTION_KEY` must contain
 43 characters: the canonical unpadded base64url encoding of exactly 32 random
 bytes. Plugin configuration names the key environment variable through `encryptionKeyEnv`,

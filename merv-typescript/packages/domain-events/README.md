@@ -2,6 +2,42 @@
 
 Provides `domainEvents`; requires only `state`. This is durable business-event delivery, separate from Cordis's in-memory lifecycle events. No tools, message broker or external worker is required.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph foundationsLayer["Foundations"]
+    domainEvents["Domain events<br/><small>durable delivery</small>"]:::self
+    state["State<br/><small>event log</small>"]
+    scope["Scope"]
+    sessions["Sessions"]
+    workflows["Workflows"]
+    reviews["Reviews"]
+    codeWork["Code work"]
+    sandboxes["Sandboxes"]
+  end
+  subgraph researchLayer["Research logic"]
+    tasks["Tasks"]
+    experiments["Experiments"]
+    reflections["Reflections"]
+    research["Research"]
+  end
+  scope -- "emits actor.revoked" --> state
+  sessions -- "emits session.closed" --> state
+  workflows -- "emits workflow.transition" --> state
+  domainEvents -- "injects" --> state
+  domainEvents -- "delivers actor.revoked" --> reviews
+  domainEvents -- "delivers workflow.transition" --> codeWork
+  domainEvents -- "delivers workflow.transition" --> sandboxes
+  domainEvents -- "delivers workflow.transition" --> research
+  domainEvents -- "delivers session.closed" --> tasks
+  domainEvents -- "delivers session.closed" --> experiments
+  domainEvents -- "delivers session.closed" --> reflections
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+```
+
+Publishers never call Domain events: they append to State's log in their own transaction, and the dispatcher reads that log and hands each event to the consumers subscribed to its type. Closing a session, for example, releases the task, experiment and reflection leases it held.
+
 Publishers append events through State in the same transaction as their change. They do not depend on delivery being available. Consumers register a stable ID, distinct event types, an explicit first-install position (`beginning` or `now`), and a handler that may await database operations. Reinstalling the same ID always resumes its persisted cursor. Changing subscribed types requires a new ID and an explicit replay choice.
 
 The dispatcher processes the event log in sequence for each consumer. It awaits the handler before committing its effects and the consumer cursor in one State transaction. Rejected handlers roll back both; a separate transaction records a sanitized error code, retry deadline and attempt count. A failed consumer stops at its failed event; other consumers continue. No event is silently skipped. `await ctx.domainEvents.status()` exposes active consumers, progress and failures. The shared dispatcher uses post-commit wakeups, bounded batches, retry backoff with a wakeup when the earliest retry is due, and a one-second safety wakeup to discover commits from another State connection. Each pass starts with one lock-free read of the event head and every consumer's cursor and retry deadline, and skips consumers that are in backoff or already at the head, so an idle dispatcher takes no writer transactions. A run of events a consumer does not subscribe to is passed in one delivery transaction. Background storage failures are contained and retried; explicit `drain()` callers receive failures that cannot be recorded.

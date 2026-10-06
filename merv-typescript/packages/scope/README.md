@@ -4,6 +4,39 @@ Scope owns project membership, actors, actor credentials and user keys, delegati
 
 Its adapters publish it: `@merv/scope/tools` and `@merv/scope/api`, which mounts the HTTP routes `/account` (the caller's account and user keys) and `/projects` (projects and memberships) on the API. The browser's Settings → Members page reads these account routes directly; its `/people` compatibility redirect does not require a Scope UI plugin.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    browser["Browser person"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    scope["Scope<br/><small>membership, actors, permissions</small>"]:::self
+    api["API<br/><small>HTTP and tool registry</small>"]
+    sessions["Sessions"]
+    reviews["Reviews"]
+    codeWork["Code work"]
+    identity["Identity"]
+    state["State"]
+  end
+  subgraph researchLayer["Research logic"]
+    researchLogic["Tasks, Experiments, Knowledge,<br/>Reflections, Research, Paper"]
+  end
+  browser -- "HTTP /account, /projects" --> api
+  api -- "injects" --> scope
+  scope -- "mounts routes, tools" --> api
+  sessions -- "injects" --> scope
+  researchLogic -- "injects" --> scope
+  scope -- "injects" --> state
+  scope -- "imports ledger" --> identity
+  scope -- "emits actor.revoked" --> reviews
+  scope -- "emits project.created" --> codeWork
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+```
+
+Scope is the authority almost every plugin injects: the API resolves each caller through it, and research logic and Sessions check permissions with it. Its own changes leave as domain events, such as `actor.revoked` for Reviews and `project.created` for Code work.
+
 ## Contracts kept on purpose
 
 - **Credential liveness.** Scope's `actor_credentials` and `user_keys` rows are provenance. Identity's credential ledger co-decides whether one is live, and only for a ledger row it records as owned by `scope` with the Scope row's id as subject. A ledger denial surfaces as 401, also inside a permission decision, whose other refusals are 403. Every credential or key revocation (`revokeCredential`, `revokeKey`, and the retirement of a rotated predecessor) also revokes the ledger row (`ledger.ts`); a rotation is refused when the ledger had already revoked its predecessor or never held it. A Scope row whose hash the ledger does not hold never authenticates; boot does not adopt such rows.

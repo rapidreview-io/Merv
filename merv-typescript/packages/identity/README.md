@@ -5,6 +5,37 @@ credential ledger exposed by `@merv/identity/credentials`. Scope owns authorizat
 Sessions and Pi own agent, execution and runtime lifecycles. Credential subjects
 reference those existing records. Identity has no project membership or agent roster.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph peopleLayer["People & agents"]
+    browser["Browser person"]
+  end
+  subgraph foundationsLayer["Foundations"]
+    identity["Identity<br/><small>JWT verifier and credential ledger</small>"]:::self
+    api["API"]
+    scope["Scope"]
+    sessions["Sessions"]
+    pi["Pi"]
+    state["State"]
+  end
+  subgraph externalLayer["External"]
+    supabase["Supabase Auth"]
+  end
+  browser -- "signs in" --> supabase
+  browser -- "HTTP with JWT" --> api
+  api -- "injects" --> identity
+  identity -- "fetches JWKS" --> supabase
+  scope -- "imports ledger" --> identity
+  sessions -- "imports ledger" --> identity
+  pi -- "imports ledger" --> identity
+  identity -- "reads/writes ledger" --> state
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+```
+
+Identity has two users. The API injects the verifier to turn a browser's Supabase token into an `{issuer, subject}`; Scope, Sessions and Pi import `@merv/identity/credentials` and run the shared ledger in their own State transactions.
+
 ## Verifier
 
 The plugin needs no other capability; it provides `ctx.identity` with `verify` and
