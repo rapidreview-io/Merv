@@ -20,6 +20,7 @@ const { TaskChecks } = await import('../packages/ui/web/views/tasks.js');
 const { fileInput } = await import('../packages/ui/web/views/artifacts.js');
 const { CreateResearch, CycleMove, chained, currentCycle } =
   await import('../packages/ui/web/views/work.js');
+const { researchUiPlugin } = await import('../packages/research/src/ui.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { setToken } = await import('../packages/ui/web/api.js');
 
@@ -642,6 +643,18 @@ const cycleGate = (state: string, advance: Record<string, unknown>) => ({
   },
 });
 const sent: Record<string, unknown>[] = [];
+/** The Cycles row as Research registers it: the choices a gate asks for are named there. */
+const cyclesRow = (() => {
+  const rows: { id: string; path: string; view: { kind: string } }[] = [];
+  researchUiPlugin.apply({
+    research: {},
+    effect: (register: () => unknown) => register(),
+    ui: { register: (row: (typeof rows)[number]) => rows.push(row) },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any);
+  const { id, path, view } = rows.find((row) => row.view.kind === 'research')!;
+  return { id, path, view };
+})();
 const researchShape = {
   name: 'research',
   version: 1,
@@ -650,7 +663,7 @@ const researchShape = {
   terminal: ['complete', 'abandoned'],
   edges: [],
 };
-const page = (state: string) => {
+const page = (state: string, rows: unknown[] = [cyclesRow]) => {
   sent.length = 0;
   serve('/tools/research.advance', (_call, body) => {
     sent.push(body);
@@ -663,7 +676,7 @@ const page = (state: string) => {
     createElement(CycleMove as any, {
       cycle: cycle(state),
       // The deployed shape says where a cycle ends; the page knows no end state of its own.
-      shell: { rows: [], plugins: [], workflows: [researchShape] },
+      shell: { rows, plugins: [], workflows: [researchShape] },
       onSaved() {},
     }),
   );
@@ -735,6 +748,41 @@ test('a consolidation task that ended without acceptance is retried from the pag
   await click('Retry consolidation');
   assert.equal(sent[0]!.retryIntegration, true);
   assert.equal(sent[0]!.nextWave, undefined);
+});
+
+test('a choice the gate asks for is drawn as Research names it, and nothing in its place', async (t) => {
+  t.after(unmount);
+  const asked = cycleGate('consolidating', {
+    status: 'needs_input',
+    requiredInput: ['nextWave'],
+    blockers: [{ code: 'input_required', status: 400, message: 'Supply nextWave.' }],
+  });
+  serve('/tools/workflow.status_and_next', asked);
+  // Whatever Research declares is what the page offers, sent as declared.
+  const declared = {
+    ...cyclesRow,
+    view: {
+      kind: 'research',
+      answers: [
+        {
+          when: 'asks',
+          name: 'nextWave',
+          moves: [{ label: 'Open the plan', input: { nextWave: 'create' } }],
+        },
+      ],
+    },
+  };
+  await mount(page('consolidating', [declared]));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Open the plan', false]]);
+  await click('Open the plan');
+  assert.equal(sent[0]!.nextWave, 'create');
+  await unmount();
+  // A choice Research does not name is not invented: the plain move stands.
+  serve('/tools/workflow.status_and_next', asked);
+  await mount(page('consolidating', []));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Start next step', false]]);
 });
 
 test('a ready gate is the one move, and it sends nothing it was not asked for', async (t) => {
@@ -825,7 +873,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       createElement(CycleMove as any, {
         cycle: { ...cycle('reflecting'), reflectionId: 'wf_wave' },
-        shell: { rows: [], plugins: [] },
+        shell: { rows: [cyclesRow], plugins: [] },
         listed,
         onSaved() {},
       }),

@@ -1,7 +1,27 @@
 import type { Context } from 'cordis';
 import type { Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
+import type { ResearchAnswer } from './models.js';
 import type {} from './types.js';
+
+/** What an advance may ask a cycle's owner to choose, and what each choice sends. */
+const answers = [
+  // An approved plan that continues: open its work and the next cycle, or complete without them.
+  {
+    when: 'asks',
+    name: 'nextWave',
+    moves: [
+      { label: 'Create next wave', input: { nextWave: 'create' } },
+      { label: 'Skip next wave', input: { nextWave: 'skip' } },
+    ],
+  },
+  // A consolidation task that ended without acceptance: inject a fresh one.
+  {
+    when: 'refused',
+    name: 'integration_failed',
+    moves: [{ label: 'Retry consolidation', input: { retryIntegration: true } }],
+  },
+] satisfies ResearchAnswer[];
 export const researchUiPlugin = {
   name: 'merv-research-ui',
   inject: ['research', 'ui'],
@@ -27,7 +47,7 @@ export const researchUiPlugin = {
         order: 14,
         path: '/research',
         workflow: 'research',
-        view: { kind: 'research' },
+        view: { kind: 'research', answers },
         home: {
           tool: 'research.list',
           keep: [
