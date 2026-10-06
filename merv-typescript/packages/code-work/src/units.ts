@@ -46,73 +46,14 @@ import type {
 import {
   WorkUnitRecords,
   oid,
+  publicationBlockers,
+  type PublicationStanding,
   unitColumns,
   type AcceptanceBody,
   type BaseBody,
   type UnitRow,
 } from './unit-store.js';
 
-/**
- * What an open publication means for the unit that is waiting on it. A done unit carrying one
- * of these is not failing and is not work anybody can take: it is a fact about where its
- * accepted code stands, and every one of them names who ends the wait.
- */
-function publicationBlockers(publication: CodeUnitPublication): WorkflowProvidedBlockerInput[] {
-  if (publication.state === 'published') return [];
-  const pull = publication.pull;
-  const named = pull ? ` (pull request #${pull.number})` : '';
-  const related = pull ? [{ kind: 'pull-request', id: pull.url, label: `#${pull.number}` }] : [];
-  const said = {
-    pending: {
-      code:
-        publication.destination === 'local'
-          ? 'code_publication_local_pending'
-          : 'code_publication_pending',
-      message:
-        publication.destination === 'local'
-          ? 'waiting for the reviewed commit to be integrated into Merv main'
-          : 'waiting on publication: a signed-in operator merges the pull request',
-      next:
-        publication.destination === 'local'
-          ? 'Nothing: Code integrates the reviewed commit by itself within a minute, as the project owner; a project with no owner needs code.publication.sync. No GitHub connection is required.'
-          : pull
-            ? `A signed-in project operator merges pull request #${pull.number} with code.publication.merge; nothing here is owed by an agent.`
-            : 'Nothing: Code opens the pull request by itself within a minute, as the project owner (a project with no owner needs code.publication.sync), and a signed-in operator merges it.',
-    },
-    stale: {
-      code: 'code_publication_stale',
-      message: `main moved; a successor task integrates it${named}`,
-      next: 'Create the successor work that takes this accepted commit and the newer main; this unit stays as it is.',
-    },
-    setup_required: {
-      code: 'code_publication_setup_required',
-      message: `publication setup is incomplete${named}`,
-      next: "An operator fixes what code.status names (the publication's lastError, its required merge-safety check or rules visibility); Code then continues and a signed-in operator merges the reviewed pull request.",
-    },
-    disabled: {
-      code: 'code_publication_disabled',
-      message: `publication was disabled after failed enforcement${named}`,
-      next: 'An administrator repairs enforcement, records a passing canary for this App and its rules, and clears any disablement with code.publication.control.',
-    },
-    closed: {
-      code: 'code_publication_closed',
-      message: `the pull request was closed without merging${named}`,
-      next: 'An operator creates the successor work that carries this accepted commit to main.',
-    },
-    unsealed: {
-      code: 'code_publish_unverifiable',
-      message:
-        'this unit was declared to publish to main, but its acceptance could not open a publication',
-      next: 'An administrator reads code.status for this unit and creates the successor work that carries its accepted code to main; this unit stays as it is.',
-    },
-    incident: {
-      code: 'code_publication_incident',
-      message: `a publication incident is retained for this unit${named}`,
-      next: 'An administrator investigates the observed merge commit in code.status.publication; a retry never clears it.',
-    },
-  }[publication.state];
-  return [{ key: 'publication', status: 409, related, ...said }];
-}
 /** What a derivation finds; only `ready` carries a body a lease may pin. */
 type Derived =
   | { status: 'waiting' }
@@ -1330,7 +1271,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
     sql: Sql,
     projectId: string,
     row: UnitRow,
-  ): Promise<CodeUnitPublication | null> {
+  ): Promise<PublicationStanding | null> {
     const publication = await super.publicationOf(sql, projectId, row);
     if (publication?.state !== 'pending') return publication;
     if (publication.destination === 'local') return publication;

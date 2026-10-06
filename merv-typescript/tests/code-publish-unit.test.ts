@@ -1109,6 +1109,10 @@ test('a pull request closed unmerged wakes whoever waits on its publication', as
   f.remote!.pulls[0].state = 'closed';
   await f.sync();
   assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'closed');
+  assert.deepEqual(
+    (await f.code.unit(f.admin, work.id)).publication?.blockers.map((blocker) => blocker.code),
+    ['code_publication_closed'],
+  );
   assert.deepEqual(await staleWakes(f), ['closed']);
   await f.sync();
   assert.deepEqual(await staleWakes(f), ['closed'], 'a settled publication wakes nobody again');

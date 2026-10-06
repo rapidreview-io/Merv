@@ -15,6 +15,7 @@ import {
   sourceCaller,
   type Caller,
   type CodePublication,
+  type CodePublicationState,
   type GitHubPullRequest,
   type Scope,
   type Sql,
@@ -82,6 +83,24 @@ const IDLE = 600_000;
 const reading = (pull: GitHubPullRequest | null) =>
   pull ? `${pull.number} ${pull.url} ${pull.state === 'closed' && !pull.merged}` : '';
 
+/** Merv's one word for where a publication stands; it also says where its verdict stands. */
+export const publicationState = (p: Omit<CodePublication, 'state'>): CodePublicationState =>
+  p.destination === 'local' && p.verified
+    ? 'integrated'
+    : p.lastError
+      ? 'blocked'
+      : p.pull?.merged
+        ? 'merged'
+        : p.review && p.review.verdict !== 'pass'
+          ? 'returned'
+          : p.pull?.state === 'closed'
+            ? 'closed'
+            : p.review?.verdict === 'pass' && p.pull && !p.pull.draft
+              ? 'ready'
+              : p.pull
+                ? 'draft'
+                : 'pending';
+
 /** A durable external publication of immutable code facts. The domain alone supplies the review verdict. */
 export class CodePublicationService implements CodePublicationApi {
   constructor(
@@ -95,7 +114,7 @@ export class CodePublicationService implements CodePublicationApi {
     await migratePublications(this.state);
   }
   private decode(row: Row): CodePublication {
-    return {
+    const record: Omit<CodePublication, 'state'> = {
       ...JSON.parse(row.record_json),
       ...(row.binding_json !== 'null'
         ? ((b) => ({
@@ -113,6 +132,7 @@ export class CodePublicationService implements CodePublicationApi {
       merge: row.merge_json ? JSON.parse(row.merge_json) : null,
       lastError: row.error,
     };
+    return { ...record, state: publicationState(record) };
   }
   private async row(caller: Caller, id: string, tx: Transaction) {
     await this.scope.require(caller, 'read', tx);
@@ -132,7 +152,7 @@ export class CodePublicationService implements CodePublicationApi {
     this.state.assertTransaction(tx);
     const destination = (await this.github.linked(caller.projectId, tx)) ? 'github' : 'local';
     const at = now();
-    const record: CodePublication = {
+    const record: Omit<CodePublication, 'state'> = {
       destination,
       proposalId: input.publicationId,
       instanceId: input.unitId,

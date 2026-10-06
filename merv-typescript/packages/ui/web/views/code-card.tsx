@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type {
   CodeBaseCheck,
-  CodeBaseControlInput,
+  CodeBaseAction,
   CodeBaseRecord,
   CodeUnit,
 } from '@merv/contracts/code-work-models';
@@ -149,30 +149,7 @@ function Verb({
   return danger ? <span className="act-danger">{control}</span> : control;
 }
 
-/** An operator's verb on a base: each is the tool `code.base.<verb>`. */
-type BaseAction = CodeBaseControlInput['action'] | 'release';
-
-/**
- * What may still be done to a base, which is the server's own rule rather than a guess:
- * only infrastructure work is retried, only a suspended base resumes, and a base that
- * resolved or was cancelled has reached its end. A quarantined base takes one verb, its
- * release, once someone has verified the alarm was false.
- */
-export function verbsOf(base: CodeBaseRecord): BaseAction[] {
-  // An inherited quarantine (code-work's INHERITED_QUARANTINE) is lifted by releasing its source.
-  if (base.quarantined)
-    return base.operatorReason?.startsWith('Input inherits quarantine from ') ? [] : ['release'];
-  const open = !['resolved', 'cancelled'].includes(base.state);
-  const actions: BaseAction[] = [];
-  if (open && ['blocked_infra', 'retry_wait'].includes(base.state)) actions.push('retry');
-  if (open && base.state !== 'suspended') actions.push('suspend');
-  if (open && base.state === 'suspended') actions.push('resume');
-  if (open) actions.push('cancel');
-  actions.push('quarantine');
-  return actions;
-}
-
-const SAID: Record<BaseAction, [string, string, string]> = {
+const SAID: Record<CodeBaseAction, [string, string, string]> = {
   retry: [
     'Retry merge',
     'Retry this merge?',
@@ -268,7 +245,7 @@ function BaseBody({
   manages: boolean;
   onDone(): void;
 }) {
-  const [open, setOpen] = useState<BaseAction | null>(null);
+  const [open, setOpen] = useState<CodeBaseAction | null>(null);
   const of = (commit: string) => units.find((unit) => unit.acceptance?.reference === commit);
   const parents = (base.parents ?? []).flatMap((commit) => (commit ? [commit] : []));
   const waiters = waitersOf(base, units);
@@ -359,7 +336,7 @@ function BaseBody({
         <div className="cluster code-verbs">
           {/* While a guard is open it is the only verb drawn, so no other sentence's
               control stands a press away from this one's confirmation. */}
-          {verbsOf(base)
+          {base.actions
             .filter((action) => !open || open === action)
             .map((action) => {
               const [label, title, says] = SAID[action];

@@ -42,8 +42,12 @@ const MEASURED = 1440;
   disconnect() {}
 };
 const { UnitCode } = await import('../packages/ui/web/views/code-section.js');
-const { firstPersonMove, personMove, publicationBlocker } =
-  await import('@merv/code-work/blockers');
+const { firstPersonMove, personMove } = await import('@merv/code-work/blockers');
+// What the server sends with each record: a base's verbs, a unit publication's blockers and a
+// publication's word, each by Code Work's own rule.
+const { actionsOf } = await import('../packages/code-work/src/bases.js');
+const { publicationBlockers } = await import('../packages/code-work/src/unit-store.js');
+const { publicationState } = await import('../packages/code-work/src/publications.js');
 
 const row = {
   id: 'code',
@@ -228,7 +232,17 @@ test('an empty managed repository is visible before GitHub is connected', async 
 /* The model ---------------------------------------------------------------- */
 
 /** A unit as Code reports one, with only what the drawing reads spelled out. */
-const unit = (id: string, over: Partial<CodeUnit> = {}): CodeUnit => ({
+type Standing = Omit<NonNullable<CodeUnit['publication']>, 'blockers'>;
+const unit = (
+  id: string,
+  {
+    publication,
+    ...over
+  }: Partial<Omit<CodeUnit, 'publication'>> & {
+    publication?: Standing | null;
+  } = {},
+): CodeUnit => ({
+  publication: publication ? { ...publication, blockers: publicationBlockers(publication) } : null,
   unitId: id,
   workflow: 'task',
   version: 1,
@@ -237,7 +251,6 @@ const unit = (id: string, over: Partial<CodeUnit> = {}): CodeUnit => ({
   base: null,
   baseStatus: { status: 'waiting' },
   acceptance: null,
-  publication: null,
   generation: 0,
   writerState: 'idle',
   canonicalHead: null,
@@ -270,29 +283,35 @@ const accepted = (commit: string): CodeUnitAcceptance => ({
   reviewAttached: true,
   storage: 'code',
 });
-const base = (key: string, over: Partial<CodeBaseRecord>): CodeBaseRecord => ({
-  key,
-  members: [],
-  left: 'l',
-  right: 'r',
-  parents: [null, null],
-  state: 'waiting_inputs',
-  quarantined: false,
-  result: null,
-  conflict: null,
-  checkState: 'none',
-  check: null,
-  resolutionTaskId: null,
-  resolutionError: null,
-  attempts: 0,
-  executionEpoch: 1,
-  deadline: null,
-  sponsors: [],
-  blocker: null,
-  operatorReason: null,
-  updatedAt: '2026-09-03T00:00:00.000Z',
-  ...over,
-});
+const base = (key: string, over: Partial<CodeBaseRecord>): CodeBaseRecord => {
+  const record = {
+    key,
+    members: [],
+    left: 'l',
+    right: 'r',
+    parents: [null, null],
+    state: 'waiting_inputs',
+    quarantined: false,
+    result: null,
+    conflict: null,
+    checkState: 'none',
+    check: null,
+    resolutionTaskId: null,
+    resolutionError: null,
+    attempts: 0,
+    executionEpoch: 1,
+    deadline: null,
+    sponsors: [],
+    blocker: null,
+    operatorReason: null,
+    updatedAt: '2026-09-03T00:00:00.000Z',
+    ...over,
+  };
+  return {
+    ...record,
+    actions: over.actions ?? actionsOf(record.state, record.quarantined, record.operatorReason),
+  };
+};
 const receipt = (id: string, head: string, add: number): CodeCommandRecord => ({
   command: {
     id: `cmd_${head}`,
@@ -329,26 +348,29 @@ const receipt = (id: string, head: string, add: number): CodeCommandRecord => ({
   },
   error: null,
 });
-const published = (over: Partial<CodePublication> = {}): CodePublication => ({
-  proposalId: 'p1',
-  instanceId: 'u7',
-  manifestHash: 'mh',
-  repository: 'lab/grokking',
-  repositoryId: 1,
-  connectionRevision: 1,
-  branch: 'merv/publish/p1',
-  baseBranch: 'main',
-  baseOid: 'c0',
-  headOid: 'g1',
-  treeOid: 't',
-  title: 'Wave one',
-  createdAt: '2026-09-05T00:00:00.000Z',
-  review: { id: 'r', actorId: 'a', verdict: 'pass', recordedAt: '' },
-  pull: null,
-  lastError: null,
-  merge: { requestId: 'q', actorId: 'a', expectedBase: 'c0', requestedAt: '', commitSha: 'g1' },
-  ...over,
-});
+const published = (over: Partial<CodePublication> = {}): CodePublication => {
+  const record: Omit<CodePublication, 'state'> = {
+    proposalId: 'p1',
+    instanceId: 'u7',
+    manifestHash: 'mh',
+    repository: 'lab/grokking',
+    repositoryId: 1,
+    connectionRevision: 1,
+    branch: 'merv/publish/p1',
+    baseBranch: 'main',
+    baseOid: 'c0',
+    headOid: 'g1',
+    treeOid: 't',
+    title: 'Wave one',
+    createdAt: '2026-09-05T00:00:00.000Z',
+    review: { id: 'r', actorId: 'a', verdict: 'pass', recordedAt: '' },
+    pull: null,
+    lastError: null,
+    merge: { requestId: 'q', actorId: 'a', expectedBase: 'c0', requestedAt: '', commitSha: 'g1' },
+    ...over,
+  };
+  return { ...record, state: over.state ?? publicationState(record) };
+};
 const openPull = (base: string, updatedAt: string) => ({
   id: 3,
   number: 3,
@@ -2062,26 +2084,19 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
     assert.ok(!/code\.|workflow\.|merv /.test(said(code)!.sentence), code);
 });
 
-test('a unit’s own publication is read as the blocker Code publishes about it', () => {
-  assert.equal(publicationBlocker(null), null);
-  assert.equal(publicationBlocker({ state: 'published', mergeCommit: 'm' }), null);
-  assert.deepEqual(publicationBlocker({ state: 'pending' }), { code: 'code_publication_pending' });
-  assert.deepEqual(
-    publicationBlocker({ state: 'stale', pull: { number: 12, url: 'https://x/12' } }),
-    {
-      code: 'code_publication_stale',
-      related: [{ kind: 'pull-request', id: 'https://x/12', label: '#12' }],
-    },
-  );
-  assert.equal(publicationBlocker({ state: 'unsealed' })?.code, 'code_publish_unverifiable');
-  assert.equal(
-    publicationBlocker({ state: 'setup_required' })?.code,
-    'code_publication_setup_required',
-  );
+test('a unit’s own publication carries the blocker Code publishes about it', () => {
+  const said = (publication: Standing) => publicationBlockers(publication)[0];
+  assert.equal(said({ state: 'published', mergeCommit: 'm' }), undefined);
+  assert.equal(said({ state: 'pending' })?.code, 'code_publication_pending');
+  assert.equal(said({ state: 'pending' })?.related.length, 0);
+  const stale = said({ state: 'stale', pull: { number: 12, url: 'https://x/12' } });
+  assert.equal(stale?.code, 'code_publication_stale');
+  assert.deepEqual(stale?.related, [{ kind: 'pull-request', id: 'https://x/12', label: '#12' }]);
+  assert.equal(said({ state: 'unsealed' })?.code, 'code_publish_unverifiable');
+  assert.equal(said({ state: 'setup_required' })?.code, 'code_publication_setup_required');
   // A pending publication carries a pull only once one exists, and the move follows the
   // fact: nothing to merge, so nothing offers a merge.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  assert.equal(personMove(publicationBlocker({ state: 'pending' }) as any)?.control, undefined);
+  assert.equal(personMove(said({ state: 'pending' })!)?.control, undefined);
   // The first one whose move is a person's leads, and a list of quiet codes leads nothing.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const first = firstPersonMove([held('code_base_wait'), held('code_quarantined')] as any);
@@ -2165,8 +2180,10 @@ test('a unit waiting on its publication says so, and shows where that publicatio
   assert.equal(pull?.getAttribute('href'), 'https://github.com/x/y/pull/7');
   assert.ok(pull?.textContent?.includes('#7'), pull?.textContent ?? '');
   assert.equal(line.querySelector('.code-refusal'), null, 'a wait is not a refusal');
-  // The server's own instruction is not on this read, so no fold is drawn at all.
-  assert.equal(document.querySelector('details.ov-said'), null, said);
+  // The publication carries the blocker Code publishes, so its instruction is folded as on
+  // Needs you.
+  const fold = document.querySelector('details.ov-said')?.textContent ?? '';
+  assert.ok(fold.includes('code.publication.merge'), fold);
 });
 
 test('the merge is offered to the signed-in operator alone, and said to everyone', async (t) => {
@@ -2601,9 +2618,10 @@ test('the same move drawn inside the canvas offers no control back to the canvas
 test('a local integration waits on the server without promising a GitHub pull request', async (t) => {
   t.after(unmount);
   serve('/tools/ui.home', { body: { result: {} } });
-  assert.deepEqual(publicationBlocker({ state: 'pending', destination: 'local' }), {
-    code: 'code_publication_local_pending',
-  });
+  assert.equal(
+    publicationBlockers({ state: 'pending', destination: 'local' })[0]?.code,
+    'code_publication_local_pending',
+  );
   await mount(
     createElement(
       MemoryRouter,
@@ -2624,13 +2642,10 @@ test('a local integration waits on the server without promising a GitHub pull re
   assert.doesNotMatch(text(), /pull request|signed-in operator|Merge reviewed proposal/);
 });
 
-test('only a quarantine an operator set is offered for release; an inherited one goes with its source', async () => {
-  const { verbsOf } = await import('../packages/ui/web/views/code-card.js');
-  const own = base('b1', { quarantined: true, operatorReason: 'Leaked a credential' });
-  assert.deepEqual(verbsOf(own), ['release']);
-  const inherited = base('b2', {
-    quarantined: true,
-    operatorReason: `Input inherits quarantine from ${'a'.repeat(64)}`,
-  });
-  assert.deepEqual(verbsOf(inherited), []);
+test('only a quarantine an operator set is offered for release; an inherited one goes with its source', () => {
+  assert.deepEqual(actionsOf('queued', true, 'Leaked a credential'), ['release']);
+  assert.deepEqual(
+    actionsOf('queued', true, `Input inherits quarantine from ${'a'.repeat(64)}`),
+    [],
+  );
 });

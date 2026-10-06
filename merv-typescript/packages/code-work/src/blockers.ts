@@ -194,50 +194,6 @@ export function personMove(blocker: CodeBlocker, names?: NameLookup): PersonMove
   }
 }
 
-/**
- * What this reads of a unit's `CodeUnitPublication`, by shape: the browser bundle imports
- * this module and must not load the server's contracts index.
- */
-interface Publication {
-  destination?: 'local' | 'github';
-  state: string;
-  pull?: { number: number; url: string };
-}
-
-/** The code Code publishes for a unit whose publication has not reached main. */
-const PUBLICATION: Partial<Record<string, string>> = {
-  pending: 'code_publication_pending',
-  stale: 'code_publication_stale',
-  setup_required: 'code_publication_setup_required',
-  disabled: 'code_publication_disabled',
-  closed: 'code_publication_closed',
-  unsealed: 'code_publish_unverifiable',
-  incident: 'code_publication_incident',
-};
-
-/**
- * A record's own page reads its unit and not the project's blockers, so the one Code
- * publishes about a publication is remade here from the very fact it is made from. It
- * carries no `next`: the server's instruction is not on that read, and an absent one
- * renders nothing.
- */
-export function publicationBlocker(
-  publication: Publication | null | undefined,
-): CodeBlocker | null {
-  const code =
-    publication?.destination === 'local' && publication.state === 'pending'
-      ? 'code_publication_local_pending'
-      : publication && PUBLICATION[publication.state];
-  if (!code) return null;
-  const pull = publication!.pull;
-  return {
-    code,
-    ...(pull
-      ? { related: [{ kind: 'pull-request', id: pull.url, label: `#${pull.number}` }] }
-      : {}),
-  };
-}
-
 /** The first blocker of a list whose next move is a person's, with that move. */
 export function firstPersonMove(
   blockers: readonly CodeBlocker[],

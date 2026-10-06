@@ -4,7 +4,7 @@ import type { CodeUnit } from '@merv/contracts/code-work-models';
 import { Ago, CopyButton, KV, Short, StatusPill, Summary, cx, words } from '../components';
 import { ArrowRightIcon, ExternalIcon } from '../icons';
 import { RecordLink, useRecordNames, type RecordNames } from '../markdown';
-import { firstPersonMove, publicationBlocker } from '@merv/code-work/blockers';
+import { firstPersonMove } from '@merv/code-work/blockers';
 
 /**
  * What Git holds for one record, on the record's own page: the branch a writer stands
@@ -113,7 +113,7 @@ export function UnitCode({
   const held = firstPersonMove(
     [
       ...(unit.baseStatus?.status === 'blocked' ? unit.baseStatus.blockers : []),
-      ...[publicationBlocker(publication)].filter((item) => !!item),
+      ...(publication?.blockers ?? []),
     ],
     names,
   );

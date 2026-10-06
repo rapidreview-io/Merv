@@ -1,6 +1,14 @@
 import type { GitHubPullRequest } from './github-models.js';
 
+/**
+ * Merv's one word for where a publication stands, which also says where its verdict stands:
+ * integrated into Merv main or merged on GitHub, blocked by an error, returned by its review,
+ * closed unmerged, ready to merge, a draft, or not opened yet.
+ */
+export type CodePublicationState =
+  'integrated' | 'blocked' | 'merged' | 'returned' | 'closed' | 'ready' | 'draft' | 'pending';
 export interface CodePublication {
+  state: CodePublicationState;
   /** Frozen when the reviewed work is sealed; linking GitHub never retargets it. */
   destination?: 'local' | 'github';
   proposalId: string;

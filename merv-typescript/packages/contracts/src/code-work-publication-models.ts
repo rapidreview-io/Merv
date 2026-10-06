@@ -1,4 +1,5 @@
 /** Portable work-unit publication status without runtime schema dependencies. */
+import type { WorkflowProvidedBlockerInput } from './workflow-guidance.js';
 /**
  * Where a unit that publishes its accepted code to main stands. Null for every unit that
  * does not publish, and for one that is marked but not accepted yet: publication begins at
@@ -20,4 +21,6 @@ export interface CodeUnitPublication {
   pull?: { number: number; url: string };
   /** The verified merge commit on main; present only once `published`. */
   mergeCommit?: string;
+  /** What this state holds the unit's work for and who ends the wait; none once published. */
+  blockers: WorkflowProvidedBlockerInput[];
 }

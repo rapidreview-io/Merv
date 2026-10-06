@@ -224,7 +224,11 @@ export interface CodeBaseRecord {
   blocker: string | null;
   operatorReason: string | null;
   updatedAt: string;
+  /** What an operator may still do to this base, by the server's own rule. */
+  actions: CodeBaseAction[];
 }
+/** An operator's verb on a base: each is the tool `code.base.<verb>`. */
+export type CodeBaseAction = CodeBaseControlInput['action'] | 'release';
 
 /** Operator disposition of one retained base; every request retains its reason. */
 export interface CodeBaseControlInput {

@@ -85,6 +85,7 @@ test('pull request creation recovers a lost response and readies exactly that pu
   const ready = (await syncing)[0];
   assert.equal(ready.lastError, null);
   assert.equal(ready.pull?.draft, false);
+  assert.equal(ready.state, 'ready');
   assert.equal(ready.review?.verdict, 'pass');
   assert.equal(f.pulls.length, 1);
   await f.sync();

@@ -22,6 +22,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { CodeWriterService } from '@merv/code/writers';
@@ -88,8 +89,87 @@ export interface PublicationRow {
 }
 const publicationColumns =
   'p.record_json,p.pull_json,p.merge_json,p.incident_json,p.error,p.stale,p.verified';
+/** A publication's standing, before the blockers it holds its unit's work for are said. */
+export type PublicationStanding = Omit<CodeUnitPublication, 'blockers'>;
+/**
+ * The blocker code of each standing that holds a unit's work; a pending local integration has
+ * its own. A publication wait is the one opinion Code keeps about work that has ended.
+ */
+const PUBLICATION_CODE = {
+  pending: 'code_publication_pending',
+  stale: 'code_publication_stale',
+  setup_required: 'code_publication_setup_required',
+  disabled: 'code_publication_disabled',
+  closed: 'code_publication_closed',
+  unsealed: 'code_publish_unverifiable',
+  incident: 'code_publication_incident',
+} as const;
+export const PUBLICATION_CODES: ReadonlySet<string> = new Set(Object.values(PUBLICATION_CODE));
+/**
+ * What an open publication means for the unit that is waiting on it. A done unit carrying one
+ * of these is not failing and is not work anybody can take: it is a fact about where its
+ * accepted code stands, and every one of them names who ends the wait.
+ */
+export function publicationBlockers(
+  publication: PublicationStanding,
+): WorkflowProvidedBlockerInput[] {
+  if (publication.state === 'published') return [];
+  const pull = publication.pull;
+  const named = pull ? ` (pull request #${pull.number})` : '';
+  const related = pull ? [{ kind: 'pull-request', id: pull.url, label: `#${pull.number}` }] : [];
+  const said = {
+    pending: {
+      code:
+        publication.destination === 'local'
+          ? 'code_publication_local_pending'
+          : PUBLICATION_CODE.pending,
+      message:
+        publication.destination === 'local'
+          ? 'waiting for the reviewed commit to be integrated into Merv main'
+          : 'waiting on publication: a signed-in operator merges the pull request',
+      next:
+        publication.destination === 'local'
+          ? 'Nothing: Code integrates the reviewed commit by itself within a minute, as the project owner; a project with no owner needs code.publication.sync. No GitHub connection is required.'
+          : pull
+            ? `A signed-in project operator merges pull request #${pull.number} with code.publication.merge; nothing here is owed by an agent.`
+            : 'Nothing: Code opens the pull request by itself within a minute, as the project owner (a project with no owner needs code.publication.sync), and a signed-in operator merges it.',
+    },
+    stale: {
+      code: PUBLICATION_CODE.stale,
+      message: `main moved; a successor task integrates it${named}`,
+      next: 'Create the successor work that takes this accepted commit and the newer main; this unit stays as it is.',
+    },
+    setup_required: {
+      code: PUBLICATION_CODE.setup_required,
+      message: `publication setup is incomplete${named}`,
+      next: "An operator fixes what code.status names (the publication's lastError, its required merge-safety check or rules visibility); Code then continues and a signed-in operator merges the reviewed pull request.",
+    },
+    disabled: {
+      code: PUBLICATION_CODE.disabled,
+      message: `publication was disabled after failed enforcement${named}`,
+      next: 'An administrator repairs enforcement, records a passing canary for this App and its rules, and clears any disablement with code.publication.control.',
+    },
+    closed: {
+      code: PUBLICATION_CODE.closed,
+      message: `the pull request was closed without merging${named}`,
+      next: 'An operator creates the successor work that carries this accepted commit to main.',
+    },
+    unsealed: {
+      code: PUBLICATION_CODE.unsealed,
+      message:
+        'this unit was declared to publish to main, but its acceptance could not open a publication',
+      next: 'An administrator reads code.status for this unit and creates the successor work that carries its accepted code to main; this unit stays as it is.',
+    },
+    incident: {
+      code: PUBLICATION_CODE.incident,
+      message: `a publication incident is retained for this unit${named}`,
+      next: 'An administrator investigates the observed merge commit in code.status.publication; a retry never clears it.',
+    },
+  }[publication.state];
+  return [{ key: 'publication', status: 409, related, ...said }];
+}
 /** What a stored publication says of itself, before any enforcement is read. */
-function storedPublication(publication: PublicationRow): CodeUnitPublication {
+function storedPublication(publication: PublicationRow): PublicationStanding {
   const { destination } = JSON.parse(publication.record_json) as {
     destination?: 'local' | 'github';
   };
@@ -333,7 +413,7 @@ export class WorkUnitRecords {
     sql: Sql,
     projectId: string,
     row: UnitRow,
-  ): Promise<CodeUnitPublication | null> {
+  ): Promise<PublicationStanding | null> {
     if (!row.publication_id)
       // Declared to publish, accepted, and nothing opened: its own facts could not be sealed.
       return row.publishes_at && row.acceptance_json ? { state: 'unsealed' } : null;
@@ -405,7 +485,9 @@ export class WorkUnitRecords {
       base,
       baseStatus: base ? { status: 'pinned', pin: base } : null,
       acceptance: this.acceptance(row),
-      publication: await this.publicationOf(tx, row.project_id, row),
+      publication: await this.publicationOf(tx, row.project_id, row).then(
+        (standing) => standing && { ...standing, blockers: publicationBlockers(standing) },
+      ),
       ...(await this.writers.facts(tx, row.project_id, row.unit_id)),
     };
   }
