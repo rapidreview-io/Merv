@@ -391,8 +391,10 @@ ignored if set, and may be removed from the env file.
 The list used to protect against renting retained machines on an image nobody had proved could
 run several sessions in sequence safely. That proof is now automatic: the hosted release's
 workflow gate (`linux-workflow-gate.py`, run against the exact candidate on every boundary
-release, before any push or switch) enrolls the image's supervisor with a work-host bootstrap,
-runs two Codex steps in one retained working directory with fresh credentials, and between them
+release, before any push or switch) enrolls the image's supervisor with a work-host bootstrap
+and lets it run one step of the work item through to its release (its runner, Code driver,
+retained workspace and Codex launch, with only the launcher's attestation, which the isolation
+gate proves, set aside), runs two Codex steps in one retained working directory with fresh credentials, and between them
 resets through the supervisor's own launcher (`assignment-probed.py --reset`), checking that a
 detached assignment process is killed, private home and temp state is gone, and the step's files
 are kept. A worker-lane release changes only the Pi worker bundle, so its image keeps the gated

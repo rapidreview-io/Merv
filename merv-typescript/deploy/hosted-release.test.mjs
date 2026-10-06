@@ -160,6 +160,7 @@ test('a gate passes only when every report line passes', () => {
     true,
   );
   assert.equal(passed(workflow({ sessionBearerUnreadableFromShell: false }), dispatch), false);
+  assert.equal(passed(workflow({ workHostStepRan: false }), dispatch), false);
 });
 
 test('every boundary image must prove it can be a work host before its release switches', () => {
@@ -175,6 +176,28 @@ test('every boundary image must prove it can be a work host before its release s
   assert.match(gate, /supervise\(\{'workInstanceId': work_instance\}\)/);
   assert.ok(gate.includes(`['${launcher}', '--reset']`), 'the gate resets as the supervisor does');
   assert.match(gate, /'retainedCodexLaunches': 2/);
+  // Main answers the enrollment, so the image's supervisor builds its runner with the work-host
+  // config and runs one step through to its release: Codex launched by the runner, calling the
+  // relay with the step's own bearer, and presence naming exactly the enrolled capabilities.
+  assert.match(gate, /return self\.reply\(\{'controlToken': control_token\}\)/);
+  assert.match(gate, /assert step_released\.wait\(\d+\)/);
+  assert.match(gate, /assert step_relayed\.is_set\(\)/);
+  const enrolled = text('packages/fleet/src/hosted-codex.ts').match(
+    /hostedCodexCapabilities = Object\.freeze\((\[[^\]]*\])\)/,
+  )[1];
+  const capabilities = [...JSON.parse(enrolled.replaceAll("'", '"')), 'workflow.workhost.1'].sort();
+  assert.ok(
+    gate.includes(
+      `b['capabilities'] == ${JSON.stringify(capabilities).replaceAll('"', "'").replaceAll(',', ', ')}`,
+    ),
+    capabilities.join(),
+  );
+  assert.match(gate, /'workHostStepRan': True/);
+  // Only the attestation, which the isolation gate proves, is set aside for that step: the
+  // stand-in runs the probed launcher's own assignment launcher, and the original comes back.
+  assert.match(text('scripts/hosted-runner/assignment-probed.py'), /return assignment\.main\(\)/);
+  assert.match(gate, /raise SystemExit\(assignment\.main\(\)\)/);
+  assert.match(gate, /finally:\n    LAUNCHER\.write_bytes\(original_launcher\)/);
   assert.ok(GATES.boundary.includes('linux-workflow-gate.py'));
   // A worker-lane image differs only in the Pi worker, so it keeps its gated supervisor and reset.
   assert.deepEqual(py('print(json.dumps(vm.WORKER_FILES))'), [
