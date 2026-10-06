@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdirSync } from 'node:fs';
+import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync } from 'node:fs';
 
 /**
  * A directory only this machine's user may enter, which the runner's ledger and every workspace
@@ -20,4 +20,14 @@ export function privateDirectory(
     throw refuse();
   chmodSync(path, 0o700);
   return path;
+}
+
+/** Flush a file's bytes or a directory's entries before a durable journal moves past them. */
+export function syncPath(path: string): void {
+  const fd = openSync(path, 'r');
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }

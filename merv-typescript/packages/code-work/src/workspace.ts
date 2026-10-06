@@ -1,7 +1,4 @@
-import type { WorkflowWorkspacePolicy } from '@merv/contracts';
-
-/** The workspace driver of Code-managed Git checkouts. */
-export const CODE_DRIVER = 'code.v2';
+import { CODE_DRIVER, type WorkflowWorkspacePolicy } from '@merv/contracts';
 
 /**
  * The checkout a step of Code-managed work runs in. Work keeps one persistent checkout per

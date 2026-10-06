@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { CodeGitHubService } from '@merv/code/github';
+import { checkPassed } from '@merv/code/github-client';
 import type { CodeUnitStore } from '@merv/code/units';
 import { parseCodeInput } from '@merv/code/input';
 import { migratePublications } from './publications-schema.js';
@@ -796,11 +797,7 @@ export class CodePublicationService implements CodePublicationApi {
               inspection.checks,
             )) &&
               (inspection.statusCount === 0 || inspection.commitStatus === 'success') &&
-              inspection.checks.every(
-                (c) =>
-                  c.status === 'completed' &&
-                  ['success', 'neutral', 'skipped'].includes(c.conclusion ?? ''),
-              ),
+              inspection.checks.every(checkPassed),
             'github_checks_pending',
             'GitHub checks must finish successfully before merging',
             409,

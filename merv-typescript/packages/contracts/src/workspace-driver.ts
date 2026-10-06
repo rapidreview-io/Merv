@@ -2,6 +2,10 @@ import type { CodeCommitCommand, CodeCommitReceipt } from './code.js';
 import type { SessionWorkspace } from './sessions-models.js';
 import type { WorkflowExecution } from './index.js';
 
+/** The workspace driver that checks out Code's repository: the capability a runner carrying it
+ * advertises, and the key of the execution policies it serves. */
+export const CODE_DRIVER = 'code.v2';
+
 /**
  * What a machine runner asks of whatever prepares its checkouts. The runner schedules,
  * launches and reports; it never learns how a checkout is made or where its history lives.

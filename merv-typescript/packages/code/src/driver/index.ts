@@ -18,10 +18,11 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { privateDirectory } from '@merv/contracts/private-directory';
+import { privateDirectory, syncPath } from '@merv/contracts/private-directory';
 import {
   codeCommitCommandSchema,
   effectiveWorkspace,
+  CODE_DRIVER,
   WorkspaceDeferred,
   type CodeCommitCommand,
   type CodeCommitReceipt,
@@ -41,7 +42,6 @@ import {
   type CodeWorkspaceManifest,
 } from '../store/protocol.js';
 import { hashFile } from '../files.js';
-import { CODE_DRIVER } from '../store/refs.js';
 import { MERGE_SETTINGS } from '../merge-settings.js';
 import {
   changedNames,
@@ -54,7 +54,6 @@ import {
   MAX_FILE,
   oid,
   pathStat,
-  syncPath,
   WorkspaceError,
 } from './git.js';
 

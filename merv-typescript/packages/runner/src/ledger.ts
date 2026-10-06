@@ -1,9 +1,9 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, fsyncSync, lstatSync, openSync } from 'node:fs';
+import { chmodSync, closeSync, lstatSync, openSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { plain } from '@merv/contracts';
-import { privateDirectory } from '@merv/contracts/private-directory';
+import { privateDirectory, syncPath } from '@merv/contracts/private-directory';
 
 export type LaunchStatus =
   'reserved' | 'starting' | 'running' | 'stopping' | 'exited' | 'stopped' | 'uncertain';
@@ -60,14 +60,6 @@ function privateFile(path: string): void {
     throw new Error('Unsafe runner file');
   }
   chmodSync(path, 0o600);
-}
-export function syncPath(path: string): void {
-  const fd = openSync(path, 'r');
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
 }
 function launchRecord(row: Row): LaunchRecord {
   return {

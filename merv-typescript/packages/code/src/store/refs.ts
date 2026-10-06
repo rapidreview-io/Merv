@@ -1,7 +1,3 @@
-/** The workspace driver that checks out Code's repository: the capability a runner carrying it
- * advertises, and the key of the execution policies it serves. */
-export const CODE_DRIVER = 'code.v2';
-
 /**
  * A unit id as one segment of a ref name. Git forbids `..`, a trailing dot and `.lock`; an id
  * that would break those rules is carried encoded, and the prefix is reserved so that a

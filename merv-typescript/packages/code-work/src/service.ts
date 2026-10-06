@@ -13,6 +13,7 @@ import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import type { CodeRepositoryPrepareInput } from './models.js';
 import {
   check,
+  CODE_DRIVER,
   codeCommandCompletionSchema,
   createService,
   digest,
@@ -38,7 +39,6 @@ import type {
   ResolutionWorkCreator,
 } from './types.js';
 import { CodeUnitService } from './units.js';
-import { CODE_DRIVER } from './workspace.js';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeAcceptedSince } from './models.js';
 

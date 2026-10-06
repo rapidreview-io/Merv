@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { closeSync, fsyncSync, lstatSync, openSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import {
   oidPattern,
@@ -37,14 +37,6 @@ export const pathStat = (path: string) => {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
-  }
-};
-export const syncPath = (path: string): void => {
-  const fd = openSync(path, 'r');
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
   }
 };
 /** Changed files above this size are refused at capture and commit. */
