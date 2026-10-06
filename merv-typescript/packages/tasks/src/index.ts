@@ -622,12 +622,15 @@ export class TaskService implements Tasks {
   /** An interactive delivery yields to a worker that holds the revision, as every domain's submission does. */
   private async unleased(caller: Caller, taskId: string, revision: number, tx: Transaction) {
     if (caller.session) return;
+    const key = `tasks:leased:${caller.projectId}:${taskId}:${revision}`;
     check(
-      !(await tx.get(
-        "SELECT id FROM task_leases WHERE project_id=? AND task_id=? AND revision=? AND purpose='work' AND released_at IS NULL",
-        caller.projectId,
-        taskId,
-        revision,
+      !(await this.state.remember(key, () =>
+        tx.get(
+          "SELECT id FROM task_leases WHERE project_id=? AND task_id=? AND revision=? AND purpose='work' AND released_at IS NULL",
+          caller.projectId,
+          taskId,
+          revision,
+        ),
       )),
       'task_leased',
       'A worker session holds this revision; the operator who offered it can halt it, or wait for its handoff',
@@ -1834,6 +1837,7 @@ export class TaskService implements Tasks {
       },
       context.tx,
       true,
+      context.snapshot,
     );
     // An assignment check may answer 503 as a blocker, so the Code gates live here and never in
     // the action rules a bare task.get evaluates: a stored Git task stays readable without Code.
@@ -1979,6 +1983,8 @@ export class TaskService implements Tasks {
     input: Omit<TaskContext, 'requestId'>,
     tx: Transaction,
     allowUnclaimedReview = false,
+    /** The instance as the caller's own transaction already read it. */
+    known?: WorkflowSnapshot,
   ): Promise<{ row: TaskRow; workflow: WorkflowSnapshot; review?: ReviewRequest }> {
     check(
       input.purpose !== 'work' || !caller.conversation,
@@ -1993,7 +1999,7 @@ export class TaskService implements Tasks {
       'Unknown context purpose',
     );
     const row = await this.row(tx, caller, input.taskId);
-    const workflow = await this.workflows.get(caller, row.id, tx);
+    const workflow = known ?? (await this.workflows.get(caller, row.id, tx));
     this.registration(workflow.version);
     check(
       workflow.revision === input.expectedRevision,

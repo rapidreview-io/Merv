@@ -236,31 +236,41 @@ export class ReflectionService implements Reflections {
     check(!this.closed, 'reflection_unavailable', 'Reflection program is unavailable', 503);
     await this.scope.require(caller, 'read', tx);
   }
+  /** Guidance's callbacks each read these rows; one snapshot reads each once. Callers get copies. */
+  private async once<T>(key: string, read: () => Promise<T>): Promise<T> {
+    return structuredClone(await this.state.remember(`reflections:${key}`, read));
+  }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<WaveRow> {
     await this.read(caller, tx);
-    const row = await tx.get<WaveRow>(
-      'SELECT * FROM reflections WHERE id=? AND project_id=?',
-      id,
-      caller.projectId,
+    const row = await this.once(`row:${caller.projectId}:${id}`, () =>
+      tx.get<WaveRow>(
+        'SELECT * FROM reflections WHERE id=? AND project_id=?',
+        id,
+        caller.projectId,
+      ),
     );
     check(row, 'reflection_not_found', 'Reflection not found', 404);
     return row;
   }
   private async lensRow(caller: Caller, id: string, tx: Transaction): Promise<LensRow> {
     await this.read(caller, tx);
-    const row = await tx.get<LensRow>(
-      'SELECT * FROM reflection_lenses WHERE id=? AND project_id=?',
-      id,
-      caller.projectId,
+    const row = await this.once(`lens:${caller.projectId}:${id}`, () =>
+      tx.get<LensRow>(
+        'SELECT * FROM reflection_lenses WHERE id=? AND project_id=?',
+        id,
+        caller.projectId,
+      ),
     );
     check(row, 'reflection_lens_not_found', 'Reflection lens not found', 404);
     return row;
   }
   private async lensRows(row: WaveRow, tx: Transaction): Promise<LensRow[]> {
-    return await tx.all<LensRow>(
-      'SELECT * FROM reflection_lenses WHERE reflection_id=? AND attempt=? ORDER BY _merv_rowid',
-      row.id,
-      row.attempt,
+    return await this.once(`lenses:${row.project_id}:${row.id}:${row.attempt}`, () =>
+      tx.all<LensRow>(
+        'SELECT * FROM reflection_lenses WHERE reflection_id=? AND attempt=? ORDER BY _merv_rowid',
+        row.id,
+        row.attempt,
+      ),
     );
   }
   private async hydrateLens(
@@ -480,11 +490,14 @@ export class ReflectionService implements Reflections {
     return { wave, lens };
   }
   private async activeLease(context: WorkflowCheckContext): Promise<LeaseRow | undefined> {
-    return await context.tx.get<LeaseRow>(
-      'SELECT * FROM reflection_leases WHERE project_id=? AND instance_id=? AND revision=? AND released_at IS NULL',
-      context.caller.projectId,
-      context.snapshot.id,
-      context.snapshot.revision,
+    const { caller, snapshot, tx } = context;
+    return await this.once(`lease:${caller.projectId}:${snapshot.id}:${snapshot.revision}`, () =>
+      tx.get<LeaseRow>(
+        'SELECT * FROM reflection_leases WHERE project_id=? AND instance_id=? AND revision=? AND released_at IS NULL',
+        caller.projectId,
+        snapshot.id,
+        snapshot.revision,
+      ),
     );
   }
   private async lease(context: WorkflowCheckContext): Promise<LeaseRow> {

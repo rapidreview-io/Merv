@@ -1323,7 +1323,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
    */
   protected async checkAction(context: WorkflowCheckContext): Promise<Submission | undefined> {
     const { caller, tx } = context,
-      experiment = await this.get(caller, context.snapshot.id, tx);
+      experiment = await this.current(context);
     const action = context.transition;
     if (context.input?.expectedRevision !== undefined)
       this.revision(experiment, context.input.expectedRevision as number);
