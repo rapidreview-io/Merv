@@ -1707,7 +1707,8 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       DROP FUNCTION worker_sessions_thread_immutable_guard();
       CREATE FUNCTION worker_sessions_agent_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN RETURN NEW; END $g$;
       CREATE TRIGGER worker_sessions_agent_immutable BEFORE UPDATE ON worker_sessions FOR EACH ROW EXECUTE FUNCTION worker_sessions_agent_immutable_guard();
-      CREATE TABLE agents(id TEXT PRIMARY KEY);
+      CREATE TABLE agents(id TEXT PRIMARY KEY, actor_id TEXT UNIQUE REFERENCES actors(id), token_hash TEXT UNIQUE,
+        status TEXT, agent_json TEXT);
       CREATE FUNCTION agents_no_delete_guard() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN RETURN OLD; END $g$;
       CREATE TRIGGER agents_no_delete BEFORE DELETE ON agents FOR EACH ROW EXECUTE FUNCTION agents_no_delete_guard();
       CREATE TABLE session_conversations(project_id TEXT, continuity_key TEXT, session_id TEXT, agent_id TEXT REFERENCES agents(id),
@@ -1721,6 +1722,31 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       DROP TABLE session_threads;
       INSERT INTO component_migrations VALUES('agents',1,'legacy'),('session_conversations',1,'legacy');
       DELETE FROM component_migrations WHERE component='sessions' AND version=13;`);
+    // Agents no session ever visited: a persistent one, with a token of its own, and one whose
+    // offer never landed. Production holds 694; they stay attribution history in Scope.
+    for (const [id, active, tokenHash, persistent] of [
+      ['agent_persistent', 1, 'b'.repeat(64), true],
+      ['agent_unlanded', 0, null, false],
+    ] as const) {
+      await tx.run(
+        'INSERT INTO actors(id,project_id,name,role,active,session_id,agent_id) VALUES(?,?,?,?,?,?,?)',
+        `actor_${id}`,
+        f.source.projectId,
+        id,
+        'producer',
+        active,
+        persistent ? null : 'session_never_landed',
+        id,
+      );
+      await tx.run(
+        'INSERT INTO agents VALUES(?,?,?,?,?)',
+        id,
+        `actor_${id}`,
+        tokenHash,
+        active ? 'active' : 'retired',
+        JSON.stringify({ persistent, contextEpoch: 0, source: { kind: 'runner' } }),
+      );
+    }
     await tx.run('UPDATE actors SET active=1 WHERE id=?', rival.actorId);
     // A session from before agents had an actor of its own, retired with it.
     await tx.run('UPDATE actors SET active=0 WHERE id=?', early.actorId);
@@ -1766,11 +1792,20 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
         "SELECT component FROM component_migrations WHERE component IN ('agents','session_conversations')",
       ),
       early: await sql.get('SELECT thread_id FROM worker_sessions WHERE id=?', early.id),
+      unvisited: await sql.all(
+        "SELECT id,active,agent_id FROM actors WHERE id LIKE 'actor_agent_%' ORDER BY id",
+      ),
     })),
     {
       tables: { agents: null, conversations: null },
       components: [],
       early: { thread_id: earlyThread },
+      // No thread for an agent no session visited (the list above is every thread); its actor
+      // stays as it was, attribution history.
+      unvisited: [
+        { id: 'actor_agent_persistent', active: 1, agent_id: 'agent_persistent' },
+        { id: 'actor_agent_unlanded', active: 0, agent_id: 'agent_unlanded' },
+      ],
     },
   );
   // The live execution reads and authenticates as it did, as its thread's actor.

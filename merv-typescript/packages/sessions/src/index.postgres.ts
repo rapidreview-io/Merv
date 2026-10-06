@@ -19,6 +19,9 @@ const quotedPlanTaskIds = retiredPlanTaskIds.replaceAll("'", "''");
  * of a key's other threads the one with the newest session holds the key and the rest are
  * `superseded`, as that session's close would have made them. The conversation a key's row kept
  * moves onto the thread it named. Neither the `agents` rows nor their actors are needed again.
+ * Threads come from sessions alone: an agent no session visited (a persistent one's token, an
+ * offer that never landed) becomes no thread, and its actor stays in Scope, untouched, as
+ * attribution history.
  *
  * Read-only counts to take on production first (and back up):
  *   SELECT count(*) AS sessions,
