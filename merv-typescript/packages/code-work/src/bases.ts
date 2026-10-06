@@ -1386,7 +1386,11 @@ export class CodeBaseService {
         digest(body),
       );
       const previous = await journal.previous();
-      if (previous) return JSON.parse(previous.result_json) as CodeBaseRecord;
+      if (previous) {
+        // A receipt kept before records carried their verbs gets them from what it records.
+        const kept = JSON.parse(previous.result_json) as CodeBaseRecord;
+        return { ...kept, actions: actionsOf(kept.state, kept.quarantined, kept.operatorReason) };
+      }
       const row = await this.row(tx, caller.projectId, input.key);
       check(row, 'code_base_not_found', 'No such base in this project', 404);
       const base = this.record(row);

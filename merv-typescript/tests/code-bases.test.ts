@@ -320,6 +320,14 @@ test('five infrastructure failures block one retained record and an idempotent o
   assert.equal(receipt.attempts, 0);
   assert.equal(receipt.state, 'queued');
   assert.deepEqual(await f.bases.control(f.scope, f.admin, input), receipt);
+  // A receipt kept before records carried their verbs still replays with them.
+  await f.state.transaction(async (tx) => {
+    await tx.run('SET LOCAL session_replication_role = replica');
+    await tx.run(
+      "UPDATE code_operations SET result_json=(result_json::jsonb - 'actions')::text WHERE kind='base-control' AND request_id='retry'",
+    );
+  });
+  assert.deepEqual(await f.bases.control(f.scope, f.admin, input), receipt);
   await assert.rejects(f.bases.control(f.scope, f.admin, { ...input, reason: 'Changed' }), {
     code: 'request_conflict',
   });
