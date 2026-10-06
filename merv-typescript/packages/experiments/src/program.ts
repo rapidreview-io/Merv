@@ -1305,6 +1305,7 @@ export abstract class ExperimentProgram {
     return {
       role: reviewing(state) ? 'reviewer' : 'producer',
       label: `${recipeNames[state]}: ${experiment.name}`,
+      name: experiment.name,
       brief:
         `${instructions[state]}${speedGuidance}\n\nExperiment: ${experiment.name}\nAttempt index: ${experiment.attempt.index}\nExpected revision: ${experiment.workflow.revision}\n\n${instruction}${gitInstruction}\n\n${sourceVerification}` +
         computeGuidance(state === 'running' ? 'execute' : 'check'),

@@ -77,7 +77,10 @@ const noIds = (value: unknown, allowed: string[] = []) =>
   );
 
 /** Sessions over PostgreSQL with a test clock, its real ui adapter, and the Running reads. */
-async function fixture(t: TestContext, options: { config?: SessionsConfig; brief?: string } = {}) {
+async function fixture(
+  t: TestContext,
+  options: { config?: SessionsConfig; brief?: string; unnamed?: true } = {},
+) {
   let clock = Date.now();
   /** Work its domain refuses to lease at its current revision, as Tasks does a base Code cannot derive. */
   const refused = new Set<string>();
@@ -110,6 +113,7 @@ async function fixture(t: TestContext, options: { config?: SessionsConfig; brief
         build: () => ({
           role: 'producer',
           label: 'Work: Rebuild citation index',
+          ...(options.unnamed ? {} : { name: 'Rebuild citation index' }),
           brief: options.brief ?? 'Rebuild the index.\n\nDone when every key maps to one file.',
           references: [],
           handoff: { instruction: 'Finish', tools: ['finish'] },
@@ -297,6 +301,30 @@ test('an offered lease is dashed and starting, on the machine that took it, even
   assert.deepEqual(board.lanes.sessions.failed, []);
   assert.equal(board.lanes.sessions.needsYou, 0);
   noIds(board);
+  const [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+  assert.deepEqual(
+    [summary?.label, summary?.name],
+    ['Work: Rebuild citation index', 'Rebuild citation index'],
+  );
+});
+
+test('a lease offered before owners named their records reads its label as it is', async (t) => {
+  const f = await fixture(t, { unnamed: true });
+  await f.heartbeat();
+  const work = await f.instance();
+  const offered = await f.sessions.offer(f.source, {
+    instanceId: work.id,
+    expectedRevision: work.revision,
+    runnerId: 'machine',
+    requestId: request(),
+    secret: secret(),
+  });
+  assert.equal(
+    node(await f.board(f.owner), `session:${offered.id}`)?.name,
+    'Work: Rebuild citation index',
+  );
+  const [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
+  assert.equal(summary?.name, 'Work: Rebuild citation index');
 });
 
 test('a lease nobody runs says nothing of a machine, and never turns red for one', async (t) => {
@@ -428,7 +456,7 @@ test('a revoked key reads as such, and a lease with no runner row is never red f
     instanceId: 'wf_1',
     status: 'active',
     role: 'reviewer',
-    label: 'Review: Draft section 3.2',
+    name: 'Draft section 3.2',
     workflow: 'task',
     createdAt: at(600_000),
     activatedAt: at(590_000),
@@ -1044,7 +1072,7 @@ test('the Sessions lane words its states as the Sessions page does', () => {
     instanceId: 'wf_2',
     status: 'offered',
     role: 'reader',
-    label: 'Work: After the first sweep: next steps',
+    name: 'After the first sweep: next steps',
     workflow: 'reflection.lens',
     createdAt: new Date(now - 40_000).toISOString(),
     activatedAt: null,

@@ -76,7 +76,6 @@ export {
   keyKind,
   keyId,
   workLink,
-  workName,
   dependencyRows,
 } from './running.js';
 export {
@@ -1691,7 +1690,9 @@ export function admitDispatch(
 }
 export interface WorkflowAssignmentContent {
   role: string;
+  /** For the agent, saying the purpose (`Work: …`); `name` is the record's own, for a person. */
   label: string;
+  name?: string;
   brief: string;
   references: WorkflowReference[];
   handoff: { instruction: string; tools: string[] };

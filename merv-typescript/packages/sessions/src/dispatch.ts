@@ -45,7 +45,7 @@ import type {
 } from './types.js';
 import { budgetStatuses, publicBudget } from './usage.js';
 import { lastActivity, type AgentObservations } from './observations.js';
-import { isoNow, liveTargets, ownerOf, readFirst, targetKey } from './common.js';
+import { isoNow, liveTargets, ownerOf, readFirst, targetKey, workNameOf } from './common.js';
 import type { ManagedRunnerBindings } from './managed.js';
 
 const label = z
@@ -1373,6 +1373,7 @@ export class SessionDispatch {
         await tx.all<
           SessionRow & {
             label: string;
+            name: string;
             workspace_mode: SessionSummary['workspaceMode'] | null;
             runner_ref: string | null;
             platform_json: string | null;
@@ -1383,7 +1384,7 @@ export class SessionDispatch {
           // A frozen assignment can be half a megabyte: the 200 rows are chosen first, and each is
           // parsed once, in SQL, and sent without its assignment, execution, lease and source.
           `SELECT s.id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
-            x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
+            ${workNameOf('x.j')} AS name,x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
             FROM (SELECT * FROM worker_sessions WHERE project_id=? ORDER BY CASE WHEN status IN ('offered','active') THEN 0 ELSE 1 END,_merv_rowid DESC LIMIT 200) s
             CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
             LEFT JOIN session_workspaces w ON w.session_id=s.id ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s._merv_rowid DESC`,
@@ -1401,6 +1402,7 @@ export class SessionDispatch {
           role: session.role,
           status: session.status,
           label: row.label,
+          name: row.name,
           runnerRef: row.runner_ref,
           hostRef: session.hostRef,
           platform: row.platform_json ? JSON.parse(row.platform_json) : null,

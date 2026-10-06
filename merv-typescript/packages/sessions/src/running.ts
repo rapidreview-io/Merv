@@ -3,7 +3,6 @@ import {
   mapAsync,
   runningKey,
   workLink,
-  workName,
   type Caller,
   type RunningAction,
   type RunningAttention,
@@ -26,6 +25,7 @@ import {
 import type { AgentEvent, AgentStreamSession } from '@merv/contracts';
 import { freshForMs, type DispatchReading, type SessionDispatch } from './dispatch.js';
 import { lastActivity } from './observations.js';
+import { workNameOf } from './common.js';
 import type {
   Agent,
   SessionPlatform,
@@ -69,7 +69,7 @@ const clip = (text: string, max: number) =>
 
 /** The lease fields a face reads, each row's JSON parsed once rather than once per field. */
 const LEASE = `s.id,s.instance_id,s.status,s.owner_hash,s.runner_id,x.j #>> '{role}' AS role,
-  x.j #>> '{assignment,label}' AS label,x.j #>> '{execution,workflow}' AS workflow,
+  ${workNameOf('x.j')} AS name,x.j #>> '{execution,workflow}' AS workflow,
   x.j #>> '{createdAt}' AS created_at,x.j #>> '{activatedAt}' AS activated_at,
   x.j #>> '{expiresAt}' AS expires_at,x.j #>> '{hardDeadline}' AS hard_deadline,
   d.platform_json,r.id AS runner_ref,r.presence_json,r.source_json,r.last_seen_at,m.allocation_id`;
@@ -85,7 +85,7 @@ interface LeaseRow {
   owner_hash: string;
   runner_id: string;
   role: SessionRole;
-  label: string;
+  name: string;
   workflow: string;
   created_at: string;
   activated_at: string | null;
@@ -105,7 +105,7 @@ export interface Lease {
   instanceId: string;
   status: LeaseRow['status'];
   role: SessionRole;
-  label: string;
+  name: string;
   workflow: string;
   createdAt: string;
   activatedAt: string | null;
@@ -222,7 +222,7 @@ export function leaseNode(
       harness && lease.platform
         ? `${ROLES[lease.role]} · ${lease.platform.harness}`
         : ROLES[lease.role],
-    name: clip(workName(lease.label), 200),
+    name: clip(lease.name, 200),
     lines: on ? [line, on] : [line],
     look,
     ...(dot ? { dot } : {}),
@@ -488,7 +488,7 @@ export class SessionRunning {
         instanceId: row.instance_id,
         status: row.status,
         role: row.role,
-        label: row.label,
+        name: row.name,
         workflow: row.workflow,
         createdAt: row.created_at,
         activatedAt: row.activated_at,
@@ -633,7 +633,7 @@ export class SessionRunning {
       const idle = this.thresholds.idleNoticeSeconds;
       const shown = live ? face(lease, now, idle) : undefined;
       const role = ROLES[row.role];
-      const work = workName(row.label);
+      const work = row.name;
       const ending = row.outcome || row.close_reason;
       const { machine } = lease;
       const silent = !!machine && (!machine.authorized || !presentAt(machine, now));
@@ -774,8 +774,8 @@ export class SessionRunning {
           if (lease.platform)
             rows.push({ label: 'Platform', value: [platformPhrase(lease.platform)] });
           if (live) {
-            const on = await tx.all<{ id: string; label: string; role: SessionRole }>(
-              `SELECT s.id,x.j #>> '{assignment,label}' AS label,x.j #>> '{role}' AS role
+            const on = await tx.all<{ id: string; name: string; role: SessionRole }>(
+              `SELECT s.id,${workNameOf('x.j')} AS name,x.j #>> '{role}' AS role
                 FROM worker_sessions s CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x
                 WHERE s.project_id=? AND s.owner_hash=? AND s.runner_id=? AND s.status IN ('offered','active') ORDER BY s._merv_rowid`,
               caller.projectId,
@@ -794,7 +794,7 @@ export class SessionRunning {
                   ...(at ? [', '] : []),
                   {
                     link: { key: runningKey('session', other.id) },
-                    text: clip(`${workName(other.label)} · ${ROLES[other.role]}`, 200),
+                    text: clip(`${other.name} · ${ROLES[other.role]}`, 200),
                   },
                 ]),
               });

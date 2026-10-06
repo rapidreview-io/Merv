@@ -1939,6 +1939,7 @@ export class TaskService implements Tasks {
     return {
       role: purpose === 'review' ? 'reviewer' : 'producer',
       label: `${purpose === 'review' ? 'Review' : 'Work'}: ${task.title}`,
+      name: task.title,
       brief:
         `${type.definition.recipe.instructions}\n\nGoal: ${task.goal}\n\nDone when:\n${task.checks.map((check, i) => `${i + 1}. ${check}`).join('\n')}\n\n${instruction}\n\n${SOURCE_VERIFICATION}` +
         (serviceOwned(task.workflow.version)
