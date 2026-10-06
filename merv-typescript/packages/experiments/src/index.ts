@@ -546,6 +546,26 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       };
     });
   }
+  async admits(caller: Caller, names: readonly string[], transaction?: Transaction) {
+    this.open();
+    caller = structuredClone(caller);
+    await inTransaction(this.state, transaction, async (tx) => {
+      const { names: taken, active } = await this.occupancy(caller, tx);
+      for (const name of names)
+        check(
+          !taken.includes(name.toLowerCase()),
+          'experiment_name_conflict',
+          `An experiment already uses the name ${name}`,
+          409,
+        );
+      check(
+        active + names.length <= MAX_ACTIVE_EXPERIMENTS,
+        'experiment_limit',
+        `At most ${MAX_ACTIVE_EXPERIMENTS} experiments may be active in this project; ${active} are, and ${names.length} more would not fit`,
+        409,
+      );
+    });
+  }
   async create(
     caller: Caller,
     value: ExperimentCreate,
@@ -563,19 +583,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           'An assigned experiment worker cannot create a separate experiment',
           403,
         );
-        const { names, active } = await this.occupancy(caller, tx);
-        check(
-          !names.includes(input.name.toLowerCase()),
-          'experiment_name_conflict',
-          'An experiment already uses this name',
-          409,
-        );
-        check(
-          active < MAX_ACTIVE_EXPERIMENTS,
-          'experiment_limit',
-          `At most ${MAX_ACTIVE_EXPERIMENTS} experiments may be active in this project`,
-          409,
-        );
+        await this.admits(caller, [input.name], tx);
         for (const id of input.dependsOn) {
           const dependency = await this.workflows.get(caller, id, tx);
           // An ordering between two experiments is a task in between (founder, 2026-09-18).

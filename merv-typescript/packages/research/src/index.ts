@@ -29,7 +29,6 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Experiments } from '@merv/experiments/types';
-import { MAX_ACTIVE_EXPERIMENTS } from '@merv/experiments/rules';
 import { problemDefined } from '@merv/paper/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';
 import type { ApprovedReflection, ChangeSpec, Reflections } from '@merv/reflections/types';
@@ -773,24 +772,19 @@ export class ResearchService implements Research {
   ): Promise<void> {
     this.requireCapability('tasks', checks);
     const planned = plan.items.flatMap((item) => (item.kind === 'experiment' ? [item.name] : []));
-    if (planned.length) {
-      const { names, active } = await this.use('experiments', checks, (service) =>
-        service.occupancy(caller, tx),
+    if (planned.length)
+      await this.use('experiments', checks, (service) => service.admits(caller, planned, tx)).catch(
+        (error: unknown) => {
+          // Experiments' refusal, with this cycle's way past it.
+          throw error instanceof MervError && error.status === 409
+            ? new MervError(
+                error.code,
+                `${error.message}. Complete this cycle with nextWave: "skip" to go on without the plan`,
+                409,
+              )
+            : error;
+        },
       );
-      for (const name of planned)
-        check(
-          !names.includes(name.toLowerCase()),
-          'experiment_name_conflict',
-          `An experiment already uses the planned name ${name}. Complete this cycle with nextWave: "skip" and create the work under another name`,
-          409,
-        );
-      check(
-        active + planned.length <= MAX_ACTIVE_EXPERIMENTS,
-        'experiment_limit',
-        `The plan adds ${planned.length} experiments to ${active} active ones, and at most ${MAX_ACTIVE_EXPERIMENTS} may be active in this project. Finish or end active experiments first, or complete this cycle with nextWave: "skip"`,
-        409,
-      );
-    }
     // The engine refuses the starts anyway; said here, the owner reads it before trying.
     check(
       !(await this.use('reflections', checks, (service) => service.open(caller, tx))),
