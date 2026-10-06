@@ -23,6 +23,8 @@ const packed = promisify(gzip);
 /** Serves a built browser bundle under /ui; routes without an extension fall back to index.html. */
 export function serveBundle(root: string): MountHandler {
   const base = resolve(root);
+  /** A hashed asset never changes, so it is gzipped once. */
+  const gzipped = new Map<string, Promise<Buffer>>();
   return async (req, res) => {
     const send = (status: number, body: Uint8Array | string, headers: Record<string, string>) => {
       res.writeHead(status, { ...headers, 'x-content-type-options': 'nosniff' });
@@ -55,15 +57,21 @@ export function serveBundle(root: string): MountHandler {
     try {
       const bytes = await readFile(file);
       const type = types[extname(file)] ?? 'application/octet-stream';
+      const hashed = relative.startsWith('assets/');
       const headers = {
         'content-type': type,
-        'cache-control': relative.startsWith('assets/')
-          ? 'public, max-age=31536000, immutable'
-          : 'no-cache',
+        'cache-control': hashed ? 'public, max-age=31536000, immutable' : 'no-cache',
       };
       if (!compressible.test(type)) return send(200, bytes, headers);
       const zipped = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
-      return send(200, zipped ? await packed(bytes) : bytes, {
+      // A HEAD is sent the headers alone: there is nothing to gzip.
+      const body =
+        !zipped || req.method === 'HEAD'
+          ? bytes
+          : await (hashed
+              ? (gzipped.get(file) ?? gzipped.set(file, packed(bytes)).get(file)!)
+              : packed(bytes));
+      return send(200, body, {
         ...headers,
         vary: 'accept-encoding',
         ...(zipped && { 'content-encoding': 'gzip' }),

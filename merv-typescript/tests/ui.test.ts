@@ -646,6 +646,46 @@ test('the assembled application serves the bundle, lists rows per active plugin,
   ]);
 });
 
+test('a hashed asset is gzipped once, and a HEAD is gzipped never', async (t) => {
+  const { serveBundle } = await import('../packages/ui/src/static.js');
+  const directory = mkdtempSync(join(tmpdir(), 'merv-ui-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  mkdirSync(join(directory, 'assets'));
+  const write = (path: string, text: string) => writeFileSync(join(directory, path), text);
+  const serve = serveBundle(directory);
+  const get = async (path: string, method = 'GET') => {
+    let sent: { status: number; headers: Record<string, string>; body?: Uint8Array } | undefined;
+    const res = {
+      setHeader() {},
+      writeHead: (status: number, headers: Record<string, string>) =>
+        void (sent = { status, headers }),
+      end: (body?: Uint8Array) => void (sent!.body = body),
+    };
+    const req = { method, url: `/ui/${path}`, headers: { 'accept-encoding': 'gzip' } };
+    await serve(req as never, res as never, {} as never);
+    return sent!;
+  };
+  const read = async (path: string) => gunzipSync((await get(path)).body!).toString('utf8');
+  // A stand-in for "never gzipped again": an asset's name is its content's hash, so what is on
+  // disk under it never changes, and what was gzipped first is sent from then on.
+  write('assets/app-1.js', 'first');
+  assert.equal(await read('assets/app-1.js'), 'first');
+  write('assets/app-1.js', 'second');
+  assert.equal(await read('assets/app-1.js'), 'first');
+  // The page itself is not hashed: it is read and gzipped afresh.
+  write('index.html', 'one');
+  assert.equal(await read('index.html'), 'one');
+  write('index.html', 'two');
+  assert.equal(await read('index.html'), 'two');
+  // A HEAD says what a GET would send and gzips nothing: what is gzipped first is the GET's.
+  write('assets/app-2.js', 'before');
+  const head = await get('assets/app-2.js', 'HEAD');
+  assert.equal(head.headers['content-encoding'], 'gzip');
+  assert.equal(head.body, undefined);
+  write('assets/app-2.js', 'after');
+  assert.equal(await read('assets/app-2.js'), 'after');
+});
+
 test('an unbuilt bundle reports itself instead of a blank page', async (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-ui-unbuilt-'));
   const app = await createApp({
