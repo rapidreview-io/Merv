@@ -6,7 +6,7 @@ import { createService } from '@merv/contracts';
 import { PaperService } from '@merv/paper';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test, { type TestContext } from 'node:test';
@@ -1697,6 +1697,55 @@ test('a results review whose final capture never landed takes the last admitted 
   );
   assert.equal(done.workflow.state, 'complete');
   assert.equal((await f.code.unit(f.source, pending.id)).acceptance?.reference, unit.canonicalHead);
+});
+
+test('a final capture Code admitted stays pending until the machine posts it, though the writer has closed', async (t) => {
+  const f = await fixture(t);
+  const experiment = await f.running();
+  const lease = await f.work.lease(experiment);
+  for (const [role, content] of [
+    ['result', 'The retained observations show no difference.'],
+    ['report', report],
+  ] as const) {
+    const artifact = await f.work.run(
+      lease,
+      'artifact.create',
+      { title: role, content, mediaType: 'text/markdown' },
+      (caller, input) => f.artifacts.create(caller, input as never),
+    );
+    await f.work.run(
+      lease,
+      'experiment.attach',
+      {
+        artifactId: artifact.id,
+        role,
+        path: `${role}.md`,
+        attemptIndex: experiment.attempt.index,
+        requestId: f.request(),
+        ...(role === 'result' ? { resultFormat: 'qualitative' } : {}),
+      },
+      (caller, input) => f.experiments.attach(caller, input as never),
+    );
+  }
+  const pending = await f.work.run(
+    lease,
+    'experiment.transition',
+    { transition: 'submit_results', requestId: f.request() },
+    (caller, input) => f.experiments.transition(caller, input as never),
+  );
+  // The session left uncommitted work: Code admits the final capture of it, which closes the
+  // writer, and the machine has not yet posted the session's result.
+  writeFileSync(join(lease.workspace.path, 'final.txt'), 'final\n');
+  const posted = t.mock.method(f.sessions, 'workspaceResult', async () => {});
+  await f.work.release(lease);
+  assert.equal(posted.mock.callCount(), 1);
+  const unit = await f.code.unit(f.source, pending.id);
+  assert.equal(unit.writerState, 'closed');
+  assert.notEqual(unit.canonicalHead, lease.workspace.snapshot!.headOid);
+  // Nobody fenced this writer: the capture is the machine's to post, not one read from the head.
+  await assert.rejects(f.workflows.assignment(f.reviewer, pending.id), {
+    code: 'experiment_capture_pending',
+  });
 });
 
 test('a fenced results review whose session admitted no commit reviews the head the fence kept', async (t) => {

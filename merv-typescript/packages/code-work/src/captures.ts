@@ -74,20 +74,17 @@ export class CodeCaptureReader {
         );
         return { ...settled, ref };
       }
-      if (fenced && observation.workspace) {
-        // No commit of this session holds the head the fence kept, so the session left the
-        // checkout where it found it: its capture is that head, on the checkout it attached.
+      if (fenced && observation.workspace?.attachment.headOid === fenced.head) {
+        // No commit of this session holds the head the fence kept, and that head is the one it
+        // attached at, so the session left the checkout where it found it: its capture is that
+        // checkout. A head that moved without a commit was moved by an admitted final capture,
+        // whose result the machine still posts, so the capture stays pending until it does.
         const { attachment } = observation.workspace;
-        const { treeOid, ...checkout } = attachment;
         return {
           ref,
           status: 'ready',
           provenance: observation.provenance,
-          workspace: {
-            ...checkout,
-            headOid: fenced.head,
-            ...(fenced.head === attachment.headOid && treeOid ? { treeOid } : {}),
-          },
+          workspace: attachment,
           attachedBaseOid: attachment.baseOid,
           observedAt: observation.observedAt,
           eventId: observation.eventId,
