@@ -1588,14 +1588,15 @@ test('a lease admits the captures of its own attempt only', async (t) => {
   await f.release(first.session.id);
 });
 
-test('work pinned before Experiments recorded an epoch keeps the one Sandboxes derived', () => {
-  // Sandboxes derived the epoch of such work from its revision.
-  assert.ok(captureEpochs(2, { data: {}, revision: 7 }).includes('7'));
-  assert.ok(captureEpochs(2, { data: {}, revision: 7 }).includes('2:running'));
-  assert.deepEqual(
-    captureEpochs(2, { data: { computeEpoch: '2:running' }, revision: 7 }),
-    captureEpochs(2, { data: {}, revision: 7 }).filter((epoch) => epoch !== '7'),
-  );
+test('work pinned before Experiments recorded an epoch keeps every one Sandboxes derived', () => {
+  // Sandboxes derived the epoch of such work from its revision, so each revision it passed
+  // through had its own; a move, which records an epoch from then on, loses none of them.
+  for (const data of [{}, { computeEpoch: '2:running' }]) {
+    const epochs = captureEpochs(2, { data, revision: 7 });
+    for (const revision of ['1', '4', '7']) assert.ok(epochs.includes(revision));
+    assert.ok(epochs.includes('2:running'));
+    assert.ok(!epochs.includes('8') && !epochs.includes('1:running'));
+  }
 });
 
 test('a context embeds only the newest interruptions, each clipped, and counts the earlier ones', async (t) => {

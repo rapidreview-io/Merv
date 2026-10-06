@@ -135,7 +135,8 @@ export function reviewedSubmission(
 export const experimentEpoch = (attemptIndex: number, state: string) => `${attemptIndex}:${state}`;
 /**
  * The epochs an attempt's compute runs under: one per state, and for work Sandboxes pinned
- * before Experiments recorded one, the epoch Sandboxes derived from the instance as it stands.
+ * before Experiments recorded one, every epoch Sandboxes derived from a revision the instance
+ * passed through, since a move changes it and from then on records one.
  */
 export const captureEpochs = (
   attemptIndex: number,
@@ -144,6 +145,7 @@ export const captureEpochs = (
   ...new Set([
     ...EXPERIMENT_WORKFLOW.states.map((state) => experimentEpoch(attemptIndex, state)),
     computeEpoch(workflow.data, workflow.revision),
+    ...Array.from({ length: workflow.revision }, (_, index) => String(index + 1)),
   ]),
 ];
 /** The workflow data that sets the epoch the move `action` leads to. */
