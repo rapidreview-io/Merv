@@ -208,7 +208,7 @@ async function fixture(
   });
   const sources: RunningSources = {
     contributions: () => ui.contributions(),
-    tools: async () => ['session.halt', 'session.dispatch'],
+    tools: async () => ['session.halt', 'session.dispatch', 'session.release_hold'],
     isolated: (read) => state.isolated(read),
     workflows: workflowsOf(() => workflows),
   };
@@ -591,7 +591,23 @@ test('dispatch marks what it holds for everyone, and tells only an operator what
   const heldMark = {
     key: `work:${held.id}`,
     says: ['Held after ', { count: 2 }, ' failed launches'],
-    who: 'An operator releases the hold',
+    who: 'A project admin can release the hold',
+  };
+  // Only a project admin is handed the release, naming the held revision; the person writes
+  // the reason, and each press carries its own request id.
+  const release = {
+    label: 'Release hold',
+    verb: 'start',
+    tool: 'session.release_hold',
+    input: { instanceId: held.id, expectedRevision: held.revision },
+    allowed: true,
+    guard: {
+      title: 'Release this hold?',
+      consequence:
+        'Dispatch offers this work again. If its launches keep failing, it is held again.',
+    },
+    ask: { field: 'reason', label: 'Reason', value: 'Cause fixed; retry' },
+    requestId: true,
   };
   const putMark = {
     key: `work:${put.id}`,
@@ -602,7 +618,7 @@ test('dispatch marks what it holds for everyone, and tells only an operator what
   assert.deepEqual(marks, [heldMark], 'a hold is red for every reader');
   ({ marks } = await f.sessions.running.marks(f.owner));
   assert.deepEqual(marks, [
-    heldMark,
+    { ...heldMark, action: release },
     {
       key: `work:${ready.id}`,
       says: ['Ready, not taken for ', { since: ready.updatedAt }],
@@ -628,8 +644,24 @@ test('dispatch marks what it holds for everyone, and tells only an operator what
   });
   const board = await f.board(f.owner);
   assert.deepEqual(node(board, `work:${held.id}`)?.attention?.says, heldMark.says);
+  assert.deepEqual(node(board, `work:${held.id}`)?.attention?.action, release);
   assert.equal(node(board, `work:${put.id}`)?.attention?.quiet, true);
   assert.equal(board.lanes.work.needsYou, 1);
+  const read = node(await f.board(f.reader), `work:${held.id}`)?.attention;
+  assert.equal(read?.who, heldMark.who);
+  assert.equal(read?.action, undefined, 'the release is a project admin’s');
+
+  // The action's input, with the reason it asks for and a request id, releases the hold.
+  await f.sessions.dispatch.releaseHold(f.owner, {
+    ...release.input,
+    reason: release.ask.value,
+    requestId: request(),
+  });
+  ({ marks } = await f.sessions.running.marks(f.owner));
+  assert.ok(
+    !marks.some(({ key, says }) => key === heldMark.key && says[0] === heldMark.says[0]),
+    'a released target is ready again, no longer held',
+  );
   dispose();
 });
 

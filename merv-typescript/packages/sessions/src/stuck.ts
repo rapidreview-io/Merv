@@ -119,7 +119,7 @@ export interface DispatchReading {
    * Targets whose launches failed at their current revision: held, for every reader; still
    * retried, for an operator, and only while the scan still offers them.
    */
-  failures: { instanceId: string; attempts: number; held: boolean }[];
+  failures: { instanceId: string; revision: number; attempts: number; held: boolean }[];
   /**
    * Targets the last machines to take them could not prepare, three closes running, for an
    * operator, while the scan still offers them.
@@ -667,6 +667,7 @@ export async function running(
       .filter((row) => row.held_at || offered.has(`${row.instance_id}:${row.revision}`))
       .map((row) => ({
         instanceId: row.instance_id,
+        revision: row.revision,
         attempts: row.attempts,
         held: !!row.held_at,
       })),

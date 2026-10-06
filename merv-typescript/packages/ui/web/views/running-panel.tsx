@@ -40,11 +40,13 @@ import { Phrase, Reading, Target, silent, steadyText, valueText } from './runnin
 export function Act({ action }: { action: RunningAction }) {
   const [unmet, setUnmet] = useState(false);
   const met = useRef<boolean>();
-  const { expect } = action;
+  const { expect, ask } = action;
+  // What the person writes, where the owner asks for words before acting.
+  const [said, setSaid] = useState(ask?.value ?? '');
   const adds = action.verb === 'extend';
   const command = useCommand<Record<string, unknown>>({
     tool: action.tool,
-    idempotent: true,
+    idempotent: !action.requestId,
     validate: (result) =>
       !expect ||
       (!!result && typeof result === 'object' && typeof result[expect.field] === 'number'),
@@ -58,7 +60,7 @@ export function Act({ action }: { action: RunningAction }) {
   const run = async () => {
     met.current = undefined;
     setUnmet(false);
-    await command.submit(action.input);
+    await command.submit(ask ? { ...action.input, [ask.field]: said.trim() } : action.input);
     if (adds && met.current === undefined) refreshTools('ui.running', 'ui.running_panel');
     return met.current === true;
   };
@@ -73,20 +75,33 @@ export function Act({ action }: { action: RunningAction }) {
           : (command.error ?? expect?.nothing)}
       </p>
     ) : null;
-  if (action.guard) {
+  if (action.guard || ask) {
     // What ends something wears the refusal's colour before it is pressed, as on Sessions.
     const ends = action.verb === 'halt' || action.verb === 'release';
     const guard = (
       <ConfirmAction
         label={action.label}
-        title={action.guard.title}
+        title={action.guard?.title ?? action.label}
         confirm={label}
         busy={busy}
         note={note}
         danger={ends}
         onConfirm={run}
       >
-        <p>{action.guard.consequence}</p>
+        {action.guard && <p>{action.guard.consequence}</p>}
+        {ask && (
+          <label className="stack stack--tight">
+            {ask.label}
+            <input
+              className="input"
+              value={said}
+              maxLength={500}
+              required
+              disabled={command.locked}
+              onChange={(event) => setSaid(event.target.value)}
+            />
+          </label>
+        )}
       </ConfirmAction>
     );
     return ends ? <div className="act-danger">{guard}</div> : guard;
@@ -400,6 +415,11 @@ function Standing({ says, attention }: { says: RunningPhrase; attention?: Runnin
         {steadyText(said, reading)}
       </span>
       {attention?.who && <p className="running-who">{attention.who}</p>}
+      {attention?.action && (
+        <div className="cluster running-acts">
+          <Act action={attention.action} />
+        </div>
+      )}
       {attention?.to && (
         <Target to={attention.to} className="hit running-move">
           {attention.to.text}

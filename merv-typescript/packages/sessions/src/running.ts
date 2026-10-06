@@ -320,20 +320,39 @@ const QUIET: Record<DispatchReading['quiet'][number]['code'], (since: string) =>
     }),
   };
 /**
+ * The go-ahead for one held revision, as session.release_hold takes it: the person writes
+ * why, and each press is its own request.
+ */
+const releaseHold = (instanceId: string, revision: number): RunningAction => ({
+  label: 'Release hold',
+  verb: 'start',
+  tool: 'session.release_hold',
+  input: { instanceId, expectedRevision: revision },
+  allowed: true,
+  guard: {
+    title: 'Release this hold?',
+    consequence: 'Dispatch offers this work again. If its launches keep failing, it is held again.',
+  },
+  ask: { field: 'reason', label: 'Reason', value: 'Cause fixed; retry' },
+  requestId: true,
+});
+/**
  * What dispatch holds back, on the work it holds. A held target and ready work nobody took
  * need a person; a target still being retried, or put off by machines that could not prepare
  * it, resumes by itself, so it only replaces the work's line, without the red. All but the
- * held are an operator's: see SessionDispatch.running.
+ * held are an operator's: see SessionDispatch.running. Only an operator, a project admin, is
+ * handed the release.
  */
 function dispatchMarks(reading: DispatchReading): RunningMark[] {
   const key = (instanceId: string) => runningKey('work', instanceId);
   return [
     ...reading.failures
       .filter(({ held }) => held)
-      .map(({ instanceId, attempts }) => ({
+      .map(({ instanceId, revision, attempts }) => ({
         key: key(instanceId),
         says: ['Held after ', { count: attempts }, ' failed launches'],
-        who: 'An operator releases the hold',
+        who: 'A project admin can release the hold',
+        ...(reading.operator ? { action: releaseHold(instanceId, revision) } : {}),
       })),
     ...reading.quiet.map(({ instanceId, since, code }) => ({
       key: key(instanceId),
