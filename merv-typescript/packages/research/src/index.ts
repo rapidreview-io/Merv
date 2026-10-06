@@ -336,21 +336,29 @@ export class ResearchService implements Research {
   }
   /**
    * Where an automatic run stands: the blocker Research published for the cycle, unless its
-   * event consumer is not bound, or the run finished its authorized cycles here.
+   * event consumer is not bound, or the run finished its authorized cycles here while its plan
+   * wanted another (a reflection that chose to stop ended the run itself).
    */
   private async automation(
     caller: Caller,
     row: AutomaticRow,
-    workflow: WorkflowSnapshot,
+    record: Pick<ResearchRecord, 'workflow' | 'reflectionId'>,
     successorId: string | null,
     tx: Transaction,
   ): Promise<ResearchAutomation> {
+    const { workflow } = record;
     const status = { rootId: row.root_id, cycle: row.cycle_index, maxCycles: row.max_cycles };
     if (over.has(workflow.state))
       return {
         ...status,
         blocker:
-          workflow.state === 'complete' && !successorId && row.cycle_index >= row.max_cycles
+          workflow.state === 'complete' &&
+          !successorId &&
+          row.cycle_index >= row.max_cycles &&
+          // Without Reflections to ask, the limit is what it may have been.
+          !!(await this.continuing(caller, record as ResearchRecord, tx, [], 'complete').catch(
+            () => true,
+          ))
             ? {
                 code: 'research_cycle_limit',
                 message: `Finished the authorized ${row.max_cycles} research cycles; no further wave was created`,
@@ -395,7 +403,13 @@ export class ResearchService implements Research {
     return {
       ...record,
       automation: automatic
-        ? await this.automation(caller, automatic, workflow, successor?.id ?? null, tx)
+        ? await this.automation(
+            caller,
+            automatic,
+            { workflow, reflectionId: row.reflection_id },
+            successor?.id ?? null,
+            tx,
+          )
         : null,
       // The column is the one statement of which cycle this follows; the record pins the rest.
       origin: origin && row.predecessor_id ? { researchId: row.predecessor_id, ...origin } : null,

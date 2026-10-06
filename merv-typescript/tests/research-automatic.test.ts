@@ -419,6 +419,22 @@ test('an entirely failed wave closes blocked descendants, reflects, and waits fo
   assert.equal(done.successorId, null);
 });
 
+test('a last authorized cycle whose reflection chose to stop reports no cycle limit', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const input = await f.task();
+  const only = await f.create([input.id], { maxCycles: 1 });
+  await f.finishTask(input.id);
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  await f.pump();
+  await f.approve(only.id);
+  const done = await f.research.get(f.owner, only.id);
+  assert.equal(done.workflow.state, 'complete');
+  assert.equal(done.successorId, null);
+  assert.equal(done.automation!.blocker, null);
+});
+
 test('two automatic waves preserve dependencies and lineage, then stop at the configured cycle limit', async (t) => {
   const f = await fixture(t);
   await f.define();
