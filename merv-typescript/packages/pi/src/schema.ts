@@ -214,13 +214,18 @@ export const usageMigration = {
  * 2026-09-25, so only proposals run in those eleven days change: the read-only count is
  * `SELECT count(*) FROM pi_commands, jsonb_array_elements(data_json::jsonb->'proposals') call
  *  WHERE call->'ran' IS NOT NULL AND call->'ran'->'told' IS NULL`.
+ * Only turns that propose calls or may tell one are read: text first, as jsonb refuses some JSON
+ * (`\u0000`, half a character), and a turn it refuses is left as it is.
  */
 export const toldMigration = {
   version: 4,
-  sql: `WITH turns AS (
+  sql: `WITH turns AS MATERIALIZED (
     SELECT conversation_id, id, data_json::jsonb AS data,
       row_number() OVER (PARTITION BY conversation_id ORDER BY created_at, id) AS n
     FROM pi_commands
+    WHERE (strpos(data_json, '"proposals"') > 0 OR strpos(data_json, 'Ran ') > 0
+        OR strpos(data_json, ' was refused: ') > 0)
+      AND pg_input_is_valid(data_json, 'jsonb')
   ), proposing AS (
     SELECT * FROM turns
     WHERE jsonb_typeof(data->'proposals') = 'array' AND jsonb_array_length(data->'proposals') > 0

@@ -63,6 +63,20 @@ export const lost = (a: FleetAllocation | null | undefined): PiInterruption =>
         ? 'runtime_stopped'
         : 'runtime_lost';
 export const decode = <T>(row: { data_json: string }): T => JSON.parse(row.data_json) as T;
+/** A turn as JSON text PostgreSQL's jsonb reads, as Pi's migrations read turns with jsonb.
+ * Pi refuses NUL and half characters from the person and the model, but not in words others write,
+ * such as a tool's refusal Run tells: there NUL is dropped and half a character reads U+FFFD. */
+export const storedTurn = (command: object): string =>
+  JSON.stringify(command, (_key, item: unknown) =>
+    typeof item === 'string'
+      ? item
+          .replaceAll('\0', '')
+          .replace(
+            /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g,
+            '\uFFFD',
+          )
+      : item,
+  );
 export const publicCommand = (record: PiCommandRecord): PiCommand => {
   const {
     inputHash: _input,
@@ -274,7 +288,7 @@ export class PiCore {
       'UPDATE pi_commands SET status=?,relay_hash=?,data_json=? WHERE conversation_id=? AND id=?',
       command.status,
       hash(this.modelToken(command)),
-      JSON.stringify(command),
+      storedTurn(command),
       command.conversationId,
       command.id,
     );
