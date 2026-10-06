@@ -10,6 +10,25 @@ import type { PiRuntime } from './types.js';
  * checkpoint (2 MB). */
 const bodyBytes = 16_000_000;
 const workerRoute = /^\/pi-worker\/(next|begin|tool|progress|complete|fail)$/;
+/** Far deeper than any tool output nests, and far short of where digesting a body recurses too deep. */
+const bodyDepth = 512;
+
+/** How deep the JSON text nests its arrays and objects, read without parsing it. */
+function depth(text: string): number {
+  let deepest = 0,
+    open = 0,
+    quoted = false;
+  for (let at = 0; at < text.length; at++) {
+    const c = text.charCodeAt(at);
+    if (quoted) {
+      if (c === 92) at++;
+      else if (c === 34) quoted = false;
+    } else if (c === 34) quoted = true;
+    else if (c === 91 || c === 123) deepest = Math.max(deepest, ++open);
+    else if (c === 93 || c === 125) open--;
+  }
+  return deepest;
+}
 
 export class PiHttp {
   private readonly responses = new Set<ServerResponse>();
@@ -57,9 +76,15 @@ export class PiHttp {
     // may hold any key, any depth and half a character, and the handlers check its shape.
     const bytes = await r.bytes(bodyBytes, 'application/json');
     check(isUtf8(bytes), 'invalid_pi_input', 'Expected UTF-8 JSON');
+    const text = bytes.toString('utf8');
+    check(
+      depth(text) <= bodyDepth,
+      'invalid_pi_input',
+      `JSON nests deeper than ${bodyDepth} levels`,
+    );
     let input: unknown;
     try {
-      input = JSON.parse(bytes.toString('utf8'));
+      input = JSON.parse(text);
     } catch {
       throw new MervError('invalid_pi_input', 'Invalid JSON');
     }

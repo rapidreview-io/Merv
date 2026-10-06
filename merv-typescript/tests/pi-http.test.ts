@@ -292,6 +292,22 @@ test('a worker body carries whatever its tools returned: a lone surrogate, any k
   assert.deepEqual(f.calls, ['complete']);
 });
 
+test('a worker body nested past any tool output is refused as such, not failed as a 500', async (t) => {
+  const f = fixture(t);
+  const base = await f.api.start();
+  const post = (depth: number) =>
+    fetch(`${base}/pi-worker/complete`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
+      body: `{"outcomes":${'['.repeat(depth)}${']'.repeat(depth)}}`,
+    });
+  const deep = await post(5000);
+  assert.equal(deep.status, 400);
+  assert.equal(((await json(deep)).error as { code: string }).code, 'invalid_pi_input');
+  assert.deepEqual(f.calls, []);
+  assert.equal((await post(500)).status, 200);
+});
+
 test('SSE sends canonical snapshots and deltas, reconnects, and releases disconnected subscribers', async (t) => {
   const f = fixture(t);
   const base = await f.api.start();
