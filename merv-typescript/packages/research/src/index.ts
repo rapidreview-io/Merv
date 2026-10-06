@@ -116,10 +116,6 @@ export type ResearchContext = Pick<
 /** A small coordinator over existing workflows; child programs own their actual assignments. */
 export class ResearchService implements Research {
   closed = false;
-  /** How long a cycle an outage refused waits before it is tried again. */
-  retryAfterMs = 30_000;
-  /** How long an outage keeps a cycle being tried again before only an event or a bind wakes it. */
-  unavailableForMs = 10 * 60_000;
   /** Projects with a retry already waiting: one resume reconciles every cycle there. */
   readonly retrying = new Set<string>();
   /** Runs a callback in the context this service was made in, outside every transaction. */
@@ -131,6 +127,10 @@ export class ResearchService implements Research {
     readonly scope: Scope,
     readonly workflows: Workflows,
     readonly providers: Providers,
+    /** How long a cycle an outage refused waits before it is tried again. */
+    readonly retryAfterMs = 30_000,
+    /** How long an outage keeps a cycle being tried again before only an event or a bind wakes it. */
+    readonly unavailableForMs = 10 * 60_000,
   ) {}
   /** Complete storage migrations before publishing this service. */
   async initialize(): Promise<void> {

@@ -28,9 +28,7 @@ async function fixture(t: TestContext) {
           ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
           : entry.id === 'ui'
             ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry.id === 'tasks'
-              ? { ...entry, config: { limits: { reviewRounds: 1 } } }
-              : entry,
+            : entry,
       ) as never,
     },
   });
@@ -533,7 +531,9 @@ test('the board reads what every task waits on, and its review rounds, once for 
   const waiting = await f.create('Rebuild citation index', { dependsOn: [source.id] });
   const both = await f.create('Draft section 3.2', { dependsOn: [source.id, second.id] });
   const reviewed = await f.create('Check figure units');
-  await f.verdict(await f.deliver(reviewed), 'needs_changes');
+  // Every round the default allows is used.
+  for (let round = 0; round < 3; round++)
+    await f.verdict(await f.deliver(reviewed), 'needs_changes');
   await f.deliver(reviewed);
   const tasks = [source, second, waiting, both, reviewed];
 

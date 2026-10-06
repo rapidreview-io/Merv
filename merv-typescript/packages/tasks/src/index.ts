@@ -25,7 +25,6 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
-import { z } from 'zod';
 import { postgresMigrations } from './index.postgres.js';
 
 import type { Code } from '@merv/code-work/types';
@@ -95,16 +94,6 @@ export type TaskLeaseRow = LeaseRow<{
   pinnedArtifacts: Artifact[];
   checkpoints: TaskCheckpoint[];
 }>;
-const configuration = z
-  .object({
-    limits: z
-      .object({ reviewRounds: z.number().int().min(1).max(1000).default(TASK_LIMITS.reviewRounds) })
-      .strict()
-      .default({}),
-  })
-  .strict()
-  .default({});
-
 /** What the modules (lease.ts, policy.ts, context.ts, running.ts, commands.ts) read of the service. */
 export type TasksContext = Pick<
   TaskService,
@@ -547,8 +536,7 @@ export class TaskService implements Tasks {
 export const tasksPlugin = {
   name: 'merv-tasks',
   inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
-  Config: configuration,
-  async apply(ctx: Context, config: z.infer<typeof configuration>) {
+  async apply(ctx: Context) {
     const tasks = await createService(
       new TaskService(
         ctx.state,
@@ -558,7 +546,6 @@ export const tasksPlugin = {
         ctx.reviews,
         ctx.contextBuilder,
         ctx.paper,
-        config.limits,
       ),
     );
     ctx.inject(['codeWork'], (ctx) => {

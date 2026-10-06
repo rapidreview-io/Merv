@@ -73,7 +73,11 @@ const waiting: PublicationStanding = {
 };
 const pending = { ...waiting, blockers: publicationBlockers(waiting) };
 
-async function fixture(t: TestContext, plugin = false) {
+async function fixture(
+  t: TestContext,
+  plugin = false,
+  retry: { afterMs?: number; forMs?: number } = {},
+) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-automatic-research-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
@@ -99,6 +103,8 @@ async function fixture(t: TestContext, plugin = false) {
             app.ctx.scope,
             app.ctx.workflows,
             providersOf(app.ctx),
+            retry.afterMs,
+            retry.forMs,
           ),
         );
   let research = await service();
@@ -534,10 +540,9 @@ test('expected handoff failures roll back child creation and recover without poi
 });
 
 test('a cycle a passing outage refused is tried again without another event', async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, false, { afterMs: 50 });
   await f.define();
   await f.enable();
-  f.research.retryAfterMs = 50;
   const work = await f.experiment();
   const cycle = await f.create([work.id]);
   await f.pump();
@@ -569,10 +574,9 @@ test('a cycle a passing outage refused is tried again without another event', as
 });
 
 test('a retry that fails while the database is still down is tried again', async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, false, { afterMs: 30 });
   await f.define();
   await f.enable();
-  f.research.retryAfterMs = 30;
   const work = await f.experiment();
   const cycle = await f.create([work.id]);
   await f.pump();
@@ -602,11 +606,9 @@ test('a retry that fails while the database is still down is tried again', async
 });
 
 test('outages that alternate their codes are still tried again only for the bound, by one timer per project', async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, false, { afterMs: 37, forMs: 400 });
   await f.define();
   await f.enable();
-  f.research.retryAfterMs = 37;
-  f.research.unavailableForMs = 400;
   const works = [await f.experiment(), await f.experiment()];
   for (const work of works) await f.create([work.id]);
   await f.pump();

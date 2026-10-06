@@ -4,7 +4,6 @@ import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
 import { CheckedTransitions, requireDependencies } from '@merv/workflows/rules';
 import { latestReleases, leaseRows } from '@merv/workflows/lease-rows';
-import { z } from 'zod';
 import {
   check,
   digest,
@@ -170,19 +169,6 @@ function reasoned(input: Data | undefined, message: string): void {
       message,
     );
 }
-const rounds = (fallback: number) => z.number().int().min(1).max(1000).default(fallback);
-const configuration = z
-  .object({
-    limits: z
-      .object({
-        designRounds: rounds(EXPERIMENT_LIMITS.designRounds),
-        resultRounds: rounds(EXPERIMENT_LIMITS.resultRounds),
-      })
-      .strict()
-      .default({}),
-  })
-  .strict()
-  .default({});
 
 /** What the experiment program (program.ts) reads of the service. */
 export type ExperimentsContext = Pick<
@@ -1663,8 +1649,7 @@ export class ExperimentService implements Experiments {
 export const experimentsPlugin = {
   name: 'merv-experiments',
   inject: ['state', 'scope', 'artifacts', 'workflows', 'reviews', 'contextBuilder', 'paper'],
-  Config: configuration,
-  async apply(ctx: Context, config: z.infer<typeof configuration>) {
+  async apply(ctx: Context) {
     const experiments = await createService(
       new ExperimentService(
         ctx.state,
@@ -1675,7 +1660,6 @@ export const experimentsPlugin = {
         ctx.contextBuilder,
         undefined,
         ctx.paper,
-        config.limits,
       ),
     );
     ctx.inject(['codeWork'], (ctx) => {

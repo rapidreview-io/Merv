@@ -48,9 +48,7 @@ async function fixture(t: TestContext) {
           ? { ...entry, config: { host: '127.0.0.1', port: 0 } }
           : entry.id === 'ui'
             ? { ...entry, config: { assets: join(directory, 'nowhere') } }
-            : entry.id === 'reflections'
-              ? { ...entry, config: { limits: { reviewReturns: 1 } } }
-              : entry,
+            : entry,
       ) as never,
     },
   });
@@ -300,6 +298,12 @@ test('synthesis and review read as the wave stands, used-up returns turn it red 
 
   // Sent back as often as the limit allows, the next review waits for a person.
   wave = await f.verdict(wave, reviewer, false);
+  assert.equal(wave.workflow.state, 'synthesizing');
+  wave = await f.verdict(
+    await f.synthesize(wave, await f.text(f.owner, 'Changes')),
+    reviewer,
+    false,
+  );
   assert.equal(wave.workflow.state, 'synthesizing');
   const plan: ChangeSpec = {
     version: 3,

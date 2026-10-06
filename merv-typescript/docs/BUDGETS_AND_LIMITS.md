@@ -43,6 +43,19 @@ that are already over it**, retroactively, the moment the new server starts.
 - One `workflow.escalated` event is recorded when an instance arrives in the capped state
   with the limit used up. Reads never record it, and a self-edge such as a reissued review
   does not repeat it.
+- The work lands in **Needs you** on the Running page, red on the board and in its sidebar,
+  until a person moves it. Nothing is left waiting silently:
+
+  | Workflow             | Card says                  | Who ends the wait                                                               |
+  | -------------------- | -------------------------- | ------------------------------------------------------------------------------- |
+  | task                 | Every review round is used | An operator allows another round, or an independent reviewer fails it by hand   |
+  | experiment (design)  | Out of review rounds       | An independent reviewer reviews it by hand, or an operator allows another round |
+  | experiment (results) | Out of review rounds       | The same                                                                        |
+  | reflection           | Review returns used up     | An independent reviewer reviews it by hand, or its owner or an operator ends it |
+
+  The disagreement is in the reviews: each returning verdict keeps its notes and findings,
+  and the next reviewer reads them as previous reviews. A task's and a reflection's card
+  links its open review.
 
 So a default of three review rounds means **three returns, after which the fourth
 delivery waits for a human**. That person either reviews it by hand, or grants one more
@@ -61,14 +74,15 @@ raises a cap, so a grant racing a transition is benign.
 
 ### Defaults
 
-Each is plugin configuration, an integer from 1 to 1000.
+Each is a constant the plugin passes to its service's constructor; no deployment config sets
+it. A test that needs a smaller cap constructs the service with its own.
 
-| Plugin      | Config key             | Default | Limit            | Capped edges                                            |
-| ----------- | ---------------------- | ------- | ---------------- | ------------------------------------------------------- |
-| tasks       | `limits.reviewRounds`  | 3       | `review_rounds`  | `in_review` → `revise`                                  |
-| experiments | `limits.designRounds`  | 4       | `design_rounds`  | `design_review` → `revise_design`                       |
-| experiments | `limits.resultRounds`  | 3       | `result_rounds`  | `experiment_review` → `revise_plan`, `revise_execution` |
-| reflections | `limits.reviewReturns` | 2       | `review_returns` | `in_review` → `revise_synthesis`, `restart_lenses`      |
+| Plugin      | Constant                          | Value | Limit            | Capped edges                                            |
+| ----------- | --------------------------------- | ----- | ---------------- | ------------------------------------------------------- |
+| tasks       | `TASK_LIMITS.reviewRounds`        | 3     | `review_rounds`  | `in_review` → `revise`                                  |
+| experiments | `EXPERIMENT_LIMITS.designRounds`  | 4     | `design_rounds`  | `design_review` → `revise_design`                       |
+| experiments | `EXPERIMENT_LIMITS.resultRounds`  | 3     | `result_rounds`  | `experiment_review` → `revise_plan`, `revise_execution` |
+| reflections | `REFLECTION_LIMITS.reviewReturns` | 2     | `review_returns` | `in_review` → `revise_synthesis`, `restart_lenses`      |
 
 Only a reflection's parent workflow is capped; a lens has one way forward. The research
 cycle has no loop and no limit. Task `reissue_review` and the experiment `retry_running`

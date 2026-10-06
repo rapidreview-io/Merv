@@ -37,7 +37,7 @@ Approval retains the exact submitted outputs, contributors and review. Research 
 The reflection reviewer owns cross-experiment Methods/Results updates. Read the current paper and integrate verified findings using `review.submit.paperChanges`. These reviewer-authored edits save atomically with any valid verdict, with rejection and uncertainty stated honestly. If no edits are warranted, explain why in review notes. Synthesis no longer supplies paper edits. See [Living paper](LIVING_PAPER.md).
 
 A review may send a reflection back, to its synthesis or to its lenses, at most
-`limits.reviewReturns` times in total (Reflections config, default 2): the
+`REFLECTION_LIMITS.reviewReturns` times in total (2): the
 `review_returns` [loop limit](BUDGETS_AND_LIMITS.md) on the parent workflow. Restarting
 the lenses opens five more sessions, so this caps that fan-out. An escalated reflection
 waits for a human approval or an admin's `workflow.extend_limit`, or for `reflection.end`

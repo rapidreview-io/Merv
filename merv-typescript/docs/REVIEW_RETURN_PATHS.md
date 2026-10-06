@@ -78,7 +78,7 @@ Verification evidence is recorded separately in [VERIFICATION.md](../VERIFICATIO
 ## Review rounds are limited
 
 A task's `in_review` → `revise` edge is capped by the `review_rounds`
-[loop limit](BUDGETS_AND_LIMITS.md), Tasks config `limits.reviewRounds`, default 3. That
+[loop limit](BUDGETS_AND_LIMITS.md), `TASK_LIMITS.reviewRounds`, 3. That
 means three returns; the fourth delivery is not reviewed automatically and waits for a
 human. A fourth `needs_changes` is refused with `loop_limit_reached` and the whole verdict
 rolls back. A reviewer can still accept or fail the task by hand, and a project admin can

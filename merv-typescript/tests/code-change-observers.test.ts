@@ -8,7 +8,7 @@ import type { CodeService } from '@merv/code-work/service';
 import { createApp } from './fixtures/app.js';
 import type { ApplicationConfig } from '../src/config.js';
 
-async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
+async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-code-observers-'));
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
@@ -26,8 +26,7 @@ async function fixture(t: TestContext, finalizeGraceSeconds = 900) {
   ]);
   config.plugins = config.plugins.filter(({ id }) => ids.has(id));
   for (const plugin of config.plugins)
-    if (plugin.id === 'code') plugin.config = { finalizeGraceSeconds };
-    else if (plugin.id === 'code-work') plugin.config = {};
+    if (plugin.id === 'code' || plugin.id === 'code-work') plugin.config = {};
   const app = await createApp({ directory, config });
   t.after(async () => {
     await app.stop();
@@ -265,12 +264,13 @@ test('research observers ignore generic Code records with no research workflow o
 });
 
 test('writer recovery composes with base blockers and fencing preserves the base refusal', async (t) => {
-  const f = await fixture(t, 3600);
+  const f = await fixture(t);
   await f.bind('b', 'a');
+  // Ten minutes is inside the default 900-second grace.
   await f.ctx.state.transaction((tx) =>
     tx.run(
       "UPDATE code_workspaces SET generation=1,writer_state='closing',writer_changed_at=? WHERE unit_id=?",
-      new Date(Date.now() - 1800_000).toISOString(),
+      new Date(Date.now() - 600_000).toISOString(),
       f.unitId,
     ),
   );

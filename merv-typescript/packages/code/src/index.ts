@@ -7,7 +7,6 @@ import { githubConfig } from './github-client.js';
 const bytes = z.number().int().positive().safe();
 const configuration = z
   .object({
-    finalizeGraceSeconds: z.number().int().min(1).max(86_400).optional(),
     repositories: z
       .object({
         root: z.string().refine((root) => root.startsWith('/'), 'The root is an absolute path'),

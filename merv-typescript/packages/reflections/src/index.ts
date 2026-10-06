@@ -24,7 +24,6 @@ import { CheckedTransitions } from '@merv/workflows/rules';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';
-import { z } from 'zod';
 import type { Paper } from '@merv/paper/types';
 import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
 import type {} from '@merv/sessions/types';
@@ -51,17 +50,6 @@ const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesiz
  * return the next synthesis waits for a human, who reviews it by hand or allows another round.
  */
 export const REFLECTION_LIMITS = { reviewReturns: 2 };
-const configuration = z
-  .object({
-    limits: z
-      .object({
-        reviewReturns: z.number().int().min(1).max(1000).default(REFLECTION_LIMITS.reviewReturns),
-      })
-      .strict()
-      .default({}),
-  })
-  .strict()
-  .default({});
 
 /** What the modules (program.ts, commands.ts, running.ts) read of the service. */
 export type ReflectionsContext = Pick<
@@ -457,8 +445,7 @@ export const reflectionsPlugin = {
     'contextBuilder',
     'sessions',
   ],
-  Config: configuration,
-  async apply(ctx: Context, config: z.infer<typeof configuration>) {
+  async apply(ctx: Context) {
     await ctx.effect(async function* () {
       const service = await createService(
         new ReflectionService(
@@ -469,7 +456,6 @@ export const reflectionsPlugin = {
           ctx.workflows,
           ctx.reviews,
           ctx.contextBuilder,
-          config.limits,
         ),
       );
       yield () => service.close();
