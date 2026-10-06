@@ -40,7 +40,7 @@ import type {
   PiRan,
   PiSnapshot,
 } from './types.js';
-import { decode, equal, hash, parse, publicCommand, roleOf } from './core.js';
+import { actOf, decode, equal, hash, parse, publicCommand, roleOf } from './core.js';
 import { PiWorkerProtocol } from './worker-protocol.js';
 
 const publicConversation = ({ source: _source, ...value }: PiConversationRecord): PiConversation =>
@@ -184,6 +184,15 @@ export class PiService extends PiWorkerProtocol implements Pi, FleetOwner {
       const view = await this.hostView(tx, host, conversation, source);
       return { conversation, commands: rows.map(decode<PiCommandRecord>), host, allocation, view };
     });
+    // A call proposed before its tool declared an act reads with the act its tool declares now.
+    const untitled = commands.flatMap((command) => command.proposals?.filter((p) => !p.act) ?? []);
+    if (untitled.length) {
+      const tools = new Map((await this.tools.list()).map((tool) => [tool.name, tool]));
+      for (const proposal of untitled) {
+        const act = actOf(tools.get(proposal.name), proposal.input as Record<string, unknown>);
+        if (act) proposal.act = act;
+      }
+    }
     const turn = commands.find((command) => command.id === conversation.activeCommandId);
     // The tail keeps only recent events: the turn's answer so far comes whole, as one event.
     const whole = streamed?.commandId === turn?.id ? streamed : undefined;

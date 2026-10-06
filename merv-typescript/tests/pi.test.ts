@@ -25,7 +25,7 @@ import { CredentialStore, tokenDigest } from '../packages/identity/src/credentia
 import { sessionsToolsPlugin } from '../packages/sessions/src/tools.js';
 import { messageChars } from '../packages/pi/src/limits.js';
 import { fit } from '../packages/pi/src/fit.js';
-import type { PiBootstrap, PiStage } from '../packages/pi/src/types.js';
+import type { PiBootstrap, PiCommandRecord, PiStage } from '../packages/pi/src/types.js';
 import { countWrites } from './fixtures/state.js';
 import { checkpointTree, code, fixture, models, sha, type PiFixture } from './fixtures/pi.js';
 
@@ -752,6 +752,44 @@ test('an exact repeated proposal in one turn keeps one Run action and one mutati
   await assert.rejects(run(first.proposed.id), code('pi_proposal_ran'));
   assert.equal(mutations, 1);
   assert.deepEqual((await run(changed.proposed.id)).result, { mutations: 2 });
+});
+
+test('a call proposed before its tool declared an act reads with the act its tool declares now', async (t) => {
+  const f = await fixture(t);
+  t.after(
+    f.tools.register({
+      name: 'probe.halt',
+      description: 'Halt one or all',
+      conversation: 'propose',
+      act: { title: ({ sessionId }) => (sessionId ? 'Halt lease' : 'Halt all leases') },
+      inputSchema: z.object({ sessionId: z.string().optional() }).strict(),
+      handler: () => ({}),
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  for (const input of [{}, { sessionId: 'session_1' }])
+    await f.pi.tool(turn.token, { ...turn.input, name: 'probe.halt', input });
+  // As a turn kept it before tools declared an act: the proposals carry none.
+  await f.state.transaction(async (tx) => {
+    const row = await tx.get<{ data_json: string }>(
+      'SELECT data_json FROM pi_commands WHERE id=?',
+      turn.input.commandId,
+    );
+    const command = JSON.parse(row!.data_json) as PiCommandRecord;
+    for (const proposal of command.proposals ?? []) delete proposal.act;
+    await tx.run(
+      'UPDATE pi_commands SET data_json=? WHERE id=?',
+      JSON.stringify(command),
+      turn.input.commandId,
+    );
+  });
+  const command = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
+  assert.deepEqual(
+    command.proposals?.map(({ act }) => act),
+    [{ title: 'Halt all leases' }, { title: 'Halt lease' }],
+  );
 });
 
 test('the hand-off: the agent proposes, the person runs it once as themselves, and a secret stays theirs', async (t) => {

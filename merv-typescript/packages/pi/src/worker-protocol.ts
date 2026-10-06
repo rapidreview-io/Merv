@@ -38,7 +38,7 @@ import type {
   PiTurnInput,
   PiWork,
 } from './types.js';
-import { decode, equal, hash, parse, publicCommand } from './core.js';
+import { actOf, decode, equal, hash, parse, publicCommand } from './core.js';
 import { PiHosts } from './hosts.js';
 
 /** What /next hands a worker: retirement, a probe to echo, or a claimed turn. */
@@ -562,8 +562,10 @@ export abstract class PiWorkerProtocol extends PiHosts {
     use: 'propose' | 'secret',
   ): Promise<unknown> {
     // The card says what the call does in the words of the tool's owner, read as it was proposed.
-    const tool = (await this.tools.list()).find(({ name }) => name === turn.name);
-    const act = tool && !('kind' in tool) ? tool.act : undefined;
+    const act = actOf(
+      (await this.tools.list()).find(({ name }) => name === turn.name),
+      turn.input,
+    );
     const result = await this.state.transaction(async (tx) => {
       const { command } = await this.bound(token, turn, tx);
       const identity = digest([turn.name, turn.input, use]);
@@ -576,12 +578,7 @@ export abstract class PiWorkerProtocol extends PiHosts {
         id: newId('pip'),
         name: turn.name,
         input: turn.input as Data,
-        ...(act && {
-          act: {
-            title: typeof act.title === 'string' ? act.title : act.title(turn.input),
-            ...(act.says && { says: act.says }),
-          },
-        }),
+        ...(act && { act }),
         ...(use === 'secret' && { secret: true as const }),
         at: this.time(),
       };
