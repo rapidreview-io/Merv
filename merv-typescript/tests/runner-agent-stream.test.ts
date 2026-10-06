@@ -199,6 +199,13 @@ test('Codex --json: reasoning, messages, commands, MCP calls and file changes wi
       usage: { input_tokens: 10, cached_input_tokens: 4, output_tokens: 3 },
     }),
     line({ type: 'turn.failed', error: { message: 'boom' } }),
+    // Codex reports non-fatal warnings as error items; only the top-level error line is fatal.
+    line({ type: 'item.started', item: { id: 'item_6', type: 'error', message: 'early' } }),
+    line({
+      type: 'item.completed',
+      item: { id: 'item_6', type: 'error', message: 'unknown model' },
+    }),
+    line({ type: 'error', message: 'stream lost' }),
   ];
   assert.deepEqual(parse('codex', codex), [
     { kind: 'status', id: 'status-0', text: 'Started' },
@@ -212,6 +219,8 @@ test('Codex --json: reasoning, messages, commands, MCP calls and file changes wi
     { kind: 'text', id: 'item_5', delta: 'Handed off.', done: true },
     { kind: 'status', id: 'status-11', text: 'Turn completed · 10 tokens in · 3 out' },
     { kind: 'status', id: 'status-12', text: 'Turn failed · boom' },
+    { kind: 'status', id: 'status-14', text: 'Warning · unknown model' },
+    { kind: 'status', id: 'status-15', text: 'Error · stream lost' },
   ]);
 });
 

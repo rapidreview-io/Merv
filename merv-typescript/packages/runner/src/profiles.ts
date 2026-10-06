@@ -276,6 +276,19 @@ const table = (values: Record<string, string>): string =>
     .map(([key, value]) => `${quote(key)}=${quote(value)}`)
     .join(',')}}`;
 
+/**
+ * Limits for models the pinned Codex (0.155.0-alpha.2) does not bundle, which it would otherwise
+ * run on fallback metadata. Pi's catalog gives each a 272K window (6.1 Sol runs as 6 Sol there);
+ * Codex compacts at 90% of a known model's window, so these do too.
+ */
+const codexModelLimits: ReadonlyMap<string, { contextWindow: number; autoCompact: number }> =
+  new Map(
+    ['gpt-6-sol', 'gpt-6-luna', 'gpt-6.1-sol'].map((model) => [
+      model,
+      { contextWindow: 272_000, autoCompact: 244_800 },
+    ]),
+  );
+
 function codexArgs(
   profile: Extract<RunnerProfile, { harness: 'codex' }>,
   request: LaunchRequest,
@@ -320,6 +333,8 @@ function codexArgs(
   ])
     config(`features.${feature}`, 'false');
   config('features.skip_host_skill_discovery', 'true');
+  // A top-level key: Codex otherwise opens every stream with a warning about the feature above.
+  config('suppress_unstable_features_warning', 'true');
   const disabledSkills = request.disabledSkillPaths ?? [];
   check(
     Array.isArray(disabledSkills) &&
@@ -398,6 +413,11 @@ function codexArgs(
       .join('')}}`,
   );
   if (profile.model !== undefined) args.push('--model', profile.model);
+  const limits = profile.model === undefined ? undefined : codexModelLimits.get(profile.model);
+  if (limits) {
+    config('model_context_window', String(limits.contextWindow));
+    config('model_auto_compact_token_limit', String(limits.autoCompact));
+  }
   if (profile.effort !== undefined) config('model_reasoning_effort', quote(profile.effort));
   if (profile.hosted) {
     config('model_provider', quote('merv'));

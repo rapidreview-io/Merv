@@ -68,7 +68,8 @@ function lines() {
             },
           ]
         : [];
-    if (item.type === 'error') return done ? status(`Error · ${str(item.message)}`) : [];
+    // Codex reports its non-fatal warnings as error items; a fatal error is the top-level line.
+    if (item.type === 'error') return done ? status(`Warning · ${str(item.message)}`) : [];
     if (!TOOLS.has(item.type)) return [];
     const { name, input, output, error } = call(item);
     const event: AgentEvent = { kind: 'tool_call', id, name, input };
