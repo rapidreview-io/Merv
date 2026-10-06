@@ -61,7 +61,7 @@ export function threadOf({
   briefId?: string;
   nameOf(id: string | null | undefined): string | undefined;
   /** The gates a review answers, and what crossing into each says its producer did. */
-  states: Pick<StateWords, 'gate' | 'submitted'>;
+  states: Pick<StateWords, 'gates' | 'said'>;
 }): Entry[] {
   const rounds = reviews
     .filter((review) => review.subjectId === subject)
@@ -99,8 +99,8 @@ export function threadOf({
   const entries: Entry[] = [];
   let open: Review | undefined;
   for (const step of crossings) {
-    const into = states.gate(step.to);
-    const out = states.gate(step.from);
+    const into = states.gates.has(step.to);
+    const out = states.gates.has(step.from);
     const decided = out && !into && open?.verdict ? open : undefined;
     open = into ? rounds.find((review) => review.subjectRevision === step.revision) : undefined;
     if (into && !out)
@@ -110,7 +110,7 @@ export function threadOf({
         role: 'Producer',
         who: nameOf(step.actorId),
         at: step.at,
-        said: states.submitted(step.to),
+        said: states.said.get(step.to)?.submitted,
         files: briefId === undefined ? undefined : open?.artifactIds.filter((id) => id !== briefId),
       });
     else if (decided) {
@@ -130,7 +130,7 @@ export function threadOf({
         at: step.at,
       });
   }
-  if (states.gate(graph.state) && open && !open.verdict) entries.push(waiting(open));
+  if (states.gates.has(graph.state) && open && !open.verdict) entries.push(waiting(open));
   return entries;
 }
 

@@ -1,5 +1,5 @@
 import { useTool } from './api';
-import type { PluginState, Row, ShellData } from './shell-types';
+import type { PluginState, Row, RowStateWords, ShellData } from './shell-types';
 
 /**
  * Sidebar navigation model. Sections express what a person is doing
@@ -59,34 +59,19 @@ export const useRows = (): Row[] =>
  * is a state left through review.submit, and the rest is in the words of the row that owns it.
  */
 export interface StateWords {
-  working(state: string): boolean;
-  gate(state: string): boolean;
-  /** Work not yet begun, as its owner says. */
-  idle(state: string): boolean;
-  /** What crossing into a gate says its producer did, as its owner says. */
-  submitted(state: string): string | undefined;
+  working: ReadonlySet<string>;
+  gates: ReadonlySet<string>;
+  said: ReadonlyMap<string, RowStateWords>;
 }
 const WORDS = new WeakMap<object, StateWords>();
-const NO_SHELL = {};
-export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>> = NO_SHELL) {
-  let words = WORDS.get(shell);
-  if (words) return words;
+export function stateWords(shell: Partial<Pick<ShellData, 'rows' | 'workflows'>> = {}) {
   const shapes = shell.workflows ?? [];
-  const working = new Set(
-    shapes.flatMap((shape) => shape.states.filter((state) => !shape.terminal.includes(state))),
-  );
-  const gates = new Set(
-    shapes.flatMap((shape) =>
-      shape.edges.filter((edge) => edge.tool === 'review.submit').map((edge) => edge.from),
+  const words = WORDS.get(shell) ?? {
+    working: new Set(shapes.flatMap((s) => s.states.filter((at) => !s.terminal.includes(at)))),
+    gates: new Set(
+      shapes.flatMap((s) => s.edges.filter((e) => e.tool === 'review.submit').map((e) => e.from)),
     ),
-  );
-  const said = (shell.rows ?? []).flatMap((row) => Object.entries(row.states ?? {}));
-  words = {
-    working: (state) => working.has(state),
-    gate: (state) => gates.has(state),
-    idle: (state) => said.some(([name, word]) => name === state && word.idle),
-    submitted: (state) =>
-      said.find(([name, word]) => name === state && word.submitted)?.[1].submitted,
+    said: new Map((shell.rows ?? []).flatMap((row) => Object.entries(row.states ?? {}))),
   };
   WORDS.set(shell, words);
   return words;

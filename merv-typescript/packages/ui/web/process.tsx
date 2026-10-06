@@ -144,9 +144,9 @@ const hueOf = (step: Step, states: StateWords): Hue =>
       : toneOf(step.state, states) === 'bad'
         ? 'bad'
         : 'off'
-    : states.idle(step.state)
+    : states.said.get(step.state)?.idle
       ? 'idle'
-      : states.gate(step.state)
+      : states.gates.has(step.state)
         ? 'review'
         : toneOf(step.state, states) === 'ok'
           ? 'live'

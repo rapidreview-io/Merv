@@ -144,7 +144,7 @@ const TONE_OF = new Map(
   TONES.flatMap(([tone, words]) => words.split(' ').map((word) => [word, tone] as const)),
 );
 export const toneOf = (value: string, states?: StateWords) =>
-  TONE_OF.get(value) ?? (states?.working(value) ? 'warn' : 'neutral');
+  TONE_OF.get(value) ?? (states?.working.has(value) ? 'warn' : 'neutral');
 
 /** A state reads as its dot and one small-caps word: ● COMPLETED. */
 const Word = ({ tone, value }: { tone: string; value: string }) => (
