@@ -90,33 +90,12 @@ export function factsOf({ name, input, act }: Pick<PiProposal, 'name' | 'input' 
   });
 }
 
-/*
- * A call run before Pi kept what Run told (`ran.told`) left only the sentence, recognised as Run
- * wrote it then: a result, as much of its JSON as Run sent; the sentence that stands for a result
- * shown only to the person; a refusal and why; and a tool's own receipt, which ended by saying
- * where to read on.
- */
-const RAN = /^Ran (\S+): ([^]*)$/;
-const SECRET = /^Ran (\S+); its result is shown only to me\.$/;
-const REFUSED = /^(\S+) was refused: ([^]*)$/;
-const REREAD = /\. Re-read [\w. ]+ for current details\.$/;
-
-/** The tool such a sentence names, and the part of it that says how the call came out. */
-function before(text?: string): { tool: string; said?: string } | null {
-  if (text === undefined || text.includes('\n\n')) return null;
-  const [secret, ran, refused] = [SECRET, RAN, REFUSED].map((said) => said.exec(text));
-  if (secret) return { tool: secret[1]! };
-  if (ran) return { tool: ran[1]!, said: ran[2]!.replace(REREAD, '') };
-  return refused && { tool: refused[1]!, said: refused[2]! };
-}
-
 /**
  * The call whose outcome the first message of turn `at` told the agent, or null where the person
  * wrote it: the message is exactly what Pi kept as told (`ran.told`) for a call among the latest
  * the agent proposed before it, the only cards that offer Run. Calls told alike are answered in
  * the order they ran. A receipt that waited in the composer and went with the person's own words
- * after it is theirs. A call that ran before Pi kept `told` is answered by the sentence Run wrote
- * then, and comes back with what that sentence said as its outcome.
+ * after it is theirs.
  */
 export function receiptOf(commands: PiCommand[], at: number): PiProposal | null {
   const told = (command?: PiCommand) => {
@@ -129,29 +108,11 @@ export function receiptOf(commands: PiCommand[], at: number): PiProposal | null 
     .slice(0, at)
     .map((command) => !!command.proposals?.length)
     .lastIndexOf(true);
-  const proposals = commands[from]?.proposals ?? [];
-  const answered = (alike: (call: PiProposal) => boolean, same: (turn: PiCommand) => boolean) => {
-    const ran = proposals.filter(alike).sort((a, b) => a.ran!.at.localeCompare(b.ran!.at));
-    const earlier = commands.slice(from + 1, at).filter(same);
-    return ran[Math.min(earlier.length, ran.length - 1)];
-  };
   // pi.send keeps the words trimmed, and a cut result can end in a space.
-  const kept = answered(
-    (call) => call.ran?.told?.trim() === text.trim(),
-    (turn) => told(turn)?.trim() === text.trim(),
-  );
-  if (kept) return kept;
-  const old = before(text);
-  const proposal =
-    old &&
-    answered(
-      (call) => call.name === old.tool && !!call.ran && call.ran.told === undefined,
-      (turn) => before(told(turn))?.tool === old.tool,
-    );
-  return proposal
-    ? {
-        ...proposal,
-        ran: { ...proposal.ran!, told: text, ...(old.said !== undefined && { said: old.said }) },
-      }
-    : null;
+  const same = (said?: string) => said?.trim() === text.trim();
+  const ran = (commands[from]?.proposals ?? [])
+    .filter((call) => same(call.ran?.told))
+    .sort((a, b) => a.ran!.at.localeCompare(b.ran!.at));
+  const earlier = commands.slice(from + 1, at).filter((turn) => same(told(turn)));
+  return ran[Math.min(earlier.length, ran.length - 1)] ?? null;
 }

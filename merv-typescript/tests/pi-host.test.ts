@@ -3,7 +3,12 @@ import { execFileSync } from 'node:child_process';
 import test from 'node:test';
 import { createService, MervError, type Caller } from '@merv/contracts';
 import { ProjectScope } from '@merv/scope';
-import { hostMigration, migration } from '../packages/pi/src/schema.js';
+import {
+  hostMigration,
+  migration,
+  toldMigration,
+  usageMigration,
+} from '../packages/pi/src/schema.js';
 import type { PiCommand, PiHostRecord } from '../packages/pi/src/types.js';
 import { openState, postgresUrl } from './fixtures/state.js';
 import { code, fixture, offers, type PiFixture } from './fixtures/pi.js';
@@ -905,6 +910,121 @@ test('pi@2 ends turns begun on a conversation’s machine, and the pi@1 image re
   assert.equal(JSON.parse(turn!.data_json).error, 'service_unavailable');
   assert.equal(column, undefined);
   await assert.rejects(state.migrate('pi', [migration]), code('migration_ahead'));
+});
+
+test('pi@4 keeps what Run told the agent on calls that ran before Pi kept it, read from the sentences Run wrote', async (t) => {
+  const state = await openState();
+  t.after(() => state.close());
+  const scope = await createService(new ProjectScope(state));
+  const boot = await scope.credentials.bootstrap({ projectName: 'Pi told', actorName: 'Owner' });
+  await state.migrate('pi', [migration, hostMigration, usageMigration]);
+  const result = JSON.stringify({ id: 'task_1', title: 'Seed sweep' });
+  const call = (id: string, name: string, at?: string, extra: object = {}) => ({
+    id,
+    name,
+    input: {},
+    at: 'then',
+    ...(at && { ran: { at, ok: name !== 'session.halt' } }),
+    ...extra,
+  });
+  const proposals = [
+    call('pip_task', 'task.create', '2026-10-01T00:00:01Z'),
+    call('pip_halt', 'session.halt', '2026-10-01T00:00:02Z'),
+    call('pip_read', 'artifact.read', '2026-10-01T00:00:03Z', { secret: true }),
+    call('pip_list', 'task.list', '2026-10-01T00:00:04Z'),
+    // Two calls told alike are told in the order they ran.
+    call('pip_start', 'session.dispatch', '2026-10-01T00:00:09Z'),
+    call('pip_again', 'session.dispatch', '2026-10-01T00:00:05Z'),
+    call('pip_kept', 'task.update', '2026-10-01T00:00:06Z'),
+    call('pip_end', 'research.end'),
+  ];
+  proposals[6]!.ran = {
+    at: '2026-10-01T00:00:06Z',
+    ok: true,
+    told: 'Ran task.update: {}',
+  } as never;
+  const dispatched = 'Ran session.dispatch: {"enabled":true}';
+  const turns: [string, string, { text?: string; proposals?: object[] }][] = [
+    ['c01', 'user', { proposals }],
+    ['c02', 'user', { text: `Ran task.create: ${result}` }],
+    ['c03', 'user', { text: 'session.halt was refused: Actor lacks admin permission' }],
+    ['c04', 'user', { text: 'Ran artifact.read; its result is shown only to me.' }],
+    ['c05', 'user', { text: 'Ran task.list: {"count":2}. Re-read task.list for current details.' }],
+    ['c06', 'user', { text: dispatched }],
+    ['c07', 'user', { text: dispatched }],
+    // The person's own words, a receipt that went with them, and words not the person's.
+    ['c08', 'user', { text: 'Ran the numbers again: anything new?' }],
+    ['c09', 'user', { text: 'Ran research.end: {}\n\nAnd then?' }],
+    ['c10', 'assistant', { text: 'Ran research.end: {}' }],
+    // A later turn proposes: what comes after it answers its calls, not the earlier ones.
+    ['c11', 'assistant', { proposals: [call('pip_next', 'research.advance')] }],
+    ['c12', 'user', { text: 'Ran research.end: {}' }],
+  ];
+  await state.transaction(async (tx) => {
+    await tx.run(
+      'INSERT INTO pi_conversations(id,project_id,user_id,request_id,input_hash,data_json) VALUES(?,?,?,?,?,?)',
+      'pic_told',
+      boot.project.id,
+      'user',
+      'request',
+      'hash',
+      JSON.stringify({ id: 'pic_told' }),
+    );
+    for (const [id, role, { text, proposals }] of turns)
+      await tx.run(
+        'INSERT INTO pi_commands(id,conversation_id,status,relay_hash,created_at,data_json) VALUES(?,?,?,?,?,?)',
+        id,
+        'pic_told',
+        'completed',
+        `relay_${id}`,
+        `2026-10-01T00:00:${id.slice(1)}Z`,
+        JSON.stringify({
+          id,
+          status: 'completed',
+          messages: [{ role, text: text ?? 'Go' }],
+          ...(proposals && { proposals }),
+        }),
+      );
+  });
+  await state.migrate('pi', [migration, hostMigration, usageMigration, toldMigration]);
+  const rows = await state.read((sql) =>
+    sql.all<{ id: string; data_json: string }>('SELECT id,data_json FROM pi_commands ORDER BY id'),
+  );
+  const kept = JSON.parse(rows[0]!.data_json).proposals as {
+    id: string;
+    ran?: Record<string, unknown>;
+  }[];
+  assert.deepEqual(
+    Object.fromEntries(kept.map(({ id, ran }) => [id, ran && { told: ran.told, said: ran.said }])),
+    {
+      pip_task: { told: `Ran task.create: ${result}`, said: result },
+      pip_halt: {
+        told: 'session.halt was refused: Actor lacks admin permission',
+        said: 'Actor lacks admin permission',
+      },
+      pip_read: { told: 'Ran artifact.read; its result is shown only to me.', said: undefined },
+      pip_list: {
+        told: 'Ran task.list: {"count":2}. Re-read task.list for current details.',
+        said: '{"count":2}',
+      },
+      pip_again: { told: dispatched, said: '{"enabled":true}' },
+      pip_start: { told: dispatched, said: '{"enabled":true}' },
+      pip_kept: { told: 'Ran task.update: {}', said: undefined },
+      pip_end: undefined,
+    },
+  );
+  // Nothing else about a call or a turn changes.
+  assert.deepEqual(kept[1]!.ran!.ok, false);
+  assert.deepEqual(kept[0]!.ran!.at, '2026-10-01T00:00:01Z');
+  assert.deepEqual(
+    rows.slice(1).map(({ data_json }) => JSON.parse(data_json)),
+    turns.slice(1).map(([id, role, { text, proposals }]) => ({
+      id,
+      status: 'completed',
+      messages: [{ role, text: text ?? 'Go' }],
+      ...(proposals && { proposals }),
+    })),
+  );
 });
 
 test('a machine whose agent never connects is replaced and the turn runs on the next; when none does, the turn ends as no machine', async (t) => {

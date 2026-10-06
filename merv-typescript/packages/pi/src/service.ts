@@ -20,6 +20,7 @@ import {
   runInput,
   sendInput,
   usageMigration,
+  toldMigration,
   warmInput,
 } from './schema.js';
 import { piModelRelay } from './relay.js';
@@ -120,7 +121,7 @@ export class PiService implements Pi {
   readonly bootstrap: PiHosts['bootstrap'] = (allocation) => this.hosts.bootstrap(allocation);
   async initialize(): Promise<void> {
     await this.core.credentials.initialize();
-    await this.core.state.migrate('pi', [migration, hostMigration, usageMigration]);
+    await this.core.state.migrate('pi', [migration, hostMigration, usageMigration, toldMigration]);
     if (!this.core.config.enabled) return;
     this.disposers.push(this.core.fleet.registerOwner('pi-host', this.hosts));
     // Pi issues conversation callers: Scope asks it whether one is current, and the tool registry
