@@ -73,9 +73,9 @@ async function fixture(t: TestContext) {
       credentialId: issued.credential.id,
     };
   };
-  /** A worker whose every lease `source` directs. */
+  /** Workers whose every lease `source` directs: each lease is a fresh agent. */
   const worker = async (source: Caller) => {
-    const token = `ms_${randomBytes(32).toString('base64url')}`;
+    let token = '';
     await sessions.dispatch.heartbeatRunner(source, {
       runnerId: 'external',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
@@ -83,24 +83,23 @@ async function fixture(t: TestContext) {
       capacity: 4,
       capabilities: ['code.v2'],
     });
-    await sessions.registerAgent(source, {
-      name: `Worker ${++seq}`,
-      runnerId: 'external',
-      requestId: `register-${seq}`,
-      secret: token,
-    });
     return {
-      token,
       assign: async (subject: { id: string; workflow: { revision: number } }) => {
-        const session = await sessions.assignAgent(token, {
+        token = `ms_${randomBytes(32).toString('base64url')}`;
+        const session = await sessions.offer(source, {
           instanceId: subject.id,
           expectedRevision: subject.workflow.revision,
+          runnerId: 'external',
           requestId: `assign-${++seq}`,
+          secret: token,
         });
         held.set(session.id, await work.attach(session, source));
         return session;
       },
+      /** The worker of the latest lease. */
       caller: async () => await sessions.authenticate(token),
+      release: async (sessionId: string) =>
+        await sessions.release(source, { sessionId, runnerId: 'external' }),
     };
   };
   const call = async <T>(name: string, caller: Caller, input: Data) =>
@@ -190,7 +189,7 @@ test('the founder decides, only as owner, the delivery of a worker the founder d
   const hand = await f.worker(f.key);
   const work = await hand.assign(task);
   const delivered = await f.deliver(await hand.caller(), task);
-  await f.app.ctx.sessions.releaseAgentAssignment(hand.token, work.id);
+  await hand.release(work.id);
   const reviewId = delivered.reviewId!;
   const requested = await f.reviews.get(f.founder, reviewId);
   assert.deepEqual(requested.excludedActorIds, [f.founder.actorId]);

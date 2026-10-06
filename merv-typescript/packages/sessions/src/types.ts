@@ -81,7 +81,10 @@ export type {
 } from './managed-types.js';
 export type { RunnerPlatform, SessionUsageReport, SessionWorkspace } from '@merv/contracts';
 
-/** A continuing agent instance and its authenticated session, independent of assignments. */
+/**
+ * The agent of one offer, or of the sessions that resume its conversation. `persistent` and a
+ * `contextEpoch` above 0 survive only on rows of the retired continuing agents.
+ */
 export interface Agent {
   id: string;
   sessionId: string;
@@ -96,22 +99,10 @@ export interface Agent {
   createdAt: string;
   retiredAt: string | null;
 }
-export interface AgentRegistration {
-  name: string;
-  runnerId: string;
-  requestId: string;
-  secret: string;
-}
 export interface AgentStatus {
   agent: Agent;
   current: Session | null;
   assignments: Session[];
-}
-export interface AgentAssignment {
-  instanceId: string;
-  expectedRevision: number;
-  requestId: string;
-  hardDeadlineSeconds?: number;
 }
 
 /** Assignment execution. Its id remains fixed for evidence and late-call fencing. */
@@ -183,7 +174,6 @@ export type SessionLookup = Pick<
   | 'closedAt'
 >;
 export interface SessionOffer {
-  agentId?: string;
   instanceId: string;
   expectedRevision: number;
   runnerId: string;
@@ -352,21 +342,9 @@ export interface Sessions {
     tx: Transaction,
   ): Promise<{ ref: string; actorId: string; authorityId: string }[]>;
 
-  registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent>;
   agents(caller: Caller): Promise<AgentStatus[]>;
   agent(caller: Caller, agentId: string): Promise<AgentStatus>;
   retireAgent(caller: Caller, agentId: string): Promise<Agent>;
-  /** Owner-authorized replacement of a continuing agent's 30-day credential. */
-  rotateAgent(
-    caller: Caller,
-    agentId: string,
-  ): Promise<{ agent: Agent; token: string; expiresAt: string }>;
-  agentSelf(
-    token: string,
-  ): Promise<AgentStatus & { available: import('@merv/contracts').WorkflowDispatchCandidate[] }>;
-  assignAgent(token: string, input: AgentAssignment): Promise<Session>;
-  releaseAgentAssignment(token: string, executionId: string): Promise<Session>;
-  resetAgentContext(token: string, reason: string): Promise<Agent>;
 
   /** Project-scoped historical metadata only; never activates, reconciles or impersonates its source. */
   workspaceObservation(

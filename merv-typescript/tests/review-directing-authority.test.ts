@@ -50,9 +50,9 @@ async function fixture(t: TestContext) {
       credentialId: issued.credential.id,
     };
   };
-  /** A worker identity whose every lease is directed by `source`. */
+  /** Workers whose every lease is directed by `source`: each lease is a fresh agent. */
   const worker = async (source: Caller) => {
-    const token = `ms_${randomBytes(32).toString('base64url')}`;
+    let token = '';
     await app.ctx.sessions.dispatch.heartbeatRunner(source, {
       runnerId: 'external',
       machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
@@ -60,26 +60,23 @@ async function fixture(t: TestContext) {
       capacity: 4,
       capabilities: ['code.v2'],
     });
-    await app.ctx.sessions.registerAgent(source, {
-      name: `Worker ${++seq}`,
-      runnerId: 'external',
-      requestId: `register-${seq}`,
-      secret: token,
-    });
     return {
-      token,
       assign: async (task: Pick<Task, 'id' | 'workflow'>) => {
-        const session = await app.ctx.sessions.assignAgent(token, {
+        token = `ms_${randomBytes(32).toString('base64url')}`;
+        const session = await app.ctx.sessions.offer(source, {
           instanceId: task.id,
           expectedRevision: task.workflow.revision,
+          runnerId: 'external',
           requestId: `assign-${++seq}`,
+          secret: token,
         });
         held.set(session.id, await work.attach(session, source));
         return session;
       },
+      /** The worker of the latest lease. */
       caller: async () => await app.ctx.sessions.authenticate(token),
-      offered: async () =>
-        (await app.ctx.sessions.agentSelf(token)).available.map((item) => item.instanceId),
+      release: async (sessionId: string) =>
+        await app.ctx.sessions.release(source, { sessionId, runnerId: 'external' }),
     };
   };
   const create = async (by: Caller) =>
@@ -124,7 +121,7 @@ test('two workers one authority directs are different actors: either may review 
   const work = await first.assign(task);
   const producer = await first.caller();
   const delivered = await f.deliver(producer, task);
-  await f.app.ctx.sessions.releaseAgentAssignment(first.token, work.id);
+  await first.release(work.id);
   const review = await f.app.ctx.reviews.get(f.founder, delivered.reviewId!);
   assert.equal(review.producerId, producer.actorId);
   assert.deepEqual(review.excludedActorIds, [f.founder.actorId]);
@@ -133,13 +130,8 @@ test('two workers one authority directs are different actors: either may review 
   await assert.rejects(async () => await f.app.ctx.reviews.start(f.founder, review.id), {
     code: 'review_independence',
   });
-  // The producing worker is its own producer.
-  await assert.rejects(async () => await first.assign(delivered), {
-    code: 'review_independence',
-  });
   // A second worker of the same authority is neither, so it is offered and claims it.
   const second = await f.worker(f.founder);
-  assert.ok((await second.offered()).includes(delivered.id));
   assert.ok((await f.candidates(f.founder)).includes(delivered.id));
   assert.equal((await second.assign(delivered)).role, 'reviewer');
   assert.equal(
@@ -185,7 +177,6 @@ test('a worker whose directing authority wrote a lens is not offered, and cannot
   // The founder's hand is no more independent of the founder's lens than the founder is.
   assert.ok(!(await f.candidates(f.founder)).includes(wave.id));
   const hand = await f.worker(f.founder);
-  assert.ok(!(await hand.offered()).includes(wave.id));
   await assert.rejects(async () => await hand.assign(submitted), { code: 'review_independence' });
   assert.equal((await reviews.get(f.founder, review.id)).status, 'requested');
 

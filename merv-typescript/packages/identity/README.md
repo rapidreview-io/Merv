@@ -66,8 +66,9 @@ Ownership rules:
    on its own initiative. Rows are never deleted, revocation is final, expiry only
    moves forward and `hard_deadline` never changes.
 2. Each kind belongs to one owner, which is why `authenticate` takes no owner. Scope:
-   `actor`, `user-key`. Sessions: `session-agent`, `session-execution`,
-   `managed-enrollment`, `managed-control`. Pi: `pi-worker`, `pi-model`. A new kind
+   `actor`, `user-key`. Sessions: `session-execution`, `managed-enrollment`,
+   `managed-control`, and `session-agent`, whose rows remain from the retired
+   continuing agents but which nothing authenticates any more. Pi: `pi-worker`, `pi-model`. A new kind
    needs an entry here.
 3. Only a row's `owner` renews or revokes it; another owner gets 403.
 4. A credential that will be renewed must be issued with a `hardDeadline`; renewing

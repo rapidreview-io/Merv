@@ -563,8 +563,8 @@ revision, admission and metadata through an internal dispatch interface. Public
 HTTP/MCP descriptions share one registry path. Ordinary credentials retain their
 existing authority. [Sessions](docs/SESSION_LEASES.md) now enforces the fixed policies for leased workers, with MCP-only secrets, immutable assignments, expiry, source checks and exact ownership recovery.
 
-## Continuing agents
+## Agents
 
-[Agent Sessions](docs/AGENT_CONTINUITY.md) now owns stable agent instances separately from assignment executions. External agents register once and explicitly change assignments with the same agent ID, Scope actor and connection credential. Assignment leases, context snapshots, tool permissions and Code/Runner references remain execution-specific. Automatic dispatch still launches fresh agents; no automatic handoff was added.
+[Sessions](docs/AGENT_CONTINUITY.md) owns agent instances separately from assignment executions. Every agent is created by an offer, and one that returns to the same work continues its conversation. Assignment leases, context snapshots, tool permissions and Code/Runner references remain execution-specific. The self-registering continuing agents were removed on 2026-10-06.
 
 Reflection waves now read live research using existing tools. New task/experiment creation pauses until approval, while existing work continues. Assignments contain compact instructions and output references, without copying the research corpus. See [Reflections](docs/REFLECTIONS.md).

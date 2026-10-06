@@ -244,44 +244,40 @@ async function main() {
     capacity: 4,
     capabilities: ['code.v2'],
   });
-  const joinAgent = async (name: string, requestId: string, runnerId = 'local-demo') => {
+  /** A demo runner's offer of one record to a fresh agent, and the bearer that agent works with. */
+  const offerTo = async (
+    record: { id: string; workflow: { revision: number } },
+    requestId: string,
+    runnerId = 'local-demo',
+  ) => {
     const token = `ms_${randomBytes(32).toString('base64url')}`;
-    const agent = await app.ctx.sessions.registerAgent(owner, {
-      name,
+    const session = await app.ctx.sessions.offer(owner, {
+      instanceId: record.id,
+      expectedRevision: record.workflow.revision,
       runnerId,
       requestId,
       secret: token,
     });
-    return { agent, token };
+    return { session, token };
   };
-  const previous = await joinAgent('Demo · prior research agent', 'demo-prior-agent');
   const historical = await currentTask(app.ctx, owner, {
     title: 'Check training configuration',
     goal: 'Verify the training configuration.',
     checks: ['Configuration recorded.'],
     requestId: 'demo-agent-history',
   });
-  const earlier = await app.ctx.sessions.assignAgent(previous.token, {
-    instanceId: historical.id,
-    expectedRevision: historical.workflow.revision,
-    requestId: 'prior-assignment',
-  });
+  const previous = await offerTo(historical, 'prior-assignment');
+  const earlier = previous.session;
   const previousWork = await work.attach(earlier);
   const earlierCaller = await app.ctx.sessions.authenticate(previous.token);
   await app.ctx.tools.call('artifact.create', earlierCaller, {
     title: 'Demo configuration',
     content: 'Recorded demo training configuration.',
   });
-  await app.ctx.sessions.releaseAgentAssignment(previous.token, earlier.id);
+  await app.ctx.sessions.release(owner, { sessionId: earlier.id, runnerId: 'local-demo' });
   await work.release(previousWork);
-  await app.ctx.sessions.retireAgent(owner, previous.agent.id);
-  await joinAgent('Demo · waiting reviewer', 'demo-idle-agent');
-  const working = await joinAgent('Demo · weight-decay researcher', 'demo-working-agent');
-  const execution = await app.ctx.sessions.assignAgent(working.token, {
-    instanceId: sweepTask.id,
-    expectedRevision: sweepTask.workflow.revision,
-    requestId: 'sweep-assignment',
-  });
+  const working = await offerTo(sweepTask, 'sweep-assignment');
+  const execution = working.session;
   await work.attach(execution);
   const worker = await app.ctx.sessions.authenticate(working.token);
   await app.ctx.tools.call('workflow.assignment', worker, { instanceId: sweepTask.id });
@@ -322,7 +318,7 @@ async function main() {
     producer: p,
     producerCaller,
     reviewer: r,
-    joinAgent,
+    offerTo,
     sweep: {
       taskId: sweepTask.id,
       sessionId: execution.id,

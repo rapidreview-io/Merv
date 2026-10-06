@@ -125,19 +125,14 @@ async function fixture(t: TestContext, reflections?: object) {
   let agents = 0;
   /** What a session offered this step is granted, read by a fresh agent that lets it go. */
   const granted = async (instanceId: string, expectedRevision: number) => {
-    const secret = token();
-    await app.ctx.sessions.registerAgent(owner, {
-      name: `Reader ${++agents}`,
-      runnerId: 'external',
-      requestId: `reader-${agents}`,
-      secret,
-    });
-    const session = await app.ctx.sessions.assignAgent(secret, {
+    const session = await app.ctx.sessions.offer(owner, {
       instanceId,
       expectedRevision,
-      requestId: `read-${agents}`,
+      runnerId: 'external',
+      requestId: `read-${++agents}`,
+      secret: token(),
     });
-    await app.ctx.sessions.releaseAgentAssignment(secret, session.id);
+    await app.ctx.sessions.release(owner, { sessionId: session.id, runnerId: 'external' });
     await app.ctx.domainEvents.drain();
     return session.execution.references;
   };
@@ -288,21 +283,17 @@ test('a format-2 wave embeds its assignment and review criteria beside a mature 
   assert.ok(reports.every((id) => synthesis.sources.some((source) => source.id === id)));
 
   // A leased worker's grants still cover every lens report its items name.
-  const secret = token();
-  await f.app.ctx.sessions.registerAgent(await f.actor('Synthesis lead', 'operator'), {
-    name: 'Synthesis agent',
-    runnerId: 'external',
-    requestId: 'synthesis-agent',
-    secret,
-  });
-  const session = await f.app.ctx.sessions.assignAgent(secret, {
+  const lead = await f.actor('Synthesis lead', 'operator');
+  const session = await f.app.ctx.sessions.offer(lead, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,
+    runnerId: 'external',
     requestId: 'assign-synthesis',
+    secret: token(),
   });
   assert.equal(session.assignment.context!.typeVersion, 13);
   assert.ok(reports.every((id) => session.execution.references.artifacts.includes(id)));
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, session.id);
+  await f.app.ctx.sessions.release(lead, { sessionId: session.id, runnerId: 'external' });
 
   wave = await f.synthesize(await f.app.ctx.reflections.get(f.owner, wave.id));
   const reviewer = await f.actor('Mature-paper reviewer', 'reviewer');
@@ -821,16 +812,12 @@ test('a cycle that follows another hands its wave the predecessor digest, and a 
     async (entry) => (await f.app.ctx.workflows.assignment(f.owner, entry.id)).context!.prompt,
   );
   const secret = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: 'Lens agent',
-    runnerId: 'external',
-    requestId: 'agent',
-    secret,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const execution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: lens.id,
     expectedRevision: 0,
+    runnerId: 'external',
     requestId: 'assign-lens',
+    secret,
   });
   assert.match(execution.assignment.context!.prompt, /Predecessor cycle digest/);
   const caller = await f.app.ctx.sessions.authenticate(secret);
@@ -981,17 +968,13 @@ test('leased lens calls use exact execution evidence, retain context through rel
   const f = await fixture(t);
   let wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'wave' });
   const secret = token();
-  const agent = await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: 'Lens agent',
-    runnerId: 'external',
-    requestId: 'agent',
-    secret,
-  });
   const first = wave.lenses[0]!;
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const execution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: first.id,
     expectedRevision: 0,
+    runnerId: 'external',
     requestId: 'assign-first',
+    secret,
   });
   const caller = await f.app.ctx.sessions.authenticate(secret);
   assert.equal(execution.role, 'producer');
@@ -1012,16 +995,7 @@ test('leased lens calls use exact execution evidence, retain context through rel
     expectedRevision: 0,
     requestId: 'submit-first',
   });
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
-  await assert.rejects(
-    async () =>
-      await f.app.ctx.sessions.assignAgent(secret, {
-        instanceId: wave.lenses[1]!.id,
-        expectedRevision: 0,
-        requestId: 'same-agent-second',
-      }),
-    { code: 'lens_independence' },
-  );
+  await f.app.ctx.sessions.release(f.owner, { sessionId: execution.id, runnerId: 'external' });
   for (const lens of wave.lenses.slice(1)) {
     const actor = await f.actor(lens.perspective);
     await f.app.ctx.reflections.submitLens(actor, {
@@ -1032,32 +1006,29 @@ test('leased lens calls use exact execution evidence, retain context through rel
     });
   }
   wave = await f.synthesize(await f.app.ctx.reflections.get(f.owner, wave.id));
-  const reviewToken = token();
   // The owner wrote the synthesis, so the review worker is directed by someone else.
-  await f.app.ctx.sessions.registerAgent(await f.actor('Lead', 'operator'), {
-    name: 'Review agent',
-    runnerId: 'external',
-    requestId: 'review-agent',
-    secret: reviewToken,
-  });
-  const reviewExecution = await f.app.ctx.sessions.assignAgent(reviewToken, {
+  const lead = await f.actor('Lead', 'operator');
+  const reviewExecution = await f.app.ctx.sessions.offer(lead, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,
+    runnerId: 'external',
     requestId: 'review',
+    secret: token(),
   });
   assert.equal(reviewExecution.role, 'reviewer');
   const oldClaim = (await f.app.ctx.reviews.get(f.owner, wave.review!.id)).claimId;
-  await f.app.ctx.sessions.releaseAgentAssignment(reviewToken, reviewExecution.id);
+  await f.app.ctx.sessions.release(lead, { sessionId: reviewExecution.id, runnerId: 'external' });
   await f.app.ctx.domainEvents.drain();
   assert.equal((await f.app.ctx.reviews.get(f.owner, wave.review!.id)).status, 'requested');
-  const next = await f.app.ctx.sessions.assignAgent(reviewToken, {
+  const next = await f.app.ctx.sessions.offer(lead, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,
+    runnerId: 'external',
     requestId: 'review-again',
+    secret: token(),
   });
   assert.notEqual((await f.app.ctx.reviews.get(f.owner, wave.review!.id)).claimId, oldClaim);
   assert.match(next.assignment.context!.prompt, /recovery/);
-  assert.equal(agent.id, execution.agentId);
 });
 
 test('a lens worker cannot read the other lenses of its reflecting wave', async (t) => {
@@ -1073,16 +1044,12 @@ test('a lens worker cannot read the other lenses of its reflecting wave', async 
     requestId: 'first-lens',
   });
   const secret = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: mine!.perspective,
-    runnerId: 'external',
-    requestId: mine!.id,
-    secret,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const execution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: mine!.id,
     expectedRevision: 0,
+    runnerId: 'external',
     requestId: `assign-${mine!.id}`,
+    secret,
   });
   const worker = await f.app.ctx.sessions.authenticate(secret);
   const read = (await f.app.ctx.tools.call('reflection.get', worker, {
@@ -1103,7 +1070,7 @@ test('a lens worker cannot read the other lenses of its reflecting wave', async 
   const shown = await f.app.ctx.reflections.get(f.owner, wave.id);
   assert.equal(shown.lenses[0]!.artifact!.id, report.id);
   assert.equal((await f.app.ctx.reflections.lens(f.owner, first!.id)).artifact!.id, report.id);
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
+  await f.app.ctx.sessions.release(f.owner, { sessionId: execution.id, runnerId: 'external' });
 });
 
 test('ordinary session workers execute a lens, synthesis and repair; unload preserves frozen assignments', async (t) => {
@@ -1112,18 +1079,14 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
   const actors: string[] = [];
   const [lens, ...others] = wave.lenses;
   const secret = token();
-  const agent = await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: lens!.perspective,
-    runnerId: 'external',
-    requestId: lens!.id,
-    secret,
-  });
-  actors.push(agent.actorId);
-  const lensExecution = await f.app.ctx.sessions.assignAgent(secret, {
+  const lensExecution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: lens!.id,
     expectedRevision: 0,
+    runnerId: 'external',
     requestId: `assign-${lens!.id}`,
+    secret,
   });
+  actors.push(lensExecution.actorId);
   const lensCaller = await f.app.ctx.sessions.authenticate(secret);
   // A step is named as the record it works on is named: the wave by its title, a lens by its
   // wave and its perspective. The step's own state is the gate's, and never part of the name.
@@ -1143,7 +1106,7 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
   await f.app.setEnabled('reflections', true);
   assert.equal((await f.app.ctx.reflections.get(f.owner, wave.id)).id, wave.id);
   assert.equal(
-    (await f.app.ctx.sessions.agentSelf(secret)).current!.assignment.context!.hash,
+    (await f.app.ctx.sessions.get(f.owner, lensExecution.id)).assignment.context!.hash,
     lensExecution.assignment.context!.hash,
   );
   const artifact = (await f.app.ctx.tools.call('artifact.create', lensCaller, {
@@ -1157,7 +1120,7 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
     expectedRevision: 0,
     requestId: `submit-${lens!.id}`,
   });
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, lensExecution.id);
+  await f.app.ctx.sessions.release(f.owner, { sessionId: lensExecution.id, runnerId: 'external' });
   await f.app.ctx.domainEvents.drain();
   // The other four lenses are submitted by distinct producers directly; the session path is
   // the one above, and every lens author is excluded from the review all the same.
@@ -1175,16 +1138,12 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
   assert.equal(wave.workflow.state, 'synthesizing');
   assert.equal(await offered(wave.id), wave.title);
   const synthesisToken = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: 'Synthesis',
-    runnerId: 'external',
-    requestId: 'synthesis-agent',
-    secret: synthesisToken,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(synthesisToken, {
+  const execution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,
+    runnerId: 'external',
     requestId: 'synthesis-work',
+    secret: synthesisToken,
   });
   const caller = await f.app.ctx.sessions.authenticate(synthesisToken);
   assert.equal(execution.assignment.label, wave.title);
@@ -1240,22 +1199,18 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
     { code: 'execution_tool_forbidden' },
   );
   wave = (await f.app.ctx.tools.call('reflection.submit', caller, submission)) as Reflection;
-  await f.app.ctx.sessions.releaseAgentAssignment(synthesisToken, execution.id);
+  await f.app.ctx.sessions.release(f.owner, { sessionId: execution.id, runnerId: 'external' });
   await f.app.ctx.domainEvents.drain();
   // Lens authors, and the owner who directed the synthesis worker, are excluded from its review.
   assert.deepEqual(new Set(wave.review!.excludedActorIds), new Set([...actors, f.owner.actorId]));
   assert.equal(await offered(wave.id), wave.title);
   const reviewToken = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: 'Independent review',
-    runnerId: 'external',
-    requestId: 'independent-review',
-    secret: reviewToken,
-  });
-  const reviewing = await f.app.ctx.sessions.assignAgent(reviewToken, {
+  const reviewing = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,
+    runnerId: 'external',
     requestId: 'review-work',
+    secret: reviewToken,
   });
   const reviewer = await f.app.ctx.sessions.authenticate(reviewToken);
   assert.equal(reviewing.assignment.label, wave.title);
@@ -1295,7 +1250,7 @@ test('ordinary session workers execute a lens, synthesis and repair; unload pres
   assert.equal(repaired.attempt, 2);
   assert.equal(repaired.lenses.length, 5);
   assert.ok(repaired.lenses.every((lens) => lens.workflow.revision === 0));
-  await f.app.ctx.sessions.releaseAgentAssignment(reviewToken, reviewing.id);
+  await f.app.ctx.sessions.release(f.owner, { sessionId: reviewing.id, runnerId: 'external' });
   await f.app.ctx.domainEvents.drain();
 });
 
@@ -1345,34 +1300,24 @@ test('synthesis admission matches review ownership for direct producers and sour
     { code: 'forbidden' },
   );
   assert.equal((await f.app.ctx.reflections.get(owner, wave.id)).review, null);
-  const blockedToken = token();
-  await f.app.ctx.sessions.registerAgent(outsider, {
-    name: 'Other producer’s agent',
-    runnerId: 'external',
-    requestId: 'blocked-agent',
-    secret: blockedToken,
-  });
   await assert.rejects(
     async () =>
-      await f.app.ctx.sessions.assignAgent(blockedToken, {
+      await f.app.ctx.sessions.offer(outsider, {
         instanceId: wave.id,
         expectedRevision: wave.workflow.revision,
+        runnerId: 'external',
         requestId: 'blocked-synthesis',
+        secret: token(),
       }),
     { code: 'forbidden' },
   );
-  assert.equal((await f.app.ctx.sessions.agentSelf(blockedToken)).current, null);
   const secret = token();
-  await f.app.ctx.sessions.registerAgent(owner, {
-    name: 'Owner’s synthesis agent',
-    runnerId: 'external',
-    requestId: 'owner-agent',
-    secret,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const execution = await f.app.ctx.sessions.offer(owner, {
     instanceId: wave.id,
     expectedRevision: wave.workflow.revision,
+    runnerId: 'external',
     requestId: 'owned-synthesis',
+    secret,
   });
   const worker = await f.app.ctx.sessions.authenticate(secret);
   assert.equal((await f.app.ctx.scope.authorityActor(worker)).id, owner.actorId);
@@ -1395,7 +1340,7 @@ test('synthesis admission matches review ownership for direct producers and sour
   assert.equal(submitted.workflow.state, 'in_review');
   assert.equal(submitted.review!.producerId, worker.actorId);
   assert.equal(submitted.review!.administrativeActorId, owner.actorId);
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
+  await f.app.ctx.sessions.release(owner, { sessionId: execution.id, runnerId: 'external' });
   await f.app.ctx.domainEvents.drain();
 });
 
@@ -1508,16 +1453,12 @@ test('a leased lens reads research added after assignment through existing tools
     requestId: 'live-wave',
   })) as Reflection;
   const secret = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: 'Live lens',
-    runnerId: 'external',
-    requestId: 'live-agent',
-    secret,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const execution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: wave.lenses[0]!.id,
     expectedRevision: 0,
+    runnerId: 'external',
     requestId: 'live-assignment',
+    secret,
   });
   const caller = await f.app.ctx.sessions.authenticate(secret);
   const call = async (name: string, input: Record<string, unknown>) =>
@@ -1616,7 +1557,7 @@ test('a leased lens reads research added after assignment through existing tools
     content:
       '# Summary\nThe observed feasibility outcome is retained.\n# Evidence\nResearch inputs read before the outage support this observation.',
   })) as Artifact;
-  assert.equal((await f.app.ctx.sessions.agentSelf(secret)).current!.id, execution.id);
+  assert.equal((await f.app.ctx.sessions.get(f.owner, execution.id)).status, 'active');
   assert.ok((await f.app.ctx.workflows.assignment(f.owner, wave.lenses[2]!.id)).context);
   assert.equal(
     (await f.app.ctx.sessions.heartbeat(f.owner, { sessionId: execution.id, runnerId: 'external' }))
@@ -1627,7 +1568,7 @@ test('a leased lens reads research added after assignment through existing tools
 
   await f.app.setEnabled('knowledge', true);
   assert.equal(f.app.ctx.reflections, provider);
-  assert.equal((await f.app.ctx.sessions.agentSelf(secret)).current!.id, execution.id);
+  assert.equal((await f.app.ctx.sessions.get(f.owner, execution.id)).status, 'active');
   assert.equal(
     (await f.app.ctx.tools.list()).filter((tool) => tool.name === 'reflection.create').length,
     1,
@@ -1663,7 +1604,7 @@ test('a leased lens reads research added after assignment through existing tools
     requestId: 'submit-without-knowledge',
   })) as { workflow: { state: string } };
   assert.equal(completed.workflow.state, 'complete');
-  await f.app.ctx.sessions.releaseAgentAssignment(secret, execution.id);
+  await f.app.ctx.sessions.release(f.owner, { sessionId: execution.id, runnerId: 'external' });
   await f.app.setEnabled('knowledge', true);
   assert.deepEqual(
     (await f.app.ctx.tools.list()).map((tool) => tool.name),
@@ -1683,17 +1624,12 @@ test('large research stays outside the assignment and live source permissions do
     });
   assert.ok(JSON.stringify(await f.app.ctx.knowledge.records(f.owner)).length > 100_000);
   const wave = await f.app.ctx.reflections.create(f.owner, { requestId: 'large-wave' });
-  const secret = token();
-  await f.app.ctx.sessions.registerAgent(f.owner, {
-    name: 'Compact lens',
-    runnerId: 'external',
-    requestId: 'compact-agent',
-    secret,
-  });
-  const execution = await f.app.ctx.sessions.assignAgent(secret, {
+  const execution = await f.app.ctx.sessions.offer(f.owner, {
     instanceId: wave.lenses[0]!.id,
     expectedRevision: 0,
+    runnerId: 'external',
     requestId: 'compact-assignment',
+    secret: token(),
   });
   assert.ok(Buffer.byteLength(JSON.stringify(execution.assignment)) < 16_000);
   assert.ok(!execution.assignment.context!.prompt.includes('long research context'));

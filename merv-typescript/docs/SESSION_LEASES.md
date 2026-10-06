@@ -1,6 +1,6 @@
 # Assignment-scoped executions and agent sessions
 
-Continuing agents now have a stable identity and connection above these execution leases. See [Agent continuity](AGENT_CONTINUITY.md). Existing `sessionId` references below identify assignment executions.
+Each execution belongs to an agent, which a later execution of the same work may continue. See [Agents and assignment executions](AGENT_CONTINUITY.md). Existing `sessionId` references below identify assignment executions.
 
 Status: integrated locally. The original Sessions checkpoint passed all 410 tests, including actual HTTP/MCP session
 credentials, native write and delayed mounted-call guards. Two fresh agents under
@@ -90,7 +90,7 @@ attaches. Everything else in the queue still reaches every machine.
 
 Closed work leaves durable events for the responsible domain plugin to release
 the exact ownership handle. Cleanup can wait while that plugin is unavailable.
-A successor execution receives a new ownership handle; an explicitly continuing agent retains its worker identity, while logical task ownership,
+A successor execution receives a new ownership handle; an agent that continues the same work's conversation retains its worker identity, while logical task ownership,
 evidence, verdicts, checkpoints and start history remain available.
 
 ## Alive, quiet, and what silence does not prove

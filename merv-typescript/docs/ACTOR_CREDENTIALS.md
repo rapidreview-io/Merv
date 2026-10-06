@@ -5,7 +5,11 @@ revoking a token does not rewrite task ownership, checkpoints or review history.
 This is the project-bound credential foundation. Shared human access is described
 in [Shared identity](SHARED_IDENTITY.md), and owner-backed project/account keys
 in [User keys](USER_KEYS.md). Worker leases remain separate work. User-key callers
-cannot administer these independent actor credentials.
+cannot administer these independent actor credentials. An external agent that works
+in a project on its own, outside a lease, uses an actor credential: the continuing
+agents Sessions once registered for that were removed on 2026-10-06. The release
+identity canary (`deploy/identity-auth-canary.mjs`) proves these guarantees after
+each release through `actor.create`, `actor.rotate_token` and `actor.revoke`.
 
 ## Public tools
 

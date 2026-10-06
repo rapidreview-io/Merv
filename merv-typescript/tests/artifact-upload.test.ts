@@ -55,30 +55,26 @@ test('file upload uses normal MCP session authority and returns a verified small
     requestId: 'task',
   });
   const token = `ms_${randomBytes(32).toString('base64url')}`;
-  const agent = await app.ctx.sessions.registerAgent(owner, {
-    name: 'File producer',
-    runnerId: 'file-test',
-    requestId: 'agent',
-    secret: token,
-  });
-  const execution = await app.ctx.sessions.assignAgent(token, {
+  const execution = await app.ctx.sessions.offer(owner, {
     instanceId: task.id,
     expectedRevision: 0,
+    runnerId: 'file-test',
     requestId: 'work',
+    secret: token,
   });
   const file = join(dir, 'proof.txt');
   const content = 'Retained result.\n'.repeat(2000);
   writeFileSync(file, content);
   const receipt = await uploadArtifact({ url: app.ctx.api.url!, file, token });
-  assert.equal(receipt.createdBy, agent.actorId);
+  assert.equal(receipt.createdBy, execution.actorId);
   assert.equal((await app.ctx.artifacts.read(owner, receipt.id)).content, content);
   assert.ok(JSON.stringify(receipt).length < 1000);
   assert.equal('content' in receipt, false);
   assert.equal(
-    (await app.ctx.sessions.observations.read(owner, agent.id)).toolCalls[0]!.tool,
+    (await app.ctx.sessions.observations.read(owner, execution.agentId!)).toolCalls[0]!.tool,
     'artifact.create',
   );
-  await app.ctx.sessions.releaseAgentAssignment(token, execution.id);
+  await app.ctx.sessions.release(owner, { sessionId: execution.id, runnerId: 'file-test' });
   await assert.rejects(uploadArtifact({ url: app.ctx.api.url!, file, token }), {
     code: 'artifact_upload_failed',
   });

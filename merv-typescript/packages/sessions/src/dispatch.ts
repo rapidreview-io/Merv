@@ -84,7 +84,6 @@ const uncountedOfferCodes = new Set([
   'invalid_session_offer',
   'invalid_deadline',
   'nested_session_offer',
-  'agent_busy',
 ]);
 export const releaseHoldSchema = z
   .object({

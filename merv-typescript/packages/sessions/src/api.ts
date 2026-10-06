@@ -15,16 +15,10 @@ export type SessionRoutes = Pick<
   Sessions,
   | 'authenticate'
   | 'managed'
-  | 'registerAgent'
   | 'agents'
   | 'agent'
   | 'observations'
   | 'retireAgent'
-  | 'rotateAgent'
-  | 'agentSelf'
-  | 'assignAgent'
-  | 'releaseAgentAssignment'
-  | 'resetAgentContext'
   | 'dispatch'
   | 'offer'
   | 'list'
@@ -44,11 +38,8 @@ export type SessionRoutes = Pick<
 /** Runs a read-only route in a snapshot scope: no writer lock, writes refused. */
 type SnapshotRead = <T>(fn: () => Promise<T>) => Promise<T>;
 
-const nonblank = z.string().trim().min(1).max(512);
-// Sessions parses every other body. These two unwrap the one field a method takes, and a
-// project halt refuses a body sessionId, which would halt one session and leave dispatch on.
-const agentReleaseInput = z.object({ executionId: nonblank }).strict();
-const agentResetInput = z.object({ reason: nonblank }).strict();
+// Sessions parses every other body. A project halt refuses a body sessionId, which would halt
+// one session and leave dispatch on.
 const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
 
 /**
@@ -93,51 +84,16 @@ function bound<T = never>(body: unknown, key: string, value: string): T {
   return { ...body, [key]: value } as T;
 }
 
-/** A continuing agent's own routes: matched first, so an unknown one costs no authentication,
- *  and its key is checked before any body is read. */
-async function agentSelf(req: IncomingMessage, r: ApiRequest, sessions: SessionRoutes) {
-  if ([...r.url.searchParams].length)
-    throw new MervError('invalid_input', 'Agent routes do not accept query parameters');
-  const action = r.url.pathname.slice('/sessions/self'.length);
-  if (
-    req.method === 'GET'
-      ? action !== ''
-      : req.method !== 'POST' || !['/assignment', '/release', '/context-reset'].includes(action)
-  )
-    throw new MervError('not_found', 'Unknown agent control route', 404);
-  const token = r.bearer();
-  const self = await sessions.agentSelf(token);
-  if (req.method === 'GET') return self;
-  if (action === '/assignment')
-    return { execution: await sessions.assignAgent(token, await r.json()) };
-  if (action === '/release')
-    return {
-      execution: await sessions.releaseAgentAssignment(
-        token,
-        (await r.json(agentReleaseInput)).executionId,
-      ),
-    };
-  return {
-    agent: await sessions.resetAgentContext(token, (await r.json(agentResetInput)).reason),
-  };
-}
-
 /** The routes of a source credential or a managed runner: one read decision before any body;
  *  Sessions parses each body and authorizes each effect. */
 async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRoutes) {
   const path = r.url.pathname;
   const caller = await r.caller();
-  if (path === '/sessions/agents') {
-    if (req.method === 'GET') return { agents: await sessions.agents(caller) };
-    if (req.method === 'POST')
-      return { agent: await sessions.registerAgent(caller, await r.json()) };
-  }
+  if (path === '/sessions/agents' && req.method === 'GET')
+    return { agents: await sessions.agents(caller) };
   const observationRoute = /^\/sessions\/agents\/([^/]+)\/observation$/.exec(path);
   if (observationRoute && req.method === 'GET')
     return await sessions.observations.read(caller, pathSegment(observationRoute[1]!));
-  const rotateAgentRoute = /^\/sessions\/agents\/([^/]+)\/rotate$/.exec(path);
-  if (rotateAgentRoute && req.method === 'POST')
-    return await sessions.rotateAgent(caller, pathSegment(rotateAgentRoute[1]!));
   const agentRoute = /^\/sessions\/agents\/([^/]+)$/.exec(path);
   if (agentRoute) {
     const agentId = pathSegment(agentRoute[1]!);
@@ -283,8 +239,8 @@ async function agentEvents(
   });
 }
 
-/** `/sessions`: an agent's own routes and runner enrollment authenticate themselves; every other
- *  route is a source credential's or a managed runner's. */
+/** `/sessions`: runner enrollment authenticates itself; every other route is a source
+ *  credential's or a managed runner's. */
 function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandler {
   return async (req, res, r) => {
     const path = r.url.pathname;
@@ -296,8 +252,6 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
     )
       res.setHeader('Cache-Control', 'no-store');
     if (!r.principal) {
-      if (path === '/sessions/self' || path.startsWith('/sessions/self/'))
-        return await agentSelf(req, r, sessions);
       if (path !== '/sessions/runners/enroll' || req.method !== 'POST' || r.url.search)
         throw unknownEndpoint();
       const token = r.bearer();
@@ -365,7 +319,7 @@ export function mountSessions(
       }),
     () =>
       api.mount('/sessions', sessionRoutes(sessions, read), {
-        public: ['/sessions/self', '/sessions/runners/enroll'],
+        public: ['/sessions/runners/enroll'],
       }),
   ];
   const disposers: (() => void)[] = [];
