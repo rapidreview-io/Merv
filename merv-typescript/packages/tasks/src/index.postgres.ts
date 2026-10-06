@@ -150,7 +150,7 @@ SELECT l.id,l.project_id,l.task_id,l.revision,
   COALESCE((SELECT h.to_state FROM wf_history h WHERE h.instance_id=l.task_id AND h.revision=l.revision),
     CASE l.purpose WHEN 'review' THEN 'in_review' ELSE 'in_progress' END),
   l.actor_id,l.source_actor_id,l.review_id,l.claim_id,l.receipt,
-  jsonb_build_object('purpose',l.purpose,'pinnedArtifacts',l.pinned_artifacts::jsonb,'checkpoints',l.checkpoints::jsonb)::text,
+  json_build_object('purpose',l.purpose,'pinnedArtifacts',l.pinned_artifacts::json,'checkpoints',l.checkpoints::json)::text,
   l.released_at
 FROM task_leases l ORDER BY l.id;
 DROP TABLE task_leases;

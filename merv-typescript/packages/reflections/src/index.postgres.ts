@@ -125,8 +125,8 @@ SELECT l.id,l.project_id,l.instance_id,l.revision,
   COALESCE((SELECT i.workflow FROM wf_instances i WHERE i.id=l.instance_id),'reflection'),
   COALESCE((SELECT h.to_state FROM wf_history h WHERE h.instance_id=l.instance_id AND h.revision=l.revision),
     CASE WHEN l.review_id IS NULL THEN 'synthesizing' ELSE 'in_review' END),
-  l.actor_id,l.receipt::jsonb->>'sourceId',l.review_id,l.claim_id,l.receipt,
-  jsonb_build_object('inputs',l.inputs::jsonb,'artifacts',l.artifacts::jsonb)::text,
+  l.actor_id,l.receipt::json->>'sourceId',l.review_id,l.claim_id,l.receipt,
+  json_build_object('inputs',l.inputs::json,'artifacts',l.artifacts::json)::text,
   l.released_at
 FROM reflection_leases l ORDER BY l.id;
 DROP TABLE reflection_leases;

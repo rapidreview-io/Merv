@@ -47,7 +47,7 @@ INSERT INTO wf_leases(id,project_id,instance_id,revision,workflow,state,actor_id
 SELECT l.id,l.project_id,l.experiment_id,l.revision,
   COALESCE((SELECT i.workflow FROM wf_instances i WHERE i.id=l.experiment_id),'experiment'),
   l.state,l.actor_id,l.source_actor_id,l.review_id,l.claim_id,l.receipt,
-  jsonb_build_object('attemptIndex',l.attempt_index,'artifacts',l.artifacts::jsonb,'recovery',l.recovery::jsonb,'inputs',l.inputs::jsonb)::text,
+  json_build_object('attemptIndex',l.attempt_index,'artifacts',l.artifacts::json,'recovery',l.recovery::json,'inputs',l.inputs::json)::text,
   l.released_at
 FROM experiment_leases l ORDER BY l.id;
 DROP TABLE experiment_leases;
