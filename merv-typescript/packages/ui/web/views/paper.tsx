@@ -45,7 +45,8 @@ import type { ViewProps } from './index';
 /** A control two other views share; it lives in components.tsx and is reached through here. */
 export { ResearchCommand } from '../components';
 
-const labels: Record<PaperKind, string> = {
+/** Each document's title, wherever the paper is named: here and on Home. */
+export const labels: Record<PaperKind, string> = {
   problem: 'Problem & scope',
   literature: 'Literature',
   methods: 'Methods',

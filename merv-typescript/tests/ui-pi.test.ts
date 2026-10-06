@@ -12,7 +12,7 @@ const { PiView } = await import('../packages/ui/web/views/pi.js');
 const { actOf, factsOf, labelOf, receiptOf } =
   await import('../packages/ui/web/views/pi-proposal.js');
 const { App } = await import('../packages/ui/web/app.js');
-const { piFrameParser } = await import('../packages/ui/web/pi-stream.js');
+const { frameParser } = await import('../packages/ui/web/event-stream.js');
 const { setProject, setToken } = await import('../packages/ui/web/api.js');
 
 const row = {
@@ -1929,7 +1929,7 @@ test('unavailable Agent is inert, including SSE and list', async (t) => {
 
 test('incremental SSE parser handles split frames and rejects oversized events', () => {
   const frames: { event: string; data: string }[] = [];
-  const parse = piFrameParser((value) => frames.push(value));
+  const parse = frameParser((value) => frames.push(value));
   parse(': heartbeat\r\nevent: del');
   parse('ta\r\ndata: {"text":"ok"}\r');
   parse('\n\r\n');

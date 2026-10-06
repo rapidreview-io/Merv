@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { useTool, type ApiError } from './api';
 import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
 import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
-import { shortId } from './markdown';
+import { FILE_PAGE, shortId } from './markdown';
 import { useCommand } from './mutations';
 import { ArtifactBody, bytes, fileType, type Artifact } from './views/artifacts';
 
@@ -955,7 +955,7 @@ export function Ruled<T>({
 
 /** One list serves every pinned title, so a record does not fetch each file to name it. */
 export const useArtifacts = () => {
-  const list = useTool<Artifact[]>('artifact.list');
+  const list = useTool<Artifact[]>('artifact.list', { limit: FILE_PAGE });
   return new Map((list.data ?? []).map((item) => [item.id, item]));
 };
 
@@ -964,7 +964,7 @@ export const useArtifacts = () => {
  * costs nothing until it is opened, and /artifacts/:id stays a destination —
  * reachable from the opened head — rather than the only way to read a file. The
  * summary has said the file's title, so the head under it does not say it again.
- * A file the one list did not name (it carries the newest thousand) is still shown
+ * A file the one list did not name (it carries the newest page) is still shown
  * and still opens, under the short form every unnamed record takes until its own
  * head can name it.
  */

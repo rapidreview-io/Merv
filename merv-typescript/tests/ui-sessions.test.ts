@@ -28,7 +28,7 @@ const row = {
   status: {},
   readable: true,
 };
-/** The lead row the page leads back to: without one, the way back is Now. */
+/** The lead row the page leads back to: without one, the way back is Home. */
 const work = {
   ...row,
   id: 'work',

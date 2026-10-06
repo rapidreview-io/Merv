@@ -2737,7 +2737,7 @@
       "exposedTools": [
         {
           "name": "ui.home",
-          "description": "Read what the Now page and the rail draw in one answer: the project, the records of every row that declares them, the people who own them, and the gate every unfinished workflow stands at.",
+          "description": "Read what Home and the rail draw in one answer: the project, the records of every row that declares them, the people who own them, and the gate every unfinished workflow stands at.",
           "readOnly": true
         },
         {

@@ -7,7 +7,7 @@ import type { Reflection } from '@merv/reflections/models';
 import type { Task } from '@merv/tasks/models';
 
 /**
- * The data Now and the rail read: the shapes of the records, and the one read that serves
+ * The data Home and the rail read: the shapes of the records, and the one read that serves
  * both.
  */
 
@@ -43,7 +43,7 @@ export type MapReview = Pick<
 >;
 export type MapReflection = Pick<Reflection, 'id' | 'title' | 'ownerId' | 'workflow' | 'lenses'>;
 /**
- * What Now and the rail read, as the server composes it (`ui.home`): the project's
+ * What Home and the rail read, as the server composes it (`ui.home`): the project's
  * records, under the id of the row that lists them, and the gate of every open workflow in it,
  * and of ended work another plugin still holds. A part the server could not answer for is null.
  */
@@ -57,7 +57,7 @@ export interface HomeData {
   workflows: { workflows: WorkflowDecision[] } | null;
   reflections: MapReflection[] | null;
 }
-/** One read for the rail and Now; asking twice joins one request. */
+/** One read for the rail and Home; asking twice joins one request. */
 export const useHome = (every = 10000) => useTool<HomeData>('ui.home', {}, { every });
 
 export const newest = <T>(items: T[], at: (item: T) => string) =>

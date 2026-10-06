@@ -17,6 +17,7 @@ import {
 import { CloseIcon } from '../icons';
 import { Segments } from '../list-filters';
 import { clock, holding, leaseLiveness, type Clock } from '../liveness';
+import { useRows } from '../navigation';
 
 /** The same lease, as the agent's own observation sends it. */
 type Assignment = Observation['assignments'][number];
@@ -25,15 +26,10 @@ const duration = (ms: number | null) =>
   ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 export const activity = (agent: AgentSummary) =>
   agent.status === 'retired' ? 'retired' : agent.currentExecutionId ? 'assigned' : 'unassigned';
-/** The view kind a workflow's records are drawn as, where this build draws them. */
-const KIND_OF: Record<string, string> = {
-  task: 'tasks',
-  experiment: 'experiments',
-  research: 'research',
-  reflection: 'reflections',
-};
 
 function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: Clock }) {
+  // The record's kind is drawn as the row that declares its workflow draws it.
+  const kind = useRows().find((row) => row.workflow === assignment.workflow.name)?.view.kind;
   return (
     <div className="stack">
       <div className="cluster cluster--between">
@@ -43,7 +39,7 @@ function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: C
       {/* The role it holds, then the record's kind and how it stands, as a row says them. */}
       <p className="cluster agent-help">
         <span className="muted">{words(assignment.role)}</span>
-        <KindLabel kind={KIND_OF[assignment.workflow.name]} />
+        <KindLabel kind={kind} />
         <StatusPill value={assignment.workflow.state} />
       </p>
       <details>
