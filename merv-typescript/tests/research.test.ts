@@ -1009,6 +1009,20 @@ test('research owner authorization, project scoping, selected prerequisite succe
       }),
     { code: 'forbidden' },
   );
+  // Each reader is told whether Research would take its move, so a page offers none it refuses.
+  const producer = await f.issue('producer');
+  assert.equal(record.writable, true);
+  assert.equal((await f.research.get(producer, record.id)).writable, false);
+  assert.equal((await f.research.get(await f.issue('reader'), record.id)).writable, false);
+  const own = await f.research.create(producer, { name: 'Own cycle', requestId: f.id() });
+  assert.equal(own.writable, true);
+  assert.deepEqual(
+    (await f.research.list(producer)).map((item) => [item.name, item.writable]),
+    [
+      ['Selected work', false],
+      ['Own cycle', true],
+    ],
+  );
   const other = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Another project',
     actorName: 'Another owner',

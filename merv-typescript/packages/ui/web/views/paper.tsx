@@ -22,7 +22,7 @@ import {
 import { refreshReferences, useReferences } from '../markdown';
 import { ReferenceLookup } from './paper-references';
 import { ThreeStates } from '../states';
-import { useSession } from '../session';
+import { useSession, writes } from '../session';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
 import { CitationEditor, HeadTool, SectionEditor } from './paper-editors';
@@ -207,7 +207,7 @@ function PaperPage({ row }: ViewProps) {
       </div>
     );
   const { citations } = workspace.data;
-  const writable = actor.role === 'operator' || actor.role === 'producer';
+  const writable = writes(actor);
   const editable = (_kind: string) => writable;
   const extendable = (kind: string) => writable && kind !== 'problem';
   const literature = workspace.data.documents.literature.current;

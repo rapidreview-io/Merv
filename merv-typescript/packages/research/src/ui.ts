@@ -85,6 +85,7 @@ export const researchUiPlugin = {
             'progress',
             'reflectionId',
             'automation',
+            'writable',
           ],
         },
         // A cycle stops on its own wave or consolidation, declared after the work it reflects

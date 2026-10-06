@@ -7,7 +7,7 @@ import { useCommand } from '../mutations';
 import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '../components';
 import { Chips, ListPage, useListFilter } from '../list-filters';
 import { RecordPicker, type Pickable } from '../record-picker';
-import { useSession } from '../session';
+import { useSession, writes } from '../session';
 import { firstSentence } from '@merv/contracts/text';
 import { currentReview } from '@merv/reviews/rules';
 import { OPEN, ThreeStates, reviewClause } from '../states';
@@ -464,14 +464,14 @@ function WaveList({ shell }: { shell: ShellData }) {
         kind === 'reflections'
           ? {
               label: 'New reflection',
-              shown: actor.role === 'operator' || actor.role === 'producer',
+              shown: writes(actor),
               form: () => (
                 <CreateReflection onCreated={(wave) => navigate(`${wavesRow!.path}/${wave.id}`)} />
               ),
             }
           : cyclesRow && {
               label: 'New cycle',
-              shown: actor.role === 'operator' || actor.role === 'producer',
+              shown: writes(actor),
               form: (close) => (
                 <CreateResearch
                   onSaved={() => {
@@ -658,19 +658,16 @@ function CycleHead({
   /** What the page hangs at the end of its title line: its filter, and what it can start. */
   ends: ReactNode;
 }) {
-  const { actor } = useSession();
   const cyclesRow = shell.rows.find((row) => row.view.kind === 'research');
   // With no cycle the page is its title.
   if (!cycle || !cyclesRow) return <PageHeader title="Work" actions={ends} />;
-  const writable =
-    actor.role === 'operator' || (actor.role === 'producer' && cycle.ownerId === actor.id);
   return (
     <PageHeader
       title={<Link to={`${cyclesRow.path}/${cycle.id}`}>{cycle.name}</Link>}
       actions={
         <>
           <StatusPill value={cycle.workflow.state} />
-          {writable && <CycleMove cycle={cycle} shell={shell} onSaved={onSaved} />}
+          {cycle.writable && <CycleMove cycle={cycle} shell={shell} onSaved={onSaved} />}
           {ends}
         </>
       }

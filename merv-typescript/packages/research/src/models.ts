@@ -84,6 +84,8 @@ export interface ResearchRecord {
   previousCycleId: string | null;
   /** The immutable artifact that records what this cycle decided; null until it has been composed. */
   digest: Artifact | null;
+  /** Whether this reader may move the cycle (advance, end, replan), as Research decides it. */
+  writable?: boolean;
 }
 /** An immutable artifact named exactly, so a reader can tell it was not replaced. */
 export interface ResearchArtifactRef {

@@ -41,6 +41,13 @@ export const useSession = (): Session => {
   if (!session) throw new Error('useSession outside SessionProvider');
   return session;
 };
+/**
+ * Whether this actor holds Scope's write permission (`permits` in scope/rules.ts, which the
+ * browser cannot import): what a page asks before it offers to create or edit. A record whose
+ * owner decides more than the role, such as a cycle only its owner moves, says so itself.
+ */
+export const writes = (actor: Pick<Actor, 'role'>) =>
+  actor.role === 'operator' || actor.role === 'producer';
 /** The identity a page's own state belongs to: when it changes, the page starts again. */
 export const useScopeKey = () => {
   const epoch = useScopeVersion();
