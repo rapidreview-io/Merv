@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Fleet — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "fleet",
+        "name": "Fleet",
+        "group": "foundation",
+        "tagline": "Decides how many rented computers may run agents, and keeps track of each one.",
+        "analogy": {
+          "icon": "🚕",
+          "text": "A taxi dispatcher. They decide how many cabs are out at once, send one when a ride is waiting, and call it back when the trip is done. They also hold the fuel card, so drivers never carry it."
+        },
+        "why": [
+          "Rented computers cost money. Fleet sets **limits** for the whole system and for each project.",
+          "A machine must never be left running and forgotten. Fleet tracks each one until it is really gone.",
+          "Agents on rented machines shouldn't hold the AI model's secret key. Fleet keeps the key and passes their calls along."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "watches, drains or halts",
+            "detail": "On the Fleet page a person sees the machines and can drain them (start no new ones) or halt them.",
+            "page": null
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "out",
+            "says": "learns what work waits",
+            "detail": "Fleet asks Sessions which steps are waiting for a hosted worker, and which session a machine is holding."
+          },
+          {
+            "id": "sandboxes",
+            "name": "Sandboxes",
+            "dir": "out",
+            "says": "rents the machines",
+            "detail": "Fleet rents and releases computers through Sandboxes."
+          },
+          {
+            "id": "runner",
+            "name": "Runner",
+            "dir": "out",
+            "says": "boots it on each machine",
+            "detail": "Each rented machine gets a start-up kit, and its runner signs in to Sessions."
+          },
+          {
+            "id": "worker",
+            "name": "Hosted worker",
+            "kind": "person",
+            "dir": "in",
+            "says": "calls the model through it",
+            "detail": "The agent on a rented machine sends its AI model calls to Fleet, which adds the key.",
+            "page": null
+          },
+          {
+            "id": "model",
+            "name": "Model provider",
+            "kind": "outside",
+            "dir": "out",
+            "says": "relays model calls",
+            "detail": "Fleet forwards those calls to the AI model provider and counts each person's daily tokens.",
+            "page": null
+          },
+          {
+            "id": "pi",
+            "name": "Pi",
+            "dir": "in",
+            "says": "gets a host machine",
+            "detail": "Pi registers with Fleet to get its own protected machine."
+          }
+        ],
+        "story": {
+          "title": "Renting one hosted worker",
+          "steps": [
+            {
+              "from": "sessions",
+              "to": "self",
+              "text": "A step is waiting for a hosted worker. Fleet notices the demand."
+            },
+            {
+              "from": "self",
+              "to": "sandboxes",
+              "text": "Fleet checks its limits, then rents a machine through Sandboxes."
+            },
+            {
+              "from": "self",
+              "to": "runner",
+              "text": "The machine gets a start-up kit. Its runner signs in to Sessions and takes on the step."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The agent works. Every call to the AI model goes through Fleet, which holds the key."
+            },
+            {
+              "from": "self",
+              "to": "model",
+              "text": "Fleet passes each call on and counts the tokens against the person the machine was rented for."
+            },
+            {
+              "from": "self",
+              "to": "sandboxes",
+              "text": "When the work is done, Fleet stops the machine and frees its slot once it is really gone."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Allocation",
+            "meaning": "One rented machine slot, from the request until the machine is gone."
+          },
+          { "term": "Drain", "meaning": "Start no new machines, and let the running ones finish." },
+          { "term": "Halt", "meaning": "Stop the machines now." },
+          {
+            "term": "Model relay",
+            "meaning": "Fleet's go-between that adds the secret key to an agent's model calls."
+          }
+        ],
+        "not": [
+          "It doesn't run research work or pick which step to do. **Sessions** hands work to the runner.",
+          "It doesn't talk to the computer provider itself. **Sandboxes** does the renting.",
+          "Agents can't ask it for machines: it offers them no such tool. It is also off unless a deployment switches it on."
+        ],
+        "readme": "../../packages/fleet/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

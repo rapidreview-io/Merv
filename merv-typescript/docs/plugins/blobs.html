@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Blobs — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "blobs",
+        "name": "Blobs",
+        "group": "foundation",
+        "tagline": "A storage room for raw file bytes, where each file is labeled by its fingerprint.",
+        "analogy": {
+          "icon": "🧥",
+          "text": "A coat check where your ticket is a fingerprint of the coat itself. When you come back, the attendant checks that the coat still matches the ticket before handing it over."
+        },
+        "why": [
+          "Plugins need somewhere to keep file contents, from small notes to files of up to 512 MiB.",
+          "Each file is named by its **hash**, a fingerprint of its exact bytes, so a damaged or changed file is caught when it is read.",
+          "Big files can travel **straight** between the browser and the storage service, so they don't clog up Merv's server."
+        ],
+        "neighbors": [
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "in",
+            "says": "keeps file contents here",
+            "detail": "Artifacts is the main user. It keeps a file's bytes in Blobs and the file's details itself."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "keeps transcripts",
+            "detail": "Sessions saves agent transcripts and conversations here whenever Blobs is loaded."
+          },
+          {
+            "id": "pi",
+            "name": "Pi",
+            "dir": "in",
+            "says": "reads conversation checkpoints",
+            "detail": "Pi reads its saved conversation checkpoints back from Blobs."
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "uploads with a signed link",
+            "detail": "For big files, a worker or a browser sends the bytes straight to the object store with a signed link.",
+            "page": null
+          },
+          {
+            "id": "object-store",
+            "name": "Object store",
+            "kind": "outside",
+            "dir": "out",
+            "says": "holds files in production",
+            "detail": "An S3-compatible cloud storage service. Blobs adds signed links that work for one hour.",
+            "page": null
+          },
+          {
+            "id": "disk",
+            "name": "Local disk",
+            "kind": "outside",
+            "dir": "out",
+            "says": "holds files in development",
+            "detail": "The disk option keeps files in a folder on one computer, handy for development.",
+            "page": null
+          }
+        ],
+        "story": {
+          "title": "Saving and reading a file",
+          "steps": [
+            {
+              "from": "artifacts",
+              "to": "self",
+              "text": "Artifacts hands Blobs the bytes of a small file, filed under its project. Blobs answers with their **hash**."
+            },
+            {
+              "from": "self",
+              "to": "object-store",
+              "text": "Blobs stores the bytes in the object store, or on local disk during development."
+            },
+            {
+              "from": "artifacts",
+              "to": "self",
+              "text": "Later, Artifacts asks for those bytes by their hash."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "Blobs checks the bytes still match the fingerprint before handing them over."
+            },
+            {
+              "from": "artifacts",
+              "to": "self",
+              "text": "For a big file, Artifacts asks Blobs for a **signed link** instead. It works for one hour."
+            },
+            {
+              "from": "worker",
+              "to": "object-store",
+              "text": "The worker uploads the file straight to the object store. Merv's server never carries the big bytes."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Hash",
+            "meaning": "A short fingerprint computed from a file. Change one byte and the fingerprint changes."
+          },
+          {
+            "term": "Namespace",
+            "meaning": "The shelf a file is filed under. Here, that is the project."
+          },
+          {
+            "term": "Backend",
+            "meaning": "Where the bytes really live: local disk or an object store."
+          },
+          {
+            "term": "Signed link",
+            "meaning": "A web link that lets someone upload or download one file for a short time."
+          }
+        ],
+        "not": [
+          "It doesn't know file names or who may read them. **Artifacts** keeps those details and checks the project.",
+          "It doesn't save records like tasks or members. **State** puts those in the database."
+        ],
+        "readme": "../../packages/blobs/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

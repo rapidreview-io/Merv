@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Domain Events — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "domain-events",
+        "name": "Domain Events",
+        "group": "foundation",
+        "tagline": "Delivers news of important changes to every plugin that asked to hear about it.",
+        "analogy": {
+          "icon": "📬",
+          "text": "A newspaper subscription with a bookmark. Each subscriber gets every issue in order, and the bookmark shows where they stopped. If one reader is ill, their pile waits for them, and nobody else's delivery stops."
+        },
+        "why": [
+          "When something happens, like a session closing, several plugins must react. Calling each one directly would tangle them together.",
+          "A change and its **event** are saved together, so the news is never lost, even if a listener is switched off.",
+          "Each listener gets events **in order** and none is ever skipped. A failure is retried, not forgotten."
+        ],
+        "neighbors": [
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "reads the event log",
+            "detail": "Events live in State's log. Publishers add them there; Domain Events reads them back."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "announces closed sessions",
+            "detail": "Sessions writes an event to the log whenever an agent session closes."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "in",
+            "says": "announces each step",
+            "detail": "Workflows writes an event each time a piece of work moves to a new step."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "in",
+            "says": "announces removed actors",
+            "detail": "Scope writes an event when an actor is removed or a project is created."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "out",
+            "says": "hears about removed actors",
+            "detail": "Reviews lets go of the reviews a removed reviewer was holding."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "out",
+            "says": "hears about projects and steps",
+            "detail": "Code Work sets up code storage for new projects and keeps up with work as it moves."
+          },
+          {
+            "id": "sandboxes",
+            "name": "Sandboxes",
+            "dir": "out",
+            "says": "hears when sessions close",
+            "detail": "Sandboxes ends what it had handed to a session once that session closes."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "out",
+            "says": "hears when sessions close",
+            "detail": "When a session closes, Tasks frees the task that session was holding."
+          }
+        ],
+        "story": {
+          "title": "News of a closed session",
+          "steps": [
+            {
+              "from": "sessions",
+              "to": "state",
+              "text": "An agent session ends. Sessions saves that change and adds a **session closed** event to the log, in the same step."
+            },
+            {
+              "from": "state",
+              "to": "self",
+              "text": "State wakes Domain Events: there is something new in the log."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "Domain Events reads the new event and finds the listeners that subscribed to it."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "It hands the event to Tasks, which frees the task the session was holding."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "Tasks' change and its moved **bookmark** are saved together. If Tasks fails, both are undone and it tries again later."
+            },
+            {
+              "from": "self",
+              "to": "sandboxes",
+              "text": "Sandboxes gets the same event on its own bookmark. One listener failing never stops another."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Event",
+            "meaning": "A saved note that something happened, like \"session closed\". It is never changed."
+          },
+          {
+            "term": "Subscriber",
+            "meaning": "A plugin that asked to hear about certain kinds of events."
+          },
+          {
+            "term": "Cursor",
+            "meaning": "A subscriber's bookmark: the last event it finished handling."
+          },
+          {
+            "term": "Retry",
+            "meaning": "Trying a failed delivery again later, waiting a little longer each time."
+          }
+        ],
+        "not": [
+          "It doesn't store events. **State** keeps the log, and nothing in it can be changed or deleted.",
+          "It doesn't decide what the news means. Each listener, like **Reviews** or **Tasks**, decides what to do.",
+          "It doesn't start agents or call outside services. Listeners keep their work inside Merv's database."
+        ],
+        "readme": "../../packages/domain-events/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

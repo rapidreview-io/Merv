@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Merv plugins — a simple guide</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "index": true,
+        "name": "How Merv works",
+        "title": "Merv plugins — a simple guide",
+        "tagline": "Merv helps a team of AI agents do research that people can trust. It is built from **31 small parts**, called plugins, and each one owns one job.",
+        "analogy": {
+          "icon": "🏫",
+          "text": "A well-run school. Some rooms hold the subjects (the **research** plugins: tasks, experiments, the paper). Other rooms keep the building running (the **foundations**: the front door, the records office, the keys). Each room has one job and asks the others for help instead of doing their work."
+        },
+        "whyTitle": "Three ideas behind every plugin",
+        "why": [
+          "**One owner per job.** Each rule lives in exactly one plugin, so there is one place to look and one place to fix.",
+          "**Nothing counts until it is checked.** Work done by one agent is reviewed by another before it is accepted.",
+          "**Nothing is quietly rewritten.** Evidence, verdicts and history are kept for good."
+        ],
+        "mapTitle": "The big picture",
+        "mapHint": "Tap a circle to see its job, then open its page.",
+        "neighbors": [
+          {
+            "id": "pi",
+            "name": "Pi",
+            "dir": "both",
+            "says": "your chat assistant",
+            "detail": "You talk to Pi on the Agent page. It acts with your permissions and asks before anything big."
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "kind": "research",
+            "dir": "both",
+            "says": "runs the research cycle",
+            "detail": "Moves a project through rounds of work, reflection and planning."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "both",
+            "says": "reviewed units of work",
+            "detail": "A goal with checks, done by one agent and checked by another."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "both",
+            "says": "planned tests of ideas",
+            "detail": "A research question tested in planned attempts, each reviewed independently."
+          },
+          {
+            "id": "reflections",
+            "name": "Reflections",
+            "kind": "research",
+            "dir": "both",
+            "says": "steps back and judges",
+            "detail": "A panel of independent agents looks at the whole project and proposes changes."
+          },
+          {
+            "id": "paper",
+            "name": "Paper",
+            "kind": "research",
+            "dir": "both",
+            "says": "the living paper",
+            "detail": "Where accepted results are written up, with full history."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "both",
+            "says": "tracks every step",
+            "detail": "Knows where each piece of work stands and which moves are allowed next."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "both",
+            "says": "independent verdicts",
+            "detail": "Gets a second opinion on finished work and keeps the verdict for good."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "both",
+            "says": "agents on the job",
+            "detail": "Gives each AI agent a short-lived pass for one job and watches it work."
+          }
+        ],
+        "story": {
+          "title": "One round of research",
+          "steps": [
+            {
+              "from": "self",
+              "to": "research",
+              "text": "A project starts a **research cycle**: what should we find out next?"
+            },
+            {
+              "from": "research",
+              "to": "tasks",
+              "text": "Research turns the plan into **tasks** and **experiments**, each with clear checks."
+            },
+            {
+              "from": "tasks",
+              "to": "sessions",
+              "text": "Sessions hands each job to an **AI agent** with a pass that only works for that job."
+            },
+            {
+              "from": "sessions",
+              "to": "workflows",
+              "text": "Workflows tracks every step, so work can only move in allowed ways."
+            },
+            {
+              "from": "workflows",
+              "to": "reviews",
+              "text": "Finished work goes to **Reviews**: a different agent checks it against the checks."
+            },
+            {
+              "from": "reviews",
+              "to": "paper",
+              "text": "Accepted results are written into the **living paper**."
+            },
+            {
+              "from": "paper",
+              "to": "reflections",
+              "text": "**Reflections** steps back, judges the whole project, and proposes what to change."
+            },
+            {
+              "from": "reflections",
+              "to": "research",
+              "text": "Research starts the next round with that advice. Meanwhile you can ask **Pi** about any of it."
+            }
+          ]
+        },
+        "catalog": [
+          {
+            "title": "Research logic",
+            "kind": "research",
+            "intro": "The plugins that know what research is.",
+            "items": [
+              {
+                "id": "experiments",
+                "name": "Experiments",
+                "tagline": "A research question tested in planned attempts, each checked twice by independent reviewers."
+              },
+              {
+                "id": "knowledge",
+                "name": "Knowledge",
+                "tagline": "A read-only index that lists the project's work and looks up any reference."
+              },
+              {
+                "id": "paper",
+                "name": "Paper",
+                "tagline": "The project's living paper: Problem, Literature, Methods and Results, with full history."
+              },
+              {
+                "id": "reflections",
+                "name": "Reflections",
+                "tagline": "A panel of five independent agents that judges the project's research and proposes changes."
+              },
+              {
+                "id": "research",
+                "name": "Research",
+                "tagline": "The coordinator that moves a project through cycles of work, reflection and planning."
+              },
+              {
+                "id": "tasks",
+                "name": "Tasks",
+                "tagline": "A piece of work with a clear goal, done by one agent and checked by another."
+              }
+            ]
+          },
+          {
+            "title": "Foundations",
+            "kind": "foundation",
+            "intro": "General building blocks. They never need to know what research is, so they could serve any project.",
+            "items": [
+              {
+                "id": "api",
+                "name": "API",
+                "tagline": "Merv's front door: the web server every person and agent comes through."
+              },
+              {
+                "id": "artifacts",
+                "name": "Artifacts",
+                "tagline": "Keeps a project's files for good, so evidence can never quietly change."
+              },
+              {
+                "id": "blobs",
+                "name": "Blobs",
+                "tagline": "A storage room for raw file bytes, where each file is labeled by its fingerprint."
+              },
+              {
+                "id": "code",
+                "name": "Code",
+                "tagline": "Keeps a project's Git repositories and every exact commit, without judging any of them."
+              },
+              {
+                "id": "code-work",
+                "name": "Code Work",
+                "tagline": "The bridge that turns research decisions into exact Git actions on a project's code."
+              },
+              {
+                "id": "context-builder",
+                "name": "Context Builder",
+                "tagline": "Packs exactly what an agent needs to read before it starts, within a size limit."
+              },
+              {
+                "id": "contracts",
+                "name": "Contracts",
+                "tagline": "Shared descriptions and helpers that let plugins work together without depending on each other."
+              },
+              {
+                "id": "domain-events",
+                "name": "Domain Events",
+                "tagline": "Delivers news of important changes to every plugin that asked to hear about it."
+              },
+              {
+                "id": "feed",
+                "name": "Feed",
+                "tagline": "A project message board where people and agents post notes that never change."
+              },
+              {
+                "id": "fleet",
+                "name": "Fleet",
+                "tagline": "Decides how many rented computers may run agents, and keeps track of each one."
+              },
+              {
+                "id": "identity",
+                "name": "Identity",
+                "tagline": "Checks who is signing in, and keeps the one shared list of access keys."
+              },
+              {
+                "id": "legacy-history",
+                "name": "Legacy History",
+                "tagline": "A read-only archive of research brought over from Merv's previous server."
+              },
+              {
+                "id": "mounts",
+                "name": "Mounts",
+                "tagline": "Lets agents use chosen tools from another tool server as if they were Merv's own."
+              },
+              {
+                "id": "nisa",
+                "name": "Nisa",
+                "tagline": "Gives every agent search over RapidReview's index of arXiv research papers."
+              },
+              {
+                "id": "pi",
+                "name": "Pi",
+                "tagline": "The AI assistant you chat with on the Agent page, acting with your permissions."
+              },
+              {
+                "id": "reviews",
+                "name": "Reviews",
+                "tagline": "Gets an independent second opinion on finished work, and keeps the verdict for good."
+              },
+              {
+                "id": "runner",
+                "name": "Runner",
+                "tagline": "A small program on an agent's computer that starts one agent and looks after it."
+              },
+              {
+                "id": "sandboxes",
+                "name": "Sandboxes",
+                "tagline": "Connects Merv to the outside Sandboxes service, where agents get computers to run things."
+              },
+              {
+                "id": "scope",
+                "name": "Scope",
+                "tagline": "Decides who belongs to each project and what each person or agent may do."
+              },
+              {
+                "id": "secrets",
+                "name": "Secrets",
+                "tagline": "Locks away each person's Hugging Face token and lets agents download through it safely."
+              },
+              {
+                "id": "sessions",
+                "name": "Sessions",
+                "tagline": "Gives each AI agent a short-lived pass for one assigned job, and watches it work."
+              },
+              {
+                "id": "state",
+                "name": "State",
+                "tagline": "The one door to Merv's database, where every lasting change is saved."
+              },
+              {
+                "id": "ui",
+                "name": "UI",
+                "tagline": "The web app frame: a sidebar and Running page that every plugin draws into."
+              },
+              {
+                "id": "web",
+                "name": "Web",
+                "tagline": "Gives agents internet search and page reading, with daily limits on spending."
+              },
+              {
+                "id": "workflows",
+                "name": "Workflows",
+                "tagline": "Keeps track of where each piece of work stands and which moves are allowed next."
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

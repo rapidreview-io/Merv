@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Reviews — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "reviews",
+        "name": "Reviews",
+        "group": "foundation",
+        "tagline": "Gets an independent second opinion on finished work, and keeps the verdict for good.",
+        "analogy": {
+          "icon": "⚖️",
+          "text": "A referee who didn't play in the game. They watch a frozen replay, not the live action, and make the call: pass, fix it, or fail. Once the call is written down, nobody can change it."
+        },
+        "why": [
+          "Whoever did the work may not judge it. Reviews checks that the reviewer is **someone else**.",
+          "The reviewer sees the exact files handed in, frozen, so the work can't change under them.",
+          "A submitted verdict can't be edited, so the record stays honest."
+        ],
+        "neighbors": [
+          {
+            "id": "reviewer",
+            "name": "Reviewer agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "claims and judges a review",
+            "detail": "An AI agent claims an open review, reads the evidence and submits a verdict with notes.",
+            "page": null
+          },
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "reads and checks verdicts",
+            "detail": "A person sees reviews in the browser. The project's owner may claim any review, and that claim is always marked.",
+            "page": null
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "asks for a check",
+            "detail": "Tasks asks for a review of each hand-in, then decides what the verdict means for the task."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "asks for a check",
+            "detail": "Experiments asks for reviews the same way, and applies the verdict itself. So do Reflections and Knowledge."
+          },
+          {
+            "id": "code-work",
+            "name": "Code Work",
+            "dir": "in",
+            "says": "reads who approved what",
+            "detail": "Code Work reads review records to know which code changes were reviewed."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "out",
+            "says": "holds the frozen evidence",
+            "detail": "Every request lists exact stored files, which can never change."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "both",
+            "says": "checks permission; reports removals",
+            "detail": "Scope says who may review. When someone loses access, Reviews frees the reviews they were holding."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "out",
+            "says": "adds the Reviews page",
+            "detail": "Reviews adds its page to the browser app."
+          }
+        ],
+        "story": {
+          "title": "One review, start to finish",
+          "steps": [
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "Tasks asks for a review: the **criteria** to check and the exact files handed in."
+            },
+            {
+              "from": "self",
+              "to": "artifacts",
+              "text": "Reviews pins those files and saves a fingerprint of the whole bundle, so nothing can be swapped later."
+            },
+            {
+              "from": "reviewer",
+              "to": "self",
+              "text": "A reviewer agent **claims** the review. Reviews checks it isn't the one who made the work."
+            },
+            {
+              "from": "reviewer",
+              "to": "self",
+              "text": "The reviewer submits a **verdict**: pass, needs changes, or fail, with a short summary and one finding per criterion."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "Reviews hands the verdict to Tasks, which decides what happens next for the task."
+            },
+            {
+              "from": "scope",
+              "to": "self",
+              "text": "If a reviewer loses access mid-review, Scope says so, and Reviews frees the review for someone else."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Criteria", "meaning": "The numbered list of things the reviewer must check." },
+          { "term": "Claim", "meaning": "Taking a review so that only you work on it." },
+          { "term": "Verdict", "meaning": "Pass, needs changes, or fail, plus notes." },
+          {
+            "term": "Finding",
+            "meaning": "The reviewer's answer for one criterion: met with evidence, or waived with a reason."
+          },
+          {
+            "term": "Owner override",
+            "meaning": "The project owner claiming a review they would normally be kept from. It is always marked."
+          }
+        ],
+        "not": [
+          "It doesn't decide what a verdict does to the work. The plugin that asked, like **Tasks**, owns that.",
+          "It doesn't track steps or moves. **Workflows** does, and Reviews doesn't even depend on it.",
+          "It doesn't store the files. **Artifacts** keeps them; Reviews only points at them."
+        ],
+        "readme": "../../packages/reviews/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

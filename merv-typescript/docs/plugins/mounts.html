@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mounts — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "mounts",
+        "name": "Mounts",
+        "group": "foundation",
+        "tagline": "Lets agents use chosen tools from another tool server as if they were Merv's own.",
+        "analogy": {
+          "icon": "🎛️",
+          "text": "A universal remote. It puts a few chosen buttons from another device on your remote. Each person's remote uses their own code to talk to that device, so nobody presses buttons on someone else's account."
+        },
+        "why": [
+          "Useful tools live on other servers, such as Nisa or the Sandboxes service. Mounts lets agents call a **chosen few** through Merv.",
+          "Each caller's calls travel on their own connection with their **own key**, so nobody borrows anyone else's access.",
+          "Keys stay on the server, and no outside error text or key ever reaches the caller."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "calls the mounted tools",
+            "detail": "An agent calls a mounted tool by its name, like any other Merv tool.",
+            "page": null
+          },
+          {
+            "id": "client",
+            "name": "MCP client",
+            "kind": "person",
+            "dir": "in",
+            "says": "calls the mounted tools",
+            "detail": "Any outside app that speaks MCP, the common way agents call tools, can call them too.",
+            "page": null
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "out",
+            "says": "publishes the tools",
+            "detail": "Mounts adds the chosen tools to Merv's tool list, each named after its mount."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "checks each caller's grant",
+            "detail": "A caller needs an exact permission for each mounted tool. Choosing a tool grants nobody anything."
+          },
+          {
+            "id": "upstream",
+            "name": "Upstream MCP server",
+            "kind": "outside",
+            "dir": "out",
+            "says": "gets each call forwarded",
+            "detail": "The other server, such as Nisa or the Sandboxes service, does the real work and answers.",
+            "page": null
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "out",
+            "says": "adds the Connections page",
+            "detail": "Mounts adds a Connections page that shows whether each mount is ready."
+          },
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "checks mount health",
+            "detail": "A person opens the Connections page to see each mount's state, never its keys.",
+            "page": null
+          }
+        ],
+        "story": {
+          "title": "One mounted tool call",
+          "steps": [
+            {
+              "from": "self",
+              "to": "upstream",
+              "text": "Mounts connects to the other server and reads its list of tools."
+            },
+            {
+              "from": "self",
+              "to": "api",
+              "text": "It publishes only the chosen tools, each named after the mount."
+            },
+            {
+              "from": "worker",
+              "to": "api",
+              "text": "An agent calls one of those tools through Merv's tool list."
+            },
+            {
+              "from": "api",
+              "to": "scope",
+              "text": "The tool list checks with Scope that this caller holds a grant for that exact tool."
+            },
+            {
+              "from": "self",
+              "to": "upstream",
+              "text": "Mounts sends the call on the caller's **own** connection, carrying the caller's own key."
+            },
+            {
+              "from": "upstream",
+              "to": "self",
+              "text": "The answer comes back. Errors become a fixed code, so no outside text or secret leaks out."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Mount",
+            "meaning": "One connected tool server, plus the tools chosen from it."
+          },
+          {
+            "term": "MCP",
+            "meaning": "Model Context Protocol: the common way AI agents and tool servers talk."
+          },
+          {
+            "term": "Binding",
+            "meaning": "Which secret key one person uses for one mount in one project."
+          },
+          {
+            "term": "Lane",
+            "meaning": "One caller's private connection to a mount. Lanes are never shared."
+          }
+        ],
+        "not": [
+          "It doesn't decide who may call a tool. **Scope** grants that.",
+          "It doesn't do the tools' work. The **upstream server** on the other end does.",
+          "It isn't switched on in Merv's main deployment today."
+        ],
+        "readme": "../../packages/mounts/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

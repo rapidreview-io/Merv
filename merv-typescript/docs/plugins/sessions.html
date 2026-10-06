@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sessions — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "sessions",
+        "name": "Sessions",
+        "group": "foundation",
+        "tagline": "Gives each AI agent a short-lived pass for one assigned job, and watches it work.",
+        "analogy": {
+          "icon": "🎫",
+          "text": "A visitor badge at an office. The front desk gives you a badge that opens only the rooms for your appointment, and only until it expires. When you leave, the badge stops working and the desk notes how long you stayed."
+        },
+        "why": [
+          "An agent should only touch the work it was given. Sessions checks **every tool call** against the job it leased.",
+          "Agents crash or go quiet. Passes expire, so stuck work is freed for someone else.",
+          "People want to see and steer a running agent. Sessions streams what it does and delivers messages to it."
+        ],
+        "neighbors": [
+          {
+            "id": "runner",
+            "name": "Runner",
+            "dir": "both",
+            "says": "leases work, streams events",
+            "detail": "The runner on an agent machine asks Sessions for work, then sends back everything its agent does."
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "calls tools with its pass",
+            "detail": "The agent uses its session key to call Merv's tools. Sessions checks each call.",
+            "page": null
+          },
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "watches and sends messages",
+            "detail": "A person can watch an agent live and send it a message, which the agent must acknowledge.",
+            "page": null
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "out",
+            "says": "finds ready work",
+            "detail": "Workflows lists the steps ready for a worker. Sessions picks one and freezes the assignment."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "out",
+            "says": "hears the session closed",
+            "detail": "When a session ends, Tasks, Experiments and Reflections hear about it and release their hold on the work."
+          },
+          {
+            "id": "fleet",
+            "name": "Fleet",
+            "dir": "in",
+            "says": "rents machines for it",
+            "detail": "The machines Fleet rents start runners that sign in to Sessions."
+          },
+          {
+            "id": "sandboxes",
+            "name": "Sandboxes",
+            "dir": "in",
+            "says": "adds compute to a session",
+            "detail": "Sandboxes gives a session's agent access to computers, and takes it back when the session closes."
+          },
+          {
+            "id": "blobs",
+            "name": "Blobs",
+            "dir": "out",
+            "says": "stores transcripts",
+            "detail": "A copy of what each agent printed is kept in storage, for operators."
+          }
+        ],
+        "story": {
+          "title": "One agent, one job",
+          "steps": [
+            {
+              "from": "runner",
+              "to": "self",
+              "text": "A runner on an agent machine asks for work it can do."
+            },
+            {
+              "from": "self",
+              "to": "workflows",
+              "text": "Sessions asks Workflows which steps are ready, picks one and **freezes** the assignment."
+            },
+            {
+              "from": "self",
+              "to": "runner",
+              "text": "The runner gets a **lease**: the job plus a secret key that works only for this session."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The runner starts the agent. Its first tool call switches the session on, and every call is checked against the job."
+            },
+            {
+              "from": "person",
+              "to": "self",
+              "text": "A person watches the live stream and may send a message. The agent must acknowledge it before it can write anything more."
+            },
+            {
+              "from": "runner",
+              "to": "self",
+              "text": "The agent finishes. The runner reports the outcome and hands in the agent's printed output."
+            },
+            {
+              "from": "self",
+              "to": "blobs",
+              "text": "That output is kept as the session's **transcript**."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "Sessions closes the session, records what it cost, and tells Tasks so it can let go of the work."
+            }
+          ]
+        },
+        "words": [
+          { "term": "Lease", "meaning": "Permission to do one job for a limited time." },
+          { "term": "Session", "meaning": "One agent's run at one job, with its own key." },
+          {
+            "term": "Continuity",
+            "meaning": "When work comes back to a step, the same agent picks it up again with its old conversation."
+          },
+          {
+            "term": "Transcript",
+            "meaning": "A saved copy of everything the agent printed, for operators."
+          },
+          {
+            "term": "Budget",
+            "meaning": "A spending limit. Reaching it pauses automatic hand-out of work."
+          }
+        ],
+        "not": [
+          "It doesn't start any programs. The **Runner** on the agent machine does.",
+          "It doesn't decide what the steps are. **Workflows** and the research plugins own them.",
+          "It doesn't rent machines. **Fleet** does, through **Sandboxes**."
+        ],
+        "readme": "../../packages/sessions/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

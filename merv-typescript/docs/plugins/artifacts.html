@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Artifacts — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "artifacts",
+        "name": "Artifacts",
+        "group": "foundation",
+        "tagline": "Keeps a project's files for good, so evidence can never quietly change.",
+        "analogy": {
+          "icon": "🗄️",
+          "text": "A museum archive. Each item gets a catalogue number and is never altered afterwards. Researchers cite the number, and the archivist checks your pass before showing you anything."
+        },
+        "why": [
+          "Research work needs **evidence**: results, logs and documents. Once saved, it must never change.",
+          "Many plugins need the same files. They keep just the file's **id**, and Artifacts holds the real thing.",
+          "Files can be big, up to 512 MiB, so large uploads go straight to storage instead of through Merv's server."
+        ],
+        "neighbors": [
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "saves and reads files",
+            "detail": "Worker agents use the artifact tools to save results and read earlier files.",
+            "page": null
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "keeps hand-in evidence",
+            "detail": "Tasks keeps the ids of the files a worker hands in as evidence."
+          },
+          {
+            "id": "experiments",
+            "name": "Experiments",
+            "kind": "research",
+            "dir": "in",
+            "says": "keeps experiment results",
+            "detail": "Experiments points to its results and files by artifact id."
+          },
+          {
+            "id": "reviews",
+            "name": "Reviews",
+            "dir": "in",
+            "says": "reads evidence to judge",
+            "detail": "Reviewers read the files behind each hand-in before giving a verdict."
+          },
+          {
+            "id": "context-builder",
+            "name": "Context Builder",
+            "dir": "in",
+            "says": "packs files for agents",
+            "detail": "Context Builder adds the right files to the package an agent gets before it starts."
+          },
+          {
+            "id": "api",
+            "name": "API",
+            "dir": "out",
+            "says": "offers its tools",
+            "detail": "Artifacts adds its tools, like create, read and upload, to Merv's shared tool list."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "out",
+            "says": "shows the Files page",
+            "detail": "Artifacts adds a Files page to the browser app."
+          },
+          {
+            "id": "blobs",
+            "name": "Blobs",
+            "dir": "out",
+            "says": "stores the bytes",
+            "detail": "A file's actual bytes are kept in Blobs, checked by their fingerprint."
+          },
+          {
+            "id": "state",
+            "name": "State",
+            "dir": "out",
+            "says": "records each file's details",
+            "detail": "File details and an **artifact created** event are saved through State."
+          }
+        ],
+        "story": {
+          "title": "A worker saves a big result",
+          "steps": [
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "A worker agent finishes a run and wants to save a large results file. It asks Artifacts to start an **upload**."
+            },
+            {
+              "from": "self",
+              "to": "blobs",
+              "text": "Artifacts asks Blobs for a **signed link** to the storage service."
+            },
+            {
+              "from": "worker",
+              "to": "blobs",
+              "text": "The worker sends the file straight to storage with that link."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "The worker says it is done. Artifacts checks the bytes and keeps the file."
+            },
+            {
+              "from": "self",
+              "to": "state",
+              "text": "Artifacts records the file and an **artifact created** event. The file now has an id and can never change."
+            },
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "The worker hands in its task, citing the file by id. Tasks keeps that id as evidence."
+            },
+            {
+              "from": "reviews",
+              "to": "self",
+              "text": "Later, a reviewer reads the file. Artifacts first checks that the reviewer belongs to the project."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Artifact",
+            "meaning": "One stored file, with its own id, that never changes."
+          },
+          { "term": "Immutable", "meaning": "Cannot be changed after it is made." },
+          {
+            "term": "Signed link",
+            "meaning": "A web link that allows one upload or download for a short time."
+          },
+          { "term": "Evidence", "meaning": "The files that show work was really done." }
+        ],
+        "not": [
+          "It doesn't store the raw bytes itself. **Blobs** does.",
+          "It doesn't judge whether the evidence is good. **Reviews** does.",
+          "It doesn't decide who belongs to a project. **Scope** does, and Artifacts asks on every read."
+        ],
+        "readme": "../../packages/artifacts/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

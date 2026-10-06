@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>API — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "api",
+        "name": "API",
+        "group": "foundation",
+        "tagline": "Merv's front door: the web server every person and agent comes through.",
+        "analogy": {
+          "icon": "🛎️",
+          "text": "A hotel reception desk. Every guest comes in through it. It checks who you are, then sends you to the right department, and each department hangs its own list of services at the desk."
+        },
+        "why": [
+          "People in a browser and AI agents both need **one** address to reach Merv.",
+          "Every request is checked first: Identity confirms who is calling, and Scope decides what they may do.",
+          "Plugins add their **tools** and pages here, so one shared tool list serves the browser, outside agents and Pi."
+        ],
+        "neighbors": [
+          {
+            "id": "person",
+            "name": "Person",
+            "kind": "person",
+            "dir": "in",
+            "says": "opens pages in a browser",
+            "detail": "A person uses Merv in the browser. Every page and button goes through the API.",
+            "page": null
+          },
+          {
+            "id": "worker",
+            "name": "Worker agent",
+            "kind": "person",
+            "dir": "in",
+            "says": "calls tools over MCP",
+            "detail": "Agents call tools through the MCP address. MCP is a standard way for AI agents to use tools.",
+            "page": null
+          },
+          {
+            "id": "identity",
+            "name": "Identity",
+            "dir": "out",
+            "says": "checks sign-in tokens",
+            "detail": "Identity confirms a browser's sign-in token is real and says who the person is."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "out",
+            "says": "decides what callers may do",
+            "detail": "Scope works out who each caller is and what they are allowed to do."
+          },
+          {
+            "id": "ui",
+            "name": "UI",
+            "dir": "in",
+            "says": "serves the web app",
+            "detail": "UI hangs the browser app's pages on the front door."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "adds its own pages",
+            "detail": "Sessions, Secrets and other plugins add their own web addresses to the API."
+          },
+          {
+            "id": "pi",
+            "name": "Pi",
+            "dir": "in",
+            "says": "calls tools from inside",
+            "detail": "Pi calls the same tools from inside the server, without going over the network."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "adds its tools",
+            "detail": "Research plugins like Tasks add their tools to the shared tool list."
+          }
+        ],
+        "story": {
+          "title": "An agent calls a tool",
+          "steps": [
+            {
+              "from": "tasks",
+              "to": "self",
+              "text": "When Merv starts, Tasks adds its tools to the API's **tool registry**: the shared list of everything agents can do."
+            },
+            {
+              "from": "worker",
+              "to": "self",
+              "text": "A worker agent sends a request to the **MCP** address: call this tool, with these inputs."
+            },
+            {
+              "from": "self",
+              "to": "scope",
+              "text": "The API asks Scope who owns the key the agent used, and what they may do."
+            },
+            {
+              "from": "self",
+              "to": "tasks",
+              "text": "The call goes to the tool, which Tasks runs."
+            },
+            { "from": "self", "to": "worker", "text": "The answer goes back to the agent." },
+            {
+              "from": "person",
+              "to": "self",
+              "text": "A person opens a page in the browser. Their request carries a sign-in **token**."
+            },
+            {
+              "from": "self",
+              "to": "identity",
+              "text": "Identity checks the token is real, and then Scope decides what this person may see."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "API",
+            "meaning": "The set of web addresses that programs use to talk to Merv."
+          },
+          {
+            "term": "Tool",
+            "meaning": "One action an agent can take, like saving a file or handing in a task."
+          },
+          { "term": "MCP", "meaning": "A standard way for AI agents to discover and call tools." },
+          { "term": "Route", "meaning": "One web address a plugin answers, like the account page." }
+        ],
+        "not": [
+          "It doesn't decide permissions. **Scope** does, and the API asks it about every caller.",
+          "It doesn't check sign-in tokens itself. **Identity** does that.",
+          "It doesn't do the work behind a tool. The plugin that added the tool, like **Tasks**, does."
+        ],
+        "readme": "../../packages/api/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>

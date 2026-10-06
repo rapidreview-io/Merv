@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>State — Merv</title>
+    <link rel="stylesheet" href="explainer.css" />
+  </head>
+  <body>
+    <script id="page" type="application/json">
+      {
+        "id": "state",
+        "name": "State",
+        "group": "foundation",
+        "tagline": "The one door to Merv's database, where every lasting change is saved.",
+        "analogy": {
+          "icon": "📚",
+          "text": "A library front desk with a single checkout line. Anyone can browse the shelves at the same time, but changes go through the desk **one at a time**. The desk also writes every change in its logbook."
+        },
+        "why": [
+          "Many plugins must save things that survive a restart. State gives them **one shared, safe way** to do it.",
+          "Changes are saved **one at a time**, so two plugins never trip over each other's half-finished work. Reading never waits in that line.",
+          "A change can add a note to the **event log** in the same step, so the change and its note are saved together or not at all."
+        ],
+        "neighbors": [
+          {
+            "id": "postgres",
+            "name": "PostgreSQL",
+            "kind": "outside",
+            "dir": "out",
+            "says": "stores everything",
+            "detail": "State opens Merv's PostgreSQL database and is the only door to it.",
+            "page": null
+          },
+          {
+            "id": "domain-events",
+            "name": "Domain Events",
+            "dir": "in",
+            "says": "reads back the event log",
+            "detail": "Domain Events reads the log State keeps and delivers each event to the plugins that listen."
+          },
+          {
+            "id": "workflows",
+            "name": "Workflows",
+            "dir": "in",
+            "says": "saves where work stands",
+            "detail": "Workflows saves each step a piece of work takes, and notes it in the event log."
+          },
+          {
+            "id": "scope",
+            "name": "Scope",
+            "dir": "in",
+            "says": "saves members and roles",
+            "detail": "Who belongs to each project, and with which role, is saved through State."
+          },
+          {
+            "id": "sessions",
+            "name": "Sessions",
+            "dir": "in",
+            "says": "saves agent sessions",
+            "detail": "Sessions saves each agent session and notes in the event log when one closes."
+          },
+          {
+            "id": "artifacts",
+            "name": "Artifacts",
+            "dir": "in",
+            "says": "records each file's details",
+            "detail": "Artifacts saves each file's details here. The file's bytes go to Blobs."
+          },
+          {
+            "id": "secrets",
+            "name": "Secrets",
+            "dir": "in",
+            "says": "saves scrambled tokens",
+            "detail": "Secrets saves only encrypted (scrambled) tokens, so the database never holds the real one."
+          },
+          {
+            "id": "tasks",
+            "name": "Tasks",
+            "kind": "research",
+            "dir": "in",
+            "says": "saves tasks and hand-ins",
+            "detail": "Research plugins like Tasks save all their records through State too."
+          }
+        ],
+        "story": {
+          "title": "One saved change",
+          "steps": [
+            {
+              "from": "workflows",
+              "to": "self",
+              "text": "Workflows moves a task to its next step. It asks State to open a **transaction**: a bundle of changes that all happen or none do."
+            },
+            {
+              "from": "self",
+              "to": "postgres",
+              "text": "State takes the **writer lock**, so no other plugin can save anything until this bundle is finished."
+            },
+            {
+              "from": "scope",
+              "to": "self",
+              "text": "Meanwhile, Scope looks up a member. Reading uses separate connections, so it never waits for the lock."
+            },
+            {
+              "from": "workflows",
+              "to": "self",
+              "text": "Workflows writes its change and adds an **event** to the log saying what happened."
+            },
+            {
+              "from": "self",
+              "to": "postgres",
+              "text": "State saves the change and the event together, then lets go of the lock."
+            },
+            {
+              "from": "self",
+              "to": "domain-events",
+              "text": "State wakes Domain Events: there is something new in the log."
+            },
+            {
+              "from": "domain-events",
+              "to": "self",
+              "text": "Domain Events reads the new event and passes it on to the plugins that listen for it."
+            }
+          ]
+        },
+        "words": [
+          {
+            "term": "Transaction",
+            "meaning": "A bundle of changes that is saved all together, or not at all."
+          },
+          {
+            "term": "Writer lock",
+            "meaning": "The rule that only one bundle of changes is saved at a time."
+          },
+          {
+            "term": "Snapshot",
+            "meaning": "A read-only view of the data at one moment. It never waits for the lock."
+          },
+          {
+            "term": "Migration",
+            "meaning": "A step that creates or changes a plugin's tables. Each plugin brings its own."
+          },
+          {
+            "term": "Event log",
+            "meaning": "A list of what happened, in order. Entries are added, never changed."
+          }
+        ],
+        "not": [
+          "It doesn't deliver events to the plugins that care. **Domain Events** does that.",
+          "It doesn't decide who may change what. **Scope** owns permissions.",
+          "It doesn't keep file contents. **Blobs** stores the raw bytes."
+        ],
+        "readme": "../../packages/state/README.md"
+      }
+    </script>
+    <script src="explainer.js"></script>
+  </body>
+</html>
