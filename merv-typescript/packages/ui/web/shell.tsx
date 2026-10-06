@@ -23,7 +23,7 @@ import { useNow } from './views/needs-you';
 import type { Row, ShellData } from './shell-types';
 export type { RowStatus, Row, PluginState, ShellData, WorkflowShape } from './shell-types';
 
-export const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
+const SIDEBAR_KB = /Mac|iP/.test(navigator.platform || '') ? '⌘B' : 'Ctrl+B';
 
 /** A row published by a remote service names its own glyph; every other row is its view kind. */
 const iconOf = (row: Row) => (typeof row.view.icon === 'string' ? row.view.icon : row.view.kind);
@@ -246,7 +246,7 @@ export function Sidebar({ shell, onHide }: { shell: ShellData | undefined; onHid
  * What a page counted, said on the line the shell titles it with. The shell owns that
  * line, so a page hands its facts up rather than drawing a heading of its own under it.
  */
-export type PageFacts = [string, ReactNode][];
+type PageFacts = [string, ReactNode][];
 const Counted = createContext<(facts: PageFacts) => void>(() => {});
 export function usePageFacts(facts: PageFacts) {
   const say = useContext(Counted);

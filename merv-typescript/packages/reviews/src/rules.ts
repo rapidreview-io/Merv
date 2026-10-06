@@ -33,7 +33,7 @@ export const requireDirecting = (
   );
 
 /** One rejected review round as the next author reads it. */
-export interface ReviewRound {
+interface ReviewRound {
   /** 1-based position among all rejected rounds, oldest first; stable when older rounds are dropped. */
   round: number;
   reviewId: string;

@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
 /** Writes one server-sent event, waiting for the socket to drain, and gives up on it after 5 s. */
-export type SendEvent = (event: string, data: unknown) => Promise<void>;
+type SendEvent = (event: string, data: unknown) => Promise<void>;
 
 /**
  * One page's live view, as server-sent events. `subscribe` is taken before the headers, so a

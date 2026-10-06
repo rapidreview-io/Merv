@@ -49,7 +49,7 @@ export function canonicalId(value: string): string | undefined {
  * either; its similar-paper data holds no old-style paper at all). */
 export const routeId = (id: string) => id.replace('/', '_');
 
-export const arxivId = z
+const arxivId = z
   .string()
   .max(64)
   .describe('arXiv ID, such as 2303.08774, arxiv:2303.08774v2 or hep-th/9901001')

@@ -36,7 +36,7 @@ export interface Draft {
   notes: string;
   evidenceIds: string[];
 }
-export const BLANK: Draft = { notes: '', evidenceIds: [] };
+const BLANK: Draft = { notes: '', evidenceIds: [] };
 /**
  * Whether a desk holds anything it has not sent. A desk that does marks itself with
  * `data-draft`, and the split pane's Escape then stays on the record: a verdict half
@@ -50,7 +50,7 @@ export const drafted = (values: Record<number, Draft>) =>
  * A desk writing on the rows: the words it may choose between, the files it may
  * cite, and what it has written.
  */
-export interface Drafting {
+interface Drafting {
   words: readonly string[];
   files: string[];
   values: Record<number, Draft>;
@@ -58,7 +58,7 @@ export interface Drafting {
 }
 
 /** A finding word as the pill every state on these pages is: a dot and the word, in its colour. */
-export const FindingPill = ({ value }: { value: string }) => (
+const FindingPill = ({ value }: { value: string }) => (
   <span className={cx('crit-word', 'crit-pill', `crit-word--${value}`)}>{words(value)}</span>
 );
 

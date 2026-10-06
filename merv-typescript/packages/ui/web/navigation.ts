@@ -8,7 +8,7 @@ import type { PluginState, Row, ShellData } from './shell-types';
  * Settings rows are omitted here because the shell renders them in its
  * footer, and Home's row is likewise the shell's own.
  */
-export interface NavSection {
+interface NavSection {
   id: string;
   label: string;
   rows: Row[];

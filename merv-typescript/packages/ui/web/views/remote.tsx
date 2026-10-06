@@ -316,7 +316,7 @@ function Section({ section, ...facts }: { section: UiSection } & Facts) {
   );
 }
 
-export function RemoteRecord({ row }: ViewProps) {
+function RemoteRecord({ row }: ViewProps) {
   const collection =
     row.view.kind === 'collection' ? (row.view.spec as UiCollectionSpec) : undefined;
   const spec = (row.view.record ?? row.view.spec) as UiRecordSpec | undefined;

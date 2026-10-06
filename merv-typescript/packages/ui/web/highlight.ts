@@ -86,8 +86,8 @@ export function languageOf(word: string | undefined): Language | undefined {
  * Past either a text is drawn plain: colour is not worth a page's second on a file nobody
  * scans, and the highlighter takes about that long at a few times this length.
  */
-export const MAX_HIGHLIGHT = 40_000;
-export const MAX_HIGHLIGHT_LINES = 5_000;
+const MAX_HIGHLIGHT = 40_000;
+const MAX_HIGHLIGHT_LINES = 5_000;
 export const highlightable = (code: string) =>
   code.length <= MAX_HIGHLIGHT &&
   code.split('\n', MAX_HIGHLIGHT_LINES + 1).length <= MAX_HIGHLIGHT_LINES;

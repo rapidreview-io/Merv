@@ -362,7 +362,6 @@ const takesWork = (runner: RunnerPresence) =>
     );
   });
 
-/** Scheduling controls are metadata only; Sessions alone reserves and authenticates a selected step. */
 /** An offer for one candidate that cannot be built; the queue moves past it. */
 class PoisonedOffer extends Error {
   constructor(

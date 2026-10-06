@@ -47,7 +47,7 @@ export const setAuthMode = (value: 'local' | 'shared') => {
   modeChanged?.();
 };
 
-export interface BrowserAuth {
+interface BrowserAuth {
   client?: SupabaseClient;
   configuration: AuthConfiguration;
   dispose(): void;

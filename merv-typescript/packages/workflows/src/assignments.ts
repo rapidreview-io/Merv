@@ -95,7 +95,6 @@ const workStart = (row: WorkStartRow): WorkflowWorkStart => ({
   eventId: row.event_id,
 });
 
-/** Every start of one instance, in revision order. */
 /** Each instance's starts in revision order, in one read however many; none is []. */
 export async function readWorkStarts(
   sql: Sql,

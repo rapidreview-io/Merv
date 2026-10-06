@@ -173,7 +173,7 @@ The nastiest of these is `settings_pending` (`dispatch.ts:528-529`): once `desir
 > (`dispatch_disabled`, `no_live_runner`, `runner_refusing`, `dispatch_held`,
 > `dispatch_failing`, `ready_quiet`), a runner's `decisionSince` says how long a refusal has
 > held, and a failing launch is bounded by a hold instead of retried for ever. See
-> [stuck work and dispatch holds](RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds).
+> [stuck work and dispatch holds](../RUNNER_CONTROL_PLANE.md#stuck-work-and-dispatch-holds).
 > The page does not draw them yet; the counts ride in `GET /sessions/status` as `stuck`.
 
 ### 1.14 An actor with no name reads as an em dash while the server knows the actor

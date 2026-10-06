@@ -14,7 +14,7 @@ import { postgresMigrations } from './stream.postgres.js';
 import type { Session, SessionStreamBatch, SessionStreamReads } from './types.js';
 
 /** How long after its session closed a stream still takes the agent's last words. */
-export const STREAM_GRACE_MS = 10 * 60_000;
+const STREAM_GRACE_MS = 10 * 60_000;
 const RETAIN_MS = 30 * 86_400_000;
 /** What a page is sent first: the newest events, at most this many or this many bytes. */
 const SNAPSHOT_EVENTS = 500;

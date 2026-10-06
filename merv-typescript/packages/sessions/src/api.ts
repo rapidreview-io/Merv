@@ -55,7 +55,7 @@ export interface SessionRoutes {
   release(caller: Caller, input: unknown): Promise<unknown>;
 }
 /** Runs a read-only route in a snapshot scope: no writer lock, writes refused. */
-export type SnapshotRead = <T>(fn: () => Promise<T>) => Promise<T>;
+type SnapshotRead = <T>(fn: () => Promise<T>) => Promise<T>;
 
 const nonblank = z.string().trim().min(1).max(512);
 // Sessions parses every other body. These two unwrap the one field a method takes, and a

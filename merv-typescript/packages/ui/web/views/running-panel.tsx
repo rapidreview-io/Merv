@@ -198,7 +198,7 @@ function Jumps({ rows }: { rows: RunningLinkRow[] }) {
 
 /** How long a silence between two rows must be before the stream says so. */
 const QUIET = 5 * 60_000;
-export type StreamRow =
+type StreamRow =
   | {
       kind: 'call';
       call: string;

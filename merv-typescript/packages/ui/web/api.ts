@@ -12,14 +12,14 @@ export class ApiError extends Error {
 }
 
 const TOKEN_KEY = 'merv:token';
-export const readToken = (): string | null => {
+const readToken = (): string | null => {
   try {
     return sessionStorage.getItem(TOKEN_KEY);
   } catch {
     return null;
   }
 };
-export const writeToken = (token: string | null) => {
+const writeToken = (token: string | null) => {
   try {
     if (token) sessionStorage.setItem(TOKEN_KEY, token);
     else sessionStorage.removeItem(TOKEN_KEY);

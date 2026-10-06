@@ -99,7 +99,7 @@ export function valueText(value: RunningValue, reading: Omit<RunningReading, 'op
   return value.text;
 }
 /** A phrase's words, for a name a screen reader hears and for whether it says anything. */
-export const phraseText = (
+const phraseText = (
   phrase: RunningPhrase | undefined,
   reading: Omit<RunningReading, 'open'>,
 ): string =>

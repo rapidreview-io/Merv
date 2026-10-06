@@ -22,8 +22,8 @@ import { status as publicationWord } from './github-publications';
  * prints no digest.
  */
 
-export type GitNodeKind = 'main' | 'unit' | 'base' | 'publication';
-export interface GitNode {
+type GitNodeKind = 'main' | 'unit' | 'base' | 'publication';
+interface GitNode {
   id: string;
   kind: GitNodeKind;
   /** The kind whose colour it wears, from the route the names map leads to. */
@@ -38,7 +38,7 @@ export interface GitNode {
 }
 
 /** A verb one record's own field says about another; no other relation is drawn. */
-export type GitVerb =
+type GitVerb =
   | 'member of'
   | 'pinned to'
   | 'waiting on'
@@ -47,7 +47,7 @@ export type GitVerb =
   | 'resolved by'
   | 'published from'
   | 'merged into';
-export interface GitEdge {
+interface GitEdge {
   from: string;
   to: string;
   verb: GitVerb;
@@ -57,7 +57,7 @@ export interface GitEdge {
   refusal?: boolean;
 }
 
-export interface GitLane {
+interface GitLane {
   id: string;
   /** The node it was cut from, by commit equality: the trunk, another lane, or a base. */
   from: string;
@@ -378,7 +378,7 @@ export const waitersOf = (base: CodeBaseRecord, units: readonly CodeUnit[]): str
     : [];
 
 /** One filter: the work a group of blockers is about, and the nodes it names. */
-export interface GitChip {
+interface GitChip {
   label: string;
   count: number;
   lights: ReadonlySet<string>;

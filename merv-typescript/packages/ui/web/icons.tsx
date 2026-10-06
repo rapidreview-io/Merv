@@ -63,7 +63,7 @@ const PATHS = {
 export type IconName = keyof typeof PATHS;
 const known = (name: string): name is IconName => Object.hasOwn(PATHS, name);
 
-export interface IconProps {
+interface IconProps {
   /** The drawn size in px; the stroke scales with it. */
   size?: number;
   className?: string;

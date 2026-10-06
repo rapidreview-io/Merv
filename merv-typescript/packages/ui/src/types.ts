@@ -39,7 +39,6 @@ export interface UiRow {
   whenCounted?: true;
   view: { kind: string; [key: string]: Json };
   status?(caller: Caller): UiRowStatus | Promise<UiRowStatus>;
-  /** Row-owned read-only data for views without a domain tool, served through ui.read. */
   /** The owning row validates any pagination or lookup parameters. */
   read?(caller: Caller, params?: Record<string, unknown>): Json | Promise<Json>;
   /**

@@ -12,7 +12,7 @@ import type {
  * stands in these words. The domain names the gate a review was read at, where it reviews a
  * subject at more than one.
  */
-export interface ReviewRounds {
+interface ReviewRounds {
   /** The review that speaks for the subject now, as get() serves it to this reader. */
   current: ReviewRequest;
   /** The gate it is read at, where the owning domain reviews its records at more than one. */

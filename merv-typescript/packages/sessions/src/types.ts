@@ -114,7 +114,6 @@ export interface AgentAssignment {
   hardDeadlineSeconds?: number;
 }
 
-/** A durable lease's public metadata. The bearer secret is never retained or returned. */
 /** Assignment execution. Its id remains fixed for evidence and late-call fencing. */
 export interface Session {
   id: string;

@@ -43,12 +43,12 @@ export interface PiMachine {
   memoryGiB: number;
   diskGB: number;
 }
-export interface PiMachineOption extends PiMachine {
+interface PiMachineOption extends PiMachine {
   available: boolean;
   reason?: string;
 }
-export type PiMoveBy = 'person' | 'agent' | 'deadline';
-export interface PiMove {
+type PiMoveBy = 'person' | 'agent' | 'deadline';
+interface PiMove {
   at: string;
   by: PiMoveBy;
   from: string;
@@ -74,7 +74,7 @@ export interface PiEvent {
   text: string;
 }
 /** What the person is waiting on, and since when. */
-export interface PiStage {
+interface PiStage {
   name: string;
   since: string;
   detail?: string;

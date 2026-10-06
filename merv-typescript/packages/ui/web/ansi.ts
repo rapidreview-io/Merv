@@ -7,7 +7,7 @@
  */
 
 /** One stretch of text printed in one style; `className` is absent where the style is plain. */
-export interface AnsiRun {
+interface AnsiRun {
   text: string;
   className?: string;
 }

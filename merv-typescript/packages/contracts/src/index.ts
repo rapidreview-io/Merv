@@ -1734,7 +1734,6 @@ export interface WorkflowRecord {
   dependents: WorkflowDependency[];
 }
 export interface Workflows {
-  /** Metadata-only, project-scoped readiness. Does not reserve work or render assignment bytes. */
   /** Candidates a source may dispatch; with `worker`, only those that worker may take. */
   dispatchCandidates(
     source: Caller,

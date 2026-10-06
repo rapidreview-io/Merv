@@ -85,7 +85,7 @@ export function ThreeStates({
 }
 
 /** What a row needs of a review: the shape `review.list` already returns. */
-export interface ReviewFacts {
+interface ReviewFacts {
   subjectId: string;
   subjectRevision: number;
   status: string;

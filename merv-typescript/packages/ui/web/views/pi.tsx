@@ -572,8 +572,6 @@ function Model({
   );
 }
 
-/** Where turn `at` moved machine or switched model, against the last earlier turn that recorded
- * each: a turn stopped before a worker claimed it recorded no model. */
 /** What the agent is given: the instructions every turn shares, then the latest turn's notes and
  * the tools it was offered, exactly as that turn was served. Read again when a turn begins. */
 function Context({ id, turns }: { id: string; turns: number }) {

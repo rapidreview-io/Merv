@@ -2,7 +2,7 @@ import type { Caller, Data, DelegationSource } from '@merv/contracts';
 import type { ModelRelayHandle } from '@merv/fleet/types';
 import type { PiModelConfig } from './schema.js';
 
-export type PiStatus = 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
+type PiStatus = 'waiting' | 'starting' | 'working' | 'saving' | 'completed' | 'interrupted';
 /** Why a command was interrupted; the UI turns each into a sentence. */
 export type PiInterruption =
   | 'worker_interrupted'
@@ -25,7 +25,7 @@ export interface PiToolOutcome {
   input: Data;
   output: Data;
 }
-export interface PiCheckpoint {
+interface PiCheckpoint {
   hash: string;
   size: number;
   commandId: string;

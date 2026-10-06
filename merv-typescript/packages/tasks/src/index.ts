@@ -307,7 +307,6 @@ const GIT_CLAIM =
 const SOURCE_VERIFICATION =
   'Verify pivotal source-stated formulas and procedures against the primary paper and nearby prose or derivation before implementation or verdict. Text extraction can lose superscripts and symbols: inspect the rendered page when available, otherwise cross-check adjacent source statements. Cite the section and distinguish printed from PDF page numbering. Treat unresolved notation as uncertainty, not a paper inconsistency; reviewers must independently verify pivotal claims before passing.';
 
-/** Owns task rules and the atomic integration between generic workflow and assessment services. */
 /**
  * How often a review may return a task for changes. After that many returns the next delivery
  * waits for a human, who reviews it by hand or allows another round. It is deployed policy
