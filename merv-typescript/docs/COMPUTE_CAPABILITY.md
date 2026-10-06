@@ -31,7 +31,11 @@ A worker gets compute only under all of the following conditions:
    expires with the session's hard deadline.
 2. The project has a **funded native Sandboxes connection**. Without one, no connection is attached
    and the work runs without compute.
-3. Its **profile** is `execute` or `check`:
+3. Its unit **declares a native work kind** with the `computeKind` reference of the assignment's
+   `references`. The native service is sent that kind; an assignment that declares none gets no
+   compute. Tasks declare `task`, Experiments `experiment`, and Reflections `task`, since the
+   native service confirms only those two kinds.
+4. Its **profile** is `execute` or `check`:
    - The unit's assignment `references` may name `computeProfile`: `execute`, `check` or `none`.
    - Otherwise the profile is `execute` when the assignment's fixed execution policy is writable
      (`readOnly: false`) with a `persistent` workspace, and `check` in every other case.
@@ -63,8 +67,8 @@ work's **compute epoch** changes:
 **Units** (Tasks, Experiments, Reflections and later ones) do only two things, neither of which
 needs a Sandboxes binding at runtime:
 
-- Optionally return `computeProfile` from an assignment rule's `references`, and set
-  `computeEpoch` in transition data.
+- Return `computeKind` from an assignment rule's `references` to bind compute, optionally with
+  `computeProfile`, and set `computeEpoch` in transition data.
 - Read compute guidance with a pure function from `@merv/sandboxes/compute-capability`, and the
   retained captures of an instance through `ctx.sandboxes.captures(projectId, instanceId, tx)`
   when Sandboxes is loaded.
@@ -80,10 +84,11 @@ needs a Sandboxes binding at runtime:
 - **Evidence.** It registers captures as artifact collections.
 - **Display.** It draws compute resources on the Running page for every unit.
 
-The native service is still sent `work_kind` `task` or `experiment`: `experiment` for the
-`experiment` workflow, and `task` for every other workflow. Before giving other units their own
-kinds, check which values the native service accepts. The `sandboxConnectionId`/`sandboxProfile`
-references that leases carried before this change are no longer read.
+The native service is sent the `work_kind` the unit declared. Sandboxes stores it on the pinned
+work row (`native_kind`, migration `sandboxes-native@5`, which gave existing rows the kind they
+were sent until then: `experiment` for the `experiment` workflow and `task` for every other), so
+the background reconcile needs no session. The `sandboxConnectionId`/`sandboxProfile`
+references that leases carried before compute became a capability are no longer read.
 
 ## Phase 1: the capability (implemented)
 
@@ -133,7 +138,7 @@ The capability ships before the older path is removed. What it settled:
 **Not yet done:**
 
 - Which `work_kind` values beyond `task` and `experiment` the native service accepts is
-  unconfirmed. Until it confirms, every other workflow is sent as `task`.
+  unconfirmed. Until it confirms, units declare one of those two.
 - A pinned work whose connection was revoked while the project later connected a different
   account is refused at launch, as before. It is not moved to the new account.
 

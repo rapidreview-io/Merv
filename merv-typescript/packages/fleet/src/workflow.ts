@@ -175,6 +175,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
             await this.reviewer(binding.source, tx),
           ],
           retired: async (binding, tx) => await this.fleet.retired(binding.allocationId, tx),
+          // Hosted Codex's image brokers Hugging Face downloads through HF_TOKEN/HF_ENDPOINT.
+          huggingFace: (binding) => canonical(binding.platform) === canonical(hostedCodexPlatform),
         }),
       );
       // Fleet's sections of system.status: the project's, and a leased worker's own budget.

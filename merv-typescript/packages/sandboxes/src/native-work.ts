@@ -82,11 +82,6 @@ const reference = (value: unknown): value is string =>
 /** A workflow name, as the workflow engine accepts one. */
 export const workflowName = (value: unknown): value is string =>
   typeof value === 'string' && /^[a-zA-Z][a-zA-Z0-9_.-]{0,127}$/.test(value);
-/** Workflow names the native service accepts as work kinds (unconfirmed beyond these). */
-const NATIVE_WORK_KINDS: ReadonlySet<string> = new Set(['task', 'experiment']);
-/** The work kind the native service is sent: the workflow's name if it knows it, else `task`. */
-export const nativeWorkKind = (workflow: string): string =>
-  NATIVE_WORK_KINDS.has(workflow) ? workflow : 'task';
 /** A launch or close never waits on a session that ended longer ago than any lease can run. */
 const LEASE_HORIZON_MS = 8 * 24 * 3_600_000;
 /** Open work at rest under a live assignment is looked at this often, not on every pass. */
@@ -136,10 +131,19 @@ export class NativeWorkService {
   private async instance(tx: Transaction, project: string, id: string) {
     return (await this.workflows.relations(project, id, tx))?.instance;
   }
-  /** Binds the work to the project's current funded connection, its payer from then on. */
-  async pin(project: string, workflow: string, work: string, tx: Transaction): Promise<void> {
+  /**
+   * Binds the work to the project's current funded connection, its payer from then on, under
+   * the native work kind its owner declared.
+   */
+  async pin(
+    project: string,
+    workflow: string,
+    work: string,
+    kind: string,
+    tx: Transaction,
+  ): Promise<void> {
     this.state.assertTransaction(tx);
-    valid(identifier(work) && workflowName(workflow));
+    valid(identifier(work) && workflowName(workflow) && identifier(kind));
     const existing = await this.row(tx, project, workflow, work);
     if (existing) return;
     const connection = await this.connections.current(project, tx);
@@ -151,11 +155,12 @@ export class NativeWorkService {
       409,
     );
     await tx.run(
-      'INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id) VALUES(?,?,?,?)',
+      'INSERT INTO sandbox_native_work(project_id,work_kind,work_id,connection_id,native_kind) VALUES(?,?,?,?,?)',
       project,
       workflow,
       work,
       connection.id,
+      kind,
     );
   }
   /**
@@ -273,16 +278,18 @@ export class NativeWorkService {
     connection: NativeConnectionRow,
   ): Promise<NativeWorkRow> {
     if (work.native_grant_id && work.namespace) return work;
+    const kind = work.native_kind;
+    valid(identifier(kind));
     const reply = await this.connections.call<WorkReceipt>(connection, '/v1/delegations/works', {
       method: 'POST',
-      body: { work_ref: work.work_id, work_kind: nativeWorkKind(work.work_kind) },
+      body: { work_ref: work.work_id, work_kind: kind },
     });
     valid(
       identifier(reply.work_grant_id) &&
         identifier(reply.namespace) &&
         reply.member_id === connection.member_id &&
         reply.work_ref === work.work_id &&
-        reply.work_kind === nativeWorkKind(work.work_kind) &&
+        reply.work_kind === kind &&
         (reply.revoked_at === null || typeof reply.revoked_at === 'string'),
     );
     return this.state.transaction(async (tx) => {
@@ -342,8 +349,10 @@ export class NativeWorkService {
   }
   /**
    * The launch-connections provider, for a leased session of any workflow. Everything comes
-   * from the session: the profile from its fixed policy and `computeProfile` reference, the
-   * epoch from its instance. The work is pinned on its first launch in a funded project.
+   * from the session: the native work kind its owner declares in the `computeKind` reference,
+   * the profile from its fixed policy and `computeProfile` reference, the epoch from its
+   * instance. The work is pinned on its first launch in a funded project. An assignment that
+   * declares no kind binds no compute.
    */
   async launchConnections(session: Readonly<Session>): Promise<NativeMcpConnection[]> {
     check(
@@ -353,13 +362,14 @@ export class NativeWorkService {
       500,
     );
     const workflow = session.execution.workflow;
-    const profile = computeProfile(
-      session.execution.policy,
-      session.execution.references.computeProfile,
-    );
-    if (profile === 'none') return [];
+    const refs = session.execution.references;
+    const profile = computeProfile(session.execution.policy, refs.computeProfile);
+    const kind = refs.computeKind;
+    if (profile === 'none' || kind === undefined) return [];
     valid(
-      workflowName(workflow) &&
+      typeof kind === 'string' &&
+        identifier(kind) &&
+        workflowName(workflow) &&
         identifier(session.instanceId) &&
         identifier(session.lease.leaseId) &&
         session.lease.instanceId === session.instanceId &&
@@ -388,7 +398,7 @@ export class NativeWorkService {
       work = await this.state.transaction(async (tx) => {
         const instance = await this.instance(tx, projectId, instanceId);
         valid(atLease(instance));
-        await this.pin(projectId, workflow, instanceId, tx);
+        await this.pin(projectId, workflow, instanceId, kind, tx);
         await this.advance(tx, (await this.row(tx, projectId, workflow, instanceId))!, instance);
         return (await this.row(tx, projectId, workflow, instanceId))!;
       });

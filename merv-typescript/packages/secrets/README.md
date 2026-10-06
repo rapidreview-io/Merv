@@ -67,13 +67,14 @@ The first version also refuses slash-containing revisions, filenames with spaces
 These fail explicitly; expand the path policy only with native-client evidence.
 
 New managed hosted Codex workers receive a readable, session-bound capability in
-`HF_TOKEN`, never the account token. jose encrypts a strict session/allocation/
-host/expiry context under an HKDF-derived grant key, separate from storage
-ciphertexts. The grant contains no account identity or Hugging Face token.
-Sessions owns the single authority callback and rechecks its live lease,
-allocation epoch, attached host, source delegation and review policy on every
-request using a read-only snapshot. Secrets then resolves the account's current
-token and inserts it into the upstream request. No authorization cache is used.
+`HF_TOKEN`, never the account token. A grant is `{binding, exp}`: Secrets checks
+the expiry and treats the binding as opaque. jose encrypts it under an HKDF-derived
+grant key, separate from storage ciphertexts. The grant contains no account identity
+or Hugging Face token. Sessions issues the binding and owns the single authority
+callback: on every request, using a read-only snapshot, it reads the binding back and
+rechecks its live lease, allocation epoch, attached host, source delegation and review
+policy. Secrets then resolves the account's current token and inserts it into the
+upstream request. No authorization cache is used.
 
 Removal, rotation, session closure and source/allocation revocation apply to the
 next request, including on existing connections. Transfers already authorized
@@ -97,12 +98,9 @@ ends with the worker session; the next worker supplies its own. Durable managed
 GPU jobs do not yet receive HF access. Work-bound credentials and Python late
 script delivery require a separate change.
 
-The old `/sessions/:id/huggingface` route remains wire-compatible for the hosted
-image transition but stops returning raw tokens at **2026-10-08 00:00 UTC**. Remove
-its raw-token implementation in the first release after the new image rollout.
-New runners use only `/huggingface-access`; errors launch without HF access and
-never fall back to raw-token delivery. Existing old processes may retain tokens
-issued before rollout; invalidate those at Hugging Face if necessary.
+Runners use only `/huggingface-access`; errors launch without HF access and never
+fall back to raw-token delivery. The older raw-token route `/sessions/:id/huggingface`
+is removed.
 
 Tests cover authenticated synthetic upstreams, path/header boundaries, range
 responses, keep-alive revocation, account rotation/removal, grant expiry and

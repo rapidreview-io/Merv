@@ -1131,6 +1131,8 @@ export abstract class ExperimentProgram {
       ? await this.reviews.get(context.caller, experiment.reviewId, context.tx)
       : null;
     return {
+      // The native Sandboxes work kind an experiment binds compute under.
+      computeKind: 'experiment',
       ...(context.snapshot.state === 'running' ? await this.pinnedBase(context) : {}),
       ...(context.snapshot.state === 'experiment_review'
         ? {

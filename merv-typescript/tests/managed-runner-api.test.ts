@@ -330,7 +330,6 @@ async function credentialGate(t: TestContext) {
         'heartbeat',
         'release',
         'workspaceResult',
-        'huggingface',
         'huggingfaceAccess',
         'launchConnections',
         'transcript',
@@ -443,7 +442,6 @@ const ownersPresent: GateRow[] = [
       ['POST', '/sessions/session_1/release', 'sessions.release'],
       ['POST', '/sessions/session_1/workspace-result', 'sessions.workspaceResult'],
       ['POST', '/sessions/session_1/transcript', 'sessions.transcript'],
-      ['POST', '/sessions/session_1/huggingface', 'sessions.huggingface'],
       ['POST', '/sessions/session_1/huggingface-access', 'sessions.huggingfaceAccess'],
       ['POST', '/sessions/session_1/launch-connections', 'sessions.launchConnections'],
       ['POST', '/code/v2/uploads/begin', 'code.v2.call'],
@@ -665,15 +663,25 @@ test('credential confinement: each bearer reaches only its owner, and an absent 
 
 test('private HF delivery is managed-only and never cacheable', async (t) => {
   const f = await credentialGate(t);
-  const reply = await f.request('POST', '/sessions/session_1/huggingface', bearers.mr_, {
+  const reply = await f.request('POST', '/sessions/session_1/huggingface-access', bearers.mr_, {
     runnerId: 'runner',
     hostRef: 'host',
   });
   assert.equal(reply.status, 200);
   assert.equal(reply.cacheControl, 'no-store');
   for (const token of [bearers.ms_, bearers.me_]) {
-    const refused = await f.request('POST', '/sessions/session_1/huggingface', token, {});
+    const refused = await f.request('POST', '/sessions/session_1/huggingface-access', token, {});
     assert.equal(refused.status, 403);
-    assert.ok(!refused.reached.includes('sessions.huggingface'));
+    assert.ok(!refused.reached.includes('sessions.huggingfaceAccess'));
   }
+  // The raw-token route of images before brokered access is gone: no managed runner reaches it.
+  const legacy = await f.request('POST', '/sessions/session_1/huggingface', bearers.mr_, {
+    runnerId: 'runner',
+    hostRef: 'host',
+  });
+  assert.equal(legacy.status, 403);
+  assert.deepEqual(
+    legacy.reached.filter((name) => name.startsWith('sessions.huggingface')),
+    [],
+  );
 });

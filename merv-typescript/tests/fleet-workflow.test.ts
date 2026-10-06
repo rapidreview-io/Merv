@@ -767,6 +767,15 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
     ),
     false,
   );
+  // Fleet owns Hugging Face eligibility: hosted Codex's image brokers it, no other does.
+  assert.equal(f.validator().huggingFace!(binding), true);
+  assert.equal(
+    f.validator().huggingFace!({
+      ...binding,
+      platform: { ...hostedCodexPlatform, harness: 'claude' },
+    }),
+    false,
+  );
   assert.equal(
     await f.state.transaction((tx) =>
       f

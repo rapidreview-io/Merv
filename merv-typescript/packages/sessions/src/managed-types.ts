@@ -27,6 +27,8 @@ export type ManagedRunnerValidator = {
   ): Promise<DelegationSource[]>;
   /** A machine no longer current because a release retired its image, not for any fault. */
   retired?(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
+  /** Whether this machine's image brokers Hugging Face downloads; without it, none does. */
+  huggingFace?(binding: ManagedRunnerBindingIdentity): boolean;
 };
 export type ManagedEnrollmentInput = Omit<ManagedRunnerBindingIdentity, 'capabilities'> & {
   capabilities?: string[];
