@@ -458,6 +458,29 @@ test('each saved checkpoint is its own context item, newest embedded first, and 
   }
 });
 
+test('a reviewer checkpoint reads back by its ID only for the reviewer whose context lists it', async () => {
+  const f = await fixture(true);
+  try {
+    const task = await f.create();
+    const claim = await f.claim(await f.submit(task.id));
+    const review = { taskId: task.id, purpose: 'review' as const, expectedRevision: 1 };
+    const saved = await f.app.ctx.tasks.checkpoint(f.reviewer.caller, {
+      ...review,
+      claimId: claim.claimId!,
+      notes: 'Reviewer notes: leaning fail.',
+      requestId: 'review-checkpoint',
+    });
+    const ref = { taskId: task.id, checkpointId: saved.id };
+    for (const caller of [f.reader.caller, f.producer.caller])
+      await assert.rejects(async () => await f.app.ctx.tools.call('task.get', caller, ref), {
+        code: 'forbidden',
+      });
+    assert.deepEqual(await f.app.ctx.tools.call('task.get', f.reviewer.caller, ref), saved);
+  } finally {
+    await f.close();
+  }
+});
+
 test('a task whose work context could never fit its recipe is refused when it is created', async () => {
   const f = await fixture();
   try {

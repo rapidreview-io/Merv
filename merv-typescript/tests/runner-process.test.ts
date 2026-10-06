@@ -267,6 +267,31 @@ test("an owner lost on its own ends its agent and the agent's jobs, and stays un
   assert.equal(await stillTicking(ticks), false);
 });
 
+test(
+  'the subreaper reaps the jobs it adopts instead of keeping them as zombies',
+  {
+    skip: process.platform !== 'linux',
+  },
+  async (t) => {
+    const { directory, ledger, host, reserve, token, command } = setup(t);
+    const record = reserve('reaped');
+    const count = join(directory, 'zombies');
+    // Twenty jobs orphaned at once end 0.2s later; the agent then counts its group's zombies.
+    const zombies = `require('fs').writeFileSync(${JSON.stringify(count)},String(require('fs').readdirSync('/proc').filter((p)=>/^\\d+$/.test(p)).filter((p)=>{try{const s=require('fs').readFileSync('/proc/'+p+'/stat','utf8').slice(require('fs').readFileSync('/proc/'+p+'/stat','utf8').lastIndexOf(')')+2).split(' ');return s[0]==='Z'&&Number(s[2])===mine}catch{return false}}).length))`;
+    await host.launch({
+      launchId: record.id,
+      sessionToken: token,
+      deadline: record.deadline,
+      command: command(
+        `const mine=Number(require('fs').readFileSync('/proc/self/stat','utf8').split(') ')[1].split(' ')[2]);require('child_process').spawnSync('sh',['-c','for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do (sleep 0.2 &); done']);setTimeout(()=>{${zombies};setInterval(()=>{},1000)},1500)`,
+      ),
+    });
+    await until(() => existsSync(count));
+    assert.equal(readFileSync(count, 'utf8'), '0');
+    await host.stop(record.id);
+  },
+);
+
 test('claimed intent without a reachable guardian stays uncertain and cannot be restarted or freed by remote status', async (t) => {
   const { ledger, host, reserve, token, command } = setup(t);
   const record = reserve('unknown');

@@ -747,14 +747,14 @@ export abstract class ExperimentProgram {
   /**
    * The commit a results review pins: the producing session's final capture, resolved by its
    * immutable reference even after its handoff. A machine that died before handing that capture
-   * over leaves its writer for an operator to fence, and the review then takes the last commit
-   * Code admitted, which is what the fence kept.
+   * over leaves its writer for an operator to fence; Code then answers with the last commit it
+   * admitted from that session, which is what the fence kept.
    */
   private async reviewCapture(
     caller: Caller,
     experiment: Experiment,
     tx: Transaction,
-  ): Promise<{ capture: CodeCapture; headOid: string } | null> {
+  ): Promise<CodeCapture | null> {
     if (experiment.workflow.state !== 'experiment_review') return null;
     const submission = experiment.submissions.find(
       (entry) => entry.reviewId === experiment.reviewId,
@@ -786,18 +786,13 @@ export abstract class ExperimentProgram {
       'The code capture must belong to the exact producing experiment node',
       409,
     );
-    if (checked.status === 'ready')
-      return { capture: checked.capture, headOid: checked.capture.workspace.headOid };
-    const unit = await this.code.unit(caller, experiment.id, tx);
-    const retained =
-      unit.writerState === 'closed' ? (unit.canonicalHead ?? unit.base?.reference) : undefined;
     check(
-      retained,
+      checked.status === 'ready',
       'experiment_capture_pending',
       'The producing worker must stop and report its final Git capture before review, or an operator fences its writer with code.unit.fence',
       409,
     );
-    return { capture: checked.capture, headOid: retained };
+    return checked.capture;
   }
 
   /**
@@ -1003,7 +998,6 @@ export abstract class ExperimentProgram {
     });
     // Paper writes the Introduction from the Problem, whose sections `paper` carries.
     const { summary: _summary, ...project } = await this.scope.project(caller, tx);
-    const reviewed = await this.reviewCapture(caller, experiment, tx);
     return {
       experiment: own({
         id: experiment.id,
@@ -1013,8 +1007,7 @@ export abstract class ExperimentProgram {
         ownerId: experiment.ownerId,
         project,
         workspace: 'git',
-        codeCapture: reviewed?.capture ?? null,
-        ...(reviewed && !reviewed.capture.workspace ? { retainedCommit: reviewed.headOid } : {}),
+        codeCapture: await this.reviewCapture(caller, experiment, tx),
         paperChangesFormat: {
           documents: [
             {
@@ -1130,7 +1123,8 @@ export abstract class ExperimentProgram {
       ...(context.snapshot.state === 'running' ? await this.pinnedBase(context) : {}),
       ...(context.snapshot.state === 'experiment_review'
         ? {
-            code: (await this.reviewCapture(context.caller, experiment, context.tx))!.headOid,
+            code: (await this.reviewCapture(context.caller, experiment, context.tx))!.workspace!
+              .headOid,
           }
         : {}),
       artifacts: await this.allowedArtifacts(context.caller, experiment, context.tx),

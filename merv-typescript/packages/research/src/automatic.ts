@@ -30,8 +30,9 @@ export const automaticStatus = (row: AutomaticRow): ResearchAutomation => ({
 });
 
 const CONSUMER = 'research.automatic.v3';
-/** Retries of one event while a provider answers 503: about 25 seconds of backoff in all. */
+/** Retries of one event while the database answers 503: about 25 seconds of backoff in all. */
 const UNAVAILABLE_RETRIES = 8;
+const TRANSIENT = ['state_timeout', 'state_busy', 'state_unavailable'];
 
 /** Existing durable events drive Research. This neither schedules nor launches workers. */
 export async function automaticResearch(
@@ -89,9 +90,11 @@ export async function automaticResearch(
           await tx.run('RELEASE SAVEPOINT research_automatic_cycle');
           if (!(error instanceof MervError) || (error.status >= 500 && error.status !== 503))
             throw error;
-          // A provider that is briefly unavailable is retried with the event, a bounded number
+          // A database that is briefly unavailable is retried with the event, a bounded number
           // of times the consumer's own durable attempt count keeps, before it shows as a blocker.
-          if (error.status === 503) {
+          // Any other refusal, such as an unbound provider whose bind wakes the cycle again, shows
+          // at once: the consumer is shared by every project and must not wait on it.
+          if (TRANSIENT.includes(error.code)) {
             const consumer = (await events.status()).find((item) => item.id === CONSUMER);
             if ((consumer?.attempts ?? UNAVAILABLE_RETRIES) < UNAVAILABLE_RETRIES) throw error;
           }

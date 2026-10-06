@@ -21,12 +21,35 @@ import { fileURLToPath } from 'node:url';
 
 const resource = fileURLToPath(import.meta.url);
 const PYTHON = '/usr/bin/python3';
-const SUBREAPER = `import ctypes, os, sys
-try: ctypes.CDLL(None).prctl(36, 1, 0, 0, 0)
-except Exception: pass
-os.execv(sys.argv[1], sys.argv[1:])`;
+/**
+ * Leads the owner's group as a child subreaper (PR_SET_CHILD_SUBREAPER) that runs the owner as
+ * its child, forwards it signals, reaps every process it adopts and exits as the owner did.
+ * Without ctypes or prctl it becomes the owner itself, which then leads its own group.
+ */
+const SUBREAPER = `import os, signal, sys
+try:
+    import ctypes
+    if ctypes.CDLL(None).prctl(36, 1, 0, 0, 0) != 0: raise OSError()
+except Exception:
+    os.execv(sys.argv[1], sys.argv[1:])
+owner = 0
+def forward(number, _frame):
+    if owner: os.kill(owner, number)
+for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(number, forward)
+owner = os.fork()
+if owner == 0:
+    try: os.execv(sys.argv[1], sys.argv[1:] + [str(os.getpgrp())])
+    finally: os._exit(127)
+while True:
+    pid, status = os.wait()
+    if pid != owner: continue
+    if os.WIFSIGNALED(status):
+        signal.signal(os.WTERMSIG(status), signal.SIG_DFL)
+        os.kill(os.getpid(), os.WTERMSIG(status))
+    os._exit(os.waitstatus_to_exitcode(status))`;
 const mode = process.argv[2];
-if (mode === 'group') groupOwner();
+if (mode === 'group') groupOwner(Number(process.argv[3]) || process.pid);
 else if (mode === 'guardian') guardian(process.argv[3], process.argv[4]);
 else process.exit(64);
 
@@ -78,7 +101,8 @@ const signalAll = (pids, signal) => {
     }
 };
 
-function groupOwner() {
+/** `group` is the owner's process group: its subreaper's, or its own without one. */
+function groupOwner(group) {
   let started = false,
     stopping = false,
     child,
@@ -93,16 +117,16 @@ function groupOwner() {
     stopping = true;
     clearTimeout(deadlineTimer);
     send({ type: 'shutdown', reason, exitCode: code, exitSignal: signal });
-    // This process is the live group leader, and the agent's jobs are found while it lives.
-    const jobs = tree(process.pid);
-    jobs.delete(process.pid);
+    // The group's leader lives while this process does, and the agent's jobs are found then.
+    const others = () => [...tree(group)].filter((pid) => pid !== process.pid && pid !== group);
+    const jobs = new Set(others());
     signalAll(jobs, 'SIGTERM');
-    process.kill(-process.pid, 'SIGTERM');
+    process.kill(-group, 'SIGTERM');
     killTimer = setTimeout(() => {
       // Before the group, so before the guardian records how the launch ended.
-      for (const pid of tree(process.pid)) if (pid !== process.pid) jobs.add(pid);
+      for (const pid of others()) jobs.add(pid);
       signalAll(jobs, 'SIGKILL');
-      const killSelfGroup = () => process.kill(-process.pid, 'SIGKILL');
+      const killSelfGroup = () => process.kill(-group, 'SIGKILL');
       if (process.connected) {
         send({ type: 'kill_ready' });
         // If the guardian is gone or stalled, deadline enforcement still closes this group.
@@ -437,8 +461,8 @@ function guardian(path, id) {
           id,
         );
         clearTimeout(startupTimer);
-        // On Linux the owner adopts what its agent leaves behind (PR_SET_CHILD_SUBREAPER, which
-        // an exec keeps), so the jobs of an agent that already ended are still its tree.
+        // On Linux the owner's subreaper adopts what its agent leaves behind, so the jobs of an
+        // agent that already ended are still the owner's tree, and reaps them as they end.
         const python = process.platform === 'linux' && existsSync(PYTHON) ? [PYTHON] : [];
         try {
           owner = spawn(

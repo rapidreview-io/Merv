@@ -1611,6 +1611,22 @@ test('a results review whose final capture never landed takes the last admitted 
   const offered = await f.offer(pending, await f.issue('operator'));
   assert.equal(offered.session.execution.references.code, unit.canonicalHead);
   assert.ok(
-    offered.session.assignment.context!.prompt.includes(`"retainedCommit":"${unit.canonicalHead}"`),
+    offered.session.assignment.context!.prompt.includes(`"headOid":"${unit.canonicalHead}"`),
   );
+  // The pass accepts exactly that admitted commit.
+  const worker = await f.sessions.authenticate(offered.secret);
+  const review = await f.reviews.get(worker, pending.reviewId!);
+  const done = await f.run(
+    worker,
+    'review.submit',
+    {
+      ...reviewedFindings(review),
+      verdict: 'pass',
+      notes: 'Verified the retained commit.',
+      requestId: f.request(),
+    } as Data,
+    (caller, input) => f.experiments.submitReview(caller, input as unknown as ReviewApplication),
+  );
+  assert.equal(done.workflow.state, 'complete');
+  assert.equal((await f.code.unit(f.source, pending.id)).acceptance?.reference, unit.canonicalHead);
 });

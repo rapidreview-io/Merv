@@ -188,7 +188,7 @@ export class CodeService extends CodeCommandService implements Code {
   override async initialize(): Promise<void> {
     await super.initialize();
     const { state, scope, sessions, utility, repositories } = this;
-    this.captureReader = new CodeCaptureReader(state, scope, sessions);
+    this.captureReader = new CodeCaptureReader(state, scope, sessions, this.writerStore);
     try {
       this.unitStore = await createService(
         new CodeUnitService(

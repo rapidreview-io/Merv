@@ -479,14 +479,8 @@ test('expected handoff failures roll back child creation and recover without poi
     },
   );
   await f.failExperiment(work.id);
-  // An unavailable provider is retried with its event, until the consumer's retries run out.
-  await f.app.ctx.domainEvents.drain();
-  const consumer = async () =>
-    (await f.app.ctx.domainEvents.status()).find((item) => item.id === 'research.automatic.v3')!;
-  assert.equal((await consumer()).error, 'reflection_unavailable');
-  await f.app.ctx.state.transaction((tx) =>
-    tx.run("UPDATE event_consumers SET attempts=8,retry_at=0 WHERE id='research.automatic.v3'"),
-  );
+  // A provider that may never come back blocks only its cycle, at once: the shared consumer
+  // moves on, and the provider's bind wakes the cycle again.
   await f.pump();
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 0);
   const blocked = await f.research.get(f.owner, cycle.id);
@@ -499,7 +493,7 @@ test('expected handoff failures roll back child creation and recover without poi
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
 });
 
-test('a provider briefly unavailable is retried with its event instead of blocking the cycle', async (t) => {
+test('a database briefly unavailable is retried with its event instead of blocking the cycle', async (t) => {
   const f = await fixture(t);
   await f.define();
   await f.enable();
@@ -509,7 +503,7 @@ test('a provider briefly unavailable is retried with its event instead of blocki
   const original = f.app.ctx.reflections.create.bind(f.app.ctx.reflections);
   let failures = 1;
   t.mock.method(f.app.ctx.reflections, 'create', async (...args: Parameters<typeof original>) => {
-    if (failures-- > 0) throw new MervError('reflection_unavailable', 'Restarting', 503);
+    if (failures-- > 0) throw new MervError('state_busy', 'Every connection is in use', 503);
     return await original(...args);
   });
   await f.failExperiment(work.id);

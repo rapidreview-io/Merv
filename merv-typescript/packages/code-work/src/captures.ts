@@ -16,6 +16,7 @@ import type {
   CodeCaptureRef,
 } from './types.js';
 import { parseCodeInput } from '@merv/code/input';
+import type { CodeWriterService } from '@merv/code/writers';
 const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 export const codeCaptureRefSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('session-final'), sessionId: id }).strict(),
@@ -52,6 +53,7 @@ export class CodeCaptureReader {
     private state: State,
     private scope: Scope,
     private sessions: Sessions,
+    private writers: CodeWriterService,
   ) {}
   async capture(caller: Caller, value: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture> {
     check(!this.closed, 'code_unavailable', 'Code capture reader is unavailable', 503);
@@ -61,6 +63,17 @@ export class CodeCaptureReader {
     await this.scope.require(caller, 'read', tx);
     if (ref.kind === 'session-final') {
       const observation = await this.sessions.workspaceObservation(caller, ref.sessionId, tx);
+      const fenced =
+        !observation.workspace?.result &&
+        (await this.fencedCommit(caller.projectId, observation.provenance, tx));
+      if (fenced) {
+        const { parentOid: _parent, ...settled } = await this.capture(
+          caller,
+          { kind: 'code-commit', commandId: fenced },
+          tx,
+        );
+        return { ...settled, ref };
+      }
       return {
         ref,
         // A released session's host may still post its final workspace; a session that ended
@@ -152,6 +165,28 @@ export class CodeCaptureReader {
         eventId: r ? (event?.id ?? null) : null,
         ...(record.error ? { error: record.error } : {}),
       } satisfies CodeCapture;
+    };
+    return tx ? await read(tx) : await this.state.read(read);
+  }
+  /**
+   * A writer an operator fenced never hands over its final capture. The session's newest commit
+   * that Code admitted, which is the head the fence kept, then stands for that capture.
+   */
+  private async fencedCommit(
+    projectId: string,
+    { instanceId, sessionId }: CodeCapture['provenance'],
+    tx?: Transaction,
+  ): Promise<string | null> {
+    const read = async (sql: Sql) => {
+      const writer = await this.writers.row(sql, projectId, instanceId);
+      if (writer?.writer_state !== 'closed' || writer.writer_session_id !== sessionId) return null;
+      const row = await sql.get<{ id: string }>(
+        "SELECT id FROM code_commands WHERE project_id=? AND session_id=? AND status='succeeded' AND (receipt_json::jsonb ->> 'headOid')=? ORDER BY _merv_rowid DESC LIMIT 1",
+        projectId,
+        sessionId,
+        writer.head_oid,
+      );
+      return row?.id ?? null;
     };
     return tx ? await read(tx) : await this.state.read(read);
   }

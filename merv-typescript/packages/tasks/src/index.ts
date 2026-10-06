@@ -713,6 +713,40 @@ export class TaskService implements Tasks {
       .reverse();
   }
 
+  /**
+   * The checkpoints a caller's context shows. A leased worker sees those its lease froze, then
+   * its own, citing only artifacts the lease admits; anyone else sees them all.
+   */
+  private async visibleCheckpoints(
+    caller: Caller,
+    taskId: string,
+    purpose: 'work' | 'review',
+    reviewId: string | null,
+    revision: number,
+    tx: Transaction,
+  ): Promise<TaskCheckpoint[]> {
+    const checkpoints = await this.checkpointRows(
+      caller,
+      taskId,
+      purpose,
+      reviewId,
+      revision,
+      tx,
+      caller.session ? caller.actorId : undefined,
+    );
+    if (!caller.session) return checkpoints;
+    const lease = await this.currentLease(caller, taskId, revision, tx);
+    const frozen = JSON.parse(lease.checkpoints) as TaskCheckpoint[];
+    const frozenIds = new Set(frozen.map((checkpoint) => checkpoint.id));
+    const allowed = new Set(await this.leaseArtifactIds(caller, lease, tx));
+    return [...frozen, ...checkpoints.filter((checkpoint) => !frozenIds.has(checkpoint.id))].map(
+      (checkpoint) => ({
+        ...checkpoint,
+        artifactIds: checkpoint.artifactIds.filter((id) => allowed.has(id)),
+      }),
+    );
+  }
+
   private workflowPolicy(version: number): WorkflowPolicy {
     const taskArguments = ({ snapshot }: WorkflowCheckContext): Data => ({
       taskId: snapshot.id,
@@ -1511,18 +1545,38 @@ export class TaskService implements Tasks {
       return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
     });
   }
+  /** One saved checkpoint, read back only by a caller whose own context or assignment lists it. */
   async savedCheckpoint(caller: Caller, taskId: string, checkpointId: string) {
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const row = await tx.get<{ checkpoint: string }>(
-        'SELECT checkpoint FROM task_checkpoints WHERE project_id=? AND task_id=? AND id=?',
+      const saved = await tx.get<{ purpose: 'work' | 'review' }>(
+        'SELECT purpose FROM task_checkpoints WHERE project_id=? AND task_id=? AND id=?',
         caller.projectId,
         taskId,
         checkpointId,
       );
-      check(row, 'not_found', 'This task has no checkpoint with that ID', 404);
-      return JSON.parse(row.checkpoint) as TaskCheckpoint;
+      check(saved, 'not_found', 'This task has no checkpoint with that ID', 404);
+      const workflow = await this.workflows.get(caller, taskId, tx);
+      const { row } = await this.assignmentFacts(
+        caller,
+        { taskId, purpose: saved.purpose, expectedRevision: workflow.revision },
+        tx,
+        true,
+        workflow,
+      );
+      const found = (
+        await this.visibleCheckpoints(
+          caller,
+          taskId,
+          saved.purpose,
+          row.review_id,
+          workflow.revision,
+          tx,
+        )
+      ).find((checkpoint) => checkpoint.id === checkpointId);
+      check(found, 'not_found', 'Your context lists no checkpoint with that ID', 404);
+      return found;
     });
   }
   async process(caller: Caller, taskId: string): Promise<ProcessGraph> {
@@ -1756,29 +1810,14 @@ export class TaskService implements Tasks {
         };
       }
     }
-    let checkpoints = await this.checkpointRows(
+    const checkpoints = await this.visibleCheckpoints(
       caller,
       task.id,
       purpose,
       task.reviewId,
       task.workflow.revision,
       tx,
-      caller.session ? caller.actorId : undefined,
     );
-    if (caller.session) {
-      const lease = await this.currentLease(caller, task.id, task.workflow.revision, tx);
-      const frozen = JSON.parse(lease.checkpoints) as TaskCheckpoint[];
-      const frozenIds = new Set(frozen.map((checkpoint) => checkpoint.id));
-      checkpoints = [
-        ...frozen,
-        ...checkpoints.filter((checkpoint) => !frozenIds.has(checkpoint.id)),
-      ];
-      const allowed = new Set(await this.leaseArtifactIds(caller, lease, tx));
-      checkpoints = checkpoints.map((checkpoint) => ({
-        ...checkpoint,
-        artifactIds: checkpoint.artifactIds.filter((id) => allowed.has(id)),
-      }));
-    }
     if (checkpoints.length) {
       // One item each, newest first to be embedded, and each read back alone by its ID.
       inputs.checkpoints = {
