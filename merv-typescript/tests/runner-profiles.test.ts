@@ -357,10 +357,11 @@ test('a hosted Codex profile calls the model through Main with its session beare
   const sealed = request(true, {
     mode: 'persistent',
     namespace: 'consolidations',
-    base: 'central',
-    perBase: true,
+    base: 'reference:code',
+    perBase: false,
     retain: true,
     advancesCentral: false,
+    driver: 'code.v2',
   });
   const reviewLaunch = buildLaunch(hosted, sealed, safeEnv);
   const review = reviewLaunch.args;
@@ -481,10 +482,11 @@ test('read-only Codex still receives explicitly authorized protocol writes, whil
     request(true, {
       mode: 'persistent',
       namespace: 'consolidations',
-      base: 'central',
-      perBase: true,
+      base: 'reference:code',
+      perBase: false,
       retain: true,
       advancesCentral: false,
+      driver: 'code.v2',
     }),
     safeEnv,
   );
@@ -543,10 +545,11 @@ test('Claude Code runs headless on the Merv server alone, reads its bearer from 
     request(true, {
       mode: 'persistent',
       namespace: 'consolidations',
-      base: 'central',
-      perBase: true,
+      base: 'reference:code',
+      perBase: false,
       retain: true,
       advancesCentral: false,
+      driver: 'code.v2',
     }),
     safeEnv,
   );
@@ -569,6 +572,7 @@ test('Claude Code runs headless on the Merv server alone, reads its bearer from 
       namespace: 'consolidation-reviews',
       base: 'reference:code',
       retain: false,
+      driver: 'code.v2',
     }),
     safeEnv,
   );
@@ -971,10 +975,11 @@ test('HF_TOKEN crosses hosted launch only in env, with name-only shell inheritan
   const sealed = request(true, {
     mode: 'persistent',
     namespace: 'review',
-    base: 'central',
+    base: 'reference:code',
     perBase: false,
     retain: true,
     advancesCentral: false,
+    driver: 'code.v2',
   });
   assert.equal(
     buildLaunch(
@@ -1046,10 +1051,11 @@ test('private native MCP connections reach both harnesses and allowed check revi
     const sealedRequest = request(true, {
       mode: 'persistent',
       namespace: 'review',
-      base: 'central',
+      base: 'reference:code',
       perBase: false,
       retain: true,
       advancesCentral: false,
+      driver: 'code.v2',
     });
     const sealedLaunch = buildLaunch(profile, { ...sealedRequest, connections: [native] }, safeEnv);
     assert.equal(sealedLaunch.env.MERV_NATIVE_MCP_TOKEN_0, undefined);

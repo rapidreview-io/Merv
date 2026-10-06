@@ -162,7 +162,7 @@ function errorCode(result: any): string {
   return JSON.parse(result.content[0].text).error.code;
 }
 
-test('an offer cannot name an agent, its agent is the source’s to read and retire, and the continuing-agent routes are gone', async (t) => {
+test('an offer cannot name an agent, and the agent administration and continuing-agent routes are gone', async (t) => {
   const f = await fixture(t);
   const { session, secret, input } = await f.offer();
   const named = await f.http('/sessions/offer', f.boot.token, {
@@ -172,10 +172,13 @@ test('an offer cannot name an agent, its agent is the source’s to read and ret
   });
   assert.deepEqual([named.status, named.body.error.code], [400, 'invalid_session_offer']);
   const agentRoute = `/sessions/agents/${session.agentId}`;
-  assert.equal((await f.http(agentRoute, f.boot.token)).body.assignments.length, 1);
-  assert.equal((await f.http(agentRoute, secret)).status, 403, 'A worker cannot administer agents');
-  const retired = await f.http(agentRoute, f.boot.token, undefined, undefined, 'DELETE');
-  assert.equal(retired.body.agent.status, 'retired');
+  for (const [path, method] of [
+    ['/sessions/agents', 'GET'],
+    [agentRoute, 'GET'],
+    [agentRoute, 'DELETE'],
+  ] as const)
+    assert.equal((await f.http(path, f.boot.token, undefined, undefined, method)).status, 404);
+  assert.equal((await f.http(`${agentRoute}/observation`, f.boot.token)).status, 200);
   for (const [path, body] of [
     ['/sessions/agents', { name: 'Agent', runnerId: 'r', requestId: 'r', secret }],
     [`${agentRoute}/rotate`, {}],

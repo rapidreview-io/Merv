@@ -175,7 +175,7 @@ async function fixture(t: TestContext) {
     assert.equal(typeof stamped.uploadedAt, 'string');
     return { bytes, facts };
   };
-  const agent = async (id: string) => (await sessions.agent(owner, id)).agent;
+  const agent = async (id: string) => (await sessions.observations.read(owner, id)).agent;
   const start = async () =>
     await handle.start(owner, { workflow: 'continuity-test', requestId: randomUUID() });
   return {

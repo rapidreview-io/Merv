@@ -11,13 +11,9 @@ import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
 const secret = () => `ms_${randomBytes(32).toString('base64url')}`;
-async function runner(
-  app: Awaited<ReturnType<typeof createApp>>,
-  source: Caller,
-  runnerId = 'external',
-) {
+async function runner(app: Awaited<ReturnType<typeof createApp>>, source: Caller) {
   await app.ctx.sessions.dispatch.heartbeatRunner(source, {
-    runnerId,
+    runnerId: 'external',
     machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
     platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
     capacity: 4,
@@ -259,23 +255,6 @@ test('a release closes a session as what happened to it, and a closed session on
     const { status, closeReason, outcome, deferral } = await app.ctx.sessions.get(owner, id);
     return { status, closeReason, outcome, deferral };
   };
-
-  await runner(app, owner, 'hand');
-  // The implicit agent of a hand offer is retired once, with its live offer.
-  const offered = await app.ctx.sessions.offer(owner, {
-    instanceId: (await createTask('offered')).id,
-    expectedRevision: 0,
-    runnerId: 'hand',
-    requestId: 'hand-offer',
-    secret: secret(),
-  });
-  assert.equal((await app.ctx.sessions.retireAgent(owner, offered.agentId!)).status, 'retired');
-  assert.deepEqual(await stored(offered.id), {
-    status: 'released',
-    closeReason: 'agent_retired',
-    outcome: 'halted',
-    deferral: undefined,
-  });
 
   // A delivered handoff is recorded as that, whichever route closes the session.
   await runner(app, owner);

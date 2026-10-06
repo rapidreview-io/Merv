@@ -27,9 +27,10 @@ const persistent: WorkflowWorkspacePolicy = {
   mode: 'persistent',
   namespace: 'test',
   base: 'reference:code',
-  perBase: true,
+  perBase: false,
   retain: true,
   advancesCentral: false,
+  driver: 'probe.v1',
 };
 async function fixture(
   t: TestContext,
@@ -125,6 +126,14 @@ async function fixture(
     requestId: 'offer',
     secret,
   };
+  // The runner offered the work advertises the driver its workspace names.
+  await app.ctx.sessions.dispatch.heartbeatRunner(source, {
+    runnerId: 'runner',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['probe.v1'],
+  });
   const session = await app.ctx.sessions.offer(source, input);
   const control = { sessionId: session.id, runnerId: 'runner', hostRef: 'launch-synthetic' };
   // A release names its session and runner only; the host belongs to attachment and capture.
@@ -408,7 +417,14 @@ test('workspace mode and exact reference base are pinned; read-only capture cann
   );
   const readonly = await fixture(t, {
     readOnly: true,
-    policy: { mode: 'ephemeral', namespace: 'review', base: 'central', retain: false },
+    policy: {
+      mode: 'ephemeral',
+      namespace: 'review',
+      base: 'reference:code',
+      retain: false,
+      driver: 'probe.v1',
+    },
+    reference: oid('c'),
     app: f.app,
   });
   const initial = workspace({
@@ -550,7 +566,13 @@ test('HTTP transports strict workspace metadata and permits post-transition capt
 test('HTTP summary preserves declared workspace mode before attachment and after preparation failure', async (t) => {
   const policies: WorkflowWorkspacePolicy[] = [
     { mode: 'none' },
-    { mode: 'ephemeral', namespace: 'pending', base: 'central', retain: false },
+    {
+      mode: 'ephemeral',
+      namespace: 'pending',
+      base: 'reference:code',
+      retain: false,
+      driver: 'probe.v1',
+    },
     persistent,
   ];
   let app: Awaited<ReturnType<typeof createApp>> | undefined;

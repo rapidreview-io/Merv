@@ -32,18 +32,13 @@ const workspaceNamespace = z
   .string()
   .regex(/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,79}$/)
   .refine((value) => !['.', '..'].includes(value));
-const workspaceBase = z.union([
-  z.literal('central'),
-  z
-    .string()
-    .startsWith('reference:')
-    .refine((value) => field.safeParse(value.slice('reference:'.length)).success),
-]);
-/** Which workspace driver prepares the checkout; opaque here. Absent means the runner's own. */
-const workspaceDriver = z
+/** An execution reference the workspace preparation resolves to an exact commit. */
+const workspaceBase = z
   .string()
-  .regex(/^[a-z][a-z0-9.]{0,39}$/)
-  .optional();
+  .startsWith('reference:')
+  .refine((value) => field.safeParse(value.slice('reference:'.length)).success);
+/** Which workspace driver prepares the checkout; opaque here. */
+const workspaceDriver = z.string().regex(/^[a-z][a-z0-9.]{0,39}$/);
 const workspaceSchema = z.discriminatedUnion('mode', [
   z.object({ mode: z.literal('none') }).strict(),
   z
@@ -60,9 +55,10 @@ const workspaceSchema = z.discriminatedUnion('mode', [
       mode: z.literal('persistent'),
       namespace: workspaceNamespace,
       base: workspaceBase,
-      perBase: z.boolean(),
+      // Always false; registered versions' pinned fingerprints hold both.
+      perBase: z.literal(false),
       retain: z.boolean(),
-      advancesCentral: z.boolean(),
+      advancesCentral: z.literal(false),
       driver: workspaceDriver,
     })
     .strict(),
@@ -111,12 +107,6 @@ export function validateExecution(value: WorkflowExecutionPolicy): WorkflowExecu
       return { name: tool.name, alternatives };
     })
     .sort((a, b) => compare(a.name, b.name));
-  valid(
-    !parsed.data.readOnly ||
-      parsed.data.workspace?.mode !== 'persistent' ||
-      !parsed.data.workspace.advancesCentral,
-    'Read-only execution cannot publish a central workspace advance',
-  );
   return freezeData({
     readOnly: parsed.data.readOnly,
     ...(parsed.data.workspace === undefined ? {} : { workspace: parsed.data.workspace }),

@@ -204,7 +204,7 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
   const checkout = await f.register('checkout', {
     mode: 'ephemeral',
     namespace: 'demand',
-    base: 'central',
+    base: 'reference:code',
     retain: false,
     driver: 'code.v2',
   });
@@ -245,24 +245,6 @@ test('prospective demand shares dispatch, source, dependency, and workspace elig
   assert.deepEqual(await demand(), {
     candidates: [{ instanceId: blocked.id, expectedRevision: 0 }],
   });
-});
-
-test('Fleet rents no machine for a checkout only a runner with its own repository can make', async (t) => {
-  const f = await fixture(t);
-  const local = await f.register('local-checkout', {
-    mode: 'ephemeral',
-    namespace: 'demand',
-    base: 'central',
-    retain: false,
-  });
-  await local.start();
-  const plain = await (await f.register('plain')).start();
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.events.drain();
-  assert.deepEqual(
-    await f.sessions.dispatch.dispatchDemand(f.source, { ...profile, capabilities: ['code.v2'] }),
-    { candidates: [{ instanceId: plain.id, expectedRevision: 0 }] },
-  );
 });
 
 test('prospective demand respects offer failure backoff without a runner-specific history', async (t) => {

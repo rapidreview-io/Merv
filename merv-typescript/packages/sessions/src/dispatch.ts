@@ -469,12 +469,9 @@ export class SessionDispatch {
         reason: project.exceeded.length ? 'budget_exceeded' : 'usage_unavailable',
       };
     const open = admissible.queue;
-    // A checkout goes only to a runner carrying its driver. One that names no driver was cloned
-    // from a runner's own repository, which no runner has any more.
+    // A checkout goes only to a runner carrying its driver.
     const compatible = open.filter(
-      (item) =>
-        item.workspace.mode === 'none' ||
-        (item.workspace.driver !== undefined && capabilities.has(item.workspace.driver)),
+      (item) => item.workspace.mode === 'none' || capabilities.has(item.workspace.driver),
     );
     const candidates = compatible.filter(
       (item) =>

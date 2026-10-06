@@ -298,10 +298,6 @@ function laneSummary(reading: DispatchReading): RunningSummary {
 
 const QUIET: Record<DispatchReading['quiet'][number]['code'], (since: string) => RunningAttention> =
   {
-    runner_incompatible: () => ({
-      says: ['No runner has this step’s local Git repository'],
-      who: 'Prepare hosted Code and create replacement work',
-    }),
     queued: (since) => ({
       says: ['Ready, not taken for ', { since }],
       who: 'An operator checks dispatch and machines',

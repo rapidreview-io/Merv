@@ -38,8 +38,9 @@ const definition: WorkflowDefinition = {
     { from: 'building', action: 'abandon', to: 'dropped' },
   ],
 };
-/** `coded` declares a workspace on its one working state, which is all Code is told of it. */
-const policy = (workspace: boolean, driver?: string): WorkflowPolicy => ({
+/** `coded` declares a workspace on its one working state, which is all Code is told of it;
+ *  another driver than Code's prepares it. */
+const policy = (workspace: boolean, driver = 'probe.v1'): WorkflowPolicy => ({
   successStates: ['built'],
   actions: ['finish', 'abandon'].map((name) => ({
     name,
@@ -64,9 +65,9 @@ const policy = (workspace: boolean, driver?: string): WorkflowPolicy => ({
               workspace: {
                 mode: 'ephemeral' as const,
                 namespace: 'probe',
-                base: 'central' as const,
+                base: 'reference:base' as const,
                 retain: false,
-                ...(driver ? { driver } : {}),
+                driver,
               },
             }
           : {}),

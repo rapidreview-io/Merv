@@ -126,6 +126,7 @@ test('dispatch discovers only metadata and prioritizes read-only candidates with
     namespace: 'reviews',
     base: 'reference:code',
     retain: false,
+    driver: 'code.v2',
   });
   const one = await work.start({ title: 'First work' });
   const two = await work.start({ title: 'Second work' });
@@ -448,9 +449,10 @@ test('workspace declarations are strict, immutable and version-pinned while abse
     mode: 'persistent',
     namespace: 'consolidations',
     base: 'reference:code',
-    perBase: true,
+    perBase: false,
     retain: true,
-    advancesCentral: true,
+    advancesCentral: false,
+    driver: 'code.v2',
   };
   const explicit = { ...oldManifest, workspace };
   const versionTwo = await restarted.register(definition('workspace-policy', 2), f.rules(explicit));
@@ -467,13 +469,14 @@ test('workspace declarations are strict, immutable and version-pinned while abse
   const invalid = [
     { mode: 'none', namespace: 'hidden' },
     { mode: 'unknown' },
-    { mode: 'persistent', namespace: 'work', base: 'central', perBase: false, retain: true },
+    { ...workspace, advancesCentral: undefined },
     ...['.', '..', '../work', 'a/b', 'a\\b', '-option', '/absolute', 'a\u0000b'].map(
       (namespace) => ({
         mode: 'ephemeral',
         namespace,
-        base: 'central',
+        base: 'reference:code',
         retain: false,
+        driver: 'code.v2',
       }),
     ),
     ...[
@@ -482,29 +485,36 @@ test('workspace declarations are strict, immutable and version-pinned while abse
       'reference:../code',
       'reference:constructor',
       'reference:__proto__',
+      // The central base went with the runners' own repositories.
+      'central',
     ].map((base) => ({
       mode: 'ephemeral',
       namespace: 'review',
       base,
       retain: false,
+      driver: 'code.v2',
     })),
-    { mode: 'ephemeral', namespace: 'review', base: 'central', retain: 'false' },
+    { mode: 'ephemeral', namespace: 'review', base: 'reference:code', retain: 'false' },
     {
       mode: 'ephemeral',
       namespace: 'review',
-      base: 'central',
+      base: 'reference:code',
       retain: false,
+      driver: 'code.v2',
       advancesCentral: true,
     },
+    // Every checkout names the driver that prepares it, and none is per base or advances central.
+    { mode: 'ephemeral', namespace: 'review', base: 'reference:code', retain: false },
+    { ...workspace, driver: undefined },
+    { ...workspace, perBase: true },
+    { ...workspace, advancesCentral: true },
   ];
   for (const value of invalid)
     assert.throws(
       () => validateExecution({ ...oldManifest, workspace: value } as WorkflowExecutionPolicy),
       { code: 'invalid_workflow_policy' },
     );
-  assert.throws(() => validateExecution({ ...explicit, readOnly: true }), {
-    code: 'invalid_workflow_policy',
-  });
+  assert.equal(validateExecution({ ...explicit, readOnly: true }).readOnly, true);
 });
 
 test('Tasks contribute source-aware queue labels and recipe availability without reading artifacts or rendering guidance', async (t) => {

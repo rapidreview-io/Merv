@@ -201,12 +201,7 @@ function AgentObservation({ observation, now }: { observation: Observation; now:
       </section>
       <section className="stack">
         <h3>Details</h3>
-        <KV
-          rows={[
-            ['Joined', <Stamp at={observation.agent.createdAt} />],
-            ['Context epoch', observation.agent.contextEpoch],
-          ]}
-        />
+        <KV rows={[['Joined', <Stamp at={observation.agent.createdAt} />]]} />
       </section>
     </>
   );

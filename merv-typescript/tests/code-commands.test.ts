@@ -133,9 +133,10 @@ async function fixture(
                 mode: 'persistent',
                 namespace: 'commands',
                 base: 'reference:code',
-                perBase: true,
+                perBase: false,
                 retain: true,
                 advancesCentral: false,
+                driver: 'code.v2',
               },
         },
         references: () => ({ code: oid('a') }),
@@ -177,6 +178,14 @@ async function fixture(
     projectId: boot.project.id,
     credentialId: boot.credential.id,
   };
+  // The runner offered the work advertises the driver its workspace names.
+  await sessions!.dispatch.heartbeatRunner(source, {
+    runnerId: 'runner',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
   const offer = async () => {
     const instance = await handle.start(source, {
       workflow: definition.name,

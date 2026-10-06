@@ -35,30 +35,29 @@ export type WorkflowTransitionCount = Pick<
 };
 
 export type Role = 'operator' | 'producer' | 'reviewer' | 'reader';
-type WorkflowWorkspaceBase = 'central' | `reference:${string}`;
-/** Checkout intent only. References are resolved and Git facts verified by workspace preparation. */
+/**
+ * Checkout intent only. The base names an execution reference, which workspace preparation
+ * resolves to an exact commit. `driver` names the workspace driver that prepares the checkout,
+ * opaque to everything but the runner and the plugin that owns the driver.
+ */
 export type WorkflowWorkspacePolicy =
   | { mode: 'none' }
   | {
       mode: 'ephemeral';
       namespace: string;
-      base: WorkflowWorkspaceBase;
+      base: `reference:${string}`;
       retain: boolean;
-      /**
-       * The workspace driver that prepares this checkout, opaque to everything but the runner
-       * and the plugin that owns the driver. Absent means a runner's own repository, which no
-       * runner has any more, so such work is offered to none.
-       */
-      driver?: string;
+      driver: string;
     }
   | {
       mode: 'persistent';
       namespace: string;
-      base: WorkflowWorkspaceBase;
-      perBase: boolean;
+      base: `reference:${string}`;
       retain: boolean;
-      advancesCentral: boolean;
-      driver?: string;
+      driver: string;
+      /** Always false. Kept only because the pinned fingerprints of registered versions hold them. */
+      perBase: false;
+      advancesCentral: false;
     };
 export interface WorkflowExecutionTarget {
   instanceId: string;

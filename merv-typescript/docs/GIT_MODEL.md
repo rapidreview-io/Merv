@@ -643,7 +643,7 @@ For v2:
 - `client.ts` adds v2 schemas/routes while preserving old command parsing.
 - `profiles.ts` remains the agent harness interface; no merge/check execution is added to ordinary profiles.
 
-Advertise the workspace driver name `code.v2`; Workflows and Sessions compare the opaque capability before offering work. Legacy policies name no driver and remain compatible with legacy runners.
+Advertise the workspace driver name `code.v2`; Workflows and Sessions compare the opaque capability before offering work. Every Git policy names its driver; registration refuses one that does not.
 
 Do not rename old refs, reset old checkouts, or reinterpret in-flight receipts. Import legacy accepted objects explicitly before allowing a v2 consumer. Preserve immutable acceptance evidence and attach the new durability proof through an operation receipt.
 
