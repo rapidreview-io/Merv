@@ -20,7 +20,6 @@ import {
   oidPattern,
   type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
-import type { CodeStoreWarning } from '@merv/code/store/protocol';
 import type { CodeWriterService } from '@merv/code/writers';
 import { resultRef, workBranch } from '@merv/code/store/refs';
 import type {

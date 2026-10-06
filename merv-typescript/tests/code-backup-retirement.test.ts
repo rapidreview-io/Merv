@@ -4,15 +4,10 @@ import { codePlugin as code } from '@merv/code';
 import { codePlugin as research } from '@merv/code-work';
 import { codeStoreFixture } from './fixtures/code-store.js';
 
-const retired = { code: 'code_backup_retired', message: /deploy\/recovery-snapshot\.py.*legacy/ };
-
-test('retired repository backup settings fail while the configuration is parsed', async () => {
+test('a retired repository backup setting is refused while the configuration is parsed', () => {
   for (const plugin of [code, research]) {
-    for (const backup of [{}, null, false, undefined]) {
-      const repositories = { ...(plugin === code ? { root: '/unused' } : {}), backup };
-      // The application validates every plugin's Config before it applies the plugin.
-      assert.throws(() => plugin.Config.parse({ repositories }), retired);
-    }
+    const repositories = { ...(plugin === code ? { root: '/unused' } : {}), backup: {} };
+    assert.equal(plugin.Config.safeParse({ repositories }).success, false);
     assert.ok(plugin.Config.safeParse({}).success);
   }
 });

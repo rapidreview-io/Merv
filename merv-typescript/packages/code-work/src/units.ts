@@ -53,7 +53,6 @@ import type {
   CodeUnit,
   CodeUnitAcceptance,
   CodeUnitAcceptInput,
-  CodeUnitPublication,
 } from './models.js';
 
 /** What a derivation finds; only `ready` carries a body a lease may pin. */
