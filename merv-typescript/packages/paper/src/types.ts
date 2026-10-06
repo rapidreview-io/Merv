@@ -39,6 +39,13 @@ export interface Paper {
   /** Only `read`'s documents, in one query: what a context reads of the paper. */
   documents(caller: Caller, tx?: Transaction): Promise<PaperWorkspace['documents']>;
   history(caller: Caller, kind: PaperKind, tx?: Transaction): Promise<PaperRevision[]>;
+  /** One retained revision of a document, or null where it has none of that number. */
+  revision(
+    caller: Caller,
+    kind: PaperKind,
+    revision: number,
+    tx?: Transaction,
+  ): Promise<PaperRevision | null>;
   patch(caller: Caller, input: PaperPatch, tx?: Transaction): Promise<PaperRevision>;
   cite(caller: Caller, input: PaperCite, tx?: Transaction): Promise<PaperCitation>;
   /** The owner verifies the review; paper edits and verdict commit or roll back together. */

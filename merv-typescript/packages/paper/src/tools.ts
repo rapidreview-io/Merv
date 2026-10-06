@@ -44,9 +44,7 @@ export const paperToolsPlugin = {
           const document =
             input.revision === undefined
               ? (await paper.documents(caller))[input.kind].current
-              : (await paper.history(caller, input.kind)).find(
-                  ({ revision }) => revision === input.revision,
-                );
+              : await paper.revision(caller, input.kind, input.revision);
           check(document, 'not_found', 'Revision not found', 404);
           if (input.section === undefined) return document;
           const { revision, sections } = document;

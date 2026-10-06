@@ -179,6 +179,11 @@ test('paper keeps ordered section history, structured scope and scoped citation 
   });
   assert.equal(updated.sections[1].content, 'Existing reference systems.');
   assert.equal((await f.paper.history(f.reader, 'literature')).length, 2);
+  // One retained revision reads by its number alone; a number never written reads as none.
+  assert.deepEqual(await f.paper.revision(f.reader, 'literature', 2), updated);
+  assert.equal((await f.paper.revision(f.reader, 'literature', 1))?.revision, 1);
+  assert.equal(await f.paper.revision(f.reader, 'literature', 3), null);
+  assert.equal(await f.paper.revision(f.reader, 'problem', 9), null);
   await f.reload();
   assert.deepEqual((await f.paper.read(f.reader)).documents.literature.current, updated);
   assert.equal((await f.paper.read(f.reader)).citations[0].id, citation.id);
@@ -199,9 +204,11 @@ test('paper keeps ordered section history, structured scope and scoped citation 
     const workspace = await f.paper.read(caller);
     Object.assign(caller, outsider);
     const history = await f.paper.history(caller, 'literature');
+    Object.assign(caller, outsider);
+    const revision = await f.paper.revision(caller, 'literature', 1);
     assert.deepEqual(
-      [workspace.documents.literature.current.revision, workspace.citations, history],
-      [0, [], []],
+      [workspace.documents.literature.current.revision, workspace.citations, history, revision],
+      [0, [], [], null],
     );
   } finally {
     f.scope.require = authorize;
