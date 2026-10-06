@@ -3,20 +3,22 @@ import {
   codeCommitInputSchema,
   codeLocalBindInputSchema,
   codeMergeInputSchema,
-  codeMirrorRetryInputSchema,
-  codeRepositoryImportInputSchema,
-  codeRepositoryRebindInputSchema,
-  codeUnitFenceInputSchema,
   type Caller,
   type CodeCommitInput,
   type CodeLocalBindInput,
   type CodeMergeInput,
+  idSchema,
+} from '@merv/contracts';
+import {
+  codeMirrorRetryInputSchema,
+  codeRepositoryImportInputSchema,
+  codeRepositoryRebindInputSchema,
+  codeUnitFenceInputSchema,
   type CodeMirrorRetryInput,
   type CodeRepositoryImportInput,
   type CodeRepositoryRebindInput,
   type CodeUnitFenceInput,
-  idSchema,
-} from '@merv/contracts';
+} from '@merv/code/store/protocol';
 import type { Context } from 'cordis';
 import { z } from 'zod';
 import { baseControlSchema, type CodeBaseControl } from './bases.js';

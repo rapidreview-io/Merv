@@ -41,4 +41,4 @@ Every package in `packages/` imports Contracts; the picture shows the two sides 
 - Service interfaces and the `Context` augmentation: `State`, `Transaction`, `DomainEvents`, `EventConsumer`, `Blobs`, `Scope`, `Artifacts`, `Workflows`, `Reviews`, `ContextBuilder`.
 - Errors and checks: `MervError`, `check`, `requiredEnv`, `plain`, `parsed`.
 - Reads and events: `within`, `forRead`, `recorded`, `leaseReleaseConsumer`.
-- Subpath modules (`@merv/contracts/<file>`): `types`, `workflow-guidance`, `running`, `ui-manifest`, `agent-stream`, `code-store` and others. A plugin's portable `/models` module may name them for types.
+- Subpath modules (`@merv/contracts/<file>`): `types`, `workflow-guidance`, `running`, `ui-manifest`, `agent-stream`, `code` and others. A plugin's portable `/models` module may name them for types.

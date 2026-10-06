@@ -14,8 +14,6 @@ import {
   recorded,
   sourceCaller,
   type Caller,
-  type CodePublication,
-  type CodePublicationState,
   type GitHubPullRequest,
   type Scope,
   type Sql,
@@ -24,6 +22,7 @@ import {
   requireHuman,
   idSchema,
 } from '@merv/contracts';
+import type { CodePublication, CodePublicationState } from './models.js';
 import {
   publicationApproval,
   PublicationIncident,

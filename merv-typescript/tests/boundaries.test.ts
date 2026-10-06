@@ -218,9 +218,10 @@ const capabilityOf = (owner: string) =>
 
 /**
  * Contracts belongs to no component. Besides its index, a component may run only these shared
- * modules: the retirement ledger text that every retirement migration embeds.
+ * modules: the retirement ledger text that every retirement migration embeds, and the portable
+ * id and Git schemas a browser-safe protocol module is built from.
  */
-const contractsRuntimeExports = new Set(['retired-instances']);
+const contractsRuntimeExports = new Set(['retired-instances', 'schemas', 'workspace']);
 const sharedContract = (specifier: string) =>
   specifier === '@merv/contracts' ||
   (specifier.startsWith('@merv/contracts/') &&
@@ -257,6 +258,7 @@ const codeUtilityExports = new Set([
   'service',
   'store/mirror',
   'store/operations',
+  'store/protocol',
   'store/refs',
   'store/repository',
   'units',

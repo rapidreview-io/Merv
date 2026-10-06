@@ -16,7 +16,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { CodeWorkspaceManifest } from '@merv/contracts';
+import type { CodeWorkspaceManifest } from '@merv/code/store/protocol';
 import type { CodeExport } from '@merv/code/store/operations';
 import { diskBytes } from '@merv/code/store/repository';
 import { git } from './fixtures/code-store.js';

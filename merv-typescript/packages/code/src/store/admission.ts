@@ -1,4 +1,5 @@
-import { CODE_BUNDLE_MAX_BYTES, MervError, type CodeFinding } from '@merv/contracts';
+import { MervError } from '@merv/contracts';
+import { CODE_BUNDLE_MAX_BYTES, type CodeFinding } from './protocol.js';
 import { createReadStream } from 'node:fs';
 import { mkdir, open, rm } from 'node:fs/promises';
 import { join } from 'node:path';

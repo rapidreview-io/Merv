@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { codePendingMergeSchema, gitBranchSchema } from './workspace.js';
-import { idSchema as id, oidSchema as oid } from './schemas.js';
+import { codePendingMergeSchema, gitBranchSchema } from '@merv/contracts/workspace';
+import { idSchema as id, oidSchema as oid } from '@merv/contracts/schemas';
 
 const importBranch = gitBranchSchema(255);
 
@@ -263,3 +263,16 @@ export const codeMirrorRetryInputSchema = z
   .object({ operationId: id, acknowledgeRemote: oid.optional(), requestId: id })
   .strict();
 export type CodeMirrorRetryInput = z.infer<typeof codeMirrorRetryInputSchema>;
+
+/**
+ * Who may advance a unit's branch in Code's repository. A generation belongs to one leased
+ * session; the next begins only once this one closed or an operator fenced it.
+ */
+export type CodeWriterState =
+  'idle' | 'reserved' | 'active' | 'closing' | 'closed' | 'recovery_required';
+export interface CodeWriterStatus {
+  generation: number;
+  state: CodeWriterState;
+  /** Why no new writer may be leased now, in the words of a refusal; null when one may. */
+  blocked: { code: string; message: string } | null;
+}

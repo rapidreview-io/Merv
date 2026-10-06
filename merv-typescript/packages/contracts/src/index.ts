@@ -30,40 +30,6 @@ export {
 } from './outbound.js';
 export { sessionWorkspaceSchema, type CodePendingMerge } from './workspace.js';
 export { sessionUsageReportSchema } from './usage-report.js';
-export type { CodePublication, CodePublicationState } from './code-publication-models.js';
-export {
-  CODE_BUNDLE_MAX_BYTES,
-  CODE_PART_MAX_BYTES,
-  codeAdmissionConfigureInputSchema,
-  codeAdmissionLimitsSchema,
-  codeRepositoryImportInputSchema,
-  codeRepositoryRebindInputSchema,
-  codeWorkspaceManifestInputSchema,
-  codeWorkspaceManifestSchema,
-  codeUploadBeginSchema,
-  codeUploadFinalizeSchema,
-  codeDownloadBeginSchema,
-  codeDownloadReadSchema,
-  codeUnitFenceInputSchema,
-  codeMirrorRetryInputSchema,
-} from './code-store.js';
-export type {
-  CodeFinding,
-  CodeAdmissionLimits,
-  CodeRepositoryImportInput,
-  CodeRepositoryPrepareInput,
-  CodeRepositoryPreparation,
-  CodeRepositoryRebindInput,
-  CodeStoreOperation,
-  CodeStoreStatus,
-  CodeStoreWarning,
-  CodeMirrorStatus,
-  CodeWorkspaceManifest,
-  CodeUploadBegin,
-  CodeUploadFinalize,
-  CodeUnitFenceInput,
-  CodeMirrorRetryInput,
-} from './code-store.js';
 export type { UiManifestRow, UiCollectionSpec, UiRecordSpec } from './ui-manifest.js';
 export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
@@ -110,7 +76,6 @@ export {
   codeCommandRecordSchema,
   codeLocalBindInputSchema,
 } from './code.js';
-export type { CodeWriterState, CodeWriterStatus } from './code-units.js';
 export type {
   CodeLocalBindInput,
   CodeProjectBinding,

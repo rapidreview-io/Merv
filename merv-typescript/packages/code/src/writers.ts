@@ -2,7 +2,6 @@ import { OperationJournal } from './operation-journal.js';
 import {
   canonical,
   check,
-  codeUnitFenceInputSchema,
   digest,
   MervError,
   newId,
@@ -10,14 +9,17 @@ import {
   recorded,
   type Caller,
   type CodeCommandCompletion,
-  type CodeWriterState,
-  type CodeWriterStatus,
   type Scope,
   type Sql,
   type State,
   type Transaction,
   requireHuman,
 } from '@merv/contracts';
+import {
+  codeUnitFenceInputSchema,
+  type CodeWriterState,
+  type CodeWriterStatus,
+} from './store/protocol.js';
 import { parseCodeInput } from './input.js';
 import { CodeChanges } from './changes.js';
 

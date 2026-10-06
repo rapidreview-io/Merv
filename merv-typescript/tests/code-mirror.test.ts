@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MervError } from '@merv/contracts';
-import type { CodeMirrorStatus, CodeStoreWarning } from '@merv/contracts';
+import type { CodeMirrorStatus, CodeStoreWarning } from '@merv/code/store/protocol';
 import type { GitResult, ServerGit } from '@merv/code/git';
 import { CodeRepositories } from '@merv/code/store/repository';
 import {

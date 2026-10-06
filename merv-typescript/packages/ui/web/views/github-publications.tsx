@@ -1,4 +1,5 @@
-import type { CodePublication, GitHubPullDetails } from '@merv/contracts/types';
+import type { GitHubPullDetails } from '@merv/contracts/types';
+import type { CodePublication, CodeProjectStatus } from '@merv/code-work/models';
 import { useEffect, useRef, useState } from 'react';
 import { accountRequest, useScopeVersion } from '../api';
 import {
@@ -14,7 +15,6 @@ import {
 } from '../components';
 import { ExternalIcon } from '../icons';
 import { useCommand, useCurrent } from '../mutations';
-import type { CodeProjectStatus } from '@merv/code-work/models';
 
 /**
  * A sealed proposal, published: one row per pull request, in the grammar GitHub

@@ -2,18 +2,20 @@ import { OperationJournal } from '../operation-journal.js';
 import {
   canonical,
   check,
-  codeRepositoryRebindInputSchema,
   digest,
   eventSource,
   newId,
   now,
   type Caller,
-  type CodeRepositoryRebindInput,
-  type CodeStoreOperation,
   type Sql,
   type Transaction,
   requireHuman,
 } from '@merv/contracts';
+import {
+  codeRepositoryRebindInputSchema,
+  type CodeRepositoryRebindInput,
+  type CodeStoreOperation,
+} from './protocol.js';
 import { parseCodeInput } from '../input.js';
 import { CodeExporter } from './export.js';
 import { columns, held, type OperationRow, type RebindPayload } from './receive.js';

@@ -18,6 +18,7 @@
     "./writers": "./src/writers.ts",
     "./store/mirror": "./src/store/mirror.ts",
     "./store/operations": "./src/store/operations.ts",
+    "./store/protocol": "./src/store/protocol.ts",
     "./store/refs": "./src/store/refs.ts",
     "./store/repository": "./src/store/repository.ts",
     "./driver/index": "./src/driver/index.ts",

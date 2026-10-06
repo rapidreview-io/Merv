@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ellipsis } from '@merv/contracts/text';
-import type { CodePublication } from '@merv/contracts/types';
 import {
   Ago,
   Area,
@@ -31,6 +30,7 @@ import type {
   CodeBaseRecord,
   CodeUnit,
   CodeProjectStatus,
+  CodePublication,
 } from '@merv/code-work/models';
 
 /**

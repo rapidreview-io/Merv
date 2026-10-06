@@ -2,13 +2,13 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Context } from 'cordis';
 import {
   check,
-  CODE_PART_MAX_BYTES,
   githubAutomationSchema,
   githubRepositoryInputSchema,
   githubRevisionSchema,
   MervError,
   type CodeGitHub,
 } from '@merv/contracts';
+import { CODE_PART_MAX_BYTES } from '@merv/code/store/protocol';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
 import { codePublicationMergeSchema } from './publications.js';
 import type { Code } from './types.js';

@@ -1,6 +1,7 @@
 import { CodeService as CoreCodeService } from '@merv/code/service';
 import assert from 'node:assert/strict';
-import { createService, type Caller, type CodeStoreOperation } from '@merv/contracts';
+import { createService, type Caller } from '@merv/contracts';
+import type { CodeStoreOperation } from '@merv/code/store/protocol';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

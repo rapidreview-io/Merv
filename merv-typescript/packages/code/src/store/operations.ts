@@ -1,16 +1,11 @@
 import { initializeManagedProjects } from './managed.js';
+import { canonical, check, now, type Caller, type Sql, type Transaction } from '@merv/contracts';
 import {
-  canonical,
-  check,
   codeAdmissionLimitsSchema,
-  now,
-  type Caller,
   type CodeAdmissionLimits,
   type CodeStoreOperation,
   type CodeStoreStatus,
-  type Sql,
-  type Transaction,
-} from '@merv/contracts';
+} from './protocol.js';
 import { parseCodeInput } from '../input.js';
 import { type ObjectFormat } from './repository.js';
 import { CodeRebinder } from './rebind.js';

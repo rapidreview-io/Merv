@@ -2,7 +2,6 @@ import { z } from 'zod';
 import {
   canonical,
   check,
-  codeAdmissionConfigureInputSchema,
   digest,
   newId,
   now,
@@ -12,6 +11,7 @@ import {
   type Sql,
   type State,
 } from '@merv/contracts';
+import { codeAdmissionConfigureInputSchema } from '@merv/code/store/protocol';
 import { parseCodeInput } from '@merv/code/input';
 import { OperationJournal } from '@merv/code/operation-journal';
 import type { CodeStore } from '@merv/code/store/operations';

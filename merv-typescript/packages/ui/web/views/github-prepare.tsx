@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type {
   CodeRepositoryPreparation,
   CodeRepositoryPrepareInput,
-} from '@merv/contracts/code-store';
+} from '@merv/code/store/protocol';
 import type { GitHubBranch, GitHubStatus } from '@merv/contracts/types';
 import { accountRequest, call, useTool } from '../api';
 import { useCommand } from '../mutations';

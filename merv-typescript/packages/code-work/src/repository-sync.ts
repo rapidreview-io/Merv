@@ -6,11 +6,13 @@ import {
   type Caller,
   type State,
   type Transaction,
-  type CodeRepositoryPrepareInput,
-  type CodeRepositoryPreparation,
-  type CodeStoreOperation,
   recorded,
 } from '@merv/contracts';
+import type {
+  CodeRepositoryPrepareInput,
+  CodeRepositoryPreparation,
+  CodeStoreOperation,
+} from '@merv/code/store/protocol';
 import { pinMerge, verifyResolution } from '@merv/code/pending-merge';
 import type { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeGitHubService } from '@merv/code/github';

@@ -1,4 +1,5 @@
-import type { CodeCaptureRef, WorkflowSnapshot } from '@merv/contracts/types';
+import type { WorkflowSnapshot } from '@merv/contracts/types';
+import type { CodeCaptureRef } from '@merv/code-work/models';
 
 export type ExperimentRole = 'plan' | 'result' | 'report' | 'feasibility' | 'exhibit';
 export type ExperimentTransitionName =

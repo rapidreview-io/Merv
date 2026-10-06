@@ -21,13 +21,10 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
   codeCommitCommandSchema,
-  codeWorkspaceManifestSchema,
   effectiveWorkspace,
   WorkspaceDeferred,
   type CodeCommitCommand,
   type CodeCommitReceipt,
-  type CodeStoreOperation,
-  type CodeWorkspaceManifest,
   type SessionWorkspace,
   type WorkflowWorkspacePolicy,
   type WorkspaceDriver,
@@ -38,6 +35,11 @@ import {
   type WorkspaceSession,
   type WorkspaceTransport,
 } from '@merv/contracts';
+import {
+  codeWorkspaceManifestSchema,
+  type CodeStoreOperation,
+  type CodeWorkspaceManifest,
+} from '../store/protocol.js';
 import { hashFile } from '../files.js';
 import { CODE_DRIVER } from '../store/refs.js';
 import { MERGE_SETTINGS } from '../merge-settings.js';

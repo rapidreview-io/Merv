@@ -13,7 +13,6 @@ import {
   type GitHubPullRequest,
   type CodeLocalBindInput,
   type CodeProjectBinding,
-  type CodeStoreWarning,
   type Scope,
   type Sql,
   type State,
@@ -21,7 +20,7 @@ import {
   oidPattern,
   type WorkflowProvidedBlockerInput,
 } from '@merv/contracts';
-import type { CodeCaptureRef } from '@merv/contracts/types';
+import type { CodeStoreWarning } from '@merv/code/store/protocol';
 import type { CodeWriterService } from '@merv/code/writers';
 import { resultRef, workBranch } from '@merv/code/store/refs';
 import type {
@@ -30,6 +29,7 @@ import type {
   CodeProjectStatus,
   CodeUnit,
   CodeUnitAcceptance,
+  CodeCaptureRef,
 } from './models.js';
 
 export interface UnitRow {
