@@ -475,3 +475,51 @@ test('Historical session capture reference resolves for current readers without 
   assert.equal(resolved!.capture!.workspace!.headOid, held.workspace.snapshot!.headOid);
   assert.equal(await f.state.eventHead(), before);
 });
+
+test('a request reads each owner once, however many ids it names, and answers as one ref at a time', async (t) => {
+  const f = await fixture(t);
+  const task = await f.completeTask(),
+    experiment = await f.createExperiment();
+  const review = await f.reviews.get(f.reader, task.reviewId!);
+  const count = async (refs: string[]) => {
+    let queries = 0;
+    await f.state.transaction(async (tx) => {
+      const spies = (['get', 'all', 'run'] as const).map((method) => t.mock.method(tx, method));
+      await f.knowledge.resolve(f.reader, refs, tx);
+      for (const spy of spies) queries += spy.mock.callCount();
+    });
+    return queries;
+  };
+  const unknown = (n: number, prefix = '') =>
+    Array.from({ length: n }, (_, index) => `${prefix}unknown_${index}`);
+  // One unknown id asks every owner once; so do 200, and a mix asks no owner more often.
+  const one = await count(unknown(1));
+  assert.ok(one <= 10, `${one} queries`);
+  assert.equal(await count(unknown(200)), one);
+  for (const refs of [
+    [...unknown(50), ...unknown(50, 'task:'), ...unknown(50, 'artifact:'), `review:${review.id}`],
+    [...unknown(50, 'review:'), ...unknown(50, 'code-commit:'), ...unknown(50, 'session-final:')],
+  ])
+    assert.ok((await count(refs)) <= one);
+  // Batched or one at a time, every ref reads byte for byte the same.
+  const refs = [
+    task.id,
+    `task:${task.id}`,
+    `experiment:${task.id}`,
+    experiment.id,
+    `work-item:${experiment.id}`,
+    task.briefId,
+    `artifact:${task.briefId}`,
+    `review:${task.briefId}`,
+    review.id,
+    `review:${review.id}`,
+    'unknown',
+    'claim:retired',
+    'session-final:unknown',
+    'code-commit:unknown',
+    task.id,
+  ];
+  const alone = [];
+  for (const ref of refs) alone.push(...(await f.knowledge.resolve(f.reader, [ref])));
+  assert.equal(JSON.stringify(await f.knowledge.resolve(f.reader, refs)), JSON.stringify(alone));
+});

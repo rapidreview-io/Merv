@@ -97,6 +97,12 @@ export type CheckedCodeCapture =
 export interface CodeCaptures {
   /** Historical, project-scoped immutable facts; never renders context or admits a new command. */
   capture(caller: Caller, ref: CodeCaptureRef, tx?: Transaction): Promise<CodeCapture>;
+  /** capture() for several refs, in one read per kind; null where the project holds none. */
+  captures(
+    caller: Caller,
+    refs: readonly CodeCaptureRef[],
+    tx?: Transaction,
+  ): Promise<(CodeCapture | null)[]>;
 }
 /**
  * Units, their acceptances and the project's local binding. The transaction-only methods are

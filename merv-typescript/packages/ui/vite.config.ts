@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { createRequire } from 'node:module';
 
 // The bundle is served by @merv/ui at <api>/ui; in development Vite proxies tool calls to a running server.
 // The Host header is kept (no changeOrigin) so the API's same-origin check sees Origin === http://<host>.
@@ -24,5 +25,18 @@ export default defineConfig({
   base: '/ui/',
   plugins: [react()],
   build: { outDir: '../dist', emptyOutDir: true, sourcemap: false },
+  // The Markdown worker has no DOM, so it decodes entities from their table, not through one.
+  worker: {
+    plugins: () => [
+      {
+        name: 'worker-entities',
+        enforce: 'pre' as const,
+        resolveId: (id: string) =>
+          id === 'decode-named-character-reference'
+            ? createRequire(import.meta.url).resolve(id)
+            : null,
+      },
+    ],
+  },
   server: { port: Number(process.env.PORT) || 5180, proxy },
 });

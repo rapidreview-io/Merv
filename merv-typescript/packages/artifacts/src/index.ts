@@ -379,15 +379,18 @@ export class ArtifactStore implements Artifacts {
     const { artifact, bytes } = await this.bytes(caller, artifactId, tx);
     return view(artifact, bytes, range);
   }
-  async getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]> {
+  async find(
+    caller: Caller,
+    ids: readonly string[],
+    tx?: Transaction,
+  ): Promise<Map<string, Artifact>> {
     caller = structuredClone(caller);
     check(
       Array.isArray(ids) && ids.length <= MAX_ARTIFACT_IDS && ids.every(named),
       'invalid_artifact',
       `Expected up to ${MAX_ARTIFACT_IDS} artifact ids`,
     );
-    ids = [...ids];
-    if (!ids.length) return [];
+    if (!ids.length) return new Map();
     const rows = await this.one(caller, tx, (tx) =>
       tx.all(
         `SELECT ${META} FROM artifacts WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
@@ -395,7 +398,11 @@ export class ArtifactStore implements Artifacts {
         JSON.stringify([...new Set(ids)]),
       ),
     );
-    const byId = new Map(rows.map((row) => [row.id as string, fromRow(row)]));
+    return new Map(rows.map((row) => [row.id as string, fromRow(row)]));
+  }
+  async getMany(caller: Caller, ids: readonly string[], tx?: Transaction): Promise<Artifact[]> {
+    ids = Array.isArray(ids) ? [...ids] : ids;
+    const byId = await this.find(caller, ids, tx);
     return ids.map((id) => {
       const artifact = byId.get(id);
       check(artifact, 'not_found', 'Artifact not found in this project', 404);

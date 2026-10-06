@@ -403,6 +403,22 @@ export class ReviewService implements Reviews {
     return await this.state.read(read);
   }
 
+  async find(caller: Caller, ids: readonly string[], transaction?: Transaction) {
+    caller = structuredClone(caller);
+    await this.scope.require(caller, 'read', transaction);
+    const read = async (sql: Sql) => {
+      const rows = await sql.all<ReviewRow>(
+        'SELECT * FROM reviews WHERE project_id = ? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))',
+        caller.projectId,
+        JSON.stringify([...new Set(ids)]),
+      );
+      return new Map(rows.map((row) => [row.id, hydrate(row)]));
+    };
+    if (!transaction) return await this.state.read(read);
+    this.state.assertTransaction(transaction);
+    return await read(transaction);
+  }
+
   async list(caller: Caller, { subjectId }: { subjectId?: string } = {}): Promise<ReviewRequest[]> {
     caller = structuredClone(caller);
     await this.scope.require(caller, 'read');
