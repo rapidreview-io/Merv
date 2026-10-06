@@ -10,12 +10,8 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { AGENT_EVENT_TEXT, type AgentEvent } from '@merv/contracts';
 import type { SessionStreamBatch } from '@merv/sessions/types';
-import {
-  agentLines,
-  AgentStream,
-  coalesce,
-  Scrubber,
-} from '../packages/runner/src/agent-stream.js';
+import { AgentStream, coalesce, Scrubber } from '../packages/runner/src/agent-stream.js';
+import { harnesses } from '../packages/runner/src/harness/index.js';
 import { RunnerControlError } from '../packages/runner/src/client.js';
 
 const line = (value: unknown) => JSON.stringify(value);
@@ -23,7 +19,7 @@ const stream = (event: unknown) =>
   line({ type: 'stream_event', event, session_id: 's', parent_tool_use_id: null, uuid: 'u' });
 /** Each line read as if it stood at its index in the log. */
 const parse = (harness: 'claude' | 'codex', lines: string[]) => {
-  const read = agentLines(harness);
+  const read = harnesses[harness].lines();
   return lines.flatMap((text, at) => read(text, at));
 };
 

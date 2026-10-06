@@ -16,6 +16,7 @@ import {
   type WorkspaceDriverFactory,
   type WorkspaceHandle,
 } from '@merv/contracts';
+import { harnesses } from '../packages/runner/src/harness/index.js';
 import { readTranscript } from '../packages/runner/src/transcript.js';
 import {
   ended,
@@ -38,7 +39,7 @@ const directory = (t: TestContext) => {
 };
 const log = (path: string, text: string | Buffer) => writeFileSync(join(path, 'stdout.log'), text);
 const read = (path: string, secrets: string[] = [], cap?: number, chunk?: number) =>
-  readTranscript(path, secrets, cap, chunk);
+  readTranscript(path, secrets, harnesses.claude, cap, chunk);
 const text = (path: string, ...rest: [string[]?, number?, number?]) =>
   Buffer.from(read(path, ...rest)!.bytes).toString('utf8');
 
@@ -112,13 +113,23 @@ test('multibyte UTF-8 passes byte for byte across chunks', (t) => {
   }
 });
 
-test('partial-message deltas are left out; the whole messages are kept', (t) => {
+test('partial-message deltas a whole message repeats are left out; those after the last are kept', (t) => {
   const path = directory(t);
   const delta = `{"type":"stream_event","event":{"type":"content_block_delta","delta":{"text":"Hi"}}}`;
   const whole = `{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]}}`;
   log(path, `${delta}\n${whole}\n${delta}\n${delta}\n{"type":"result"}\n${delta}`);
   for (const chunk of [7, 1000])
-    assert.equal(text(path, [], undefined, chunk), `${whole}\n{"type":"result"}\n`);
+    assert.equal(text(path, [], undefined, chunk), `${whole}\n{"type":"result"}\n${delta}`);
+  // A run stopped mid-message: what it streamed after its last whole message stays.
+  log(path, `${delta}\n${whole}\n${delta}\n${delta}\n`);
+  assert.equal(text(path), `${whole}\n${delta}\n${delta}\n`);
+  // Codex prints no deltas; a plain command's output is kept as it is.
+  log(path, `${delta}\n${whole}\n`);
+  for (const harness of [harnesses.codex, undefined])
+    assert.equal(
+      Buffer.from(readTranscript(path, [], harness)!.bytes).toString('utf8'),
+      `${delta}\n${whole}\n`,
+    );
 });
 
 test('a log over the cap keeps its head and tail at line ends around one marker', (t) => {

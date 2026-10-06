@@ -3,6 +3,7 @@ import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { join } from 'node:path';
 import { MAX_TRANSCRIPT_BYTES } from '@merv/contracts';
 import type { SessionTranscriptDeclaration } from '@merv/sessions/types';
+import type { Harness } from './harness/index.js';
 
 /** What Sessions is told of the file: all it believes of it. */
 export type TranscriptFacts = Omit<SessionTranscriptDeclaration, 'hostRef' | 'deliver'>;
@@ -35,8 +36,8 @@ const MARKER = 128;
 
 /**
  * The launch's stdout as kept: the whole log up to `cap`, else its first min(16 MiB, cap/4) bytes
- * and its last bytes, each cut at a line end, around one marker line; partial-message deltas
- * dropped, and bearers and each exact secret (≥ 16 chars) blanked. Undefined when nothing was printed. Never follows a link or waits
+ * and its last bytes, each cut at a line end, around one marker line; the harness's partial-message
+ * lines dropped where a whole message follows them, and bearers and each exact secret (≥ 16 chars) blanked. Undefined when nothing was printed. Never follows a link or waits
  * on a FIFO; reads at most `cap` bytes into one buffer, which the blanking compacts in place
  * (every replacement is shorter than what it replaces). Deterministic for one log. Synchronous:
  * a typical log is about 100 KB; one near the cap costs the tick a second or so.
@@ -44,6 +45,7 @@ const MARKER = 128;
 export function readTranscript(
   runDirectory: string,
   secrets: string[],
+  harness: Harness | undefined,
   cap = MAX_TRANSCRIPT_BYTES,
   chunk = 4 << 20,
 ) {
@@ -84,7 +86,7 @@ export function readTranscript(
       segments.push([0, headEnd], [from, end]);
       omitted = logBytes - headEnd - (end - from);
     }
-    for (const segment of segments) segment[1] = dropDeltas(out, ...segment);
+    if (harness) dropDeltas(out, segments, harness);
     const blank = blankPattern(secrets.map((secret) => Buffer.from(secret).toString('latin1')));
     const carry = Math.max(CARRY, ...secrets.map((secret) => Buffer.byteLength(secret)));
     let length = 0;
@@ -126,20 +128,23 @@ export function readTranscript(
 }
 const marker = (omittedBytes: number) =>
   `${JSON.stringify({ type: 'merv.transcript.truncated', omittedBytes })}\n`;
-/** A partial-message line: the live view reads it from stdout.log, and the whole message follows. */
-const DELTA = Buffer.from('{"type":"stream_event"');
-/** Moves the lines of out[start, end) that are not deltas to `start`; returns their new end. */
-function dropDeltas(out: Buffer, start: number, end: number): number {
-  let to = start;
-  for (let line = start; line < end;) {
-    const newline = out.indexOf(0x0a, line),
-      stop = newline < 0 || newline >= end ? end : newline + 1;
-    if (
-      stop - line < DELTA.length ||
-      out.compare(DELTA, 0, DELTA.length, line, line + DELTA.length)
-    )
-      to += out.copy(out, to, line, stop);
-    line = stop;
-  }
-  return to;
+/**
+ * Moves each segment's lines to its start, but the partial-message lines that a later whole
+ * message repeats (the live view read them from stdout.log); those after the last whole message,
+ * as of a run stopped mid-message, are kept.
+ */
+function dropDeltas(out: Buffer, segments: [number, number][], harness: Harness) {
+  let last = -1;
+  for (const find of [true, false])
+    for (const segment of segments) {
+      let to = segment[0];
+      for (let line = segment[0], stop; line < segment[1]; line = stop) {
+        const newline = out.indexOf(0x0a, line);
+        stop = newline < 0 || newline >= segment[1] ? segment[1] : newline + 1;
+        const kind = harness.line(out.toString('latin1', line, Math.min(stop, line + 32)));
+        if (find) last = kind === 'whole' ? line : last;
+        else if (kind !== 'delta' || line > last) to += out.copy(out, to, line, stop);
+      }
+      if (!find) segment[1] = to;
+    }
 }

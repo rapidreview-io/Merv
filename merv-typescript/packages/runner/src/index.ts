@@ -44,18 +44,18 @@ import {
   conversationFile,
   forgetConversations,
   keepConversation,
-  launchCodexHome,
   refusedResume,
   restoreConversation,
   type ConversationFacts,
 } from './conversation.js';
+import { launchCodexHome } from './harness/codex.js';
+import { harnessOf } from './harness/index.js';
 import { assignmentUser, RunnerWorkspaces, type RepositoryDriverFactory } from './workspaces.js';
 import {
   buildLaunch,
   sealed,
   collectRepositorySkillPaths,
   handoffGraceMs,
-  harnessUsage,
   validateProfile,
   type RunnerProfile,
 } from './profiles.js';
@@ -961,7 +961,7 @@ export class MachineRunner implements Runner {
         let t = record.metadata[kind] as Owed<TranscriptFacts | ConversationFacts> | undefined;
         // The conversation was kept when the launch settled; the log is read here, once.
         if (!t) {
-          const file = readTranscript(record.runDirectory, [this.sourceBearer]);
+          const file = this.transcript(record);
           t = file ? { state: 'owed', ...file.facts } : { state: 'none' };
           record = this.save(record.id, { transcript: t });
         }
@@ -1041,10 +1041,13 @@ export class MachineRunner implements Runner {
     }
     return false;
   }
+  private transcript(record: LaunchRecord) {
+    const profile = record.metadata.profile as RunnerProfile | undefined;
+    return readTranscript(record.runDirectory, [this.sourceBearer], profile && harnessOf(profile));
+  }
   /** The bytes a declaration named, read again: the log, or the conversation's redacted copy. */
   private kept(kind: Kind, record: LaunchRecord): Buffer | undefined {
-    if (kind === 'transcript')
-      return readTranscript(record.runDirectory, [this.sourceBearer])?.bytes;
+    if (kind === 'transcript') return this.transcript(record)?.bytes;
     try {
       return readFileSync(conversationFile(record.runDirectory));
     } catch {
@@ -1131,12 +1134,11 @@ export class MachineRunner implements Runner {
     if (
       typeof resumed === 'string' &&
       profile &&
-      profile.harness !== 'command' &&
       record.metadata.releaseOutcome === undefined &&
       record.metadata.remoteClosed !== true &&
       !this.stopping &&
       record.metadata.runnerStopped !== true &&
-      refusedResume(profile.harness, record.runDirectory)
+      refusedResume(profile, record.runDirectory)
     )
       record = this.save(record.id, {
         releaseOutcome: 'preparation_deferred',
@@ -1247,9 +1249,9 @@ export class MachineRunner implements Runner {
     }
     try {
       const log = read(join(record.runDirectory, 'stdout.log'), 1 << 20, true);
-      return sessionUsageReportSchema.parse(
-        harnessUsage(record.metadata.profile as RunnerProfile, log),
-      );
+      const profile = record.metadata.profile as RunnerProfile;
+      const model = 'model' in profile ? profile.model : undefined;
+      return sessionUsageReportSchema.parse(harnessOf(profile)?.usage(log, model));
     } catch {
       return;
     }
