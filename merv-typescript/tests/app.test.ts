@@ -371,6 +371,26 @@ test('a call an agent proposes is titled in the words of the plugin that owns it
   }
 });
 
+test('each paper-keeping review owner tells its reviewers exactly what it told them before', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
+  const app = await createApp({ directory, api: true, port: 0 });
+  try {
+    const owners = (app.ctx.reviews as unknown as { owners: Map<string, { guidance?: string }> })
+      .owners;
+    assert.equal(
+      owners.get('experiments')?.guidance,
+      'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.',
+    );
+    assert.equal(
+      owners.get('reflections')?.guidance,
+      'Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.',
+    );
+  } finally {
+    await app.stop();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('every tool reaches an agent conversation as the relay accepts it, under its own model name', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'merv-app-'));
   const app = await createApp({ directory, api: true, port: 0 });

@@ -71,7 +71,7 @@ import type {
 export type * from './types.js';
 
 /** What review.start and review.get tell the reviewer of a reflection wave's synthesis. */
-const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. ${PAPER_REVIEW_GUIDANCE}`;
+const REVIEW_GUIDANCE = `Pass rejects returnTo; a rejection returns to synthesizing (the default) or reflecting. Reflection reviewers ${PAPER_REVIEW_GUIDANCE} You may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.`;
 
 interface WaveRow {
   id: string;

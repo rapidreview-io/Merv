@@ -13,8 +13,9 @@ export const problemDefined = (problem: { sections: readonly { id: string; conte
   );
 
 /**
- * What review.start and review.get tell a scientific reviewer about the paper, which its
- * reviewers keep: each reviewing owner puts its own return routes before it.
+ * What review.start and review.get tell a scientific reviewer about keeping the paper, said the
+ * same by every reviewing owner: each says first which of its reviewers keep Methods/Results, and
+ * after it how much they write and that edits save with any verdict.
  */
 export const PAPER_REVIEW_GUIDANCE =
-  'Reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep paper updates on a design brief, usually one or two sentences; for results and syntheses you may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.';
+  'own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative.';
