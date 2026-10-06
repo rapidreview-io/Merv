@@ -440,7 +440,7 @@ test('a new cycle names its prerequisites by picking them, and the tool is sent 
     createElement(MemoryRouter, null, createElement(CreateResearch, { onSaved: () => saved++ })),
   );
   await settle(10);
-  // Code's readiness is Code's to say, on Now and on Code: the form says nothing of it.
+  // Code's readiness is Code's to say, on Needs you and on Code: the form says nothing of it.
   assert.equal(document.querySelector('[role="note"]'), null);
   assert.ok(!requests.some((request) => request.includes('code.status')));
   assert.equal(document.querySelector('textarea'), null, 'nowhere to type an id');

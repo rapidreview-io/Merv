@@ -607,3 +607,30 @@ test('Escape leaves a record for its list, but not while a desk on it holds some
   assert.ok(!shows('button'), 'the record was left');
   assert.ok(shows('.the-list'));
 });
+
+test('a refresh that answers the same keeps the page as it is drawn', async (t) => {
+  t.after(unmount);
+  const { refreshTools, useTool } = await import('../packages/ui/web/api.js');
+  let answer: unknown = { items: ['a'] };
+  serve('/tools/probe.read', () => ({ body: { result: answer } }));
+  const seen: unknown[] = [];
+  function Probe() {
+    const read = useTool<{ items: string[] }>('probe.read');
+    seen.push(read.data);
+    return createElement('p', null, read.data?.items.join(',') ?? '');
+  }
+  await mount(createElement(Probe));
+  const drawn = seen.length;
+  const held = seen.at(-1);
+  assert.deepEqual(held, { items: ['a'] });
+
+  await act(async () => refreshTools('probe.read'));
+  await settle();
+  assert.equal(seen.length, drawn, 'an identical answer draws nothing again');
+
+  answer = { items: ['a', 'b'] };
+  await act(async () => refreshTools('probe.read'));
+  await settle();
+  assert.equal(text(), 'a,b');
+  assert.notEqual(seen.at(-1), held);
+});

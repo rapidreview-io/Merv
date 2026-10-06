@@ -6,7 +6,7 @@ import { useSession } from './session';
 import { cx } from './components';
 import { ChevronsIcon, RowIcon, SidebarIcon, SwitchIcon } from './icons';
 import { signedInEmail } from './auth';
-import { onWorn, worn } from './theme';
+import { onWorn, wear, worn } from './theme';
 import { initials, personName } from './views/people';
 import {
   accountLines,
@@ -18,7 +18,7 @@ import {
   topRows,
 } from './navigation';
 import { stepped } from './record-picker';
-import { useNow } from './views/overview';
+import { useNow } from './views/needs-you';
 
 import type { Row, ShellData } from './shell-types';
 export type { RowStatus, Row, PluginState, ShellData, WorkflowShape } from './shell-types';
@@ -73,15 +73,6 @@ function RailRow({
       )}
     </Link>
   );
-}
-
-function wear(theme: 'light' | 'dark') {
-  document.documentElement.dataset.theme = theme;
-  try {
-    localStorage.setItem('merv:theme', theme);
-  } catch {
-    /* preference lives for this page only */
-  }
 }
 
 function AccountFoot() {

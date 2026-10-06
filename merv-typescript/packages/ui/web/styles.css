@@ -291,7 +291,7 @@ time,
   color: var(--text);
 }
 
-/* The rail: wordmark, project, Home and Now, then one row per registered
+/* The rail: wordmark, project, Home, the lead and top rows, then one row per registered
    collection under its group heading, and Settings and the account at the
    foot. The wordmark, the project and the foot hold their height; only the
    list of destinations scrolls, so the account never leaves the bottom. */
@@ -2605,7 +2605,7 @@ pre.math--source {
   min-height: 100dvh;
 }
 
-/* Home's parts (views/overview.tsx). ------------------------------------------ */
+/* Home's parts (views/needs-you.tsx). ------------------------------------------ */
 /* One block meets the next at a hairline; nothing around either of them. */
 .ov-block {
   margin-top: var(--space-5);

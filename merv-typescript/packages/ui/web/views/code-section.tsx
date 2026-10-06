@@ -121,7 +121,7 @@ export function UnitCode({
     <div className={cx('stack', unit.quarantine && 'code-refused')}>
       {/* The move leads, in the standing line's own grammar: the sentence, who ends the
           wait, the one control a page of this app makes — and the agent's instruction
-          folded in the fold Now uses, so the two readings are one thing. */}
+          folded in the fold Needs you uses, so the two readings are one thing. */}
       {!!held && (
         <div className="stack stack--tight">
           <p className="ov-say">{held.move.sentence}</p>

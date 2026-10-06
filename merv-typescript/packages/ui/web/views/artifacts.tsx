@@ -9,7 +9,7 @@ import { CodeBlock } from '../code-block';
 import { DelimitedTable, parseDelimited } from '../csv';
 import { languageOf } from '../highlight';
 import { JsonLines, JsonView, readJson } from '../json-view';
-import { MAX_READ, Markdown, useRecordNames } from '../markdown';
+import { FILE_PAGE, MAX_READ, Markdown, useRecordNames } from '../markdown';
 import { Mermaid } from '../mermaid';
 import { NotebookView, readNotebook } from '../notebook';
 import { useSession } from '../session';
@@ -695,7 +695,10 @@ function FileMeta({ file, keeper }: { file: Artifact; keeper?: string }) {
 }
 
 function ArtifactList() {
-  const list = useTool<Artifact[]>('artifact.list', {}, { every: 10000 });
+  // The newest page is the read every name lookup shares; older files come a page at a time,
+  // up to the thousand the tool holds at most.
+  const [limit, setLimit] = useState(FILE_PAGE);
+  const list = useTool<Artifact[]>('artifact.list', { limit }, { every: 10000 });
   const storage = useTool<{ available: boolean }>('artifact.storage_status', {});
   const nameOf = useActorNames();
   const { actor } = useSession();
@@ -722,6 +725,18 @@ function ArtifactList() {
         name: <strong>{a.title}</strong>,
         standing: <FileMeta file={a} keeper={nameOf(a.createdBy)} />,
       })}
+      after={
+        list.data?.length === limit &&
+        limit < 1000 && (
+          <button
+            type="button"
+            className="btn-text"
+            onClick={() => setLimit(Math.min(1000, limit + FILE_PAGE))}
+          >
+            Show older files
+          </button>
+        )
+      }
     />
   );
 }

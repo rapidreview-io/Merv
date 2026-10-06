@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { Artifact } from '@merv/contracts/artifact-models';
-import type { PaperWorkspace } from '@merv/paper/models';
+import type { PaperKind, PaperWorkspace } from '@merv/paper/models';
 import { useTool } from '../api';
 import { Ago, KindLabel, StatusPill, cx, words } from '../components';
 import { ArrowRightIcon } from '../icons';
@@ -10,7 +10,8 @@ import { pathOf } from '../navigation';
 import { useSession } from '../session';
 import type { Row, ShellData } from '../shell-types';
 import { newest, type HomeData } from './map-data';
-import { NeedsYou, Part, useNow } from './overview';
+import { NeedsYou, Part, useNow } from './needs-you';
+import { labels as paperTitles } from './paper';
 import { useActorNames } from './people';
 import { Phrase, Reading } from './running-phrase';
 import { currentCycle } from './work';
@@ -144,12 +145,6 @@ interface Recorded {
 /** How many recorded things Home lists, and how many of each it asks for. */
 const LATEST = 8;
 const FILES = 5;
-const PAPER: Record<string, string> = {
-  problem: 'Problem',
-  literature: 'Literature',
-  methods: 'Methods',
-  results: 'Results',
-};
 
 /**
  * What was lately recorded, newest first: review verdicts from the home read, the newest
@@ -200,7 +195,7 @@ function Latest({ rows, home }: { rows: Row[]; home: HomeData | undefined }) {
             {
               key: `paper:${kind}`,
               kind: 'paper',
-              name: PAPER[kind] ?? words(kind),
+              name: paperTitles[kind as PaperKind] ?? words(kind),
               to: paperPath,
               says: `Revision ${current.revision}${nameOf(current.updatedBy ?? '') ? ` · ${nameOf(current.updatedBy!)}` : ''}`,
               at: current.updatedAt,

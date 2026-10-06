@@ -137,7 +137,7 @@ export const uiPlugin = {
       ctx.tools.register({
         name: 'ui.home',
         description:
-          'Read what the Now page and the rail draw in one answer: the project, the records of every row that declares them, the people who own them, and the gate every unfinished workflow stands at.',
+          'Read what Home and the rail draw in one answer: the project, the records of every row that declares them, the people who own them, and the gate every unfinished workflow stands at.',
         inputSchema: z.object({}).strict(),
         // One snapshot for every part: sequential reads on one connection cost tens of
         // milliseconds; parallel parts each queued on the writer lock cost seconds. Each part

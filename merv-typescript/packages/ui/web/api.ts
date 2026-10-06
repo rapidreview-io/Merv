@@ -327,6 +327,8 @@ interface Read {
   input: Record<string, unknown>;
   epoch: number;
   shown: { data?: unknown; error?: ApiError; loadedAt?: string };
+  /** The shown answer as text, so an identical poll can be told apart from a changed one. */
+  text?: string;
   listeners: Set<() => void>;
   /** Each mounted place's cadence in ms, or undefined for a place that does not poll. */
   readers: Map<object, number | undefined>;
@@ -403,15 +405,20 @@ function ask(read: Read, fresh = false): Promise<void> {
   if (read.flight && !fresh) return read.flight;
   clearTimeout(read.timer);
   const asked = ++read.asked;
-  const show = (shown: Read['shown']) => {
+  const show = (shown: Read['shown'], text?: string) => {
     if (asked < read.answered) return;
     read.answered = asked;
+    // An identical answer keeps the object every view holds, so nothing re-renders; only its
+    // arrival time moves, read at each view's next render.
+    if (text !== undefined && text === read.text && !read.shown.error)
+      return void (read.shown.loadedAt = shown.loadedAt);
+    if (text !== undefined) read.text = text;
     read.shown = shown;
     for (const listener of read.listeners) listener();
   };
   const flight = call(read.name, read.input)
     .then(
-      (data) => show({ data, loadedAt: new Date().toISOString() }),
+      (data) => show({ data, loadedAt: new Date().toISOString() }, JSON.stringify(data)),
       (error: unknown) => show({ ...read.shown, error: error as ApiError }),
     )
     .finally(() => {

@@ -23,7 +23,7 @@ export interface UiRow {
   id: string;
   label: string;
   /**
-   * Where the rail places the row: `lead` above Now, `top` just under it, `settings` in the
+   * Where the rail places the row: `lead` just under Home, `top` under that, `settings` in the
    * foot, `hidden` nowhere (its routes and its read still serve); any other group is the
    * section it is listed under.
    */
@@ -43,16 +43,16 @@ export interface UiRow {
   /** The owning row validates any pagination or lookup parameters. */
   read?(caller: Caller, params?: Record<string, unknown>): Json | Promise<Json>;
   /**
-   * This row's part of ui.home, the one read Now and the rail poll, under the row's id: the
+   * This row's part of ui.home, the one read Home and the rail poll, under the row's id: the
    * read-only tool that lists its records, and the fields of each record those pages read.
    * `list`, when given, is read in the tool's place: those records with at least those fields.
    */
   home?: { tool: string; keep: readonly string[]; list?(caller: Caller): Promise<unknown> };
-  /** How Now says a record of `home` is the reader's move, in the owner's words. */
+  /** How Needs you says a record of `home` is the reader's move, in the owner's words. */
   needs?: UiRowNeeds;
 }
 
-/** The words Now says a row's records in: the shell has none of its own for any workflow. */
+/** The words Needs you says a row's records in: the shell has none of its own for any workflow. */
 export interface UiRowNeeds {
   /** The fields of a `home` record that name it and whose it is. */
   name: string;

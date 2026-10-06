@@ -6,3 +6,14 @@ export const onWorn = (changed: () => void) => {
   watch.observe(document.documentElement, { attributeFilter: ['data-theme'] });
   return () => watch.disconnect();
 };
+/** Where a chosen theme is kept; index.html's boot script reads the same key, spelled there too. */
+const KEY = 'merv:theme';
+/** Wear a theme and keep it as the person's choice. */
+export function wear(theme: 'light' | 'dark') {
+  document.documentElement.dataset.theme = theme;
+  try {
+    localStorage.setItem(KEY, theme);
+  } catch {
+    /* preference lives for this page only */
+  }
+}

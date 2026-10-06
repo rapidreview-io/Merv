@@ -2,7 +2,7 @@ import { clip, type Caller, type Json } from '@merv/contracts';
 import type { Tools } from '@merv/api/types';
 import type { UiRow } from './types.js';
 
-/** The shell's own parts of what Now and the rail read, and the fields of each record they read. */
+/** The shell's own parts of what Home and the rail read, and the fields of each record they read. */
 const PARTS: [key: string, tool: string, keep?: string[]][] = [
   ['project', 'project.get'],
   ['actors', 'actor.list', ['id', 'name', 'role', 'kind', 'active', 'sessionId']],
@@ -13,7 +13,7 @@ export interface HomeSources {
   tools: Tools;
   /** Runs one part behind a savepoint of its own, so a statement that fails costs that part. */
   isolated<T>(read: () => Promise<T>): Promise<T>;
-  /** The gates Now reads: open work's, and ended work's a plugin still holds; absent, null. */
+  /** The gates Needs you reads: open work's, and ended work's a plugin still holds; absent, null. */
   gates?(caller: Caller): Promise<unknown>;
 }
 
@@ -41,7 +41,7 @@ export async function identityOf(tools: Tools, caller: Caller): Promise<Record<s
 }
 
 /**
- * Everything Now and the rail read, in one answer: the shell's parts, the open gates, and the
+ * Everything Home and the rail read, in one answer: the shell's parts, the open gates, and the
  * records of every row that declares a home part, under the row's id. Read-only tools run in
  * one snapshot scope, so this is a single consistent read of the project rather than twenty
  * round trips at a browser's latency. The parts run one at a time on that snapshot's
