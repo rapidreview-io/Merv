@@ -50,22 +50,12 @@ export type Block =
  * Every id this system mints is `newId(prefix)`: a lowercase prefix, an underscore
  * and a UUID's 32 hex digits (`art_…`, `wf_…`, `review_…`, `claim_…`, `exp_sub_…`).
  * The shape is recognised whole, so a prefix a later plugin adds is still shortened
- * rather than printed, and only the prefixes below know where they lead.
+ * rather than printed; what an id names and where it leads is its owner's to say.
  */
 const ID = '[a-z][a-z_]{0,30}_[0-9a-f]{32}(?![0-9A-Za-z_])';
 const ID_AT = new RegExp(ID, 'y');
 const ID_ANYWHERE = new RegExp(`(?<![0-9A-Za-z_])(${ID})`, 'g');
 export const prefixOf = (id: string) => id.slice(0, id.lastIndexOf('_'));
-/**
- * Where an id leads when nothing but its shape is known: a file to its page, a review to its
- * row's where this composition has one. A `wf_` may be any of five kinds: its shape names no page.
- */
-export const recordRoute = (id: string, rows: readonly NamedRow[]): string | undefined => {
-  const prefix = prefixOf(id);
-  const path =
-    prefix === 'art' ? '/artifacts' : prefix === 'review' ? pathOf(rows, 'reviews') : undefined;
-  return path && `${path}/${id}`;
-};
 /** What stands for an id nobody could name: its prefix and its last six. */
 export const shortId = (id: string) => `${prefixOf(id)}_…${id.slice(-6)}`;
 /** A text cut at its ids: even places are the author's words, odd places are ids. */
@@ -87,17 +77,17 @@ interface NamedFile {
   id: string;
   title: string;
 }
-type Listed = { id: string; name?: string; title?: string; subjectId?: string };
+type Listed = { id: string; name?: string; title?: string };
 /** `ui.home`: the people, and each row's records under the row's id. */
 export type NamedHome = object;
 type Parts = { actors?: { id: string; name: string }[] | null } & Record<string, Listed[] | null>;
-type NamedRow = Pick<Row, 'id' | 'path' | 'view'>;
+type NamedRow = Pick<Row, 'id' | 'path' | 'view' | 'workflow'>;
 
 /**
  * Names for the ids a text mentions, from lists the app already reads: a record opens at
- * its row's page. One with no name of its own, a review, is named by what it judges, so it
- * is named after the records it points at; a person is a name and no link. An id no list
- * names is simply absent from the map.
+ * its row's page, and a person is a name and no link. A record with no name of its own, a
+ * review, is named by its owner through project.references. An id no list names is simply
+ * absent from the map.
  */
 export function recordNames(
   files?: NamedFile[] | null,
@@ -119,29 +109,47 @@ export function recordNames(
   for (const actor of parts.actors ?? [])
     // A directory name that is itself an identifier names nobody.
     if (!/[0-9a-f]{16,}/.test(actor.name)) names.set(actor.id, { name: actor.name });
-  for (const { id, name, title, subjectId, to } of listed) {
-    const subject = !name && !title && subjectId && names.get(subjectId);
-    if (subject) names.set(id, { name: `Review of ${subject.name}`, to });
-  }
   return names;
 }
 
+/** One answer of project.references, which names a record as its owner does. */
+interface Reference {
+  status: string;
+  kind: string | null;
+  id: string | null;
+  label?: string;
+}
+/** Where a record a reference names opens: a work record on the row that lists its workflow. */
+const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
+  const path =
+    kind === 'artifact'
+      ? '/artifacts'
+      : kind === 'review'
+        ? pathOf(rows, 'reviews')
+        : rows.find((row) => row.workflow === kind)?.path;
+  return path && `${path}/${id}`;
+};
+
 /**
- * The names for one text, read only when the text mentions something to name: the
- * file list for an `art_`, the home read for anything else. Both are questions the
- * page around the text already asks, so this joins their answers instead of adding
- * a read of its own, and a text with no ids in it costs nothing at all.
+ * The names for one text, read only when the text mentions something to name: what
+ * project.references says of each id, over the people and records of the home read the
+ * rail already holds. A text with no ids in it costs nothing at all.
  */
 export function useRecordNames(text: string): RecordNames {
-  const ids = useMemo(() => idsIn(text), [text]);
-  const files = useTool<NamedFile[]>(
-    ids.some((id) => prefixOf(id) === 'art') ? 'artifact.list' : null,
-  );
-  const others = ids.some((id) => prefixOf(id) !== 'art');
-  const home = useTool<NamedHome>(others ? 'ui.home' : null);
-  // The rows say where each list's records open: the ones the shell already holds.
+  const ids = useMemo(() => idsIn(text).slice(0, 200), [text]);
+  const references = useTool<Reference[]>(ids.length ? 'project.references' : null, {
+    refs: ids,
+  });
+  const home = useTool<NamedHome>(ids.length ? 'ui.home' : null);
+  // The rows say where each record opens: the ones the shell already holds.
   const rows = useRows();
-  return useMemo(() => recordNames(files.data, home.data, rows), [files.data, home.data, rows]);
+  return useMemo(() => {
+    const names = new Map(recordNames(null, home.data, rows));
+    for (const reference of references.data ?? [])
+      if (reference.status === 'resolved' && reference.id && reference.label)
+        names.set(reference.id, { name: reference.label, to: routeOf(reference, rows) });
+    return names;
+  }, [references.data, home.data, rows]);
 }
 
 /**
@@ -159,9 +167,8 @@ export function RecordLink({
   names?: RecordNames;
   plain?: boolean;
 }) {
-  const rows = useRows();
   const found = names?.get(id);
-  const to = found?.to ?? recordRoute(id, rows);
+  const to = found?.to;
   const said = found?.name ?? shortId(id);
   const className = found ? 'record-link' : 'record-link record-link--id';
   return to && !plain ? (
@@ -177,7 +184,8 @@ export function RecordLink({
 
 /**
  * A plain text with the ids in it named and linked; everything else as it was written.
- * `plain` names them without linking, where the text already stands inside a control.
+ * `plain` names them without linking, where the text already stands inside a control. A
+ * text given no names reads its own.
  */
 export function RecordText({
   text,
@@ -188,6 +196,8 @@ export function RecordText({
   names?: RecordNames;
   plain?: boolean;
 }) {
+  const own = useRecordNames(names ? '' : text);
+  names ??= own;
   return (
     <>
       {splitIds(text).map((piece, at) =>
