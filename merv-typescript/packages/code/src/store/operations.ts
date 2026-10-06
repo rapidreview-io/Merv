@@ -1,18 +1,41 @@
 import { initializeManagedProjects } from './managed.js';
-import { canonical, check, now, type Caller, type Sql, type Transaction } from '@merv/contracts';
+import {
+  canonical,
+  check,
+  now,
+  type Caller,
+  type Scope,
+  type Sql,
+  type State,
+  type Transaction,
+} from '@merv/contracts';
 import {
   codeAdmissionLimitsSchema,
   type CodeAdmissionLimits,
   type CodeStoreOperation,
   type CodeStoreStatus,
+  type CodeUpload,
 } from './protocol.js';
 import { parseCodeInput } from '../input.js';
-import { type ObjectFormat } from './repository.js';
+import type { CodeRepositories, ObjectFormat } from './repository.js';
 import { CodeRebinder } from './rebind.js';
-import { columns, journalled, kinds, serial, type OperationRow } from './receive.js';
+import { CodeExporter } from './export.js';
+import { CodeReceiver } from './receive.js';
+import {
+  columns,
+  journalled,
+  kinds,
+  serial,
+  StoreCore,
+  type CodeImportRemote,
+  type CodeStoreConfig,
+  type CodeStoreHooks,
+  type FaultPoint,
+  type OperationRow,
+} from './core.js';
 
-export { defaultStoreConfig } from './receive.js';
-export type { CodeImportRemote, CodeStoreConfig, CodeStoreHooks, FaultPoint } from './receive.js';
+export { defaultStoreConfig } from './core.js';
+export type { CodeImportRemote, CodeStoreConfig, CodeStoreHooks, FaultPoint } from './core.js';
 export type { CodeExport } from './export.js';
 
 /**
@@ -26,12 +49,67 @@ export type { CodeExport } from './export.js';
  * from the retained bundle, or are swept. The exact ref update is written down before it is
  * made, so a start after a crash either finds the receipt ref or retries that same update.
  */
-export class CodeStore extends CodeRebinder {
-  protected closing?: Promise<void>;
-  protected timer?: NodeJS.Timeout;
-  protected waker?: NodeJS.Timeout;
-  protected woken = false;
-  protected maintaining?: Promise<void>;
+export class CodeStore {
+  readonly config: CodeStoreConfig;
+  /** Opened and closed by their owner, which holds the writer lock. */
+  readonly repositories: CodeRepositories;
+  private readonly core: StoreCore;
+  private readonly receiver: CodeReceiver;
+  private readonly exporter: CodeExporter;
+  private readonly rebinder: CodeRebinder;
+  private closing?: Promise<void>;
+  private timer?: NodeJS.Timeout;
+  private waker?: NodeJS.Timeout;
+  private woken = false;
+  private maintaining?: Promise<void>;
+  constructor(
+    state: State,
+    scope: Scope,
+    config: Pick<CodeStoreConfig, 'root'> & Partial<CodeStoreConfig>,
+    hooks: CodeStoreHooks,
+    repositories: CodeRepositories,
+    remote?: CodeImportRemote,
+    /** Throws at a named boundary, which is how a test ends the process there. */
+    fault?: (point: FaultPoint) => void,
+  ) {
+    this.core = new StoreCore(state, scope, config, hooks, repositories, remote, fault);
+    this.config = this.core.config;
+    this.repositories = repositories;
+    this.receiver = new CodeReceiver(this.core);
+    this.exporter = new CodeExporter(this.core);
+    this.rebinder = new CodeRebinder(this.core);
+  }
+
+  importRepository(caller: Caller, value: unknown) {
+    return this.receiver.importRepository(caller, value);
+  }
+  contains(projectId: string, oid: string) {
+    return this.receiver.contains(projectId, oid);
+  }
+  stats(projectId: string, base: string, head: string) {
+    return this.receiver.stats(projectId, base, head);
+  }
+  beginUpload(caller: Caller, input: CodeUpload) {
+    return this.receiver.beginUpload(caller, input);
+  }
+  operation(caller: Caller, operationId: string) {
+    return this.receiver.operation(caller, operationId);
+  }
+  putPart(caller: Caller, operationId: string, offset: number, bytes: Buffer) {
+    return this.receiver.putPart(caller, operationId, offset, bytes);
+  }
+  complete(caller: Caller, operationId: string) {
+    return this.receiver.complete(caller, operationId);
+  }
+  export(caller: Caller, input: Parameters<CodeExporter['export']>[1]) {
+    return this.exporter.export(caller, input);
+  }
+  readExport(caller: Caller, exportId: string, input: Parameters<CodeExporter['readExport']>[2]) {
+    return this.exporter.readExport(caller, exportId, input);
+  }
+  rebindRepository(caller: Caller, value: unknown) {
+    return this.rebinder.rebindRepository(caller, value);
+  }
 
   /** Finish what an earlier process left between two steps. */
   async initialize(): Promise<void> {
@@ -54,7 +132,7 @@ export class CodeStore extends CodeRebinder {
         // A wake can arrive inside a transaction that outlasts this timer interval.
         // Cross the writer barrier before reading the journal, so that declaration
         // has either committed or rolled back. No Git runs inside the barrier.
-        await this.state.transaction(async () => {});
+        await this.core.state.transaction(async () => {});
         await this.maintain(false);
       })().catch(() => {});
     }, 200);
@@ -67,11 +145,11 @@ export class CodeStore extends CodeRebinder {
     input: { denyGlobs: string[]; secretExemptGlobs: string[] },
     tx: Transaction,
   ): Promise<CodeAdmissionLimits> {
-    this.assertOpen();
-    this.state.assertTransaction(tx);
-    await this.administrator(caller, tx);
+    this.core.assertOpen();
+    this.core.state.assertTransaction(tx);
+    await this.core.administrator(caller, tx);
     check(
-      await this.project(tx, caller.projectId),
+      await this.core.project(tx, caller.projectId),
       'code_project_unbound',
       'Bind this project before configuring its repository',
       409,
@@ -94,9 +172,9 @@ export class CodeStore extends CodeRebinder {
   async describe(
     projectId: string,
   ): Promise<{ store: CodeStoreStatus; operations: CodeStoreOperation[] }> {
-    this.assertOpen();
-    const read = await this.state.read(async (sql) => ({
-      project: await this.project(sql, projectId),
+    this.core.assertOpen();
+    const read = await this.core.state.read(async (sql) => ({
+      project: await this.core.project(sql, projectId),
       // A prepared rebind is the window in which the binding is writable at all, so it is read
       // here with the transfers: nothing else would show that it is open, who opened it, or
       // that a later request superseded it.
@@ -129,9 +207,9 @@ export class CodeStore extends CodeRebinder {
         tips: read.imports.map((row) => (JSON.parse(row.result_json) as { head: string }).head),
         diskBytes: await this.repositories.usage(projectId),
         quotaBytes: this.config.quotaBytes,
-        limits: this.limits(read.project),
+        limits: this.core.limits(read.project),
       },
-      operations: [...read.open, ...read.failed].map((row) => this.view(row)),
+      operations: [...read.open, ...read.failed].map((row) => this.core.view(row)),
     };
   }
 
@@ -141,12 +219,16 @@ export class CodeStore extends CodeRebinder {
    * keeps Code from starting.
    */
   async maintain(sweep = true): Promise<void> {
-    if (this.closed) return;
-    this.maintaining ??= this.owned(async () => {
+    if (this.core.closed) return;
+    this.maintaining ??= this.core.owned(async () => {
       try {
-        await initializeManagedProjects(this.state, this.repositories, this.hooks.imported);
-        await this.hooks.maintained?.();
-        const rows = await this.state.read(
+        await initializeManagedProjects(
+          this.core.state,
+          this.repositories,
+          this.core.hooks.imported,
+        );
+        await this.core.hooks.maintained?.();
+        const rows = await this.core.state.read(
           async (sql) =>
             await sql.all<OperationRow>(
               `SELECT ${columns} FROM code_operations WHERE status='prepared' AND phase IS NOT NULL ORDER BY created_at,id`,
@@ -160,30 +242,37 @@ export class CodeStore extends CodeRebinder {
         await Promise.all(
           [...projects.values()].map(async (rows) => {
             for (const row of rows)
-              if (journalled.includes(row.phase!)) await this.start(row).catch(() => {});
-              else if (row.kind === 'upload' && !this.jobs.has(row.id) && (await this.stale(row)))
+              if (journalled.includes(row.phase!)) await this.receiver.start(row).catch(() => {});
+              else if (
+                row.kind === 'upload' &&
+                !this.receiver.jobs.has(row.id) &&
+                (await this.receiver.stale(row))
+              )
                 await this.repositories
-                  .run(row.project_id, () => this.fail(row, 'code_generation_stale', null))
+                  .run(row.project_id, () => this.receiver.fail(row, 'code_generation_stale', null))
                   .catch(() => {});
-              else if ((row.updated_at ?? row.created_at) < stale && !this.jobs.has(row.id))
+              else if (
+                (row.updated_at ?? row.created_at) < stale &&
+                !this.receiver.jobs.has(row.id)
+              )
                 await this.repositories
-                  .run(row.project_id, () => this.fail(row, 'code_upload_abandoned', null))
+                  .run(row.project_id, () => this.receiver.fail(row, 'code_upload_abandoned', null))
                   .catch(() => {});
           }),
         );
         if (!sweep) return;
         await this.repositories.sweep(
           async (operationId) => {
-            const row = await this.state.read((sql) => this.row(sql, operationId));
+            const row = await this.core.state.read((sql) => this.core.row(sql, operationId));
             if (!row) return undefined;
             if (row.status === 'prepared') return false;
-            await this.hold(row);
+            await this.receiver.hold(row);
             return true;
           },
           undefined,
           (exportId, take) =>
-            serial(this.exporting, exportId, async () => {
-              if (await take()) this.exports.delete(exportId);
+            serial(this.exporter.exporting, exportId, async () => {
+              if (await take()) this.exporter.exports.delete(exportId);
             }),
         );
       } finally {
@@ -207,18 +296,18 @@ export class CodeStore extends CodeRebinder {
     return (this.closing ??= this.drain());
   }
   private async drain(): Promise<void> {
-    this.closed = true;
+    this.core.closed = true;
     clearInterval(this.timer);
     clearInterval(this.waker);
-    const timer = setTimeout(() => this.cancellation.abort(), this.config.drainSeconds * 1000);
+    const timer = setTimeout(() => this.core.cancellation.abort(), this.config.drainSeconds * 1000);
     try {
       await this.maintaining?.catch(() => {});
-      await Promise.allSettled([...this.parts.values()]);
-      while (this.active.size || this.jobs.size)
-        await Promise.allSettled([...this.active, ...this.jobs.values()]);
+      await Promise.allSettled([...this.receiver.parts.values()]);
+      while (this.core.active.size || this.receiver.jobs.size)
+        await Promise.allSettled([...this.core.active, ...this.receiver.jobs.values()]);
     } finally {
       clearTimeout(timer);
-      this.cancellation.abort();
+      this.core.cancellation.abort();
     }
   }
 
@@ -227,7 +316,7 @@ export class CodeStore extends CodeRebinder {
     sql: Sql,
     projectId: string,
   ): Promise<{ repositoryId: string; objectFormat: ObjectFormat } | null> {
-    const row = await this.project(sql, projectId);
+    const row = await this.core.project(sql, projectId);
     if (!row?.store_json) return null;
     const { objectFormat } = JSON.parse(row.store_json) as { objectFormat: ObjectFormat };
     return { repositoryId: row.repository_id, objectFormat };
