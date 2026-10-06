@@ -289,3 +289,31 @@ test('how long a record stood in each state is read from its crossings, a state 
     [false, false, true, true],
   );
 });
+
+test('a record on a retired version reads its program from any version still registered', async () => {
+  const { ended } = await import('../packages/ui/web/process.js');
+  // The catalog lists only the versions still registered: tasks v40, not the v38 a done task ran.
+  const shapes = [
+    {
+      name: 'task',
+      version: 40,
+      initial: 'open',
+      states: ['open', 'done', 'abandoned'],
+      terminal: ['done', 'abandoned'],
+      edges: [{ from: 'open', to: 'done', action: 'act' }],
+    },
+  ] as never;
+  assert.equal(ended(shapes, { workflow: 'task', version: 38, state: 'done' }), true);
+  assert.equal(ended(shapes, { workflow: 'task', version: 38, state: 'open' }), false);
+  assert.equal(ended(shapes, { workflow: 'experiment', version: 30, state: 'done' }), false);
+  await mount(
+    createElement(StageMark, {
+      shapes,
+      workflow: { workflow: 'task', version: 38, state: 'open' },
+    }),
+  );
+  // Its stages are drawn from the registered version, not a bare dot.
+  assert.ok(document.querySelector('.stage-mark svg'));
+  assert.equal(document.querySelector('.stage-mark .status-dot'), null);
+  unmount();
+});
