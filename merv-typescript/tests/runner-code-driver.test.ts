@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
+  chmodSync,
   chownSync,
   existsSync,
   lstatSync,
@@ -989,6 +990,58 @@ test('a checkout Code would never keep ends its generation at the last admitted 
   const next = await command(f, driver, 'ses_2', receipt.headOid);
   const admitted = await driver.checkpointCommit(m.launch('ses_2'), next);
   assert.equal((await f.unit()).canonicalHead, admitted.headOid);
+});
+
+test('a final capture clears an index lock the stopped session left, and repeated local failures end in a handover', async (t) => {
+  const f = await writerFixture(t);
+  await f.lease('ses_1');
+  const m = machine(t, f);
+  const driver = m.start();
+  const { path } = await driver.prepare(m.launch('ses_1'), m.session('ses_1'));
+  await f.event('session.workspace_attached', 'ses_1');
+  writeFileSync(join(path, 'a.txt'), 'one\n');
+  const gitDir = git(path, ['rev-parse', '--absolute-git-dir']);
+  // A killed agent `git add` left its lock; the process is confirmed stopped before capture.
+  writeFileSync(join(gitDir, 'index.lock'), '');
+  await f.event('session.closed', 'ses_1');
+  f.end('ses_1');
+  m.terminal.add('launch-ses_1');
+  const result = await driver.capture(m.launch('ses_1'));
+  assert.equal(git(path, ['show', `${result!.headOid}:a.txt`]), 'one');
+  assert.equal((await f.unit()).canonicalHead, result!.headOid);
+  assert.equal(existsSync(join(gitDir, 'index.lock')), false);
+  await driver.close(m.launch('ses_1'));
+
+  // The next generation's checkout cannot be captured at all: after a bounded number of
+  // local failures the generation is handed over at the head Code has.
+  await f.lease('ses_2');
+  await driver.prepare(m.launch('ses_2'), m.session('ses_2'));
+  await f.event('session.workspace_attached', 'ses_2');
+  writeFileSync(join(path, 'b.txt'), 'two\n');
+  await f.event('session.closed', 'ses_2');
+  f.end('ses_2');
+  m.terminal.add('launch-ses_2');
+  chmodSync(gitDir, 0o500);
+  let handed;
+  try {
+    for (let attempt = 1; attempt < 5; attempt++)
+      await assert.rejects(driver.capture(m.launch('ses_2')), failed('workspace_git_failed'));
+    handed = await driver.capture(m.launch('ses_2'));
+  } finally {
+    chmodSync(gitDir, 0o700);
+  }
+  assert.equal(handed!.headOid, result!.headOid);
+  assert.equal((await f.unit()).writerState, 'closed');
+  assert.ok(existsSync(join(path, 'b.txt')), 'what was not captured stays on the machine');
+  const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
+  try {
+    const final = db
+      .prepare("SELECT error FROM code_v2_transfers WHERE request_id='final:ses_2'")
+      .get() as { error: string };
+    assert.equal(final.error, 'workspace_capture_failed');
+  } finally {
+    db.close();
+  }
 });
 
 test('an export Code no longer holds defers the launch rather than failing it', async (t) => {

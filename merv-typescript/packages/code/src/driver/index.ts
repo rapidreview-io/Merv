@@ -165,6 +165,8 @@ const terminal = [
  * so every later attempt on the same checkout finds exactly the same answer.
  */
 const uncapturable = ['workspace_file_too_large', 'workspace_foreign_path'];
+/** Local failures to build a final capture before the generation is handed over without it. */
+const CAPTURE_ATTEMPTS = 5;
 /** Why the place history lives could not serve now, in the closed vocabulary of a deferral. */
 function deferral(error: unknown): WorkspaceDeferred | null {
   if (error instanceof WorkspaceDeferred) return error;
@@ -259,6 +261,9 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         command_json TEXT, expected_head TEXT NOT NULL, tree_oid TEXT, merge_tree TEXT, target_oid TEXT, index_path TEXT,
         bundle_path TEXT, bundle_hash TEXT, bundle_bytes INTEGER, operation_id TEXT,
         receipt_json TEXT, error TEXT, acknowledged INTEGER NOT NULL DEFAULT 0
+      ) STRICT;
+      CREATE TABLE IF NOT EXISTS code_v2_capture_failures (
+        launch_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS code_v2_review_restores (
         launch_id TEXT PRIMARY KEY, device INTEGER NOT NULL, inode INTEGER NOT NULL
@@ -1451,6 +1456,14 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         tree: string,
         refused: string | null = null;
       try {
+        // The session's processes are confirmed stopped: an index lock their Git left is stale.
+        // A hosted checkout's own .git is the assignment's: never follow a link out of it.
+        const dot = join(row.path, '.git');
+        const path = ['rev-parse', '--path-format=absolute', '--git-path', 'index.lock'];
+        const lock = this.assignmentRoot
+          ? lstatSync(dot).isDirectory() && join(dot, 'index.lock')
+          : (await this.git.ok(path, { cwd: row.path })).trim();
+        if (lock) rmSync(lock, { force: true });
         await this.checkFiles(row);
         await this.git.ok(['add', '-A', '--', '.'], { cwd: row.path });
         const staged = await this.git.ok(
@@ -1472,12 +1485,21 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         await this.importAssignmentCommit(row, target);
       } catch (error) {
         const code = (error as { code?: unknown }).code;
-        if (!(typeof code === 'string' && uncapturable.includes(code))) throw error;
+        const lasting = typeof code === 'string' && uncapturable.includes(code);
+        if (!lasting) {
+          const { attempts } = this.db
+            .prepare(
+              'INSERT INTO code_v2_capture_failures (launch_id,attempts) VALUES (?,1) ON CONFLICT(launch_id) DO UPDATE SET attempts=attempts+1 RETURNING attempts',
+            )
+            .get(row.launch_id) as { attempts: number };
+          if (attempts < CAPTURE_ATTEMPTS) throw error;
+        }
         // The checkout holds something no capture may carry, and no later attempt finds it
-        // different, exactly as such a refusal ends a checkpoint command. The generation is
-        // handed over at the commit Code already has instead of being asked for a capture
-        // that can never be built; what the session left stays in the checkout.
-        refused = code;
+        // different, exactly as such a refusal ends a checkpoint command; so does a checkout
+        // whose capture failed CAPTURE_ATTEMPTS times. The generation is handed over at the
+        // commit Code already has instead of being asked for a capture that can never be
+        // built; what the session left stays in the checkout.
+        refused = lasting ? code : 'workspace_capture_failed';
         target = row.head_oid;
         tree = oid(
           await this.git.ok(['rev-parse', '--verify', `${row.head_oid}^{tree}`], { cwd: row.path }),
