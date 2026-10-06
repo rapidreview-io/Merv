@@ -1044,7 +1044,7 @@ test('the Sessions lane words its states as the Sessions page does', () => {
     instanceId: 'wf_2',
     status: 'offered',
     role: 'reader',
-    label: 'Work: After the first sweep: next_steps',
+    label: 'Work: After the first sweep: next steps',
     workflow: 'reflection.lens',
     createdAt: new Date(now - 40_000).toISOString(),
     activatedAt: null,

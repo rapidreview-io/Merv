@@ -888,7 +888,7 @@ export class CodeUnitService extends WorkUnitRecords implements CodeUnits {
               : 'Complete the existing resolution task and its independent review; this unit continues from the accepted result.',
           related: [
             {
-              kind: 'task',
+              kind: task?.instance.workflow ?? 'workflow',
               id: record.resolutionTaskId!,
               label: task?.instance.name ?? record.resolutionTaskId!,
             },

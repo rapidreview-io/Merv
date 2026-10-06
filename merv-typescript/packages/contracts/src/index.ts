@@ -76,6 +76,7 @@ export {
   keyKind,
   keyId,
   workLink,
+  workName,
   dependencyRows,
 } from './running.js';
 export {
