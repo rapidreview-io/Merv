@@ -1,5 +1,5 @@
 import { readdirSync } from 'node:fs';
-import { record, type AgentEvent } from '@merv/contracts';
+import { readLine as read, type AgentEvent, type HarnessLine as Line } from '@merv/contracts';
 import type { SessionUsageReport } from '@merv/sessions/types';
 import { conversationIdPattern, type RunnerProfile } from '../profiles.js';
 
@@ -30,28 +30,6 @@ export interface Harness {
   forget(root: string, ids: string[]): void;
 }
 
-// Lines are the harness's own JSON, read field by field.
-export type Line = Record<string, any>;
-
-export const read = (line: string): Line | undefined => {
-  try {
-    return record(JSON.parse(line));
-  } catch {
-    return undefined;
-  }
-};
-export const str = (value: unknown) => (typeof value === 'string' ? value : '');
-/** What a tool answered: its text, with anything else named by its type. */
-export const answer = (content: unknown): string =>
-  typeof content === 'string'
-    ? content
-    : Array.isArray(content)
-      ? content
-          .map((part) =>
-            part?.type === 'text' ? str(part.text) : `[${str(part?.type) || 'content'}]`,
-          )
-          .join('\n')
-      : '';
 export const entries = (directory: string) => {
   try {
     return readdirSync(directory, { withFileTypes: true });

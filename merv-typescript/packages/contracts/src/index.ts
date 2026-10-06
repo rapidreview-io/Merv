@@ -34,7 +34,7 @@ export { uiManifestSchema } from './ui-manifest.js';
 export type * from './sessions-models.js';
 export type * from './running.js';
 export type * from './agent-stream.js';
-export { AGENT_EVENT_TEXT } from './agent-stream.js';
+export { AGENT_EVENT_TEXT, claudeEvents, codexEvents, readLine } from './agent-stream.js';
 export {
   runningKeyPattern,
   runningKey,
