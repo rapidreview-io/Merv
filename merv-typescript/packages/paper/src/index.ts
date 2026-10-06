@@ -177,25 +177,6 @@ export class PaperService implements Paper {
       return row ? (JSON.parse(row.record) as PaperRevision) : null;
     });
   }
-  async revision(
-    caller: Caller,
-    documentKind: PaperKind,
-    revision: number,
-    transaction?: Transaction,
-  ): Promise<PaperRevision | null> {
-    caller = this.capture(caller);
-    parse(kind, documentKind);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const row = await tx.get<{ record: string }>(
-        'SELECT record FROM paper_revisions WHERE project_id=? AND kind=? AND revision=?',
-        caller.projectId,
-        documentKind,
-        revision,
-      );
-      return row ? (JSON.parse(row.record) as PaperRevision) : null;
-    });
-  }
   private async command<T>(
     caller: Caller,
     operation: string,
