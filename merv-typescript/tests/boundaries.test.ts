@@ -221,7 +221,7 @@ const capabilityOf = (owner: string) =>
  * modules: the portable id and Git schemas a browser-safe protocol module is built from, and the
  * text helpers, which a pure rules module the browser also runs may import in the index's place.
  */
-const contractsRuntimeExports = new Set(['schemas', 'text', 'workspace']);
+const contractsRuntimeExports = new Set(['private-directory', 'schemas', 'text', 'workspace']);
 const sharedContract = (specifier: string) =>
   specifier === '@merv/contracts' ||
   (specifier.startsWith('@merv/contracts/') &&
@@ -542,6 +542,18 @@ test('pure rule modules that other units run import nothing but contracts and zo
         `${specifier} imports ${reference.specifier}`,
       );
   }
+});
+
+test('a machine’s private directory has one definition, in the workspace driver contract', () => {
+  // The runner and Code's workspace driver both keep storage in private directories and may
+  // not import each other, so the one definition lives with the contract between them.
+  const definitions = sourceFiles.filter((path) =>
+    /\b(?:function|const|let)\s+privateDirectory\b/.test(readFileSync(path, 'utf8')),
+  );
+  assert.deepEqual(
+    definitions.map((path) => relative(root, path)),
+    [join('packages', 'contracts', 'src', 'private-directory.ts')],
+  );
 });
 
 test('Pi SDK imports stay in the sandbox worker, outside every server entrypoint', () => {

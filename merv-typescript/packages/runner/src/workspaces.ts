@@ -12,7 +12,8 @@ import {
   type WorkspaceLaunch,
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
-import { LocalLedger, privateDirectory, terminalLaunch } from './ledger.js';
+import { privateDirectory } from '@merv/contracts/private-directory';
+import { LocalLedger, terminalLaunch } from './ledger.js';
 
 export type { WorkspaceHandle } from '@merv/contracts';
 /** The hosted image's unprivileged assignment user, and the wrapper that runs Git as it. */

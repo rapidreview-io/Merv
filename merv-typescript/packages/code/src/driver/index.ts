@@ -8,7 +8,6 @@ import {
   fsyncSync,
   fstatSync,
   lstatSync,
-  mkdirSync,
   openSync,
   readdirSync,
   readSync,
@@ -19,6 +18,7 @@ import {
 } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { privateDirectory } from '@merv/contracts/private-directory';
 import {
   codeCommitCommandSchema,
   effectiveWorkspace,
@@ -106,11 +106,9 @@ interface TransferRow {
 }
 type TransportFailure = { code?: unknown; status?: unknown };
 
-const privateDirectory = (path: string) => {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  if (lstatSync(path).isSymbolicLink()) throw new WorkspaceError('workspace_foreign_path');
-  return path;
-};
+/** The driver's own storage under the runner's ledger, refused as a foreign path when unsafe. */
+const driverDirectory = (path: string) =>
+  privateDirectory(path, () => new WorkspaceError('workspace_foreign_path'));
 /** Pin one assignment-produced bundle as a private regular file before root Git parses it. */
 const stageAssignmentBundle = (source: string, target: string, owner?: number): void => {
   const input = openSync(source, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -233,8 +231,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   ) {
     this.pollMs = options.pollMs ?? 1000;
     this.admissionMs = options.admissionMs ?? 120_000;
-    this.root = realpathSync(privateDirectory(join(host.directory, 'code-v2')));
-    const template = privateDirectory(join(this.root, 'empty-template'));
+    this.root = realpathSync(driverDirectory(join(host.directory, 'code-v2')));
+    const template = driverDirectory(join(this.root, 'empty-template'));
     // A hosted machine is a work host: its assignment root holds exactly one work item.
     if (host.assignmentWorkspaceDirectory || host.workInstanceId !== undefined) {
       const assignmentRoot = host.assignmentWorkspaceDirectory;
@@ -669,11 +667,11 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
   }
 
   private preservedPath(): string {
-    return join(privateDirectory(join(this.root, 'preserved')), hash(this.workKey!));
+    return join(driverDirectory(join(this.root, 'preserved')), hash(this.workKey!));
   }
 
   private rejectedPath(row: WorkspaceRow): string {
-    return join(privateDirectory(join(this.root, 'rejected')), hash(row.launch_id));
+    return join(driverDirectory(join(this.root, 'rejected')), hash(row.launch_id));
   }
 
   private priorWriter(row: WorkspaceRow): WorkspaceRow | undefined {
@@ -765,7 +763,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
           .run(manifest.repositoryId, manifest.projectRef);
       else if (known.status === 'ready') return known.path;
     }
-    const directory = privateDirectory(join(this.root, hash(manifest.projectRef).slice(0, 32)));
+    const directory = driverDirectory(join(this.root, hash(manifest.projectRef).slice(0, 32)));
     const path = join(directory, 'cache.git');
     if (!known)
       this.db
@@ -822,7 +820,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     )
       .split('\n')
       .filter(Boolean);
-    const downloads = privateDirectory(join(dirname(cache), 'downloads'));
+    const downloads = driverDirectory(join(dirname(cache), 'downloads'));
     const file = join(downloads, `${hash(control.hostRef).slice(0, 32)}.bundle`);
     for (const claimed of haves.length ? [haves, []] : [[]]) {
       const { download } = (await this.ask(() =>
@@ -871,7 +869,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
 
   private async checkout(cache: string, row: WorkspaceRow, retryPreparing = false): Promise<void> {
     if (this.assignmentRoot) return this.checkoutShared(cache, row, retryPreparing);
-    privateDirectory(dirname(row.path));
+    driverDirectory(dirname(row.path));
     await this.git.ok(['--git-dir', cache, 'worktree', 'prune']);
     if (!existsSync(join(row.path, '.git'))) {
       rmSync(row.path, { recursive: true, force: true });
@@ -902,7 +900,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     const dot = join(row.path, '.git');
     if (!existsSync(dot)) {
       if (existsSync(row.path)) throw new WorkspaceError('workspace_foreign_checkout');
-      privateDirectory(row.path);
+      driverDirectory(row.path);
       const bundle = join(dirname(cache), `checkout-${hash(row.launch_id)}.bundle`);
       const pending = this.mergeMetadata(row);
       const refs = [row.head_oid, ...(pending ? [pending.secondParent] : [])].map(
@@ -1059,7 +1057,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     const ref = `refs/merv/export/${hash(`${row.launch_id}:${commit}`)}`;
     const bundle = join(row.path, '.git', `merv-export-${randomUUID()}.bundle`);
     const staged = join(
-      privateDirectory(join(dirname(cache), 'transfers')),
+      driverDirectory(join(dirname(cache), 'transfers')),
       `import-${randomUUID()}.bundle`,
     );
     try {
@@ -1218,7 +1216,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
       // Each attempt owns a fresh index, so a crashed Git child never touches the checkout's.
       const directory = this.assignmentRoot
         ? join(row.path, '.git')
-        : privateDirectory(
+        : driverDirectory(
             join(
               dirname(cache),
               'operations',
@@ -1356,7 +1354,7 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     const cache = this.repository(row.project_ref)!;
     const target = journal.target_oid!;
     if (target !== journal.expected_head && !journal.bundle_hash) {
-      const transfers = privateDirectory(join(dirname(cache), 'transfers'));
+      const transfers = driverDirectory(join(dirname(cache), 'transfers'));
       const file = join(transfers, `${hash(journal.request_id).slice(0, 32)}.bundle`);
       const ref = this.pendingRef(journal.request_id);
       await this.git.ok(['--git-dir', cache, 'update-ref', ref, target]);

@@ -1,8 +1,9 @@
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync } from 'node:fs';
+import { chmodSync, closeSync, fsyncSync, lstatSync, openSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { plain } from '@merv/contracts';
+import { privateDirectory } from '@merv/contracts/private-directory';
 
 export type LaunchStatus =
   'reserved' | 'starting' | 'running' | 'stopping' | 'exited' | 'stopped' | 'uncertain';
@@ -43,18 +44,6 @@ export interface LedgerBinding {
 type Row = Record<string, string | number | null>;
 
 /** Refuse symlinks and files belonging to another account before opening local secrets. */
-export function privateDirectory(path: string): void {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  const stat = lstatSync(path);
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    (process.getuid && stat.uid !== process.getuid())
-  ) {
-    throw new Error('Unsafe runner directory');
-  }
-  chmodSync(path, 0o700);
-}
 function privateFile(path: string): void {
   try {
     const fd = openSync(path, 'wx', 0o600);
