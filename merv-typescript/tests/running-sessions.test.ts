@@ -308,7 +308,7 @@ test('an offered lease is dashed and starting, on the machine that took it, even
   );
 });
 
-test('a lease offered before owners named their records reads its label as it is', async (t) => {
+test('a lease offered before owners named their records reads its label without its purpose', async (t) => {
   const f = await fixture(t, { unnamed: true });
   await f.heartbeat();
   const work = await f.instance();
@@ -321,10 +321,10 @@ test('a lease offered before owners named their records reads its label as it is
   });
   assert.equal(
     node(await f.board(f.owner), `session:${offered.id}`)?.name,
-    'Work: Rebuild citation index',
+    'Rebuild citation index',
   );
   const [summary] = (await f.sessions.projectStatus(f.owner)).sessions;
-  assert.equal(summary?.name, 'Work: Rebuild citation index');
+  assert.equal(summary?.name, 'Rebuild citation index');
 });
 
 test('a lease nobody runs says nothing of a machine, and never turns red for one', async (t) => {

@@ -447,7 +447,8 @@ export async function admit(input: AdmissionInput): Promise<Admission> {
   };
 
   for (const [oid, object] of fresh)
-    if (object.type === 'tree' && object.size > MAX_ONE_TREE_BYTES) found('tree_size', null, oid);
+    if (object.type === 'tree' && object.size > Math.min(MAX_ONE_TREE_BYTES, limits.blobBytes))
+      found('tree_size', null, oid);
     else if (object.size > limits.blobBytes)
       found(object.type === 'blob' ? 'blob_size' : 'object_size', null, oid);
   const freshTrees = fresh.filter(([, object]) => object.type === 'tree');

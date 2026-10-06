@@ -360,6 +360,23 @@ test('a wave closes the unstarted work between its selection and a failed input 
   assert.equal((await f.app.ctx.experiments.get(f.owner, training.id)).workflow.state, 'abandoned');
   assert.equal((await f.app.ctx.tasks.get(f.owner, evaluation.id)).workflow.state, 'failed');
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
+  // Only the selected work is the cycle's to reflect on; what lay between is closed for it.
+  const reasons = Object.fromEntries(
+    (
+      await f.app.ctx.state.read((sql) =>
+        sql.all<{ data: string }>(
+          "SELECT data_json AS data FROM events WHERE type='research.blocked_work_closed' AND subject_id=?",
+          cycle.id,
+        ),
+      )
+    ).map((row) => {
+      const data = JSON.parse(row.data) as { workflowId: string; reason: string };
+      return [data.workflowId, data.reason];
+    }),
+  );
+  assert.match(reasons[evaluation.id]!, /Retained for reflection in /);
+  assert.doesNotMatch(reasons[training.id]!, /Retained for reflection/);
+  assert.match(reasons[training.id]!, /work selected by .* waits on it/);
 });
 
 test('an entirely failed wave closes blocked descendants, reflects, and waits for independent approval', async (t) => {

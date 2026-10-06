@@ -1,6 +1,6 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
-import { safeCount, workNameOf } from './common.js';
+import { safeCount, workName, workNameOf } from './common.js';
 import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
@@ -20,7 +20,7 @@ const aggregateNumber = safeCount(
 
 const named = ({ assignment }: Session) => ({
   label: assignment.label,
-  name: assignment.name ?? assignment.label,
+  name: workName(assignment),
 });
 
 function summarizeAgent(

@@ -1692,8 +1692,12 @@ export class ResearchService implements Research {
           (item) => item.failed,
         );
         if (!failed.length) continue;
+        // Work between the selection and the failed input is not the cycle's own to reflect on.
+        const after = record.researchDependencies.includes(id)
+          ? `Retained for reflection in ${record.name}.`
+          : `Closed because work selected by ${record.name} waits on it.`;
         const reason = clip(
-          `Not run: required input ended without success: ${failed.map((item) => `${item.name} (${item.id}, ${item.state})`).join(', ')}. Retained for reflection in ${record.name}.`,
+          `Not run: required input ended without success: ${failed.map((item) => `${item.name} (${item.id}, ${item.state})`).join(', ')}. ${after}`,
           16000,
         );
         const requestId = automaticRequest(record.id, work.revision, `close:${id}`);

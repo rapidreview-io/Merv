@@ -439,6 +439,18 @@ test('a fresh tree too large or with too many entries to parse is a finding nami
   assert.deepEqual((await f.judge(f.source.bundle(wide, [base]))).findings, [
     { rule: 'tree_size', path: null, oid: tree(wide) },
   ]);
+  // A tree over a lower object cap is too large to parse in the same way.
+  const fewer = f.crafted(
+    Array.from(
+      { length: 50_000 },
+      (_, i) => ['100644', 'blob', file, `f${i}`] as [string, string, string, string],
+    ),
+    base,
+  );
+  const capped = { limits: { blobBytes: 1024 * 1024 } };
+  assert.deepEqual((await f.judge(f.source.bundle(fewer, [base]), capped)).findings, [
+    { rule: 'tree_size', path: null, oid: tree(fewer) },
+  ]);
 });
 
 test('the deny-glob matcher knows literals, ?, * within a segment and ** across segments', () => {

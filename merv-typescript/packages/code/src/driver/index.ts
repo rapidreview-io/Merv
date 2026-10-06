@@ -10,6 +10,7 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readSync,
   realpathSync,
   renameSync,
@@ -165,8 +166,17 @@ const terminal = [
  * so every later attempt on the same checkout finds exactly the same answer.
  */
 const uncapturable = ['workspace_file_too_large', 'workspace_foreign_path'];
-/** Local failures to build a final capture before the generation is handed over without it. */
-const CAPTURE_ATTEMPTS = 5;
+/** How long a final capture may keep failing locally before the generation is handed over. */
+const CAPTURE_FAILING_MS = 10 * 60_000;
+/** The lock files under a directory, descending only into real directories, never links. */
+function lockFiles(directory: string): string[] {
+  if (!lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return [];
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return lockFiles(path);
+    return entry.name.endsWith('.lock') ? [path] : [];
+  });
+}
 /** Why the place history lives could not serve now, in the closed vocabulary of a deferral. */
 function deferral(error: unknown): WorkspaceDeferred | null {
   if (error instanceof WorkspaceDeferred) return error;
@@ -262,8 +272,8 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         bundle_path TEXT, bundle_hash TEXT, bundle_bytes INTEGER, operation_id TEXT,
         receipt_json TEXT, error TEXT, acknowledged INTEGER NOT NULL DEFAULT 0
       ) STRICT;
-      CREATE TABLE IF NOT EXISTS code_v2_capture_failures (
-        launch_id TEXT PRIMARY KEY, attempts INTEGER NOT NULL
+      CREATE TABLE IF NOT EXISTS code_v2_capture_failing (
+        launch_id TEXT PRIMARY KEY, since INTEGER NOT NULL
       ) STRICT;
       CREATE TABLE IF NOT EXISTS code_v2_review_restores (
         launch_id TEXT PRIMARY KEY, device INTEGER NOT NULL, inode INTEGER NOT NULL
@@ -1456,14 +1466,26 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         tree: string,
         refused: string | null = null;
       try {
-        // The session's processes are confirmed stopped: an index lock their Git left is stale.
-        // A hosted checkout's own .git is the assignment's: never follow a link out of it.
+        // The session's processes are confirmed stopped: the locks their Git left are stale. A
+        // hosted checkout's own .git is the assignment's, refs and all: never follow a link out
+        // of it. Another checkout shares its refs, so only its own index and HEAD are cleared.
         const dot = join(row.path, '.git');
-        const path = ['rev-parse', '--path-format=absolute', '--git-path', 'index.lock'];
-        const lock = this.assignmentRoot
-          ? lstatSync(dot).isDirectory() && join(dot, 'index.lock')
-          : (await this.git.ok(path, { cwd: row.path })).trim();
-        if (lock) rmSync(lock, { force: true });
+        const locks = this.assignmentRoot
+          ? lstatSync(dot).isDirectory()
+            ? ['index.lock', 'HEAD.lock', 'packed-refs.lock']
+                .map((name) => join(dot, name))
+                .concat(lockFiles(join(dot, 'refs')))
+            : []
+          : await Promise.all(
+              ['index.lock', 'HEAD.lock'].map(async (name) =>
+                (
+                  await this.git.ok(['rev-parse', '--path-format=absolute', '--git-path', name], {
+                    cwd: row.path,
+                  })
+                ).trim(),
+              ),
+            );
+        for (const lock of locks) rmSync(lock, { force: true });
         await this.checkFiles(row);
         await this.git.ok(['add', '-A', '--', '.'], { cwd: row.path });
         const staged = await this.git.ok(
@@ -1487,16 +1509,16 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
         const code = (error as { code?: unknown }).code;
         const lasting = typeof code === 'string' && uncapturable.includes(code);
         if (!lasting) {
-          const { attempts } = this.db
+          const { since } = this.db
             .prepare(
-              'INSERT INTO code_v2_capture_failures (launch_id,attempts) VALUES (?,1) ON CONFLICT(launch_id) DO UPDATE SET attempts=attempts+1 RETURNING attempts',
+              'INSERT INTO code_v2_capture_failing (launch_id,since) VALUES (?,?) ON CONFLICT(launch_id) DO UPDATE SET since=since RETURNING since',
             )
-            .get(row.launch_id) as { attempts: number };
-          if (attempts < CAPTURE_ATTEMPTS) throw error;
+            .get(row.launch_id, Date.now()) as { since: number };
+          if (Date.now() - since < CAPTURE_FAILING_MS) throw error;
         }
         // The checkout holds something no capture may carry, and no later attempt finds it
         // different, exactly as such a refusal ends a checkpoint command; so does a checkout
-        // whose capture failed CAPTURE_ATTEMPTS times. The generation is handed over at the
+        // whose capture kept failing for CAPTURE_FAILING_MS. The generation is handed over at the
         // commit Code already has instead of being asked for a capture that can never be
         // built; what the session left stays in the checkout.
         refused = lasting ? code : 'workspace_capture_failed';

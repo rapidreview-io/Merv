@@ -709,12 +709,20 @@ test('hosted Code checkout has independent Git metadata and its edits pass throu
   const receipt = await driver.checkpointCommit(launch, first);
   assert.equal((await f.unit()).canonicalHead, receipt.headOid);
   writeFileSync(join(handle.path, 'after.txt'), 'capture this too\n');
+  // A killed agent's Git left HEAD and its branch locked; the session is confirmed stopped.
+  const branch = git(handle.path, ['symbolic-ref', '-q', 'HEAD']) || 'refs/heads/left';
+  const locks = ['HEAD.lock', `${branch}.lock`].map((name) => join(handle.path, '.git', name));
+  for (const lock of locks) writeFileSync(lock, '');
   await f.event('session.closed', 'ses_hosted');
   f.end('ses_hosted');
   m.terminal.add(launch.id);
   const final = await driver.capture(launch);
   assert.equal((await f.unit()).canonicalHead, final?.headOid);
   assert.equal(git(handle.path, ['show', 'HEAD:after.txt']), 'capture this too');
+  assert.deepEqual(
+    locks.filter((lock) => existsSync(lock)),
+    [],
+  );
   await driver.close(launch);
   assert.deepEqual(
     readdirSync(join(handle.path, '.git')).filter((name) => name.startsWith('index-')),
@@ -1001,8 +1009,9 @@ test('a final capture clears an index lock the stopped session left, and repeate
   await f.event('session.workspace_attached', 'ses_1');
   writeFileSync(join(path, 'a.txt'), 'one\n');
   const gitDir = git(path, ['rev-parse', '--absolute-git-dir']);
-  // A killed agent `git add` left its lock; the process is confirmed stopped before capture.
+  // A killed agent's Git left its locks; the process is confirmed stopped before capture.
   writeFileSync(join(gitDir, 'index.lock'), '');
+  writeFileSync(join(gitDir, 'HEAD.lock'), '');
   await f.event('session.closed', 'ses_1');
   f.end('ses_1');
   m.terminal.add('launch-ses_1');
@@ -1010,10 +1019,12 @@ test('a final capture clears an index lock the stopped session left, and repeate
   assert.equal(git(path, ['show', `${result!.headOid}:a.txt`]), 'one');
   assert.equal((await f.unit()).canonicalHead, result!.headOid);
   assert.equal(existsSync(join(gitDir, 'index.lock')), false);
+  assert.equal(existsSync(join(gitDir, 'HEAD.lock')), false);
   await driver.close(m.launch('ses_1'));
 
-  // The next generation's checkout cannot be captured at all: after a bounded number of
-  // local failures the generation is handed over at the head Code has.
+  // The next generation's checkout cannot be captured at all: failures however many keep
+  // the work until they have lasted the bound, and the generation is then handed over at the
+  // head Code has.
   await f.lease('ses_2');
   await driver.prepare(m.launch('ses_2'), m.session('ses_2'));
   await f.event('session.workspace_attached', 'ses_2');
@@ -1023,9 +1034,11 @@ test('a final capture clears an index lock the stopped session left, and repeate
   m.terminal.add('launch-ses_2');
   chmodSync(gitDir, 0o500);
   let handed;
+  const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
   try {
-    for (let attempt = 1; attempt < 5; attempt++)
+    for (let attempt = 1; attempt <= 8; attempt++)
       await assert.rejects(driver.capture(m.launch('ses_2')), failed('workspace_git_failed'));
+    db.prepare('UPDATE code_v2_capture_failing SET since=since-?').run(10 * 60_000);
     handed = await driver.capture(m.launch('ses_2'));
   } finally {
     chmodSync(gitDir, 0o700);
@@ -1033,7 +1046,6 @@ test('a final capture clears an index lock the stopped session left, and repeate
   assert.equal(handed!.headOid, result!.headOid);
   assert.equal((await f.unit()).writerState, 'closed');
   assert.ok(existsSync(join(path, 'b.txt')), 'what was not captured stays on the machine');
-  const db = new DatabaseSync(join(m.directory, 'ledger.sqlite'));
   try {
     const final = db
       .prepare("SELECT error FROM code_v2_transfers WHERE request_id='final:ses_2'")
