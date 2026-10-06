@@ -333,8 +333,10 @@ export class ActorCredentials {
         'self_revoke',
         'Cannot revoke the credential authenticating this call; verify another credential first',
       );
-      if (target.revoked_at !== null) return;
-      await this.ledger.retire('actor', target, tx);
+      // The ledger decides liveness: a credential Scope's row calls revoked is retired there too,
+      // and only one revoked in both is left as it is.
+      const before = await this.ledger.retire('actor', target, tx);
+      if (target.revoked_at !== null && before?.revokedAt !== null) return;
       const time = this.time();
       await tx.run(
         'UPDATE actor_credentials SET revoked_at=? WHERE id=? AND revoked_at IS NULL',

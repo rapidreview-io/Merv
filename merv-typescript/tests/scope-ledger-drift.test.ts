@@ -171,6 +171,36 @@ for (const [name, kind, retire, authenticate] of unadopted)
     await assert.rejects(f.ledger.authenticate(legacy.token, kind), unauthorized);
   });
 
+test('a credential or key revoked only in Scope is revoked in the ledger when revoked again', async () => {
+  const f = await fixture();
+  const { key, token } = await f.scope.userKeys.create(f.alice, { projectId: f.project.id });
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      'UPDATE actor_credentials SET revoked_at=? WHERE id=?',
+      f.time(),
+      f.machine.credential.id,
+    );
+    await tx.run('UPDATE user_keys SET revoked_at=? WHERE id=?', f.time(), key.id);
+  });
+  await f.scope.credentials.revokeCredential(f.owner, f.machine.credential.id);
+  await f.scope.userKeys.revoke(f.alice, key.id);
+  assert.notEqual((await ledgerRow(f, sha256Hex(f.machine.token)))?.revoked_at, null);
+  assert.notEqual((await ledgerRow(f, sha256Hex(token)))?.revoked_at, null);
+  await assert.rejects(f.scope.authenticate(f.machine.token), unauthorized);
+  await assert.rejects(f.scope.userKeys.authenticate(token), unauthorized);
+  // Revoked in both, a revocation again changes nothing and says nothing.
+  const events = async () =>
+    (await f.state.read((sql) =>
+      sql.get<{ n: string }>(
+        "SELECT COUNT(*) AS n FROM events WHERE type IN ('actor.credential_revoked','actor.key_revoked')",
+      ),
+    ))!.n;
+  const before = await events();
+  await f.scope.credentials.revokeCredential(f.owner, f.machine.credential.id);
+  await f.scope.userKeys.revoke(f.alice, key.id);
+  assert.equal(await events(), before);
+});
+
 test('a credential or key the ledger never held cannot be rotated', async () => {
   const f = await fixture();
   const credential = await legacyCredential(f);
