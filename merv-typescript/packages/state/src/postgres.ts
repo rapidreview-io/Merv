@@ -133,6 +133,7 @@ export class PostgresState implements State {
 
   private readonly pool: Pool;
   private readonly readers: Pool;
+  private readonly broken = new WeakSet<object>();
   private readonly schema: string;
   /**
    * Opens a write transaction and takes the writer lock in one round trip. This advisory lock is
@@ -183,6 +184,13 @@ export class PostgresState implements State {
       });
       // Idle clients can emit errors outside a query. pg removes them; later requests reconnect.
       created.on('error', () => undefined);
+      // A lent client has no pool listener: a dropped backend would crash the process. Mark it
+      // broken instead; its pending query fails, and release discards it.
+      created.on('connect', (client) =>
+        client.on('error', () => {
+          this.broken.add(client);
+        }),
+      );
       return created;
     };
     // Writers queue on the state lock holding their connection; reads answer from their own pool.
@@ -281,7 +289,7 @@ END $merv$;`);
       });
     } finally {
       await tail;
-      client.release(discard);
+      client.release(discard || this.broken.has(client));
     }
   }
 

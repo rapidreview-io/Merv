@@ -853,6 +853,34 @@ test('PostgreSQL lock timeout rolls back the checked-out connection for later re
   assert.equal((await other.events('project')).length, 1);
 });
 
+test('PostgreSQL: a backend killed mid-transaction fails that transaction, not the process', async (t) => {
+  const { state } = await fixture(t, { maxConnections: 1 });
+  const admin = new Pool({ connectionString, max: 1 });
+  t.after(() => admin.end());
+  const kill = (pid: number) => admin.query('SELECT pg_terminate_backend($1)', [pid]);
+  // Between statements (awaiting other work inside the transaction), then inside one.
+  await assert.rejects(
+    state.transaction(async (tx) => {
+      const { pid } = (await tx.get<{ pid: number }>('SELECT pg_backend_pid() AS pid'))!;
+      await kill(pid);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await tx.get('SELECT 1 AS x');
+    }),
+    { code: 'state_unavailable' },
+  );
+  await assert.rejects(
+    state.transaction(async (tx) => {
+      const { pid } = (await tx.get<{ pid: number }>('SELECT pg_backend_pid() AS pid'))!;
+      setTimeout(() => void kill(pid), 100);
+      await tx.get('SELECT pg_sleep(2) AS x');
+    }),
+    { code: 'state_unavailable' },
+  );
+  // The broken connections were discarded; the pool reconnects.
+  await state.transaction((tx) => state.appendEvent(tx, event));
+  assert.equal((await state.events('project')).length, 1);
+});
+
 test('PostgreSQL disposal drains admitted async work before closing its pool', async (t) => {
   const { state } = await fixture(t, { maxConnections: 1 });
   const entered = deferred();
