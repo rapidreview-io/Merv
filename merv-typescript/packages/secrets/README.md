@@ -98,12 +98,9 @@ ends with the worker session; the next worker supplies its own. Durable managed
 GPU jobs do not yet receive HF access. Work-bound credentials and Python late
 script delivery require a separate change.
 
-The old `/sessions/:id/huggingface` route remains wire-compatible for the hosted
-image transition but stops returning raw tokens at **2026-10-08 00:00 UTC**. Remove
-its raw-token implementation in the first release after the new image rollout.
-New runners use only `/huggingface-access`; errors launch without HF access and
-never fall back to raw-token delivery. Existing old processes may retain tokens
-issued before rollout; invalidate those at Hugging Face if necessary.
+Runners use only `/huggingface-access`; errors launch without HF access and never
+fall back to raw-token delivery. The older raw-token route `/sessions/:id/huggingface`
+is removed.
 
 Tests cover authenticated synthetic upstreams, path/header boundaries, range
 responses, keep-alive revocation, account rotation/removal, grant expiry and

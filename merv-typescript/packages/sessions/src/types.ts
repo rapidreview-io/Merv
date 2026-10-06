@@ -399,10 +399,6 @@ export interface Sessions {
     caller: Caller,
     input: SessionControl & { hostRef: string },
   ): Promise<{ access: HuggingFaceAccess | null }>;
-  huggingface(
-    caller: Caller,
-    input: SessionControl & { hostRef: string },
-  ): Promise<{ hfToken: string | null }>;
   workspaceResult(
     caller: Caller,
     input: SessionControl & { hostRef: string; workspace: SessionWorkspace },

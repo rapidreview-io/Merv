@@ -32,7 +32,6 @@ export type SessionRoutes = Pick<
   | 'attach'
   | 'launchConnections'
   | 'huggingfaceAccess'
-  | 'huggingface'
   | 'workspaceResult'
   | 'transcript'
   | 'streams'
@@ -78,7 +77,7 @@ const managedRoute = (method: string, path: string): boolean =>
     ].includes(path)) ||
   (method === 'GET' && /^\/sessions\/session_[A-Za-z0-9_]+$/.test(path)) ||
   (method === 'POST' &&
-    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|stream|conversation|resume|huggingface|huggingface-access|launch-connections)$/.test(
+    /^\/sessions\/session_[A-Za-z0-9_]+\/(attach|heartbeat|release|workspace-result|transcript|stream|conversation|resume|huggingface-access|launch-connections)$/.test(
       path,
     )) ||
   (method === 'POST' && /^\/code\/v2\/[A-Za-z0-9_/-]+$/.test(path)) ||
@@ -164,7 +163,7 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
   if (path === '/sessions/offer' && req.method === 'POST')
     return { session: await sessions.offer(caller, await r.json()) };
   const route =
-    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|stream|conversation|resume|huggingface|huggingface-access|launch-connections))?$/.exec(
+    /^\/sessions\/(session_[^/]+)(?:\/(attach|heartbeat|release|halt|workspace-result|transcript|stream|conversation|resume|huggingface-access|launch-connections))?$/.exec(
       path,
     );
   if (route) {
@@ -173,13 +172,10 @@ async function controls(req: IncomingMessage, r: ApiRequest, sessions: SessionRo
       return { session: await sessions.get(caller, sessionId) };
     if (req.method === 'POST' && route[2] === 'halt')
       return await sessions.dispatch.halt(caller, { ...(await r.json(haltInput)), sessionId });
-    if (
-      req.method === 'POST' &&
-      (route[2] === 'huggingface' || route[2] === 'huggingface-access')
-    ) {
+    if (req.method === 'POST' && route[2] === 'huggingface-access') {
       if (!caller.managed)
         throw new MervError('managed_runner_forbidden', 'Managed runner authority required', 403);
-      return await sessions[route[2] === 'huggingface' ? 'huggingface' : 'huggingfaceAccess'](
+      return await sessions.huggingfaceAccess(
         caller,
         bound(await r.json(undefined, 4096), 'sessionId', sessionId),
       );
@@ -289,7 +285,6 @@ function sessionRoutes(sessions: SessionRoutes, read: SnapshotRead): MountHandle
   return async (req, res, r) => {
     const path = r.url.pathname;
     if (
-      path.endsWith('/huggingface') ||
       path.endsWith('/huggingface-access') ||
       path.endsWith('/resume') ||
       path.endsWith('/launch-connections')

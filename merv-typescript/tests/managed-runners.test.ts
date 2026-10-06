@@ -1054,13 +1054,12 @@ test('a bound session ends when the managed source loses read', async (t) => {
 for (const sourceKind of [undefined, 'human', 'key', 'service-human', 'service-key'] as const) {
   test(`HF delivery uses only the attached managed lease's immutable ${sourceKind ?? 'actor'} source`, async (t) => {
     const f = await fixture(t, { sourceKind });
-    const marker = 'hf_' + 'AccountMarker'.repeat(3);
-    let token: string | null = marker;
-    const identities: unknown[] = [];
+    let available = true;
+    const grants: import('@merv/secrets/types').HuggingFaceGrant[] = [];
     f.sessions.secrets = {
-      resolveHuggingFaceToken: async (person) => {
-        identities.push(person);
-        return token;
+      createHuggingFaceAccess: async (grant) => {
+        grants.push(grant);
+        return available ? { token: 'opaque-test', endpoint: 'https://merv.example/hf' } : null;
       },
     };
     await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
@@ -1068,62 +1067,60 @@ for (const sourceKind of [undefined, 'human', 'key', 'service-human', 'service-k
     const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
     assert.ok(bound);
     const input = { sessionId: bound.id, runnerId: f.runnerId, hostRef: 'hf-host' };
-    await assert.rejects(f.sessions.huggingface(f.caller, input), { code: 'host_conflict' });
+    const access = (caller = f.caller, value: typeof input = input) =>
+      f.sessions.huggingfaceAccess(caller, value);
+    await assert.rejects(access(), { code: 'host_conflict' });
     await f.sessions.attach(f.caller, input);
-    await assert.rejects(f.sessions.huggingface(f.source, input), {
-      code: 'managed_runner_forbidden',
-    });
-    await assert.rejects(
-      f.sessions.huggingface({ ...f.caller, projectId: 'other-project' }, input),
-    );
-    await assert.rejects(f.sessions.huggingface(f.caller, { ...input, runnerId: 'other-runner' }), {
+    await assert.rejects(access(f.source), { code: 'managed_runner_forbidden' });
+    await assert.rejects(access({ ...f.caller, projectId: 'other-project' }));
+    await assert.rejects(access(f.caller, { ...input, runnerId: 'other-runner' }), {
       code: 'session_forbidden',
     });
-    await assert.rejects(
-      f.sessions.huggingface(f.caller, { ...input, sessionId: 'session_other' }),
-      { code: 'session_forbidden' },
-    );
-    await assert.rejects(f.sessions.huggingface(f.caller, { ...input, hostRef: 'other-host' }), {
+    await assert.rejects(access(f.caller, { ...input, sessionId: 'session_other' }), {
+      code: 'session_forbidden',
+    });
+    await assert.rejects(access(f.caller, { ...input, hostRef: 'other-host' }), {
       code: 'host_conflict',
     });
-    assert.equal(identities.length, 0);
-    assert.deepEqual(await f.sessions.huggingface(f.caller, input), {
-      hfToken: sourceKind ? marker : null,
-    });
+    assert.equal(grants.length, 0);
     assert.deepEqual(
-      identities,
-      sourceKind ? [{ issuer: 'https://identity.example', subject: 'original-person' }] : [],
+      await access(),
+      sourceKind
+        ? { access: { token: 'opaque-test', endpoint: 'https://merv.example/hf' } }
+        : { access: null },
     );
-    token = null;
-    assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
+    assert.equal(grants.length, sourceKind ? 1 : 0);
+    if (sourceKind)
+      assert.deepEqual(await f.sessions.authorizeHuggingFaceGrant(grants[0]!), {
+        issuer: 'https://identity.example',
+        subject: 'original-person',
+      });
+    available = false;
+    assert.deepEqual(await access(), { access: null });
     // Eligibility is the managed validator's: a machine whose image brokers no HF gets none.
-    token = marker;
     f.huggingFace(false);
-    const before = identities.length;
-    assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
-    assert.equal(identities.length, before);
+    const asked = grants.length;
+    assert.deepEqual(await access(), { access: null });
+    assert.equal(grants.length, asked);
     f.huggingFace(true);
-    token = null;
-    assert.ok(!JSON.stringify(await f.sessions.get(f.caller, bound.id)).includes(marker));
     f.current(false);
-    const reads = identities.length;
-    await assert.rejects(f.sessions.huggingface(f.caller, input), { code: 'managed_revoked' });
+    await assert.rejects(access(), { code: 'managed_revoked' });
     f.current(true);
     if (sourceKind?.endsWith('key')) {
       await f.revokePerson!();
-      await assert.rejects(f.sessions.huggingface(f.caller, input));
+      await assert.rejects(access());
     } else {
       await f.sessions.release(f.caller, { sessionId: bound.id, runnerId: f.runnerId });
-      await assert.rejects(f.sessions.huggingface(f.caller, input), { code: 'session_closed' });
+      await assert.rejects(access(), { code: 'session_closed' });
     }
-    assert.equal(identities.length, reads);
+    assert.equal(grants.length, asked);
   });
 }
 
 test('sealed review gets no HF account credential', async (t) => {
   const f = await fixture(t, { sourceKind: 'human', reviewWorkspace: 'retained' });
   f.sessions.secrets = {
-    resolveHuggingFaceToken: async () => {
+    createHuggingFaceAccess: async () => {
       assert.fail('sealed review read a secret');
     },
   };
@@ -1142,7 +1139,6 @@ test('sealed review gets no HF account credential', async (t) => {
     stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
   };
   await f.sessions.attach(f.caller, { ...input, workspace });
-  assert.deepEqual(await f.sessions.huggingface(f.caller, input), { hfToken: null });
   assert.deepEqual(await f.sessions.huggingfaceAccess(f.caller, input), { access: null });
 });
 
@@ -1151,9 +1147,6 @@ for (const sourceKind of ['human', 'key', 'service-human', 'service-key'] as con
     const f = await fixture(t, { sourceKind });
     let grant: import('@merv/secrets/types').HuggingFaceGrant | undefined;
     f.sessions.secrets = {
-      resolveHuggingFaceToken: async () => {
-        throw Error('raw token delivery used');
-      },
       createHuggingFaceAccess: async (value) => {
         grant = value;
         return { token: 'opaque-test', endpoint: 'https://merv.example/hf' };

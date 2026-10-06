@@ -332,9 +332,8 @@ export class LeasedSessions implements Sessions {
   messaging!: SessionMessages;
   /** The tool policy: each leased worker's MCP calls. */
   invocations!: SessionInvocations;
-  /** Optional private account credential reader; never exposed through the tool registry. */
-  secrets?: Pick<Secrets, 'resolveHuggingFaceToken'> &
-    Partial<Pick<Secrets, 'createHuggingFaceAccess'>>;
+  /** Optional private account credential broker; never exposed through the tool registry. */
+  secrets?: Pick<Secrets, 'createHuggingFaceAccess'>;
   private readonly sections = new Map<string, StatusSection>();
   private launchConnectionsProvider?: LaunchConnectionsProvider;
   private directory!: AgentDirectory;
@@ -1726,32 +1725,8 @@ export class LeasedSessions implements Sessions {
       };
     });
     return {
-      access:
-        grant && this.secrets?.createHuggingFaceAccess
-          ? await this.secrets.createHuggingFaceAccess(grant)
-          : null,
+      access: grant && this.secrets ? await this.secrets.createHuggingFaceAccess(grant) : null,
     };
-  }
-  async huggingface(
-    caller: Caller,
-    input: SessionControl & { hostRef: string },
-  ): Promise<{ hfToken: string | null }> {
-    caller = structuredClone(caller);
-    input = closed(controlSchema.extend({ hostRef: trimmed(512) }), input, controlRefusals);
-    check(caller.managed, 'managed_runner_forbidden', 'Managed runner authority required', 403);
-    return await this.reading(async (tx) => {
-      const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
-      const { row } = await this.managed.require(caller, tx);
-      const identity = await this.huggingFaceIdentity(session, row, input.hostRef, tx);
-      return {
-        hfToken:
-          // Compatibility window ends after the hosted image rollout; old runners then
-          // receive null. New runners exclusively use huggingface-access.
-          identity && this.secrets && this.clock() < Date.parse('2026-10-08T00:00:00Z')
-            ? await this.secrets.resolveHuggingFaceToken(identity)
-            : null,
-      };
-    });
   }
   async workspaceResult(
     caller: Caller,
