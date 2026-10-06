@@ -22,6 +22,8 @@ interface Reference {
  * name, because whether the name exists is the question — so the field says that
  * in the one place a field may: its own placeholder.
  */
+const UNNAMED = new Map();
+
 export function ReferenceLookup() {
   const [text, setText] = useState('');
   const [refs, setRefs] = useState<string[] | null>(null);
@@ -67,8 +69,9 @@ export function ReferenceLookup() {
           {lookup.data.map((item, index) => (
             <li className="row" key={`${index}:${item.ref}`}>
               <span className="row-name">
-                {/* A reference nobody could name is shortened, never printed as its id. */}
-                <strong>{item.label ?? <RecordText text={item.ref} />}</strong>
+                {/* A reference nobody could name is shortened, never printed as its id, and
+                    never asked about again. */}
+                <strong>{item.label ?? <RecordText text={item.ref} names={UNNAMED} />}</strong>
                 <StatusPill value={item.status} />
               </span>
               <span className="states-detail">{item.state ? words(item.state) : ''}</span>

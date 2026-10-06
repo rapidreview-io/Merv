@@ -616,10 +616,54 @@ test('ids outside Markdown are named the same way, and a document reads its own 
     all('a').map((a) => a.getAttribute('href')),
     [`/verdicts/${review}`, `/artifacts/${ART}`, `/tasks/${TASK}`],
   );
-  assert.deepEqual(asked, [
-    [review, nobody],
-    [ART, TASK],
-  ]);
+  // Every text on the page asks in the same request.
+  assert.deepEqual(asked, [[review, nobody, ART, TASK]]);
+});
+
+test('names a growing text asks for come once, and stay while the next are asked', async (t) => {
+  t.after(async () => await unmount());
+  const asked: unknown[] = [];
+  serve('/tools/project.references', (call, sent) => {
+    asked.push(sent.refs);
+    if (call > 1) return { network: true };
+    const refs = sent.refs as string[];
+    return {
+      body: {
+        result: refs.map((id) => ({
+          ref: id,
+          id,
+          status: 'resolved',
+          kind: 'artifact',
+          label: `File ${id.at(-1)}`,
+        })),
+      },
+    };
+  });
+  serve('/tools/ui.home', { body: { result: {} } });
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  const first = `art_${'1'.repeat(32)}`;
+  const second = `art_${'2'.repeat(32)}`;
+  let grow!: (source: string) => void;
+  function Growing() {
+    const [source, setSource] = useState(`See ${first}.`);
+    grow = setSource;
+    return createElement(MarkdownPieces, { source });
+  }
+  await mount(
+    createElement(
+      MemoryRouter,
+      null,
+      createElement(Growing),
+      createElement(RecordText, { text: `Also ${first}` }),
+    ),
+  );
+  await settle(10);
+  assert.equal(text(), 'See File 1.Also File 1');
+  // The next answer fails: what the page already named stays named.
+  await act(async () => grow(`See ${first}. Then ${second}.`));
+  await settle(10);
+  assert.equal(text(), 'See File 1. Then art_…222222.Also File 1');
+  assert.deepEqual(asked, [[first], [second]]);
 });
 
 test('a file is named by a short human type, never by its media type', () => {
@@ -774,4 +818,31 @@ test('a file older than the newest page is still named where it is cited', async
   await settle(10);
   assert.equal(document.querySelector('.md')!.textContent, 'Cites Brief: the first sweep.');
   assert.equal(document.querySelector('.picked')!.textContent, 'Brief: the first sweep');
+});
+
+test('a reference lookup asks once, and never again for what came back missing', async (t) => {
+  t.after(async () => await unmount());
+  const { ReferenceLookup } = await import('../packages/ui/web/views/paper-references.js');
+  const asked: unknown[] = [];
+  serve('/tools/project.references', (_, sent) => {
+    asked.push(sent.refs);
+    const refs = sent.refs as string[];
+    return {
+      body: { result: refs.map((ref) => ({ ref, id: ref, status: 'missing', kind: null })) },
+    };
+  });
+  serve('/tools/ui.home', { body: { result: {} } });
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  await mount(createElement(MemoryRouter, null, createElement(ReferenceLookup)));
+  const field = document.querySelector('textarea')!;
+  const set = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), 'value')!.set!;
+  const refs = [`art_${'3'.repeat(32)}`, `wf_${'4'.repeat(32)}`];
+  await act(async () => {
+    set.call(field, refs.join('\n'));
+    field.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await act(async () => document.querySelector('form')!.requestSubmit());
+  await settle(10);
+  assert.match(text(), /art_…333333/);
+  assert.deepEqual(asked, [refs]);
 });

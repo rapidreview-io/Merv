@@ -1,6 +1,14 @@
-import { Fragment, memo, useMemo, useRef, type ReactNode } from 'react';
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from 'react';
 import { Link, useHref } from 'react-router-dom';
-import { useTool } from './api';
+import { call, scopeVersion, useTool } from './api';
 import { CodeBlock, NUMBERED_FROM } from './code-block';
 import { TeX } from './math';
 import { Mermaid } from './mermaid';
@@ -114,6 +122,7 @@ export function recordNames(
 
 /** One answer of project.references, which names a record as its owner does. */
 interface Reference {
+  ref: string;
   status: string;
   kind: string | null;
   id: string | null;
@@ -131,25 +140,90 @@ const routeOf = ({ kind, id }: Reference, rows: readonly NamedRow[]) => {
 };
 
 /**
+ * What project.references said of each id, for every text on the page at once: the ids asked
+ * within one tick go as one request (of at most 200, the tool's own bound), and each answer, a
+ * record or a miss, is kept while anything on the page reads names. A text that grows asks only
+ * for what it newly mentions and keeps every name it had while that is asked; a failed request
+ * leaves its ids to be asked again. The page that next opens, or another project, starts afresh.
+ */
+const told = new Map<string, Reference>();
+const queued = new Set<string>();
+const asking = new Set<string>();
+const hearing = new Set<() => void>();
+let heard = 0;
+let round = 0;
+let epoch = scopeVersion();
+let timer: ReturnType<typeof setTimeout> | undefined;
+const forget = () => {
+  told.clear();
+  queued.clear();
+  asking.clear();
+  round++;
+  epoch = scopeVersion();
+};
+function askNames(ids: readonly string[]): void {
+  if (epoch !== scopeVersion()) forget();
+  for (const id of ids) if (!told.has(id) && !asking.has(id)) queued.add(id);
+  if (!queued.size || timer) return;
+  timer = setTimeout(() => {
+    timer = undefined;
+    const ids = [...queued];
+    queued.clear();
+    const at = round;
+    for (let from = 0; from < ids.length; from += 200) {
+      const refs = ids.slice(from, from + 200);
+      for (const ref of refs) asking.add(ref);
+      void call<Reference[]>('project.references', { refs })
+        .then(
+          (answer) => {
+            if (at !== round) return;
+            for (const reference of answer) told.set(reference.ref, reference);
+            heard++;
+            for (const listener of hearing) listener();
+          },
+          () => undefined,
+        )
+        .finally(() => {
+          if (at === round) for (const ref of refs) asking.delete(ref);
+        });
+    }
+  });
+}
+const hear = (listener: () => void) => {
+  hearing.add(listener);
+  return () => {
+    hearing.delete(listener);
+    if (!hearing.size) forget();
+  };
+};
+
+/**
  * The names for one text, read only when the text mentions something to name: what
  * project.references says of each id, over the people and records of the home read the
  * rail already holds. A text with no ids in it costs nothing at all.
  */
 export function useRecordNames(text: string): RecordNames {
   const ids = useMemo(() => idsIn(text).slice(0, 200), [text]);
-  const references = useTool<Reference[]>(ids.length ? 'project.references' : null, {
-    refs: ids,
-  });
+  const version = useSyncExternalStore(
+    hear,
+    () => heard,
+    () => heard,
+  );
+  useEffect(() => askNames(ids), [ids]);
   const home = useTool<NamedHome>(ids.length ? 'ui.home' : null);
   // The rows say where each record opens: the ones the shell already holds.
   const rows = useRows();
   return useMemo(() => {
     const names = new Map(recordNames(null, home.data, rows));
-    for (const reference of references.data ?? [])
-      if (reference.status === 'resolved' && reference.id && reference.label)
-        names.set(reference.id, { name: reference.label, to: routeOf(reference, rows) });
+    // What another project's page was told names nothing here.
+    if (epoch === scopeVersion())
+      for (const reference of ids.map((id) => told.get(id)))
+        if (reference?.status === 'resolved' && reference.id && reference.label)
+          names.set(reference.id, { name: reference.label, to: routeOf(reference, rows) });
     return names;
-  }, [references.data, home.data, rows]);
+    // `version` counts the answers heard, which `told` holds.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ids, version, home.data, rows]);
 }
 
 /**
