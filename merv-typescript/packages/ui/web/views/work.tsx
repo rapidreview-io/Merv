@@ -533,16 +533,12 @@ function WaveList({ shell }: { shell: ShellData }) {
   );
 }
 
-/** The gate's own code for a cycle whose problem, scope, goals and constraints are unwritten. */
-const UNDEFINED = 'research_definition_required';
-
 /**
  * A cycle's one move, here and on its own page, as the cycle's own gate has it. A move the
- * gate refuses is not offered as a button that can only fail: for want of the definition it
- * is the way to the paper, where that is written, and otherwise it stands disabled over the
- * records it waits on — unless the page already `listed` them.
- * An answer the gate asks for, such as the approved plan's next wave or a fresh consolidation
- * task, is drawn as the moves Research names for it on its Cycles row.
+ * gate refuses is not offered as a button that can only fail: it stands disabled over the
+ * records it waits on — unless the page already `listed` them. Where the gate asks for an
+ * answer, refuses for a reason or stops an automatic run, the page draws the moves Research
+ * names for it on its Cycles row (`ResearchAnswer`).
  */
 export function CycleMove({
   cycle,
@@ -566,8 +562,18 @@ export function CycleMove({
   const gate = read?.revision === cycle.workflow.revision ? read : undefined;
   const advance = gate?.actions.find((action) => action.tool === 'research.advance');
   const refused = (code: string) => !!advance?.blockers.some((item) => item.code === code);
-  const paper = shell.rows.find((row) => row.view.kind === 'paper');
-  const cycles = shell.rows.find((row) => row.view.kind === 'research');
+  const row = (kind: string) => shell.rows.find((item) => item.view.kind === kind);
+  const offered = (tool: string) =>
+    !!gate?.actions.some((item) => item.tool === tool && item.status !== 'blocked');
+  const automatic = cycle.automation;
+  // An answer applies where the gate says so, and only if the page can make each of its moves.
+  const applies = ({ when, name, moves }: ResearchAnswer) =>
+    (when === 'stopped'
+      ? automatic?.blocker?.code === name
+      : (when === 'asks' ? advance?.requiredInput.includes(name) : refused(name)) &&
+        (!automatic || moves.every((item) => item.row))) &&
+    moves.every((item) => (item.row ? row(item.row) : !item.tool || offered(item.tool)));
+  const answer = (row('research')?.view.answers as ResearchAnswer[] | undefined)?.find(applies);
   const move = (
     label: string,
     choice: Record<string, unknown> = {},
@@ -586,50 +592,46 @@ export function CycleMove({
       }}
     />
   );
-  const end = (label: string, reason: string) =>
-    move(label, { outcome: 'abandoned', reason }, false, 'research.end');
-  if (refused(UNDEFINED) && paper)
-    return (
-      <Link className="btn" to={paper.path}>
-        Write the definition <ArrowRightIcon size={14} />
+  const moves = answer?.moves.map((item) =>
+    item.row ? (
+      <Link key={item.label} className="btn" to={row(item.row)!.path}>
+        {item.label} <ArrowRightIcon size={14} />
       </Link>
+    ) : (
+      move(item.label, item.input, false, item.tool)
+    ),
+  );
+  // A move that answers failed work stands under it.
+  const failed = answer?.moves.find((item) => item.failed)?.failed;
+  if (answer && answer.when !== 'stopped')
+    return (
+      <div className={failed ? 'stack' : 'cluster'}>
+        {!listed &&
+          gate?.dependencies
+            .filter((item) => item.failed && item.workflow === failed)
+            .map((item) => <Dependency key={item.id} item={item} />)}
+        {moves}
+      </div>
     );
-  if (cycle.automation)
+  if (automatic)
     return (
       <div className="stack">
         <span>
-          Automatic · cycle {cycle.automation.cycle} of {cycle.automation.maxCycles}
+          Automatic · cycle {automatic.cycle} of {automatic.maxCycles}
         </span>
-        {cycle.automation.blocker && <span>{cycle.automation.blocker.message}</span>}
-        {cycle.automation.blocker?.code === 'research_definition_changed' &&
-          move('Accept changed definition')}
-        {end('Stop automatic research', 'The owner stopped automatic research from the Work page.')}
+        {automatic.blocker && <span>{automatic.blocker.message}</span>}
+        {moves}
+        {move(
+          'Stop automatic research',
+          {
+            outcome: 'abandoned',
+            reason: 'The owner stopped automatic research from the Work page.',
+          },
+          false,
+          'research.end',
+        )}
       </div>
     );
-  // A choice the gate asks for is drawn as Research names it, each answer a move of its own.
-  const answer = (cycles?.view.answers as ResearchAnswer[] | undefined)?.find((item) =>
-    item.when === 'asks' ? advance?.requiredInput.includes(item.name) : refused(item.name),
-  );
-  if (answer)
-    return (
-      <div className="cluster">{answer.moves.map((item) => move(item.label, item.input))}</div>
-    );
-  // A wave that ended unapproved stops its cycle, though work it reflects on may fail and still be
-  // read: the wave where it stands, unless the page lists it, and the end the gate offers instead.
-  const ends = gate?.actions.some(
-    (item) => item.tool === 'research.end' && item.status !== 'blocked',
-  );
-  if (refused('dependency_failed') && ends) {
-    const waves = gate!.dependencies.filter(
-      (item) => item.failed && item.workflow === 'reflection',
-    );
-    return (
-      <div className="stack">
-        {!listed && waves.map((item) => <Dependency key={item.id} item={item} />)}
-        {end('End cycle', `${waves[0]?.name ?? 'Its reflection'} was abandoned.`)}
-      </div>
-    );
-  }
   const blocked = advance?.status === 'blocked';
   return (
     <div className="stack">

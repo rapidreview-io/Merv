@@ -164,12 +164,26 @@ export interface ResearchLineage {
 }
 /**
  * A choice a cycle's gate asks of its owner, as Research names it on its Cycles row
- * (`view.answers`): where research.advance `asks` for the input `name`, or is `refused` with the
- * code `name`, the page offers these advances, each sending its own input, in place of the plain
- * one. The first that applies is the one drawn.
+ * (`view.answers`): where research.advance `asks` for the input `name`, is `refused` with the
+ * code `name`, or an automatic run `stopped` on the code `name`, the page offers these moves in
+ * place of the plain one. The first that applies, and whose moves the page can all make, is the
+ * one drawn. While a run is automatic only its `stopped` answers and ways elsewhere are drawn:
+ * any other move would race the run.
  */
 export type ResearchAnswer = {
-  when: 'asks' | 'refused';
+  when: 'asks' | 'refused' | 'stopped';
   name: string;
-  moves: { label: string; input: { [field: string]: string | boolean } }[];
+  moves: ResearchMove[];
+};
+/**
+ * One move of an answer: a call of `tool` (research.advance where unnamed, and otherwise only
+ * where the gate offers it) sending `input`, or the way to the page of the row whose view is
+ * `row`. A move that answers the failed dependencies of a `failed` workflow stands under them.
+ */
+export type ResearchMove = {
+  label: string;
+  tool?: 'research.end';
+  input?: { [field: string]: string | boolean };
+  row?: string;
+  failed?: string;
 };

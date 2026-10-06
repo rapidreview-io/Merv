@@ -786,6 +786,62 @@ test('a choice the gate asks for is drawn as Research names it, and nothing in i
   assert.deepEqual(buttons(), [['Start next step', false]]);
 });
 
+test('an unwritten definition is the way to the paper, automatic or not, as Research names it', async (t) => {
+  t.after(unmount);
+  const undefinedGate = cycleGate('defining', {
+    status: 'blocked',
+    blockers: [{ code: 'research_definition_required', status: 409, message: 'Fill it.' }],
+  });
+  const paperRow = { id: 'paper', path: '/paper', view: { kind: 'paper' } };
+  serve('/tools/workflow.status_and_next', undefinedGate);
+  await mount(page('defining', [cyclesRow, paperRow]));
+  await settle(10);
+  assert.deepEqual(buttons(), []);
+  assert.equal(document.querySelector('a[href="/paper"]')?.textContent, 'Write the definition ');
+  await unmount();
+  // With no paper to write it on, the move stands disabled over what it waits on.
+  serve('/tools/workflow.status_and_next', undefinedGate);
+  await mount(page('defining'));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Start next step', true]]);
+});
+
+test('an automatic run offers its stop, and only the answers Research names for what stopped it', async (t) => {
+  t.after(unmount);
+  const automatic = (code: string) =>
+    createElement(
+      MemoryRouter,
+      null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(CycleMove as any, {
+        cycle: {
+          ...cycle('defining'),
+          automation: { cycle: 2, maxCycles: 3, blocker: { code, message: `Stopped: ${code}.` } },
+        },
+        shell: { rows: [cyclesRow], plugins: [], workflows: [researchShape] },
+        onSaved() {},
+      }),
+    );
+  // A gate that also refuses for a reason with an answer of its own: the run is not raced.
+  const gate = cycleGate('defining', {
+    status: 'blocked',
+    blockers: [{ code: 'integration_failed', status: 409, message: 'The task ended failed.' }],
+  });
+  serve('/tools/workflow.status_and_next', gate);
+  await mount(automatic('research_definition_changed'));
+  await settle(10);
+  assert.deepEqual(buttons(), [
+    ['Accept changed definition', false],
+    ['Stop automatic research', false],
+  ]);
+  assert.ok(text().includes('Stopped: research_definition_changed.'));
+  await unmount();
+  serve('/tools/workflow.status_and_next', gate);
+  await mount(automatic('research_waiting'));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Stop automatic research', false]]);
+});
+
 test('a ready gate is the one move, and it sends nothing it was not asked for', async (t) => {
   t.after(unmount);
   serve('/tools/workflow.status_and_next', cycleGate('researching', { status: 'ready' }));
@@ -894,7 +950,7 @@ test('a cycle whose wave was abandoned names the wave and its state, and offers 
       researchId: 'wf_cycle',
       expectedRevision: 3,
       outcome: 'abandoned',
-      reason: 'Wave 1 was abandoned.',
+      reason: 'The wave this cycle reflected on was abandoned.',
       requestId: 'string',
     },
   );
