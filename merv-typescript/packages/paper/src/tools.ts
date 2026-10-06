@@ -70,7 +70,7 @@ export const paperToolsPlugin = {
       ctx.tools.register({
         name: 'paper.cite',
         description:
-          'Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry. A literature search record (nisa.search, nisa.semantic, nisa.related or nisa.paper) carries the identifier (arxiv:…), title, authors, year and url this takes; when more_authors is set or the title ends in …, read the whole record with nisa.paper first.',
+          'Create or revise one durable literature citation. Supply an identifier (for example doi:10... or arxiv:...), bibliographic fields, existing literature sectionIds, and project artifact:<id> evidence refs. expectedRevision is zero for a new entry. A literature search record (nisa.search, nisa.semantic_search, nisa.related or nisa.paper) carries the identifier (arxiv:…), title, authors, year and url this takes; when more_authors is set or the title ends in …, read the whole record with nisa.paper first.',
         inputSchema: citeSchema,
         readOnly: false,
         handler: async (caller, input) => await paper.cite(caller, input),
