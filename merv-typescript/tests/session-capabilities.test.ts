@@ -4,6 +4,7 @@ import {
   type Caller,
   type WorkflowExecutionReferences,
   type WorkflowPolicy,
+  type WorkflowWorkspacePolicy,
 } from '@merv/contracts';
 import { test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
@@ -46,7 +47,7 @@ async function fixture(t: TestContext) {
     await workflows.close();
     await state.close();
   });
-  // `null`: a checkout of a runner's own repository, which names no driver and no runner has.
+  // `null`: a checkout that names no driver, which registration refuses.
   const register = async (name: string, driver?: string | null) => {
     const policy: WorkflowPolicy = {
       successStates: ['done'],
@@ -81,14 +82,14 @@ async function fixture(t: TestContext) {
             ...(driver !== undefined
               ? {
                   workspace: {
-                    mode: 'persistent' as const,
+                    mode: 'persistent',
                     namespace: 'work',
-                    base: 'reference:base' as const,
+                    base: 'reference:base',
                     perBase: false,
                     retain: true,
                     advancesCentral: false,
                     ...(driver ? { driver } : {}),
-                  },
+                  } as WorkflowWorkspacePolicy,
                 }
               : {}),
           },
@@ -117,7 +118,6 @@ async function fixture(t: TestContext) {
   };
   const hosted = await register('hosted', 'code.v2');
   const scratch = await register('scratch');
-  const local = await register('local', null);
   const boot = await scope.credentials.bootstrap({
     projectName: 'Capabilities',
     actorName: 'Owner',
@@ -134,7 +134,7 @@ async function fixture(t: TestContext) {
     credentialId: issued.credential.id,
   };
   await sessions.dispatch.setDispatch(owner, { enabled: true });
-  return { sessions, source, owner, hosted, scratch, local };
+  return { sessions, source, owner, hosted, scratch, register };
 }
 
 test('work that names a workspace driver is offered only to a runner that advertises it, and the rest of the queue still reaches the others', async (t) => {
@@ -222,19 +222,7 @@ test('a hand offer requires the driver before leasing and attachment rechecks th
   }
 });
 
-test('work on a runner’s own repository goes to no runner, an older one included', async (t) => {
+test('a checkout that names no workspace driver cannot be registered', async (t) => {
   const f = await fixture(t);
-  await f.sessions.dispatch.heartbeatRunner(f.source, presence('bare', ['runner.2']));
-  await f.sessions.dispatch.heartbeatRunner(
-    f.source,
-    presence('repository', ['git.local', 'runner.2']),
-  );
-  // A runner from before `runner.2` does not say, and is no longer trusted to have one.
-  await f.sessions.dispatch.heartbeatRunner(f.source, presence('older'));
-  await f.local.start(f.source, { workflow: 'local', requestId: request() });
-  for (const runner of ['bare', 'repository', 'older'])
-    assert.deepEqual(await f.sessions.dispatch.lease(f.source, auto(runner)), {
-      session: null,
-      reason: 'runner_incompatible',
-    });
+  await assert.rejects(f.register('local', null), { code: 'invalid_workflow_policy' });
 });

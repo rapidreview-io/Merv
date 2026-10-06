@@ -1259,76 +1259,6 @@ test('both dispatch views require three consecutive recent deferred closes at th
   assert.deepEqual(await deferred(), [[], []]);
 });
 
-test('local-Git work is reported incompatible at once, whoever would supply machines', async (t) => {
-  const f = await fixture(t, {
-    workspace: {
-      mode: 'ephemeral',
-      namespace: 'work',
-      base: 'central',
-      retain: false,
-    },
-  });
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  const work = await f.instance();
-  let served = true;
-  t.after(
-    f.sessions.managed.registerValidator({
-      current: async () => false,
-      admits: async () => false,
-      serves: (projectId) => served && projectId === f.owner.projectId,
-    }),
-  );
-  const blocked = async () =>
-    (await f.sessions.dispatch.stuck(f.owner)).items.filter(
-      (item) => item.code === 'runner_incompatible',
-    );
-  const marks = async () => (await f.sessions.running.marks(f.owner)).marks;
-  const reported = async () => {
-    assert.deepEqual(
-      (await blocked()).map((item) => [item.kind, item.instanceId]),
-      [['work_blocked', work.id]],
-    );
-    assert.match((await blocked())[0].next, /frozen workspace policy/);
-    assert.match(JSON.stringify(await marks()), /No runner has this step/);
-  };
-  await reported();
-  // No runner has a repository of its own any more: neither Fleet's, nor the project's own.
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true, ownMachines: true });
-  await reported();
-  served = false;
-  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
-  await reported();
-  // With dispatch off, dispatch_disabled says why it waits instead.
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
-  assert.deepEqual(await blocked(), []);
-});
-
-test('Fleet does not label scratch or hosted-driver work as needing a local repository', async (t) => {
-  for (const workspace of [
-    { mode: 'none' as const },
-    {
-      mode: 'ephemeral' as const,
-      namespace: 'work',
-      base: 'central' as const,
-      retain: false,
-      driver: 'code.v2',
-    },
-  ]) {
-    const f = await fixture(t, { workspace });
-    await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-    await f.instance();
-    t.after(
-      f.sessions.managed.registerValidator({
-        current: async () => false,
-        admits: async () => false,
-        serves: () => true,
-      }),
-    );
-    assert.deepEqual((await f.sessions.dispatch.stuck(f.owner)).items, []);
-    assert.deepEqual((await f.sessions.running.marks(f.owner)).marks, []);
-  }
-});
-
 /**
  * session.stuck, system.status and the Running board read one dispatch reading: what each says
  * of why queued work does not move agrees, at every step of several fixtures.
@@ -1376,9 +1306,11 @@ async function views(f: Awaited<ReturnType<typeof fixture>>, step: string) {
   assert.deepEqual(
     byId(reading.quiet),
     byId(
-      of('ready_quiet', 'work_blocked')
-        .filter((item) => item.kind === 'ready_quiet' || item.code === 'runner_incompatible')
-        .map((item) => ({ instanceId: item.instanceId!, since: item.since, code: item.code })),
+      of('ready_quiet').map((item) => ({
+        instanceId: item.instanceId!,
+        since: item.since,
+        code: item.code,
+      })),
     ),
     step,
   );
@@ -1437,22 +1369,4 @@ test('the stuck report, the status read and the Running board agree on why work 
   assert.ok(deferred.id);
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
   assert.deepEqual(await views(f, 'off again'), ['work_deferred', 'dispatch_disabled']);
-});
-
-test('the three dispatch views agree while no runner can supply a local checkout', async (t) => {
-  const f = await fixture(t, {
-    workspace: { mode: 'ephemeral', namespace: 'work', base: 'central', retain: false },
-  });
-  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.instance();
-  t.after(
-    f.sessions.managed.registerValidator({
-      current: async () => false,
-      admits: async () => false,
-      serves: (projectId) => projectId === f.owner.projectId,
-    }),
-  );
-  assert.deepEqual(await views(f, 'fleet'), ['work_blocked']);
-  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
-  assert.deepEqual(await views(f, 'own runner'), ['work_blocked']);
 });

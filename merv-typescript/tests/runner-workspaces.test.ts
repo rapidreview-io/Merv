@@ -175,7 +175,13 @@ test('a scratch directory is the launch’s own, and Git work that names no driv
   await assert.rejects(
     f.manager.prepare(
       git,
-      f.session(git.id, { mode: 'ephemeral', namespace: 'n', base: 'central', retain: false }),
+      f.session(git.id, {
+        mode: 'ephemeral',
+        namespace: 'n',
+        base: 'reference:code',
+        retain: false,
+        driver: 'code.v2',
+      }),
     ),
     /workspace_repository_required/,
   );

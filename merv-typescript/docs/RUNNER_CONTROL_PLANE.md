@@ -154,19 +154,20 @@ controls while the API stays available. Neither HTTP registration nor the UI ada
 Workspace rules are part of the fixed execution policy owned by each assignment
 type. They are not separate task-type plugins.
 
-| Mode         | Intent                                                                                                                  |
-| ------------ | ----------------------------------------------------------------------------------------------------------------------- |
-| `none`       | Scratch space without a repository checkout                                                                             |
-| `ephemeral`  | Temporary checkout from central or an explicitly named reference                                                        |
-| `persistent` | Per-instance checkout, with declared retention, optional per-base identity and a reserved `advancesCentral` declaration |
+| Mode         | Intent                                                         |
+| ------------ | -------------------------------------------------------------- |
+| `none`       | Scratch space without a repository checkout                    |
+| `ephemeral`  | Temporary checkout of a named execution reference              |
+| `persistent` | Per-instance checkout of a named execution reference, retained |
 
-Namespaces must be safe single path segments. A referenced base names an entry in
-the frozen execution references; it must never silently fall back to central if
-missing. A read-only assignment cannot declare central publication. The machine
-Runner implements [Git resolution, preparation and capture](WORKSPACES.md), plus
-the fixed [Code commit protocol](CODE_OPERATIONS.md).
-Declaring `advancesCentral` does not itself publish a commit; the reviewed
-publication protocol remains open.
+Namespaces must be safe single path segments. Every checkout names the workspace
+driver that prepares it and a `reference:<name>` base, an entry in the frozen
+execution references; a missing entry is refused, never replaced. Registration
+refuses a checkout without a driver, the former `central` base, `perBase: true`
+and `advancesCentral: true`; persistent policies still carry the two flags as
+`false`, because registered versions' pinned fingerprints include them. The
+machine Runner implements [Git resolution, preparation and capture](WORKSPACES.md),
+plus the fixed [Code commit protocol](CODE_OPERATIONS.md).
 
 Omitted workspace policy means `none` through `effectiveWorkspace()`. That default
 is not materialized into old manifests, so existing pinned policy hashes and Task

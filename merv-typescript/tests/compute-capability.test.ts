@@ -12,12 +12,14 @@ const persistent = {
   perBase: false,
   retain: true,
   advancesCentral: false,
+  driver: 'code.v2',
 } as const;
 const ephemeral = {
   mode: 'ephemeral',
   namespace: 'task-reviews',
   base: 'reference:code',
   retain: false,
+  driver: 'code.v2',
 } as const;
 
 test('the default profile executes only writable work with a persistent workspace', () => {

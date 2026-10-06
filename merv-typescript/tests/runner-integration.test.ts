@@ -980,7 +980,7 @@ test(
 );
 
 test(
-  'a scratch runner is not offered work on a repository of its own, and nothing is counted',
+  'a runner is not offered work whose workspace driver it lacks, and nothing is counted',
   { timeout: 20_000 },
   async (t) => {
     const f = await fixture(t);
@@ -1032,9 +1032,10 @@ test(
                 mode: 'persistent',
                 namespace: 'test-work',
                 base: 'reference:code',
-                perBase: true,
+                perBase: false,
                 retain: true,
                 advancesCentral: false,
+                driver: 'probe.v1',
               },
             },
             lease: {
@@ -1060,7 +1061,7 @@ test(
     const runner = f.make();
     await runner.start();
     await f.enabled(true);
-    // No runner has a repository of its own, so the lease declines rather than failing work.
+    // The runner does not advertise the driver, so the lease declines rather than failing work.
     await until(
       () => runner.snapshot().lastDeclined === 'runner_incompatible',
       runner,

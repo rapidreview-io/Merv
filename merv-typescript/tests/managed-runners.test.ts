@@ -53,14 +53,14 @@ async function fixture(
       ? {
           mode: 'ephemeral',
           namespace: 'managed-review',
-          base: 'central',
+          base: 'reference:code',
           retain: false,
           driver: 'code.v2',
         }
       : {
           mode: 'persistent',
           namespace: 'managed-review',
-          base: 'central',
+          base: 'reference:code',
           perBase: false,
           retain: true,
           advancesCentral: false,
@@ -126,7 +126,9 @@ async function fixture(
                 }
               : {}),
         },
-        ...(options.codeWorkspace ? { references: () => ({ code: 'a'.repeat(40) }) } : {}),
+        ...(options.codeWorkspace || reviewWorkspace
+          ? { references: () => ({ code: 'a'.repeat(40) }) }
+          : {}),
         lease: {
           role: () => (service ? 'reviewer' : 'producer'),
           acquire: ({ leaseId }) => ({ leaseId }),

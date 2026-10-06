@@ -1001,7 +1001,7 @@ export class LeasedSessions implements Sessions {
     const workspace = effectiveWorkspace(frozen.execution.policy);
     // Dispatch chose this work by the capabilities the runner advertised; a work host's
     // runner is registered under its sponsor, not the phase source (a reviewer) offering here.
-    if (!dispatched && workspace.mode !== 'none' && workspace.driver !== undefined)
+    if (!dispatched && workspace.mode !== 'none')
       check(
         await this.dispatch.capable(caller, input.runnerId, workspace.driver, tx),
         'runner_incompatible',
@@ -1340,7 +1340,7 @@ export class LeasedSessions implements Sessions {
         409,
       );
       // A hand offer names its runner itself, so the driver it needs is asked for here too.
-      if (policy.mode !== 'none' && policy.driver !== undefined)
+      if (policy.mode !== 'none')
         check(
           await this.dispatch.capable(
             caller.managed ? (await this.managed.require(caller, tx)).sourceCaller : caller,
@@ -1353,24 +1353,22 @@ export class LeasedSessions implements Sessions {
           409,
         );
       if (workspace && policy.mode !== 'none') {
-        if (policy.base.startsWith('reference:')) {
-          const name = policy.base.slice('reference:'.length);
-          const oid = Object.hasOwn(session.execution.references, name)
-            ? session.execution.references[name]
-            : undefined;
-          check(
-            typeof oid === 'string' && oidPattern.test(oid),
-            'workspace_reference_unavailable',
-            'Frozen workspace reference must name an exact Git commit',
-            409,
-          );
-          check(
-            workspace.baseOid === oid,
-            'workspace_base_conflict',
-            'Workspace base differs from the frozen commit reference',
-            409,
-          );
-        }
+        const name = policy.base.slice('reference:'.length);
+        const oid = Object.hasOwn(session.execution.references, name)
+          ? session.execution.references[name]
+          : undefined;
+        check(
+          typeof oid === 'string' && oidPattern.test(oid),
+          'workspace_reference_unavailable',
+          'Frozen workspace reference must name an exact Git commit',
+          409,
+        );
+        check(
+          workspace.baseOid === oid,
+          'workspace_base_conflict',
+          'Workspace base differs from the frozen commit reference',
+          409,
+        );
         if (session.workspace) {
           check(
             canonical(session.workspace.attachment) === canonical(workspace),

@@ -59,8 +59,9 @@ const policy = (workspace: boolean): WorkflowPolicy => ({
               workspace: {
                 mode: 'ephemeral' as const,
                 namespace: 'probe',
-                base: 'central' as const,
+                base: 'reference:base' as const,
                 retain: false,
+                driver: 'probe.v1',
               },
             }
           : {}),

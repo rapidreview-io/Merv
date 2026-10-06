@@ -94,9 +94,10 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
               mode: 'persistent',
               namespace: 'reload',
               base: 'reference:code',
-              perBase: true,
+              perBase: false,
               retain: true,
               advancesCentral: false,
+              driver: 'code.v2',
             },
           },
           references: () => ({ code: oid('a') }),
@@ -124,6 +125,14 @@ test('Cordis Code removal withdraws its tools, controls and UI while commands an
     assert.equal(response.status, 200, JSON.stringify(response));
     return response.body;
   };
+  // The runner offered the work advertises the driver its workspace names.
+  await app.ctx.sessions.dispatch.heartbeatRunner(source, {
+    runnerId: 'runner',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
   const secret = `ms_${randomBytes(32).toString('base64url')}`;
   const { session } = await ok('/sessions/offer', {
     instanceId: instance.id,

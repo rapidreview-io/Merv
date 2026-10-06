@@ -80,16 +80,6 @@ const stuckKinds: StuckKind[] = [
   'no_live_runner',
   'runner_refusing',
 ];
-const localGitWhy =
-  'This step requires a runner’s local Git repository, and no runner has one any more.';
-const localGitNext =
-  'Prepare hosted Code and create replacement work using it. Preparing Code does not change this existing work’s frozen workspace policy.';
-/** Git work that names no driver needed a runner's own repository, which no runner has. */
-function localGitBlocked(queue: readonly WorkflowDispatchCandidate[]): WorkflowDispatchCandidate[] {
-  return queue.filter(
-    (item) => item.workspace.mode !== 'none' && item.workspace.driver === undefined,
-  );
-}
 const stuckLimit = 200;
 /** Why queued work does not start: the first of the reading's stalls. */
 export type DispatchStall = 'dispatch_disabled' | 'no_live_runner' | 'runner_refusing';
@@ -125,16 +115,11 @@ export interface DispatchReading {
    * operator, while the scan still offers them.
    */
   deferred: { instanceId: string; attempts: number }[];
-  /** Ready work waiting beyond quietReadySeconds, or immediately incompatible with Fleet; operator only. */
+  /** Ready work waiting beyond quietReadySeconds; operator only. */
   quiet: {
     instanceId: string;
     since: string;
-    code:
-      | 'queued'
-      | 'budget_exceeded'
-      | 'usage_unavailable'
-      | 'awaiting_operator'
-      | 'runner_incompatible';
+    code: 'queued' | 'budget_exceeded' | 'usage_unavailable' | 'awaiting_operator';
   }[];
 }
 /** A runner as the dispatch reading holds it: whether Fleet rents it, and its live leases. */
@@ -154,7 +139,7 @@ interface Reading {
   waiting: Map<string, WorkflowDispatchCandidate>;
   /** Targets the last machines to take them could not prepare, three closes running. */
   deferred: Map<string, Close[]>;
-  /** Ready work waiting beyond quietReadySeconds, or immediately incompatible with Fleet. */
+  /** Ready work waiting beyond quietReadySeconds. */
   quiet: { item: WorkflowDispatchCandidate; code: DispatchReading['quiet'][number]['code'] }[];
   /** Why queued work does not start, in this order; nothing while nothing is queued. */
   stalls: (
@@ -257,7 +242,6 @@ async function readingOf(
     failing,
     recent,
   );
-  const incompatible = new Set(localGitBlocked(dispatch.enabled ? queue : []).map(targetKey));
   const quiet = all.flatMap((item) => {
     const key = targetKey(item),
       step = item.role === 'operator';
@@ -266,20 +250,17 @@ async function readingOf(
       leased.has(key) ||
       failing.has(key) ||
       deferred.has(key) ||
-      (!incompatible.has(key) &&
-        Date.parse(item.updatedAt) + ctx.thresholds.quietReadySeconds * 1000 > now) ||
+      Date.parse(item.updatedAt) + ctx.thresholds.quietReadySeconds * 1000 > now ||
       (!step && !dispatch.enabled)
     )
       return [];
     const code = step
       ? 'awaiting_operator'
-      : incompatible.has(key)
-        ? 'runner_incompatible'
-        : unaccounted.has(item.instanceId)
-          ? 'usage_unavailable'
-          : spent.has(item.instanceId)
-            ? 'budget_exceeded'
-            : 'queued';
+      : unaccounted.has(item.instanceId)
+        ? 'usage_unavailable'
+        : spent.has(item.instanceId)
+          ? 'budget_exceeded'
+          : 'queued';
     return [{ item, code } as const];
   });
   // Why the queue does not start; where Fleet rents for this project, its machines are the
@@ -396,35 +377,23 @@ async function attention(
   }
   for (const { item, code } of quiet) {
     const { instanceId, expectedRevision, label, updatedAt: since } = item;
-    if (code === 'runner_incompatible')
-      add({
-        kind: 'work_blocked',
-        instanceId,
-        expectedRevision,
-        label,
-        since,
-        code,
-        why: localGitWhy,
-        next: localGitNext,
-      });
-    else
-      add({
-        kind: 'ready_quiet',
-        instanceId,
-        expectedRevision,
-        label,
-        since,
-        code,
-        why: 'This step is ready and no session holds it. The clock is the record’s last revision change, so a step released after a long session is quiet at once.',
-        next:
-          code === 'awaiting_operator'
-            ? 'It is an operator’s step: no runner is ever offered it. workflow.status_and_next on the instance names the action.'
-            : code === 'usage_unavailable'
-              ? 'A budget covers it that cannot be judged: a session in its scope was activated and reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
-              : code === 'budget_exceeded'
-                ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
-                : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
-      });
+    add({
+      kind: 'ready_quiet',
+      instanceId,
+      expectedRevision,
+      label,
+      since,
+      code,
+      why: 'This step is ready and no session holds it. The clock is the record’s last revision change, so a step released after a long session is quiet at once.',
+      next:
+        code === 'awaiting_operator'
+          ? 'It is an operator’s step: no runner is ever offered it. workflow.status_and_next on the instance names the action.'
+          : code === 'usage_unavailable'
+            ? 'A budget covers it that cannot be judged: a session in its scope was activated and reported no usage, or the dependency closure it budgets is too large to walk. usage.read names the budget and the unreported count; the usage arriving, or usage.set_budget clearing that bound, resumes it.'
+            : code === 'budget_exceeded'
+              ? 'A reached budget withholds it; usage.read shows which, and usage.set_budget raises or clears it.'
+              : 'Read the other items of this report for the cause; a runner with free capacity takes it on its next poll.',
+    });
   }
   for (const stall of reading.stalls)
     if (stall.code === 'dispatch_disabled')

@@ -89,9 +89,10 @@ async function fixture(t: TestContext) {
             mode: 'persistent',
             namespace: 'capture',
             base: 'reference:code',
-            perBase: true,
+            perBase: false,
             retain: true,
             advancesCentral: false,
+            driver: 'code.v2',
           },
         },
         references: () => ({ code: oid('a') }),
@@ -124,6 +125,14 @@ async function fixture(t: TestContext) {
   };
   const reader = await issue('reader'),
     admin = await issue('operator');
+  // The runner offered the work advertises the driver its workspace names.
+  await app.ctx.sessions.dispatch.heartbeatRunner(source, {
+    runnerId: 'capture-runner',
+    machine: { hostname: 'fixture', system: 'test', architecture: 'test' },
+    platforms: [{ name: 'test', harness: 'codex', enabled: true, parallelism: 4 }],
+    capacity: 4,
+    capabilities: ['code.v2'],
+  });
   let sequence = 0;
   async function offer(attach = true) {
     const instance = await handle.start(source, {

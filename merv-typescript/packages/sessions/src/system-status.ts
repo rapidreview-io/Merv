@@ -81,7 +81,7 @@ export async function systemStatus(caller: Caller, sessions: Sessions) {
         updatedAt: item.updatedAt,
         workspace: {
           mode: item.workspace.mode,
-          driver: 'driver' in item.workspace ? (item.workspace.driver ?? null) : null,
+          driver: item.workspace.mode === 'none' ? null : item.workspace.driver,
         },
       })),
       truncated: project.queueTotal > project.queue.length,
