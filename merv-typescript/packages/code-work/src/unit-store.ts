@@ -180,7 +180,9 @@ export class WorkUnitRecords {
   /**
    * Every accepted commit this repository holds, with the unit it belongs to and the main to
    * compare them against. Whether main already contains one is a question for Git, which is
-   * asked once, outside every transaction, by whoever holds the repository.
+   * asked once, outside every transaction, by whoever holds the repository. A pull request
+   * closed unmerged rejected its unit and every acceptance its base was made from, so none of
+   * them is offered again.
    */
   async acceptedCandidates(
     caller: Caller,
@@ -196,13 +198,20 @@ export class WorkUnitRecords {
       const project = await this.project(tx, caller.projectId);
       check(project, 'code_project_unbound', 'This project has no Code binding', 409);
       const candidates: { unitId: string; commit: string; quarantined: boolean }[] = [];
-      for (const row of await tx.all<UnitRow>(
+      const rows = await tx.all<UnitRow>(
         `SELECT ${unitColumns} FROM code_units WHERE project_id=? AND acceptance_json IS NOT NULL ORDER BY unit_id`,
         caller.projectId,
-      )) {
+      );
+      const rejected = new Set<string>();
+      for (const row of rows)
+        if ((await this.publicationOf(tx, caller.projectId, row))?.state === 'closed') {
+          rejected.add(row.unit_id);
+          this.pin(row)?.sources.forEach((source) => rejected.add(source.unitId));
+        }
+      for (const row of rows) {
         const accepted = JSON.parse(row.acceptance_json!) as AcceptanceBody;
         // A code-less success is nothing main could be missing.
-        if (!accepted.code) continue;
+        if (!accepted.code || rejected.has(row.unit_id)) continue;
         candidates.push({
           unitId: row.unit_id,
           commit: accepted.code.commit,

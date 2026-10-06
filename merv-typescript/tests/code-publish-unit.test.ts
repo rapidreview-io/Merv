@@ -1088,6 +1088,30 @@ test('a pull request closed unmerged wakes whoever waits on its publication', as
   assert.deepEqual(await staleWakes(f), ['closed'], 'a settled publication wakes nobody again');
 });
 
+test('a pull request closed unmerged rejects its unit and the units it integrated', async (t) => {
+  const f = await fixture(t, true);
+  await f.canary();
+  const dependency = await f.declare('Dependency');
+  await f.accept(dependency, f.feature);
+  const other = await f.declare('Other');
+  await f.accept(other, f.clashing);
+  const work = await f.declare('Consolidation', [dependency.id]);
+  await f.publishes(work);
+  await f.bases.work(f.admin.projectId);
+  await f.pin(work);
+  await f.accept(work, f.feature);
+  await f.sync();
+  assert.deepEqual(
+    (await f.code.acceptedSince(f.admin)).unitIds,
+    [dependency.id, other.id, work.id].sort(),
+  );
+  f.remote!.pulls[0].state = 'closed';
+  await f.sync();
+  assert.equal((await f.code.unit(f.admin, work.id)).publication?.state, 'closed');
+  // A rejection is durable: no later consolidation is offered the rejected code again.
+  assert.deepEqual((await f.code.acceptedSince(f.admin)).unitIds, [other.id]);
+});
+
 test('verification retries a failed merge-commit import with a fresh attempt, a bounded number of times', async (t) => {
   const f = await fixture(t, true, true, 1);
   const { work, publication } = await opened(f);
