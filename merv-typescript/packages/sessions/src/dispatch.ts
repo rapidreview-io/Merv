@@ -392,8 +392,6 @@ class PoisonedOffer extends Error {
   }
 }
 export class SessionDispatch {
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   /** `${ownerHash} ${targetKey}` of a silent offer failure, until when that owner passes it over. */
   private readonly passed = new Map<string, number>();
   private passing(ownerHash: string): Set<string> {
@@ -411,13 +409,13 @@ export class SessionDispatch {
     private hooks: Hooks,
     private clock: () => number,
     private thresholds: StuckReport['thresholds'],
-  ) {
-    this.initialize = async () => {
-      await state.migrate(
-        'session_dispatch',
-        Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
-      );
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate(
+      'session_dispatch',
+      Object.entries(postgresMigrations).map(([version, sql]) => ({ version: +version, sql })),
+    );
   }
   /** An entry point's first checks: Sessions is open, and the caller is no managed runner. */
   private enter(caller?: Caller): void {

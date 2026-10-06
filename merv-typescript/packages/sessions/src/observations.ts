@@ -59,23 +59,16 @@ export function lastActivity(
 
 /** Metadata only: never retain arguments, results, error messages or credentials. */
 export class AgentObservations {
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
   constructor(
     private state: State,
     private scope: Scope,
     private clock: () => number,
     /** Refuses once Sessions has closed. */
     private available: () => void,
-  ) {
-    this.initialize = async () => {
-      await state.migrate('session_tool_calls', [
-        {
-          version: 1,
-          sql: postgresMigrations[1],
-        },
-      ]);
-    };
+  ) {}
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    await this.state.migrate('session_tool_calls', [{ version: 1, sql: postgresMigrations[1] }]);
   }
 
   async start(id: string, executionId: string, tool: string, input: unknown): Promise<void> {

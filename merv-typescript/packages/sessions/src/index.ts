@@ -341,8 +341,7 @@ export class LeasedSessions implements Sessions {
   observations!: AgentObservations;
   managed!: ManagedRunnerBindings;
   private credentials!: CredentialStore;
-  /** Complete storage migrations before publishing this service. */
-  initialize!: () => Promise<void>;
+  private readonly config: z.output<typeof configSchema>;
   constructor(
     private readonly state: State,
     private readonly scope: Scope,
@@ -353,149 +352,150 @@ export class LeasedSessions implements Sessions {
     tuning: Partial<StuckReport['thresholds']> = {},
   ) {
     // A clock function is a test hook, not configuration; JSON config can never supply one.
-    const config = parsed(
+    this.config = parsed(
       configSchema,
       typeof options?.clock === 'function' ? { ...options, clock: undefined } : options,
       'invalid_sessions_config',
     );
-    this.initialize = async () => {
-      this.clock = options.clock ?? Date.now;
-      this.thresholds = { ...thresholds, ...tuning };
-      await state.migrate(
-        'sessions',
-        Object.entries({ ...postgresMigrations, 8: managedNoncePostgresMigration }).map(
-          ([version, sql]) => ({ version: +version, sql }),
-        ),
-      );
-      // What each part Sessions hands a call to checks first: that Sessions is still open.
-      const available = () => this.ensureOpen();
-      this.credentials = new CredentialStore(state, this.clock);
-      await this.credentials.initialize();
-      this.managed = new ManagedRunnerBindings(
-        state,
-        scope,
-        this.clock,
-        config.managedSecretEnv,
-        this.credentials,
-        available,
-      );
-      this.directory = await createService(
-        new AgentDirectory(state, scope, this.clock, this.credentials),
-      );
-      this.observations = await createService(
-        new AgentObservations(state, scope, this.clock, available),
-      );
-      this.dispatch = await createService(
-        new SessionDispatch(
-          state,
-          scope,
-          workflows,
-          this.observations,
-          {
-            managed: this.managed,
-            available,
-            byDefault: config.dispatchByDefault,
-            prepare: async (caller) => await this.prepareControl(caller),
-            offer: async (caller, input, tx) =>
-              await this.offerTransaction(caller, input, tx, true),
-            close: async (session, reason, tx) => {
-              // A session whose record already moved is closed by what moved it, not by the halt;
-              // a re-check that could not run (the program away) halts it all the same.
-              const closed = await this.reconcile(session, tx);
-              if (closed && closed.status < 500) return false;
-              await this.closeSession(session, reason, tx, 'released', 'halted');
-              return true;
-            },
-          },
-          this.clock,
-          this.thresholds,
-        ),
-      );
-      // After the session and dispatch tables, which a transcript row names and reads.
-      this.transcripts = await createService(
-        new SessionTranscripts(state, this.clock, (caller, id, runnerId, tx) =>
-          this.controlled(caller, id, runnerId, tx),
-        ),
-      );
-      this.streams = await createService(
-        new SessionStreams(
-          state,
-          scope,
-          this.clock,
-          (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx, BARE),
-          available,
-        ),
-      );
-      this.conversations = await createService(
-        new SessionConversations(
-          state,
-          this.clock,
-          (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
-          async (agentId, reason, tx) => {
-            const agent = await this.directory.get(agentId, tx);
-            if (!agent.persistent && !(await this.currentAgentExecution(agent, tx)))
-              await this.directory.retire(agent, reason, tx);
-          },
-          available,
-        ),
-      );
-      this.messaging = new SessionMessages(state, scope, this.clock, {
-        transaction: (fn) => this.transaction(fn),
-        reading: (fn) => this.reading(fn),
-        row: (tx, id) => this.row(tx, id),
-        decode: (row) => this.decode(row),
-        valid: (session, tx) => this.valid(session, tx),
-      });
-      this.invocations = new SessionInvocations(this.observations, this.clock, {
-        open: () => this.ensureOpen(),
-        closed: () => this.closed,
-        reading: (fn) => this.reading(fn),
-        session: (caller, tx) => this.session(caller, tx),
-        valid: (session, tx, frozen) => this.valid(session, tx, frozen),
-        acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
-      });
-      this.running = new SessionRunning(
-        state,
-        scope,
-        this.dispatch,
-        this.clock,
-        this.thresholds,
-        available,
-      );
-      this.serviceWork = new SessionServiceWork(
+    this.clock = options.clock ?? Date.now;
+    this.thresholds = { ...thresholds, ...tuning };
+  }
+  /** Complete storage migrations before publishing this service. */
+  async initialize(): Promise<void> {
+    const { state, scope, workflows, config } = this;
+    await state.migrate(
+      'sessions',
+      Object.entries({ ...postgresMigrations, 8: managedNoncePostgresMigration }).map(
+        ([version, sql]) => ({ version: +version, sql }),
+      ),
+    );
+    // What each part Sessions hands a call to checks first: that Sessions is still open.
+    const available = () => this.ensureOpen();
+    this.credentials = new CredentialStore(state, this.clock);
+    await this.credentials.initialize();
+    this.managed = new ManagedRunnerBindings(
+      state,
+      scope,
+      this.clock,
+      config.managedSecretEnv,
+      this.credentials,
+      available,
+    );
+    this.directory = await createService(
+      new AgentDirectory(state, scope, this.clock, this.credentials),
+    );
+    this.observations = await createService(
+      new AgentObservations(state, scope, this.clock, available),
+    );
+    this.dispatch = await createService(
+      new SessionDispatch(
         state,
         scope,
         workflows,
+        this.observations,
+        {
+          managed: this.managed,
+          available,
+          byDefault: config.dispatchByDefault,
+          prepare: async (caller) => await this.prepareControl(caller),
+          offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx, true),
+          close: async (session, reason, tx) => {
+            // A session whose record already moved is closed by what moved it, not by the halt;
+            // a re-check that could not run (the program away) halts it all the same.
+            const closed = await this.reconcile(session, tx);
+            if (closed && closed.status < 500) return false;
+            await this.closeSession(session, reason, tx, 'released', 'halted');
+            return true;
+          },
+        },
         this.clock,
-        config.serviceConcurrency,
-        async (projectId, tx) => (await this.dispatch.dispatch(projectId, tx)).enabled,
+        this.thresholds,
+      ),
+    );
+    // After the session and dispatch tables, which a transcript row names and reads.
+    this.transcripts = await createService(
+      new SessionTranscripts(state, this.clock, (caller, id, runnerId, tx) =>
+        this.controlled(caller, id, runnerId, tx),
+      ),
+    );
+    this.streams = await createService(
+      new SessionStreams(
+        state,
+        scope,
+        this.clock,
+        (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx, BARE),
+        available,
+      ),
+    );
+    this.conversations = await createService(
+      new SessionConversations(
+        state,
+        this.clock,
+        (caller, id, runnerId, tx) => this.controlled(caller, id, runnerId, tx),
+        async (agentId, reason, tx) => {
+          const agent = await this.directory.get(agentId, tx);
+          if (!agent.persistent && !(await this.currentAgentExecution(agent, tx)))
+            await this.directory.retire(agent, reason, tx);
+        },
+        available,
+      ),
+    );
+    this.messaging = new SessionMessages(state, scope, this.clock, {
+      transaction: (fn) => this.transaction(fn),
+      reading: (fn) => this.reading(fn),
+      row: (tx, id) => this.row(tx, id),
+      decode: (row) => this.decode(row),
+      valid: (session, tx) => this.valid(session, tx),
+    });
+    this.invocations = new SessionInvocations(this.observations, this.clock, {
+      open: () => this.ensureOpen(),
+      closed: () => this.closed,
+      reading: (fn) => this.reading(fn),
+      session: (caller, tx) => this.session(caller, tx),
+      valid: (session, tx, frozen) => this.valid(session, tx, frozen),
+      acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
+    });
+    this.running = new SessionRunning(
+      state,
+      scope,
+      this.dispatch,
+      this.clock,
+      this.thresholds,
+      available,
+    );
+    this.serviceWork = new SessionServiceWork(
+      state,
+      scope,
+      workflows,
+      this.clock,
+      config.serviceConcurrency,
+      async (projectId, tx) => (await this.dispatch.dispatch(projectId, tx)).enabled,
+    );
+    await this.serviceWork.initialize();
+    try {
+      this.disposers.push(
+        scope.registerSessionAuthority({
+          require: async (caller, tx, permission) => await this.guard(caller, tx, permission),
+        }),
       );
-      await this.serviceWork.initialize();
-      try {
-        this.disposers.push(
-          scope.registerSessionAuthority({
-            require: async (caller, tx, permission) => await this.guard(caller, tx, permission),
-          }),
-        );
-        this.disposers.push(
-          scope.registerManagedRunnerAuthority({
-            require: async (caller, tx) =>
-              JSON.parse((await this.managed.require(caller, tx)).row.source_json),
-          }),
-        );
-        // Older than any client waits for a call: another live process's may be younger.
-        await this.observations.interrupt(isoNow(() => this.clock() - 180_000));
-        this.timer = setInterval(() => {
-          this.sweeping ??= this.alone('sweep', () =>
-            this.pass(this.clock() - this.checkedAt >= 30_000),
-          ).finally(() => (this.sweeping = undefined));
-        }, config.sweepIntervalMs);
-        this.timer.unref();
-      } catch (error) {
-        await this.close();
-        throw error;
-      }
-    };
+      this.disposers.push(
+        scope.registerManagedRunnerAuthority({
+          require: async (caller, tx) =>
+            JSON.parse((await this.managed.require(caller, tx)).row.source_json),
+        }),
+      );
+      // Older than any client waits for a call: another live process's may be younger.
+      await this.observations.interrupt(isoNow(() => this.clock() - 180_000));
+      this.timer = setInterval(() => {
+        this.sweeping ??= this.alone('sweep', () =>
+          this.pass(this.clock() - this.checkedAt >= 30_000),
+        ).finally(() => (this.sweeping = undefined));
+      }, config.sweepIntervalMs);
+      this.timer.unref();
+    } catch (error) {
+      await this.close();
+      throw error;
+    }
   }
   private clock!: () => number;
   private thresholds!: StuckReport['thresholds'];
