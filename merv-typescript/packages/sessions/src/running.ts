@@ -27,6 +27,7 @@ import type { AgentEvent, AgentStreamSession } from '@merv/contracts';
 import { freshForMs, type DispatchReading, type SessionDispatch } from './dispatch.js';
 import { lastActivity } from './observations.js';
 import { ordinary as unmanaged, text, workNameOf } from './common.js';
+import { platformPhrase } from './rules.js';
 import type {
   Agent,
   SessionPlatform,
@@ -366,8 +367,6 @@ export function briefText(brief: string): { text: string; truncated: boolean } {
   const end = brief.lastIndexOf('\n', briefCap);
   return { text: brief.slice(0, end > 0 ? end : briefCap).trimEnd(), truncated: true };
 }
-const platformPhrase = (platform: SessionPlatform) =>
-  [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
 
 interface PanelRow extends LeaseRow {
   closed_at: string | null;

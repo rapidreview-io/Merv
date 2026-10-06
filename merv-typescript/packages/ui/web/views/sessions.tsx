@@ -42,12 +42,11 @@ import type {
   SessionSummary,
   SessionsProjectStatus,
 } from '@merv/sessions/models';
+import { platformPhrase } from '@merv/sessions/rules';
 
 const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 /** How much of a list this read holds: all of it, or the newest part of a larger total. */
 const portion = (shown: number, total: number) => (total > shown ? `${shown} of ${total}` : total);
-const platformPhrase = (platform: NonNullable<SessionSummary['platform']>) =>
-  [platform.name, platform.model, platform.effort].filter(Boolean).join(' · ');
 /** What a runner offers, in its own order; a platform it has paused says so. */
 const platformList = (platforms: RunnerPlatform[]) =>
   platforms
@@ -261,17 +260,11 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
       state.reload();
     },
   });
-  // The lease's work item is named by the lists the page's siblings already own.
-  const taskRow = shell.rows.find((entry) => entry.view.kind === 'tasks');
-  const experimentRow = shell.rows.find((entry) => entry.view.kind === 'experiments');
-  const tasks = useTool<{ id: string }[]>(taskRow ? 'task.list' : null);
-  const experiments = useTool<{ id: string }[]>(experimentRow ? 'experiment.list' : null);
-  const routeOf = (instanceId: string) =>
-    tasks.data?.some((task) => task.id === instanceId)
-      ? { to: `${taskRow!.path}/${instanceId}`, kind: 'tasks' }
-      : experiments.data?.some((experiment) => experiment.id === instanceId)
-        ? { to: `${experimentRow!.path}/${instanceId}`, kind: 'experiments' }
-        : undefined;
+  // A lease's record opens on the row that lists its workflow, as a record a text names does.
+  const routeOf = ({ workflow, instanceId }: SessionSummary) => {
+    const owner = workflow && shell.rows.find((entry) => entry.workflow === workflow);
+    return owner ? { to: `${owner.path}/${instanceId}`, kind: owner.view.kind } : undefined;
+  };
   // Every machine Fleet was asked for, the ended ones too: its own page, a step further.
   const fleet = shell.rows.find((entry) => entry.id === 'fleet');
   const retired = agents.filter((agent) => agent.status === 'retired').length;
@@ -462,7 +455,7 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
                     key={session.id}
                     session={session}
                     now={now}
-                    route={routeOf(session.instanceId)}
+                    route={routeOf(session)}
                     name={agentName.get(session.agentId ?? '')}
                     canManage={status.canManage}
                     reload={state.reload}

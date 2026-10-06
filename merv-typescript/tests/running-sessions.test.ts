@@ -313,9 +313,10 @@ test('an offered lease is dashed and starting, on the machine that took it, even
   assert.equal(board.lanes.sessions.needsYou, 0);
   noIds(board);
   const [summary] = (await f.sessions.dispatch.projectStatus(f.owner)).sessions;
+  // The lease names its record's workflow, so the Agents page opens it on that workflow's row.
   assert.deepEqual(
-    [summary?.label, summary?.name],
-    ['Work: Rebuild citation index', 'Rebuild citation index'],
+    [summary?.label, summary?.name, summary?.workflow],
+    ['Work: Rebuild citation index', 'Rebuild citation index', 'running-fixture'],
   );
 });
 

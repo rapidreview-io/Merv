@@ -1478,6 +1478,7 @@ export class SessionDispatch {
           SessionRow & {
             label: string;
             name: string;
+            workflow: string | null;
             workspace_mode: SessionSummary['workspaceMode'] | null;
             runner_ref: string | null;
             platform_json: string | null;
@@ -1488,7 +1489,7 @@ export class SessionDispatch {
           // A frozen assignment can be half a megabyte: the 200 rows are chosen first, and each is
           // parsed once, in SQL, and sent without its assignment, execution, lease and source.
           `SELECT s.id,(x.j - '{assignment,execution,lease,source}'::text[])::text AS session_json,x.j #>> '{assignment,label}' AS label,
-            ${workNameOf('x.j')} AS name,x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
+            ${workNameOf('x.j')} AS name,x.j #>> '{execution,workflow}' AS workflow,x.j #>> '{execution,policy,workspace,mode}' AS workspace_mode,d.runner_ref,d.platform_json,w.attachment_json,w.result_json
             FROM (SELECT * FROM worker_sessions WHERE project_id=? ORDER BY CASE WHEN status IN ('offered','active') THEN 0 ELSE 1 END,_merv_rowid DESC LIMIT 200) s
             CROSS JOIN LATERAL (SELECT s.session_json::jsonb AS j OFFSET 0) x LEFT JOIN session_dispatch_receipts d ON d.session_id=s.id
             LEFT JOIN session_workspaces w ON w.session_id=s.id ORDER BY CASE WHEN s.status IN ('offered','active') THEN 0 ELSE 1 END,s._merv_rowid DESC`,
@@ -1509,6 +1510,7 @@ export class SessionDispatch {
           agentSessionId: session.agentSessionId,
           actorId: session.actorId,
           instanceId: session.instanceId,
+          ...(row.workflow ? { workflow: row.workflow } : {}),
           expectedRevision: session.expectedRevision,
           role: session.role,
           status: session.status,

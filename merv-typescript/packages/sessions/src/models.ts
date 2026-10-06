@@ -183,6 +183,8 @@ export interface SessionSummary {
   actorId?: string;
   id: string;
   instanceId: string;
+  /** The workflow of the record this lease works on, from its frozen execution. */
+  workflow?: string;
   expectedRevision: number;
   role: SessionRole;
   status: SessionStatus;

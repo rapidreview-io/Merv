@@ -286,6 +286,59 @@ test('leases open on what is live or recent; the older history is one control aw
   assert.ok(!text().includes('Show all'), 'nothing is left to show');
 });
 
+test('a lease opens on the row that lists its workflow, without reading any owner list', async (t) => {
+  t.after(unmount);
+  const lease = status().sessions[0];
+  const sessions = [
+    { ...lease, id: 'sess_t', name: 'A task', instanceId: 'wf_t', workflow: 'task' },
+    { ...lease, id: 'sess_r', name: 'A wave', instanceId: 'wf_r', workflow: 'reflection' },
+    { ...lease, id: 'sess_x', name: 'Unlisted', instanceId: 'wf_x', workflow: 'research' },
+    { ...lease, id: 'sess_o', name: 'Older lease', instanceId: 'wf_o' },
+  ];
+  const listing = (id: string, workflow: string, kind: string) => ({
+    ...row,
+    id,
+    path: `/${id}`,
+    group: 'hidden',
+    workflow,
+    view: { kind },
+  });
+  const rows = [
+    work,
+    row,
+    listing('tasks', 'task', 'tasks'),
+    listing('reflections', 'reflection', 'reflections'),
+  ];
+  serve('/tools/ui.read', () => read({ sessions, sessionTotal: 4, liveSessionCount: 4 }));
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/sessions'] },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(AgentsPage as any, { row, shell: { ...shell, rows }, me: 'actor_me' }),
+    ),
+  );
+  const linkOf = async (name: string) => {
+    const toggle = [...document.querySelectorAll<HTMLButtonElement>('.lease-row')].find((button) =>
+      button.textContent?.includes(name),
+    )!;
+    await act(async () => toggle.click());
+    const link = document.querySelector('.lease-panel a');
+    const href = link?.getAttribute('href') ?? null;
+    await act(async () => toggle.click());
+    return href;
+  };
+  assert.equal(await linkOf('A task'), '/tasks/wf_t');
+  assert.equal(await linkOf('A wave'), '/reflections/wf_r');
+  // A workflow no row lists, and a lease that names none, open nothing.
+  assert.equal(await linkOf('Unlisted'), null);
+  assert.equal(await linkOf('Older lease'), null);
+  assert.ok(
+    !requests.some((path) => /task\.list|experiment\.list/.test(path)),
+    requests.join(', '),
+  );
+});
+
 test('a failed lease shows both the outcome and the runner exit reason', async (t) => {
   t.after(unmount);
   const ended = {
