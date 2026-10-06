@@ -356,6 +356,9 @@ export class CodePublicationService implements CodePublicationApi {
           row.proposal_id,
         );
         await this.host.reconcile(caller, tx);
+        await recorded(this.state, tx, caller, 'code.publication_stale', row.proposal_id, {
+          unitId: current.instanceId,
+        });
         return;
       }
       await tx.run(
@@ -662,6 +665,10 @@ export class CodePublicationService implements CodePublicationApi {
                   record.proposalId,
                 );
               await this.host.reconcile(caller, tx);
+              // A consumer waiting on this publication learns that a successor must take it.
+              await recorded(this.state, tx, caller, 'code.publication_stale', record.proposalId, {
+                unitId: record.instanceId,
+              });
             });
             return this.decode(
               await this.state.transaction((tx) => this.row(caller, record.proposalId, tx)),

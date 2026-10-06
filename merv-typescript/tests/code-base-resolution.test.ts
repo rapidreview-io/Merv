@@ -1468,6 +1468,7 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
   await f.workflows.extendLimit(f.admin, grant);
   const resumed = await f.tasks.get(f.admin, taskId);
   assert.equal(resumed.workflow.state, 'in_progress');
+  assert.equal(resumed.failure, null, 'a resumed task no longer reads as failed');
   assert.deepEqual(resumed.workflow.data.rejectedReviewIds, ids);
   await f.workflows.extendLimit(f.admin, grant);
   assert.equal((await f.tasks.get(f.admin, taskId)).workflow.revision, resumed.workflow.revision);
@@ -1494,9 +1495,11 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
     reason: 'The next round was abandoned before submission.',
   });
   assert.equal(stopped.workflow.state, 'suspended');
+  assert.equal(stopped.failure!.reason, 'The next round was abandoned before submission.');
   await f.workflows.extendLimit(f.admin, { ...grant, requestId: 'resume-again' });
   const continued = await f.tasks.get(f.admin, taskId);
   assert.equal(continued.workflow.state, 'in_progress');
+  assert.equal(continued.failure, null);
   assert.deepEqual(continued.workflow.data.rejectedReviewIds, ids);
   const feedback = await f.tasks.context(f.admin, {
     taskId,

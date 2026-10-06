@@ -42,13 +42,14 @@ export async function automaticResearch(
   ) => Promise<ResearchAutomation['blocker']>,
 ): Promise<() => void | Promise<void>> {
   return await events.subscribe({
-    id: 'research.automatic.v2',
+    id: 'research.automatic.v3',
     // New subscriptions start here; bindAutomatic's startup wake revisits every open cycle.
     from: 'now',
     types: [
       'workflow.transition',
       'workflow.limit_extended',
       'code.publication_verified',
+      'code.publication_stale',
       'research.created',
       'research.resume',
       'paper.patched',

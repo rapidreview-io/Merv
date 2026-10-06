@@ -10,6 +10,7 @@ const readSchema = z
     kind: kind.optional(),
     history: z.boolean().optional(),
     section: id.optional(),
+    revision: z.number().int().min(1).optional(),
     offset: z.number().int().min(0).optional(),
     length: z.number().int().min(1).optional(),
   })
@@ -29,18 +30,26 @@ export const paperToolsPlugin = {
       ctx.tools.register({
         name: 'paper.read',
         description:
-          'Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total.',
+          'Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total. revision reads that retained revision instead of the current one, whole or by section, offset and length.',
         inputSchema: readSchema,
         readOnly: true,
         handler: async (caller, input: z.infer<typeof readSchema>) => {
-          if (input.section === undefined)
+          if (input.section === undefined && input.revision === undefined)
             return input.kind
               ? input.history
                 ? await paper.history(caller, input.kind)
                 : (await paper.documents(caller))[input.kind]
               : await paper.read(caller);
           check(input.kind, 'invalid_paper_input', 'Name the kind of the section to read');
-          const { revision, sections } = (await paper.documents(caller))[input.kind].current;
+          const document =
+            input.revision === undefined
+              ? (await paper.documents(caller))[input.kind].current
+              : (await paper.history(caller, input.kind)).find(
+                  ({ revision }) => revision === input.revision,
+                );
+          check(document, 'not_found', 'Revision not found', 404);
+          if (input.section === undefined) return document;
+          const { revision, sections } = document;
           const found = sections.find(({ id }) => id === input.section);
           check(found, 'not_found', 'Section not found', 404);
           const offset = Math.min(input.offset ?? 0, found.content.length);

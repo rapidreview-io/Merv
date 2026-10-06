@@ -1197,7 +1197,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references, or unavailable ones while Code, which resolves code-commit: and session-final:, is not loaded. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -1227,7 +1227,7 @@
         },
         {
           "name": "project.references",
-          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references. Does not read artifact bytes.",
+          "description": "Resolve up to 200 project-scoped references to exact record metadata. Accepts record IDs or task:, experiment:, reflection:, research:, artifact:, review:, code-commit: and session-final: followed by an ID. Each result explicitly identifies resolved, missing or unsupported references, or unavailable ones while Code, which resolves code-commit: and session-final:, is not loaded. Does not read artifact bytes.",
           "readOnly": true
         }
       ]
@@ -1382,7 +1382,7 @@
         },
         {
           "name": "paper.read",
-          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total.",
+          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total. revision reads that retained revision instead of the current one, whole or by section, offset and length.",
           "readOnly": true
         }
       ]
@@ -1417,7 +1417,7 @@
         },
         {
           "name": "paper.read",
-          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total.",
+          "description": "Read the living project paper: structured problem/scope/goals/constraints, literature, citation ledger, Methods and Results with reviewed paper contributions and revision history. Optional kind returns only that document; history returns its retained revisions; section, one of its section ids, returns that section of the current document, and offset and length read part of its content, in characters, giving offset and total. revision reads that retained revision instead of the current one, whole or by section, offset and length.",
           "readOnly": true
         }
       ]

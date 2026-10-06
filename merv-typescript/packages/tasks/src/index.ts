@@ -114,6 +114,42 @@ const REJECTED_REVIEWS_KEPT = 50;
  * when it does not fit, so they stay small beside the latest pinned assessment.
  */
 const REVIEW_HISTORY_CHARS = 4000;
+/**
+ * The most the latest pinned assessment adds to the always-embedded feedback, which also holds
+ * that round's notes (up to 16,000 characters) beside a brief of up to 32,000, so a task returned
+ * with any valid review still has a work context.
+ */
+const PINNED_ASSESSMENT_CHARS = 16_000;
+
+/** The latest assessment whole, or abbreviated to PINNED_ASSESSMENT_CHARS with review.get named. */
+function pinnedAssessment(review: ReviewRequest): string {
+  const { id: reviewId, snapshotHash, artifactIds, verdict, notes, criteria } = review;
+  const { synopsis, findings, evidence } = review;
+  const whole = JSON.stringify({
+    reviewId,
+    snapshotHash,
+    artifactIds,
+    verdict,
+    notes,
+    criteria,
+    synopsis,
+    findings,
+    evidence,
+  });
+  if (whole.length <= PINNED_ASSESSMENT_CHARS) return whole;
+  // The notes are the feedback's own text and the criteria the brief's checks.
+  const short = JSON.stringify({
+    reviewId,
+    snapshotHash,
+    artifactIds,
+    verdict,
+    synopsis,
+    findings,
+    evidence,
+  });
+  const more = `\n(Abbreviated for room: read review.get ${reviewId} for the whole assessment.)`;
+  return clip(short, PINNED_ASSESSMENT_CHARS - more.length) + more;
+}
 
 /** Tasks have fixed routes; inspect only an ordinary optional data property. */
 function rejectReviewReturn(input: object): void {
@@ -712,6 +748,8 @@ export class TaskService implements Tasks {
                   action: 'resume',
                   requestId: `task:resume:${context.input!.requestId}`,
                   input: context.input,
+                  // The task runs again; the reason it stopped stays its feedback, not a failure.
+                  data: { failure: null },
                 },
                 context.tx,
               );
@@ -1435,7 +1473,25 @@ export class TaskService implements Tasks {
           briefId: brief.id,
           evidenceVersion: 2,
         });
-        return await this.hydrate(caller, await this.row(tx, caller, workflow.id), tx);
+        const task = await this.hydrate(caller, await this.row(tx, caller, workflow.id), tx);
+        // Render what every work context embeds, or the task could never begin. A session's
+        // lease is on its own task, so the check reads as the session's actor.
+        const { session: _session, ...owner } = caller;
+        const subject = { id: task.id, revision: task.workflow.revision };
+        const inputs = await this.contextInputs(owner, task, 'work', undefined, tx);
+        // The brief is rendered as the text in hand rather than read back.
+        if (inputs.brief) inputs.brief.items[0].body = { text: content };
+        await this.contextType(task, 'work')
+          .context.preview(owner, { subject, inputs }, tx)
+          .catch((error: unknown) => {
+            check(
+              !(error instanceof MervError && error.code === 'context_too_large'),
+              'invalid_brief',
+              'The goal and checks leave no room in the work context; shorten them',
+            );
+            throw error;
+          });
+        return task;
       });
     });
   }
@@ -1604,8 +1660,13 @@ export class TaskService implements Tasks {
     tx: Transaction,
   ): Promise<Record<string, ContextInput>> {
     const type = this.contextType(task, purpose);
-    // Reverse links change when downstream work is added, independently of this assignment.
-    const { dependents: _dependents, ...assignmentTask } = task;
+    // Reverse links change when downstream work is added, independently of this assignment. The
+    // checks reach a worker in the brief and a reviewer in the criteria, the goal in the brief,
+    // and the last round's notes in the feedback: each is embedded once, and task.get has all.
+    const { dependents: _dependents, checks: _checks, acceptanceChecks: _accepted, ...rest } = task;
+    const { goal: _goal, workflow, ...work } = rest;
+    const { revisionContext: _feedback, ...data } = workflow.data;
+    const assignmentTask = purpose === 'work' ? { ...work, workflow: { ...workflow, data } } : rest;
     // Worker contexts retain the offer's Introduction even if an operator later changes it.
     const receipt = caller.session
       ? (JSON.parse(
@@ -1668,17 +1729,7 @@ export class TaskService implements Tasks {
               previous.findings.length ||
               Object.keys(previous.evidence).length)
               ? '\n\nPinned review assessment (verify cited evidence before revising):\n' +
-                JSON.stringify({
-                  reviewId: previous.id,
-                  snapshotHash: previous.snapshotHash,
-                  artifactIds: previous.artifactIds,
-                  verdict: previous.verdict,
-                  notes: previous.notes,
-                  criteria: previous.criteria,
-                  synopsis: previous.synopsis,
-                  findings: previous.findings,
-                  evidence: previous.evidence,
-                })
+                pinnedAssessment(previous)
               : '') +
             (earlier.rounds.length
               ? '\n\nEarlier review rounds, oldest first (each was answered by a later delivery; do not reintroduce what they rejected):\n' +

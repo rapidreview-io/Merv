@@ -166,8 +166,10 @@ test('new tasks render one immutable brief, expose numbered checks and replay wi
       requestId: 'work-context',
     });
     assert.ok(context.sources.some((source) => source.id === task.briefId));
-    assert.ok(context.prompt.includes('"acceptanceChecks"'));
+    // The numbered checks are the brief's; the task record does not repeat them.
+    assert.ok(!context.prompt.includes('"acceptanceChecks"'));
     assert.ok(context.prompt.includes(brief.content));
+    assert.equal(context.prompt.split('Handles negative inputs.').length, 2);
 
     const supplied = await f.app.ctx.artifacts.create(f.producer.caller, {
       title: 'Existing authored brief',

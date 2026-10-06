@@ -446,7 +446,7 @@ test('context sections list every written current and published section whole, i
   assert.equal(published.text, 'Five seeds.');
   assert.match(published.note, new RegExp(`; publication ${publication!.id}$`));
   assert.deepEqual(published.refs, [
-    { tool: 'paper.read', input: { kind: 'methods', history: true } },
+    { tool: 'paper.read', input: { kind: 'methods', revision: 1, section: 'protocol' } },
   ]);
   // It reads nothing: the documents it was given are all it sees, and it leaves them unchanged.
   const copy = structuredClone(documents);

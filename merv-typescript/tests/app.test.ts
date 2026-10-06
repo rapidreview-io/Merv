@@ -286,7 +286,30 @@ test('a paper too long to show the agent whole reads on section by section', asy
       first.content + next.content,
       sections[3].content.slice(0, end + next.content.length),
     );
+    // A later revision changes d; the earlier one still reads on, section by section.
+    await app.ctx.tools.call('paper.patch', caller, {
+      kind: 'methods',
+      expectedRevision: 1,
+      requestId: 'methods-2',
+      changes: [{ id: 'd', content: long('e', 70_000) }],
+    });
+    const old = await read({ kind: 'methods', revision: 1, section: 'd' });
+    assert.equal(old.content.length, end);
+    assert.equal(old.note, first.note);
+    const rest = await read({ kind: 'methods', revision: 1, section: 'd', offset: end });
+    assert.equal(old.content + rest.content, first.content + next.content);
+    assert.equal(
+      (await read({ kind: 'methods', section: 'd' })).content,
+      long('e', 70_000).slice(0, end),
+    );
+    await assert.rejects(
+      app.ctx.tools.call('paper.read', caller, { kind: 'methods', revision: 3, section: 'd' }),
+      { code: 'not_found' },
+    );
     await assert.rejects(app.ctx.tools.call('paper.read', caller, { section: 'd' }), {
+      code: 'invalid_paper_input',
+    });
+    await assert.rejects(app.ctx.tools.call('paper.read', caller, { revision: 1 }), {
       code: 'invalid_paper_input',
     });
     await assert.rejects(
