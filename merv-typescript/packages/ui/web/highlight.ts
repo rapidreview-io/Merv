@@ -114,6 +114,10 @@ function tokens(highlighter: HighlighterCore, code: string, lang: string): Piece
       lang,
       themes: { light: 'github-light', dark: 'github-dark' },
       defaultColor: false,
+      // Shiki stops a line after 500 ms and colours its rest as one token. A grammar compiles as
+      // it first reads, so a busy machine could cut the first theme's line and not the second's:
+      // the colours would hang on the clock. highlightable() bounds the work instead.
+      tokenizeTimeLimit: 0,
     })
     .tokens.map((line) =>
       line.map((token) => ({

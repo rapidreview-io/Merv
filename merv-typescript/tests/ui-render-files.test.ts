@@ -583,6 +583,24 @@ test('how one file is read, its source shown, does not carry over to the next', 
   assert.ok(one('.notebook'));
 });
 
+test('a line is coloured whole however long its grammar takes to read it', async () => {
+  const { highlight, languageOf } = await import('../packages/ui/web/highlight.js');
+  const ts = languageOf('ts')!;
+  const code = 'const a = 1;';
+  const steady = await highlight(code, ts);
+  assert.ok(steady && steady[0]!.length >= 7, 'every token of the line');
+  // A grammar reads its first lines slowly while it compiles, more so on a busy machine: a clock
+  // that leaps a second with each look stands for that. The line must not be cut short.
+  const now = Date.now;
+  let clock = now();
+  Date.now = () => (clock += 1000);
+  try {
+    assert.deepEqual(await highlight(code, ts), steady);
+  } finally {
+    Date.now = now;
+  }
+});
+
 test('code still streaming in is drawn plain and coloured once it stands still; a long file never is', async (t) => {
   t.after(async () => await unmount());
   const { CodeBlock } = await import('../packages/ui/web/code-block.js');

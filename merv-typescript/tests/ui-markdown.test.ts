@@ -669,6 +669,17 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
     `See ${ART}.`,
   ].join('\n');
   const names = recordNames([{ id: ART, title: 'Notes' }]);
+  // The fence's grammar loads only when the test lets it. A block drawn afresh is coloured once
+  // its grammar is there, and one still streaming is not, so a grammar landing mid-stream would
+  // make the pieces and the whole differ by when it landed, not by what they read.
+  const { highlightNow, languageOf } = await import('../packages/ui/web/highlight.js');
+  const ts = languageOf('ts')!;
+  assert.equal(highlightNow('x', ts), undefined, 'the grammar is not loaded yet');
+  const load = ts.load;
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  ts.load = async () => (await released, await load());
+  t.after(() => void (ts.load = load));
   let grow!: (text: string) => void;
   function Growing() {
     const [text, setText] = useState('');
@@ -677,9 +688,7 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
   }
   await mount(createElement(MemoryRouter, null, createElement(Growing)));
   const whole = document.createElement('div');
-  // Every length: a frame may end anywhere, even at `2` before it becomes `2.`.
-  for (let end = 1; end <= source.length; end++) {
-    await act(async () => grow(source.slice(0, end)));
+  const same = (end: number) => {
     whole.innerHTML = renderToStaticMarkup(
       createElement(
         MemoryRouter,
@@ -696,7 +705,19 @@ test('a growing text drawn in pieces reads as the whole does at every length', a
       whole.firstElementChild!.innerHTML,
       `at ${end}`,
     );
+  };
+  // Every length: a frame may end anywhere, even at `2` before it becomes `2.`.
+  for (let end = 1; end <= source.length; end++) {
+    await act(async () => grow(source.slice(0, end)));
+    same(end);
   }
+  // Once the grammar is there and the text stands still, its fence is coloured as the whole's is.
+  release();
+  for (let tries = 0; !document.querySelector('.md .code-body [style]'); tries++) {
+    assert.ok(tries < 400, 'the fence is coloured');
+    await settle(25);
+  }
+  same(source.length);
   // A text too long to read whole is still read, piece by piece.
   const long = `# Read\n\n${'A line of an answer.\n\n'.repeat(12_000)}`;
   assert.ok(long.length > MAX_READ);
