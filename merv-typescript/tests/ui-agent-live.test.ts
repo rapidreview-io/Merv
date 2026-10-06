@@ -220,3 +220,57 @@ test('the sessions are chips, newest first, each naming what it continues; choos
   assert.ok(requests.includes('GET /sessions/ses_old/events'));
   assert.deepEqual(aborted, ['/sessions/ses_new/events']);
 });
+
+test('a snapshot after a gap starts the timeline over, and nothing is joined across the gap', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  const [first] = streams('/sessions/ses_4/events', 1);
+  const [second] = streams('/sessions/ses_4/events?after=1', 1);
+  await mount(createElement(Panel, { sessions: [session('ses_4')] }));
+  first!.send('snapshot', {
+    events: [{ seq: 1, at, event: { kind: 'text', id: 'a', delta: 'Hello wor' } }],
+  });
+  await settle(10);
+  first!.close();
+  await settle(1100);
+  // The page fell over 500 events behind: the server sends its newest instead.
+  second!.send('snapshot', {
+    events: [
+      { seq: 601, at, event: { kind: 'status', id: 's', text: 'Turn completed' } },
+      { seq: 602, at, event: { kind: 'text', id: 'a', delta: ' END', done: true } },
+    ],
+  });
+  await settle(10);
+  assert.deepEqual(
+    [...document.querySelectorAll('.agent-blocks > li')].map((node) => node.textContent),
+    ['Turn completed', 'END'],
+  );
+});
+
+test('a stream reads on through rotations until the server says it ended, live or not', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/ui.shell', { body: { result: { rows: [] } } });
+  // An ended session still takes its agent's last words for a while: it rotates, not ends.
+  const [first] = streams('/sessions/ses_5/events', 1);
+  const [second] = streams('/sessions/ses_5/events?after=1', 2);
+  await mount(createElement(Panel, { sessions: [session('ses_5', { live: false })] }));
+  first!.send('snapshot', {
+    events: [{ seq: 1, at, event: { kind: 'text', id: 'a', delta: 'One.', done: true } }],
+  });
+  first!.send('rotate', {});
+  first!.close();
+  await settle(1100);
+  assert.ok(requests.includes('GET /sessions/ses_5/events?after=1'));
+  second!.send('events', {
+    events: [{ seq: 2, at, event: { kind: 'text', id: 'b', delta: 'Two.', done: true } }],
+  });
+  second!.send('end', {});
+  second!.close();
+  await settle(1100);
+  assert.deepEqual(
+    [...document.querySelectorAll('.agent-text')].map((node) => node.textContent),
+    ['One.', 'Two.'],
+  );
+  assert.equal(requests.filter((request) => request.startsWith('GET /sessions/ses_5/')).length, 2);
+  assert.ok(!text().includes('Reconnecting…'));
+});

@@ -7,11 +7,14 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { createServer, get } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { AgentEvent, Caller, WorkflowPolicy } from '@merv/contracts';
+import { serveEvents } from '@merv/api/event-stream';
 import type { ApplicationConfig } from '../src/config.js';
 import { createApp } from './fixtures/app.js';
 
@@ -389,4 +392,51 @@ test('a unit’s sidebar lists its sessions for an operator alone, and a lease�
     events: [call],
   });
   assert.deepEqual((await line())!.slice(0, 2), ['Calling ', { mono: 'sandbox.run' }]);
+  // What the agent said of itself is an operator's to read, as its stream is.
+  await f.ok('POST', `/sessions/${session.id}/stream`, f.token, {
+    ...control,
+    from: 20,
+    to: 30,
+    events: [{ kind: 'status', id: 'st', text: 'Turn failed · /home/agent/notes.txt' }],
+  });
+  assert.equal((await line())![0], 'Turn failed · /home/agent/notes.txt');
+  const readerLine = (await f.app.ctx.sessions.running(readerCaller)).nodes.find(
+    (node) => node.key === `session:${session.id}`,
+  )!.lines[0];
+  assert.ok(!JSON.stringify(readerLine).includes('Turn failed'), JSON.stringify(readerLine));
+});
+
+test('a page gone while its authority was read gives its reader slot back at once', async (t) => {
+  let taken = 0,
+    given = 0;
+  let served!: Promise<void>;
+  let arrive!: () => void;
+  const arrived = new Promise<void>((resolve) => (arrive = resolve));
+  const server = createServer((req, res) => {
+    served = (async () => {
+      arrive();
+      // The page leaves before the stream opens, as one closed during `authorize`.
+      if (!res.destroyed) await new Promise((resolve) => res.once('close', resolve));
+      await serveEvents(req, res, {
+        rotateMs: 20_000,
+        subscribe: () => {
+          taken++;
+          return () => given++;
+        },
+        step: async () => undefined,
+      });
+    })();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const request = get(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+  request.on('error', () => undefined);
+  await arrived;
+  request.destroy();
+  const ended = await Promise.race([
+    served.then(() => 'ended'),
+    new Promise((resolve) => setTimeout(resolve, 2000, 'held')),
+  ]);
+  assert.equal(ended, 'ended');
+  assert.equal(given, taken);
 });

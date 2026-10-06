@@ -70,6 +70,8 @@ export async function serveEvents(
   let deadline: ReturnType<typeof setTimeout> | undefined;
   try {
     unsubscribe = options.subscribe(pump);
+    // A page that left before this (while its authority was read) closes nothing again.
+    if (res.destroyed) return;
     res.once('close', stop);
     req.once('aborted', stop);
     res.writeHead(200, {

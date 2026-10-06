@@ -21,9 +21,10 @@ import { RunnerControlError } from '../packages/runner/src/client.js';
 const line = (value: unknown) => JSON.stringify(value);
 const stream = (event: unknown) =>
   line({ type: 'stream_event', event, session_id: 's', parent_tool_use_id: null, uuid: 'u' });
+/** Each line read as if it stood at its index in the log. */
 const parse = (harness: 'claude' | 'codex', lines: string[]) => {
   const read = agentLines(harness);
-  return lines.flatMap((text) => read(text));
+  return lines.flatMap((text, at) => read(text, at));
 };
 
 /** Claude Code's stream-json with --include-partial-messages, as recorded, trimmed. */
@@ -98,7 +99,7 @@ const claude = [
 
 test('Claude stream-json: pieces of thinking and text, whole tool calls and results, milestones; garbage is skipped', () => {
   assert.deepEqual(parse('claude', claude), [
-    { kind: 'status', id: 'status-1', text: 'Started · claude-opus-4-1' },
+    { kind: 'status', id: 'status-0', text: 'Started · claude-opus-4-1' },
     { kind: 'thinking', id: 'msg_1.0', delta: '' },
     { kind: 'thinking', id: 'msg_1.0', delta: 'Look ' },
     { kind: 'thinking', id: 'msg_1.0', delta: 'first.' },
@@ -108,7 +109,7 @@ test('Claude stream-json: pieces of thinking and text, whole tool calls and resu
     { kind: 'text', id: 'msg_2.0', delta: '' },
     { kind: 'text', id: 'msg_2.0', delta: 'Done' },
     { kind: 'text', id: 'msg_2.0', delta: '', done: true },
-    { kind: 'status', id: 'status-2', text: 'Finished · success · 2 turns' },
+    { kind: 'status', id: 'status-22', text: 'Finished · success · 2 turns' },
   ]);
   // Without partial messages, a block arrives whole; another server's tool keeps its name.
   assert.deepEqual(
@@ -126,7 +127,7 @@ test('Claude stream-json: pieces of thinking and text, whole tool calls and resu
       }),
     ]),
     [
-      { kind: 'text', id: 'msg_9.whole1', delta: 'Hi', done: true },
+      { kind: 'text', id: 'msg_9.whole0-0', delta: 'Hi', done: true },
       { kind: 'tool_call', id: 't', name: 'nisa.papers_search', input: '{}' },
       { kind: 'tool_call', id: 'u', name: 'Bash', input: '{"command":"ls"}' },
     ],
@@ -204,7 +205,7 @@ test('Codex --json: reasoning, messages, commands, MCP calls and file changes wi
     line({ type: 'turn.failed', error: { message: 'boom' } }),
   ];
   assert.deepEqual(parse('codex', codex), [
-    { kind: 'status', id: 'status-1', text: 'Started' },
+    { kind: 'status', id: 'status-0', text: 'Started' },
     { kind: 'thinking', id: 'item_0', delta: 'Plan it.', done: true },
     { kind: 'tool_call', id: 'item_1', name: 'shell', input: 'ls' },
     { kind: 'tool_result', id: 'item_1', output: 'a\n', error: true },
@@ -213,8 +214,8 @@ test('Codex --json: reasoning, messages, commands, MCP calls and file changes wi
     { kind: 'tool_call', id: 'item_3', name: 'edit', input: 'update a.ts' },
     { kind: 'tool_result', id: 'item_3', output: 'completed' },
     { kind: 'text', id: 'item_5', delta: 'Handed off.', done: true },
-    { kind: 'status', id: 'status-2', text: 'Turn completed · 10 tokens in · 3 out' },
-    { kind: 'status', id: 'status-3', text: 'Turn failed · boom' },
+    { kind: 'status', id: 'status-11', text: 'Turn completed · 10 tokens in · 3 out' },
+    { kind: 'status', id: 'status-12', text: 'Turn failed · boom' },
   ]);
 });
 
@@ -299,7 +300,7 @@ test('a launch log is sent whole lines at a time; a failed batch is sent again a
   writeFileSync(log, `${started}${message.slice(0, 10)}`);
   await agent.flush();
   assert.deepEqual(sent, [
-    { from: 0, to: started.length, events: [{ kind: 'status', id: 'status-1', text: 'Started' }] },
+    { from: 0, to: started.length, events: [{ kind: 'status', id: 'status-0', text: 'Started' }] },
   ]);
 
   // A failure keeps the batch and waits; the retry sends it unchanged.
@@ -324,7 +325,9 @@ test('a launch log is sent whole lines at a time; a failed batch is sent again a
   appendFileSync(log, line({ type: 'error', message: 'last' }));
   agent.end();
   await agent.flush();
-  assert.deepEqual(sent.at(-1)!.events, [{ kind: 'status', id: 'status-2', text: 'Error · last' }]);
+  assert.deepEqual(sent.at(-1)!.events, [
+    { kind: 'status', id: `status-${sent[2]!.to}`, text: 'Error · last' },
+  ]);
   await agent.flush();
   assert.equal(agent.finished, true);
 });
@@ -366,4 +369,108 @@ test('a restarted stream jumps to what Sessions holds; one far behind skips ahea
   assert.equal(skipped[0]!.kind, 'status');
   assert.match((skipped[0] as { text: string }).text, /^Stream skipped \d+ bytes$/);
   assert.deepEqual(skipped.slice(1), [{ kind: 'text', id: 'i4', delta: 'm4', done: true }]);
+});
+
+/** Sessions as it takes batches: a batch from before what it holds is answered, not added. */
+const sessions = () => {
+  let until = 0;
+  const held: AgentEvent[] = [];
+  return {
+    held,
+    post: async (batch: SessionStreamBatch) => {
+      if (batch.from < until || !batch.events.length) return { until };
+      held.push(...batch.events);
+      until = batch.to;
+      return { until };
+    },
+  };
+};
+
+test('a restarted runner sends what Sessions does not hold yet, from the line it reached', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-agent-stream-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const log = join(directory, 'stdout.log');
+  // The first two lines are more than one batch reads.
+  const one = (n: number) =>
+    `${line({ type: 'item.completed', item: { id: `i${n}`, type: 'agent_message', text: `m${n}${n < 3 ? ' '.repeat(400_000) : ''}` } })}\n`;
+  const server = sessions();
+  writeFileSync(log, one(1) + one(2));
+  const first = new AgentStream(directory, 'codex', [], server.post, () => 0);
+  await first.flush();
+  await first.flush();
+  // The runner restarts while its agent prints on: the new stream reads the log from the start,
+  // a batch short of what Sessions holds.
+  appendFileSync(log, one(3) + one(4));
+  const restarted = new AgentStream(directory, 'codex', [], server.post, () => 0);
+  await restarted.flush();
+  await restarted.flush();
+  appendFileSync(log, one(5));
+  await restarted.flush();
+  assert.deepEqual(
+    [...new Set(server.held.map((event) => event.id))],
+    ['i1', 'i2', 'i3', 'i4', 'i5'],
+  );
+});
+
+test('after a restart or a skip, a block is never continued from what was not read, and no id repeats', async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), 'merv-agent-stream-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const log = join(directory, 'stdout.log');
+  const text = (index: number, piece: string) =>
+    stream({ type: 'content_block_delta', index, delta: { type: 'text_delta', text: piece } });
+  const message = (id: string, ...pieces: string[]) => [
+    stream({ type: 'message_start', message: { id, content: [] } }),
+    stream({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }),
+    ...pieces.map((piece) => text(0, piece)),
+    stream({ type: 'content_block_stop', index: 0 }),
+  ];
+  const lines = (...items: string[]) => items.map((item) => `${item}\n`).join('');
+  const result = line({ type: 'result', subtype: 'success', is_error: false, num_turns: 1 });
+  const server = sessions();
+  // Sessions holds msg_1 up to its first piece when the runner restarts.
+  const [start, open, first, ...rest] = message('msg_1', 'Hello ', 'world');
+  writeFileSync(log, lines(claude[0]!, start!, open!, first!));
+  await new AgentStream(directory, 'claude', [], server.post, () => 0).flush();
+  appendFileSync(log, lines(...rest, result, ...message('msg_2', 'Next'), result));
+  const restarted = new AgentStream(directory, 'claude', [], server.post, () => 0);
+  await restarted.flush();
+  await restarted.flush();
+  // Then, inside msg_3, it falls far behind: what follows the skip belongs to no block it saw open.
+  appendFileSync(log, lines(...message('msg_3', 'Old ').slice(0, 3)));
+  await restarted.flush();
+  appendFileSync(log, lines('x'.repeat(5 << 20)));
+  await restarted.flush();
+  appendFileSync(log, lines(text(0, 'lost'), ...message('msg_4', 'New')));
+  await restarted.flush();
+  const said = server.held.map((event) =>
+    event.kind === 'status'
+      ? event.text.replace(/\d+ bytes/, 'N bytes')
+      : `${event.id} ${event.kind === 'text' ? event.delta : ''}`,
+  );
+  assert.deepEqual(said, [
+    'Started · claude-opus-4-1',
+    'msg_1.0 Hello ',
+    'Finished · success · 1 turns',
+    'msg_2.0 Next',
+    'Finished · success · 1 turns',
+    'msg_3.0 Old ',
+    'Stream skipped N bytes',
+    'msg_4.0 New',
+  ]);
+  const ids = server.held.map((event) => `${event.kind}:${event.id}`);
+  assert.equal(new Set(ids).size, ids.length);
+});
+
+test('a block longer than an event holds is parted into pieces, never cut', () => {
+  const long = `${'a'.repeat(AGENT_EVENT_TEXT - 1)}😀${'b'.repeat(AGENT_EVENT_TEXT)}`;
+  const parts = new Scrubber([]).scrub([{ kind: 'text', id: 'm', delta: long, done: true }]);
+  assert.deepEqual(
+    parts.map((part) => [(part as { delta: string }).delta.length, 'done' in part, 'cut' in part]),
+    [
+      [AGENT_EVENT_TEXT - 1, false, false],
+      [AGENT_EVENT_TEXT, false, false],
+      [2, true, false],
+    ],
+  );
+  assert.equal(parts.map((part) => (part as { delta: string }).delta).join(''), long);
 });

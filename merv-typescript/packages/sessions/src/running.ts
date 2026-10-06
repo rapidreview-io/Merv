@@ -416,6 +416,7 @@ export class SessionRunning {
   private async leases(
     tx: Transaction,
     projectId: string,
+    operator: boolean,
     instanceIds?: readonly string[],
   ): Promise<Lease[]> {
     const within = instanceIds
@@ -428,10 +429,14 @@ export class SessionRunning {
         projectId,
         ...(instanceIds ?? []),
       ),
+      operator,
     );
   }
-  /** Each lease with its latest Merv activity, its call in flight and whether its runner may still read. */
-  private async facts(tx: Transaction, rows: LeaseRow[]): Promise<Lease[]> {
+  /**
+   * Each lease with its latest Merv activity, its call in flight and whether its runner may still
+   * read; for an operator, what its agent does, as the stream itself is an operator's alone.
+   */
+  private async facts(tx: Transaction, rows: LeaseRow[], operator: boolean): Promise<Lease[]> {
     if (!rows.length) return [];
     const calls = new Map(
       (
@@ -451,19 +456,20 @@ export class SessionRunning {
     );
     // One index probe per lease for the newest event of its agent's stream.
     const latest = new Map(
-      (
-        await tx.all<{
-          id: string;
-          kind: AgentEvent['kind'];
-          name: string | null;
-          text: string | null;
-          at: string;
-        }>(
-          `SELECT w.id,e.event->>'kind' AS kind,e.event->>'name' AS name,LEFT(e.event->>'text',200) AS text,e.at
+      (operator
+        ? await tx.all<{
+            id: string;
+            kind: AgentEvent['kind'];
+            name: string | null;
+            text: string | null;
+            at: string;
+          }>(
+            `SELECT w.id,e.event->>'kind' AS kind,e.event->>'name' AS name,LEFT(e.event->>'text',200) AS text,e.at
             FROM unnest(CAST(ARRAY[${rows.map(() => '?').join(',')}] AS TEXT[])) AS w(id)
             CROSS JOIN LATERAL (SELECT event,at FROM session_events WHERE session_id=w.id ORDER BY seq DESC LIMIT 1) e`,
-          ...rows.map((row) => row.id),
-        )
+            ...rows.map((row) => row.id),
+          )
+        : []
       ).map(({ id, ...doing }) => [id, doing]),
     );
     const authorized = new Map<string, boolean>();
@@ -512,8 +518,8 @@ export class SessionRunning {
   }
 
   async nodes(caller: Caller): Promise<RunningNodes> {
-    return await this.read(caller, async (tx) => {
-      const leases = await this.leases(tx, caller.projectId);
+    return await this.read(caller, async (tx, operator) => {
+      const leases = await this.leases(tx, caller.projectId, operator);
       const now = this.clock();
       // The harness names a lease only where the lane holds more than one.
       const harnesses = new Set(
@@ -543,7 +549,7 @@ export class SessionRunning {
     if (!ids.length) return [];
     return await this.read(caller, async (tx, operator) => {
       const now = this.clock();
-      const rows = (await this.leases(tx, caller.projectId, ids)).map((lease) =>
+      const rows = (await this.leases(tx, caller.projectId, operator, ids)).map((lease) =>
         leaseRow(lease, now, this.thresholds.idleNoticeSeconds),
       );
       const sections: RunningSection[] = rows.length
@@ -628,7 +634,7 @@ export class SessionRunning {
         caller.projectId,
       );
       if (!row) return null;
-      const [lease] = await this.facts(tx, [row]);
+      const [lease] = await this.facts(tx, [row], operator);
       const now = this.clock();
       const live = row.status === 'offered' || row.status === 'active';
       const holding = live && !lapsed(lease, now);
