@@ -245,7 +245,25 @@ export interface CodeUnit {
   mirroredAt: string | null;
   /** A final capture admission refused; the unit waits for an operator until it is fenced. */
   quarantine: { operationId: string } | null;
+  /** How the unit stands, in one word, by Code Work's own reading of the fields above. */
+  standing: CodeUnitStanding;
 }
+/**
+ * A unit that is not accepted reads what keeps it from being: quarantine first, because
+ * nothing it holds may be reused; `held` is a writer an operator must fence.
+ */
+export type CodeUnitStanding =
+  | 'quarantined'
+  | 'accepted'
+  | 'artifacts only'
+  | 'ended'
+  | 'blocked'
+  | 'waiting'
+  | 'ready'
+  | 'held'
+  | 'working';
+/** Which of four things a blocker holds work up for; any other is work waiting on the server. */
+export type CodeBlockerGroup = 'conflict' | 'quarantine' | 'publication' | 'waiting';
 
 export type CodeBaseState =
   | 'waiting_inputs'
@@ -363,7 +381,7 @@ export interface CodeProjectStatus {
   warnings: CodeStoreWarning[];
   /** The newest 200 units. */
   units: CodeUnit[];
-  blockers: WorkflowProvidedBlocker[];
+  blockers: (WorkflowProvidedBlocker & { group: CodeBlockerGroup })[];
 }
 
 /**

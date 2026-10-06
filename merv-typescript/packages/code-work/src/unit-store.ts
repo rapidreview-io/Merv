@@ -27,6 +27,7 @@ import type {
   CodeProjectStatus,
   CodeUnit,
   CodeUnitAcceptance,
+  CodeUnitStanding,
   CodeCaptureRef,
 } from './models.js';
 
@@ -91,6 +92,27 @@ export interface PublicationRow {
 }
 const publicationColumns =
   'p.record_json,p.pull_json,p.merge_json,p.incident_json,p.error,p.stale,p.verified';
+/** A unit with its one word, read from its own fields. */
+export const withStanding = (unit: Omit<CodeUnit, 'standing'>): CodeUnit => ({
+  ...unit,
+  standing: standingOf(unit),
+});
+/** Quarantine first, because nothing the unit holds may be reused again. */
+function standingOf(unit: Omit<CodeUnit, 'standing'>): CodeUnitStanding {
+  const base = unit.baseStatus;
+  if (
+    unit.quarantine ||
+    (base?.status === 'blocked' &&
+      base.blockers.some((blocker) => blocker.code === 'code_quarantined'))
+  )
+    return 'quarantined';
+  if (unit.acceptance) return unit.acceptance.reference ? 'accepted' : 'artifacts only';
+  if (!base) return 'ended';
+  if (base.status !== 'pinned') return base.status;
+  if (unit.writerState === 'recovery_required') return 'held';
+  return unit.generation > 0 ? 'working' : 'ready';
+}
+
 /** A publication's standing, before the blockers it holds its unit's work for are said. */
 export type PublicationStanding = Omit<CodeUnitPublication, 'blockers'>;
 /**
@@ -474,7 +496,7 @@ export class WorkUnitRecords {
     const base = pin(row);
     const publication = await this.publicationOf(tx, row.project_id, row);
     const facts = await this.writers.facts(tx, row.project_id, row.unit_id);
-    return {
+    return withStanding({
       unitId: row.unit_id,
       workflow: row.workflow,
       version: Number(row.version),
@@ -492,7 +514,7 @@ export class WorkUnitRecords {
         blockers: publicationBlockers(publication),
       },
       ...facts,
-    };
+    });
   }
 
   async retainDeclaration(

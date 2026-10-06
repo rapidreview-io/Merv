@@ -1,4 +1,5 @@
 import { baseKey } from './base-plan.js';
+import { blockerGroup } from './blockers.js';
 import { pendingMerge, pinMerge } from '@merv/code/pending-merge';
 import type { CodeWriterService } from '@merv/code/writers';
 import type { CodeUnitStore } from '@merv/code/units';
@@ -555,9 +556,9 @@ export class CodeUnitService {
       const stored = await this.records.readStatus(caller, tx);
       return {
         ...stored,
-        blockers: (await this.workflows.blockers(caller, undefined, tx)).filter(
-          (blocker) => blocker.provider === PROVIDER,
-        ),
+        blockers: (await this.workflows.blockers(caller, undefined, tx))
+          .filter((blocker) => blocker.provider === PROVIDER)
+          .map((blocker) => ({ ...blocker, group: blockerGroup(blocker.code) })),
       };
     });
   }
