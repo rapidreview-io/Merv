@@ -12,7 +12,7 @@ import {
 import type { Session } from './types.js';
 
 /** Offered or active: a session that still holds its lease. */
-export const live = (session: Session) =>
+export const live = (session: Pick<Session, 'status'>) =>
   session.status === 'offered' || session.status === 'active';
 /** Visible text of at most `max` characters and no NUL. */
 export const text = (value: unknown, max = 200) =>

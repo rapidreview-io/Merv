@@ -105,14 +105,6 @@ const configSchema = z
     /** Maximum simultaneous server executions in one project, across every provider. */
     serviceConcurrency: between(1, 256, 1),
     sweepIntervalMs: between(100, 60_000, 1000),
-    /** Failed launches of one instance revision after which automatic dispatch stops offering it. */
-    maxLaunchFailures: between(1, 100, 5),
-    /** Seconds without a tool call before an active session is reported as quiet; nothing is closed for it. */
-    idleNoticeSeconds: between(60, 604_800, 1800),
-    /** Seconds a dispatchable target may wait on one revision before it is reported as quiet. */
-    quietReadySeconds: between(60, 2_592_000, 21_600),
-    /** Seconds a live runner may repeat one refusal before it is reported as refusing. */
-    refusalSeconds: between(30, 86_400, 300),
     /** Whether a project nobody has switched is on: the founder's ruling (2026-09-25) is that
      * every project runs its work unless someone turns it off. */
     dispatchByDefault: z.boolean().default(false),
@@ -124,6 +116,13 @@ const configSchema = z
   })
   .strict();
 export type SessionsConfig = z.input<typeof configSchema>;
+/** The thresholds session.stuck reports by; see StuckReport['thresholds']. */
+const thresholds: StuckReport['thresholds'] = {
+  idleNoticeSeconds: 1800,
+  maxLaunchFailures: 5,
+  quietReadySeconds: 21_600,
+  refusalSeconds: 300,
+};
 /** Trimmed text with something to read, as it is stored and compared. */
 const trimmed = (max: number) =>
   z
@@ -350,6 +349,8 @@ export class LeasedSessions implements Sessions {
     private readonly workflows: Workflows,
     private readonly events: DomainEvents,
     options: SessionsConfig & { clock?: () => number } = {},
+    /** A test's own thresholds, never configuration. */
+    tuning: Partial<StuckReport['thresholds']> = {},
   ) {
     // A clock function is a test hook, not configuration; JSON config can never supply one.
     const config = parsed(
@@ -359,12 +360,7 @@ export class LeasedSessions implements Sessions {
     );
     this.initialize = async () => {
       this.clock = options.clock ?? Date.now;
-      this.thresholds = {
-        idleNoticeSeconds: config.idleNoticeSeconds,
-        maxLaunchFailures: config.maxLaunchFailures,
-        quietReadySeconds: config.quietReadySeconds,
-        refusalSeconds: config.refusalSeconds,
-      };
+      this.thresholds = { ...thresholds, ...tuning };
       await state.migrate(
         'sessions',
         Object.entries({ ...postgresMigrations, 8: managedNoncePostgresMigration }).map(

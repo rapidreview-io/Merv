@@ -12,14 +12,10 @@ import {
   sessionSecretPattern,
 } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
+import { label, platformName } from '@merv/sessions/rules';
 
-const text = z
-  .string()
-  .min(1)
-  .max(200)
-  .refine((value) => value.trim() === value && !/[\0\r\n]/.test(value));
 const common = {
-  name: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/),
+  name: z.string().regex(platformName),
   executable: z
     .string()
     .min(1)
@@ -33,8 +29,8 @@ const profileSchema = z.discriminatedUnion('harness', [
     .object({
       ...common,
       harness: z.literal('codex'),
-      model: text.optional(),
-      effort: text.optional(),
+      model: label.optional(),
+      effort: label.optional(),
       /** Image-owned executable that drops to the assignment identity before starting Codex. */
       isolatedLauncher: z
         .string()
@@ -51,8 +47,8 @@ const profileSchema = z.discriminatedUnion('harness', [
     .object({
       ...common,
       harness: z.literal('claude'),
-      model: text.optional(),
-      effort: text.optional(),
+      model: label.optional(),
+      effort: label.optional(),
       /** Further MCP servers beside Merv, each bearer named by the variable that holds it. */
       servers: z
         .array(

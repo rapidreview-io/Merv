@@ -102,9 +102,9 @@ active session's **idle clock** starts at the later of its activation and its la
 call. A call that is still running counts from its start, so one that hangs does not hide the
 silence. Heartbeat is unchanged: it renews `expiresAt` and says nothing about progress.
 
-| Sessions config     | Default | Bounds       | Meaning                                                                  |
-| ------------------- | ------- | ------------ | ------------------------------------------------------------------------ |
-| `idleNoticeSeconds` | 1800    | 60 to 604800 | Time without a Merv tool call after which the session is reported quiet. |
+| Threshold           | Value | Meaning                                                                  |
+| ------------------- | ----- | ------------------------------------------------------------------------ |
+| `idleNoticeSeconds` | 1800  | Time without a Merv tool call after which the session is reported quiet. |
 
 Quiet is computed when it is read and never stored. `GET /sessions/status` carries
 `lastActivityAt` and `quietSince` on every session: `quietSince` is the moment the idle clock
@@ -237,8 +237,10 @@ assignment, policy and reference packet is bounded at 64 KiB. This is an admissi
 limit, not a transport upload limit.
 
 Optional Sessions configuration is `sweepIntervalMs` (100–60000; default 1000),
-`maxLaunchFailures` (1–100; default 5), the idle thresholds `idleNoticeSeconds` described under [alive is not progressing](#alive-quiet-and-what-silence-does-not-prove),
-and the two report thresholds of `session.stuck`, `quietReadySeconds` (60–2592000; default 21600) and `refusalSeconds` (30–86400; default 300). Any other key is refused at startup.
+`serviceConcurrency` (1–256; default 1), `dispatchByDefault` and `managedSecretEnv`. Any other
+key is refused at startup. The thresholds `session.stuck` reports are fixed:
+`maxLaunchFailures` 5, `idleNoticeSeconds` 1800 (see [alive is not progressing](#alive-quiet-and-what-silence-does-not-prove)),
+`quietReadySeconds` 21600 and `refusalSeconds` 300; only a test sets others.
 Offer commits expired-predecessor closure and drains durable cleanup before
 starting a fresh acquisition transaction. A failing cleanup handler cannot roll
 back worker retirement or partially commit domain cleanup.

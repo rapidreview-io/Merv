@@ -9,7 +9,7 @@ import {
   type State,
   type Transaction,
 } from '@merv/contracts';
-import { isoNow, readFirst } from './common.js';
+import { isoNow, live, readFirst } from './common.js';
 import { postgresMigrations } from './stream.postgres.js';
 import type { Session, SessionStreamBatch, SessionStreamReads } from './types.js';
 
@@ -60,8 +60,6 @@ const batchSchema = z
   .strict()
   .refine((batch) => batch.to >= batch.from);
 
-const live = (session: Pick<Session, 'status'>) =>
-  session.status === 'offered' || session.status === 'active';
 type Row = { seq: number | string; at: string; event: string };
 const view = (row: Row): AgentStreamEvent => ({
   seq: Number(row.seq),
@@ -231,15 +229,18 @@ export class SessionStreams implements SessionStreamReads {
     };
   }
 
-  /** The sweep's: the events of sessions that ended over 30 days ago, a thousand at a time. */
+  /**
+   * The sweep's: the events of sessions that ended over 30 days ago, a hundred sessions at a
+   * time. They are chosen among ended sessions, never among the oldest events, which a session
+   * still live, or ended lately, could fill and so keep every other one's events.
+   */
   async prune(): Promise<void> {
     const cutoff = isoNow(() => this.clock() - RETAIN_MS);
     await readFirst(this.state, async (tx) => {
       const ended = await tx.all<{ id: string }>(
-        `SELECT s.id FROM worker_sessions s WHERE s.id IN
-          (SELECT session_id FROM session_events WHERE at<? ORDER BY at LIMIT 1000)
-          AND s.status IN ('released','expired') AND (s.session_json::jsonb #>> '{closedAt}')<?`,
-        cutoff,
+        `SELECT s.id FROM worker_sessions s WHERE s.status IN ('released','expired')
+          AND (s.session_json::jsonb #>> '{closedAt}')<?
+          AND EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id) LIMIT 100`,
         cutoff,
       );
       if (ended.length)

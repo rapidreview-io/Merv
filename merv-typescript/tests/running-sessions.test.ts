@@ -20,7 +20,7 @@ import {
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
-import { LeasedSessions, type SessionsConfig } from '@merv/sessions';
+import { LeasedSessions, type StuckReport } from '@merv/sessions';
 import { UiRegistry } from '@merv/ui';
 import { runningBoard, runningPanel, workflowsOf, type RunningSources } from '@merv/ui/running';
 import type { SandboxRuntimes } from '@merv/sandboxes';
@@ -79,7 +79,11 @@ const noIds = (value: unknown, allowed: string[] = []) =>
 /** Sessions over PostgreSQL with a test clock, its real ui adapter, and the Running reads. */
 async function fixture(
   t: TestContext,
-  options: { config?: SessionsConfig; brief?: string; unnamed?: true } = {},
+  options: {
+    tuning?: Partial<StuckReport['thresholds']>;
+    brief?: string;
+    unnamed?: true;
+  } = {},
 ) {
   let clock = Date.now();
   /** Work its domain refuses to lease at its current revision, as Tasks does a base Code cannot derive. */
@@ -174,12 +178,14 @@ async function fixture(
   const source = await issue('Producer', 'producer');
   const reader = await issue('Reader', 'reader');
   const sessions = await createService(
-    new LeasedSessions(state, scope, workflows, events, {
-      clock: () => clock,
-      sweepIntervalMs: 60_000,
-      managedSecretEnv: env,
-      ...options.config,
-    }),
+    new LeasedSessions(
+      state,
+      scope,
+      workflows,
+      events,
+      { clock: () => clock, sweepIntervalMs: 60_000, managedSecretEnv: env },
+      options.tuning,
+    ),
   );
   const ctx = new Context();
   const ui = new UiRegistry();
@@ -400,7 +406,7 @@ test('an active lease names its call in flight, breathes once the call outlasts 
 });
 
 test('a lease quiet past the idle notice needs a person, and so does one whose machine stopped reporting', async (t) => {
-  const f = await fixture(t, { config: { idleNoticeSeconds: 60 } });
+  const f = await fixture(t, { tuning: { idleNoticeSeconds: 60 } });
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   await f.instance();
@@ -486,7 +492,7 @@ test('a revoked key reads as such, and a lease with no runner row is never red f
 });
 
 test('the lane says how dispatch stands to everyone, and to an operator only how much waits and why, with its control', async (t) => {
-  const f = await fixture(t, { config: { refusalSeconds: 30 } });
+  const f = await fixture(t, { tuning: { refusalSeconds: 30 } });
   await f.instance();
   const summary = async (caller: Caller) =>
     (await f.board(caller)).lanes.sessions.summaries.find(({ owner }) => owner === 'sessions')!;
@@ -556,7 +562,7 @@ test('the lane says how dispatch stands to everyone, and to an operator only how
 });
 
 test('dispatch marks what it holds for everyone, and tells only an operator what resumes by itself and what nobody took', async (t) => {
-  const f = await fixture(t, { config: { maxLaunchFailures: 2, quietReadySeconds: 60 } });
+  const f = await fixture(t, { tuning: { maxLaunchFailures: 2, quietReadySeconds: 60 } });
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.heartbeat();
   const held = await f.instance();
@@ -940,7 +946,7 @@ test('a lease bound to a Fleet machine takes that machine in, and Fleet describe
 });
 
 test('a Fleet machine that refuses work is named as one, never by its hostname', async (t) => {
-  const f = await fixture(t, { config: { refusalSeconds: 30 } });
+  const f = await fixture(t, { tuning: { refusalSeconds: 30 } });
   const { machine, runnerId, runner } = await rent(f);
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.sessions.dispatch.setRunnerSettings(f.owner, {
@@ -1147,4 +1153,39 @@ test('an agent’s live stream is kept 30 days after its session ended, then the
   assert.equal(await count(session.id), 0);
   // The other lapsed only at the first sweep, 29 days on: its stream is kept.
   assert.equal(await count(kept.session.id), 1);
+});
+
+test('the sweep deletes an ended session’s stream although a live one holds a thousand older events', async (t) => {
+  const f = await fixture(t);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.heartbeat();
+  await f.instance();
+  await f.instance();
+  const { session } = await f.active();
+  const busy = await f.active();
+  const event = `'{"kind":"status","id":"s","text":"Working"}'`;
+  await f.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO session_events(session_id,seq,at,until,event) SELECT ?,n,?,n,${event} FROM generate_series(1,1000) AS n`,
+      busy.session.id,
+      new Date(f.now() - 1000).toISOString(),
+    );
+    await tx.run(
+      `INSERT INTO session_events(session_id,seq,at,until,event) VALUES(?,1,?,1,${event})`,
+      session.id,
+      new Date(f.now()).toISOString(),
+    );
+  });
+  const count = async (id: string) =>
+    Number(
+      (await f.state.read((sql) =>
+        sql.get<{ n: string }>('SELECT COUNT(*) AS n FROM session_events WHERE session_id=?', id),
+      ))!.n,
+    );
+  await f.sessions.dispatch.halt(f.owner, { sessionId: session.id, reason: 'halted_by_operator' });
+  f.advance(31 * 86_400_000);
+  await f.sessions.sweep();
+  // The busy session's older events, which lapsed only now, are not what the sweep waits on.
+  assert.equal(await count(session.id), 0);
+  assert.equal(await count(busy.session.id), 1000);
 });

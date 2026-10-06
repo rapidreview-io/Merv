@@ -24,6 +24,37 @@ const view = (row: Row): SessionTranscript => ({
   uploadedAt: row.uploaded_at,
 });
 
+type Uploads = Required<Pick<Blobs, 'upload' | 'stored'>>;
+/** Blobs that take a session's transcript or conversation, or why they cannot. */
+export function uploads(blobs: Blobs | undefined, kind: 'transcript' | 'conversation'): Uploads {
+  const name = `${kind[0]!.toUpperCase()}${kind.slice(1)} storage`;
+  check(blobs, 'blob_unavailable', `${name} is not loaded`, 503);
+  check(blobs.upload && blobs.stored, `${kind}s_unsupported`, `${name} takes no uploads`, 409);
+  return blobs as Uploads;
+}
+/**
+ * The delivery of what a session declared, one HEAD outside any transaction: with nothing
+ * stored, one signed PUT (local signing, 1 h, exact size, checksum, If-None-Match:*); stored,
+ * `uploaded` records the upload once, and a racing delivery updates nothing.
+ */
+export async function deliver(
+  blobs: Uploads,
+  kind: 'transcript' | 'conversation',
+  key: string,
+  declared: SessionTranscript,
+  uploaded: () => Promise<SessionTranscript>,
+): Promise<SessionTranscript> {
+  const stored = await blobs.stored(key, declared.sha256);
+  check(
+    stored === null || stored === declared.size,
+    `${kind}_mismatch`,
+    `A stored ${kind} with this SHA-256 has another size`,
+    409,
+  );
+  if (stored !== null) return await uploaded();
+  return { ...declared, upload: await blobs.upload(key, declared.sha256, declared.size) };
+}
+
 /** The one copy of what a worker's process printed, kept for operators; nothing in Merv reads it back. */
 export class SessionTranscripts {
   /** Late-bound like `tools`: unbound while Blobs loads or reloads. */
@@ -46,14 +77,7 @@ export class SessionTranscripts {
     caller: Caller,
     input: SessionControl & SessionTranscriptDeclaration,
   ): Promise<SessionTranscript> {
-    const blobs = this.blobs;
-    check(blobs, 'blob_unavailable', 'Transcript storage is not loaded', 503);
-    check(
-      blobs.upload && blobs.stored,
-      'transcripts_unsupported',
-      'Transcript storage takes no uploads',
-      409,
-    );
+    const blobs = uploads(this.blobs, 'transcript');
     // Like a workspace result: the runner that held it, whatever the session's state now.
     const row = await readFirst(this.state, async (tx) => {
       const session = await this.controlled(caller, input.sessionId, input.runnerId, tx);
@@ -96,30 +120,20 @@ export class SessionTranscripts {
       409,
     );
     if (row.uploaded_at !== null || !input.deliver) return view(row);
-    const key = namespace(row.project_id),
-      stored = await blobs.stored(key, row.sha256);
-    check(
-      stored === null || stored === Number(row.size),
-      'transcript_mismatch',
-      'A stored transcript with this SHA-256 has another size',
-      409,
-    );
-    // Nothing stored: one signed PUT (local signing), 1 h, exact size, checksum, If-None-Match:*.
-    if (stored === null)
-      return { ...view(row), upload: await blobs.upload(key, row.sha256, Number(row.size)) };
-    // Stored: the upload is recorded once; a racing delivery updates nothing.
-    return await this.state.transaction(async (tx) => {
-      await tx.run(
-        'UPDATE session_transcripts SET uploaded_at=? WHERE session_id=? AND uploaded_at IS NULL',
-        isoNow(this.clock),
-        row.session_id,
-      );
-      return view(
-        (await tx.get<Row>(
-          'SELECT * FROM session_transcripts WHERE session_id=?',
+    return await deliver(blobs, 'transcript', namespace(row.project_id), view(row), () =>
+      this.state.transaction(async (tx) => {
+        await tx.run(
+          'UPDATE session_transcripts SET uploaded_at=? WHERE session_id=? AND uploaded_at IS NULL',
+          isoNow(this.clock),
           row.session_id,
-        ))!,
-      );
-    });
+        );
+        return view(
+          (await tx.get<Row>(
+            'SELECT * FROM session_transcripts WHERE session_id=?',
+            row.session_id,
+          ))!,
+        );
+      }),
+    );
   }
 }

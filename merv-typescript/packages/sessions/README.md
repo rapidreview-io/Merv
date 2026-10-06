@@ -2,7 +2,11 @@
 
 Continuing agent identity, authenticated sessions, and assignment execution lifecycle. The provider injects
 `state`, `scope`, `workflows`, `domainEvents`, and registers its session tool policy with `tools` whenever a tool
-registry is loaded. It stores [transcripts](#transcripts) through `blobs` whenever Blobs is loaded. The registry refuses session callers while no policy is registered. A policy decision or
+registry is loaded. It stores [transcripts](#transcripts) through `blobs` whenever Blobs is loaded, and is Secrets'
+authority for [Hugging Face access](#private-account-credential-delivery) whenever Secrets is loaded. Agent and
+managed-runner credentials live in Identity's credential store (`@merv/identity/credentials`). What a runner
+advertises (`RUNNER_HARNESSES`, the platform and capability schemas, session statuses) is the pure-rules module
+`@merv/sessions/rules`, which the runner imports too. The registry refuses session callers while no policy is registered. A policy decision or
 prepared invocation belongs to the registration that admitted it: withdrawing or replacing that registration,
 even with the same provider, prevents later dispatch, and cleanup still goes to the original provider. A handler
 already admitted may finish. Its `@merv/sessions/api` adapter (config row `sessions-api`) injects `sessions` and `api`: it mounts `/sessions` and registers the session (`ms_`, POST `/mcp` only), managed-runner (`mr_`, its control routes only) and enrollment (`me_`) credentials, all withdrawn with it. Its optional `/ui` adapter injects `sessions` and `ui`, and its optional `/tools` adapter injects `sessions` and `tools` for usage, dispatch, observation and session messaging. It launches no processes.
@@ -28,6 +32,10 @@ flowchart LR
     sessions["Sessions<br/><small>agents, leases, live stream</small>"]
     workflows["Workflows"]
     scope["Scope"]
+    identity["Identity"]
+    state["State"]
+    domainEvents["Domain events"]
+    secrets["Secrets"]
     blobs["Blobs"]
     fleet["Fleet"]
     sandboxes["Sandboxes"]
@@ -45,6 +53,11 @@ flowchart LR
   sessions -- "injects" --> api
   sessions -- "injects; runs admitDispatch" --> workflows
   sessions -- "injects" --> scope
+  sessions -- "imports @merv/identity/credentials" --> identity
+  sessions -- "injects" --> state
+  sessions -- "injects; drains before an offer" --> domainEvents
+  sessions -- "injects; HF grant authority" --> secrets
+  runner -- "imports @merv/sessions/rules" --> sessions
   sessions -- "injects" --> blobs
   blobs -- "reads/writes" --> blobStore
   fleet -- "injects" --> sessions
@@ -91,6 +104,8 @@ separate real-agent acceptance harness, not a production runner.
 [Automatic assignment and project controls](../../docs/RUNNER_CONTROL_PLANE.md) include default-off dispatch, pause/halt, source-bound runner presence, desired platform settings and transactional capacity checks. Workflows supplies metadata-only candidates; Sessions owns durable lease selection and retry receipts. `npm run test:live:dispatch -- /private/tmp/UNIQUE_DIRECTORY` exercises automatic HTTP assignment with two fresh agents.
 
 ## Private account credential delivery
+
+Hugging Face access is for hosted Codex only: a session on a machine Fleet rents, whose platform's harness is `codex`, and not a read-only step that keeps its workspace. Every other session receives `{access: null}`.
 
 `POST /sessions/:id/huggingface-access` accepts only `{runnerId, hostRef}` from the managed supervisor bearer. It checks the current allocation, bound project, runner, source, attached host and live workflow lease before resolving an account through Scope. A personal key follows its owner; a service follows its immutable validated voucher. Where an account resolves, Secrets issues `{access: {token, endpoint}}`: a read-only capability for its Hugging Face broker, bound to this session, runner, allocation and host and expiring at the session's hard deadline, never the account token. Actor-only sources, sealed offline reviews and a deployment without Secrets receive `{access: null}`. The response uses `Cache-Control: no-store`. There is no corresponding MCP tool or credential field in ordinary session responses.
 

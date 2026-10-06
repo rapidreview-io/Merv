@@ -14,7 +14,7 @@ import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';
 import { LeasedSessions, type Session, type SessionsConfig } from '@merv/sessions';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from './fixtures/app.js';
@@ -60,6 +60,7 @@ async function fixture(
     maxLaunchFailures?: number;
     dispatchSchema?: number;
     config?: SessionsConfig;
+    tuning?: Partial<StuckReport['thresholds']>;
     workspace?: WorkflowWorkspacePolicy;
   } = {},
 ) {
@@ -164,14 +165,19 @@ async function fixture(
             );
     try {
       return await createService(
-        new LeasedSessions(state, scope, workflows, events, {
-          clock: () => clock,
-          sweepIntervalMs: 60_000,
-          ...options.config,
-          ...(options.maxLaunchFailures === undefined
-            ? {}
-            : { maxLaunchFailures: options.maxLaunchFailures }),
-        }),
+        new LeasedSessions(
+          state,
+          scope,
+          workflows,
+          events,
+          { clock: () => clock, sweepIntervalMs: 60_000, ...options.config },
+          {
+            ...options.tuning,
+            ...(options.maxLaunchFailures === undefined
+              ? {}
+              : { maxLaunchFailures: options.maxLaunchFailures }),
+          },
+        ),
       );
     } finally {
       state.migrate = migrate;
@@ -759,7 +765,7 @@ test('a tool call that hangs counts from its start, so it does not hide the sile
 
 test('hours without a Merv call never close a session or count against its target', async (t) => {
   const f = await fixture(t, {
-    config: { idleNoticeSeconds: 600 },
+    tuning: { idleNoticeSeconds: 600 },
   });
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -778,7 +784,7 @@ test('hours without a Merv call never close a session or count against its targe
 });
 
 test('no read closes an idle session, yet the stuck report already names it', async (t) => {
-  const f = await fixture(t, { config: { idleNoticeSeconds: 600 } });
+  const f = await fixture(t, { tuning: { idleNoticeSeconds: 600 } });
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
   await f.instance();
@@ -823,16 +829,15 @@ test('the stuck report leaves out no_live_runner while Fleet rents for the proje
   assert.match(item.next, /Fleet serves a project as its owner/, 'the key-made project has none');
 });
 
-test('the idle, quiet-ready and refusal thresholds are bounded', async (t) => {
+test('configuration sets neither the stuck report’s thresholds nor the test clock', async (t) => {
   for (const config of [
-    { idleNoticeSeconds: 59 },
-    { quietReadySeconds: 59 },
-    { refusalSeconds: 29 },
-    { refusalSeconds: 1.5 },
-    // Operator config cannot replace the test clock.
+    { idleNoticeSeconds: 600 },
+    { maxLaunchFailures: 3 },
+    { quietReadySeconds: 600 },
+    { refusalSeconds: 30 },
     { clock: 1 },
   ])
-    await assert.rejects(async () => await fixture(t, { config }), {
+    await assert.rejects(async () => await fixture(t, { config: config as SessionsConfig }), {
       code: 'invalid_sessions_config',
     });
 });
@@ -903,7 +908,7 @@ test('the stuck report names a switched-off dispatch, a missing runner and a run
 });
 
 test('a ready step nobody takes is quiet, an operator step included, and a failing target is reported once', async (t) => {
-  const f = await fixture(t, { maxLaunchFailures: 2, config: { quietReadySeconds: 600 } });
+  const f = await fixture(t, { maxLaunchFailures: 2, tuning: { quietReadySeconds: 600 } });
   f.wallClock();
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   const target = await f.instance();
@@ -988,7 +993,7 @@ for (const code of ['code_base_pending', 'code_merge_required', 'code_dependenci
   });
 
 test('work another plugin published a blocker for is named in the stuck report until it clears', async (t) => {
-  const f = await fixture(t, { config: { quietReadySeconds: 600 } });
+  const f = await fixture(t, { tuning: { quietReadySeconds: 600 } });
   f.wallClock();
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -1182,7 +1187,7 @@ test('a preparation nobody could make is deferred: it names its cause, never cou
 });
 
 test('a run of deferred preparations is shown as work nobody could take, with its cause', async (t) => {
-  const f = await fixture(t, { config: { quietReadySeconds: 600 } });
+  const f = await fixture(t, { tuning: { quietReadySeconds: 600 } });
   f.wallClock();
   await f.sessions.dispatch.heartbeatRunner(f.source, presence());
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
@@ -1332,4 +1337,132 @@ test('Fleet does not label scratch or hosted-driver work as needing a local repo
     assert.deepEqual((await f.sessions.dispatch.stuck(f.owner)).items, []);
     assert.deepEqual((await f.sessions.running.marks(f.owner)).marks, []);
   }
+});
+
+/**
+ * session.stuck, system.status and the Running board read one dispatch reading: what each says
+ * of why queued work does not move agrees, at every step of several fixtures.
+ */
+async function views(f: Awaited<ReturnType<typeof fixture>>, step: string) {
+  const report = await f.sessions.dispatch.stuck(f.owner);
+  const status = await f.sessions.dispatch.projectStatus(f.owner, true);
+  const reading = await f.state.transaction((tx) => f.sessions.dispatch.running(f.owner, tx));
+  if (process.env.MERV_DISPATCH_VIEWS)
+    appendFileSync(
+      process.env.MERV_DISPATCH_VIEWS,
+      `${JSON.stringify({ step, report, status, reading })}\n`,
+    );
+  const of = (...kinds: string[]) => report.items.filter((item) => kinds.includes(item.kind));
+  const byId = <T extends { instanceId?: string }>(items: T[]) =>
+    items.sort((a, b) => (a.instanceId! < b.instanceId! ? -1 : 1));
+  assert.deepEqual(status.stuck, report, step);
+  assert.equal(reading.waiting, status.queueTotal, step);
+  assert.equal(
+    reading.stall?.code ?? null,
+    of('dispatch_disabled', 'no_live_runner', 'runner_refusing')[0]?.kind ?? null,
+    step,
+  );
+  assert.deepEqual(
+    byId(reading.failures),
+    byId(
+      of('dispatch_held', 'dispatch_failing').map((item) => ({
+        instanceId: item.instanceId!,
+        attempts: item.attempts!,
+        held: item.kind === 'dispatch_held',
+      })),
+    ),
+    step,
+  );
+  assert.deepEqual(
+    byId(reading.deferred),
+    byId(
+      of('work_deferred').map((item) => ({
+        instanceId: item.instanceId!,
+        attempts: item.attempts!,
+      })),
+    ),
+    step,
+  );
+  assert.deepEqual(
+    byId(reading.quiet),
+    byId(
+      of('ready_quiet', 'work_blocked')
+        .filter((item) => item.kind === 'ready_quiet' || item.code === 'runner_incompatible')
+        .map((item) => ({ instanceId: item.instanceId!, since: item.since, code: item.code })),
+    ),
+    step,
+  );
+  return report.items.map((item) => item.kind);
+}
+
+test('the stuck report, the status read and the Running board agree on why work waits', async (t) => {
+  const f = await fixture(t, { maxLaunchFailures: 2, tuning: { quietReadySeconds: 600 } });
+  f.wallClock();
+  const registered = await f.sessions.dispatch.heartbeatRunner(f.source, presence());
+  assert.deepEqual(await views(f, 'empty'), []);
+  const failing = await f.instance();
+  assert.deepEqual(await views(f, 'off'), ['dispatch_disabled']);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  f.advance(46_000);
+  assert.deepEqual(await views(f, 'no runner'), ['no_live_runner']);
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence('other'));
+  await f.sessions.dispatch.setRunnerSettings(f.owner, {
+    runnerId: registered.id,
+    settings: { platforms: [{ name: 'codex', enabled: true, parallelism: 1 }] },
+  });
+  await f.sessions.dispatch.lease(f.source, auto());
+  f.advance(300_000);
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence('other'));
+  assert.deepEqual(await views(f, 'refusing'), ['runner_refusing'], 'not quiet yet');
+  f.leaseRole('operator');
+  assert.deepEqual(await views(f, 'operator step'), [], 'no runner refuses an operator’s step');
+  f.leaseRole('producer');
+  await f.fail('other');
+  assert.deepEqual(await views(f, 'failing'), ['dispatch_failing', 'runner_refusing']);
+  await f.pastBackoff('machine', 'other');
+  await f.fail('other');
+  const deferred = await f.instance();
+  for (let index = 0; index < 3; index++) {
+    await f.pastBackoff('machine', 'other');
+    await f.fail('other', 'preparation_deferred');
+  }
+  assert.equal((await f.holds()).find((row) => row.instance_id === failing.id)?.attempts, 2);
+  assert.deepEqual(await views(f, 'held and deferred'), [
+    'dispatch_held',
+    'work_deferred',
+    'runner_refusing',
+  ]);
+  await f.instance();
+  f.advance(11 * minute);
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence('other'));
+  assert.deepEqual(await views(f, 'quiet too'), [
+    'dispatch_held',
+    'work_deferred',
+    'ready_quiet',
+    'runner_refusing',
+  ]);
+  assert.ok(deferred.id);
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: false });
+  assert.deepEqual(await views(f, 'off again'), ['work_deferred', 'dispatch_disabled']);
+});
+
+test('the three dispatch views agree while Fleet cannot supply a local checkout', async (t) => {
+  const f = await fixture(t, {
+    workspace: { mode: 'ephemeral', namespace: 'work', base: 'central', retain: false },
+  });
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  await f.instance();
+  t.after(
+    f.sessions.managed.registerValidator({
+      current: async () => false,
+      admits: async () => false,
+      serves: (projectId) => projectId === f.owner.projectId,
+    }),
+  );
+  assert.deepEqual(await views(f, 'fleet'), ['work_blocked']);
+  await f.sessions.dispatch.heartbeatRunner(f.source, presence());
+  assert.deepEqual(await views(f, 'own runner'), []);
 });
