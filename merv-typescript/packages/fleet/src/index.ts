@@ -828,6 +828,37 @@ export class FleetService implements Fleet {
       return;
     }
     const handle = await runtime.inspect(place, a.runtime);
+    // A machine nothing was launched on that failed, or whose agent has not connected a minute
+    // after Fleet adopted it, is stuck. It is stopped and another rented under a new key, before
+    // its failure is recorded for owners to read as a lost machine; the last one fails the work.
+    if (
+      a.intent === 'run' &&
+      !handle.ready &&
+      !handle.launch &&
+      !handle.deleted &&
+      (handle.state === 'failed' ||
+        Date.parse(a.adoptedAt ?? a.updatedAt) + readyMs <= this.clock())
+    ) {
+      report('fleet.not_ready', a, new MervError('runtime_not_ready', 'Machine never ready'));
+      if ((a.replaced ?? 0) + 1 >= readyAttempts)
+        a = await this.update(a.id, (current) => {
+          current.intent = 'stop';
+          current.error = 'runtime_not_ready';
+        });
+      else {
+        await runtime.stop(place, handle);
+        await this.update(a.id, (current) => {
+          if (current.intent !== 'run' || current.runtime?.sandboxId !== handle.sandboxId) return;
+          current.runtime = null;
+          current.createAttempted = false;
+          current.replaced = (current.replaced ?? 0) + 1;
+          current.failures++;
+          current.error = 'runtime_unavailable';
+          current.retryAt = new Date(this.clock() + backoff(current.failures)).toISOString();
+        });
+        return;
+      }
+    }
     a = await this.observed(a, handle, a.phase);
     if (a.phase === 'released') return;
     if (
@@ -839,33 +870,6 @@ export class FleetService implements Fleet {
         current.intent = 'stop';
       });
     if (a.intent === 'stop') return await stop(a, handle);
-    // A machine whose agent never connected is stuck: stop it and rent another under a new key.
-    if (
-      a.intent === 'run' &&
-      !handle.ready &&
-      !handle.launch &&
-      Date.parse(a.adoptedAt ?? a.updatedAt) + readyMs <= this.clock()
-    ) {
-      report('fleet.not_ready', a, new MervError('runtime_not_ready', 'Machine never ready'));
-      if ((a.replaced ?? 0) + 1 >= readyAttempts) {
-        a = await this.update(a.id, (current) => {
-          current.intent = 'stop';
-          current.error = 'runtime_not_ready';
-        });
-        return await stop(a, handle);
-      }
-      await runtime.stop(place, handle);
-      await this.update(a.id, (current) => {
-        if (current.intent !== 'run' || current.runtime?.sandboxId !== handle.sandboxId) return;
-        current.runtime = null;
-        current.createAttempted = false;
-        current.replaced = (current.replaced ?? 0) + 1;
-        current.failures++;
-        current.error = 'runtime_unavailable';
-        current.retryAt = new Date(this.clock() + backoff(current.failures)).toISOString();
-      });
-      return;
-    }
     if (!owner || !handle.ready) return;
     if (handle.launch?.deliveryState !== 'launched') {
       if (a.intent === 'drain') {

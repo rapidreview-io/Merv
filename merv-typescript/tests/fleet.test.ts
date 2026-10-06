@@ -1690,3 +1690,23 @@ test('an allocation whose machines never become ready fails after three, with ru
   const released = await f.fleet.inspect(f.caller, id);
   assert.deepEqual([released.phase, released.error], ['released', 'runtime_not_ready']);
 });
+
+test('a machine that fails before anything was launched on it is replaced at once, its failure never recorded', async (t) => {
+  const f = await fixture(t);
+  f.runtimes.initialState = 'provisioning';
+  const { id } = await f.fleet.request(f.caller, input('failed-early'));
+  await f.fleet.tick();
+  // The provider ended the container before its agent connected: Sandboxes fails the machine.
+  const live = f.runtimes.byKey.get(`${id}:create`)!;
+  Object.assign(live, { state: 'failed', revision: live.revision + 1 });
+  f.runtimes.initialState = 'ready';
+  f.advance(1000);
+  await f.fleet.tick();
+  const replaced = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([replaced.intent, replaced.runtime, replaced.replaced], ['run', null, 1]);
+  assert.deepEqual(f.runtimes.stopped, ['sbx_1']);
+  f.advance(2000);
+  for (const _ of [1, 2, 3]) await f.fleet.tick();
+  const running = await f.fleet.inspect(f.caller, id);
+  assert.deepEqual([running.phase, running.runtime?.sandboxId], ['running', 'sbx_2']);
+});
