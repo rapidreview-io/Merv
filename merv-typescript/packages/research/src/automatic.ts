@@ -12,7 +12,10 @@ import {
   type Workflows,
 } from '@merv/contracts';
 
-/** A row of research_automation. Its blocker_json column is no longer written. */
+/**
+ * A row of research_automation. Its blocker_json column holds `{unavailableSince}`, when the
+ * outage the cycle's blocker reports was first seen, whatever codes it has reported since.
+ */
 export interface AutomaticRow {
   research_id: string;
   project_id: string;
@@ -28,6 +31,17 @@ export const AUTOMATIC_PROVIDER = 'research';
 const NEXT =
   'Automatic research tries again when this project next changes; research.advance moves the cycle by hand, and research.end stops it.';
 
+/** When the outage a cycle's blocker reports was first seen, or NaN when it reports none. */
+export const unavailableSince = (blockerJson: string | null): number => {
+  try {
+    return Date.parse(
+      (JSON.parse(blockerJson ?? 'null') as { unavailableSince?: string })?.unavailableSince ?? '',
+    );
+  } catch {
+    return NaN;
+  }
+};
+
 /** Research's whole opinion of a cycle, written over whatever it said before. */
 export async function publishBlocker(
   workflows: Pick<Workflows, 'replaceBlockers'>,
@@ -35,6 +49,18 @@ export async function publishBlocker(
   blocker: AutomaticBlocker,
   tx: Transaction,
 ): Promise<void> {
+  const held = await tx.get<{ blocker_json: string | null }>(
+    'SELECT blocker_json FROM research_automation WHERE research_id=?',
+    row.research_id,
+  );
+  const since = unavailableSince(held?.blocker_json ?? null);
+  await tx.run(
+    'UPDATE research_automation SET blocker_json=? WHERE research_id=?',
+    blocker?.status === 503
+      ? JSON.stringify({ unavailableSince: new Date(since || Date.now()).toISOString() })
+      : null,
+    row.research_id,
+  );
   await workflows.replaceBlockers(
     {
       projectId: row.project_id,

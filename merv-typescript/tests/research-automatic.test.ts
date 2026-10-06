@@ -545,6 +545,39 @@ test('a cycle a passing outage refused is tried again without another event', as
   assert.equal((await f.research.get(f.owner, cycle.id)).workflow.state, 'reflecting');
 });
 
+test('outages that alternate their codes are still tried again only for the bound, by one timer per project', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  f.research.retryAfterMs = 37;
+  f.research.unavailableForMs = 400;
+  const works = [await f.experiment(), await f.experiment()];
+  for (const work of works) await f.create([work.id]);
+  await f.pump();
+  let calls = 0;
+  t.mock.method(f.app.ctx.reflections, 'create', async () => {
+    // Each refusal names another outage, so the published blocker's `since` keeps moving.
+    throw new MervError(calls++ % 2 ? 'code_git_timeout' : 'sandbox_unavailable', 'Down', 503);
+  });
+  const timers = t.mock.method(globalThis, 'setTimeout');
+  const retries = () => timers.mock.calls.filter((call) => call.arguments[1] === 37).length;
+  for (const work of works) await f.failExperiment(work.id);
+  await f.pump();
+  // Two cycles of one project refused in one pass: one resume tries both again.
+  assert.equal(retries(), 1);
+  const settle = async () => {
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await f.app.ctx.domainEvents.drain();
+    return calls;
+  };
+  await settle();
+  await settle();
+  await settle();
+  const after = await settle();
+  assert.ok(after > 4, 'the outage was tried again while it was new');
+  assert.equal(await settle(), after, 'retries stop once the first outage is older than the bound');
+});
+
 test('a database briefly unavailable is retried with its event instead of blocking the cycle', async (t) => {
   const f = await fixture(t);
   await f.define();

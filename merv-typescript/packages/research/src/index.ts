@@ -42,6 +42,7 @@ import {
   automaticRequest,
   automaticResearch,
   publishBlocker,
+  unavailableSince,
   type AutomaticBlocker,
   type AutomaticRow,
 } from './automatic.js';
@@ -120,8 +121,6 @@ const origin = (approved: ApprovedReflection, ...named: string[]) =>
 const pinned = (kind: string, { id, hash }: Artifact) => `${kind} ${id} (${hash})`;
 /** A cycle in one of these states is over: it may be digested and it may be followed. */
 const over = new Set(['complete', 'abandoned', 'failed']);
-/** How long an outage keeps a cycle being tried again before only an event or a bind wakes it. */
-const UNAVAILABLE_FOR = 10 * 60_000;
 /**
  * A digest rides inside a 24000-character reflection context, behind the assignment and any
  * rework feedback. At this bound it still fits beside them instead of being omitted whole.
@@ -183,6 +182,10 @@ export class ResearchService implements Research {
   private automaticBound = false;
   /** How long a cycle an outage refused waits before it is tried again. */
   retryAfterMs = 30_000;
+  /** How long an outage keeps a cycle being tried again before only an event or a bind wakes it. */
+  unavailableForMs = 10 * 60_000;
+  /** Projects with a retry already waiting: one resume reconciles every cycle there. */
+  private readonly retrying = new Set<string>();
   /** Runs a callback in the context this service was made in, outside every transaction. */
   private readonly detached = AsyncResource.bind((fn: () => void) => fn());
   private bindings: { [K in keyof Capabilities]?: Binding<Capabilities[K]> } = {};
@@ -1549,19 +1552,29 @@ export class ResearchService implements Research {
   }
 
   /**
-   * Wakes a cycle an outage refused once `retryAfterMs` has passed, while the refusal it
-   * published is an outage first seen less than UNAVAILABLE_FOR ago: an idle project has no
-   * other event to wake it, and the bound is the published blocker's own `since`.
+   * Wakes a project whose cycle an outage refused once `retryAfterMs` has passed, while one of
+   * its cycles reports an outage first seen less than `unavailableForMs` ago: an idle project
+   * has no other event to wake it. The bound is the outage's first sighting, kept beside the
+   * cycle, so outages that alternate their codes cannot extend it. One retry waits per project.
    */
   private retryUnavailable(row: AutomaticRow): void {
+    if (this.retrying.has(row.project_id)) return;
+    this.retrying.add(row.project_id);
     const wake = async () => {
+      this.retrying.delete(row.project_id);
       if (this.closed || !this.automaticBound) return;
       const source = JSON.parse(row.source_json) as DelegationSource;
       await this.state.transaction(async (tx) => {
-        const held = (
-          await this.workflows.blockers(sourceCaller(source), row.research_id, tx)
-        ).find((item) => item.provider === AUTOMATIC_PROVIDER);
-        if (held?.status !== 503 || Date.now() - Date.parse(held.since) > UNAVAILABLE_FOR) return;
+        const out = await tx.all<{ blocker_json: string | null }>(
+          'SELECT blocker_json FROM research_automation WHERE project_id=? AND blocker_json IS NOT NULL',
+          row.project_id,
+        );
+        if (
+          !out.some(
+            (item) => Date.now() - unavailableSince(item.blocker_json) <= this.unavailableForMs,
+          )
+        )
+          return;
         await this.state.appendEvent(tx, {
           projectId: row.project_id,
           actorId: source.actorId,
