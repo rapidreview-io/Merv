@@ -337,7 +337,7 @@ tasks were accepted with and pins it when the first producing lease is acquired.
 That is normally the planner's, although planning has no checkout, so the plan is
 written against a fixed base and the `running` checkout inherits it; a revised
 plan or a new attempt keeps the same pin. While no base can be derived the
-experiment is not offered and shows `code_base_pending` or `code_merge_required`
+experiment is not offered and shows `code_base_pending` or `code_base_wait`
 ([workspaces](WORKSPACES.md#the-derived-base)). Each `running` lease is also a
 writer generation: until the previous writer's final capture arrives, or an
 operator fences it, execution is not offered.

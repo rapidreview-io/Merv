@@ -974,7 +974,7 @@ test('a ready step nobody takes is quiet, an operator step included, and a faili
   );
 });
 
-for (const code of ['code_base_pending', 'code_merge_required', 'code_dependencies_changed'])
+for (const code of ['code_base_pending', 'code_base_wait', 'code_dependencies_changed'])
   test(`a base that turns ${code} at the offer is not counted against the target`, async (t) => {
     const f = await fixture(t, { maxLaunchFailures: 1 });
     await f.sessions.dispatch.heartbeatRunner(f.source, presence());
@@ -1010,7 +1010,7 @@ test('work another plugin published a blocker for is named in the stuck report u
   await publish([
     {
       key: 'merge',
-      code: 'code_merge_required',
+      code: 'code_base_wait',
       message: 'Two accepted commits must be combined.',
       status: 409,
       next: 'Recreate the work on one of them.',
@@ -1023,7 +1023,7 @@ test('work another plugin published a blocker for is named in the stuck report u
       [
         'work_blocked',
         target.id,
-        'code_merge_required',
+        'code_base_wait',
         'Two accepted commits must be combined.',
         'Recreate the work on one of them.',
       ],

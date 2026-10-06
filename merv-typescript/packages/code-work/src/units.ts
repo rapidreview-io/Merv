@@ -731,7 +731,9 @@ export class CodeUnitService {
       .sort((left, right) => left.id.localeCompare(right.id))
       .map((item) => ({ kind: 'workflow', id: item.id, label: item.name }));
     // Several accepted commits are one base, made once for everyone who waits on that set.
-    if (commits.size > 1 && this.bases?.enabled) {
+    if (commits.size > 1) {
+      // Several commits only come from Code's repositories, which also make their base.
+      check(this.bases, 'code_store_unavailable', 'This server keeps no Code repositories', 503);
       const base = await this.bases.find(tx, projectId, commits.keys());
       const path = base ? await this.bases.path(tx, projectId, base.key) : [];
       const held = path.find(
@@ -851,20 +853,6 @@ export class CodeUnitService {
         ],
       };
     }
-    if (commits.size > 1)
-      return {
-        status: 'blocked',
-        blockers: [
-          {
-            key: 'merge',
-            code: 'code_merge_required',
-            message: `The dependencies of this unit were accepted with ${commits.size} different commits, and automatic merging is disabled`,
-            status: 409,
-            next: `${EXPLICIT_BASE}, or make one dependency carry the combined code.`,
-            related,
-          },
-        ],
-      };
     const [accepted] = [...commits];
     if (!accepted && main.stored !== true)
       return {
@@ -1013,7 +1001,7 @@ export class CodeUnitService {
 
   /** Creation and linkage share the caller's transaction, so a crash never leaves an orphan. */
   private async resolveBases(tx: Transaction, projectId: string): Promise<void> {
-    if (!this.bases?.enabled) return;
+    if (!this.bases) return;
     for (const base of await this.bases.records(tx, projectId)) {
       if (base.state !== 'awaiting_resolution' || base.quarantined) continue;
       if (!base.resolutionTaskId && this.resolutionTasks) {
@@ -1232,7 +1220,7 @@ export class CodeUnitService {
 
   /** Rebuild projects whose facts may change while detached; `resolving`, those owed a task. */
   async reconcileAll(resolving = false): Promise<void> {
-    if (resolving && !this.bases?.enabled) return;
+    if (resolving && !this.bases) return;
     const projects = await this.state.read(async (sql) => {
       const ids = new Set(
         (
@@ -1259,7 +1247,7 @@ export class CodeUnitService {
    * those.
    */
   async transitioned(event: StoredEvent, tx: Transaction): Promise<void> {
-    if (this.bases?.enabled && (await this.bases.forTask(tx, event.projectId, event.subjectId))) {
+    if (this.bases && (await this.bases.forTask(tx, event.projectId, event.subjectId))) {
       await this.reconcileProject(tx, event.projectId);
       return;
     }

@@ -83,8 +83,7 @@ commit, so changing the project base cannot rewrite work already pinned to an ol
 Connection, retained server history, accepted changes and remote publication remain visible
 as distinct states. Connecting a repository is not approval to merge a research outcome.
 
-Its one setting is `repositories.autoMerge`: automatic merging of several accepted commits
-into one base is on unless it is set to `false`.
+It has no settings: several accepted commits are always merged into one base on the server.
 
 Review provenance is read through the Reviews service rather than its private tables.
 

@@ -32,9 +32,6 @@ test(
       'code-work',
     ]);
     config.plugins = config.plugins.filter(({ id }) => ids.has(id));
-    config.plugins.find(({ id }) => id === 'code-work')!.config = {
-      repositories: { autoMerge: false },
-    };
     const app = await createApp({ directory, config });
     const entered = deferred(),
       release = deferred();
