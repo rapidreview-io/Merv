@@ -53,24 +53,36 @@ export const AnsiText = ({ text }: { text: string }) => (
   </>
 );
 
+/** How long text must stand unchanged before it is coloured again: a block streaming in is not. */
+const STILL_MS = 300;
+
 /**
- * The lines of `code` coloured: at once where the highlighter already holds its
- * grammar, otherwise once that loads. Until then, and for a language it does not
- * know, there is nothing, and the code is drawn plain.
+ * The lines of `code` coloured: as first drawn where the highlighter already holds
+ * its grammar, otherwise once that loads. Text that then changes, a block still
+ * streaming in, is coloured again only once it has stood still a moment, never with
+ * every piece that arrives. Until then, and for a language it does not know, there
+ * is nothing, and the code is drawn plain.
  */
 export function useHighlight(code: string, language: Language | undefined) {
-  const now = useMemo(() => highlightNow(code, language), [code, language]);
+  const [drawn] = useState(() => ({ code, language, lines: highlightNow(code, language) }));
   const [later, setLater] = useState<{ code: string; language: Language; lines: Piece[][] }>();
+  const first = drawn.code === code && drawn.language === language;
+  const now = first ? drawn.lines : undefined;
   useEffect(() => {
     if (now || !language || !highlightable(code)) return;
     let live = true;
-    void highlight(code, language).then((lines) => {
-      if (live && lines) setLater({ code, language, lines });
-    });
+    const still = setTimeout(
+      () =>
+        void highlight(code, language, () => live).then((lines) => {
+          if (live && lines) setLater({ code, language, lines });
+        }),
+      first ? 0 : STILL_MS,
+    );
     return () => {
       live = false;
+      clearTimeout(still);
     };
-  }, [code, language, now]);
+  }, [code, language, now, first]);
   return now ?? (later?.code === code && later.language === language ? later.lines : undefined);
 }
 

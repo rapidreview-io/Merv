@@ -61,7 +61,7 @@ export function parseDelimited(text: string, separator: ',' | '\t'): string[][] 
 
 /** How many rows are drawn at a time. */
 const PAGE = 200;
-const NUMBER = /^[-+]?(?:\d[\d,_]*\.?\d*|\.\d+)(?:e[-+]?\d+)?%?$|^(?:nan|-?inf)$/i;
+const NUMBER = /^[-+]?(?:\d[\d,_]*(?:\.\d*)?|\.\d+)(?:e[-+]?\d+)?%?$|^(?:nan|-?inf)$/i;
 
 /** A parsed table: its head stays in view, its rows are numbered, and a column of numbers is set flush right. */
 export function DelimitedTable({ rows }: { rows: string[][] }) {

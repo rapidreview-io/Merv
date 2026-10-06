@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, Route, Routes, useLocation } from 'react-router-dom';
 import { SessionProvider } from './session';
 import { Sidebar, ShellFrame, PageLede, useShell, type ShellData } from './shell';
-import { EmptyState, LoadState, StatusPill } from './components';
+import { EmptyState, ErrorBoundary, LoadState, StatusPill } from './components';
 import { Icon } from './icons';
 import { MOVED, dormantOwner, humanizeGroup } from './navigation';
 import { Moved, VIEW_KINDS, viewFor } from './views';
@@ -47,6 +47,7 @@ function NotFound({ shell }: { shell: ShellData }) {
 
 function Workspace() {
   const shell = useShell();
+  const { pathname } = useLocation();
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem('merv:sidebar') !== 'closed';
@@ -89,25 +90,28 @@ function Workspace() {
         )}
         <PageLede rows={shell.data ? rows : []}>
           {shell.data ? (
-            <Routes>
-              {/* A project opens on Home: where it stands, what needs the reader, who is at work. */}
-              <Route path="/" element={<HomeView shell={shell.data} />} />
-              {/* Before the rows: the first of two equal routes is the one that answers. */}
-              {Object.entries(MOVED).map(([from, to]) => (
-                <Route key={from} path={`/${from}/*`} element={<Moved to={to(rows)} />} />
-              ))}
-              {rows.map((row) => {
-                const View = viewFor(row.view.kind);
-                return (
-                  <Route
-                    key={row.id}
-                    path={`${row.path}/*`}
-                    element={<View row={row} shell={shell.data!} />}
-                  />
-                );
-              })}
-              <Route path="*" element={<NotFound shell={shell.data} />} />
-            </Routes>
+            // A page that fails to draw says so where it stands; the next address tries afresh.
+            <ErrorBoundary reset={pathname}>
+              <Routes>
+                {/* A project opens on Home: where it stands, what needs the reader, who is at work. */}
+                <Route path="/" element={<HomeView shell={shell.data} />} />
+                {/* Before the rows: the first of two equal routes is the one that answers. */}
+                {Object.entries(MOVED).map(([from, to]) => (
+                  <Route key={from} path={`/${from}/*`} element={<Moved to={to(rows)} />} />
+                ))}
+                {rows.map((row) => {
+                  const View = viewFor(row.view.kind);
+                  return (
+                    <Route
+                      key={row.id}
+                      path={`${row.path}/*`}
+                      element={<View row={row} shell={shell.data!} />}
+                    />
+                  );
+                })}
+                <Route path="*" element={<NotFound shell={shell.data} />} />
+              </Routes>
+            </ErrorBoundary>
           ) : (
             <div className="page-stage">
               <LoadState loading={shell.loading} error={shell.error} />

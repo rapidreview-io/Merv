@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Hash } from 'fast-sha256';
 import { Link, useParams } from 'react-router-dom';
 import { call, refreshTools, useScopeVersion, useTool } from '../api';
-import { Ago, KV, LoadState, RecordPage, Short, timeRows } from '../components';
+import { Ago, ErrorBoundary, KV, LoadState, RecordPage, Short, timeRows } from '../components';
 import { ArrowRightIcon, Icon, SourceIcon, fileIcon, type IconName } from '../icons';
 import { ListPage, splitRoutes, useListFilter } from '../list-filters';
 import { CodeBlock } from '../code-block';
@@ -585,18 +585,21 @@ function Take({ artifact }: { artifact: Artifact }) {
  * glyph. A file is read as what it is (`fileType`): Markdown as a document, JSON as a
  * tree, a table as a table, a notebook as its cells, a diagram or a picture as drawn,
  * code and logs as code; and the one control on the head turns any of them that is
- * drawn as something else back into the text its author typed.
+ * drawn as something else back into the text its author typed. How one file is being
+ * read (its source shown, its failure to parse) never carries over to the next.
  */
-export function ArtifactBody({
-  artifactId,
-  metadata,
-  named,
-}: {
+export function ArtifactBody(props: FileProps) {
+  return <FileBody key={props.artifactId} {...props} />;
+}
+
+interface FileProps {
   artifactId: string;
   metadata?: Artifact;
   /** Who has already said the title: the file's own `page`, or the disclosure that `cited` it. */
   named?: 'page' | 'cited';
-}) {
+}
+
+function FileBody({ artifactId, metadata, named }: FileProps) {
   const scope = useScopeVersion();
   const [source, setSource] = useState(false);
   const [unread, setUnread] = useState(false);
@@ -654,14 +657,16 @@ export function ArtifactBody({
         </span>
       </div>
       {inline && (
-        <InlineArtifact
-          key={`${scope}:${artifactId}`}
-          artifactId={artifactId}
-          type={type}
-          title={artifact.title}
-          source={source}
-          onUnread={markUnread}
-        />
+        // A file that fails to draw is still the file: its head, its source and its copy stand.
+        <ErrorBoundary key={scope} reset={source}>
+          <InlineArtifact
+            artifactId={artifactId}
+            type={type}
+            title={artifact.title}
+            source={source}
+            onUnread={markUnread}
+          />
+        </ErrorBoundary>
       )}
       <Take artifact={artifact} />
     </div>

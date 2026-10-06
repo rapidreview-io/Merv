@@ -7,9 +7,9 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mount, serve, settle, unmount } from './ui-render.js';
+import { click, mount, serve, settle, unmount } from './ui-render.js';
 
-const { createElement } = await import('react');
+const { createElement, useState } = await import('react');
 const { act } = await import('react-dom/test-utils');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router-dom');
@@ -329,6 +329,15 @@ test('a ragged CSV stays its text, with no source to turn to', async (t) => {
   assert.equal(one('button[aria-label="View source"]'), null);
 });
 
+test('a long cell that is nearly a number is read at once, not tried every way it could be cut', async (t) => {
+  t.after(async () => await unmount());
+  const started = performance.now();
+  await file({ title: 'long.csv', mediaType: 'text/csv' }, `id\n1\n${'9'.repeat(100_000)}x\n`);
+  assert.ok(performance.now() - started < 2000, `${Math.round(performance.now() - started)} ms`);
+  assert.equal(all('.table-file tbody tr').length, 2);
+  assert.equal(one('.table-file thead th.num'), null, 'a column with a word in it is text');
+});
+
 test('JSON Lines: a tree a line, numbered as the file numbers it, and a bad line marked as text', async (t) => {
   t.after(async () => await unmount());
   await file(
@@ -437,4 +446,129 @@ test('code is numbered with its language, and a log keeps its colours', async (t
   assert.equal(one('.code-body .ansi-fg3')?.textContent, 'warn');
   assert.equal(one('.code-body')?.textContent, 'step 1\nwarn slow');
   assert.doesNotMatch(one('.doc-frame')!.textContent!, /\x1b/);
+});
+
+test('a notebook bent by hand or by a crash still reads as its cells', async (t) => {
+  t.after(async () => await unmount());
+  const cell = (outputs: unknown) => ({ cell_type: 'code', source: 'x', outputs });
+  await file(
+    { title: 'bent.ipynb', mediaType: 'application/x-ipynb+json' },
+    JSON.stringify({
+      cells: [
+        cell({}),
+        cell([null, 'text', { output_type: 'stream', text: 'ran\n' }]),
+        cell([{ output_type: 'error', ename: 'ValueError', evalue: 'bad', traceback: 'boom' }]),
+      ],
+    }),
+  );
+  assert.equal(all('.notebook .nb-cell').length, 3);
+  assert.deepEqual(
+    all('.nb-output').map((node) => node.textContent),
+    ['ran\n', 'ValueError: bad'],
+  );
+});
+
+test('a view that fails to draw says so in its place, and tries again when asked or moved on', async (t) => {
+  t.after(async () => await unmount());
+  const { ErrorBoundary } = await import('../packages/ui/web/components.js');
+  const failing = { now: true };
+  const Fragile = () => {
+    if (failing.now) throw new Error('outputs.map is not a function');
+    return createElement('p', { className: 'drawn' }, 'drawn');
+  };
+  let show: (reset: number) => void = () => {};
+  const Page = () => {
+    const [reset, setReset] = useState(0);
+    show = setReset;
+    return createElement(
+      'main',
+      null,
+      createElement('h1', null, 'Head'),
+      createElement(ErrorBoundary, { reset }, createElement(Fragile)),
+    );
+  };
+  const quiet = console.error;
+  console.error = () => {};
+  t.after(() => void (console.error = quiet));
+  await mount(createElement(Page));
+  assert.equal(one('h1')?.textContent, 'Head');
+  assert.equal(one('[role="alert"] .empty-title')?.textContent, 'This view failed to render');
+  assert.match(one('[role="alert"]')?.textContent ?? '', /outputs\.map is not a function/);
+  await click('Retry');
+  assert.ok(one('[role="alert"]'), 'still failing, still said');
+  failing.now = false;
+  await act(async () => show(1));
+  assert.equal(one('.drawn')?.textContent, 'drawn');
+  failing.now = true;
+  await act(async () => show(2));
+  assert.ok(one('[role="alert"]'));
+  failing.now = false;
+  await click('Retry');
+  assert.equal(one('.drawn')?.textContent, 'drawn');
+});
+
+test('how one file is read, its source shown, does not carry over to the next', async (t) => {
+  t.after(async () => await unmount());
+  const notebook = JSON.stringify({ cells: [{ cell_type: 'markdown', source: '# One' }] });
+  const artifactOf = (id: string) => ({
+    id,
+    projectId: 'project_1',
+    createdBy: 'actor_1',
+    hash: 'abc',
+    size: notebook.length,
+    createdAt: new Date().toISOString(),
+    title: `${id}.ipynb`,
+    mediaType: 'application/x-ipynb+json',
+  });
+  const [first, second] = [nextId(), nextId()];
+  serve('/tools/artifact.read', (_, sent) => ({
+    body: {
+      result: {
+        artifact: artifactOf(String(sent.artifactId)),
+        encoding: 'utf8',
+        content: notebook,
+      },
+    },
+  }));
+  let open: (id: string) => void = () => {};
+  const Reader = () => {
+    const [id, setId] = useState(first);
+    open = setId;
+    return createElement(
+      MemoryRouter,
+      null,
+      createElement(ArtifactBody, { artifactId: id, metadata: artifactOf(id) }),
+    );
+  };
+  await mount(createElement(Reader));
+  await settle(10);
+  await press('button[aria-label="View source"]');
+  assert.equal(one('.notebook'), null);
+  await act(async () => open(second));
+  await settle(10);
+  assert.equal(one('button[aria-label="View source"]')?.getAttribute('aria-pressed'), 'false');
+  assert.ok(one('.notebook'));
+});
+
+test('code still streaming in is drawn plain and coloured once it stands still; a long file never is', async (t) => {
+  t.after(async () => await unmount());
+  const { CodeBlock } = await import('../packages/ui/web/code-block.js');
+  const { highlightable } = await import('../packages/ui/web/highlight.js');
+  const start = 'def train(seed):\n    return seed';
+  let write: (code: string) => void = () => {};
+  const Stream = () => {
+    const [code, setCode] = useState(start);
+    write = setCode;
+    return createElement(CodeBlock, { code, lang: 'python' });
+  };
+  await mount(createElement(Stream));
+  assert.ok(await until(() => all('.code-body [style]').length > 0), 'python is coloured');
+  const more = `${start} * 2\nprint(train(1))`;
+  await act(async () => write(more));
+  // Read again with every piece that arrives, a long reply would hold the page each time.
+  assert.equal(one('.code-body')?.textContent, more);
+  assert.equal(all('.code-body [style]').length, 0, 'plain while it changes');
+  assert.ok(await until(() => all('.code-body [style]').length > 0), 'coloured once still');
+  assert.equal(one('.code-body')?.textContent, more);
+  assert.equal(highlightable('x = 1\n'.repeat(10_000)), false, 'sixty thousand characters');
 });
