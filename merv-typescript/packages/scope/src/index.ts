@@ -27,6 +27,7 @@ import {
   type ProjectContextUpdate,
   type Transaction,
   type Sql,
+  type StoredEvent,
   type ActorCredential,
   type AuthenticatedActor,
   type IssuedActorCredential,
@@ -503,19 +504,22 @@ export class ProjectScope implements Scope {
     tx: Transaction,
   ): Promise<boolean> {
     this.state.assertTransaction(tx);
-    const holders = JSON.stringify(ROLES.filter((role) => permits(role, permission)));
-    return !!(await tx.get(
-      `SELECT 1 FROM events WHERE project_id=? AND subject_id=? AND id>? AND (
-         type='actor.revoked' OR (type='actor.permissions_changed'
-           AND (data_json::jsonb #>> '{beforeRole}') IN (SELECT jsonb_array_elements_text(?::jsonb))
-           AND COALESCE((data_json::jsonb #>> '{role}'),'') NOT IN (SELECT jsonb_array_elements_text(?::jsonb)))
-       ) LIMIT 1`,
-      projectId,
-      actorId,
-      after,
-      holders,
-      holders,
-    ));
+    const held = (role: unknown) =>
+      ROLES.includes(role as Role) && permits(role as Role, permission);
+    const lost = (event: StoredEvent) =>
+      event.type === 'actor.revoked' || (held(event.data.beforeRole) && !held(event.data.role));
+    for (const type of ['actor.revoked', 'actor.permissions_changed'])
+      for (let cursor = after; ;) {
+        const page = await this.state.findEvents(
+          { projectId, subjectId: actorId, type, after: cursor },
+          1000,
+          tx,
+        );
+        if (page.some(lost)) return true;
+        if (page.length < 1000) break;
+        cursor = page.at(-1)!.id;
+      }
+    return false;
   }
   async authorityActor(caller: Caller, tx?: Transaction): Promise<Actor> {
     caller = structuredClone(caller);

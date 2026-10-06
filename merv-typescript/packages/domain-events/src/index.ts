@@ -5,8 +5,8 @@ import {
   createService,
   check,
   digest,
-  type Sql,
   type State,
+  type Transaction,
   type DomainEvents,
   type EventConsumer,
   type ConsumerStatus,
@@ -23,15 +23,6 @@ type Progress = {
 };
 
 const NAME = /^[a-z][a-z0-9_.-]{0,127}$/;
-
-/** Whether an event `consumer` subscribes to lies past `after`, up to `through`. */
-const due = async (sql: Sql, consumer: EventConsumer, after: number, through: number) =>
-  !!(await sql.get(
-    `SELECT 1 AS due FROM events WHERE id>? AND id<=? AND type IN (${consumer.types.map(() => '?').join(',')}) LIMIT 1`,
-    after,
-    through,
-    ...consumer.types,
-  ));
 
 /** Local async handlers commit their effects and durable event cursor together. */
 export class DurableEvents implements DomainEvents {
@@ -177,6 +168,12 @@ export class DurableEvents implements DomainEvents {
     return this.running;
   }
 
+  /** Whether an event `consumer` subscribes to lies past `after`, up to `through`. */
+  private async due(consumer: EventConsumer, after: number, through: number, tx?: Transaction) {
+    const next = await this.state.nextEvent(after, consumer.types, tx);
+    return next !== undefined && next <= through;
+  }
+
   private async deliver(): Promise<boolean> {
     const consumers = [...this.consumers.values()];
     this.retryAt = Infinity;
@@ -199,7 +196,7 @@ export class DurableEvents implements DomainEvents {
       for (const consumer of consumers) {
         const seen = progress.get(consumer.id);
         if (seen && seen.retry_at <= Date.now() && seen.cursor < head)
-          if (!(await due(sql, consumer, seen.cursor, head))) quiet.push(consumer);
+          if (!(await this.due(consumer, seen.cursor, head))) quiet.push(consumer);
       }
       return { head, progress, quiet };
     });
@@ -213,7 +210,7 @@ export class DurableEvents implements DomainEvents {
             'SELECT * FROM event_consumers WHERE id=?',
             consumer.id,
           );
-          if (!row || row.retry_at > Date.now() || (await due(tx, consumer, row.cursor, head)))
+          if (!row || row.retry_at > Date.now() || (await this.due(consumer, row.cursor, head, tx)))
             continue;
           if (row.cursor < head)
             await tx.run(
@@ -247,19 +244,15 @@ export class DurableEvents implements DomainEvents {
             if (!consumer.types.includes(event.type)) {
               // Under the writer lock every event up to the head is committed and no smaller ID
               // can commit later, so the run of unsubscribed events is passed in one step.
-              const next = await tx.get<{ id: number | null }>(
-                `SELECT MIN(id) AS id FROM events WHERE id>? AND type IN (${consumer.types.map(() => '?').join(',')})`,
-                event.id,
-                ...consumer.types,
-              );
-              const cursor = next?.id != null ? next.id - 1 : await this.state.eventHead(tx);
+              const next = await this.state.nextEvent(event.id, consumer.types, tx);
+              const cursor = next !== undefined ? next - 1 : await this.state.eventHead(tx);
               await tx.run(
                 'UPDATE event_consumers SET cursor=?, attempts=0, error=NULL, retry_at=0 WHERE id=?',
                 cursor,
                 consumer.id,
               );
               // At the head: no further transaction would find anything.
-              return next?.id != null;
+              return next !== undefined;
             }
             // A handler owns its argument, not the dispatcher's durable progress.
             const cursor = event.id;

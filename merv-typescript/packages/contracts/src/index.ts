@@ -639,6 +639,8 @@ export interface State {
   /** The oldest `limit` (at most 1000) events matching `filter`, in order. */
   findEvents(filter: EventFilter, limit: number, tx?: Transaction): Promise<StoredEvent[]>;
   eventBatch(after: number, limit: number, tx?: Transaction): Promise<StoredEvent[]>;
+  /** The id of the first event after `after` of one of `types`, in any project; undefined if none. */
+  nextEvent(after: number, types: readonly string[], tx?: Transaction): Promise<number | undefined>;
   eventHead(tx?: Transaction): Promise<number>;
   onEventsCommitted(listener: () => void): () => void;
 }

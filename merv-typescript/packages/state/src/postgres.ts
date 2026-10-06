@@ -798,6 +798,28 @@ END $merv$;`);
     );
   }
 
+  async nextEvent(
+    after: number,
+    types: readonly string[],
+    tx?: Transaction,
+  ): Promise<number | undefined> {
+    check(
+      Number.isSafeInteger(after) && after >= 0 && types.length > 0,
+      'invalid_cursor',
+      'Invalid event search',
+    );
+    if (tx) this.assertTransaction(tx);
+    const row = await this.read(
+      async (sql) =>
+        await sql.get<{ id: number | null }>(
+          `SELECT MIN(id) AS id FROM events WHERE id>? AND type IN (${types.map(() => '?').join(',')})`,
+          after,
+          ...types,
+        ),
+    );
+    return row?.id ?? undefined;
+  }
+
   async events(projectId: string, after = 0): Promise<StoredEvent[]> {
     check(
       Number.isSafeInteger(after) && after >= 0,
