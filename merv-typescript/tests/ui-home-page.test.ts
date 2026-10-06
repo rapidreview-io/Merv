@@ -196,6 +196,23 @@ const texts = (scope: Element, selector: string) =>
 
 // First: every read keeps its last good answer for the life of the page, as a refresh that
 // fails must, so a read that never answered is one no earlier test has made.
+test('Latest says the home read failed, rather than loading for ever, when nothing else stands', async (t) => {
+  t.after(async () => await unmount());
+  boot();
+  const down = { status: 500, body: { error: { code: 'internal', message: 'Broken' } } };
+  serve('/tools/ui.home', down);
+  serve('/tools/ui.running', down);
+  serve('/tools/paper.read', down);
+  serve('/tools/artifact.list', { body: { result: [] } });
+  await open();
+  const latest = part('Latest');
+  assert.equal(
+    latest.querySelector('.home-failed')?.textContent,
+    'Could not read the paper or reviews.',
+  );
+  assert.ok(!latest.querySelector('[aria-label="Loading"]'), 'and is not still loading');
+});
+
 test('a part whose read fails says so on its own line, and the rest of Home stands', async (t) => {
   t.after(async () => await unmount());
   boot();

@@ -2623,3 +2623,14 @@ test('a local integration waits on the server without promising a GitHub pull re
   assert.match(text(), /The server/);
   assert.doesNotMatch(text(), /pull request|signed-in operator|Merge reviewed proposal/);
 });
+
+test('only a quarantine an operator set is offered for release; an inherited one goes with its source', async () => {
+  const { verbsOf } = await import('../packages/ui/web/views/code-card.js');
+  const own = base('b1', { quarantined: true, operatorReason: 'Leaked a credential' });
+  assert.deepEqual(verbsOf(own), ['release']);
+  const inherited = base('b2', {
+    quarantined: true,
+    operatorReason: `Input inherits quarantine from ${'a'.repeat(64)}`,
+  });
+  assert.deepEqual(verbsOf(inherited), []);
+});

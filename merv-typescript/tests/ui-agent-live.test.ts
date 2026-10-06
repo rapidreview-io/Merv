@@ -274,3 +274,26 @@ test('a stream reads on through rotations until the server says it ended, live o
   assert.equal(requests.filter((request) => request.startsWith('GET /sessions/ses_5/')).length, 2);
   assert.ok(!text().includes('Reconnecting…'));
 });
+
+test('a stream path that resolves to another host is never asked, so the credential stays home', async (t) => {
+  t.after(async () => await unmount());
+  const { setToken } = await import('../packages/ui/web/api.js');
+  const { StreamError, readEventStream } = await import('../packages/ui/web/event-stream.js');
+  setToken('fixture-token');
+  t.after(() => setToken(null));
+  for (const path of [
+    '/\t/evil.example/x',
+    '/\n/evil.example/x',
+    '/\r//evil.example/x',
+    '//evil.example/x',
+    '/\\evil.example/x',
+    'https://evil.example/x',
+  ]) {
+    await assert.rejects(
+      readEventStream(path, new AbortController().signal, () => {}),
+      (error) => error instanceof StreamError,
+      JSON.stringify(path),
+    );
+  }
+  assert.deepEqual(requests, [], 'nothing was sent anywhere');
+});

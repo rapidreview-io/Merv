@@ -413,3 +413,48 @@ test('a check the review requires is met to pass, never waived, as review.submit
   assert.equal(submit.disabled, true);
   assert.match(text(), /Check 1 is required: a passing verdict needs it met, not waived\./);
 });
+
+test('a draft belongs to its review: opening the next review starts it blank', async (t) => {
+  t.after(async () => await unmount());
+  const { useNavigate } = await import('react-router-dom');
+  serve('/tools/review.get', (_, sent) => ({
+    body: { result: { ...claimed, id: sent.reviewId } },
+  }));
+  serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', {
+    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
+  });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows: [], plugins: [] } } });
+  let go: (to: string) => void = () => {};
+  const Steer = () => {
+    go = useNavigate();
+    return null;
+  };
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/reviews/review_1'] },
+      createElement(
+        SessionProvider,
+        null,
+        createElement(Steer),
+        createElement(
+          Routes,
+          null,
+          createElement(Route, { path: '/reviews/:id', element: createElement(ReviewDetail) }),
+        ),
+      ),
+    ),
+  );
+  await settle(10);
+  const notes = () =>
+    document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Notes on check 1"]');
+  await click('not met');
+  await write(notes()!, 'Only true of the first review.');
+  assert.equal(notes()!.value, 'Only true of the first review.');
+  await act(async () => go('/reviews/review_2'));
+  await settle(10);
+  assert.ok(!text().includes('Only true of the first review.'));
+  assert.ok(!notes() || notes()!.value === '', notes()?.value);
+});

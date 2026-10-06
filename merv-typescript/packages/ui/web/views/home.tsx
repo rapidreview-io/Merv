@@ -150,7 +150,7 @@ const FILES = 5;
  * What was lately recorded, newest first: review verdicts from the home read, the newest
  * files, and the paper's sections as they were last revised. Each is the way to its record.
  */
-function Latest({ rows, home }: { rows: Row[]; home: HomeData | undefined }) {
+function Latest({ rows, home, lost }: { rows: Row[]; home?: HomeData; lost: boolean }) {
   const reviewsPath = pathOf(rows, 'reviews');
   const filesPath = pathOf(rows, 'artifacts');
   const paperPath = pathOf(rows, 'paper');
@@ -207,14 +207,14 @@ function Latest({ rows, home }: { rows: Row[]; home: HomeData | undefined }) {
   const failed = [
     files.error && !files.data && 'files',
     paper.error && !paper.data && 'the paper',
-    reviewsPath && home && home.reviews === null && 'reviews',
+    reviewsPath && (lost || home?.reviews === null) && 'reviews',
   ].filter(Boolean);
   const shown = newest(items, (item) => item.at).slice(0, LATEST);
   return (
     <Part
       title="Latest"
       failed={failed.length ? `Could not read ${failed.join(' or ')}.` : undefined}
-      loading={!shown.length && (files.loading || paper.loading || !home)}
+      loading={!shown.length && (files.loading || paper.loading || (!home && !lost))}
       empty={!shown.length && !failed.length ? 'Nothing recorded yet.' : undefined}
     >
       {shown.map((item) => (
@@ -246,7 +246,8 @@ export function HomeView({ shell }: { shell: ShellData }) {
         </div>
         <div className="home-side">
           <LiveNow rows={shell.rows} />
-          <Latest rows={shell.rows} home={home.data} />
+          {/* A home read that never answered is said, never loaded for ever. */}
+          <Latest rows={shell.rows} home={home.data} lost={!home.data && !!home.error} />
         </div>
       </div>
     </div>

@@ -9,7 +9,7 @@ import { CodeBlock } from '../code-block';
 import { DelimitedTable, parseDelimited } from '../csv';
 import { languageOf } from '../highlight';
 import { JsonLines, JsonView, readJson } from '../json-view';
-import { FILE_PAGE, MAX_READ, Markdown, useRecordNames } from '../markdown';
+import { MAX_READ, Markdown, useRecordNames } from '../markdown';
 import { Mermaid } from '../mermaid';
 import { NotebookView, readNotebook } from '../notebook';
 import { useSession } from '../session';
@@ -694,11 +694,16 @@ function FileMeta({ file, keeper }: { file: Artifact; keeper?: string }) {
   );
 }
 
+/** The newest files the Artifacts page polls; older ones come a page at a time. */
+const FILE_PAGE = 200;
+
 function ArtifactList() {
-  // The newest page is the read every name lookup shares; older files come a page at a time,
-  // up to the thousand the tool holds at most.
+  // Up to the thousand the tool holds at most; while a longer page loads, the rows shown stay.
   const [limit, setLimit] = useState(FILE_PAGE);
-  const list = useTool<Artifact[]>('artifact.list', { limit }, { every: 10000 });
+  const read = useTool<Artifact[]>('artifact.list', { limit }, { every: 10000 });
+  const held = useRef(read.data);
+  held.current = read.data ?? held.current;
+  const list = { ...read, data: held.current, loading: read.loading && !held.current };
   const storage = useTool<{ available: boolean }>('artifact.storage_status', {});
   const nameOf = useActorNames();
   const { actor } = useSession();

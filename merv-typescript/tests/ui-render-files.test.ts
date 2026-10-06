@@ -507,6 +507,38 @@ test('a view that fails to draw says so in its place, and tries again when asked
   assert.equal(one('.drawn')?.textContent, 'drawn');
 });
 
+test('a view that fails at the address it moved to stays failed there, drawn no more than once', async (t) => {
+  t.after(async () => await unmount());
+  const { ErrorBoundary } = await import('../packages/ui/web/components.js');
+  let draws = 0;
+  const Fragile = ({ at }: { at: string }) => {
+    draws++;
+    if (at === '/broken') throw new Error('outputs.map is not a function');
+    return createElement('p', { className: 'drawn' }, at);
+  };
+  let go: (at: string) => void = () => {};
+  const Page = () => {
+    const [at, setAt] = useState('/broken');
+    go = setAt;
+    return createElement(ErrorBoundary, { reset: at }, createElement(Fragile, { at }));
+  };
+  const quiet = console.error;
+  console.error = () => {};
+  t.after(() => void (console.error = quiet));
+  await mount(createElement(Page));
+  // However many times React itself retries a failing draw, arriving there is the measure.
+  const arriving = draws;
+  assert.ok(document.querySelector('[role="alert"]'));
+  await act(async () => go('/fine'));
+  assert.equal(document.querySelector('.drawn')?.textContent, '/fine');
+  draws = 0;
+  await act(async () => go('/broken'));
+  assert.ok(document.querySelector('[role="alert"]'), 'the failure is said at its address');
+  assert.equal(draws, arriving, 'and the failing view is not drawn again on the way');
+  await act(async () => go('/fine'));
+  assert.equal(document.querySelector('.drawn')?.textContent, '/fine', 'moving on clears it');
+});
+
 test('how one file is read, its source shown, does not carry over to the next', async (t) => {
   t.after(async () => await unmount());
   const notebook = JSON.stringify({ cells: [{ cell_type: 'markdown', source: '# One' }] });

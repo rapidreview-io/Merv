@@ -866,8 +866,24 @@ test('sections that break the contract or say nothing are left out, row by row w
       ],
     });
   assert.equal((agent('/pi/s/events') as { sessions: unknown[] }).sessions.length, 1);
-  for (const events of ['//evil.test/x', '/\\evil.test/x', 'https://evil.test/x', 'x/events'])
-    assert.equal(agent(events), null, events);
+  for (const events of [
+    '//evil.test/x',
+    '/\\evil.test/x',
+    'https://evil.test/x',
+    'x/events',
+    // A browser strips a tab or a line break from a URL, which leaves `//evil.test`.
+    '/\t/evil.test/x',
+    '/\n/evil.test/x',
+    '/\r/evil.test/x',
+    '/ /evil.test/x',
+    '/\u0000/evil.test/x',
+    '/a\\b',
+  ])
+    assert.equal(agent(events), null, JSON.stringify(events));
+  // An encoded slash is a path on this host, never a second one.
+  const encoded = '/%2F%2Fevil.test/x';
+  assert.equal((agent(encoded) as { sessions: unknown[] }).sessions.length, 1);
+  assert.equal(new URL(encoded, 'https://merv.app').origin, 'https://merv.app');
 });
 
 test('sections read what needs a person first, then by place, with code before content, and within a place by who wrote it', () => {

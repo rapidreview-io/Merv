@@ -235,9 +235,14 @@ export function CriterionRows({
   );
 }
 
-/** The record read straight down: what was asked, what was found, what was decided. */
+/** One review's page, and its draft with it: the next review opened starts blank. */
 export function ReviewDetail() {
   const { id = '' } = useParams();
+  return <ReviewRecord key={id} id={id} />;
+}
+
+/** The record read straight down: what was asked, what was found, what was decided. */
+function ReviewRecord({ id }: { id: string }) {
   const review = useTool<Review>('review.get', { reviewId: id }, { every: 8000 });
   const nameOf = useActorNames();
   const artifacts = useArtifacts();

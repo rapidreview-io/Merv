@@ -159,7 +159,9 @@ type BaseAction = CodeBaseControlInput['action'] | 'release';
  * release, once someone has verified the alarm was false.
  */
 export function verbsOf(base: CodeBaseRecord): BaseAction[] {
-  if (base.quarantined) return ['release'];
+  // An inherited quarantine (code-work's INHERITED_QUARANTINE) is lifted by releasing its source.
+  if (base.quarantined)
+    return base.operatorReason?.startsWith('Input inherits quarantine from ') ? [] : ['release'];
   const open = !['resolved', 'cancelled'].includes(base.state);
   const actions: BaseAction[] = [];
   if (open && ['blocked_infra', 'retry_wait'].includes(base.state)) actions.push('retry');

@@ -47,7 +47,7 @@ function NotFound({ shell }: { shell: ShellData }) {
 
 function Workspace() {
   const shell = useShell();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const [open, setOpen] = useState(() => {
     try {
       return localStorage.getItem('merv:sidebar') !== 'closed';
@@ -90,8 +90,9 @@ function Workspace() {
         )}
         <PageLede rows={shell.data ? rows : []}>
           {shell.data ? (
-            // A page that fails to draw says so where it stands; the next address tries afresh.
-            <ErrorBoundary reset={pathname}>
+            // A page that fails to draw says so where it stands; the next address, a new
+            // `?key=` among them, tries afresh.
+            <ErrorBoundary reset={pathname + search}>
               <Routes>
                 {/* A project opens on Home: where it stands, what needs the reader, who is at work. */}
                 <Route path="/" element={<HomeView shell={shell.data} />} />

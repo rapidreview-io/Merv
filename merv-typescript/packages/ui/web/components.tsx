@@ -14,7 +14,7 @@ import { Link } from 'react-router-dom';
 import { useTool, type ApiError } from './api';
 import { CheckIcon, ChevronRightIcon, CopyIcon, Icon } from './icons';
 import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from './liveness';
-import { FILE_PAGE, shortId } from './markdown';
+import { shortId } from './markdown';
 import { useCommand } from './mutations';
 import { ArtifactBody, bytes, fileType, type Artifact } from './views/artifacts';
 
@@ -532,19 +532,23 @@ export function LoadState({
 
 /**
  * Where drawing a page or a file throws, that part says so and offers to try again;
- * the rest of the app stands. A new `reset` (the address, the shown file) clears it.
+ * the rest of the app stands. A failure keeps the `reset` (the address, the shown file) it
+ * happened at, and clears once that changes, not on the move that arrived at it.
  */
 export class ErrorBoundary extends Component<
   { reset?: unknown; children: ReactNode },
-  { failed?: string }
+  { failed?: string; at?: unknown }
 > {
-  state: { failed?: string } = {};
+  state: { failed?: string; at?: unknown } = {};
   static getDerivedStateFromError(error: unknown) {
     return { failed: error instanceof Error ? error.message : String(error) };
   }
-  componentDidUpdate(previous: { reset?: unknown }) {
-    if (this.state.failed !== undefined && previous.reset !== this.props.reset)
-      this.setState({ failed: undefined });
+  static getDerivedStateFromProps(
+    props: { reset?: unknown },
+    state: { failed?: string; at?: unknown },
+  ) {
+    if (state.failed === undefined) return { at: props.reset };
+    return state.at === props.reset ? null : { failed: undefined, at: props.reset };
   }
   render() {
     const { failed } = this.state;
@@ -953,9 +957,13 @@ export function Ruled<T>({
   );
 }
 
-/** One list serves every pinned title, so a record does not fetch each file to name it. */
+/**
+ * One list serves every pinned title, so a record does not fetch each file to name it: the
+ * newest thousand the tool holds, not the Artifacts page's first page, so an older file keeps
+ * its name.
+ */
 export const useArtifacts = () => {
-  const list = useTool<Artifact[]>('artifact.list', { limit: FILE_PAGE });
+  const list = useTool<Artifact[]>('artifact.list');
   return new Map((list.data ?? []).map((item) => [item.id, item]));
 };
 
@@ -964,7 +972,7 @@ export const useArtifacts = () => {
  * costs nothing until it is opened, and /artifacts/:id stays a destination —
  * reachable from the opened head — rather than the only way to read a file. The
  * summary has said the file's title, so the head under it does not say it again.
- * A file the one list did not name (it carries the newest page) is still shown
+ * A file the one list did not name (it carries the newest thousand) is still shown
  * and still opens, under the short form every unnamed record takes until its own
  * head can name it.
  */
