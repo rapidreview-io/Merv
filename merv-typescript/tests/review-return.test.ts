@@ -703,6 +703,9 @@ test('Tasks reject supplied routes before command replay and agree with workflow
       app.ctx.reviews.apply(caller, bound as never),
     );
     await work.release(reviewLease);
+    // Whether or not a sweep has closed the session and retired its actor yet, the retry
+    // learns the same thing; the sweep runs first here so the order is fixed.
+    await app.ctx.sessions.sweep();
     const committed = await durable();
     assert.equal((result as { workflow: { state: string } }).workflow.state, 'done');
     // This worker handed off its lease; a fresh transport cannot revive its successful command.

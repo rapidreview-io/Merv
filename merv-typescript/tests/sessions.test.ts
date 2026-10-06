@@ -610,6 +610,23 @@ test('controller polls preserve offered leases across provider outages and commi
   assert.equal((await f.workflows.workStarts(f.source, session.instanceId)).length, 0);
 });
 
+test('a halt during a workflow outage still closes the session it answers for', async (t) => {
+  const f = await fixture(t);
+  const { session } = await f.offer();
+  f.handle.dispose();
+  assert.equal((await f.sessions.halt(f.owner, { sessionId: session.id })).halted, 1);
+  assert.equal(
+    await f.state.read(
+      async (sql) =>
+        (await sql.get<{ status: string }>(
+          'SELECT status FROM worker_sessions WHERE id=?',
+          session.id,
+        ))!.status,
+    ),
+    'released',
+  );
+});
+
 test('revocation before first authentication creates no work start and sibling credentials do not replace the pinned source', async (t) => {
   const f = await fixture(t),
     { token, session } = await f.offer();
@@ -748,6 +765,28 @@ test('one invocation may finish its own handoff transaction, while later calls a
   );
   assert.equal(entered, false);
   await assert.rejects(async () => await f.scope.require(invocation.caller, 'read'));
+});
+
+test('a tool call that committed answers its result when recording its finish fails', async (t) => {
+  const f = await fixture(t),
+    { token } = await f.offer();
+  const caller = await f.sessions.authenticate(token);
+  const observations = (
+    f.sessions as unknown as { observations: { finish: (...args: unknown[]) => Promise<void> } }
+  ).observations;
+  const finish = observations.finish.bind(observations);
+  const finished: unknown[] = [];
+  observations.finish = async (...args) => {
+    finished.push(args[1]);
+    if (finished.length === 1) throw new MervError('state_timeout', 'Timed out', 503);
+    await finish(...args);
+  };
+  const prepared = await f.sessions.prepare(caller, 'artifact.read', {
+    artifactId: 'frozen-artifact',
+  });
+  assert.equal(await f.sessions.run(prepared, () => 'committed'), 'committed');
+  // The failed record is not overwritten as a failed call; the startup sweep settles it.
+  assert.deepEqual(finished, ['succeeded']);
 });
 
 test('frozen references survive reload, a prepared generation does not, and cancellation removes invocation authority', async (t) => {

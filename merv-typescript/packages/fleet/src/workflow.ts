@@ -622,12 +622,16 @@ export class FleetWorkflowAdapter implements FleetOwner {
     }
     // A one-assignment supervisor that has not claimed work when its enrollment lapses never will.
     if (observed && Date.parse(observed.enrollmentExpiresAt) <= this.clock()) return 'finished';
-    const demand = await this.sessions.dispatchDemand(sourceCaller(a.source), demandInput);
+    // A work host is rented under the owner for its reviews too, which only the reviewer sees.
+    let wanted = false;
+    for (const director of workId(a) ? [a.source, await this.reviewer(a.source)] : [a.source])
+      wanted ||= !!(await this.sessions.dispatchDemand(sourceCaller(director), demandInput))
+        .candidates.length;
     // Counted from the launch, or the runner's enrollment. Work claimed after the first read
     // keeps its machine; a claim after the second is refused once the stop commits.
     const grace = observed?.runnerId ? emptyRunnerGraceMs : startupGraceMs;
     if (
-      !demand.candidates.length &&
+      !wanted &&
       this.clock() - Date.parse(a.updatedAt) >= grace &&
       !(await this.sessions.inspectManaged(a.id, a.epoch))?.session
     )
