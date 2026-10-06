@@ -1040,6 +1040,97 @@ test('a call that ran keeps how it came out though writing it down fails at firs
   assert.equal(ran, 1);
 });
 
+/** A conversation whose turn proposed `name`, and Run's input for it. */
+async function proposedRun(f: PiFixture, name: string) {
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const { proposed } = (await f.pi.tool(turn.token, { ...turn.input, name, input: {} })) as {
+    proposed: { id: string };
+  };
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  const input = {
+    id: turn.input.conversationId,
+    commandId: turn.input.commandId,
+    proposalId: proposed.id,
+  };
+  const ran = async () => (await f.pi.snapshot(human, input.id)).commands[0]!.proposals![0]!.ran!;
+  return { human, input, ran };
+}
+const unknown = {
+  ok: false,
+  code: 'interrupted',
+  told: 'probe.slow was interrupted: it may have run, but how it came out is unknown.',
+  said: 'it may have run, but how it came out is unknown',
+};
+
+test('a call whose outcome no write could keep keeps it once writing works again', async (t) => {
+  const f = await fixture(t);
+  let failing = 0;
+  t.after(
+    f.tools.register({
+      name: 'probe.once',
+      description: 'Runs once',
+      conversation: 'propose',
+      inputSchema: z.object({}).strict(),
+      handler: () => {
+        failing = 1000;
+        return { ran: 1 };
+      },
+    }),
+  );
+  const { human, input, ran } = await proposedRun(f, 'probe.once');
+  const transaction = f.state.transaction.bind(f.state);
+  t.mock.method(f.state, 'transaction', (...args: Parameters<typeof transaction>) =>
+    failing-- > 0 ? Promise.reject(new Error('connection lost')) : transaction(...args),
+  );
+  await assert.rejects(f.pi.run(human, input));
+  failing = 0;
+  await f.pi.tick();
+  const { at: _at, ...outcome } = await ran();
+  assert.deepEqual(outcome, { ok: true, told: 'Ran probe.once: {"ran":1}', said: '{"ran":1}' });
+  await assert.rejects(f.pi.run(human, input), code('pi_proposal_ran'));
+});
+
+test('a call cut off by a restart, or that never returns, is kept as interrupted', async (t) => {
+  const f = await fixture(t);
+  let finish = (_value: unknown) => {};
+  t.after(
+    f.tools.register({
+      name: 'probe.slow',
+      description: 'Returns when told',
+      conversation: 'propose',
+      inputSchema: z.object({}).strict(),
+      handler: () => new Promise((resolve) => (finish = resolve)),
+    }),
+  );
+  // Main restarts while the call runs: the next process keeps it as interrupted at once.
+  const first = await proposedRun(f, 'probe.slow');
+  const cut = f.pi.run(first.human, first.input);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await f.restart();
+  const { at: _at, ...outcome } = await first.ran();
+  assert.deepEqual(outcome, unknown);
+  await assert.rejects(f.pi.run(first.human, first.input), code('pi_proposal_ran'));
+  finish({ late: true });
+  await cut.catch(() => undefined);
+  // A call that has not returned after ten minutes is interrupted too; when it returns at last,
+  // Run answers with what was kept, which the agent may already have been told.
+  const second = await proposedRun(f, 'probe.slow');
+  const running = f.pi.run(second.human, second.input);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await f.pi.tick();
+  assert.equal((await second.ran()).ok, undefined);
+  f.advance(600_000);
+  await f.pi.tick();
+  const { at: _at2, ...kept } = await second.ran();
+  assert.deepEqual(kept, unknown);
+  finish({ late: true });
+  assert.deepEqual(await running, { result: { late: true }, told: unknown.told, whole: true });
+  const { at: _at3, ...still } = await second.ran();
+  assert.deepEqual(still, unknown);
+});
+
 test('a call refused when the person runs it tells the agent why, and Pi keeps what it told', async (t) => {
   const f = await fixture(t);
   probes(f, t);

@@ -2111,6 +2111,78 @@ test('a Run whose answer is lost reads how the call came out, shows it, and tell
   assert.equal(sent.length, 1);
 });
 
+test('a Run whose outcome comes later than its answer reads as running, and the agent is told once it shows', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const halt = { id: 'pip_halt', name: 'fleet.halt', input: { id: 'flt_1' }, at: 'later' };
+  const told = 'Ran fleet.halt: {"halted":true}';
+  const turn = (ran?: object) => ({
+    ...command('c1', 'completed'),
+    proposals: [ran ? { ...halt, ran } : halt],
+  });
+  let state = snapshot(conversation(), [turn()]);
+  const stream = boot(
+    () => state,
+    () => [conversation()],
+  );
+  // Pi took the run and is still calling the tool when the connection drops.
+  serve('/tools/pi.run', () => {
+    state = snapshot(conversation(), [turn({ at: 'now' })]);
+    return { network: true as const };
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  await act(async () => document.querySelector<HTMLButtonElement>('.pi-proposal button')!.click());
+  await settle(10);
+  const word = () => document.querySelector('.pi-proposal .pi-receipt-word')?.textContent;
+  assert.equal(word(), 'Running');
+  assert.equal(sent.length, 0);
+  // The call returns and Pi keeps how it came out: the stream shows it, and the agent hears it
+  // under the turn named for the call, once.
+  state = snapshot(conversation(), [turn({ at: 'now', ok: true, told, said: '{"halted":true}' })]);
+  await act(async () => stream.push('snapshot', state));
+  await settle(10);
+  assert.equal(word(), 'Ran');
+  assert.deepEqual(sent, [{ id: 'conversation_1', commandId: 'told_pip_halt', text: told }]);
+  assert.equal(document.querySelector('[role="alert"]'), null);
+  // Shown again, before or after its turn appears, it is not told twice.
+  await act(async () => stream.push('snapshot', { ...state, sequence: 1 }));
+  await settle(10);
+  state = snapshot(
+    conversation(),
+    [
+      turn({ at: 'now', ok: true, told }),
+      command('told_pip_halt', 'completed', [{ role: 'user', text: told }]),
+    ],
+    2,
+  );
+  await act(async () => stream.push('snapshot', state));
+  await settle(10);
+  assert.equal(sent.length, 1);
+  // A call a restart cut off reads as interrupted, and why.
+  const unknown = 'it may have run, but how it came out is unknown';
+  const cut = `fleet.halt was interrupted: ${unknown}.`;
+  state = snapshot(
+    conversation(),
+    [
+      turn({ at: 'now', ok: false, code: 'interrupted', told: cut, said: unknown }),
+      command('told_pip_halt', 'completed', [{ role: 'user', text: cut }]),
+    ],
+    3,
+  );
+  await act(async () => stream.push('snapshot', state));
+  await settle(10);
+  assert.equal(
+    document.querySelector('.pi-proposal .pi-receipt')?.textContent,
+    `Interrupted·${unknown}`,
+  );
+  assert.equal(sent.length, 1);
+});
+
 test('a call is titled by the act its tool’s owner names, and otherwise by the tool’s own words', () => {
   // The owner's title, which Pi keeps on the proposal from the tool's registration.
   assert.equal(
@@ -2314,10 +2386,16 @@ test('a card says how its call came out from what Pi kept, and a run Pi itself r
     cards().map((card) => card.querySelector('.pi-receipt-line')?.textContent),
     ['RanResult', 'Refused·Ask an operator', undefined],
   );
+  // What Pi kept but the agent was never told is told as the page opens, under the turns named
+  // for the calls.
+  assert.deepEqual(
+    sent.map(({ commandId }) => commandId),
+    ['told_pip_task', 'told_pip_halt'],
+  );
   await act(async () => cards()[2].querySelector<HTMLButtonElement>('button.btn')!.click());
   await settle(10);
-  // Nothing ran, so the agent is told nothing; the person reads why.
-  assert.deepEqual(sent, []);
+  // Nothing ran, so the agent is told nothing more; the person reads why.
+  assert.equal(sent.length, 2);
   assert.equal(
     document.querySelector('.pi-error')?.textContent,
     'This conversation already has an active turn',

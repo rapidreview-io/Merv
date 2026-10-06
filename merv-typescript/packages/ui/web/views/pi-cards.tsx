@@ -146,15 +146,23 @@ export function Outcome({
   named?: boolean;
 }) {
   const [open, setOpen] = useState(!!proposal.secret);
-  const failed = proposal.ran?.ok === false;
-  const refused = failed ? proposal.ran?.said : undefined;
-  const shown = result ?? (failed ? undefined : proposal.ran?.said);
+  const { ran } = proposal;
+  const failed = ran?.ok === false;
+  const refused = failed ? ran?.said : undefined;
+  const shown = result ?? (failed ? undefined : ran?.said);
+  // Pi keeps no outcome while the call runs; one a restart cut off may have run.
+  const word =
+    ran && ran.ok === undefined && result === undefined
+      ? 'Running'
+      : ran?.code === 'interrupted'
+        ? 'Interrupted'
+        : failed
+          ? 'Refused'
+          : 'Ran';
   return (
     <div className="pi-receipt" title={named ? proposal.name : undefined}>
       <div className="pi-receipt-line">
-        <span className={cx('pi-receipt-word', failed && 'pi-refused')}>
-          {failed ? 'Refused' : 'Ran'}
-        </span>
+        <span className={cx('pi-receipt-word', failed && 'pi-refused')}>{word}</span>
         {named && <span className="pi-receipt-act">{actOf(proposal)}</span>}
         {refused && (
           <>
