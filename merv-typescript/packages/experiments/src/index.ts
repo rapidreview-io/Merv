@@ -95,6 +95,7 @@ import {
   type SubmissionRow,
 } from './storage.js';
 import type { CodeUnit } from '@merv/code-work/models';
+import { PAPER_REVIEW_GUIDANCE } from '@merv/paper/rules';
 export type * from './types.js';
 
 const terminal = new Set<string>(TERMINAL);
@@ -128,8 +129,7 @@ const RETURNS: Record<string, { value: string; label: string }[]> = {
   ],
 };
 /** What review.start and review.get tell the reviewer of an experiment's design or results. */
-const REVIEW_GUIDANCE =
-  'Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative. Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.';
+const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. ${PAPER_REVIEW_GUIDANCE}`;
 /** The evidence, figures, exhibit and final capture a design or results submission pins. */
 interface Submission {
   evidence: ExperimentEvidence[];
