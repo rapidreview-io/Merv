@@ -31,18 +31,27 @@ step_secret, control_calls, step_calls = [], [], []
 step_relayed, step_released = threading.Event(), threading.Event()
 LAUNCHER = Path('/opt/merv/runtime/assignment-probed.py')
 LAUNCH_RECORD = Path('/run/merv-runtime/gate-launch.json')
-# The probed launcher attests the live boundary first, which a local fake Main's own listener
-# fails by design: the separate exact-image isolation gate proves that. For the step only, this
-# stand-in records the runner's exact launch, then runs the same assignment launcher unattested.
-UNATTESTED = '''#!/usr/bin/python3
+REAL_LAUNCHER = Path('/run/merv-runtime/assignment-probed.real.py')
+MAIN_PORT = Path('/run/merv-runtime/gate-main-port')
+# The step runs the image's own probed launcher, attestation included: the runner's real
+# supervisor -> guardian -> [subreaper ->] group ancestry, its socket, the identity drop's
+# denials and the sshd check, all as on a Cloudflare work host. A local fake Main is one more
+# loopback listener, which the probe refuses by design and live Main never is; only that one
+# listener is hidden from it. The stand-in also records the runner's exact launch.
+ATTESTED = '''#!/usr/bin/python3
 import json, os, sys
 sys.path.insert(0, '/opt/merv/python')
-from merv_sandboxes.runtimes import assignment
+import isolation_probe
+port = int(open(%r).read())
+listeners = isolation_probe._listeners
+isolation_probe._listeners = lambda: [entry for entry in listeners()
+                                      if entry != '0100007F:%%04X 0' %% port]
 if sys.argv[1:4] == ['--', '/opt/merv/bin/codex', 'exec']:
-    with open('%s', 'w') as f:
+    with open(%r, 'w') as f:
         json.dump({'argv': sys.argv[1:], 'cwd': os.getcwd()}, f)
-raise SystemExit(assignment.main())
-''' % LAUNCH_RECORD
+# Run as itself: the attestation pins this launcher's own path as argv[0].
+exec(compile(open(%r).read(), %r, 'exec'), {'__name__': '__main__', '__file__': %r})
+''' % (str(MAIN_PORT), str(LAUNCH_RECORD), str(REAL_LAUNCHER), str(LAUNCHER), str(LAUNCHER))
 
 
 def step_session(runner_id, status='offered', host_ref=None):
@@ -267,7 +276,15 @@ filename, refused = supervise({'modelApiKey': model_key})
 refused_output = b''.join(refused.communicate(timeout=30))
 assert refused.returncode != 0 and not enrolled.is_set() and not filename.exists()
 original_launcher = LAUNCHER.read_bytes()
-LAUNCHER.write_text(UNATTESTED)
+REAL_LAUNCHER.write_bytes(original_launcher)
+MAIN_PORT.write_text(str(server.server_port))
+LAUNCHER.write_text(ATTESTED)
+# The release catalog Sandboxes provisions on a machine, which the probe requires root-private.
+CATALOG = Path('/opt/merv/runtime/releases.json')
+catalog_made = not CATALOG.exists()
+if catalog_made:
+    CATALOG.write_text('synthetic-root-private-canary')
+    CATALOG.chmod(0o600)
 filename, parent = supervise({'workInstanceId': work_instance})
 try:
     assert enrolled.wait(30), 'fixed workflow supervisor did not reach managed enrollment'
@@ -294,9 +311,19 @@ try:
     assert [launch['argv'][i + 1] for i, v in enumerate(launch['argv'][:-1]) if v == '-C'] == [str(retained)]
     attached = [b for m, p, b in control_calls if p == f'/sessions/{step_id}/attach']
     assert attached and attached[0]['hostRef'].startswith('launch_')
+    # The probed launcher attested this very launch: its receipt names the work host's directory
+    # and the supervisor's actual ancestry, the group's subreaper included where Python runs it.
+    receipt = json.loads((Path('/run/merv-isolation') / f'{retained.name}.json').read_text())
+    assert receipt['workspace'] == retained.name and receipt['launch_id'] == attached[0]['hostRef'], receipt
+    assert set(receipt['roots']) == {'supervisor', 'guardian', 'subreaper', 'group'}, receipt['roots']
+    assert receipt['listeners'] == [], receipt['listeners']
 finally:
     LAUNCHER.write_bytes(original_launcher)
     LAUNCH_RECORD.unlink(missing_ok=True)
+    REAL_LAUNCHER.unlink(missing_ok=True)
+    MAIN_PORT.unlink(missing_ok=True)
+    if catalog_made:
+        CATALOG.unlink(missing_ok=True)
     if parent.poll() is None:
         os.killpg(parent.pid, signal.SIGTERM)
     try:
@@ -467,7 +494,8 @@ print(json.dumps({
     'detachedAssignmentDescendantsCleared': True, 'freshSessionCredentials': True,
     'resetBySupervisorLauncher': True,
     'codexSandboxPerLaunch': sandbox_results,
-    # Local fake relay is incompatible with the probe's sole-sshd listener rule.
-    # The release's separate exact-image isolation gate covers that boundary.
-    'assignmentAttestation': 'separate exact-image isolation gate; not integrated here',
+    # The work-host step's launch passed the probed launcher's own attestation, with only the
+    # local fake Main's listener hidden; the normal and retained Codex launches below the step
+    # call the assignment launcher directly.
+    'workHostStepAttested': True,
 }))

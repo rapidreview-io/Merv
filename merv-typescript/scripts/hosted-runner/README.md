@@ -78,7 +78,9 @@ calls only `POST /codex-model/responses` with the keys the relay admits, leaves 
 credential in its `CODEX_HOME`, and runs shell commands that have the network but
 cannot read its session bearer from any process environment.
 It also proves the image can be a work host, as Main rents every workflow machine:
-the supervisor enrolls with a work-host bootstrap, and two further Codex steps run in
+the supervisor enrolls with a work-host bootstrap and runs one step through the image's
+own probed launcher, whose attestation must pass (only the local fake Main's loopback
+listener is hidden from it), and two further Codex steps run in
 one retained working directory with fresh credentials, reset between them through the
 supervisor's own `assignment-probed.py --reset`, which must kill a detached assignment
 process and clear private home and temp state while keeping the step's files.
@@ -92,7 +94,11 @@ The next candidate uses `assignment-probed.py` around the existing fixed
 assignment launcher. Only validated Codex `exec`, not login or Git, invokes
 `isolation_probe.py` before the final identity handoff. It pins the actual root
 supervisor, guardian and group ancestry by executable, arguments, PID and start
-time, and verifies the guardian owns its listening control socket. A bounded
+time, and verifies the guardian owns its listening control socket. Where Python
+runs it, the group owner's parent is the supervisor's own Python subreaper
+(`SUBREAPER` in `supervisor.mjs`): the probe requires exactly that source, read
+from the fixed `supervisor.mjs`, and the subreaper's own process group as the
+owner's fourth argument, and probes the subreaper like the other roots. A bounded
 child uses the same UID/GID/capability drop, attempts all required denials, and
 exits before the assignment begins. Because a hosted assignment's shell has the
 network, that child also lists every TCP listener it could reach: any but root's

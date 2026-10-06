@@ -24,6 +24,7 @@ from merv_sandboxes.runtimes.launcher import (
 
 
 NODE = "/usr/local/bin/node"
+PYTHON = "/usr/bin/python3"
 SUPERVISOR = "/opt/merv/runner/supervisor.mjs"
 SMOKE = "/opt/merv/runner/smoke-supervisor.mjs"
 ASSIGNMENT = "/opt/merv/runtime/assignment-probed.py"
@@ -38,15 +39,23 @@ TIMEOUT = 5.0
 SSHD = "0100007F:0016 0"
 
 
-def _process(pid: int) -> dict[str, int]:
+def _process(pid: int, executable: str = NODE) -> dict[str, int]:
     raw = Path(f"/proc/{pid}/stat").read_bytes()
     fields = raw.rsplit(b") ", 1)[1].split()
     if fields[0] in (b"Z", b"X"):
         raise IsolationUnavailable("isolation target is not running")
     info = Path(f"/proc/{pid}").stat()
-    if info.st_uid != 0 or os.readlink(f"/proc/{pid}/exe") != NODE:
+    if info.st_uid != 0 or os.readlink(f"/proc/{pid}/exe") != executable:
         raise IsolationUnavailable("isolation target is not the root Node runtime")
     return {"pid": pid, "ppid": int(fields[1]), "starttime": int(fields[19])}
+
+
+def _subreaper_source() -> str:
+    """The exact Python the fixed supervisor runs as its group's subreaper, read from it."""
+    match = re.search(r"^const SUBREAPER = `([^`]*)`;$", Path(SUPERVISOR).read_text(), re.M)
+    if not match or "${" in match.group(1) or "\\" in match.group(1):
+        raise IsolationUnavailable("isolation subreaper source is invalid")
+    return match.group(1)
 
 
 def _command(pid: int) -> list[str]:
@@ -57,20 +66,40 @@ def _command(pid: int) -> list[str]:
 
 
 def _roots() -> tuple[dict[str, dict[str, int]], str]:
+    """supervisor -> guardian -> [subreaper ->] group -> this launcher.
+
+    On Linux with Python the fixed supervisor's guardian runs the group owner under a root
+    Python subreaper (supervisor.mjs SUBREAPER), which passes the owner its process group as a
+    fourth argument: that group is the subreaper's own. Without Python the guardian runs the
+    group owner directly, with three arguments.
+    """
     group = _process(os.getppid())
-    guardian = _process(group["ppid"])
+    command = _command(group["pid"])
+    roots = {}
+    parent = group["ppid"]
+    if command == [NODE, SUPERVISOR, "group"]:
+        pass
+    elif command[:3] == [NODE, SUPERVISOR, "group"] and len(command) == 4:
+        subreaper = _process(parent, os.path.realpath(PYTHON))
+        if (_command(parent) != [PYTHON, "-c", _subreaper_source(), NODE, SUPERVISOR, "group"]
+                or command[3] != str(parent) or os.getpgid(parent) != parent):
+            raise IsolationUnavailable("isolation subreaper is invalid")
+        roots["subreaper"] = subreaper
+        parent = subreaper["ppid"]
+    else:
+        raise IsolationUnavailable("isolation target ancestry is invalid")
+    guardian = _process(parent)
     supervisor = _process(guardian["ppid"])
-    if (_command(group["pid"]) != [NODE, SUPERVISOR, "group"]
-            or _command(supervisor["pid"]) != [NODE, SMOKE]):
+    if _command(supervisor["pid"]) != [NODE, SMOKE]:
         raise IsolationUnavailable("isolation target ancestry is invalid")
     arguments = _command(guardian["pid"])
     if (len(arguments) != 5 or arguments[:3] != [NODE, SUPERVISOR, "guardian"]
             or arguments[3] != str(LEDGER)
             or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", arguments[4])):
         raise IsolationUnavailable("isolation guardian command is invalid")
-    if (group["ppid"] != guardian["pid"] or guardian["ppid"] != supervisor["pid"]):
+    if (guardian["pid"] != parent or guardian["ppid"] != supervisor["pid"]):
         raise IsolationUnavailable("isolation target ancestry changed")
-    return {"supervisor": supervisor, "guardian": guardian, "group": group}, arguments[4]
+    return {"supervisor": supervisor, "guardian": guardian, **roots, "group": group}, arguments[4]
 
 
 def _private(path: Path, mode: int, directory: bool) -> None:
@@ -259,13 +288,13 @@ def _child(write_fd: int, read_fd: int, roots: dict[str, dict[str, int]],
         os._exit(1)
 
 
-def _valid_result(result: object) -> bool:
+def _valid_result(result: object, names=("supervisor", "guardian", "group")) -> bool:
     if (type(result) is not dict or set(result) != {"ok", "identity", "outcomes", "listeners"}
             or result["listeners"] not in ([], [SSHD])):
         return False
     identity = result["identity"]
     outcomes = result["outcomes"]
-    expected = {f"{name}_{operation}" for name in ("supervisor", "guardian", "group")
+    expected = {f"{name}_{operation}" for name in names
                 for operation in ("environ", "fd", "signal", "ptrace")}
     expected.update(("guardian_socket_fd", "ledger_directory", "runtime_directory",
                      "state_directory", "ledger_catalog", "release_catalog", "guardian_connect"))
@@ -320,7 +349,7 @@ def _collect(roots: dict[str, dict[str, int]], endpoint: dict[str, object]) -> d
         if not os.WIFEXITED(status) or os.WEXITSTATUS(status) != 0:
             raise IsolationUnavailable("isolation probe failed")
         result = json.loads(payload)
-        if not _valid_result(result):
+        if not _valid_result(result, tuple(roots)):
             raise IsolationUnavailable("isolation probe failed")
         return result
     finally:

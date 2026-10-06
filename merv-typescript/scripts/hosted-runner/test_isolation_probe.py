@@ -118,6 +118,77 @@ class IsolationProbeTests(unittest.TestCase):
                     with self.assertRaises(probe.IsolationUnavailable):
                         probe._roots()
 
+    def test_ancestry_admits_the_supervisors_own_python_subreaper(self):
+        # On Linux with Python the guardian runs the group owner under supervisor.mjs's
+        # SUBREAPER, which passes the owner its process group (the subreaper's own).
+        supervisor = (Path(__file__).resolve().parents[2] / "packages/runner/src/supervisor.mjs").read_text()
+        roots = {
+            "supervisor": {"pid": 101, "ppid": 1, "starttime": 12},
+            "guardian": {"pid": 102, "ppid": 101, "starttime": 13},
+            "subreaper": {"pid": 104, "ppid": 102, "starttime": 14},
+            "group": {"pid": 105, "ppid": 104, "starttime": 15},
+        }
+        with patch.object(probe.Path, "read_text", return_value=supervisor):
+            source = probe._subreaper_source()
+        # The supervisor's actual subreaper, as the probe reads it from the fixed resource.
+        self.assertIn("prctl(36, 1", source)
+        self.assertTrue(source.startswith("import os, signal, sys") and "`" not in source)
+        commands = {
+            101: [probe.NODE, probe.SMOKE],
+            102: [probe.NODE, probe.SUPERVISOR, "guardian", str(probe.LEDGER), "launch_1"],
+            104: [probe.PYTHON, "-c", source, probe.NODE, probe.SUPERVISOR, "group"],
+            105: [probe.NODE, probe.SUPERVISOR, "group", "104"],
+        }
+        executables = []
+
+        def process(pid, executable=probe.NODE):
+            executables.append((pid, executable))
+            return next(info.copy() for info in roots.values() if info["pid"] == pid)
+
+        with patch.object(probe.os, "getppid", return_value=105), \
+                patch.object(probe.os, "getpgid", return_value=104), \
+                patch.object(probe.os.path, "realpath", return_value="/usr/bin/python3.11"), \
+                patch.object(probe, "_subreaper_source", return_value=source), \
+                patch.object(probe, "_process", side_effect=process), \
+                patch.object(probe, "_command", side_effect=lambda pid: commands[pid]):
+            self.assertEqual(probe._roots(), (roots, "launch_1"))
+            self.assertIn((104, "/usr/bin/python3.11"), executables)
+            self.assertIn((102, probe.NODE), executables)
+            # Another group than the subreaper's, another script, or a subreaper outside its
+            # own process group: each refuses.
+            commands[105][3] = "999"
+            with self.assertRaises(probe.IsolationUnavailable):
+                probe._roots()
+            commands[105][3] = "104"
+            commands[104][2] = source + "\nimport os"
+            with self.assertRaises(probe.IsolationUnavailable):
+                probe._roots()
+            commands[104][2] = source
+            with patch.object(probe.os, "getpgid", return_value=102):
+                with self.assertRaises(probe.IsolationUnavailable):
+                    probe._roots()
+            commands[105].append("extra")
+            with self.assertRaises(probe.IsolationUnavailable):
+                probe._roots()
+
+    def test_valid_result_requires_every_attested_root(self):
+        names = ("supervisor", "guardian", "subreaper", "group")
+        outcomes = {f"{name}_{operation}": errno.EACCES for name in names
+                    for operation in ("environ", "fd", "signal", "ptrace")}
+        outcomes.update({key: errno.EACCES for key in (
+            "guardian_socket_fd", "ledger_directory", "runtime_directory", "state_directory",
+            "ledger_catalog", "release_catalog", "guardian_connect")})
+        outcomes["sudo_returncode"] = 1
+        result = {"ok": True, "listeners": [], "outcomes": outcomes, "identity": {
+            "uids": [12001] * 3, "gids": [12001] * 3, "groups": [],
+            "caps": {key: "0000000000000000" for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")},
+            "no_new_privs": 1}}
+        self.assertTrue(probe._valid_result(result, names))
+        # A subreaper the probe never tried to reach is not attested.
+        self.assertFalse(probe._valid_result(result))
+        del outcomes["subreaper_ptrace"]
+        self.assertFalse(probe._valid_result(result, names))
+
     def test_socket_requires_bound_inode_in_guardian_fd(self):
         def link(name):
             return "socket:[20]" if name.endswith("/7") else "socket:[99]"
