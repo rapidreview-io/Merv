@@ -34,7 +34,7 @@ flowchart LR
   fleet -- "injects" --> scope
   fleet -- "injects" --> state
   sandboxes -- "HTTP /v1/sandboxes" --> sandboxesService
-  fleet -- "bootstraps" --> runner
+  fleet -- "bootstraps one work host per work item" --> runner
   runner -- "HTTP /sessions/runners/enroll" --> sessions
   runner -- "imports hosted-codex" --> fleet
   runner -- "launches" --> workerAgent
@@ -49,6 +49,8 @@ Fleet decides how many machines may run and keeps their leases: it rents them th
 An allocation uses one immutable runtime profile and one stable create and launch key. Global and per-project limits count every allocation that has left the queue until the sandbox provider reports `stopped`, Fleet can prove no machine is left, or the lease of a stopped machine has passed. A queued request gives up at its deadline; once reserved, the machine gets the full allocation timeout. `drain` prevents new admission and launch while renewing a running sandbox until its owner finishes or the deadline expires. One failed call keeps a launched machine's phase, and its worker's admission, while its lease lasts.
 
 The workers Fleet launches hold no model provider key. `fleet.modelRelay(config)` builds the relay that holds it for them (`src/model-relay.ts`): a feature supplies its route, bearer, grant, accepted bodies and spend hooks, then mounts the relay's handler public on the API and closes it with the mount. Pi does this for `/pi-model`, and the workflow adapter for hosted Codex at `/codex-model`. The model ledger (`@merv/fleet/model-ledger`, pure rules) holds the upstream endpoint, `personKey` (whose day a call counts toward) and `dailyTokens`; Pi and Fleet each keep their own daily table with it.
+
+Every workflow machine is a work host: the adapter rents one machine per work item (owner `work:<instance>`), and it serves every step of that item, the item's reviews included, each step in a fresh session with its own credential, deadline (`stepSeconds`, two hours) and billing. The host is rented under the item's owner for two hours and ten minutes in all, and its runner leases only its own item. Between steps the supervisor resets the assignment identity (kills its processes and clears its home and temp) while the step's working directory carries over. A step's host takes the next step only after its runner acknowledged the previous one's release and its capture and transcript settled; a host that has settled and waits five minutes without a next step, a host whose acknowledgement is two minutes overdue, and one that claimed nothing before its enrollment lapsed, are stopped. The hosted release proves each image can be a work host before switching to it (the workflow gate in `scripts/hosted-runner/linux-workflow-gate.py`); there is no per-step mode and no approval list.
 
 The workflow adapter is the one grant authority for hosted Codex's model. Sessions only says which session a bearer or session id holds (`managed.boundSession`: live, or closed by its own handoff and when). Fleet grants that session the model and effort of `hostedCodexPlatform`, which its runner enrolled with, while the session is live or within `codexHandoffGraceMs` of its own handoff, and charges it to the person the allocation was rented for. `@merv/fleet/hosted-codex` (pure rules) holds that profile, its capabilities and the grace; the runner imports the grace from it.
 

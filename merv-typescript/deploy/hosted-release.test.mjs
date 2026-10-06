@@ -161,6 +161,27 @@ test('a gate passes only when every report line passes', () => {
   assert.equal(passed(workflow({ sessionBearerUnreadableFromShell: false }), dispatch), false);
 });
 
+test('every boundary image must prove it can be a work host before its release switches', () => {
+  // Main rents every workflow machine as a work host. The workflow gate, run against the exact
+  // candidate, enrols the image's supervisor with a work-host bootstrap and runs Codex steps on
+  // one retained cwd, resetting between them through the supervisor's own launcher.
+  const text = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+  const gate = text('scripts/hosted-runner/linux-workflow-gate.py');
+  const supervisor = text('scripts/hosted-runner/smoke-supervisor.ts');
+  const launcher = supervisor.match(/const launcher = '([^']+)'/)[1];
+  assert.match(supervisor, /workInstanceId: z\.string\(\)\.min\(1\)\.max\(200\),/);
+  assert.match(supervisor, /execute\(launcher, \['--reset'\]/);
+  assert.match(gate, /supervise\(\{'workInstanceId': work_instance\}\)/);
+  assert.ok(gate.includes(`['${launcher}', '--reset']`), 'the gate resets as the supervisor does');
+  assert.match(gate, /'retainedCodexLaunches': 2/);
+  assert.ok(GATES.boundary.includes('linux-workflow-gate.py'));
+  // A worker-lane image differs only in the Pi worker, so it keeps its gated supervisor and reset.
+  assert.deepEqual(py('print(json.dumps(vm.WORKER_FILES))'), [
+    '/opt/merv/pi/worker-main.mjs',
+    '/opt/merv/pi/compile-cache/',
+  ]);
+});
+
 test('release ids match the live Sandboxes catalog and require a digest', () => {
   // The release of 2026-09-25T02:00Z as Sandboxes derived it; the seed moves on with each release.
   const live = `registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:3ca9ef18a5fe95d65b0277963098cc938b0908bbb61e80cf6185bfc1d10720a6`;

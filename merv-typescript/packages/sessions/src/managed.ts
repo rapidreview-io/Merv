@@ -29,14 +29,15 @@ import type {
 } from './managed-types.js';
 import { capabilitiesSchema as capabilities, runnerPlatformSchema as profile } from './rules.js';
 
-/** A session's allocation by either binding: two index lookups, never a scan of every one. */
+/** A session's allocation by either binding, its work host's or (before every machine was a work
+ *  host) its runner's own: two index lookups, never a scan of every one. */
 const boundTo = `SELECT * FROM session_managed_runners WHERE allocation_id IN (SELECT allocation_id FROM session_managed_runners WHERE bound_session_id=?
   UNION ALL SELECT allocation_id FROM session_managed_assignments WHERE session_id=?)`;
 const enrollment = z
   .object({
     allocationId: z.string().min(1).max(200),
-    workInstanceId: z.string().min(1).max(200).optional(),
-    stepSeconds: z.number().int().min(60).max(86400).optional(),
+    workInstanceId: z.string().min(1).max(200),
+    stepSeconds: z.number().int().min(60).max(86400),
     epoch: z.number().int().safe().nonnegative(),
     source: z
       .object({
@@ -117,9 +118,9 @@ export class ManagedRunnerBindings {
   }
   private identity(row: ManagedBindingRow): ManagedRunnerBindingIdentity {
     return {
-      ...(row.work_instance_id
-        ? { workInstanceId: row.work_instance_id, stepSeconds: Number(row.step_seconds) }
-        : {}),
+      // A binding from before every machine was a work host has neither, and is not current.
+      workInstanceId: row.work_instance_id ?? '',
+      stepSeconds: Number(row.step_seconds),
       allocationId: row.allocation_id,
       epoch: Number(row.epoch),
       source: JSON.parse(row.source_json),
@@ -154,10 +155,9 @@ export class ManagedRunnerBindings {
     check(parsed.success, 'invalid_managed_enrollment', 'Managed enrollment identity is invalid');
     const value = parsed.data as ManagedEnrollmentInput;
     check(
-      !!value.workInstanceId === !!value.stepSeconds &&
-        (!value.workInstanceId || value.capabilities?.includes('workflow.workhost.1')),
+      value.capabilities?.includes('workflow.workhost.1'),
       'invalid_managed_enrollment',
-      'Work host requires its capability and phase duration',
+      'Work host requires its capability',
     );
     check(
       Date.parse(value.expiresAt) > this.clock(),
@@ -187,9 +187,8 @@ export class ManagedRunnerBindings {
             row.platform_json === canonical(value.platform) &&
             row.capabilities_json === canonical(identity.capabilities) &&
             row.control_expires_at === value.expiresAt &&
-            row.work_instance_id === (value.workInstanceId ?? null) &&
-            (row.step_seconds === null ? null : Number(row.step_seconds)) ===
-              (value.stepSeconds ?? null),
+            row.work_instance_id === value.workInstanceId &&
+            Number(row.step_seconds) === value.stepSeconds,
           'managed_binding_conflict',
           'Managed allocation identity cannot change',
           409,
@@ -214,8 +213,8 @@ export class ManagedRunnerBindings {
           tokenDigest(`unbound:${enrollmentToken}`),
           value.expiresAt,
           now,
-          value.workInstanceId ?? null,
-          value.stepSeconds ?? null,
+          value.workInstanceId,
+          value.stepSeconds,
         );
         await this.credentials.issue(
           {
@@ -443,10 +442,9 @@ export class ManagedRunnerBindings {
     const { row, sourceCaller: source } = await this.require(caller, tx);
     // A runner whose lease reply was lost still offers its slot; its retry replays the binding.
     check(
-      input.capacity === 1 ||
-        ((row.work_instance_id || row.bound_session_id) && input.capacity === 0),
+      input.capacity === 1 || input.capacity === 0,
       'managed_capacity',
-      'Managed runner capacity must be one, or zero once bound',
+      'Managed runner capacity must be one or zero',
       409,
     );
     check(
@@ -504,7 +502,6 @@ export class ManagedRunnerBindings {
   }
   /** Code transfers remain bound to the unfinished phase, including its final capture. */
   private async currentSessionId(row: ManagedBindingRow, tx: Transaction): Promise<string | null> {
-    if (!row.work_instance_id) return row.bound_session_id;
     return (
       (
         await tx.get<{ session_id: string }>(
@@ -519,7 +516,6 @@ export class ManagedRunnerBindings {
     sessionId: string,
     tx: Transaction,
   ): Promise<ManagedBindingRow> {
-    if (!row.work_instance_id) return row;
     const assignment = await tx.get<{
       source_json: string;
       runner_id: string;
@@ -539,16 +535,13 @@ export class ManagedRunnerBindings {
     };
   }
   async hasSession(row: ManagedBindingRow, sessionId: string, tx: Transaction): Promise<boolean> {
-    return row.work_instance_id
-      ? !!(await tx.get(
-          'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND session_id=?',
-          row.allocation_id,
-          sessionId,
-        ))
-      : row.bound_session_id === sessionId;
+    return !!(await tx.get(
+      'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND session_id=?',
+      row.allocation_id,
+      sessionId,
+    ));
   }
   async sources(row: ManagedBindingRow, tx: Transaction): Promise<Caller[]> {
-    if (!row.work_instance_id) return [sourceCaller(JSON.parse(row.source_json))];
     check(
       this.validator?.assignmentSources,
       'managed_unavailable',
@@ -566,7 +559,6 @@ export class ManagedRunnerBindings {
   }
   /** A missing process acknowledgement can release a machine, but never reuse one. */
   async reusable(row: ManagedBindingRow, tx: Transaction): Promise<boolean> {
-    if (!row.work_instance_id) return !row.bound_session_id;
     const pending = await tx.get<{ session_id: string }>(
       'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? AND settled_at IS NULL',
       row.allocation_id,
@@ -596,41 +588,26 @@ export class ManagedRunnerBindings {
     return true;
   }
   async bind(row: ManagedBindingRow, sessionId: string, tx: Transaction): Promise<void> {
-    if (row.work_instance_id) {
-      const found = await tx.get<{ session_json: string }>(
-        'SELECT session_json FROM worker_sessions WHERE id=?',
-        sessionId,
-      );
-      const session: Session = JSON.parse(found!.session_json);
-      check(
-        session.projectId === row.project_id &&
-          session.instanceId === row.work_instance_id &&
-          session.runnerId === row.runner_id,
-        'managed_work_conflict',
-        'Work host cannot lease another workflow',
-        409,
-      );
-      await tx.run(
-        'INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at) VALUES(?,?,?,?,?)',
-        sessionId,
-        row.allocation_id,
-        row.runner_id,
-        canonical(session.source),
-        new Date(this.clock()).toISOString(),
-      );
-      return;
-    }
-
+    const found = await tx.get<{ session_json: string }>(
+      'SELECT session_json FROM worker_sessions WHERE id=?',
+      sessionId,
+    );
+    const session: Session = JSON.parse(found!.session_json);
     check(
-      !row.bound_session_id || row.bound_session_id === sessionId,
-      'managed_bound',
-      'Managed runner already owns another session',
+      session.projectId === row.project_id &&
+        session.instanceId === row.work_instance_id &&
+        session.runnerId === row.runner_id,
+      'managed_work_conflict',
+      'Work host cannot lease another workflow',
       409,
     );
     await tx.run(
-      'UPDATE session_managed_runners SET bound_session_id=? WHERE allocation_id=? AND bound_session_id IS NULL',
+      'INSERT INTO session_managed_assignments(session_id,allocation_id,runner_id,source_json,bound_at) VALUES(?,?,?,?,?)',
       sessionId,
       row.allocation_id,
+      row.runner_id,
+      canonical(session.source),
+      new Date(this.clock()).toISOString(),
     );
   }
   async controlled(
@@ -651,19 +628,11 @@ export class ManagedRunnerBindings {
   /** The release of `caller`'s bound session, which the caller's control already admitted. */
   async acknowledgeRelease(caller: Caller, sessionId: string, tx: Transaction): Promise<void> {
     const { row } = await this.require(caller, tx);
-    if (row.work_instance_id) {
-      await tx.run(
-        'UPDATE session_managed_assignments SET release_ack_at=COALESCE(release_ack_at,?) WHERE allocation_id=? AND session_id=?',
-        new Date(this.clock()).toISOString(),
-        row.allocation_id,
-        sessionId,
-      );
-      return;
-    }
     await tx.run(
-      'UPDATE session_managed_runners SET runner_released_at=COALESCE(runner_released_at,?) WHERE allocation_id=?',
+      'UPDATE session_managed_assignments SET release_ack_at=COALESCE(release_ack_at,?) WHERE allocation_id=? AND session_id=?',
       new Date(this.clock()).toISOString(),
-      caller.managed!.allocationId,
+      row.allocation_id,
+      sessionId,
     );
   }
   /** Whether a live session's machine is no longer current, so no runner is left to release it:
@@ -694,18 +663,15 @@ export class ManagedRunnerBindings {
       );
       if (!row || Number(row.epoch) !== epoch) return null;
       const runner = {
-        ...(row.work_instance_id ? { workInstanceId: row.work_instance_id } : {}),
         runnerId: row.runner_id,
         enrollmentExpiresAt: row.enrollment_expires_at,
       };
-      if (row.work_instance_id) {
-        const latest = await tx.get<{ session_id: string }>(
-          'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? ORDER BY ordinal DESC LIMIT 1',
-          row.allocation_id,
-        );
-        if (latest) Object.assign(row, await this.forSession(row, latest.session_id, tx));
-      }
-      if (!row.bound_session_id) return { ...runner, session: null };
+      const latest = await tx.get<{ session_id: string }>(
+        'SELECT session_id FROM session_managed_assignments WHERE allocation_id=? ORDER BY ordinal DESC LIMIT 1',
+        row.allocation_id,
+      );
+      if (!latest) return { ...runner, session: null };
+      Object.assign(row, await this.forSession(row, latest.session_id, tx));
       const bound = await tx.get<{ session_json: string }>(
         'SELECT session_json FROM worker_sessions WHERE id=?',
         row.bound_session_id,

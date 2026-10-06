@@ -3,10 +3,10 @@ import type { DelegationSource, Transaction } from '@merv/contracts';
 import type { RunnerPlatform, Session } from './types.js';
 
 export interface ManagedRunnerBindingIdentity {
-  /** Opt-in affinity to one workflow instance across fresh sessions. */
-  workInstanceId?: string;
+  /** The one workflow instance this work host serves, each step in a fresh session. */
+  workInstanceId: string;
   /** Per-phase cap, independent of the host deadline. */
-  stepSeconds?: number;
+  stepSeconds: number;
   allocationId: string;
   epoch: number;
   source: DelegationSource;
@@ -43,7 +43,6 @@ export interface ManagedBoundSession {
   handedOffAt?: string;
 }
 export interface ManagedRunnerInspection {
-  workInstanceId?: string;
   runnerId: string | null;
   /** After this no runner can enroll on the allocation. */
   enrollmentExpiresAt: string;

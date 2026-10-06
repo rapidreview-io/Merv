@@ -116,9 +116,8 @@ const configSchema = z
       .max(4096)
       .refine((value) => !/[\0\r\n]/.test(value) && resolve(value) === value)
       .optional(),
-    /** A managed machine admits at most one durable assignment during its lifetime. */
-    oneAssignment: z.boolean().optional(),
-    /** Keep this hosted machine's workspace across separate sessions of exactly one work item. */
+    /** A managed hosted machine, a work host: it keeps its workspace across the separate
+     *  sessions of exactly this one work item. */
     workInstanceId: z.string().min(1).max(200).optional(),
     capacity: z.number().int().min(0).max(256).optional(),
     pollIntervalMs: z.number().int().min(100).max(30_000).optional(),
@@ -141,29 +140,18 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
     'invalid_runner_config',
     'Runner profile names must be distinct',
   );
-  if (
-    parsed.data.assignmentWorkspaceDirectory ||
-    parsed.data.oneAssignment ||
-    parsed.data.workInstanceId
-  )
+  if (parsed.data.assignmentWorkspaceDirectory || parsed.data.workInstanceId)
     check(
       profiles.length === 1 &&
         profiles[0].harness === 'codex' &&
         !!profiles[0].isolatedLauncher &&
         profiles[0].parallelism === 1 &&
         parsed.data.capacity === 1 &&
-        (!parsed.data.assignmentWorkspaceDirectory ||
-          parsed.data.oneAssignment === true ||
-          !!parsed.data.workInstanceId),
+        !!parsed.data.assignmentWorkspaceDirectory &&
+        !!parsed.data.workInstanceId,
       'invalid_runner_config',
-      'A hosted workspace requires one isolated Codex profile and capacity one',
+      'A work host requires one isolated Codex profile, capacity one and an assignment root',
     );
-  check(
-    !parsed.data.workInstanceId ||
-      (!!parsed.data.assignmentWorkspaceDirectory && !parsed.data.oneAssignment),
-    'invalid_runner_config',
-    'A retained work host requires an assignment root and sequential sessions',
-  );
   // An isolated machine's Git checkouts are its workspace driver's; the runner's own
   // repository gives it only scratch directories.
   check(
@@ -482,12 +470,8 @@ export class MachineRunner implements Runner {
     const workspace = this.driverOf(record)?.get(record.id);
     return !terminalLaunch(record) || (!!workspace && workspace.status !== 'closed');
   }
-  /** A managed machine admits one assignment in its lifetime. */
-  private assigned(): boolean {
-    return !!this.config.oneAssignment && this.ledger.count() > 0;
-  }
   private managed(): boolean {
-    return !!(this.config.oneAssignment || this.config.workInstanceId);
+    return !!this.config.workInstanceId;
   }
   /** The ledger detaches and bounds the patch; only the source bearer is known here. */
   private save(id: string, patch: Record<string, unknown>): LaunchRecord {
@@ -503,9 +487,7 @@ export class MachineRunner implements Runner {
     // `git.local` exactly when it has a repository of its own for work that names no driver.
     // A managed runner's capabilities must equal its enrolment, so it names only its drivers.
     const marker = this.managed()
-      ? this.config.workInstanceId
-        ? ['workflow.workhost.1']
-        : []
+      ? ['workflow.workhost.1']
       : ['runner.2', ...(this.config.workspace ? ['git.local'] : [])];
     const capabilities = [...this.drivers.keys(), ...marker].sort();
     // Sent when it changed or 15 s after the last one succeeded (fresh for 45 s on the server).
@@ -514,7 +496,7 @@ export class MachineRunner implements Runner {
         runnerId: this.ledger.runnerId,
         machine: { hostname: hostname(), system: process.platform, architecture: process.arch },
         platforms: this.profiles.map(platformOf),
-        capacity: this.assigned() ? 0 : this.capacity(),
+        capacity: this.capacity(),
         appliedVersion: this.appliedVersion,
         ...(capabilities.length ? { capabilities } : {}),
       };
@@ -583,15 +565,10 @@ export class MachineRunner implements Runner {
     // Existing uncertain requests are retried first, preserving their original platform and secret.
     for (const pending of this.ledger.pendingRequests()) {
       if (this.stopping || !leasing) break;
-      if (
-        this.assigned() &&
-        !this.ledger.list().some((record) => record.metadata.requestId === pending.requestId)
-      )
-        continue;
       await this.acquire(pending);
     }
     for (const profile of this.profiles) {
-      if (this.stopping || !leasing || this.assigned()) break;
+      if (this.stopping || !leasing) break;
       const live = this.ledger.open().filter((record) => this.occupied(record));
       if (
         !profile.enabled ||
@@ -654,12 +631,6 @@ export class MachineRunner implements Runner {
         !this.config.workInstanceId || session.instanceId === this.config.workInstanceId,
         'invalid_control_response',
         'Retained machine received another work item',
-      );
-      check(
-        !this.config.oneAssignment ||
-          this.ledger.list().every((record) => record.sessionId === session.id),
-        'invalid_control_response',
-        'One-assignment runner received a second session',
       );
       check(
         session.runnerId === this.ledger.runnerId,

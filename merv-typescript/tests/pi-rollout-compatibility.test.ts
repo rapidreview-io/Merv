@@ -134,8 +134,10 @@ test('sessions v8 keeps v7 data; exact migration-only rollback boots while the v
       (await bindings.enroll(enrollmentToken, { workerNonce })).controlToken,
       enrolled.controlToken,
     );
+    // The control credential is live. Authenticating as a runner reads tables of later
+    // migrations (work hosts), outside this v7/v8 bridge.
     assert.equal(
-      (await bindings.authenticate(enrolled.controlToken)).managed?.allocationId,
+      (await credentials.authenticate(enrolled.controlToken, 'managed-control')).subject,
       allocationId,
     );
     await assert.rejects(
@@ -161,8 +163,10 @@ test('sessions v8 keeps v7 data; exact migration-only rollback boots while the v
     const reopened = await openState(directory);
     await reopened.migrate('sessions', bridgeMigrations);
     assert.equal((await row())?.control_hash, sha(enrolled.controlToken));
+    // The control credential is live. Authenticating as a runner reads tables of later
+    // migrations (work hosts), outside this v7/v8 bridge.
     assert.equal(
-      (await bindings.authenticate(enrolled.controlToken)).managed?.allocationId,
+      (await credentials.authenticate(enrolled.controlToken, 'managed-control')).subject,
       allocationId,
     );
     assert.deepEqual(

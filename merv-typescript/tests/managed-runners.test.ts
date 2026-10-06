@@ -231,9 +231,11 @@ async function fixture(
     }
   }
   const sourceIdentity = await scope.delegationSource(source);
-  const workTarget = options.workHost
-    ? await handle.start(source, { workflow: 'managed-test', requestId: 'pinned-work' })
-    : undefined;
+  // Every managed machine is a work host, pinned to one work item: this one.
+  const workTarget = await handle.start(service ? owner : source, {
+    workflow: 'managed-test',
+    requestId: 'pinned-work',
+  });
   const reviewer = options.workHost
     ? await scope.serviceActor('fleet-review', source.projectId, undefined, 'reviewer')
     : undefined;
@@ -252,8 +254,8 @@ async function fixture(
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
     retired: async () => retired,
-    assignmentSources: async () => [
-      sourceIdentity,
+    assignmentSources: async (binding) => [
+      binding.source,
       ...(reviewer
         ? [
             {
@@ -277,14 +279,15 @@ async function fixture(
   const allocationId = randomUUID();
   const input = {
     allocationId,
-    ...(workTarget ? { workInstanceId: workTarget.id, stepSeconds: 900 } : {}),
+    workInstanceId: workTarget.id,
+    stepSeconds: 900,
     epoch: 1,
     source: sourceIdentity,
     runtimeProfileId: 'codex-profile',
     platform: profile,
     capabilities: [
       ...(options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : []),
-      ...(options.workHost ? ['workflow.workhost.1'] : []),
+      'workflow.workhost.1',
     ],
     expiresAt: new Date((options.clock?.() ?? Date.now()) + 3_600_000).toISOString(),
   };
@@ -299,7 +302,7 @@ async function fixture(
     platforms: [profile],
     capabilities: [
       ...(options.codeWorkspace || options.reviewWorkspace ? ['code.v2'] : []),
-      ...(options.workHost ? ['workflow.workhost.1'] : []),
+      'workflow.workhost.1',
     ],
     capacity,
   });
@@ -551,7 +554,6 @@ test('managed lease binds once, replays after admission closes, and rejects anot
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const first = f.lease();
   const result = await f.sessions.dispatch.lease(f.caller, first);
   assert.ok(result.session, result.reason);
@@ -589,11 +591,10 @@ test('managed lease binds once, replays after admission closes, and rejects anot
   await assert.rejects(f.sessions.dispatch.lease(f.caller, first), { code: 'managed_revoked' });
 });
 
-test('a failure on one rented machine holds its target back on the next, and a released machine leaves the Runners list', async (t) => {
+test('a failure on one rented machine holds its target back on the next, and a work host stays listed between its steps', async (t) => {
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   assert.ok(bound);
   await f.sessions.release(f.caller, {
@@ -616,7 +617,8 @@ test('a failure on one rented machine holds its target back on the next, and a r
   });
   const listed = (await f.sessions.dispatch.projectStatus(f.owner)).runners.map((r) => r.runnerId);
   assert.ok(listed.includes(runnerId));
-  assert.ok(!listed.includes(f.runnerId), 'a machine whose release was acknowledged is gone');
+  // A work host waits for its work item's next step after a release: it is still a machine.
+  assert.ok(listed.includes(f.runnerId));
 });
 
 test('rented machines never exhaust a project’s own runners, and another project’s runner of the same name stays its own', async (t) => {
@@ -675,10 +677,7 @@ test('a machine a release retired mid-step closes its session as machine_retired
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  const target = await f.handle.start(f.source, {
-    workflow: 'managed-test',
-    requestId: randomUUID(),
-  });
+  const target = f.workTarget;
   const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   assert.ok(bound);
   f.retire();
@@ -700,7 +699,6 @@ test('own machines give a managed runner no new work, and the session it holds r
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true, ownMachines: true });
   assert.equal((await f.sessions.dispatch.projectStatus(f.owner)).dispatch.fleet, true);
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   assert.deepEqual(await f.sessions.dispatch.lease(f.caller, f.lease()), {
     session: null,
     reason: 'dispatch_disabled',
@@ -730,11 +728,13 @@ test('a person’s source enrolls a managed runner that leases as that person', 
   });
   const owner = await f.scope.caller(person, project.id);
   const source = await f.scope.delegationSource(owner);
+  const target = await f.handle.start(owner, { workflow: 'managed-test', requestId: randomUUID() });
   const allocationId = randomUUID();
   const runnerId = `managed-${allocationId}`;
   const { enrollmentToken } = await f.sessions.managed.ensure({
     ...f.input,
     allocationId,
+    workInstanceId: target.id,
     source,
   });
   const enrolled = await f.sessions.managed.enroll(enrollmentToken, { workerNonce: f.workerNonce });
@@ -742,7 +742,6 @@ test('a person’s source enrolls a managed runner that leases as that person', 
   assert.equal(managed.projectId, project.id);
   await f.sessions.dispatch.heartbeatRunner(managed, { ...f.heartbeat(1), runnerId });
   await f.sessions.dispatch.setDispatch(owner, { enabled: true });
-  const target = await f.handle.start(owner, { workflow: 'managed-test', requestId: randomUUID() });
   const leased = await f.sessions.dispatch.lease(managed, { ...f.lease(), runnerId });
   assert.ok(leased.session, leased.reason);
   assert.deepEqual([leased.session.instanceId, leased.session.source], [target.id, source]);
@@ -752,7 +751,6 @@ test('a hosted step ends five minutes before its machine, and a machine with und
   let now = Date.now();
   const f = await fixture(t, { clock: () => now });
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   // The machine runs until its allocation's end, fixed at enrollment an hour from now.
   now = Date.parse(f.input.expiresAt) - 599_999;
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
@@ -773,7 +771,6 @@ test('the sweep ends a bound session once its machine is no longer current', asy
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
   assert.ok((await f.sessions.dispatch.lease(f.caller, request)).session);
   await f.sessions.authenticate(request.secret);
@@ -790,7 +787,6 @@ test('managed Code v2 runner attaches its bound checkout using its verified sour
   const f = await fixture(t, { codeWorkspace: true });
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
   const leased = await f.sessions.dispatch.lease(f.caller, request);
   assert.ok(leased.session, leased.reason);
@@ -832,7 +828,6 @@ test('managed inspection does not hold a released disposable read-only checkout 
       const f = await fixture(subtest, { reviewWorkspace: mode });
       await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
       await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-      await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
       const request = f.lease();
       const leased = await f.sessions.dispatch.lease(f.caller, request);
       const session = leased.session!;
@@ -884,7 +879,6 @@ test('managed inspection holds a released session for its declared transcript fo
       };
       await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
       await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-      await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
       const request = f.lease();
       const leased = await f.sessions.dispatch.lease(f.caller, request);
       assert.ok(leased.session, leased.reason);
@@ -934,26 +928,27 @@ test('two concurrent managed lease requests create at most one bound session', a
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const [a, b] = await Promise.all([
     f.sessions.dispatch.lease(f.caller, f.lease()),
     f.sessions.dispatch.lease(f.caller, f.lease()),
   ]);
   assert.equal([a, b].filter((result) => result.session).length, 1);
   const bound = await f.state.read((tx) =>
-    tx.get<{ bound_session_id: string }>(
-      'SELECT bound_session_id FROM session_managed_runners WHERE allocation_id=?',
+    tx.all<{ session_id: string }>(
+      'SELECT session_id FROM session_managed_assignments WHERE allocation_id=?',
       f.input.allocationId,
     ),
   );
-  assert.equal(bound?.bound_session_id, (a.session ?? b.session)?.id);
+  assert.deepEqual(
+    bound.map((row) => row.session_id),
+    [(a.session ?? b.session)?.id],
+  );
 });
 
 test('cancelled admission cannot create a new managed claim', async (t) => {
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   f.admits(false);
   await assert.rejects(f.sessions.dispatch.lease(f.caller, f.lease()), {
     code: 'managed_not_admitted',
@@ -986,7 +981,6 @@ test('a managed runner’s bound session reads while it is live or handed off, a
   const f = await fixture(t, { clock: () => now });
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
   const { session } = await f.sessions.dispatch.lease(f.caller, request);
   assert.ok(session);
@@ -1042,7 +1036,6 @@ test('a bound session ends when the managed source loses read', async (t) => {
   const f = await fixture(t);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const request = f.lease();
   assert.ok((await f.sessions.dispatch.lease(f.caller, request)).session);
   await f.sessions.managed.boundSession(request.secret);
@@ -1067,7 +1060,6 @@ for (const sourceKind of [undefined, 'human', 'key', 'service-human', 'service-k
     };
     await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
     await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-    await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
     const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
     assert.ok(bound);
     const input = { sessionId: bound.id, runnerId: f.runnerId, hostRef: 'hf-host' };
@@ -1124,7 +1116,6 @@ test('sealed review gets no HF account credential', async (t) => {
   };
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const bound = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   assert.ok(bound);
   const input = { sessionId: bound.id, runnerId: f.runnerId, hostRef: 'sealed-host' };
@@ -1157,7 +1148,6 @@ for (const sourceKind of ['human', 'key', 'service-human', 'service-key'] as con
     };
     await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
     await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-    await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
     const session = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
     const input = { sessionId: session.id, runnerId: f.runnerId, hostRef: 'hf-proxy-host' };
     await assert.rejects(f.sessions.huggingfaceAccess(f.caller, input), { code: 'host_conflict' });
@@ -1223,7 +1213,6 @@ async function attachedNative(t: TestContext, options: Parameters<typeof fixture
   const f = await fixture(t, options);
   await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
   await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
-  await f.handle.start(f.source, { workflow: 'managed-test', requestId: randomUUID() });
   const session = (await f.sessions.dispatch.lease(f.caller, f.lease())).session!;
   const input = { sessionId: session.id, runnerId: f.runnerId, hostRef: 'native-host' };
   const workspace = options.reviewWorkspace

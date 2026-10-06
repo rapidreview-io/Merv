@@ -57,7 +57,9 @@ async function fixture(t: TestContext) {
       enabled: true,
       parallelism: 1,
     },
-    capabilities: [],
+    capabilities: ['workflow.workhost.1'],
+    workInstanceId: 'work-api',
+    stepSeconds: 900,
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
   const request = async (
@@ -136,7 +138,7 @@ test('managed HTTP credentials stay on enrollment and control routes', async (t)
       { name: 'codex', harness: 'codex', model: 'gpt-6-luna', enabled: true, parallelism: 1 },
     ],
     capacity: 1,
-    capabilities: [],
+    capabilities: ['workflow.workhost.1'],
   };
   const active = await f.request(
     '/sessions/runners/heartbeat',

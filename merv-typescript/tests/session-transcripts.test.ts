@@ -182,13 +182,14 @@ async function fixture(t: TestContext, store: 's3' | 'disk' | 'none' = 's3') {
       start,
       /** A dispatched session of `runnerId`, attached as `hostRef`, with its worker secret. */
       async leased(runnerId = 'runner', hostRef = `launch-${randomUUID()}`, bearer = token) {
-        // A managed runner holds one session; a source runner here holds up to four.
+        // A managed runner, a work host, holds one session; a source runner here holds up to four.
         const managed = bearer !== token;
         await ok('POST', '/sessions/runners/heartbeat', bearer, {
           runnerId,
           machine,
           platforms: [{ ...profile, parallelism: managed ? 1 : 4 }],
           capacity: managed ? 1 : 4,
+          ...(managed ? { capabilities: ['workflow.workhost.1'] } : {}),
         });
         await app.ctx.sessions.dispatch.setDispatch(owner, { enabled: true });
         await start();
@@ -482,15 +483,19 @@ test('a managed runner declares and delivers for its bound session after release
     current: async () => true,
     admits: async () => true,
     retired: async () => false,
+    assignmentSources: async (binding) => [binding.source],
   });
   const allocationId = randomUUID();
+  const work = await a.start();
   const { enrollmentToken } = await f.app.ctx.sessions.managed.ensure({
     allocationId,
     epoch: 1,
     source: await f.app.ctx.scope.delegationSource(a.owner),
     runtimeProfileId: 'codex-profile',
     platform: profile,
-    capabilities: [],
+    capabilities: ['workflow.workhost.1'],
+    workInstanceId: work.id,
+    stepSeconds: 900,
     expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
   });
   const { controlToken } = await f.app.ctx.sessions.managed.enroll(enrollmentToken, {

@@ -1,5 +1,6 @@
 import test, { type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
@@ -176,10 +177,20 @@ test("a hosted runner's stop, and an ending that only races a stop, stay counted
   const clock = () => Date.now() + 60_000;
   const hosted = server(() => null, undefined, refuse);
   const h = machine(t, [codex], hosted.fetch, {
-    config: { oneAssignment: true, capacity: 1 },
+    config: { workInstanceId: 'instance_evicted', capacity: 1 },
+    resetAssignment: async () => {},
     clock,
   });
-  const evicted = seed(h, hosted, 'evicted', { reason: 'external_stop' });
+  const assignments = join(realpathSync(h.root), 'assignments');
+  mkdirSync(assignments, { mode: 0o700 });
+  h.config.assignmentWorkspaceDirectory = assignments;
+  const evicted = seed(
+    h,
+    hosted,
+    'evicted',
+    { reason: 'external_stop' },
+    { session: offer('evicted') },
+  );
   const own = h.make();
   await own.start();
   refused = false;

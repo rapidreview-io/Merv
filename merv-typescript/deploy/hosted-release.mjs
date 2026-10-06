@@ -25,8 +25,9 @@
 //    bundle (worker tests included), then scripts/hosted-runner/Dockerfile. The host diffs the whole
 //    image against the deployed one: anything beyond the Pi worker bundle is the boundary, and an
 //    identical image ends the run, after a canary if the live release is unverified.
-//  3 gates, chosen on the host from its lane: linux-pi-gate; the boundary adds the workflow gate
-//    and the isolation probe. A failure stops with nothing changed.
+//  3 gates, chosen on the host from its lane: linux-pi-gate; the boundary adds the workflow gate,
+//    which also proves the image can be a work host (Main rents no other workflow machine), and
+//    the isolation probe. A failure stops with nothing changed.
 //  4 push with a 30-minute registry credential minted by the local wrangler and piped over ssh
 //    stdin into docker login (tmpfs config, logged out after); pin the amd64 manifest digest.
 //  5 catalog: add the release to both Sandboxes services, keeping earlier releases.

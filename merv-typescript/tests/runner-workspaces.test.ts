@@ -256,7 +256,7 @@ test("an isolated machine takes no runner repository: its Git checkouts are its 
     projectId: 'project',
     credentialEnv: 'MERV_SOURCE',
     capacity: 1,
-    oneAssignment: true,
+    workInstanceId: 'instance',
     assignmentWorkspaceDirectory: '/workspace/assignments',
     profiles: [
       {

@@ -855,7 +855,8 @@ test('a continuing agent’s lease names the agent, and its sidebar counts nothi
   assert.ok(panel.actions[0].guard!.consequence.startsWith('Citation agent holds this lease'));
 });
 
-/** A machine Fleet rents for one new piece of work, enrolled and reporting as ip-10-0-0-7. */
+/** A machine Fleet rents as the work host of one new piece of work, enrolled and reporting as
+ *  ip-10-0-0-7. */
 async function rent(f: Awaited<ReturnType<typeof fixture>>) {
   const runtimes = {
     profiles: [{ key: 'standard', id: 'standard-profile', leaseSeconds: 3600 }],
@@ -873,12 +874,16 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
   f.ctx.provide('fleet', fleet);
   await f.ctx.plugin(fleetUiPlugin);
   f.closing.push(async () => await fleet.close());
-  f.sessions.managed.registerValidator({ current: async () => true, admits: async () => true });
+  f.sessions.managed.registerValidator({
+    current: async () => true,
+    admits: async () => true,
+    assignmentSources: async (binding) => [binding.source],
+  });
 
   const work = await f.instance();
   const allocation = await fleet.request(f.owner, {
     requestId: request(),
-    owner: { kind: 'workflow', id: `${work.id}:${work.revision}` },
+    owner: { kind: 'workflow', id: `work:${work.id}` },
   });
   const profile = { ...platform, parallelism: 1 };
   const { enrollmentToken } = await f.sessions.managed.ensure({
@@ -887,7 +892,9 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
     source: await f.scope.delegationSource(f.source),
     runtimeProfileId: 'standard-profile',
     platform: profile,
-    capabilities: [],
+    capabilities: ['workflow.workhost.1'],
+    workInstanceId: work.id,
+    stepSeconds: 900,
     expiresAt: new Date(f.now() + 3_600_000).toISOString(),
   });
   const enrolled = await f.sessions.managed.enroll(enrollmentToken, {
@@ -899,7 +906,7 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
     runnerId,
     machine: { hostname: 'ip-10-0-0-7', system: 'linux', architecture: 'x64' },
     platforms: [profile],
-    capabilities: [],
+    capabilities: ['workflow.workhost.1'],
     capacity: 1,
   });
   return { allocation, machine, runnerId, runner };
