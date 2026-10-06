@@ -221,9 +221,7 @@ export class RecipeContextBuilder implements ContextBuilder {
       return await fn(tx);
     }
     const ambient = this.state.ambient;
-    return ambient
-      ? await fn(ambient)
-      : await this.state.snapshot(() => this.state.transaction(fn));
+    return ambient ? await fn(ambient) : await this.state.snapshotTransaction(fn);
   }
   async register(input: ContextRecipeDefinition): Promise<ContextRegistration> {
     check(!this.closed, 'context_builder_closed', 'Context Builder is closed', 503);

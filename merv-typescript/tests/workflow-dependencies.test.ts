@@ -1,3 +1,4 @@
+import { requireDependencies } from '@merv/workflows/rules';
 import { createService, type Data } from '@merv/contracts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -143,9 +144,15 @@ test('registered dependency semantics gate designated actions, guide failure rec
       }),
     { code: 'dependencies_pending' },
   );
-  await assert.rejects(async () => await workflows.checkDependencies(caller, downstream.id), {
-    code: 'dependencies_pending',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies(
+        (await workflows.prerequisites(caller, [downstream.id])).get(downstream.id)!,
+      ),
+    {
+      code: 'dependencies_pending',
+    },
+  );
   assert.equal(await state.eventHead(), beforeEvents);
   assert.equal((await workflows.get(caller, downstream.id)).revision, 0);
   assert.equal(
@@ -203,15 +210,24 @@ test('registered dependency semantics gate designated actions, guide failure rec
     requestId: 'completed-finish',
   });
   const dependent = await start(prep, caller, 'preparation', 'consumes-experiment', completed.id);
-  assert.equal((await workflows.dependencies(caller, dependent.id)).dependencies[0].settled, true);
-  assert.equal((await workflows.dependencies(caller, completed.id)).dependents[0].id, dependent.id);
+  assert.equal(
+    (await workflows.prerequisites(caller, [dependent.id])).get(dependent.id)![0].settled,
+    true,
+  );
+  assert.equal(
+    (await workflows.records(caller, [completed.id])).get(completed.id)!.dependents[0].id,
+    dependent.id,
+  );
   await prep.transition(caller, {
     instanceId: dependent.id,
     expectedRevision: 0,
     action: 'finish',
     requestId: 'dependent-finish',
   });
-  assert.equal((await workflows.dependencies(caller, completed.id)).dependents[0].settled, true);
+  assert.equal(
+    (await workflows.records(caller, [completed.id])).get(completed.id)!.dependents[0].settled,
+    true,
+  );
 });
 
 test('dependency creation normalizes inputs, rejects unsupported or out-of-scope targets, and rolls back records and events', async (t) => {
@@ -225,7 +241,10 @@ test('dependency creation normalizes inputs, rejects unsupported or out-of-scope
     dependsOn: [' ', ` ${upstream.id} `, upstream.id],
   };
   const downstream = await handle.start(caller, input);
-  assert.equal((await workflows.dependencies(caller, downstream.id)).dependencies.length, 1);
+  assert.equal(
+    (await workflows.prerequisites(caller, [downstream.id])).get(downstream.id)!.length,
+    1,
+  );
   assert.deepEqual(await handle.start(caller, { ...input, dependsOn: upstream.id }), downstream);
   // The fingerprint names the set asked for: another order, or an empty list for none, replays.
   const second = await start(handle, caller, 'preparation', 'second');
@@ -269,9 +288,8 @@ test('dependency creation normalizes inputs, rejects unsupported or out-of-scope
     assert.equal((await workflows.list(caller)).length, count);
     assert.equal(await state.eventHead(), head);
   }
-  await assert.rejects(async () => await workflows.dependencies(other, downstream.id), {
-    code: 'not_found',
-  });
+  assert.deepEqual((await workflows.prerequisites(other, [downstream.id])).get(downstream.id), []);
+  assert.equal((await workflows.records(other, [downstream.id])).size, 0);
   assert.deepEqual(
     (await workflows.overview(other)).workflows.map((item) => item.instanceId),
     [foreign.id],
@@ -365,7 +383,7 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
       }),
     { code: 'not_found' },
   );
-  assert.deepEqual((await workflows.dependencies(caller, b.id)).dependencies, []);
+  assert.deepEqual((await workflows.prerequisites(caller, [b.id])).get(b.id)!, []);
   const reader = {
     actorId: (await scope.issueActor(caller, { name: 'Reader', role: 'reader' })).actor.id,
     projectId: caller.projectId,
@@ -426,7 +444,7 @@ test('owner-only additive dependency composition fences revisions, prevents cycl
     /rollback/,
   );
   assert.equal((await workflows.get(caller, b.id)).revision, 0);
-  assert.deepEqual((await workflows.dependencies(caller, b.id)).dependencies, []);
+  assert.deepEqual((await workflows.prerequisites(caller, [b.id])).get(b.id)!, []);
   // Fingerprinted as sets: a retry naming the same ids in another order replays.
   const d = await start(handle, caller, 'preparation', 'd'),
     e = await start(handle, caller, 'preparation', 'e'),
@@ -479,17 +497,17 @@ test('success declarations and edge contracts survive provider removal and datab
       requestId: `finish-${target.id}`,
     });
   assert.equal(
-    (await workflows.dependencies(caller, oldDependent.id)).dependencies[0].settled,
+    (await workflows.prerequisites(caller, [oldDependent.id])).get(oldDependent.id)![0].settled,
     true,
   );
   assert.equal(
-    (await workflows.dependencies(caller, newDependent.id)).dependencies[0].failed,
+    (await workflows.prerequisites(caller, [newDependent.id])).get(newDependent.id)![0].failed,
     true,
   );
   v1.dispose();
   v2.dispose();
   assert.equal(
-    (await workflows.dependencies(caller, oldDependent.id)).dependencies[0].settled,
+    (await workflows.prerequisites(caller, [oldDependent.id])).get(oldDependent.id)![0].settled,
     true,
   );
   await assert.rejects(
@@ -509,12 +527,18 @@ test('success declarations and edge contracts survive provider removal and datab
   scope = await createService(new ProjectScope(state));
   workflows = await createService(new WorkflowsService(state, scope));
   assert.equal(
-    (await workflows.dependencies(caller, oldDependent.id)).dependencies[0].settled,
+    (await workflows.prerequisites(caller, [oldDependent.id])).get(oldDependent.id)![0].settled,
     true,
   );
-  await assert.rejects(async () => await workflows.checkDependencies(caller, newDependent.id), {
-    code: 'dependency_failed',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies(
+        (await workflows.prerequisites(caller, [newDependent.id])).get(newDependent.id)!,
+      ),
+    {
+      code: 'dependency_failed',
+    },
+  );
   assert.equal((await workflows.evaluate(caller, oldDependent.id)).available, false);
   const restored = await workflows.register(graph(), policy());
   restored.dispose();
@@ -541,10 +565,12 @@ test('missing or foreign targets cannot open a gate or reveal another project; u
     input: { reason: 'stop' },
   });
   assert.deepEqual(
-    (await workflows.dependencies(caller, target.id)).dependents.map(({ settled, failed }) => ({
-      settled,
-      failed,
-    })),
+    (await workflows.records(caller, [target.id]))
+      .get(target.id)!
+      .dependents.map(({ settled, failed }) => ({
+        settled,
+        failed,
+      })),
     [{ settled: false, failed: false }],
   );
   const dangling = await start(targetProgram, caller, 'preparation', 'dangling', [target.id]);
@@ -557,12 +583,16 @@ test('missing or foreign targets cannot open a gate or reveal another project; u
       ),
   );
   assert.equal(
-    (await workflows.dependencies(caller, dangling.id)).dependencies[0].state,
+    (await workflows.prerequisites(caller, [dangling.id])).get(dangling.id)![0].state,
     'missing',
   );
-  await assert.rejects(async () => await workflows.checkDependencies(caller, dangling.id), {
-    code: 'dependencies_pending',
-  });
+  await assert.rejects(
+    async () =>
+      requireDependencies((await workflows.prerequisites(caller, [dangling.id])).get(dangling.id)!),
+    {
+      code: 'dependencies_pending',
+    },
+  );
   const identity = await scope.bootstrap({ projectName: 'Secret', actorName: 'Other' });
   const other = { actorId: identity.actor.id, projectId: identity.project.id };
   const foreign = await start(targetProgram, other, 'preparation', 'PRIVATE TITLE');
@@ -580,7 +610,7 @@ test('missing or foreign targets cannot open a gate or reveal another project; u
         dangling.id,
       ),
   );
-  const dependencies = (await workflows.dependencies(caller, dangling.id)).dependencies;
+  const dependencies = (await workflows.prerequisites(caller, [dangling.id])).get(dangling.id)!;
   assert.equal(dependencies[0].state, 'missing');
   assert.equal(dependencies[0].settled, false);
   assert.ok(!JSON.stringify(dependencies).includes('PRIVATE TITLE'));
@@ -635,10 +665,12 @@ test('success states are pinned per version, their absence included, and absence
     input: { reason: 'stop' },
   });
   assert.deepEqual(
-    (await workflows.dependencies(caller, target.id)).dependents.map(({ settled, failed }) => ({
-      settled,
-      failed,
-    })),
+    (await workflows.records(caller, [target.id]))
+      .get(target.id)!
+      .dependents.map(({ settled, failed }) => ({
+        settled,
+        failed,
+      })),
     [{ settled: false, failed: false }],
   );
   const relations = await state.transaction(
@@ -675,7 +707,10 @@ test('dependency policy validation and immutable contexts prevent changing regis
     requestId: 'finish',
   });
   const downstream = await start(handle, caller, 'preparation', 'downstream', [upstream.id]);
-  assert.equal((await workflows.dependencies(caller, downstream.id)).dependencies[0].settled, true);
+  assert.equal(
+    (await workflows.prerequisites(caller, [downstream.id])).get(downstream.id)![0].settled,
+    true,
+  );
   const denied = await workflows.register(graph('denied'), policy('done', false));
   const failure = await start(handle, caller, 'preparation', 'failure');
   await handle.transition(caller, {
@@ -905,13 +940,13 @@ test('dependency reads and attaching cost the same however many edges there are'
     quiet = await start(handle, caller, 'preparation', 'quiet');
   for (let i = 0; i < 100; i++)
     await start(handle, caller, 'preparation', `waiter-${i}`, [busy.id]);
-  assert.equal((await workflows.dependencies(caller, busy.id)).dependents.length, 100);
+  assert.equal((await workflows.records(caller, [busy.id])).get(busy.id)!.dependents.length, 100);
   // Guidance, the gate and a move read what an instance depends on, never what depends on it.
   const cost = async (id: string) =>
     (
       await statements(state, async (tx) => {
         await workflows.evaluate(caller, id, {}, tx);
-        await workflows.checkDependencies(caller, id, tx);
+        requireDependencies((await workflows.prerequisites(caller, [id], tx)).get(id)!);
         await handle.transition(
           caller,
           { instanceId: id, action: 'finish', expectedRevision: 0, requestId: `finish-${id}` },
@@ -923,7 +958,7 @@ test('dependency reads and attaching cost the same however many edges there are'
   // Both directions come from the kept contracts, with no definition or success read.
   const read = await statements(
     state,
-    async (tx) => await workflows.dependencies(caller, busy.id, tx),
+    async (tx) => await workflows.records(caller, [busy.id], tx),
   );
   assert.deepEqual(
     read.filter((sql) => /wf_definitions|wf_success_states/.test(sql)),
@@ -949,7 +984,10 @@ test('dependency reads and attaching cost the same however many edges there are'
   });
   assert.ok(started.length <= 12, `${started.length} statements to start on a 20-chain`);
   assert.deepEqual(
-    (await workflows.dependencies(caller, tail.id)).dependencies.map((item) => item.id).sort(),
+    (await workflows.prerequisites(caller, [tail.id]))
+      .get(tail.id)!
+      .map((item) => item.id)
+      .sort(),
     chain.map((link) => link.id).sort(),
   );
 
@@ -975,9 +1013,9 @@ test('dependency reads and attaching cost the same however many edges there are'
       }),
     { code: 'not_found' },
   );
-  assert.deepEqual((await workflows.dependencies(caller, a.id)).dependencies, []);
+  assert.deepEqual((await workflows.prerequisites(caller, [a.id])).get(a.id)!, []);
   assert.deepEqual(
-    (await workflows.dependencies(caller, b.id)).dependencies.map((item) => item.id),
+    (await workflows.prerequisites(caller, [b.id])).get(b.id)!.map((item) => item.id),
     [a.id],
   );
   const linked = await handle.addDependencies(caller, {
@@ -1033,18 +1071,20 @@ test('replanning removes declared edges in one bounded write, preserving ownersh
     /rollback replan/,
   );
   assert.equal((await workflows.get(caller, source.id)).revision, 0);
-  assert.equal((await workflows.dependencies(caller, source.id)).dependencies.length, 22);
+  assert.equal((await workflows.prerequisites(caller, [source.id])).get(source.id)!.length, 22);
   const writes = await statements(state, (tx) => handle.addDependencies(caller, input, tx));
   assert.equal(writes.filter((sql) => sql.startsWith('DELETE FROM wf_dependencies')).length, 1);
   const history = await workflows.history(caller, source.id);
   assert.equal(history.at(-1)?.action, 'replan_dependencies');
   assert.deepEqual(history.at(-1)?.data, { dependsOn: [], dropped: targets.toReversed() });
-  const remaining = (await workflows.dependencies(caller, source.id)).dependencies;
+  const remaining = (await workflows.prerequisites(caller, [source.id])).get(source.id)!;
   assert.deepEqual(remaining.map(({ id }) => id).sort(), targets.slice(0, 2).sort());
   assert.ok(remaining.every(({ kind, owner }) => kind === 'system' && owner === 'provider'));
-  assert.equal((await workflows.dependencies(caller, neighbor.id)).dependencies.length, 20);
+  assert.equal((await workflows.prerequisites(caller, [neighbor.id])).get(neighbor.id)!.length, 20);
   assert.deepEqual(
-    (await workflows.dependencies(other, foreignSource.id)).dependencies.map(({ id }) => id),
+    (await workflows.prerequisites(other, [foreignSource.id]))
+      .get(foreignSource.id)!
+      .map(({ id }) => id),
     [foreignTarget.id],
   );
   const after = await workflows.get(caller, source.id);
@@ -1088,7 +1128,7 @@ test('a dependency is named by its data title, else its name, else its workflow,
   const downstream = await start(prep, caller, 'preparation', 'downstream', ids);
   const [dependencies, upstream] = [
     (await workflows.prerequisites(caller, [downstream.id])).get(downstream.id)!,
-    (await workflows.dependencies(caller, ids[1])).dependents,
+    (await workflows.records(caller, [ids[1]])).get(ids[1])!.dependents,
   ];
   // Edges made together are in no particular order among themselves.
   assert.deepEqual(

@@ -39,6 +39,7 @@ import {
   type WorkspaceTransport,
 } from '@merv/contracts';
 import { hashFile } from '../files.js';
+import { CODE_DRIVER } from '../store/refs.js';
 import { MERGE_SETTINGS } from '../merge-settings.js';
 import {
   changedNames,
@@ -56,8 +57,6 @@ import {
 } from './git.js';
 
 export { WorkspaceError } from './git.js';
-/** The capability a runner that carries this driver advertises, and the policy key it serves. */
-export const CODE_DRIVER = 'code.v2';
 
 export interface CodeDriverOptions {
   /** How often an admission that outlasts its request is asked about again. */

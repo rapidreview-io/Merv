@@ -1,8 +1,9 @@
-import { visible, mapAsync } from '@merv/contracts';
+import { visible, mapAsync, record } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import { leaseReleaseConsumer } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
+import { requireDependencies } from '@merv/workflows/rules';
 import { z } from 'zod';
 import {
   check,
@@ -110,6 +111,10 @@ interface StandingContext {
   blocked: ReadonlySet<string>;
   /** On the board, what every open experiment waits on, read once for all of them. */
   waitsOn?: ReadonlyMap<string, WorkflowDependency[]>;
+  /** Experiments back in a producing state they were in before. */
+  again: ReadonlySet<string>;
+  /** Experiments in review whose review rounds are used up. */
+  exhausted: ReadonlySet<string>;
 }
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
@@ -243,6 +248,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
         ...ids,
       );
       const context: StandingContext = {
+        ...(await this.counted(caller, rows, tx)),
         released: await this.releases(caller, rows, tx),
         blocked: new Set(
           (await this.workflows.blockers(caller, undefined, tx)).map((item) => item.instanceId),
@@ -282,6 +288,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       if (!row) return null;
       const experiment = await this.get(caller, id, tx);
       const context: StandingContext = {
+        ...(await this.counted(caller, [row], tx)),
         released: await this.releases(caller, [row], tx),
         blocked: new Set(
           (await this.workflows.blockers(caller, id, tx)).map((item) => item.instanceId),
@@ -340,6 +347,41 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     );
     return new Map(ended.map((row) => [row.experiment_id, row.released_at]));
   }
+  /**
+   * Which cards are back where they were, counted from their moves without the moves' data, and
+   * which reviews have used every round, in a fixed number of reads however many cards.
+   */
+  private async counted(
+    caller: Caller,
+    rows: StandingRow[],
+    tx: Transaction,
+  ): Promise<Pick<StandingContext, 'again' | 'exhausted'>> {
+    const producers = rows.filter((row) => producing(row.state));
+    const moves = await this.workflows.transitionCounts(
+      caller.projectId,
+      producers.map((row) => row.id),
+      tx,
+    );
+    const exhausted = new Set<string>();
+    for (const [state, limit] of [
+      ['design_review', 'design_rounds'],
+      ['experiment_review', 'result_rounds'],
+    ] as const) {
+      const ids = rows
+        .filter((row) => row.state === state && currentExperiment(row.version))
+        .map((row) => row.id);
+      if (ids.length)
+        for (const [id, status] of await this.workflows.limitStatusOf(caller, ids, limit, tx))
+          if (status.exhausted) exhausted.add(id);
+    }
+    return {
+      // A new attempt is not a return by itself, so the record's own arrivals say it.
+      again: new Set(
+        producers.filter((row) => enteredAgain(moves.get(row.id)!, row.state)).map((row) => row.id),
+      ),
+      exhausted,
+    };
+  }
   /** One card's facts, read without evaluating a gate; a review state's only in one. */
   private async standing(
     caller: Caller,
@@ -349,20 +391,6 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
   ): Promise<ExperimentStanding> {
     const ended = terminal.has(row.state);
     const review = reviewing(row.state) && row.review_id;
-    let exhausted = false;
-    if (currentExperiment(row.version) && reviewing(row.state))
-      try {
-        exhausted = (
-          await this.workflows.limitStatus(
-            caller,
-            row.id,
-            row.state === 'design_review' ? 'design_rounds' : 'result_rounds',
-            tx,
-          )
-        ).exhausted;
-      } catch (error) {
-        if (!(error instanceof MervError && error.status === 404)) throw error;
-      }
     const released = context.released.get(row.id);
     return {
       id: row.id,
@@ -370,10 +398,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       state: row.state,
       updatedAt: row.updatedAt,
       idleSince: released && released > row.updatedAt ? released : row.updatedAt,
-      // A new attempt is not a return by itself, so the record's own arrivals say it.
-      again:
-        producing(row.state) &&
-        enteredAgain(await this.workflows.history(caller, row.id, tx), row.state),
+      again: context.again.has(row.id),
       blocked: context.blocked.has(row.id),
       lease: row.lease_id
         ? {
@@ -385,7 +410,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
       dependencies: ended
         ? []
         : (context.waitsOn?.get(row.id) ??
-          (await this.workflows.dependencies(caller, row.id, tx)).dependencies),
+          (await this.workflows.prerequisites(caller, [row.id], tx)).get(row.id)!),
       // A review the experiment names and Reviews does not hold is drawn as no review, so one
       // dangling row costs its own card its reviewer and nothing else on the board.
       review: review
@@ -394,7 +419,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
             throw error;
           })
         : null,
-      exhausted,
+      exhausted: context.exhausted.has(row.id),
     };
   }
   private async row(caller: Caller, id: string, tx: Transaction): Promise<ExperimentRow> {
@@ -670,7 +695,9 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
           409,
         );
         // Evidence is written against the work this experiment depends on, like the step itself.
-        await this.workflows.checkDependencies(caller, experiment.id, tx);
+        requireDependencies(
+          (await this.workflows.prerequisites(caller, [experiment.id], tx)).get(experiment.id)!,
+        );
         const artifact = await this.artifacts.get(caller, input.artifactId, tx);
         const inherited = await this.pinnedRecovery(caller, experiment, tx);
         check(
@@ -1198,11 +1225,7 @@ export class ExperimentService extends ExperimentProgram implements Experiments 
     });
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'review', tx);
-      check(
-        input && typeof input === 'object' && !Array.isArray(input),
-        'invalid_experiment_input',
-        'Review input must be an object',
-      );
+      check(record(input), 'invalid_experiment_input', 'Review input must be an object');
       if (input.paperChanges !== undefined)
         input.paperChanges = this.paper.parseChanges(input.paperChanges);
       check(

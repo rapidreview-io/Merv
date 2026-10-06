@@ -227,9 +227,10 @@ const sharedContract = (specifier: string) =>
     contractsRuntimeExports.has(specifier.slice('@merv/contracts/'.length)));
 
 /** A unit's pure rules, which other units may run: the compute capability, experiment naming and
- * limits, and review independence and history. */
+ * limits, review independence and history, and the prerequisite guard. */
 const pureRules = new Set([
   '@merv/sandboxes/compute-capability',
+  '@merv/workflows/rules',
   '@merv/experiments/rules',
   '@merv/reviews/rules',
   '@merv/scope/rules',
@@ -459,8 +460,9 @@ function assertComponentReferences(
       // Identity's credential store is a public shared authority, also usable by standalone services.
       const credentials =
         ['scope', 'sessions', 'pi'].includes(owner) && specifier === '@merv/identity/credentials';
-      // API's server-sent-events writer, for the HTTP adapters that stream to a page.
-      const events = isAdapter && specifier === '@merv/api/event-stream';
+      // API's server-sent-events writer and its unknown-endpoint error, for the HTTP adapters.
+      const events =
+        isAdapter && ['@merv/api/event-stream', '@merv/api/errors'].includes(specifier);
       // Pure rules (no service, see the test below) that any unit may run.
       if (!utility && !credentials && !events && !pureRules.has(specifier)) {
         assert.ok(

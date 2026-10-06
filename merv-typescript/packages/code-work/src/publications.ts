@@ -19,6 +19,7 @@ import {
   type State,
   type Transaction,
   requireHuman,
+  idSchema,
 } from '@merv/contracts';
 import {
   publicationApproval,
@@ -34,7 +35,7 @@ export const codePublicationMergeSchema = codePublicationIdSchema
   .extend({
     expectedHead: z.string().regex(/^[0-9a-f]{40}$/),
     expectedBase: z.string().regex(/^[0-9a-f]{40}$/),
-    requestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/),
+    requestId: idSchema,
   })
   .strict() satisfies z.ZodType<CodePublicationMerge>;
 

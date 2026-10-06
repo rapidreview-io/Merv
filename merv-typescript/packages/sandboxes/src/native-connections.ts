@@ -120,6 +120,14 @@ export class NativeConnections {
     return this.credentials.open<{ bearer: string }>(row.credentials, `connection:${row.id}`)
       .bearer;
   }
+  /** One request to Sandboxes made with a connection's own bearer token. */
+  call<T>(
+    row: NativeConnectionRow,
+    path: string,
+    options?: Parameters<NativeSandboxClient['request']>[2],
+  ): Promise<T> {
+    return this.client.request<T>(path, this.bearer(row), options);
+  }
   /**
    * The assignments of a project's work on a connection other than `kept` end with that
    * connection's tokens: it was revoked, or held only expired assignments when the work moved.
@@ -145,31 +153,26 @@ export class NativeConnections {
     );
   }
   async status(caller: Caller): Promise<NativeConnectionStatus> {
-    const status = await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        await this.authorize(caller, tx, false);
-        const connection = await this.current(caller.projectId, tx);
-        return {
-          available: true,
-          connected: !!connection,
-          connectionId: connection?.id ?? null,
-          accountId: connection?.account_id ?? null,
-          memberId: connection?.member_id ?? null,
-          connectedAt: connection?.connected_at ?? null,
-          funding: connection?.billing_subject ? ('managed' as const) : ('personal' as const),
-          managedAvailable: !!this.config.managed,
-          url: `${this.client.origin}/ui`,
-        };
-      }),
-    );
+    const status = await this.state.snapshotTransaction(async (tx) => {
+      await this.authorize(caller, tx, false);
+      const connection = await this.current(caller.projectId, tx);
+      return {
+        available: true,
+        connected: !!connection,
+        connectionId: connection?.id ?? null,
+        accountId: connection?.account_id ?? null,
+        memberId: connection?.member_id ?? null,
+        connectedAt: connection?.connected_at ?? null,
+        funding: connection?.billing_subject ? ('managed' as const) : ('personal' as const),
+        managedAvailable: !!this.config.managed,
+        url: `${this.client.origin}/ui`,
+      };
+    });
     if (status.connected && status.funding === 'managed') {
       const connection = await this.get(status.connectionId!);
       return {
         ...status,
-        allowance: await this.client.request<Json>(
-          '/v1/delegations/allowance',
-          this.bearer(connection),
-        ),
+        allowance: await this.call<Json>(connection, '/v1/delegations/allowance'),
       };
     }
     return status;
@@ -265,12 +268,12 @@ export class NativeConnections {
           path: `/v1/delegations/works/${work.native_grant_id}`,
         });
     const empty = async ({ old, path }: (typeof grants)[number]) => {
-      const resources = await this.client.request<{
+      const resources = await this.call<{
         workflows: unknown[];
         jobs: unknown[];
         sandboxes: unknown[];
         next: Record<string, unknown>;
-      }>(`${path}/resources`, this.bearer(old));
+      }>(old, `${path}/resources`);
       check(
         ['workflows', 'jobs', 'sandboxes'].every(
           (key) => Array.isArray(resources[key as 'jobs']) && resources[key as 'jobs'].length === 0,
@@ -287,7 +290,7 @@ export class NativeConnections {
     for (const grant of grants) {
       // Retire the old grant, then check again: a request admitted just before
       // revocation must not be orphaned or attributed to the replacement root.
-      await this.client.request(grant.path, this.bearer(grant.old), { method: 'DELETE' });
+      await this.call(grant.old, grant.path, { method: 'DELETE' });
       await empty(grant);
     }
     await this.state.transaction(async (tx) => {
@@ -681,7 +684,7 @@ export class NativeConnections {
     for (const row of rows) {
       try {
         // Only a successful native self-revoke confirms revocation. A 403 may be suspension.
-        await this.client.request('/v1/delegations/connection', this.bearer(row), {
+        await this.call(row, '/v1/delegations/connection', {
           method: 'DELETE',
         });
       } catch {

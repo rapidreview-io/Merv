@@ -174,10 +174,11 @@ Programs can coordinate domain work through one caller-owned transaction.
 The service also owns project-scoped dependency edges. Programs declare durable
 `successStates` in policy and can pass `dependsOn` at start. The first registration
 of a version pins its success states, or their absence; a later registration that
-adds, drops or changes them is `workflow_version_conflict`. `dependencies` returns
-live forward/reverse rows, each with its revision and whether it is `settled`, `terminal`
-(ended, as a fact) or `failed` (ended in a way that fails the dependent; a provider's edge
-never is); `checkDependencies` is the shared prerequisite guard. Guidance, the guard and
+adds, drops or changes them is `workflow_version_conflict`. `prerequisites` returns the
+live forward rows, and `records` both directions, each with its revision and whether it is
+`settled`, `terminal` (ended, as a fact) or `failed` (ended in a way that fails the
+dependent; a provider's edge never is); `requireDependencies`, a pure rule in
+`@merv/workflows/rules`, is the shared prerequisite guard over them. Guidance, the guard and
 transitions read only what an instance depends on, in a fixed number of queries; what depends
 on it is read only when asked for. Attaching at start never walks the graph, because the new
 id cannot be reached; `addDependencies` and a provider's `replace` refuse a cycle with one

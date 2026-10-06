@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
-import { check, MervError, type Json } from '@merv/contracts';
+import { check, fetchJson, MervError, OutboundError, type Json } from '@merv/contracts';
 
 /** Server-only credentials. Domain-separated authenticated encryption binds each
  * value to its durable row; moving ciphertext between connections cannot work. */
@@ -71,6 +71,24 @@ export function nativeOrigin(value: string): string {
   return url.origin;
 }
 
+/**
+ * Each page of one cursor-paged list, first to last: the first is read with no cursor, each
+ * later one with the cursor the page before it named. A list naming a cursor twice is `stuck`.
+ */
+export async function* pages<T extends { next: string | null }>(
+  read: (after: string | undefined) => Promise<T>,
+  stuck: () => never,
+): AsyncGenerator<T, void, undefined> {
+  const seen = new Set<string>();
+  for (let after: string | undefined; ;) {
+    const page = await read(after);
+    yield page;
+    if (page.next === null) return;
+    if (seen.has(page.next)) stuck();
+    seen.add((after = page.next));
+  }
+}
+
 /** The fixed-origin connection bridge. Native agents use MCP directly; this
  * transport only handles consent, grants, cleanup and evidence registration. */
 export class NativeSandboxClient {
@@ -107,88 +125,43 @@ export class NativeSandboxClient {
     const url = new URL(path, this.origin);
     for (const [key, value] of Object.entries(options.query ?? {}))
       url.searchParams.set(key, value);
-    let response: Response;
     try {
-      response = await this.fetcher(url, {
+      return (await fetchJson(url, options.application ? null : secret, {
         method: options.method ?? 'GET',
-        redirect: 'manual',
         headers: {
-          ...(options.application
-            ? { 'x-sandbox-application-secret': secret }
-            : { authorization: `Bearer ${secret}` }),
-          ...(options.scope
-            ? {
-                'x-sandbox-namespace': options.scope.namespace,
-                'x-sandbox-subject': options.scope.subject,
-              }
-            : {}),
-          accept: 'application/json',
-          ...(options.body ? { 'content-type': 'application/json' } : {}),
+          ...(options.application && { 'x-sandbox-application-secret': secret }),
+          ...(options.scope && {
+            'x-sandbox-namespace': options.scope.namespace,
+            'x-sandbox-subject': options.scope.subject,
+          }),
         },
-        ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+        ...(options.body ? { body: options.body } : {}),
+        maxBytes: 8 * 1024 * 1024,
         signal: AbortSignal.timeout(15_000),
-      });
-    } catch {
-      throw new MervError('sandbox_unavailable', 'Sandboxes is unreachable', 503);
-    }
-    try {
-      check(
-        response.status >= 200 && response.status < 300,
-        response.status === 409
-          ? 'sandbox_conflict'
-          : response.status === 404
-            ? 'sandbox_not_found'
-            : response.status === 401 || response.status === 403
-              ? 'sandbox_access_revoked'
-              : 'sandbox_unavailable',
-        response.status === 401 || response.status === 403
-          ? 'Reconnect Sandboxes to restore access'
-          : `Sandboxes could not complete this request (HTTP ${response.status})`,
-        response.status === 409
-          ? 409
-          : response.status === 404
-            ? 404
-            : response.status === 401 || response.status === 403
-              ? 403
-              : 503,
-      );
-      if (response.status === 204) return undefined as T;
-      check(
-        response.headers.get('content-type')?.split(';')[0]?.trim() === 'application/json',
-        'sandbox_unavailable',
-        'Sandboxes returned an invalid response',
-        502,
-      );
-      const reader = response.body?.getReader();
-      check(reader, 'sandbox_unavailable', 'Sandboxes returned an empty response', 502);
-      let size = 0;
-      const chunks: Uint8Array[] = [];
-      try {
-        for (;;) {
-          const part = await reader.read();
-          if (part.done) break;
-          size += part.value.length;
-          check(
-            size <= 8 * 1024 * 1024,
-            'sandbox_unavailable',
-            'Sandboxes response is too large',
-            502,
-          );
-          chunks.push(part.value);
-        }
-      } catch (error) {
-        if (error instanceof MervError) throw error;
-        throw new MervError('sandbox_unavailable', 'Sandboxes response was interrupted', 503);
-      } finally {
-        reader.releaseLock();
+        fetcher: this.fetcher,
+      })) as T;
+    } catch (error) {
+      const failure = error instanceof OutboundError ? error.failure : { kind: 'network' as const };
+      if (failure.kind === 'status') {
+        const status = failure.status;
+        const revoked = status === 401 || status === 403;
+        throw new MervError(
+          status === 409
+            ? 'sandbox_conflict'
+            : status === 404
+              ? 'sandbox_not_found'
+              : revoked
+                ? 'sandbox_access_revoked'
+                : 'sandbox_unavailable',
+          revoked
+            ? 'Reconnect Sandboxes to restore access'
+            : `Sandboxes could not complete this request (HTTP ${status})`,
+          status === 409 ? 409 : status === 404 ? 404 : revoked ? 403 : 503,
+        );
       }
-      try {
-        return JSON.parse(Buffer.concat(chunks).toString('utf8')) as T;
-      } catch {
-        throw new MervError('sandbox_unavailable', 'Sandboxes returned invalid JSON', 502);
-      }
-    } finally {
-      await response.body?.cancel().catch(() => {});
+      throw failure.kind === 'network'
+        ? new MervError('sandbox_unavailable', 'Sandboxes is unreachable', 503)
+        : new MervError('sandbox_unavailable', 'Sandboxes returned an invalid response', 502);
     }
   }
 }

@@ -1,5 +1,5 @@
 import { freezeLaunchSnapshot } from './launch-connections.js';
-import { nativeMcpConnectionsSchema } from '@merv/contracts';
+import { nativeMcpConnectionsSchema, record, oidPattern } from '@merv/contracts';
 import { visible, createService } from '@merv/contracts';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { z } from 'zod';
@@ -351,11 +351,7 @@ function admitCall(
   );
   check(encoded.length <= 4_000_000, 'invalid_input', 'Input is too large');
   const original = JSON.parse(encoded) as Data;
-  check(
-    original && typeof original === 'object' && !Array.isArray(original),
-    'invalid_input',
-    'Tool input must be a JSON object',
-  );
+  check(record(original), 'invalid_input', 'Tool input must be a JSON object');
   // The project overview is asked for by leaving the instance out. A fixed binding would
   // fill it in and answer for this worker's own record instead — a narrower question than
   // the one asked, and the only read a session cannot otherwise express.
@@ -1923,7 +1919,7 @@ export class LeasedSessions implements Sessions {
             ? session.execution.references[name]
             : undefined;
           check(
-            typeof oid === 'string' && /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(oid),
+            typeof oid === 'string' && oidPattern.test(oid),
             'workspace_reference_unavailable',
             'Frozen workspace reference must name an exact Git commit',
             409,

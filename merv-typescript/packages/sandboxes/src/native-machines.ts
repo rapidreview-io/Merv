@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { check, type Json, type State, type UiManifestRow } from '@merv/contracts';
+import { check, MervError, type Json, type State, type UiManifestRow } from '@merv/contracts';
+import { pages } from './native-client.js';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeWorkRow } from './native-schema.js';
 import type { SandboxRow } from './types.js';
@@ -85,14 +86,19 @@ export class NativeMachineReader implements NativeMachineReads {
       409,
     );
     const result: Json[] = [],
-      ids = new Set<string>(),
-      cursors = new Set<string>();
-    let after: string | undefined;
-    for (let count = 0; count < 100; count++) {
+      ids = new Set<string>();
+    const unfinished = (): never => {
+      throw new MervError(
+        'sandbox_machines_invalid',
+        'Native machine pagination did not finish',
+        502,
+      );
+    };
+    const read = async (after?: string) => {
       const parsed = page.safeParse(
-        await this.connections.client.request(
+        await this.connections.call(
+          connection,
           `/v1/delegations/works/${work.native_grant_id}/machines`,
-          this.connections.bearer(connection),
           { query: { limit: '100', include_stopped: 'true', ...(after ? { after } : {}) } },
         ),
       );
@@ -102,7 +108,11 @@ export class NativeMachineReader implements NativeMachineReads {
         'Native machine list has invalid provenance',
         502,
       );
-      for (const row of parsed.data.sandboxes) {
+      return parsed.data;
+    };
+    let count = 0;
+    for await (const { sandboxes, next } of pages(read, unfinished)) {
+      for (const row of sandboxes) {
         check(
           row.namespace === work.namespace && !ids.has(row.id),
           'sandbox_machines_invalid',
@@ -112,15 +122,7 @@ export class NativeMachineReader implements NativeMachineReads {
         ids.add(row.id);
         result.push(this.display(row));
       }
-      if (parsed.data.next === null) break;
-      check(
-        !cursors.has(parsed.data.next) && count < 99,
-        'sandbox_machines_invalid',
-        'Native machine pagination did not finish',
-        502,
-      );
-      cursors.add(parsed.data.next);
-      after = parsed.data.next;
+      if (next !== null && ++count >= 100) unfinished();
     }
     // Do not retain any pages fetched while this connection was disconnected.
     await this.connections.get(work.connection_id);
@@ -178,9 +180,9 @@ export class NativeMachineReader implements NativeMachineReads {
           'Native machine scope changed',
           409,
         );
-        const value = await this.connections.client.request(
+        const value = await this.connections.call(
+          connection,
           `/v1/delegations/works/${work.native_grant_id}/machines/${machineId}`,
-          this.connections.bearer(connection),
         );
         const parsed = machine.safeParse(value);
         check(

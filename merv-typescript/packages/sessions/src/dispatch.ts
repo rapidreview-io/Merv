@@ -1063,29 +1063,27 @@ export class SessionDispatch {
     const parsed = demandSchema.safeParse(input);
     check(parsed.success, 'invalid_dispatch_demand', 'Demand requires a valid runner profile');
     input = parsed.data;
-    return await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        await this.ordinary(caller, 'read', tx);
-        // Only Fleet asks: a project on its own machines has no work for a machine it rents.
-        if (!input.platform.enabled || (await this.dispatch(caller.projectId, tx)).ownMachines)
-          return { candidates: [] };
-        const owner = (await ownerOf(this.scope, caller, tx)).hash;
-        const selected = await this.eligibleCandidates(
-          caller,
-          tx,
-          new Set(input.capabilities ?? []),
-          await this.recentFailures(tx, owner, input.platform.name),
-          this.passing(owner),
-          false,
-        );
-        return {
-          candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
-            instanceId,
-            expectedRevision,
-          })),
-        };
-      }),
-    );
+    return await this.state.snapshotTransaction(async (tx) => {
+      await this.ordinary(caller, 'read', tx);
+      // Only Fleet asks: a project on its own machines has no work for a machine it rents.
+      if (!input.platform.enabled || (await this.dispatch(caller.projectId, tx)).ownMachines)
+        return { candidates: [] };
+      const owner = (await ownerOf(this.scope, caller, tx)).hash;
+      const selected = await this.eligibleCandidates(
+        caller,
+        tx,
+        new Set(input.capabilities ?? []),
+        await this.recentFailures(tx, owner, input.platform.name),
+        this.passing(owner),
+        false,
+      );
+      return {
+        candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
+          instanceId,
+          expectedRevision,
+        })),
+      };
+    });
   }
   /**
    * Closes inside the backoff window, asked of the database since history is kept for ever. A
@@ -1719,10 +1717,8 @@ export class SessionDispatch {
     );
     input = parsed.data;
     const preparedCaller = caller.managed
-      ? await this.state.snapshot(() =>
-          this.state.transaction(
-            async (tx) => (await this.hooks.managed.require(caller, tx)).sourceCaller,
-          ),
+      ? await this.state.snapshotTransaction(
+          async (tx) => (await this.hooks.managed.require(caller, tx)).sourceCaller,
         )
       : caller;
     await this.hooks.prepare(preparedCaller);

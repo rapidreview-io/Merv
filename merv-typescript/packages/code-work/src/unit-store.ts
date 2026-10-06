@@ -18,6 +18,7 @@ import {
   type Sql,
   type State,
   type Transaction,
+  oidPattern,
 } from '@merv/contracts';
 import type { CodeCaptureRef } from '@merv/contracts/types';
 import type { CodeWriterService } from '@merv/code/writers';
@@ -114,8 +115,6 @@ export function bindsRepository(
 }
 export const unitColumns =
   'project_id,unit_id,workflow,version,declared_at,base_json,base_hash,base_lease_id,based_at,acceptance_json,acceptance_hash,accepted_at,quarantine_base_key,publishes_at,publication_id';
-export const oid = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-export const CODE_DRIVER = 'code.v2';
 
 /** Durable Code records. Work-unit owners supply already validated facts in their transaction. */
 export class WorkUnitRecords {
@@ -458,7 +457,7 @@ export class WorkUnitRecords {
         409,
       );
       check(
-        !caller.session && oid.test(baseReference),
+        !caller.session && oidPattern.test(baseReference),
         'invalid_base',
         'Only an owner can declare a fixed unit input',
         403,

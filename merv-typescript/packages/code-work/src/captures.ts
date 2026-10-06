@@ -7,6 +7,7 @@ import {
   type State,
   type Transaction,
   type Sql,
+  idSchema,
 } from '@merv/contracts';
 import type { Sessions } from '@merv/sessions/types';
 import type {
@@ -17,10 +18,9 @@ import type {
 } from './types.js';
 import { parseCodeInput } from '@merv/code/input';
 import type { CodeWriterService } from '@merv/code/writers';
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
 export const codeCaptureRefSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('session-final'), sessionId: id }).strict(),
-  z.object({ kind: z.literal('code-commit'), commandId: id }).strict(),
+  z.object({ kind: z.literal('session-final'), sessionId: idSchema }).strict(),
+  z.object({ kind: z.literal('code-commit'), commandId: idSchema }).strict(),
 ]);
 /** Whether a capture came from exactly this origin's writable session, and holds its result. */
 export function checkedCapture(

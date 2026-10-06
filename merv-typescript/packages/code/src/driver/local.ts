@@ -29,6 +29,7 @@ import {
   type WorkspaceHandle,
   type WorkspaceLaunch,
   type WorkspaceSession,
+  oidPattern,
 } from '@merv/contracts';
 import { unitRef } from '../store/refs.js';
 import {
@@ -569,7 +570,7 @@ export class LocalWorkspaceDriver implements WorkspaceDriver {
       .filter(([ref]) => new RegExp(`^refs/merv/rescued/${name}(?:-\\d+)?$`).test(ref ?? ''));
     const refs = earlier.map(([ref]) => ref!);
     const kept = ['HEAD', ...earlier.map(([, tip]) => tip!)];
-    for (const tip of new Set(tips.filter((tip) => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(tip)))) {
+    for (const tip of new Set(tips.filter((tip) => oidPattern.test(tip)))) {
       const args = ['rev-list', '-n1', '--ignore-missing', tip, '--not', ...kept];
       if (!(await this.checkoutGit(row, args)).trim()) continue;
       const ref = `refs/merv/rescued/${name}${refs.length ? `-${refs.length}` : ''}`;

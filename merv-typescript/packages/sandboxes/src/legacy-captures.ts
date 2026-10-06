@@ -1,9 +1,8 @@
-import { check } from '@merv/contracts';
+import { check, record } from '@merv/contracts';
 import { SandboxClient, sandboxRoute } from './client.js';
 import type { LegacyCapturesConfig } from './types.js';
 
-const object = (value: unknown): Record<string, any> =>
-  value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, any>) : {};
+const object = (value: unknown): Record<string, any> => record(value) ?? {};
 
 /**
  * Downloads of the files the retired Merv-side compute path captured. Their artifact collections

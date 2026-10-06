@@ -335,85 +335,79 @@ export class ManagedRunnerBindings {
       'Invalid managed runner credential',
       401,
     );
-    return await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const credential = await this.credentials.authenticate(token, 'managed-control', tx);
-        const row = await tx.get<ManagedBindingRow>(
-          'SELECT * FROM session_managed_runners WHERE control_hash=?',
-          tokenDigest(token),
-        );
-        check(
-          row &&
-            row.worker_nonce_hash !== null &&
-            Date.parse(row.control_expires_at) > this.clock(),
-          'unauthorized',
-          'Managed runner credential expired or invalid',
-          401,
-        );
-        check(
-          credential.subject === row.allocation_id,
-          'unauthorized',
-          'Invalid managed runner credential',
-          401,
-        );
-        await this.current(row, tx);
-        return this.caller({ ...row, bound_session_id: await this.currentSessionId(row, tx) });
-      }),
-    );
+    return await this.state.snapshotTransaction(async (tx) => {
+      const credential = await this.credentials.authenticate(token, 'managed-control', tx);
+      const row = await tx.get<ManagedBindingRow>(
+        'SELECT * FROM session_managed_runners WHERE control_hash=?',
+        tokenDigest(token),
+      );
+      check(
+        row && row.worker_nonce_hash !== null && Date.parse(row.control_expires_at) > this.clock(),
+        'unauthorized',
+        'Managed runner credential expired or invalid',
+        401,
+      );
+      check(
+        credential.subject === row.allocation_id,
+        'unauthorized',
+        'Invalid managed runner credential',
+        401,
+      );
+      await this.current(row, tx);
+      return this.caller({ ...row, bound_session_id: await this.currentSessionId(row, tx) });
+    });
   }
   /** The model authority of a bound session, by its bearer or, when the relay checks again, its
    *  id: live, or closed by its own handoff within the runner's grace so Codex finishes its
    *  closing turn. Reading it never activates an offered session. */
   async modelGrant(tokenOrSessionId: string): Promise<ManagedModelGrant> {
-    return await this.state.snapshot(() =>
-      this.state.transaction(async (tx) => {
-        const bearer = sessionSecretPattern.test(tokenOrSessionId);
-        const credential = bearer
-          ? await this.credentials.authenticate(tokenOrSessionId, 'session-execution', tx)
-          : undefined;
-        const found = await tx.get<{ session_json: string; token_hash: string }>(
-          `SELECT session_json,token_hash FROM worker_sessions WHERE ${bearer ? 'token_hash' : 'id'}=?`,
-          bearer ? tokenDigest(tokenOrSessionId) : tokenOrSessionId,
-        );
-        const session: Session | undefined = found && JSON.parse(found.session_json);
-        const row = session && (await tx.get<ManagedBindingRow>(boundTo, session.id, session.id));
-        const platform: RunnerPlatform | undefined = row && JSON.parse(row.platform_json);
-        const now = this.clock();
-        check(
-          !credential || credential.subject === session?.id,
-          'unauthorized',
-          'No live managed session holds this credential',
-          401,
-        );
-        check(
-          session &&
-            row &&
-            platform?.model &&
-            (session.status === 'offered' || session.status === 'active'
-              ? Date.parse(session.expiresAt) > now
-              : session.closeReason === 'handoff' &&
-                now - Date.parse(session.closedAt!) < codexHandoffGraceMs),
-          'unauthorized',
-          'No live managed session holds this credential',
-          401,
-        );
-        if (!bearer)
-          await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
-        const { user, projectId, id } = await this.current(row, tx);
-        await this.scope.requireDelegation(session.source, 'read', tx);
-        return {
-          id: session.id,
-          projectId: row.project_id,
-          allocationId: row.allocation_id,
-          person: personKey(user, { projectId, actorId: id }),
-          model: platform.model,
-          ...(platform.effort ? { effort: platform.effort } : {}),
-          expiresAt: new Date(
-            Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
-          ).toISOString(),
-        };
-      }),
-    );
+    return await this.state.snapshotTransaction(async (tx) => {
+      const bearer = sessionSecretPattern.test(tokenOrSessionId);
+      const credential = bearer
+        ? await this.credentials.authenticate(tokenOrSessionId, 'session-execution', tx)
+        : undefined;
+      const found = await tx.get<{ session_json: string; token_hash: string }>(
+        `SELECT session_json,token_hash FROM worker_sessions WHERE ${bearer ? 'token_hash' : 'id'}=?`,
+        bearer ? tokenDigest(tokenOrSessionId) : tokenOrSessionId,
+      );
+      const session: Session | undefined = found && JSON.parse(found.session_json);
+      const row = session && (await tx.get<ManagedBindingRow>(boundTo, session.id, session.id));
+      const platform: RunnerPlatform | undefined = row && JSON.parse(row.platform_json);
+      const now = this.clock();
+      check(
+        !credential || credential.subject === session?.id,
+        'unauthorized',
+        'No live managed session holds this credential',
+        401,
+      );
+      check(
+        session &&
+          row &&
+          platform?.model &&
+          (session.status === 'offered' || session.status === 'active'
+            ? Date.parse(session.expiresAt) > now
+            : session.closeReason === 'handoff' &&
+              now - Date.parse(session.closedAt!) < codexHandoffGraceMs),
+        'unauthorized',
+        'No live managed session holds this credential',
+        401,
+      );
+      if (!bearer)
+        await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
+      const { user, projectId, id } = await this.current(row, tx);
+      await this.scope.requireDelegation(session.source, 'read', tx);
+      return {
+        id: session.id,
+        projectId: row.project_id,
+        allocationId: row.allocation_id,
+        person: personKey(user, { projectId, actorId: id }),
+        model: platform.model,
+        ...(platform.effort ? { effort: platform.effort } : {}),
+        expiresAt: new Date(
+          Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
+        ).toISOString(),
+      };
+    });
   }
   async require(
     caller: Caller,
@@ -764,8 +758,6 @@ export class ManagedRunnerBindings {
         },
       };
     };
-    return transaction
-      ? await read(transaction)
-      : await this.state.snapshot(() => this.state.transaction(read));
+    return transaction ? await read(transaction) : await this.state.snapshotTransaction(read);
   }
 }

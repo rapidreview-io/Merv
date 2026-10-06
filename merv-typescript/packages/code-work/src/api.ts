@@ -12,6 +12,7 @@ import {
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
 import { codePublicationMergeSchema } from './publications.js';
 import type { Code } from './types.js';
+import { unknownEndpoint } from '@merv/api/errors';
 
 /** What Code's HTTP routes use of Code. */
 export type CodeRoutes = Pick<
@@ -26,7 +27,6 @@ export type CodeRoutes = Pick<
   | 'v2'
 >;
 
-const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404);
 const emptyObject = (body: unknown) =>
   !!body && typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 0;
 

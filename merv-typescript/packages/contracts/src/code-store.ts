@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { codePendingMergeSchema, gitBranchSchema } from './workspace.js';
+import { idSchema as id, oidSchema as oid } from './schemas.js';
 
 const importBranch = gitBranchSchema(255);
 
@@ -8,8 +9,6 @@ const importBranch = gitBranchSchema(255);
  * bundles to and from it. Everything here is opaque to the API, which forwards these bodies
  * and the bundle bytes unread; only Code and its workspace driver interpret them.
  */
-const id = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/);
-const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/);
 const glob = z
   .string()

@@ -76,7 +76,7 @@ pins the target’s success and terminal-state criteria, so provider removal or 
 later version upgrade cannot silently rewrite an existing dependency’s meaning.
 
 `requiresDependencies: true` on an action applies the shared gate to that action.
-Programs use `checkDependencies` when constructing assignments or authorizing
+Programs apply `requireDependencies` (`@merv/workflows/rules`) to `prerequisites` when constructing assignments or authorizing
 execution separately. This distinction matters for experiment parity: Python
 permits planning and design review while prerequisites are pending, then gates
 execution dispatch. Dependencies are deliberately not an unconditional gate on

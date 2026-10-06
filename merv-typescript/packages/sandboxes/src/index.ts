@@ -7,6 +7,7 @@ import {
   type Json,
   type Transaction,
   type UiManifestRow,
+  record,
 } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { z } from 'zod';
@@ -100,8 +101,7 @@ interface MachineCache {
   failed: boolean;
   records: Map<string, MachineRecord>;
 }
-const field = (value: Json, name: string): unknown =>
-  value !== null && typeof value === 'object' && !Array.isArray(value) ? value[name] : undefined;
+const field = (value: Json, name: string): unknown => record(value)?.[name];
 /** A machine or its job is on the move, so its row will say something new within seconds. */
 const changing = (row: Json) =>
   changingStates.has(String(field(row, 'state'))) ||
@@ -597,11 +597,10 @@ export class SandboxService implements Sandboxes {
         return visible(await this.#client.read(entry, sandboxRoute(spec.collection.read)));
       check(typeof id === 'string', 'invalid_sandbox_id', 'A sandbox identifier must be a string');
       check(spec.record, 'sandbox_record_unavailable', 'This row publishes no record', 404);
-      const record = visible(await this.#record(entry, sandboxRoute(spec.record.read, id)));
+      const value = visible(await this.#record(entry, sandboxRoute(spec.record.read, id)));
       // The manifest's console link may be a path on the service; say where that path lives.
-      return record !== null && typeof record === 'object' && !Array.isArray(record)
-        ? { ...record, console_origin: this.#client.origin }
-        : record;
+      const fields = record(value);
+      return fields ? { ...fields, console_origin: this.#client.origin } : value;
     });
   }
 

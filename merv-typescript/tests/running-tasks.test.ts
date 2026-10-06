@@ -575,12 +575,12 @@ test('the board reads what every task waits on, and its review rounds, once for 
     for (const task of tasks) {
       assert.deepEqual(
         waitsOn.get(task.id),
-        (await workflows.dependencies(f.operator, task.id, tx)).dependencies,
+        (await workflows.prerequisites(f.operator, [task.id], tx)).get(task.id)!,
         task.title,
       );
       assert.deepEqual(
         rounds.get(task.id),
-        await workflows.limitStatus(f.operator, task.id, 'review_rounds', tx),
+        (await workflows.limitStatusOf(f.operator, [task.id], 'review_rounds', tx)).get(task.id),
         task.title,
       );
     }
@@ -589,7 +589,7 @@ test('the board reads what every task waits on, and its review rounds, once for 
 
   const calls: string[] = [];
   const spied = workflows as unknown as Record<string, (...args: unknown[]) => unknown>;
-  for (const name of ['dependencies', 'limitStatus', 'prerequisites', 'limitStatusOf']) {
+  for (const name of ['records', 'prerequisites', 'limitStatusOf']) {
     const original = spied[name]!;
     spied[name] = function (this: unknown, ...args: unknown[]) {
       calls.push(name);

@@ -2,15 +2,20 @@ import { z } from 'zod';
 import {
   check,
   digest,
+  MervError,
   type ArtifactCollectionInput,
   type Artifacts,
   type Scope,
   type State,
 } from '@merv/contracts';
+import { pages } from './native-client.js';
 import { NativeConnections } from './native-connections.js';
 import type { NativeConnectionRow, NativeWorkRow } from './native-schema.js';
 
 const id = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/);
+const invalid = (message: string): never => {
+  throw new MervError('sandbox_evidence_invalid', message, 502);
+};
 const hash = z.string().regex(/^[a-f0-9]{64}$/);
 const relativePath = z
   .string()
@@ -298,18 +303,20 @@ export class NativeEvidence {
   }
   private async captures(work: NativeWorkRow, connection: NativeConnectionRow, workflowId: string) {
     const captures: z.infer<typeof captureSchema>[] = [];
-    let after: string | undefined;
     const seen = new Set<string>();
-    for (;;) {
+    const read = async (after?: string) => {
       const parsed = capturePageSchema.safeParse(
-        await this.connections.client.request<unknown>(
+        await this.connections.call<unknown>(
+          connection,
           `/v1/delegations/works/${work.native_grant_id}/workflows/${workflowId}/captures`,
-          this.connections.bearer(connection),
           { query: { limit: '1', ...(after ? { after } : {}) } },
         ),
       );
       check(parsed.success, 'sandbox_evidence_invalid', 'Invalid native capture page', 502);
-      for (const capture of parsed.data.captures) {
+      return parsed.data;
+    };
+    for await (const page of pages(read, () => invalid('Native capture cursor did not advance'))) {
+      for (const capture of page.captures) {
         check(
           !seen.has(capture.id),
           'sandbox_evidence_invalid',
@@ -325,15 +332,10 @@ export class NativeEvidence {
         'Too many native capture nodes',
         502,
       );
-      if (parsed.data.next === null) return captures;
-      check(
-        parsed.data.captures.length > 0 && parsed.data.next !== after,
-        'sandbox_evidence_invalid',
-        'Native capture cursor did not advance',
-        502,
-      );
-      after = parsed.data.next;
+      if (page.next !== null && !page.captures.length)
+        invalid('Native capture cursor did not advance');
     }
+    return captures;
   }
   private async retainedFiles(
     work: NativeWorkRow,
@@ -342,27 +344,27 @@ export class NativeEvidence {
     nodeId: string,
   ) {
     const files: { name: string; object_id: string }[] = [];
-    let after: string | undefined;
-    for (;;) {
+    const stuck = () => invalid('Native capture files cursor did not advance');
+    const read = async (after?: string) => {
       const parsed = filesPageSchema.safeParse(
-        await this.connections.client.request<unknown>(
+        await this.connections.call<unknown>(
+          connection,
           `/v1/delegations/works/${work.native_grant_id}/workflows/${workflowId}/captures/${nodeId}/files`,
-          this.connections.bearer(connection),
           { query: { limit: '500', ...(after ? { after } : {}) } },
         ),
       );
       check(parsed.success, 'sandbox_evidence_invalid', 'Invalid native capture files page', 502);
-      files.push(...parsed.data.files);
+      return parsed.data;
+    };
+    let last = 0;
+    for await (const page of pages(read, stuck)) {
+      files.push(...page.files);
       check(files.length <= 10_000, 'sandbox_evidence_invalid', 'Too many captured files', 502);
-      if (parsed.data.next === null) return files;
-      check(
-        Number(parsed.data.next) > Number(after ?? '0'),
-        'sandbox_evidence_invalid',
-        'Native capture files cursor did not advance',
-        502,
-      );
-      after = parsed.data.next;
+      if (page.next === null) break;
+      if (!(Number(page.next) > last)) stuck();
+      last = Number(page.next);
     }
+    return files;
   }
   private async inspect(
     work: NativeWorkRow,
@@ -370,9 +372,9 @@ export class NativeEvidence {
     workflowId: string,
     objectId: string,
   ) {
-    const received = await this.connections.client.request<unknown>(
+    const received = await this.connections.call<unknown>(
+      connection,
       `/v1/delegations/works/${work.native_grant_id}/evidence/${objectId}`,
-      this.connections.bearer(connection),
     );
     const parsed = object.safeParse(received);
     check(
@@ -474,13 +476,10 @@ export class NativeEvidence {
       'Retained file identity changed',
       502,
     );
-    const response = await this.connections.client.request<{
+    const response = await this.connections.call<{
       object: { id: string; sha256: string; size_bytes: number };
       url: string;
-    }>(
-      `/v1/delegations/works/${work.native_grant_id}/evidence/${objectId}/download`,
-      this.connections.bearer(connection),
-    );
+    }>(connection, `/v1/delegations/works/${work.native_grant_id}/evidence/${objectId}/download`);
     const downloadObject = object.omit({ evidence_held: true }).safeParse(response?.object);
     check(
       downloadObject.success &&

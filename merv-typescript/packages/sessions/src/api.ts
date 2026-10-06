@@ -6,6 +6,7 @@ import { check, MervError, pathSegment, type Caller } from '@merv/contracts';
 import { serveEvents } from '@merv/api/event-stream';
 import type { Api, ApiRequest, MountHandler } from '@merv/api/types';
 import type { NativeMcpConnection, Sessions } from './types.js';
+import { unknownEndpoint } from '@merv/api/errors';
 
 /**
  * What Sessions' HTTP routes and credentials use of Sessions. Each body, and the enrollment's
@@ -63,7 +64,6 @@ const nonblank = z.string().trim().min(1).max(512);
 const agentReleaseInput = z.object({ executionId: nonblank }).strict();
 const agentResetInput = z.object({ reason: nonblank }).strict();
 const haltInput = z.object({ reason: z.string().min(1).max(200).optional() }).strict();
-const unknownEndpoint = () => new MervError('not_found', 'Unknown endpoint', 404);
 
 /**
  * What a runner tells the worker it launches about the lease, sent with each attach: the runner

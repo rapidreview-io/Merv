@@ -170,9 +170,13 @@ const reads: [string, (f: Fixture) => Promise<unknown>][] = [
     async (f) => assert.equal((await f.workflows.assignment(f.owner, f.instance.id)).label, 'Work'),
   ],
   [
-    'dependencies',
+    'records',
     async (f) =>
-      assert.equal((await f.workflows.dependencies(f.owner, f.instance.id)).dependencies.length, 1),
+      assert.equal(
+        (await f.workflows.records(f.owner, [f.instance.id])).get(f.instance.id)?.dependencies
+          .length,
+        1,
+      ),
   ],
   [
     'prerequisites',
@@ -183,24 +187,13 @@ const reads: [string, (f: Fixture) => Promise<unknown>][] = [
       ),
   ],
   [
-    'limitStatus',
-    async (f) =>
-      assert.equal(
-        (await f.workflows.limitStatus(f.owner, f.instance.id, 'finishes')).remaining,
-        1,
-      ),
-  ],
-  [
     'limitStatusOf',
     async (f) =>
-      assert.equal((await f.workflows.limitStatusOf(f.owner, [f.instance.id], 'none')).size, 0),
-  ],
-  [
-    'checkDependencies',
-    async (f) =>
-      await assert.rejects(f.workflows.checkDependencies(f.owner, f.instance.id), {
-        code: 'dependencies_pending',
-      }),
+      assert.equal(
+        (await f.workflows.limitStatusOf(f.owner, [f.instance.id], 'finishes')).get(f.instance.id)
+          ?.remaining,
+        1,
+      ),
   ],
   [
     'dependencyClosure',

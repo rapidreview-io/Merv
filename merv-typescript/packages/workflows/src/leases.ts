@@ -25,7 +25,8 @@ import {
   executionReferences,
   executionMetadata,
 } from './execution-policy.js';
-import { prerequisites, prerequisitesOf, requireDependencies } from './dependencies.js';
+import { prerequisites, prerequisitesOf } from './dependencies.js';
+import { requireDependencies } from './rules.js';
 import {
   batches,
   checkInstance,

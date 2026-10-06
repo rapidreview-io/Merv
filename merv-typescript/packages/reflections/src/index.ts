@@ -1677,7 +1677,8 @@ export class ReflectionService implements Reflections {
       // The returns are counted from review, so only a wave in review can have used them up.
       exhausted:
         wave.workflow.state === 'in_review' &&
-        (await this.workflows.limitStatus(caller, id, 'review_returns', tx)).exhausted,
+        !!(await this.workflows.limitStatusOf(caller, [id], 'review_returns', tx)).get(id)
+          ?.exhausted,
     };
   }
   async running(

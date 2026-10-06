@@ -46,25 +46,37 @@ function retryAfter(value: string | null): number | undefined {
 }
 
 /**
- * One JSON request: a GET, or a POST of `body`. No redirect (it would carry the key somewhere
- * nobody chose), and a JSON object of at most `maxBytes` back. A failure says only its kind and
- * HTTP status, nothing the service wrote; the signal's own reason is thrown when it ends the call.
+ * One JSON request: a GET, or a POST of `body`, unless `method` says otherwise. The key is sent
+ * as a bearer token, or `headers` carry the credential instead. No redirect (it would carry the
+ * key somewhere nobody chose), and a JSON object of at most `maxBytes` back, or `{}` when a DELETE
+ * answers 204.
+ * A failure says only its kind and HTTP status, nothing the service wrote; the signal's own
+ * reason is thrown when it ends the call.
  */
 export async function fetchJson(
-  url: string,
-  key: string,
-  options: { body?: unknown; userAgent: string; maxBytes: number; signal: AbortSignal },
+  url: string | URL,
+  key: string | null,
+  options: {
+    method?: 'GET' | 'POST' | 'DELETE';
+    body?: unknown;
+    headers?: Record<string, string>;
+    userAgent?: string;
+    maxBytes: number;
+    signal: AbortSignal;
+    fetcher?: typeof fetch;
+  },
 ): Promise<Record<string, unknown>> {
   const { body, maxBytes, signal } = options;
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: body === undefined ? 'GET' : 'POST',
+    response = await (options.fetcher ?? fetch)(url, {
+      method: options.method ?? (body === undefined ? 'GET' : 'POST'),
       headers: {
-        authorization: `Bearer ${key}`,
+        ...(key !== null && { authorization: `Bearer ${key}` }),
+        ...options.headers,
         accept: 'application/json',
         ...(body !== undefined && { 'content-type': 'application/json' }),
-        'user-agent': options.userAgent,
+        ...(options.userAgent !== undefined && { 'user-agent': options.userAgent }),
       },
       ...(body !== undefined && { body: JSON.stringify(body) }),
       redirect: 'error',
@@ -83,6 +95,10 @@ export async function fetchJson(
       { kind: 'status', status: response.status },
       retryAfter(response.headers.get('retry-after')),
     );
+  if (response.status === 204 && options.method === 'DELETE') {
+    void response.body?.cancel().catch(() => undefined);
+    return {};
+  }
   const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase();
   if (!(type === 'application/json' || type?.endsWith('+json'))) refuse({ kind: 'invalid' });
   const length = Number(response.headers.get('content-length'));

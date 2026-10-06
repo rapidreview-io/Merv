@@ -1,5 +1,6 @@
 import type { Sandboxes } from '@merv/sandboxes/types';
 import { computeGuidance } from '@merv/sandboxes/compute-capability';
+import { requireDependencies } from '@merv/workflows/rules';
 import {
   excludedFromReview,
   requireDirecting,
@@ -673,7 +674,9 @@ export abstract class ExperimentProgram {
     }
     if (experiment.workflow.state === 'running') {
       this.approvedPlan(experiment);
-      await this.workflows.checkDependencies(caller, experiment.id, tx);
+      requireDependencies(
+        (await this.workflows.prerequisites(caller, [experiment.id], tx)).get(experiment.id)!,
+      );
     }
   }
 

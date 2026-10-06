@@ -71,14 +71,21 @@ const timed = (phrase: RunningPhrase) =>
  * crossings of a definition edge into it, so the initial state begins with none. A new
  * attempt is not a return by itself: a design sent back and then approved runs once.
  */
-export function enteredAgain(history: readonly WorkflowHistoryEntry[], state: string): boolean {
-  const arrivals = history.filter(
-    (row) =>
+export function enteredAgain(
+  moves: readonly (Pick<WorkflowHistoryEntry, 'action' | 'fromState' | 'toState'> & {
+    count?: number;
+  })[],
+  state: string,
+): boolean {
+  let arrivals = 0;
+  for (const row of moves)
+    if (
       row.toState === state &&
       EXPERIMENT_WORKFLOW.edges.some(
         (edge) => edge.action === row.action && edge.from === row.fromState && edge.to === state,
-      ),
-  ).length;
+      )
+    )
+      arrivals += row.count ?? 1;
   return arrivals > (state === EXPERIMENT_WORKFLOW.initial ? 0 : 1);
 }
 

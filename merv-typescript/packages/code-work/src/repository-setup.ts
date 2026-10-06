@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { check, githubBranchSchema } from '@merv/contracts';
+import { check, githubBranchSchema, oidSchema } from '@merv/contracts';
 import type {
   Caller,
   CodeRepositoryPreparation,
@@ -13,7 +13,7 @@ type PreparationHost = Pick<Code, 'github' | 'importRepository'> & {
   repositoryState(caller: Caller): ReturnType<CodeService['repositoryState']>;
 };
 
-const oid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/);
+const oid = oidSchema;
 export const repositoryPrepareSchema = z
   .object({
     expectedRevision: z.number().int().nonnegative(),

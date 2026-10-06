@@ -273,14 +273,10 @@ export class NativeWorkService {
     connection: NativeConnectionRow,
   ): Promise<NativeWorkRow> {
     if (work.native_grant_id && work.namespace) return work;
-    const reply = await this.connections.client.request<WorkReceipt>(
-      '/v1/delegations/works',
-      this.connections.bearer(connection),
-      {
-        method: 'POST',
-        body: { work_ref: work.work_id, work_kind: nativeWorkKind(work.work_kind) },
-      },
-    );
+    const reply = await this.connections.call<WorkReceipt>(connection, '/v1/delegations/works', {
+      method: 'POST',
+      body: { work_ref: work.work_id, work_kind: nativeWorkKind(work.work_kind) },
+    });
     valid(
       identifier(reply.work_grant_id) &&
         identifier(reply.namespace) &&
@@ -479,9 +475,9 @@ export class NativeWorkService {
       assignment.credentials,
       `assignment:${assignment.lease_id}`,
     );
-    const reply = await this.connections.client.request<AssignmentReceipt>(
+    const reply = await this.connections.call<AssignmentReceipt>(
+      connection,
       `${route(work)}/assignments`,
-      this.connections.bearer(connection),
       {
         method: 'POST',
         body: {
@@ -540,11 +536,9 @@ export class NativeWorkService {
     lease: string,
   ): Promise<void> {
     valid(identifier(lease));
-    await this.connections.client.request(
-      `${route(work)}/assignments/${lease}`,
-      this.connections.bearer(connection),
-      { method: 'DELETE' },
-    );
+    await this.connections.call(connection, `${route(work)}/assignments/${lease}`, {
+      method: 'DELETE',
+    });
     await this.state.transaction((tx) =>
       tx.run(
         'UPDATE sandbox_native_assignments SET revoked_at=COALESCE(revoked_at,?),revoke_pending=FALSE WHERE lease_id=?',
@@ -558,28 +552,24 @@ export class NativeWorkService {
     work: NativeWorkRow,
     connection: NativeConnectionRow,
   ): Promise<Omit<NativeResources, 'next'>> {
-    const workflows = new Map<string, NativeWorkflow>(),
-      jobs = new Map<string, NativeJob>(),
-      sandboxes = new Map<string, NativeMachine>();
-    let wf: string | undefined,
-      job: string | undefined,
-      machine: string | undefined,
-      wfDone = false,
-      jobDone = false,
-      machineDone = false;
-    const seenWf = new Set<string>(),
-      seenJob = new Set<string>(),
-      seenMachine = new Set<string>();
+    const streams = (['workflows', 'jobs', 'sandboxes'] as const).map((key) => ({
+      key,
+      param: `${key}_after`,
+      found: new Map<string, NativeResources[typeof key][number]>(),
+      seen: new Set<string>(),
+      after: undefined as string | undefined,
+      done: false,
+    }));
     for (let page = 0; page < 10_000; page++) {
-      const reply = await this.connections.client.request<NativeResources>(
+      const reply = await this.connections.call<NativeResources>(
+        connection,
         `${route(work)}/resources`,
-        this.connections.bearer(connection),
         {
           query: {
             limit: '100',
-            ...(wf ? { workflows_after: wf } : {}),
-            ...(job ? { jobs_after: job } : {}),
-            ...(machine ? { sandboxes_after: machine } : {}),
+            ...Object.fromEntries(
+              streams.flatMap((stream) => (stream.after ? [[stream.param, stream.after]] : [])),
+            ),
           },
         },
       );
@@ -590,50 +580,33 @@ export class NativeWorkService {
           Array.isArray(reply.sandboxes) &&
           reply.next,
       );
-      for (const rows of [reply.workflows, reply.jobs, reply.sandboxes])
-        for (const item of rows)
+      for (const stream of streams)
+        for (const item of reply[stream.key])
           valid(
             identifier(item.id) &&
               item.namespace === work.namespace &&
               typeof item.state === 'string',
           );
-      if (!wfDone) reply.workflows.forEach((item) => workflows.set(item.id, item));
-      if (!jobDone) reply.jobs.forEach((item) => jobs.set(item.id, item));
-      if (!machineDone) reply.sandboxes.forEach((item) => sandboxes.set(item.id, item));
-      if (!wfDone) {
-        const next = reply.next.workflows;
-        valid(next === null || (reference(next) && !seenWf.has(next)));
-        if (next === null) wfDone = true;
+      for (const stream of streams.filter((stream) => !stream.done))
+        reply[stream.key].forEach((item) => stream.found.set(item.id, item));
+      for (const stream of streams.filter((stream) => !stream.done)) {
+        const next = reply.next[stream.key];
+        valid(next === null || (reference(next) && !stream.seen.has(next)));
+        if (next === null) stream.done = true;
         else {
-          seenWf.add(next);
-          wf = next;
+          stream.seen.add(next);
+          stream.after = next;
         }
       }
-      if (!jobDone) {
-        const next = reply.next.jobs;
-        valid(next === null || (reference(next) && !seenJob.has(next)));
-        if (next === null) jobDone = true;
-        else {
-          seenJob.add(next);
-          job = next;
-        }
-      }
-      if (!machineDone) {
-        const next = reply.next.sandboxes;
-        valid(next === null || (reference(next) && !seenMachine.has(next)));
-        if (next === null) machineDone = true;
-        else {
-          seenMachine.add(next);
-          machine = next;
-        }
-      }
-      if (wfDone && jobDone && machineDone)
+      if (streams.every((stream) => stream.done)) {
+        const [workflows, jobs, sandboxes] = streams.map((stream) => [...stream.found.values()]);
         return {
           namespace: work.namespace!,
-          workflows: [...workflows.values()],
-          jobs: [...jobs.values()],
-          sandboxes: [...sandboxes.values()],
+          workflows: workflows as NativeWorkflow[],
+          jobs: jobs as NativeJob[],
+          sandboxes: sandboxes as NativeMachine[],
         };
+      }
     }
     valid(false);
     throw new Error('Unreachable');
@@ -688,11 +661,10 @@ export class NativeWorkService {
     const connection = await this.connections.get(initial.connection_id);
     const work = await this.ensure(initial, connection);
     const request = <T>(suffix: string, method: 'GET' | 'POST' | 'DELETE' = 'GET', body?: Json) =>
-      this.connections.client.request<T>(
-        `${route(work)}${suffix}`,
-        this.connections.bearer(connection),
-        { method, ...(body ? { body } : {}) },
-      );
+      this.connections.call<T>(connection, `${route(work)}${suffix}`, {
+        method,
+        ...(body ? { body } : {}),
+      });
     await this.fresh(work);
     if (work.closed_at) await request('', 'DELETE');
     // Fence assignment admission before touching jobs. Revoked/unknown leases cannot be
