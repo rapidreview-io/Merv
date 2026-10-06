@@ -145,7 +145,8 @@ async function fixture(t: TestContext, config: FleetWorkflowConfig = {}) {
         createAttempted: false,
         createdAt: new Date(now).toISOString(),
         updatedAt: new Date(now).toISOString(),
-        deadlineAt: new Date(now + 3_600_000).toISOString(),
+        // Fleet's limit, as deployed: a day.
+        deadlineAt: new Date(now + Math.min(input.seconds ?? 3600, 86_400) * 1000).toISOString(),
         retryAt: null,
         failures: 0,
         error: null,
@@ -364,8 +365,8 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   assert.deepEqual(f.allocations[0]?.owner, { kind: 'workflow', id: 'work:task_a' });
-  // A two-hour step, and ten minutes more for its machine to start and stop.
-  assert.equal(f.allocations[0]?.seconds, 130 * 60);
+  // A host for several of the item's steps: a day, which Fleet caps at its own limit.
+  assert.equal(f.allocations[0]?.seconds, 86_400);
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
   f.allocations[0]!.phase = 'released';
@@ -1032,6 +1033,37 @@ test('a work host waits for capture and acknowledgement, idles a bounded time, a
   assert.equal(await f.owner().observe(allocation), 'running');
   f.advance(900_000 - 30_001);
   assert.equal(await f.owner().observe(allocation), 'finished');
+});
+
+test('a settled work host without a whole step left stops at once, so the next step gets a fresh one', async (t) => {
+  const f = await fixture(t);
+  f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  const settled = (closedAt: string) =>
+    f.inspections.set(allocation.id, {
+      runnerId: 'managed-machine',
+      enrollmentExpiresAt,
+      session: {
+        id: 'session_a',
+        instanceId: 'task_a',
+        expectedRevision: 0,
+        status: 'released',
+        closedAt,
+        outcome: 'completed',
+        releaseAcknowledged: true,
+        capturePending: false,
+      },
+    });
+  const now = Date.parse(allocation.createdAt); // the fixture's clock has not moved
+  settled(allocation.createdAt);
+  assert.equal(await f.owner().observe(allocation), 'running');
+  // A two-hour step and five minutes to stop no longer fit before its deadline.
+  allocation.deadlineAt = new Date(now + (120 + 5) * 60_000 - 1).toISOString();
+  assert.equal(await f.owner().observe(allocation), 'finished');
+  // A step under way keeps it: Sessions ends that step five minutes before the machine.
+  f.inspections.get(allocation.id)!.session!.status = 'active';
+  assert.equal(await f.owner().observe(allocation), 'running');
 });
 
 test('a missing model key serves nothing, and the adapter still starts', async (t) => {

@@ -746,11 +746,17 @@ export class SessionDispatch {
       if (!(await open())) return { session: null, reason: await decided('dispatch_disabled') };
       if (managed) await this.hooks.managed.admits(managed.row, tx);
       // A hosted machine stops at its allocation's end, so its step must end five minutes
-      // before; a machine with under ten minutes left starts none.
+      // before. A work host starts a step only with all of the step's time left (its owner rents
+      // a fresh host for the next); another machine, with ten minutes.
       const left = managed
         ? Math.floor((Date.parse(managed.row.control_expires_at) - this.clock()) / 1000) - 300
         : Infinity;
-      check(left >= 300, 'managed_expiring', 'Managed machine has too little time for a step', 409);
+      check(
+        left >= (managed?.row.step_seconds ? Number(managed.row.step_seconds) : 300),
+        'managed_expiring',
+        'Managed machine has too little time for a step',
+        409,
+      );
       const admission = await this.admitRunner(owner.hash, input, tx);
       if (!admission.ok) return { session: null, reason: await decided(admission.reason) };
       const { runner, platform } = admission;
