@@ -1,6 +1,6 @@
 import type { ProcessGraph } from '@merv/contracts/workflow-guidance';
 import { useState, type FormEvent, type ReactNode } from 'react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTool } from '../api';
 import {
   Failure,
@@ -16,7 +16,7 @@ import { Tabs, recordRoutes } from '../list-filters';
 import { homeOf } from '../navigation';
 import { useCommand } from '../mutations';
 import { Gate, StageMark } from '../process';
-import type { Reflection } from '@merv/reflections/models';
+import type { Reflection, ReflectionLens } from '@merv/reflections/models';
 import { lensName } from '@merv/reflections/names';
 import { ArtifactBody } from './artifacts';
 import type { ViewProps } from './index';
@@ -70,14 +70,22 @@ export function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) 
 export function ReflectionDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   const data = useTool<Reflection>('reflection.get', { reflectionId: id }, { every: 8000 });
+  // This row holds lenses too (a lens lease opens here): an id that is no wave is asked as a
+  // lens, which opens on its wave's tab.
+  const held = useTool<ReflectionLens>(
+    data.error?.code === 'reflection_not_found' ? 'reflection.lens' : null,
+    { lensId: id },
+  );
   const nameOf = useActorNames();
   const [params, setParams] = useSearchParams();
   // A read that fails keeps what was last read, as every record page does.
   const wave = data.data;
+  if (held.data)
+    return <Navigate to={`${row.path}/${held.data.reflectionId}?lens=${id}`} replace />;
   if (!wave)
     return (
       <div className="page-stage">
-        <LoadState {...data} back={homeOf(shell.rows)} />
+        <LoadState {...(held.loading ? held : data)} back={homeOf(shell.rows)} />
       </div>
     );
   const tabs = [

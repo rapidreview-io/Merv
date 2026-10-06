@@ -24,6 +24,7 @@ export interface Row {
   path: string;
   view: { kind: string; [key: string]: unknown };
   workflow?: string;
+  holds?: string[];
   rooms?: true;
   whenCounted?: true;
   needs?: RowNeeds;

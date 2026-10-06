@@ -19,7 +19,7 @@ import {
   cx,
   useArtifacts,
 } from '../components';
-import { useReferences } from '../markdown';
+import { refreshReferences, useReferences } from '../markdown';
 import { ReferenceLookup } from './paper-references';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
@@ -43,6 +43,8 @@ import {
 export { ResearchCommand } from '../components';
 
 const KINDS = Object.keys(labels) as PaperKind[];
+/** How often the paper, and the states of what it names, are read again. */
+const EVERY = 10_000;
 
 /** A fragment a person can read, from the section's own title. */
 const slug = (title: string) =>
@@ -155,7 +157,7 @@ function PaperPage({ row }: ViewProps) {
   const { actor } = useSession();
   const { pathname } = useLocation();
   const { kind: opened } = useParams();
-  const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: 10000 });
+  const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: EVERY });
   const artifacts = useArtifacts();
   const nameOf = useActorNames();
   // Every retained revision of each document, for History; a read that fails
@@ -171,11 +173,14 @@ function PaperPage({ row }: ViewProps) {
   };
   // What the paper names that is not its own, named and routed by its owners.
   const cited = citedBy(workspace.data, Object.values(kept));
-  const named = useReferences(useMemo(() => (cited ? cited.split(' ') : []), [cited]));
+  const ids = useMemo(() => (cited ? cited.split(' ') : []), [cited]);
+  // A review's state moves while the paper stands still, so it is asked again as the paper is.
+  const named = useReferences(ids, EVERY);
   /** A saved edit writes a revision, so History is read again with the workspace. */
   const reload = () => {
     workspace.reload();
     for (const held of Object.values(kept)) held.reload();
+    refreshReferences(ids);
   };
   const [editing, setEditing] = useState<{ kind: PaperKind; section?: PaperSection } | null>(null);
   const [citing, setCiting] = useState<string | null>(null);

@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { KindLabel, StatusPill, cx, toneOf, useNow, words } from './components';
 import { elapsed } from './liveness';
-import { useRows, useStateWords, type StateWords } from './navigation';
+import { rowOf, useRows, useStateWords, type StateWords } from './navigation';
 import type { WorkflowShape } from './shell-types';
 
 /**
@@ -315,7 +315,7 @@ export function StageList({ graph }: { graph: ProcessGraph }) {
 export function Dependency({ item }: { item: WorkflowDependency }) {
   // Its page, and the kind it is read as, are the row's that lists its workflow, as on the
   // Running page's sidebars.
-  const row = useRows().find((entry) => entry.workflow === item.workflow);
+  const row = rowOf(useRows(), item.workflow);
   const route = row && `${row.path}/${encodeURIComponent(item.id)}`;
   return (
     <p className="cluster">

@@ -15,7 +15,7 @@ import {
 import { CloseIcon } from '../icons';
 import { Segments } from '../list-filters';
 import { clock, holding, leaseLiveness, type Clock } from '../liveness';
-import { useRows } from '../navigation';
+import { rowOf, useRows } from '../navigation';
 import type { AgentSummary, AgentObservation as Observation } from '@merv/sessions/models';
 
 /** The same lease, as the agent's own observation sends it. */
@@ -28,7 +28,7 @@ export const activity = (agent: AgentSummary) =>
 
 function AssignmentDetails({ assignment, now }: { assignment: Assignment; now: Clock }) {
   // The record's kind is drawn as the row that declares its workflow draws it.
-  const kind = useRows().find((row) => row.workflow === assignment.workflow.name)?.view.kind;
+  const kind = rowOf(useRows(), assignment.workflow.name)?.view.kind;
   return (
     <div className="stack">
       <div className="cluster cluster--between">

@@ -292,24 +292,26 @@ test('a lease opens on the row that lists its workflow, without reading any owne
   const sessions = [
     { ...lease, id: 'sess_t', name: 'A task', instanceId: 'wf_t', workflow: 'task' },
     { ...lease, id: 'sess_r', name: 'A wave', instanceId: 'wf_r', workflow: 'reflection' },
+    { ...lease, id: 'sess_l', name: 'A lens', instanceId: 'wf_l', workflow: 'reflection.lens' },
     { ...lease, id: 'sess_x', name: 'Unlisted', instanceId: 'wf_x', workflow: 'research' },
     { ...lease, id: 'sess_o', name: 'Older lease', instanceId: 'wf_o' },
   ];
-  const listing = (id: string, workflow: string, kind: string) => ({
+  const listing = (id: string, workflow: string, kind: string, holds?: string[]) => ({
     ...row,
     id,
     path: `/${id}`,
     group: 'hidden',
     workflow,
+    ...(holds && { holds }),
     view: { kind },
   });
   const rows = [
     work,
     row,
     listing('tasks', 'task', 'tasks'),
-    listing('reflections', 'reflection', 'reflections'),
+    listing('reflections', 'reflection', 'reflections', ['reflection.lens']),
   ];
-  serve('/tools/ui.read', () => read({ sessions, sessionTotal: 4, liveSessionCount: 4 }));
+  serve('/tools/ui.read', () => read({ sessions, sessionTotal: 5, liveSessionCount: 5 }));
   await mount(
     createElement(
       MemoryRouter,
@@ -330,6 +332,8 @@ test('a lease opens on the row that lists its workflow, without reading any owne
   };
   assert.equal(await linkOf('A task'), '/tasks/wf_t');
   assert.equal(await linkOf('A wave'), '/reflections/wf_r');
+  // A lens has no row of its own: it opens on the row that declares it holds lenses.
+  assert.equal(await linkOf('A lens'), '/reflections/wf_l');
   // A workflow no row lists, and a lease that names none, open nothing.
   assert.equal(await linkOf('Unlisted'), null);
   assert.equal(await linkOf('Older lease'), null);

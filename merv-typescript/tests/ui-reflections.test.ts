@@ -179,6 +179,27 @@ test('before its report a wave opens on its first lens, and an address it cannot
   assert.deepEqual(read(), ['The evidence lens']);
 });
 
+test('an address naming a lens, as a lens lease opens, lands on its wave at that lens', async (t) => {
+  t.after(async () => await unmount());
+  const element = page('/reflections/wf_lens_2');
+  serve('/tools/reflection.get', (_, sent) =>
+    sent.reflectionId === 'wf_wave'
+      ? { body: { result: wave() } }
+      : {
+          status: 404,
+          body: { error: { code: 'reflection_not_found', message: 'Reflection not found' } },
+        },
+  );
+  serve('/tools/reflection.lens', (_, sent) => ({
+    body: { result: lens('theory', Number(String(sent.lensId).slice(-1)) - 1) },
+  }));
+  await mount(element);
+  await settle(40);
+  assert.equal(document.querySelector('#where')?.textContent, '?lens=wf_lens_2');
+  assert.deepEqual(pressed(), ['Theory']);
+  assert.deepEqual(read(), ['The theory lens']);
+});
+
 test('a read that fails after the wave was read keeps the wave on the page', async (t) => {
   t.after(async () => await unmount());
   await mount(page('/reflections/wf_wave'));

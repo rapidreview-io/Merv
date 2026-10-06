@@ -472,3 +472,59 @@ test('a publication made before reviews wrote the paper stands behind its sectio
   assert.match(setup.textContent!, /Edited by Operator · .* · published/);
   assert.ok(!text().includes('never reviewed'));
 });
+
+test('a review’s state on the paper moves as the page polls, while its name stands', async (t) => {
+  t.after(async () => await unmount());
+  // Only the page's own interval is driven by hand; every other timer runs as it would.
+  t.mock.timers.enable({ apis: ['setInterval'] });
+  const SOURCE = `wf_${'c'.repeat(32)}`;
+  const REVIEW = `review_${'c'.repeat(32)}`;
+  const held = workspace([]);
+  const methods = revision('methods', [section('s_poll', 'Setup', 'Three seeds.')]);
+  Object.assign(held.documents.methods, {
+    current: methods,
+    published: {
+      document: methods,
+      // A publication that recorded no verdict stands in its review's own state.
+      publication: {
+        id: 'paperpub_poll',
+        projectId: project.id,
+        kind: 'methods',
+        revision: 1,
+        source: { kind: 'experiment', id: SOURCE, revision: 1 },
+        reviewId: REVIEW,
+        evidence: [],
+        createdBy: 'actor_1',
+        createdAt: '2026-09-19T10:00:00Z',
+      },
+    },
+  });
+  boot(held);
+  let state = 'in_progress';
+  let asked = 0;
+  serve('/tools/project.references', (_call, sent) => {
+    asked++;
+    return {
+      body: {
+        result: (sent.refs as string[]).map((ref) => ({
+          ref,
+          status: 'resolved',
+          kind: ref === REVIEW ? 'review' : 'experiment',
+          id: ref,
+          label: ref === REVIEW ? 'Review of the sweep' : 'Seed sweep',
+          ...(ref === REVIEW && { state }),
+        })),
+      },
+    };
+  });
+  await open();
+  assert.match(text(), /Seed sweep review/);
+  assert.match(text(), /in_progress|in progress/i);
+  const before = asked;
+  state = 'submitted';
+  await act(async () => t.mock.timers.tick(10_000));
+  await settle(20);
+  assert.ok(asked > before, 'the references were asked again with the poll');
+  assert.match(text(), /submitted/i);
+  assert.match(text(), /Seed sweep review/);
+});
