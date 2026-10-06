@@ -989,8 +989,8 @@ async function deliver(f: Fixture, taskId: string) {
     },
     task.checks.length,
   );
-  const submitted = await f.sessions.run(
-    await f.sessions.prepare(worker, 'task.submit_delivery', delivery),
+  const submitted = await f.sessions.invocations.run(
+    await f.sessions.invocations.prepare(worker, 'task.submit_delivery', delivery),
     (caller) => f.tasks.submitDelivery(caller, delivery),
   );
   return { runner, session, worker, base, submitted };
@@ -1359,8 +1359,8 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
       },
       task.checks.length,
     );
-    const submitted = await f.sessions.run(
-      await f.sessions.prepare(worker, 'task.submit_delivery', delivery),
+    const submitted = await f.sessions.invocations.run(
+      await f.sessions.invocations.prepare(worker, 'task.submit_delivery', delivery),
       (caller) => f.tasks.submitDelivery(caller, delivery),
     );
     submissions.push(submitted.deliveryCodeArtifactId!);
@@ -1392,8 +1392,8 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
       })),
       requestId: `verdict-${round}`,
     };
-    const returned = await f.sessions.run(
-      await f.sessions.prepare(reviewWorker, 'review.submit', assessment),
+    const returned = await f.sessions.invocations.run(
+      await f.sessions.invocations.prepare(reviewWorker, 'review.submit', assessment),
       (caller) => f.tasks.submitReview(caller, assessment),
     );
     assert.equal(returned.workflow.state, round === 3 ? 'suspended' : 'in_progress');
@@ -1662,8 +1662,8 @@ for (const verdict of ['pass', 'fail'] as const)
       },
       task.checks.length,
     );
-    const pending = await f.sessions.run(
-      await f.sessions.prepare(worker, 'task.submit_delivery', delivery),
+    const pending = await f.sessions.invocations.run(
+      await f.sessions.invocations.prepare(worker, 'task.submit_delivery', delivery),
       (caller) => f.tasks.submitDelivery(caller, delivery),
     );
     const review = await f.reviews.get(f.admin, pending.reviewId!);
@@ -1718,8 +1718,8 @@ for (const verdict of ['pass', 'fail'] as const)
       notes: 'Independent verification of the frozen inputs and checks.',
       requestId: 'verdict',
     };
-    const result = await f.sessions.run(
-      await f.sessions.prepare(reviewWorker, 'review.submit', assessment),
+    const result = await f.sessions.invocations.run(
+      await f.sessions.invocations.prepare(reviewWorker, 'review.submit', assessment),
       (caller) => f.tasks.submitReview(caller, assessment),
     );
     assert.equal(result.workflow.state, verdict === 'pass' ? 'done' : 'suspended');
@@ -1812,7 +1812,7 @@ test('project writers lease a service task as producers and mark_failed suspends
   assert.equal((await f.scope.require(worker, 'write')).role, 'producer');
   await assert.rejects(f.scope.require(worker, 'admin'), { code: 'forbidden' });
   for (const tool of ['task.create', 'task.create_service', 'workflow.system_prerequisites'])
-    await assert.rejects(f.sessions.prepare(worker, tool, {}));
+    await assert.rejects(f.sessions.invocations.prepare(worker, tool, {}));
   await assert.rejects(
     f.workflows.leaseRole(worker, { instanceId: task.id, expectedRevision: 0 }),
     { code: 'forbidden' },

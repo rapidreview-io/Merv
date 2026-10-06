@@ -138,7 +138,7 @@ test('Sessions registers its tool policy with the current registry and withdraws
   const registered = () =>
     (app.ctx.tools as unknown as { sessions?: { provider: unknown } }).sessions?.provider;
   try {
-    assert.equal(registered(), app.ctx.sessions);
+    assert.equal(registered(), app.ctx.sessions.invocations);
     const sessions = app.ctx.sessions as LeasedSessions;
     const close = sessions.close.bind(sessions);
     let atClose: unknown = 'close not called';
@@ -154,14 +154,14 @@ test('Sessions registers its tool policy with the current registry and withdraws
     });
     await app.setEnabled('sessions', true);
     assert.notEqual(app.ctx.sessions, sessions);
-    assert.equal(registered(), app.ctx.sessions);
+    assert.equal(registered(), app.ctx.sessions.invocations);
     const tools = app.ctx.tools;
     await app.setEnabled('tools', false);
     await app.setEnabled('tools', true);
     assert.notEqual(app.ctx.tools, tools);
     assert.equal(
       registered(),
-      app.ctx.sessions,
+      app.ctx.sessions.invocations,
       'A reloaded registry receives a fresh registration',
     );
   } finally {

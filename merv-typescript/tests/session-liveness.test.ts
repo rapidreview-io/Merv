@@ -222,7 +222,10 @@ async function fixture(
     },
     /** One recorded tool call that leaves the record where it is. */
     async call(worker: Caller, handler: () => void | Promise<void> = () => {}) {
-      await sessions.run(await sessions.prepare(worker, 'finish', {}), handler);
+      await sessions.invocations.run(
+        await sessions.invocations.prepare(worker, 'finish', {}),
+        handler,
+      );
     },
     stored: async (id: string): Promise<Session> =>
       JSON.parse(
@@ -777,7 +780,7 @@ test('no read closes an idle session, yet the stuck report already names it', as
   const activatedAt = f.time();
   f.advance(30 * minute);
 
-  await f.sessions.describe(worker);
+  await f.sessions.session(worker);
   await f.sessions.projectStatus(f.owner);
   const report = await f.sessions.stuck(f.owner);
   assert.equal((await f.stored(id)).status, 'active');
@@ -1282,7 +1285,7 @@ test('Fleet local-Git incompatibility is immediate, per target, and clears with 
   await f.sessions.heartbeatRunner(f.source, presence());
   const { worker } = await f.active();
   assert.deepEqual(await blocked(), [], 'live work is not reported as waiting');
-  await f.sessions.describe(worker);
+  await f.sessions.session(worker);
 });
 
 test('Fleet does not label scratch or hosted-driver work as needing a local repository', async (t) => {

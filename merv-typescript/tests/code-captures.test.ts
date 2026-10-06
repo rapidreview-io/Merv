@@ -270,7 +270,7 @@ test('Exact command captures retain historical parent/head/tree/provenance after
   );
   await f.restart();
   const before = await f.snapshot();
-  for (const method of ['get', 'list', 'describe'] as const)
+  for (const method of ['get', 'list', 'session'] as const)
     f.app.ctx.sessions[method] = (() => {
       throw new Error('Historical read must not reconcile a session');
     }) as never;

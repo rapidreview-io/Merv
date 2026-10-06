@@ -341,7 +341,9 @@ test(
     );
     assert.ok(!assigned.execution.tools.some((tool) => tool.name === 'task.submit_delivery'));
     await assert.rejects(
-      f.app.ctx.sessions.prepare(reviewer.worker, 'review.submit', { claimId: 'stale-claim' }),
+      f.app.ctx.sessions.invocations.prepare(reviewer.worker, 'review.submit', {
+        claimId: 'stale-claim',
+      }),
       { code: 'execution_arguments_forbidden' },
     );
     await work.release(reviewer);

@@ -94,7 +94,7 @@ export class CodeCommandService implements CodeCommands {
   }
   private async reader(caller: Caller, tx: Transaction): Promise<string | undefined> {
     await this.scope.require(caller, 'read', tx);
-    return caller.session ? (await this.sessions.describe(caller)).id : undefined;
+    return caller.session ? (await this.sessions.session(caller)).id : undefined;
   }
   private writable(session: Session): void {
     check(session.status === 'active', 'session_closed', 'An active session is required', 409);
@@ -129,13 +129,13 @@ export class CodeCommandService implements CodeCommands {
     tool = 'code.commit',
   ): Promise<void> {
     const data: Data = { ...input };
-    if (caller.session?.invocationId) await this.sessions.validate(caller, tool, data);
+    if (caller.session?.invocationId) await this.sessions.invocations.validate(caller, tool, data);
     else {
-      const invocation = await this.sessions.prepare(caller, tool, data);
+      const invocation = await this.sessions.invocations.prepare(caller, tool, data);
       try {
-        await this.sessions.validate(invocation.caller, tool, data);
+        await this.sessions.invocations.validate(invocation.caller, tool, data);
       } finally {
-        await this.sessions.cancel(invocation);
+        await this.sessions.invocations.cancel(invocation);
       }
     }
   }
@@ -232,7 +232,7 @@ export class CodeCommandService implements CodeCommands {
     return await this.transaction(async (tx) => {
       check(caller.session, 'session_required', 'Only a worker session can request a commit', 403);
       await this.scope.require(caller, 'write', tx);
-      const session = await this.sessions.describe(caller);
+      const session = await this.sessions.session(caller);
       this.writable(session);
       await this.authorizeCommit(caller, input, merge ? 'code.merge' : 'code.commit');
       const pending = merge ? await pendingMerge(tx, caller.projectId, session.instanceId) : null;

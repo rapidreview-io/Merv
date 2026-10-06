@@ -238,9 +238,12 @@ async function fixture(
     },
     /** One recorded Merv call, held open until `until` settles. */
     async call(worker: Caller, until?: Promise<void>) {
-      await sessions.run(await sessions.prepare(worker, 'finish', {}), async () => {
-        await until;
-      });
+      await sessions.invocations.run(
+        await sessions.invocations.prepare(worker, 'finish', {}),
+        async () => {
+          await until;
+        },
+      );
     },
     async fail(outcome: 'launch_failed' | 'preparation_deferred' = 'launch_failed') {
       const leased = await sessions.lease(source, auto());

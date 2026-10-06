@@ -980,8 +980,8 @@ test('a hosted session’s model grant holds while it is live or just handed off
   await assert.rejects(f.sessions.managedModelGrant(request.secret), { code: 'managed_revoked' });
   f.current(true);
   const worker = await f.sessions.authenticate(request.secret);
-  const prepared = await f.sessions.prepare(worker, 'finish', {});
-  await f.sessions.run(prepared, (caller) =>
+  const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+  await f.sessions.invocations.run(prepared, (caller) =>
     f.state.transaction((tx) =>
       f.handle.transition(
         caller,
@@ -1394,8 +1394,8 @@ test('one work host runs four fresh producer/reviewer phases with retained bindi
         code: 'session_forbidden',
       });
     const worker = await f.sessions.authenticate(request.secret);
-    const prepared = await f.sessions.prepare(worker, 'finish', {});
-    await f.sessions.run(prepared, (caller) =>
+    const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+    await f.sessions.invocations.run(prepared, (caller) =>
       f.state.transaction((tx) =>
         f.handle.transition(
           caller,
@@ -1546,8 +1546,8 @@ test('revoking the host sponsor ends its review phase and never restores old pro
   const firstRequest = f.lease();
   const first = (await f.sessions.lease(f.caller, firstRequest)).session!;
   const worker = await f.sessions.authenticate(firstRequest.secret);
-  const prepared = await f.sessions.prepare(worker, 'finish', {});
-  await f.sessions.run(prepared, (caller) =>
+  const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+  await f.sessions.invocations.run(prepared, (caller) =>
     f.state.transaction((tx) =>
       f.handle.transition(
         caller,
@@ -1595,8 +1595,8 @@ test('a work host offers its review phase a checkout under the reviewer', async 
   };
   await f.sessions.attach(f.caller, { ...control, workspace });
   const worker = await f.sessions.authenticate(firstRequest.secret);
-  const prepared = await f.sessions.prepare(worker, 'finish', {});
-  await f.sessions.run(prepared, (caller) =>
+  const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+  await f.sessions.invocations.run(prepared, (caller) =>
     f.state.transaction((tx) =>
       f.handle.transition(
         caller,
@@ -1678,8 +1678,8 @@ test('work-host Code transfers use only the unfinished assignment, including clo
     hostRef: 'code-launch',
   });
   const worker = await f.sessions.authenticate(request.secret);
-  const prepared = await f.sessions.prepare(worker, 'finish', {});
-  await f.sessions.run(prepared, (who) =>
+  const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+  await f.sessions.invocations.run(prepared, (who) =>
     f.state.transaction((tx) =>
       f.handle.transition(
         who,

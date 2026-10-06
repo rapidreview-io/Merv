@@ -370,8 +370,10 @@ test('commit enforces active attached writable fixed authority, including direct
   await t.test('a real invocation retains exact arguments', async (t) => {
     const f = await fixture(t, { fixedMessage: input().message }),
       worker = await f.ready();
-    const invocation = await f.sessions.prepare(worker.caller, 'code.commit', { ...input() });
-    const record = await f.sessions.run(
+    const invocation = await f.sessions.invocations.prepare(worker.caller, 'code.commit', {
+      ...input(),
+    });
+    const record = await f.sessions.invocations.run(
       invocation,
       async (caller) => await f.code.commit(caller, input()),
     );

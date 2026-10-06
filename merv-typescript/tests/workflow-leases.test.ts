@@ -86,8 +86,8 @@ async function fixture(t: TestContext) {
       lease.worker = caller;
       input = { ...input, commandId: await work.commit(lease) };
     }
-    const invocation = await app.ctx.sessions.prepare(caller, tool, input);
-    return await app.ctx.sessions.run(invocation, handler);
+    const invocation = await app.ctx.sessions.invocations.prepare(caller, tool, input);
+    return await app.ctx.sessions.invocations.run(invocation, handler);
   }
   const release = async (session: Session) => {
     await app.ctx.sessions.release(source, { sessionId: session.id, runnerId: 'test' });
@@ -238,7 +238,8 @@ test('frozen checkpoint inputs remain readable; later source attachments cannot 
     requestId: 'late',
   });
   await assert.rejects(
-    async () => await sessions.prepare(worker, 'artifact.read', { artifactId: late.id }),
+    async () =>
+      await sessions.invocations.prepare(worker, 'artifact.read', { artifactId: late.id }),
     {
       code: 'execution_arguments_forbidden',
     },
@@ -263,7 +264,8 @@ test('frozen checkpoint inputs remain readable; later source attachments cannot 
       await artifacts.create(caller, input as unknown as { title: string; content: string }),
   );
   assert.equal(
-    (await sessions.prepare(worker, 'artifact.read', { artifactId: output.id })).input.artifactId,
+    (await sessions.invocations.prepare(worker, 'artifact.read', { artifactId: output.id })).input
+      .artifactId,
     output.id,
   );
   await f.run(
@@ -324,7 +326,7 @@ test('lease generations survive provider reload but old invocations and released
   const f = await fixture(t);
   const offered = await f.offer();
   const worker = await f.app.ctx.sessions.authenticate(offered.secret);
-  const invocation = await f.app.ctx.sessions.prepare(worker, 'task.get', {});
+  const invocation = await f.app.ctx.sessions.invocations.prepare(worker, 'task.get', {});
   const oldGeneration = offered.session.execution.registrationId;
   await f.app.setEnabled('tasks', false);
   await f.app.setEnabled('tasks', true);
@@ -342,7 +344,7 @@ test('lease generations survive provider reload but old invocations and released
     ).references,
   );
   await assert.rejects(
-    f.app.ctx.sessions.run(
+    f.app.ctx.sessions.invocations.run(
       invocation,
       async (caller, input) => await f.app.ctx.tasks.get(caller, input.taskId as string),
     ),
@@ -551,7 +553,7 @@ test('a leased status_and_next admission stays within a statement budget', async
       return fn(tx);
     })) as typeof state.transaction);
   // As the tool registry calls it, which marks a read tool.
-  const policy: SessionToolPolicy = f.app.ctx.sessions;
+  const policy: SessionToolPolicy = f.app.ctx.sessions.invocations;
   // Background reconciliation can issue transactions while admission is awaiting PostgreSQL.
   // Count only this invocation's async chain, not the application's unrelated consumers.
   const invocation = await measured.run(true, () =>
@@ -736,7 +738,7 @@ test('a non-Task program can reserve, activate and release through generic hooks
   });
   assert.equal(buildCount, 1);
   const worker = await sessions.authenticate(secret);
-  const work = await sessions.prepare(worker, 'custom.work', {});
+  const work = await sessions.invocations.prepare(worker, 'custom.work', {});
   assert.equal(work.input.instanceId, instance.id);
   assert.equal(buildCount, 1);
   assert.equal((await workflows.workStarts(f.source, instance.id)).length, 1);

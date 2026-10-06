@@ -12,7 +12,6 @@ import type {} from '@merv/api/types';
 import type { Secrets, HuggingFaceGrant, AccountIdentity } from '@merv/secrets/types';
 import type { ManagedBindingRow } from './managed-types.js';
 import {
-  admitDispatch,
   canonical,
   check,
   delegationEnd,
@@ -22,20 +21,16 @@ import {
   MervError,
   newId,
   parsed,
-  plain,
   sessionSecretPattern,
   sessionUsageReportSchema,
   sessionWorkspaceSchema,
   type Caller,
-  type Data,
   type DelegationSource,
   type DomainEvents,
   type Permission,
   type Scope,
   type State,
   type Transaction,
-  type WorkflowDispatchAdmission,
-  type WorkflowExecution,
   type WorkflowExecutionReferences,
   type Workflows,
   type WorkRoute,
@@ -44,12 +39,27 @@ import { SessionDispatch, failureReasons } from './dispatch.js';
 import { SessionRunning } from './running.js';
 import { AgentDirectory, sourceCaller, tokenDigest } from './agents.js';
 import { AgentObservations } from './observations.js';
-import { isoNow, liveTargets, ownerOf, readFirst, refused, targetKey } from './common.js';
+import {
+  clone,
+  isoNow,
+  live,
+  liveTargets,
+  ordinary,
+  ownerOf,
+  readFirst,
+  refused,
+  safeError,
+  targetKey,
+  text,
+  type Row,
+} from './common.js';
 import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules } from './managed.js';
 import { SessionTranscripts } from './transcripts.js';
 import { SessionStreams } from './stream.js';
 import { SessionConversations } from './conversations.js';
+import { SessionMessages } from './messages.js';
+import { SessionInvocations } from './invocations.js';
 import type {
   ManagedEnrollmentInput,
   ManagedModelGrant,
@@ -66,7 +76,6 @@ import type {
   LaunchConnectionsProvider,
   NativeMcpConnection,
   SessionControl,
-  SessionInvocation,
   SessionTranscript,
   SessionTranscriptDeclaration,
   SessionOffer,
@@ -87,8 +96,6 @@ import type {
   SessionWorkspace,
   SessionWorkspaceObservation,
   SessionBudgetInput,
-  SessionMessage,
-  SessionMessageInput,
   SessionLookup,
   SessionUsageReport,
   BudgetStatus,
@@ -136,7 +143,6 @@ const configSchema = z
   })
   .strict();
 export type SessionsConfig = z.input<typeof configSchema>;
-const live = (session: Session) => session.status === 'offered' || session.status === 'active';
 /** Trimmed text with something to read, as it is stored and compared. */
 const trimmed = (max: number) =>
   z
@@ -312,99 +318,12 @@ const workspaceEvent = (session: Session, workspace: SessionWorkspace) => ({
 });
 const permission = (role: Session['role']): Permission =>
   role === 'producer' ? 'write' : role === 'reviewer' ? 'review' : 'read';
-const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
-const snapshotInput = (input: Data): Data =>
-  plain(input, 'invalid_input', {
-    keys: 'any',
-    strings: 'json',
-    undefined: 'reject',
-    nullPrototype: false,
-  });
-/** Refusals that say only that the policy does not bind a call, which a read does not need. */
-const unbound = [
-  'execution_tool_forbidden',
-  'execution_arguments_forbidden',
-  'execution_reference_unavailable',
-];
-/**
- * Admits one tool call under a session's execution. With `read`, the tool only reads, and a
- * session reads whatever its project holds (founder, 2026-09-17: no read constraints). The
- * policy still fills in what it names, so a read called as declared is admitted as declared;
- * one it does not name, or names differently, is admitted as given, bounded by the project
- * alone. Every write holds as published.
- */
-function admitCall(
-  execution: WorkflowExecution,
-  tool: string,
-  input: Data,
-  read = false,
-): WorkflowDispatchAdmission {
-  // A detached copy, bounded as the engine bounds a caller's data.
-  const encoded = canonical(
-    plain(input, 'invalid_input', {
-      depth: 32,
-      nodes: 16_000,
-      keys: 'any',
-      strings: 'json',
-      undefined: 'reject',
-      nullPrototype: false,
-    }),
-  );
-  check(encoded.length <= 4_000_000, 'invalid_input', 'Input is too large');
-  const original = JSON.parse(encoded) as Data;
-  check(
-    original && typeof original === 'object' && !Array.isArray(original),
-    'invalid_input',
-    'Tool input must be a JSON object',
-  );
-  // The project overview is asked for by leaving the instance out. A fixed binding would
-  // fill it in and answer for this worker's own record instead — a narrower question than
-  // the one asked, and the only read a session cannot otherwise express.
-  if (read && tool === 'workflow.status_and_next' && !Object.hasOwn(original, 'instanceId'))
-    return { tool, input: original };
-  try {
-    return admitDispatch(execution, tool, original);
-  } catch (error) {
-    if (read && error instanceof MervError && unbound.includes(error.code))
-      return { tool, input: original };
-    throw error;
-  }
-}
-const text = (value: unknown, max = 200) =>
-  typeof value === 'string' && visible(value) && value.length <= max && !value.includes('\0');
-const safeError = (error: unknown): MervError =>
-  error instanceof MervError
-    ? error
-    : new MervError('session_unavailable', 'Session validation is unavailable', 503);
-interface Row {
-  id: string;
-  project_id: string;
-  owner_hash: string;
-  token_hash: string;
-  fingerprint: string;
-  session_json: string;
-  attachment_json: string | null;
-  result_json: string | null;
-}
 /** A session row with its workspace capture, read in one statement. */
 const SESSION =
   'SELECT s.*,w.attachment_json,w.result_json FROM worker_sessions s LEFT JOIN session_workspaces w ON w.session_id=s.id';
 /** The same row without its workspace capture, for a check that never reads it. */
 const BARE =
   'SELECT id,project_id,owner_hash,session_json,NULL AS attachment_json,NULL AS result_json FROM worker_sessions';
-interface MessageRow {
-  id: string;
-  project_id: string;
-  session_id: string;
-  sender_actor_id: string;
-  request_id: string;
-  fingerprint: string;
-  body: string;
-  created_at: string;
-  acknowledged_at: string | null;
-  ack_request_id: string | null;
-  reply_body: string | null;
-}
 interface Frame {
   tx: Transaction;
   actorId: string;
@@ -412,26 +331,9 @@ interface Frame {
   source: DelegationSource;
   role: Session['role'];
 }
-interface InvocationState {
-  public: SessionInvocation;
-  sessionId: string;
-  registrationId: string;
-  running: boolean;
-  used: boolean;
-  input: Data;
-  validated: boolean;
-  /** The tool only reads, so the project is its bound rather than the policy. */
-  read: boolean;
-}
-
 /** Durable step credentials. Domain reservations and all lifecycle mutations share State transactions. */
 export class LeasedSessions implements Sessions {
-  readonly instructions =
-    'You are a leased Merv worker in one fixed project and workflow revision. Use the available tools for your current assignment. Tool arguments are bound by the server; omitted fixed identifiers are supplied automatically. Follow workflow.assignment and its handoff guidance. This session credential is valid only on this MCP endpoint.';
   private readonly frames = new AsyncLocalStorage<Frame[]>();
-  private readonly toolHandler = new AsyncLocalStorage<string>();
-  private readonly invocations = new WeakMap<SessionInvocation, InvocationState>();
-  private readonly invocationIds = new Map<string, InvocationState>();
   private readonly fenced = new WeakMap<Transaction, Set<string>>();
   private readonly disposers: (() => void | Promise<void>)[] = [];
   private timer?: ReturnType<typeof setInterval>;
@@ -446,6 +348,10 @@ export class LeasedSessions implements Sessions {
   /** Each worker agent's live stream, read by the events route. */
   streams!: SessionStreams;
   conversations!: SessionConversations;
+  /** Operator messages to live sessions. */
+  messaging!: SessionMessages;
+  /** The tool policy: each leased worker's MCP calls. */
+  invocations!: SessionInvocations;
   /** Optional private account credential reader; never exposed through the tool registry. */
   secrets?: Pick<Secrets, 'resolveHuggingFaceToken'> &
     Partial<Pick<Secrets, 'createHuggingFaceAccess'>>;
@@ -545,6 +451,21 @@ export class LeasedSessions implements Sessions {
           },
         ),
       );
+      this.messaging = new SessionMessages(state, scope, this.clock, {
+        transaction: (fn) => this.transaction(fn),
+        reading: (fn) => this.reading(fn),
+        row: (tx, id) => this.row(tx, id),
+        decode: (row) => this.decode(row),
+        valid: (session, tx) => this.valid(session, tx),
+      });
+      this.invocations = new SessionInvocations(this.observations, this.clock, {
+        open: () => this.ensureOpen(),
+        closed: () => this.closed,
+        reading: (fn) => this.reading(fn),
+        session: (caller, tx) => this.session(caller, tx),
+        valid: (session, tx, frozen) => this.valid(session, tx, frozen),
+        acknowledged: (id, tx) => this.messaging.requireMessagesAcknowledged(id, tx),
+      });
       this.board = new SessionRunning(state, scope, this.dispatcher, this.clock, this.thresholds);
       this.serviceWork = new SessionServiceWork(
         state,
@@ -589,14 +510,6 @@ export class LeasedSessions implements Sessions {
   private ensureOpen(): void {
     check(!this.closed, 'session_unavailable', 'Sessions is unavailable', 503);
   }
-  private ordinary(caller: Caller): void {
-    check(
-      !caller.managed,
-      'forbidden',
-      'Managed runners may only use their bound session controls',
-      403,
-    );
-  }
   private async transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T> {
     this.ensureOpen();
     // Join the caller's transaction, or open one without first holding a read connection
@@ -621,24 +534,6 @@ export class LeasedSessions implements Sessions {
     check(row, 'session_not_found', 'Session not found', 404);
     return row;
   }
-  private async messageRow(tx: Transaction, id: string): Promise<MessageRow> {
-    const row = await tx.get<MessageRow>('SELECT * FROM session_messages WHERE id=?', id);
-    check(row, 'session_message_not_found', 'Session message not found', 404);
-    return row;
-  }
-  private publicMessage(row: MessageRow, session: Session): SessionMessage {
-    return {
-      id: row.id,
-      sessionId: row.session_id,
-      instanceId: session.instanceId,
-      expectedRevision: session.expectedRevision,
-      senderActorId: row.sender_actor_id,
-      body: row.body,
-      createdAt: row.created_at,
-      acknowledgedAt: row.acknowledged_at,
-      reply: row.reply_body,
-    };
-  }
   private lookup(session: Session): SessionLookup {
     return {
       id: session.id,
@@ -651,19 +546,6 @@ export class LeasedSessions implements Sessions {
       createdAt: session.createdAt,
       closedAt: session.closedAt,
     };
-  }
-  private async requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void> {
-    const row = await tx.get<{ id: string }>(
-      'SELECT id FROM session_messages WHERE session_id=? AND acknowledged_at IS NULL ORDER BY _merv_rowid LIMIT 1',
-      sessionId,
-    );
-    if (row)
-      throw new MervError(
-        'session_message_pending',
-        'A queued session message must be read with session.messages and acknowledged with session.message.ack before continuing.',
-        409,
-        { messageId: row.id },
-      );
   }
   private decode(row: Row): Session {
     const session: Session = JSON.parse(row.session_json);
@@ -803,17 +685,17 @@ export class LeasedSessions implements Sessions {
     if (
       requiredPermission !== 'read' &&
       caller.session?.invocationId !== undefined &&
-      caller.session?.invocationId === this.toolHandler.getStore()
+      caller.session?.invocationId === this.invocations.toolHandler.getStore()
     ) {
-      const tool = this.invocationIds.get(caller.session.invocationId)?.public.tool;
+      const tool = this.invocations.invocationIds.get(caller.session.invocationId)?.public.tool;
       if (tool !== 'session.messages' && tool !== 'session.message.ack') {
-        await this.requireMessagesAcknowledged(session.id, tx);
+        await this.messaging.requireMessagesAcknowledged(session.id, tx);
       }
     }
     await this.source(session, tx);
     const invocationId = caller.session.invocationId;
     if (invocationId !== undefined) {
-      const invocation = this.invocationIds.get(invocationId);
+      const invocation = this.invocations.invocationIds.get(invocationId);
       check(
         invocation && invocation.sessionId === session.id && !invocation.used,
         'session_invocation',
@@ -1015,7 +897,7 @@ export class LeasedSessions implements Sessions {
   }
 
   async offer(caller: Caller, input: SessionOffer): Promise<Session> {
-    this.ordinary(caller);
+    ordinary(caller);
     return await this.offerParsed(
       structuredClone(caller),
       closed(offerSchema, input, offerRefusals),
@@ -1269,7 +1151,7 @@ export class LeasedSessions implements Sessions {
     return clone(session);
   }
   async registerAgent(caller: Caller, input: AgentRegistration): Promise<Agent> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     input = closed(registrationSchema, input, {
       fallback: ['invalid_agent', 'Agent requires a name, runner, request and ms_ secret'],
@@ -1304,14 +1186,14 @@ export class LeasedSessions implements Sessions {
     });
   }
   async agents(caller: Caller): Promise<AgentStatus[]> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(
       async (tx) => await this.agentStatuses(await this.directory.list(caller, tx), tx),
     );
   }
   async agent(caller: Caller, agentId: string): Promise<AgentStatus> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(
       async (tx) =>
@@ -1319,7 +1201,7 @@ export class LeasedSessions implements Sessions {
     );
   }
   async retireAgent(caller: Caller, agentId: string): Promise<Agent> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const agent = await this.directory.controlled(caller, agentId, tx);
@@ -1333,7 +1215,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     agentId: string,
   ): Promise<{ agent: Agent; token: string; expiresAt: string }> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       await this.scope.require(caller, 'write', tx);
@@ -1416,28 +1298,28 @@ export class LeasedSessions implements Sessions {
     });
   }
   async projectStatus(caller: Caller, report?: boolean): Promise<SessionsProjectStatus> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.projectStatus(caller, report);
   }
   async running(caller: Caller) {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.board.nodes(caller);
   }
   async runningMarks(caller: Caller) {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.board.marks(caller);
   }
   async runningPanel(caller: Caller, sessionId: string, route?: WorkRoute) {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     check(text(sessionId), 'invalid_session', 'A session identifier is required');
     return await this.board.panel(caller, sessionId, route);
   }
   async runningWork(caller: Caller, instanceIds: readonly string[]) {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     check(
       Array.isArray(instanceIds) && instanceIds.every((id) => text(id)),
@@ -1470,7 +1352,7 @@ export class LeasedSessions implements Sessions {
       .map((row) => row.id);
   }
   async agentObservation(caller: Caller, agentId: string) {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     check(
       text(agentId, 200),
@@ -1483,7 +1365,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     instanceId: string,
   ): Promise<{ current: SessionLookup | null; latest: SessionLookup | null }> {
-    this.ordinary(caller);
+    ordinary(caller);
     check(!caller.session, 'forbidden', 'Workers cannot look up other sessions', 403);
     check(text(instanceId, 200), 'invalid_instance', 'A work item ID is required');
     return await this.reading(async (tx) => {
@@ -1512,189 +1394,16 @@ export class LeasedSessions implements Sessions {
       };
     });
   }
-  async message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage> {
-    this.ordinary(caller);
-    check(
-      !caller.session && !caller.managed,
-      'forbidden',
-      'Workers cannot send operator messages',
-      403,
-    );
-    check(
-      text(input.sessionId, 200) && text(input.body, 8_000) && text(input.requestId, 200),
-      'invalid_session_message',
-      'A session ID, message of 1–8000 characters and stable requestId are required',
-    );
-    caller = structuredClone(caller);
-    input = structuredClone(input);
-    return await this.transaction(async (tx) => {
-      await this.scope.require(caller, 'write', tx);
-      const fingerprint = digest({ sessionId: input.sessionId, body: input.body });
-      const old = await tx.get<MessageRow>(
-        'SELECT * FROM session_messages WHERE project_id=? AND sender_actor_id=? AND request_id=?',
-        caller.projectId,
-        caller.actorId,
-        input.requestId,
-      );
-      if (old) {
-        check(
-          old.fingerprint === fingerprint,
-          'request_conflict',
-          'Message requestId was used for different input',
-          409,
-        );
-        const session = this.decode(await this.row(tx, old.session_id));
-        return this.publicMessage(old, session);
-      }
-      const row = await this.row(tx, input.sessionId);
-      check(
-        row.project_id === caller.projectId,
-        'session_not_found',
-        'Session not found in this project',
-        404,
-      );
-      const session = this.decode(row);
-      check(
-        live(session),
-        'session_ended',
-        'This session has ended; send to its successor instead',
-        409,
-      );
-      try {
-        await this.valid(session, tx);
-      } catch (error) {
-        if (!(error instanceof MervError) || error.status >= 500) throw error;
-        throw new MervError(
-          'session_ended',
-          'This assignment has ended; send to its successor instead',
-          409,
-        );
-      }
-      const createdAt = isoNow(this.clock);
-      const id = newId('session_message');
-      await tx.run(
-        'INSERT INTO session_messages(id,project_id,session_id,sender_actor_id,request_id,fingerprint,body,created_at) VALUES(?,?,?,?,?,?,?,?)',
-        id,
-        caller.projectId,
-        session.id,
-        caller.actorId,
-        input.requestId,
-        fingerprint,
-        input.body,
-        createdAt,
-      );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'session.message_queued',
-        subjectId: session.id,
-        data: {
-          messageId: id,
-          sessionId: session.id,
-          instanceId: session.instanceId,
-          revision: session.expectedRevision,
-        },
-      });
-      return this.publicMessage(await this.messageRow(tx, id), session);
-    });
-  }
-  async messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]> {
-    this.ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.reading(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const id = sessionId ?? caller.session?.id;
-      check(id && text(id, 200), 'invalid_session_message', 'A session ID is required');
-      const row = await this.row(tx, id);
-      check(
-        row.project_id === caller.projectId,
-        'session_not_found',
-        'Session not found in this project',
-        404,
-      );
-      if (caller.session)
-        check(
-          caller.session.id === id,
-          'forbidden',
-          'Workers can read only their own messages',
-          403,
-        );
-      const session = this.decode(row);
-      const rows = await tx.all<MessageRow>(
-        'SELECT * FROM session_messages WHERE project_id=? AND session_id=? ORDER BY _merv_rowid',
-        caller.projectId,
-        id,
-      );
-      return rows.map((item) => this.publicMessage(item, session));
-    });
-  }
-  async acknowledgeMessage(
-    caller: Caller,
-    input: { messageId: string; reply?: string; requestId: string },
-  ): Promise<SessionMessage> {
-    this.ordinary(caller);
-    check(caller.session, 'session_required', 'Only the assigned worker may acknowledge', 403);
-    check(
-      text(input.messageId, 200) &&
-        text(input.requestId, 200) &&
-        (input.reply === undefined || text(input.reply, 8_000)),
-      'invalid_session_message',
-      'Acknowledgement requires messageId, stable requestId and an optional reply of 1–8000 characters',
-    );
-    caller = structuredClone(caller);
-    input = structuredClone(input);
-    return await this.transaction(async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const row = await this.messageRow(tx, input.messageId);
-      check(
-        row.project_id === caller.projectId && row.session_id === caller.session!.id,
-        'session_message_not_found',
-        'Message not found in this session',
-        404,
-      );
-      const session = this.decode(await this.row(tx, row.session_id));
-      check(
-        live(session) && session.actorId === caller.actorId,
-        'session_ended',
-        'This session has ended',
-        409,
-      );
-      if (row.acknowledged_at) {
-        check(
-          row.ack_request_id === input.requestId && row.reply_body === (input.reply ?? null),
-          'request_conflict',
-          'Message was acknowledged with different input',
-          409,
-        );
-        return this.publicMessage(row, session);
-      }
-      await tx.run(
-        'UPDATE session_messages SET acknowledged_at=?,ack_request_id=?,reply_body=? WHERE id=? AND acknowledged_at IS NULL',
-        isoNow(this.clock),
-        input.requestId,
-        input.reply ?? null,
-        row.id,
-      );
-      await this.state.appendEvent(tx, {
-        projectId: caller.projectId,
-        actorId: caller.actorId,
-        type: 'session.message_acknowledged',
-        subjectId: session.id,
-        data: { messageId: row.id, sessionId: session.id, replied: input.reply !== undefined },
-      });
-      return this.publicMessage(await this.messageRow(tx, row.id), session);
-    });
-  }
   async setDispatch(
     caller: Caller,
     input: Parameters<SessionDispatch['setDispatch']>[1],
   ): Promise<DispatchState> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.setDispatch(caller, input);
   }
   async stuck(caller: Caller): Promise<StuckReport> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.stuck(caller);
   }
@@ -1702,12 +1411,12 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     input: Parameters<Sessions['releaseHold']>[1],
   ): Promise<DispatchHold> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.releaseHold(caller, input);
   }
   async setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.setBudget(caller, input);
   }
@@ -1717,7 +1426,7 @@ export class LeasedSessions implements Sessions {
    * reviews cost. The scope check still bounds it to the caller's project.
    */
   async usage(caller: Caller, input: UsageQuery = {}): Promise<UsageRollup> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     this.ensureOpen();
     check(
@@ -1771,7 +1480,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     input: { sessionId?: string; reason?: string } = {},
   ): Promise<{ halted: number }> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.halt(caller, input);
   }
@@ -1783,7 +1492,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     input: { runnerId: string; settings: RunnerSettings },
   ): Promise<RunnerPresence> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.setRunnerSettings(caller, input);
   }
@@ -1799,7 +1508,7 @@ export class LeasedSessions implements Sessions {
     return await this.dispatcher.servedSources();
   }
   async dispatchDemand(caller: Caller, input: DispatchDemandInput): Promise<DispatchDemand> {
-    this.ordinary(caller);
+    ordinary(caller);
     this.ensureOpen();
     return await this.dispatcher.dispatchDemand(caller, input);
   }
@@ -1809,7 +1518,7 @@ export class LeasedSessions implements Sessions {
     sessionId: string,
     transaction?: Transaction,
   ): Promise<SessionWorkspaceObservation> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     this.ensureOpen();
     check(text(sessionId), 'invalid_session', 'A session identifier is required');
@@ -1862,7 +1571,7 @@ export class LeasedSessions implements Sessions {
     return transaction ? await read(transaction) : await this.reading(read);
   }
   async list(caller: Caller): Promise<Session[]> {
-    this.ordinary(caller);
+    ordinary(caller);
     caller = structuredClone(caller);
     return await this.transaction(async (tx) => {
       const owner = await ownerOf(this.scope, caller, tx);
@@ -2489,227 +2198,15 @@ export class LeasedSessions implements Sessions {
     this.ensureOpen();
     return await this.managed.inspect(allocationId, epoch, tx);
   }
-  async describe(caller: Caller): Promise<Session> {
-    this.ordinary(caller);
-    caller = structuredClone(caller);
-    return await this.transaction(async (tx) => {
-      check(caller.session, 'session_required', 'Session authority is required', 401);
-      await this.scope.require(caller, 'read', tx);
-      return this.decode(await this.row(tx, caller.session.id));
-    });
-  }
-  /** Tool names per session, read once: a policy is frozen at offer, and the tool listing
-   *  asks about every registered tool, which under load meant one locked transaction each. */
-  private readonly toolNames = new Map<string, { names: Set<string>; at: number }>();
-  async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
-    this.ordinary(caller);
-    caller = structuredClone(caller);
-    if (read || name === 'session.message.ack') return true;
-    const id = caller.session?.id;
-    const cached = id ? this.toolNames.get(id) : undefined;
-    if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
-    const names = await this.reading(async (tx) => {
-      const session = await this.session(caller, tx);
-      return new Set(session.execution.policy.tools.map((tool) => tool.name));
-    });
-    if (id) {
-      if (this.toolNames.size >= 1000) this.toolNames.clear();
-      this.toolNames.set(id, { names, at: this.clock() });
+  async session(caller: Caller, tx?: Transaction): Promise<Session> {
+    ordinary(caller);
+    if (!tx) {
+      const own = structuredClone(caller);
+      return await this.transaction(async (tx) => await this.session(own, tx));
     }
-    return names.has(name);
-  }
-  private async session(caller: Caller, tx: Transaction): Promise<Session> {
     await this.scope.require(caller, 'read', tx);
     check(caller.session, 'session_required', 'Session authority is required', 401);
     return this.decode(await this.row(tx, caller.session.id));
-  }
-  private async admit(
-    caller: Caller,
-    tool: string,
-    input: Data,
-    tx: Transaction,
-    registrationId?: string,
-    read?: boolean,
-  ) {
-    const session = await this.session(caller, tx);
-    // Acknowledging a message is always admitted; it needs only a live lease. The lease
-    // is checked before the input is bounded, so when both are bad the lease error wins.
-    const ack = tool === 'session.message.ack';
-    const current = await this.valid(session, tx, ack ? undefined : session.execution);
-    if (registrationId !== undefined)
-      check(
-        current.registrationId === registrationId,
-        'execution_replaced',
-        'Workflow implementation changed during invocation',
-        409,
-      );
-    const admission = ack
-      ? { tool, input: structuredClone(input) }
-      : admitCall({ ...session.execution, references: current.references! }, tool, input, read);
-    return { admission, registrationId: current.registrationId, session };
-  }
-  async prepare(
-    caller: Caller,
-    tool: string,
-    input: Data,
-    read?: boolean,
-  ): Promise<SessionInvocation> {
-    this.ordinary(caller);
-    caller = structuredClone(caller);
-    input = snapshotInput(input);
-    const prepared = await this.reading(
-      async (tx) => await this.admit(caller, tool, input, tx, undefined, read),
-    );
-    this.ensureOpen();
-    const invocationId = newId('invocation');
-    const invocation: SessionInvocation = Object.freeze({
-      caller: Object.freeze({
-        actorId: caller.actorId,
-        projectId: caller.projectId,
-        session: Object.freeze({
-          id: prepared.session.id,
-          ...(prepared.session.agentSessionId
-            ? { agentSessionId: prepared.session.agentSessionId }
-            : {}),
-          ...(caller.session?.agentCredentialHash
-            ? { agentCredentialHash: caller.session.agentCredentialHash }
-            : {}),
-          invocationId,
-        }),
-      }),
-      tool,
-      input: clone(prepared.admission.input),
-    });
-    const state: InvocationState = {
-      public: invocation,
-      sessionId: prepared.session.id,
-      registrationId: prepared.registrationId,
-      running: false,
-      used: false,
-      input: clone(prepared.admission.input),
-      validated: false,
-      read: !!read,
-    };
-    this.invocations.set(invocation, state);
-    this.invocationIds.set(invocationId, state);
-    return invocation;
-  }
-  async validate(caller: Caller, tool: string, input: Data): Promise<void> {
-    this.ordinary(caller);
-    caller = structuredClone(caller);
-    input = snapshotInput(input);
-    await this.reading(async (tx) => {
-      const state = caller.session?.invocationId
-        ? this.invocationIds.get(caller.session.invocationId)
-        : undefined;
-      check(
-        state && !state.used && state.public.tool === tool,
-        'session_invocation',
-        'Session invocation is unavailable',
-        403,
-      );
-      if (state.validated)
-        check(
-          canonical(state.input) === canonical(input),
-          'session_invocation',
-          'Session invocation arguments changed',
-          403,
-        );
-      const admitted = await this.admit(caller, tool, input, tx, state.registrationId, state.read);
-      this.ensureOpen();
-      check(!state.used, 'session_invocation', 'Session invocation is unavailable', 403);
-      check(
-        canonical(admitted.admission.input) === canonical(input),
-        'session_invocation',
-        'Session arguments no longer match their bindings',
-        403,
-      );
-      // The first validation follows schema parsing. Unbound defaults/stripping are permitted;
-      // fixed bindings are independently re-authorized before retaining the parsed snapshot.
-      if (!state.validated) {
-        state.input = clone(input);
-        state.validated = true;
-      }
-    });
-  }
-  async run<T>(
-    invocation: SessionInvocation,
-    handler: (caller: Caller, input: Data) => T | Promise<T>,
-  ): Promise<T> {
-    const state = this.invocations.get(invocation);
-    check(
-      state && !state.used && !state.running,
-      'session_invocation',
-      'Session invocation is unavailable',
-      403,
-    );
-    // Claim once before yielding so concurrent callers cannot execute one preparation twice.
-    state.running = true;
-    try {
-      // The registry authorized this call right before run; storing the observation yields,
-      // so it is authorized again below before the tool runs.
-      await this.observations.start(
-        invocation.caller.session!.invocationId!,
-        state.sessionId,
-        invocation.tool,
-        state.input,
-      );
-      await this.validate(invocation.caller, invocation.tool, state.input);
-      if (invocation.tool !== 'session.messages' && invocation.tool !== 'session.message.ack')
-        await this.reading(
-          async (tx) => await this.requireMessagesAcknowledged(state.sessionId, tx),
-        );
-      // A session has one assignment, the frozen one it was offered; another record's
-      // assignment is an admission of somebody else, so the question is refused by name.
-      const own =
-        invocation.tool === 'workflow.assignment'
-          ? await this.reading(async (tx) => await this.session(invocation.caller, tx))
-          : undefined;
-      const asked = (state.input as { instanceId?: string }).instanceId;
-      check(
-        !own || asked === undefined || asked === own.instanceId,
-        'execution_arguments_forbidden',
-        `This session's assignment is ${own?.instanceId}; read another record with workflow.status_and_next`,
-        403,
-      );
-      const result = own
-        ? (clone(own.assignment) as T)
-        : await this.toolHandler.run(
-            invocation.caller.session!.invocationId!,
-            async () => await handler(invocation.caller, clone(state.input)),
-          );
-      // MCP may return a tool error without throwing. Native values have no such envelope.
-      const failed =
-        invocation.tool.startsWith('_') &&
-        result &&
-        typeof result === 'object' &&
-        'isError' in result &&
-        result.isError === true;
-      state.running = false;
-      // The call has committed: a record that fails to say so is left running for the
-      // startup sweep, and the worker still gets its result.
-      if (!this.closed)
-        await this.observations
-          .finish(invocation.caller.session!.invocationId!, failed ? 'failed' : 'succeeded', result)
-          .catch((error) =>
-            process.stderr.write(
-              `${JSON.stringify({ event: 'session.observation_unrecorded', code: safeError(error).code })}\n`,
-            ),
-          );
-      return result;
-    } finally {
-      await this.cancel(invocation);
-    }
-  }
-  async cancel(invocation: SessionInvocation): Promise<void> {
-    const state = this.invocations.get(invocation);
-    if (!state || state.used) return;
-    const running = state.running;
-    state.used = true;
-    state.running = false;
-    this.invocationIds.delete(invocation.caller.session!.invocationId!);
-    if (running && !this.closed)
-      await this.observations.finish(invocation.caller.session!.invocationId!, 'failed');
   }
   /**
    * Upkeep, each subject decided on a snapshot of its own and recorded in a writer only when it
@@ -2811,7 +2308,8 @@ export class LeasedSessions implements Sessions {
   close(): Promise<void> {
     if (this.closing) return this.closing;
     // A call that ends once closed skips its finish, so the calls in flight now are marked too.
-    const running = () => [...this.invocationIds].filter(([, c]) => c.running).map(([id]) => id);
+    const running = () =>
+      [...this.invocations.invocationIds].filter(([, c]) => c.running).map(([id]) => id);
     const inFlight = running();
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
@@ -2831,7 +2329,7 @@ export class LeasedSessions implements Sessions {
           errors.push(error);
         }
       }
-      this.invocationIds.clear();
+      this.invocations.invocationIds.clear();
       if (errors.length) throw errors[0];
     });
     return this.closing;
@@ -2848,7 +2346,7 @@ export const sessionsPlugin = {
       yield async () => await sessions.close();
       // Without these registrations the tool registry refuses every session and managed caller.
       ctx.inject(['tools'], (ctx) => {
-        ctx.effect(() => ctx.tools.registerSessionPolicy(sessions));
+        ctx.effect(() => ctx.tools.registerSessionPolicy(sessions.invocations));
         ctx.effect(() => ctx.tools.registerCallerRules('managed', managedRunnerRules));
       });
       // Transcripts go to the object store; while Blobs is unloaded a runner is told to retry.

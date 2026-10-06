@@ -274,9 +274,9 @@ test('a worker’s authentication, heartbeat and tool call stay within their loc
   await f.costs(
     { writers: 2, checks: 6 },
     async () => {
-      const invocation = await f.sessions.prepare(worker, 'finish', input);
-      await f.sessions.validate(invocation.caller, 'finish', input);
-      await f.sessions.run(invocation, () => undefined);
+      const invocation = await f.sessions.invocations.prepare(worker, 'finish', input);
+      await f.sessions.invocations.validate(invocation.caller, 'finish', input);
+      await f.sessions.invocations.run(invocation, () => undefined);
     },
     'a tool call: prepare, the registry’s validate and run',
   );

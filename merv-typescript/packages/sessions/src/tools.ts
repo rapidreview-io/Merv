@@ -118,7 +118,7 @@ export const sessionsToolsPlugin = {
         handler: async (
           caller: Caller,
           input: { sessionId: string; body: string; requestId: string },
-        ) => await sessions.message(caller, input),
+        ) => await sessions.messaging.message(caller, input),
       }),
     );
     ctx.effect(() =>
@@ -129,7 +129,7 @@ export const sessionsToolsPlugin = {
         readOnly: true,
         inputSchema: z.object({ sessionId: z.string().min(1).max(200).optional() }).strict(),
         handler: async (caller: Caller, input: { sessionId?: string }) =>
-          await sessions.messages(caller, input.sessionId),
+          await sessions.messaging.messages(caller, input.sessionId),
       }),
     );
     ctx.effect(() =>
@@ -148,7 +148,7 @@ export const sessionsToolsPlugin = {
         handler: async (
           caller: Caller,
           input: { messageId: string; reply?: string; requestId: string },
-        ) => await sessions.acknowledgeMessage(caller, input),
+        ) => await sessions.messaging.acknowledgeMessage(caller, input),
       }),
     );
     ctx.effect(() =>

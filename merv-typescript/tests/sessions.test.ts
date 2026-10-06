@@ -535,8 +535,12 @@ test('a runner’s release of a session whose handoff landed records the handoff
   const f = await fixture(t);
   const handoff = async () => {
     const { token, session } = await f.offer(),
-      prepared = await f.sessions.prepare(await f.sessions.authenticate(token), 'finish', {});
-    await f.sessions.run(
+      prepared = await f.sessions.invocations.prepare(
+        await f.sessions.authenticate(token),
+        'finish',
+        {},
+      );
+    await f.sessions.invocations.run(
       prepared,
       async (caller) =>
         await f.state.transaction(
@@ -703,9 +707,9 @@ test('one invocation may finish its own handoff transaction, while later calls a
   const f = await fixture(t),
     { token, session } = await f.offer();
   const worker = await f.sessions.authenticate(token),
-    prepared = await f.sessions.prepare(worker, 'finish', {});
+    prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
   assert.deepEqual(prepared.input, { instanceId: session.instanceId, expectedRevision: 0 });
-  await f.sessions.run(
+  await f.sessions.invocations.run(
     prepared,
     async (caller) =>
       await f.state.transaction(async (tx) => {
@@ -728,7 +732,7 @@ test('one invocation may finish its own handoff transaction, while later calls a
       }),
   );
   await assert.rejects(
-    f.sessions.run(prepared, () => {}),
+    f.sessions.invocations.run(prepared, () => {}),
     { code: 'session_invocation' },
   );
   await assert.rejects(async () => await f.scope.require(prepared.caller, 'read'), {
@@ -755,11 +759,11 @@ test('one invocation may finish its own handoff transaction, while later calls a
 
   const next = await f.offer(),
     second = await f.sessions.authenticate(next.token),
-    invocation = await f.sessions.prepare(second, 'finish', {});
+    invocation = await f.sessions.invocations.prepare(second, 'finish', {});
   let entered = false;
   await f.scope.revokeCredential(f.owner, f.source.credentialId!);
   await assert.rejects(
-    f.sessions.run(invocation, () => {
+    f.sessions.invocations.run(invocation, () => {
       entered = true;
     }),
   );
@@ -781,10 +785,10 @@ test('a tool call that committed answers its result when recording its finish fa
     if (finished.length === 1) throw new MervError('state_timeout', 'Timed out', 503);
     await finish(...args);
   };
-  const prepared = await f.sessions.prepare(caller, 'artifact.read', {
+  const prepared = await f.sessions.invocations.prepare(caller, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
-  assert.equal(await f.sessions.run(prepared, () => 'committed'), 'committed');
+  assert.equal(await f.sessions.invocations.run(prepared, () => 'committed'), 'committed');
   // The failed record is not overwritten as a failed call; the startup sweep settles it.
   assert.deepEqual(finished, ['succeeded']);
 });
@@ -794,7 +798,7 @@ test('frozen references survive reload, a prepared generation does not, and canc
     { token } = await f.offer();
   const caller = await f.sessions.authenticate(token);
   const input = { artifactId: 'frozen-artifact', options: { format: 'original' } };
-  const pending = f.sessions.prepare(caller, 'artifact.read', input);
+  const pending = f.sessions.invocations.prepare(caller, 'artifact.read', input);
   input.artifactId = 'other-artifact';
   input.options.format = 'changed';
   const prepared = await pending;
@@ -803,26 +807,29 @@ test('frozen references survive reload, a prepared generation does not, and canc
     options: { format: 'original' },
   });
   await assert.rejects(
-    async () => await f.sessions.prepare(caller, 'artifact.read', { artifactId: 'other-artifact' }),
+    async () =>
+      await f.sessions.invocations.prepare(caller, 'artifact.read', {
+        artifactId: 'other-artifact',
+      }),
     { code: 'execution_arguments_forbidden' },
   );
   await f.reload();
   await assert.rejects(
-    f.sessions.run(prepared, () => {}),
+    f.sessions.invocations.run(prepared, () => {}),
     { code: 'execution_replaced' },
   );
   await f.restart();
   const restored = await f.sessions.authenticate(token);
-  const next = await f.sessions.prepare(restored, 'artifact.read', {
+  const next = await f.sessions.invocations.prepare(restored, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
   const parsed = { ...next.input, options: { format: 'parsed' } };
   const validatingCaller = structuredClone(next.caller);
-  const validating = f.sessions.validate(validatingCaller, next.tool, parsed);
+  const validating = f.sessions.invocations.validate(validatingCaller, next.tool, parsed);
   validatingCaller.session!.invocationId = 'missing';
   parsed.options.format = 'changed';
   await validating;
-  await f.sessions.validate(next.caller, next.tool, {
+  await f.sessions.invocations.validate(next.caller, next.tool, {
     ...next.input,
     options: { format: 'parsed' },
   });
@@ -835,19 +842,24 @@ test('frozen references survive reload, a prepared generation does not, and canc
     },
   });
   for (const method of ['prepare', 'validate'] as const)
-    await assert.rejects(f.sessions[method](next.caller, next.tool, unsafe), {
+    await assert.rejects(f.sessions.invocations[method](next.caller, next.tool, unsafe), {
       code: 'invalid_input',
     });
   assert.equal(getters, 0);
-  await f.sessions.cancel(next);
-  await assert.rejects(async () => await f.sessions.validate(next.caller, next.tool, next.input), {
-    code: 'session_invocation',
-  });
+  await f.sessions.invocations.cancel(next);
+  await assert.rejects(
+    async () => await f.sessions.invocations.validate(next.caller, next.tool, next.input),
+    {
+      code: 'session_invocation',
+    },
+  );
   const forged = {
-    ...(await f.sessions.prepare(restored, 'artifact.read', { artifactId: 'frozen-artifact' })),
+    ...(await f.sessions.invocations.prepare(restored, 'artifact.read', {
+      artifactId: 'frozen-artifact',
+    })),
   };
   await assert.rejects(
-    f.sessions.run(forged, () => {}),
+    f.sessions.invocations.run(forged, () => {}),
     { code: 'session_invocation' },
   );
 });
@@ -861,10 +873,12 @@ test('session metadata and tool preparation cannot adopt a replacement worker', 
       const caller = { ...structuredClone(worker), actorId: 'missing' };
       const pending =
         method === 'describe'
-          ? f.sessions.describe(caller)
+          ? f.sessions.session(caller)
           : method === 'allowsTool'
-            ? f.sessions.allowsTool(caller, 'artifact.read')
-            : f.sessions.prepare(caller, 'artifact.read', { artifactId: 'frozen-artifact' });
+            ? f.sessions.invocations.allowsTool(caller, 'artifact.read')
+            : f.sessions.invocations.prepare(caller, 'artifact.read', {
+                artifactId: 'frozen-artifact',
+              });
       Object.assign(caller, worker);
       await assert.rejects(pending, { code: 'forbidden' });
     });
@@ -877,7 +891,7 @@ test('system.status gives a leased worker only its authenticated session', async
   const worker = await f.sessions.authenticate(token);
   const tools = new ToolRegistry(f.scope);
   t.after(() => tools.close());
-  tools.registerSessionPolicy(f.sessions);
+  tools.registerSessionPolicy(f.sessions.invocations);
   sessionsToolsPlugin.apply({
     tools,
     sessions: f.sessions,
@@ -935,7 +949,7 @@ test('a leased worker lists and runs web and literature search, open reads its p
   for (const tool of webTools(web)) tools.register(tool);
   const papers = new NisaService({ keyEnv: keyEnv(t, 'rr_sk_fixture'), origin: nisa.origin });
   for (const tool of nisaTools(papers)) tools.register(tool);
-  tools.registerSessionPolicy(f.sessions);
+  tools.registerSessionPolicy(f.sessions.invocations);
   assert.deepEqual(
     (await tools.describe(caller)).map(({ name }) => name),
     [
@@ -972,31 +986,38 @@ test('tool policy replacement fences real session invocations and cleanup releas
     inputSchema: z.object({ artifactId: z.string() }).strict(),
     handler: () => ++calls,
   });
-  let dispose = tools.registerSessionPolicy(f.sessions);
-  const prepare = f.sessions.prepare.bind(f.sessions);
+  let dispose = tools.registerSessionPolicy(f.sessions.invocations);
+  const prepare = f.sessions.invocations.prepare.bind(f.sessions.invocations);
   const prepared: Awaited<ReturnType<typeof prepare>>[] = [];
-  t.mock.method(f.sessions, 'prepare', async (...args: Parameters<typeof prepare>) => {
+  t.mock.method(f.sessions.invocations, 'prepare', async (...args: Parameters<typeof prepare>) => {
     prepared.push(await prepare(...args));
     return prepared.at(-1)!;
   });
   // Sessions.run validates again after storing its observation; replace the provider there.
-  const validate = f.sessions.validate.bind(f.sessions);
+  const validate = f.sessions.invocations.validate.bind(f.sessions.invocations);
   let validations = 0;
-  t.mock.method(f.sessions, 'validate', async (...args: Parameters<typeof validate>) => {
-    await validate(...args);
-    if (++validations === 2) {
-      dispose();
-      dispose = tools.registerSessionPolicy(f.sessions);
-    }
-  });
+  t.mock.method(
+    f.sessions.invocations,
+    'validate',
+    async (...args: Parameters<typeof validate>) => {
+      await validate(...args);
+      if (++validations === 2) {
+        dispose();
+        dispose = tools.registerSessionPolicy(f.sessions.invocations);
+      }
+    },
+  );
   await assert.rejects(tools.call('artifact.read', caller, { artifactId: 'frozen-artifact' }), {
     code: 'session_unavailable',
   });
   assert.equal(calls, 0);
   const [original] = prepared;
-  await assert.rejects(f.sessions.validate(original.caller, original.tool, original.input), {
-    code: 'session_invocation',
-  });
+  await assert.rejects(
+    f.sessions.invocations.validate(original.caller, original.tool, original.input),
+    {
+      code: 'session_invocation',
+    },
+  );
   assert.equal(await tools.call('artifact.read', caller, { artifactId: 'frozen-artifact' }), 1);
 });
 
@@ -1576,7 +1597,7 @@ test('a continuing agent keeps its identity and credential across explicit assig
   assert.equal(a.actorId, agent.actorId);
   const callerA = await f.sessions.authenticate(token);
   const inputA = { instanceId: first.id, expectedRevision: 0 };
-  const delayed = await f.sessions.prepare(callerA, 'finish', inputA);
+  const delayed = await f.sessions.invocations.prepare(callerA, 'finish', inputA);
   await assert.rejects(
     async () =>
       await f.sessions.assignAgent(token, {
@@ -1638,7 +1659,7 @@ test('a continuing agent keeps its identity and credential across explicit assig
   // Released because the agent was reassigned, not because its handoff landed: the refusal
   // says closed, and its reason travels in the message.
   await assert.rejects(
-    f.sessions.run(delayed, () => {
+    f.sessions.invocations.run(delayed, () => {
       throw new Error('Old handler must not run');
     }),
     { code: 'session_closed' },
@@ -1646,7 +1667,7 @@ test('a continuing agent keeps its identity and credential across explicit assig
   const callerB = await f.sessions.authenticate(token);
   assert.equal(callerB.actorId, callerA.actorId);
   assert.equal(callerB.session?.id, b.id);
-  await assert.rejects(async () => await f.sessions.prepare(callerB, 'finish', inputA));
+  await assert.rejects(async () => await f.sessions.invocations.prepare(callerB, 'finish', inputA));
   assert.equal(
     (await f.sessions.assignAgent(token, firstInput)).id,
     a.id,
@@ -1865,7 +1886,7 @@ test('agent observations retain tool timings and estimates across assignments wi
     });
   const first = await assign('first');
   const caller = await f.sessions.authenticate(token);
-  const pending = await f.sessions.prepare(caller, 'artifact.read', {
+  const pending = await f.sessions.invocations.prepare(caller, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
   let finish!: (value: unknown) => void;
@@ -1873,7 +1894,7 @@ test('agent observations retain tool timings and estimates across assignments wi
   const entered = new Promise<void>((resolve) => {
     started = resolve;
   });
-  const running = f.sessions.run(
+  const running = f.sessions.invocations.run(
     pending,
     () =>
       new Promise((resolve) => {
@@ -1883,7 +1904,7 @@ test('agent observations retain tool timings and estimates across assignments wi
   );
   await entered;
   await assert.rejects(
-    f.sessions.run(pending, () => 'duplicate'),
+    f.sessions.invocations.run(pending, () => 'duplicate'),
     { code: 'session_invocation' },
   );
   let observed = await f.sessions.agentObservation(f.owner, agent.id);
@@ -1921,20 +1942,20 @@ test('agent observations retain tool timings and estimates across assignments wi
   await f.sessions.releaseAgentAssignment(token, first.id);
   const second = await assign('second');
   const worker = await f.sessions.authenticate(token);
-  const failed = await f.sessions.prepare(worker, 'artifact.read', {
+  const failed = await f.sessions.invocations.prepare(worker, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
   await assert.rejects(
-    f.sessions.run(failed, () => {
+    f.sessions.invocations.run(failed, () => {
       throw new Error('secret-in-error');
     }),
   );
-  const cancelled = await f.sessions.prepare(worker, 'artifact.read', {
+  const cancelled = await f.sessions.invocations.prepare(worker, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
-  await f.sessions.cancel(cancelled);
-  await f.sessions.cancel(cancelled);
-  const interrupted = await f.sessions.prepare(worker, 'artifact.read', {
+  await f.sessions.invocations.cancel(cancelled);
+  await f.sessions.invocations.cancel(cancelled);
+  const interrupted = await f.sessions.invocations.prepare(worker, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
   let complete!: () => void;
@@ -1942,7 +1963,7 @@ test('agent observations retain tool timings and estimates across assignments wi
   const resumed = new Promise<void>((resolve) => {
     resuming = resolve;
   });
-  const unfinished = f.sessions.run(
+  const unfinished = f.sessions.invocations.run(
     interrupted,
     () =>
       new Promise<void>((resolve) => {
@@ -2005,14 +2026,14 @@ test('owner rotation keeps a continuing agent across idle and active assignments
   });
   const priorCaller = await f.sessions.authenticate(first.token);
   assert.equal(priorCaller.session?.id, assignment.id);
-  const priorInvocation = await f.sessions.prepare(priorCaller, 'artifact.read', {
+  const priorInvocation = await f.sessions.invocations.prepare(priorCaller, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
   const second = await f.sessions.rotateAgent(f.source, agent.id);
   assert.equal(second.agent.id, agent.id);
   await assert.rejects(f.sessions.agentSelf(first.token), { code: 'unauthorized' });
   await assert.rejects(
-    f.sessions.run(priorInvocation, () => 'must not run'),
+    f.sessions.invocations.run(priorInvocation, () => 'must not run'),
     {
       code: 'unauthorized',
     },
@@ -2070,10 +2091,10 @@ test('agent observations are project-scoped read-only metadata with a bounded ca
   const caller = await f.sessions.authenticate(offered.token);
   const reader = await f.scope.issueActor(f.owner, { name: 'Observer', role: 'reader' });
   const viewer: Caller = { actorId: reader.actor.id, projectId: f.owner.projectId };
-  const invocation = await f.sessions.prepare(caller, 'artifact.read', {
+  const invocation = await f.sessions.invocations.prepare(caller, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
-  await f.sessions.run(invocation, () => ({ content: 'test' }));
+  await f.sessions.invocations.run(invocation, () => ({ content: 'test' }));
   // 104 more calls as the one real call stored itself: the window and totals are read in SQL.
   await f.state.transaction((tx) =>
     tx.run(
@@ -2153,10 +2174,10 @@ test('PostgreSQL preserves continuing agent identity, lease fencing and tool obs
     requestId: 'first',
   });
   const worker = await f.sessions.authenticate(token);
-  const prepared = await f.sessions.prepare(worker, 'artifact.read', {
+  const prepared = await f.sessions.invocations.prepare(worker, 'artifact.read', {
     artifactId: 'frozen-artifact',
   });
-  await f.sessions.run(prepared, () => ({ content: 'answer' }));
+  await f.sessions.invocations.run(prepared, () => ({ content: 'answer' }));
   const observation = await f.sessions.agentObservation(f.owner, agent.id);
   assert.equal(observation.toolCalls[0]?.executionId, first.id);
   assert.equal(observation.toolCalls[0]?.status, 'succeeded');

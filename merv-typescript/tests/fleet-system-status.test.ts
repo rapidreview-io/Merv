@@ -42,7 +42,7 @@ async function status(t: TestContext) {
       queue: queue.map((item) => ({ ...item, workspace: { mode: 'none' } })),
       stuck: { total: 0, counts: {}, items: [], truncated: false },
     }),
-    describe: async () => ({ id: 'session-1', projectId: 'project-a', assignment: {} }),
+    session: async () => ({ id: 'session-1', projectId: 'project-a', assignment: {} }),
   } as unknown as Sessions;
   const fleet = {
     registerOwner: () => () => undefined,

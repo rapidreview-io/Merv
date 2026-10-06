@@ -189,8 +189,8 @@ test('a close writes one usage row, a report lands once, and the row is then sea
   const { token, session } = await f.offer(target.id);
   const worker = await f.sessions.authenticate(token);
   f.advance(90_000);
-  const prepared = await f.sessions.prepare(worker, 'finish', {});
-  await f.sessions.run(
+  const prepared = await f.sessions.invocations.prepare(worker, 'finish', {});
+  await f.sessions.invocations.run(
     prepared,
     async (caller) =>
       await f.handle.transition(caller, {

@@ -407,12 +407,8 @@ export interface Sessions {
    */
   holdingWorkspace(projectId: string, driver: string, tx: Transaction): Promise<string[]>;
   agentObservation(caller: Caller, agentId: string): Promise<AgentObservation>;
-  message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
-  messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]>;
-  acknowledgeMessage(
-    caller: Caller,
-    input: { messageId: string; reply?: string; requestId: string },
-  ): Promise<SessionMessage>;
+  /** Operator messages to a live session, read and acknowledged by its worker. */
+  readonly messaging: SessionMessaging;
   findSession(
     caller: Caller,
     instanceId: string,
@@ -507,8 +503,24 @@ export interface Sessions {
   setBudget(caller: Caller, input: SessionBudgetInput): Promise<BudgetStatus>;
   /** First MCP authentication activates the offered lease using metadata only. */
   authenticate(token: string): Promise<Caller>;
-  /** Rechecks a worker credential without activating an offer. */
-  describe(caller: Caller): Promise<Session>;
+  /** The caller's own session, rechecking its credential without activating an offer. */
+  session(caller: Caller, tx?: Transaction): Promise<Session>;
+  /** The tool policy the registry admits each leased worker's MCP call through. */
+  readonly invocations: SessionInvocationPolicy;
+  sweep(): Promise<void>;
+}
+export interface SessionMessaging {
+  message(caller: Caller, input: SessionMessageInput): Promise<SessionMessage>;
+  messages(caller: Caller, sessionId?: string): Promise<SessionMessage[]>;
+  acknowledgeMessage(
+    caller: Caller,
+    input: { messageId: string; reply?: string; requestId: string },
+  ): Promise<SessionMessage>;
+  /** Refuses while a queued message waits for the worker's acknowledgement. */
+  requireMessagesAcknowledged(sessionId: string, tx: Transaction): Promise<void>;
+}
+export interface SessionInvocationPolicy {
+  readonly instructions: string;
   allowsTool(caller: Caller, name: string): Promise<boolean>;
   validate(caller: Caller, tool: string, input: Data): Promise<void>;
   cancel(invocation: SessionInvocation): Promise<void>;
@@ -517,7 +529,6 @@ export interface Sessions {
     invocation: SessionInvocation,
     handler: (caller: Caller, input: Data) => T | Promise<T>,
   ): Promise<T>;
-  sweep(): Promise<void>;
 }
 export interface UsageQuery {
   instanceId?: string;

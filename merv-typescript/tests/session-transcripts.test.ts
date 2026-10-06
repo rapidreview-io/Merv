@@ -385,8 +385,8 @@ test('the runner that held a session declares after it closed; every other calle
   // Closed by its own handoff, then released by its runner.
   const handed = await a.leased();
   const worker = await f.app.ctx.sessions.authenticate(handed.secret);
-  const prepared = await f.app.ctx.sessions.prepare(worker, 'finish', {});
-  await f.app.ctx.sessions.run(prepared, (caller) =>
+  const prepared = await f.app.ctx.sessions.invocations.prepare(worker, 'finish', {});
+  await f.app.ctx.sessions.invocations.run(prepared, (caller) =>
     f.app.ctx.state.transaction((tx) =>
       f.handle.transition(
         caller,

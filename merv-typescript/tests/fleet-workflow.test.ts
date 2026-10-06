@@ -1626,7 +1626,7 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
     }),
   );
   const tools = new ToolRegistry(h.scope);
-  tools.registerSessionPolicy(sessions);
+  tools.registerSessionPolicy(sessions.invocations);
   sessionsToolsPlugin.apply({
     tools,
     sessions,
@@ -1838,7 +1838,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
     papers.close();
   });
   for (const tool of [...webTools(web), ...nisaTools(papers)]) tools.register(tool);
-  tools.registerSessionPolicy(h.sessions);
+  tools.registerSessionPolicy(h.sessions.invocations);
   const worker = await h.sessions.authenticate(machine.secret);
   const offered = (await tools.describe(worker)).map(({ name }) => name);
   for (const name of [

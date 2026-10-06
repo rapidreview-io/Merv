@@ -8,7 +8,7 @@ const safe = (value: string) => value.replace(/https?:\/\/[^\s]+/gi, '[URL omitt
  * plugins' sections follow `session`, or `workers` in the project view. */
 export async function systemStatus(caller: Caller, sessions: Sessions) {
   if (caller.session) {
-    const session = await sessions.describe(caller);
+    const session = await sessions.session(caller);
     return {
       scope: 'session' as const,
       projectId: session.projectId,

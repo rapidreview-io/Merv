@@ -572,8 +572,10 @@ test('Task contexts freeze the Problem at lease offer, carry it once, and retain
   });
   async function workerContext(requestId: string) {
     const worker = await app.ctx.sessions.authenticate(secret);
-    const invocation = await app.ctx.sessions.prepare(worker, 'task.context', { requestId });
-    return app.ctx.sessions.run(
+    const invocation = await app.ctx.sessions.invocations.prepare(worker, 'task.context', {
+      requestId,
+    });
+    return app.ctx.sessions.invocations.run(
       invocation,
       async (caller, input: Data) =>
         await app.ctx.tasks.context(caller, input as unknown as TaskContext),
