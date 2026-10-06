@@ -307,6 +307,8 @@ const SOURCE_VERIFICATION =
  * and not part of the published graph, so it covers every live task of every version.
  */
 export const TASK_LIMITS = { reviewRounds: 3 };
+/** At most this many Done-when checks, so a delivery's confirmations always fit a workflow move. */
+const MAX_CHECKS = 200;
 const configuration = z
   .object({
     limits: z
@@ -1407,6 +1409,11 @@ export class TaskService implements Tasks {
           'Task requires at least one nonempty single-line Done-when check',
         );
         check(
+          input.checks.length <= MAX_CHECKS,
+          'invalid_checks',
+          `A task has at most ${MAX_CHECKS} Done-when checks`,
+        );
+        check(
           new Set(input.checks.map(folded)).size === input.checks.length,
           'invalid_checks',
           'Done-when checks must be distinct',
@@ -1544,36 +1551,49 @@ export class TaskService implements Tasks {
       return await this.hydrate(caller, await this.row(tx, caller, taskId), tx);
     });
   }
-  /** One saved checkpoint, read back only by a caller whose own context or assignment lists it. */
+  /**
+   * One saved checkpoint. A work checkpoint reads back for anyone who may read the project,
+   * whatever the task's state; a leased worker, and anyone reading a review's checkpoint, reads
+   * only what their own current context lists, filtered as it filters it. Any other is not found.
+   */
   async savedCheckpoint(caller: Caller, taskId: string, checkpointId: string) {
     caller = structuredClone(caller);
     return await this.state.transaction(async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      const saved = await tx.get<{ purpose: 'work' | 'review' }>(
-        'SELECT purpose FROM task_checkpoints WHERE project_id=? AND task_id=? AND id=?',
+      const saved = await tx.get<{ purpose: 'work' | 'review'; checkpoint: string }>(
+        'SELECT purpose,checkpoint FROM task_checkpoints WHERE project_id=? AND task_id=? AND id=?',
         caller.projectId,
         taskId,
         checkpointId,
       );
       check(saved, 'not_found', 'This task has no checkpoint with that ID', 404);
-      const workflow = await this.workflows.get(caller, taskId, tx);
-      const { row } = await this.assignmentFacts(
-        caller,
-        { taskId, purpose: saved.purpose, expectedRevision: workflow.revision },
-        tx,
-        true,
-        workflow,
-      );
-      const found = (
-        await this.visibleCheckpoints(
+      if (!caller.session && saved.purpose === 'work')
+        return JSON.parse(saved.checkpoint) as TaskCheckpoint;
+      const listed = async () => {
+        const workflow = await this.workflows.get(caller, taskId, tx);
+        const { row } = await this.assignmentFacts(
           caller,
-          taskId,
-          saved.purpose,
-          row.review_id,
-          workflow.revision,
+          { taskId, purpose: saved.purpose, expectedRevision: workflow.revision },
           tx,
-        )
-      ).find((checkpoint) => checkpoint.id === checkpointId);
+          true,
+          workflow,
+        );
+        return (
+          await this.visibleCheckpoints(
+            caller,
+            taskId,
+            saved.purpose,
+            row.review_id,
+            workflow.revision,
+            tx,
+          )
+        ).find((checkpoint) => checkpoint.id === checkpointId);
+      };
+      const found = await listed().catch((error: unknown) => {
+        // A caller without the assignment is shown no more than a missing checkpoint shows.
+        if (error instanceof MervError && error.status < 500) return undefined;
+        throw error;
+      });
       check(found, 'not_found', 'Your context lists no checkpoint with that ID', 404);
       return found;
     });

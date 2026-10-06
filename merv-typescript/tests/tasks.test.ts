@@ -451,6 +451,20 @@ test('a rendered brief is checked as written, without reading it back', async (t
   assert.equal((await f.artifacts.list(f.producer)).length, artifacts);
 });
 
+test('a task keeps at most 200 Done-when checks, so its delivery always fits a workflow move', async (t) => {
+  const f = await fixture();
+  t.after(f.cleanup);
+  const create = async (count: number) =>
+    await f.tasks.create(f.producer, {
+      title: 'Many checks',
+      goal: 'Check many things.',
+      checks: Array.from({ length: count }, (_, n) => `Check ${n} holds.`),
+      requestId: `checks-${count}`,
+    });
+  await assert.rejects(async () => await create(201), code('invalid_checks'));
+  assert.equal((await create(200)).acceptanceChecks.length, 200);
+});
+
 test('task creation retains the validated input while its pinned brief is read', async (t) => {
   const f = await fixture();
   t.after(f.cleanup);

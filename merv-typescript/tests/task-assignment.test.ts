@@ -471,11 +471,32 @@ test('a reviewer checkpoint reads back by its ID only for the reviewer whose con
       requestId: 'review-checkpoint',
     });
     const ref = { taskId: task.id, checkpointId: saved.id };
+    // A checkpoint hidden from its caller is not found, as one that does not exist.
     for (const caller of [f.reader.caller, f.producer.caller])
       await assert.rejects(async () => await f.app.ctx.tools.call('task.get', caller, ref), {
-        code: 'forbidden',
+        code: 'not_found',
       });
     assert.deepEqual(await f.app.ctx.tools.call('task.get', f.reviewer.caller, ref), saved);
+  } finally {
+    await f.close();
+  }
+});
+
+test('a work checkpoint reads back for whoever may read the project, after the task moved on', async () => {
+  const f = await fixture(true);
+  try {
+    const task = await f.create();
+    const saved = await f.app.ctx.tasks.checkpoint(f.producer.caller, {
+      taskId: task.id,
+      purpose: 'work',
+      expectedRevision: 0,
+      notes: 'Producer notes: halfway there.',
+      requestId: 'work-checkpoint',
+    });
+    await f.submit(task.id);
+    const ref = { taskId: task.id, checkpointId: saved.id };
+    for (const caller of [f.operator, f.reader.caller, f.producer.caller])
+      assert.deepEqual(await f.app.ctx.tools.call('task.get', caller, ref), saved);
   } finally {
     await f.close();
   }
