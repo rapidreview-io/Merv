@@ -20,7 +20,6 @@ import type {
   PaperKind,
   PaperPatch,
   PaperChanges,
-  PaperProposal,
   PaperPublication,
   PaperRevision,
   PaperRevisionSummary,
@@ -96,18 +95,7 @@ export class PaperService implements Paper {
     caller = this.capture(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       const documents = await this.documents(caller, tx);
-      const proposals = (
-        await tx.all<{ record: string; acceptance: string | null }>(
-          'SELECT record,acceptance FROM paper_proposals WHERE project_id=? ORDER BY _merv_rowid DESC',
-          caller.projectId,
-        )
-      ).map((row) => {
-        // A stored edit also keeps a whole copy of its document before it, which no reader uses.
-        const { documents, ...proposal }: PaperProposal = JSON.parse(row.record);
-        const acceptance = row.acceptance ? JSON.parse(row.acceptance) : null;
-        return { ...proposal, documents: documents.map(({ edit }) => ({ edit })), acceptance };
-      });
-      return { documents, citations: await this.citations(caller, tx), proposals };
+      return { documents, citations: await this.citations(caller, tx) };
     });
   }
   async documents(caller: Caller, transaction?: Transaction): Promise<PaperWorkspace['documents']> {
@@ -304,9 +292,10 @@ export class PaperService implements Paper {
       'paper_too_large',
       'Paper document exceeds 100 sections or 160,000 characters',
     );
-    const { proposalId: _proposal, review: _review, ...document } = before;
+    // Named field by field, so nothing a stored revision once carried is copied forward.
     return {
-      ...document,
+      projectId: before.projectId,
+      kind: before.kind,
       revision: before.revision + 1,
       sections,
       updatedBy: caller.actorId,

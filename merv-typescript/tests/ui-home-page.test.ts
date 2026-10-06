@@ -182,7 +182,6 @@ function boot() {
           },
         },
         citations: [],
-        proposals: [],
       },
     },
   });

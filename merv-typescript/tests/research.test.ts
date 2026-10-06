@@ -323,7 +323,6 @@ test('an empty research cycle completes after approved reflection without consol
   );
   assert.ok(!f.app.status().some(({ id }) => id.startsWith('consolidation')));
   await assert.rejects(async () => await f.advance(record), { code: 'research_complete' });
-  assert.equal((await f.app.ctx.paper.read(f.owner)).proposals.length, 0);
   // A text change specification opens nothing: the cycle neither follows nor leads another.
   assert.equal(record.origin, null);
   assert.equal(record.successorId, null);

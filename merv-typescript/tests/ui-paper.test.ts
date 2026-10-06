@@ -52,7 +52,6 @@ const workspace = (problem: unknown[], literature: unknown[] = []) => ({
     results: { current: revision('results', []), published: null },
   },
   citations: [],
-  proposals: [],
 });
 
 function boot(held: ReturnType<typeof workspace>, role = 'operator') {
@@ -360,19 +359,6 @@ test('the paper names its sources and reviews through their owners, and reads no
       results: empty('results'),
     },
     citations: [],
-    proposals: [
-      {
-        id: 'paperprop_1',
-        projectId: project.id,
-        source,
-        artifact: { id: 'art_1', hash: 'h' },
-        documents: [],
-        evidence: [],
-        createdBy: 'actor_p',
-        createdAt: at,
-        acceptance: { reviewId: REVIEW, reviewerId: 'actor_r', publications: [] },
-      },
-    ],
   };
   t.after(unmount);
   serve('/auth/config', { body: { enabled: false } });
@@ -449,14 +435,40 @@ test('the paper names its sources and reviews through their owners, and reads no
     link.textContent,
     link.getAttribute('href'),
   ]);
-  // The proposal’s source opens where the experiments row lists it, and stands in its own state.
-  assert.ok(
-    links.some(([name, to]) => name === 'Seed sweep' && to === `/experiments/${EXPERIMENT}`),
-  );
   assert.ok(
     links.some(([name, to]) => name === 'Seed sweep review' && to === `/reviews/${REVIEW}`),
   );
   // The review stands in the verdict the paper recorded, by the reviewer the paper recorded.
   assert.match(document.body.textContent!, /Seed sweep reviewpass · Ada · published Methods/);
-  assert.match(document.body.textContent!, /Earlier paper proposalsSeed sweepdone/);
+  // Paper proposals were retired: the page lists none, and keeps no retained-files group for them.
+  assert.doesNotMatch(document.body.textContent!, /Earlier paper proposals|Evidence retained/);
+});
+
+test('a publication made before reviews wrote the paper stands behind its sections, read without proposals', async (t) => {
+  t.after(async () => await unmount());
+  const held = workspace([]);
+  const methods = revision('methods', [section('s_setup', 'Setup', 'Three seeds.')]);
+  // As paper proposals published it: no review on the revision, no section list on the publication.
+  Object.assign(held.documents.methods, {
+    current: methods,
+    published: {
+      document: methods,
+      publication: {
+        id: 'paperpub_old',
+        projectId: project.id,
+        kind: 'methods',
+        revision: 1,
+        source: { kind: 'experiment', id: 'wf_old', revision: 3 },
+        reviewId: 'review_old',
+        evidence: [],
+        createdBy: 'actor_1',
+        createdAt: '2026-09-19T10:00:00Z',
+      },
+    },
+  });
+  boot(held);
+  await open();
+  const setup = document.getElementById('methods-setup')!;
+  assert.match(setup.textContent!, /Edited by Operator · .* · published/);
+  assert.ok(!text().includes('never reviewed'));
 });

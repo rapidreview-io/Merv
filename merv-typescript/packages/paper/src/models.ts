@@ -31,7 +31,6 @@ export interface PaperRevision {
   sections: PaperSection[];
   updatedBy: string | null;
   updatedAt: string | null;
-  proposalId?: string;
   review?: { id: string; source: PaperSource; verdict: Verdict };
 }
 /** A retained revision as history lists it: its section bodies are read with its number. */
@@ -69,7 +68,6 @@ export interface PaperPublication {
   projectId: string;
   kind: 'methods' | 'results';
   revision: number;
-  proposalId?: string;
   sectionIds?: string[];
   verdict?: Verdict;
   source: PaperSource;
@@ -78,17 +76,6 @@ export interface PaperPublication {
   createdBy: string;
   createdAt: string;
 }
-export interface PaperProposal {
-  id: string;
-  projectId: string;
-  source: PaperSource;
-  artifact: { id: string; hash: string };
-  documents: { edit: PaperEdit }[];
-  evidence: { id: string; hash: string }[];
-  createdBy: string;
-  createdAt: string;
-  acceptance: { reviewId: string; reviewerId: string; publications: PaperPublication[] } | null;
-}
 export interface PaperDocument {
   current: PaperRevision;
   published: { publication: PaperPublication; document: PaperRevision } | null;
@@ -96,7 +83,6 @@ export interface PaperDocument {
 export interface PaperWorkspace {
   documents: Record<PaperKind, PaperDocument>;
   citations: PaperCitation[];
-  proposals: PaperProposal[];
 }
 export interface PaperCite {
   id?: string;
