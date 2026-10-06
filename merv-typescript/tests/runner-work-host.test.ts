@@ -135,8 +135,12 @@ test('retained mode cannot run without a trusted cleanup barrier or admit a seco
   f.config.assignmentWorkspaceDirectory = assignments;
   assert.throws(() => new MachineRunner(f.config, { fetch: fake.fetch }), /cleanup barrier/);
   assert.throws(
-    () => validateRunnerConfig({ ...f.config, oneAssignment: true }),
-    /sequential sessions/,
+    () => validateRunnerConfig({ ...f.config, assignmentWorkspaceDirectory: undefined }),
+    /assignment root/,
+  );
+  assert.throws(
+    () => validateRunnerConfig({ ...f.config, workInstanceId: undefined }),
+    /assignment root/,
   );
   assert.throws(() => validateRunnerConfig({ ...f.config, capacity: 2 }), /capacity one/);
   const runner = f.make();

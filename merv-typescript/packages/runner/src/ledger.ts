@@ -310,9 +310,6 @@ export class LocalLedger {
       .run(input.id, input.sessionId, input.deadline, metadata, now, now, runDirectory);
     return this.get(input.id)!;
   }
-  count(): number {
-    return Number(this.db.prepare('SELECT count(*) AS n FROM launches').get()!.n);
-  }
   get(id: string): LaunchRecord | undefined {
     const row = this.db.prepare('SELECT * FROM launches WHERE id=?').get(id) as Row | undefined;
     return row ? launchRecord(row) : undefined;

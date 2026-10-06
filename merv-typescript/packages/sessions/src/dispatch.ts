@@ -780,8 +780,7 @@ export class SessionDispatch {
           !managed && (capabilities.has('git.local') || !capabilities.has('runner.2')),
         );
         candidate = selected.candidates.find(
-          (item) =>
-            !managed?.row.work_instance_id || item.instanceId === managed.row.work_instance_id,
+          (item) => !managed || item.instanceId === managed.row.work_instance_id,
         );
         reason = selected.reason ?? reason;
         if (candidate) {
@@ -805,7 +804,7 @@ export class SessionDispatch {
             hardDeadlineSeconds: Math.min(
               input.hardDeadlineSeconds ?? 86400,
               left,
-              managed?.row.step_seconds ? Number(managed.row.step_seconds) : Infinity,
+              managed ? Number(managed.row.step_seconds) : Infinity,
             ),
           },
           tx,

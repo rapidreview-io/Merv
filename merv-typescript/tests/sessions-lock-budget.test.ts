@@ -419,7 +419,7 @@ async function rented(t: TestContext) {
       runnerId,
       machine: { hostname, system: 'Linux', architecture: 'x64' },
       platforms: [hostedCodexPlatform],
-      capabilities: [...hostedCodexCapabilities],
+      capabilities: [...hostedCodexCapabilities, 'workflow.workhost.1'],
       capacity: 1,
     });
   await beat();

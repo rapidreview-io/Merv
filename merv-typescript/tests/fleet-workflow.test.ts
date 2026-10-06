@@ -363,7 +363,7 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   ]);
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1);
-  assert.deepEqual(f.allocations[0]?.owner, { kind: 'workflow', id: 'task_a:2' });
+  assert.deepEqual(f.allocations[0]?.owner, { kind: 'workflow', id: 'work:task_a' });
   // A two-hour step, and ten minutes more for its machine to start and stop.
   assert.equal(f.allocations[0]?.seconds, 130 * 60);
   await f.adapter.reconcile();
@@ -386,7 +386,7 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   });
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 2);
-  assert.equal(f.allocations[1]?.owner.id, 'task_a:2');
+  assert.equal(f.allocations[1]?.owner.id, 'work:task_a');
   assert.notEqual(f.allocations[0]?.requestId, f.allocations[1]?.requestId);
   // A create whose reply was lost has launched nothing, so an unwanted one is cancelled too.
   f.allocations[1]!.phase = 'uncertain';
@@ -395,10 +395,10 @@ test('workflow adapter covers demand with one pending slot and retries a claimed
   await f.adapter.reconcile();
   assert.equal(f.allocations[1]?.intent, 'stop');
   await f.adapter.reconcile();
-  assert.equal(f.allocations[2]?.owner.id, 'task_b:0');
+  assert.equal(f.allocations[2]?.owner.id, 'work:task_b');
 });
 
-test('a runner claimed by another step covers its actual work and frees the rent target', async (t) => {
+test('a running work host covers every revision of its work item, and another item gets its own', async (t) => {
   const f = await fixture(t, { maxAgents: 3 });
   const a = { instanceId: 'task_a', expectedRevision: 0 };
   const b = { instanceId: 'task_b', expectedRevision: 0 };
@@ -414,27 +414,16 @@ test('a runner claimed by another step covers its actual work and frees the rent
   });
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 1, 'an unclaimed runner still covers its rent target');
-
-  f.inspections.get(first.id)!.session = {
-    id: 'session_b',
-    instanceId: b.instanceId,
-    expectedRevision: b.expectedRevision,
-    status: 'active',
-    closedAt: null,
-    outcome: null,
-    releaseAcknowledged: false,
-    capturePending: false,
-  };
-  f.demand([a, b]);
+  // The item's next step is a new revision: the same host takes it.
+  f.demand([{ ...a, expectedRevision: 1 }, b]);
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 2);
-  assert.equal(f.allocations[1]?.owner.id, 'task_a:0');
-  assert.notEqual(f.allocations[1]?.requestId, first.requestId);
+  assert.equal(f.allocations[1]?.owner.id, 'work:task_b');
   await f.adapter.reconcile();
-  assert.equal(f.allocations.length, 2, 'actual task and fresh rent target are both covered');
+  assert.equal(f.allocations.length, 2, 'both items are covered');
 });
 
-test('workflow bounds created but unclaimed retries across restart without blocking new revisions', async (t) => {
+test('workflow bounds created but unclaimed retries across restart without blocking other work', async (t) => {
   const f = await fixture(t);
   f.demand([{ instanceId: 'task_a', expectedRevision: 2 }]);
   await f.adapter.reconcile();
@@ -465,25 +454,26 @@ test('workflow bounds created but unclaimed retries across restart without block
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 3, 'two unclaimed attempts exhaust this task revision');
 
+  // Machines are rented per work item, so its unclaimed streak holds a later revision back too;
+  // another work item is not held.
   f.demand([{ instanceId: 'task_a', expectedRevision: 3 }]);
   await f.adapter.reconcile();
-  assert.equal(f.allocations[3]?.owner.id, 'task_a:3');
-  f.allocations[3]!.phase = 'released';
+  assert.equal(f.allocations.length, 3);
   f.demand([{ instanceId: 'task_b', expectedRevision: 2 }]);
   await f.adapter.reconcile();
-  assert.equal(f.allocations[4]?.owner.id, 'task_b:2');
+  assert.equal(f.allocations[3]?.owner.id, 'work:task_b');
 });
 
-test('a retry window counts only the machines its renting counts, when a config change left a work host behind', async (t) => {
+test('a retry window counts only its work host’s machines, not one a retired one-machine-per-step owner left', async (t) => {
   const f = await fixture(t);
   const target = { instanceId: 'flipped', expectedRevision: 2 };
   f.demand([target]);
   await f.adapter.reconcile();
-  // A work host rented for this instance before reuse was switched off.
+  // A machine rented for this exact revision before every machine was a work host.
   f.allocations.unshift({
     ...f.allocations[0]!,
-    id: 'flt_old_work_host',
-    owner: { kind: 'workflow', id: 'work:flipped' },
+    id: 'flt_old_step_host',
+    owner: { kind: 'workflow', id: 'flipped:2' },
   });
   const fail = (a: FleetAllocation) => {
     a.createAttempted = true;
@@ -737,6 +727,7 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
     baseUrl: 'https://merv.example.test',
     projectId: f.caller.projectId,
     enrollmentToken: `me_${'a'.repeat(64)}`,
+    workInstanceId: 'task_a',
   });
   // The provider key stays on Main: hosted Codex reaches the model through its relay.
   assert.equal(first.includes(f.modelApiKey), false);
@@ -753,7 +744,9 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
       enabled: true,
       parallelism: 1,
     },
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'workflow.workhost.1'],
+    workInstanceId: 'task_a',
+    stepSeconds: 120 * 60,
     expiresAt: allocation.deadlineAt,
   });
   const binding = {
@@ -762,7 +755,9 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
     source: f.source,
     runtimeProfileId: 'image-profile',
     platform: hostedCodexPlatform,
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'workflow.workhost.1'],
+    workInstanceId: 'task_a',
+    stepSeconds: 120 * 60,
     expiresAt: allocation.deadlineAt,
   };
   assert.equal(await f.state.transaction((tx) => f.validator().current(binding, tx)), true);
@@ -780,10 +775,15 @@ test('bootstrap carries only the managed enrollment and model key, with fixed pr
     ),
     false,
   );
-  assert.equal(
-    await f.state.transaction((tx) => f.validator().current({ ...binding, capabilities: [] }, tx)),
-    false,
-  );
+  for (const changed of [
+    { capabilities: ['code.v2'] },
+    { workInstanceId: 'task_b' },
+    { stepSeconds: 60 * 60 },
+  ])
+    assert.equal(
+      await f.state.transaction((tx) => f.validator().current({ ...binding, ...changed }, tx)),
+      false,
+    );
   allocation.phase = 'released';
   assert.equal(await f.state.transaction((tx) => f.validator().current(binding, tx)), false);
   allocation.phase = 'queued';
@@ -801,7 +801,9 @@ test('closing unregisters first: a bound session is never judged stale while a p
     source: f.source,
     runtimeProfileId: 'image-profile',
     platform: hostedCodexPlatform,
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'workflow.workhost.1'],
+    workInstanceId: 'task_a',
+    stepSeconds: 120 * 60,
     expiresAt: allocation.deadlineAt,
   };
   const [owner, validator] = [f.owner(), f.validator()];
@@ -972,7 +974,7 @@ test('the mounted relay reads a grant through the adapter, charged to the alloca
   });
 });
 
-test('owner waits for closed-session capture and retires a runner that never claims', async (t) => {
+test('a work host waits for capture and acknowledgement, idles a bounded time, and retires a runner that never claims', async (t) => {
   const f = await fixture(t);
   f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
   await f.adapter.reconcile();
@@ -1005,11 +1007,17 @@ test('owner waits for closed-session capture and retires a runner that never cla
   f.inspections.get(allocation.id)!.session!.releaseAcknowledged = false;
   f.inspections.get(allocation.id)!.session!.capturePending = false;
   assert.equal(await f.owner().observe(allocation), 'running');
-  // An acknowledgement lost for two minutes after the close no longer keeps the machine.
-  f.inspections.get(allocation.id)!.session!.closedAt = '2026-09-21T00:00:00Z';
+  // An acknowledgement lost for two minutes after the close no longer keeps the machine, and
+  // never lets it serve a successor.
+  const session = f.inspections.get(allocation.id)!.session!;
+  session.closedAt = '2026-09-21T23:58:00.001Z';
+  assert.equal(await f.owner().observe(allocation), 'running');
+  session.closedAt = '2026-09-21T23:58:00.000Z';
   assert.equal(await f.owner().observe(allocation), 'finished');
-  f.inspections.get(allocation.id)!.session!.closedAt = new Date().toISOString();
-  f.inspections.get(allocation.id)!.session!.releaseAcknowledged = true;
+  // Acknowledged, the host waits five minutes for its work item's next step, then stops.
+  session.releaseAcknowledged = true;
+  assert.equal(await f.owner().observe(allocation), 'running');
+  session.closedAt = '2026-09-21T23:55:00.000Z';
   assert.equal(await f.owner().observe(allocation), 'finished');
   f.inspections.set(allocation.id, {
     runnerId: 'managed-machine',
@@ -1019,7 +1027,7 @@ test('owner waits for closed-session capture and retires a runner that never cla
   f.demand([]);
   f.advance(30_001);
   assert.equal(await f.owner().observe(allocation), 'finished');
-  // Demand returns, but a one-assignment runner that has not claimed by now never will.
+  // Demand returns, but a host that has not claimed by its enrollment's end never will.
   f.demand([{ instanceId: 'task_a', expectedRevision: 0 }]);
   assert.equal(await f.owner().observe(allocation), 'running');
   f.advance(900_000 - 30_001);
@@ -1050,7 +1058,9 @@ test('a new director lets in-flight work finish under its own source, and direct
     source: f.source,
     runtimeProfileId: 'image-profile',
     platform: hostedCodexPlatform,
-    capabilities: ['code.v2'],
+    capabilities: ['code.v2', 'workflow.workhost.1'],
+    workInstanceId: 'task_a',
+    stepSeconds: 120 * 60,
     expiresAt: allocation.deadlineAt,
   };
   // Sessions now serves the project as the colleague, who directs what follows.
@@ -1085,11 +1095,11 @@ test('Fleet serves each project as its owner, within its machines', async (t) =>
   // Five machines in all, taken in the order the projects are served.
   const first = f.caller.projectId;
   assert.deepEqual(f.open(), [
-    [first, 'first_0:0'],
-    [first, 'first_1:0'],
-    [second.id, 'second_0:0'],
-    [second.id, 'second_1:0'],
-    [theirs.id, 'theirs_0:0'],
+    [first, 'work:first_0'],
+    [first, 'work:first_1'],
+    [second.id, 'work:second_0'],
+    [second.id, 'work:second_1'],
+    [theirs.id, 'work:theirs_0'],
   ]);
   for (const a of f.allocations)
     assert.deepEqual(a.source, f.served.find((row) => row.projectId === a.projectId)!.source);
@@ -1117,18 +1127,18 @@ test('Fleet serves each project as its owner, within its machines', async (t) =>
   );
   await f.adapter.reconcile();
   assert.deepEqual(f.open(), [
-    [first, 'first_0:0'],
-    [second.id, 'second_0:0'],
-    [second.id, 'second_1:0'],
-    [theirs.id, 'theirs_0:0'],
-    [theirs.id, 'theirs_1:0'],
+    [first, 'work:first_0'],
+    [second.id, 'work:second_0'],
+    [second.id, 'work:second_1'],
+    [theirs.id, 'work:theirs_0'],
+    [theirs.id, 'work:theirs_1'],
   ]);
 
   await f.restart({ people: ['*'], maxAgents: 10 });
   await f.adapter.reconcile();
   assert.deepEqual(f.open().slice(5), [
-    [theirs.id, 'theirs_2:0'],
-    [outsider.id, 'outsider_0:0'],
+    [theirs.id, 'work:theirs_2'],
+    [outsider.id, 'work:outsider_0'],
   ]);
   assert.equal(f.serves(outsider.id), true);
 });
@@ -1154,8 +1164,8 @@ test('a director who can no longer write directs nothing, and a failing project 
   f.demand(targets('healthy', 1), healthy.id);
   await f.adapter.reconcile();
   assert.deepEqual(f.open(), [
-    [f.caller.projectId, 'first_0:0'],
-    [healthy.id, 'healthy_0:0'],
+    [f.caller.projectId, 'work:first_0'],
+    [healthy.id, 'work:healthy_0'],
   ]);
   assert.deepEqual([f.caller.projectId, failing.id, unconnected.id, healthy.id].map(f.serves), [
     true,
@@ -1177,13 +1187,13 @@ test('a project whose demand cannot be read keeps its machines and its standing 
   const f = await fixture(t);
   f.demand(targets('kept', 1));
   await f.adapter.reconcile();
-  assert.deepEqual(f.open(), [[f.caller.projectId, 'kept_0:0']]);
+  assert.deepEqual(f.open(), [[f.caller.projectId, 'work:kept_0']]);
   f.allocations[0]!.phase = 'provisioning';
   f.demand(new MervError('state_unavailable', 'Lock timeout', 503));
   await f.adapter.reconcile();
   assert.deepEqual(
     f.open(),
-    [[f.caller.projectId, 'kept_0:0']],
+    [[f.caller.projectId, 'work:kept_0']],
     'a transient error cancels nothing',
   );
   assert.equal(f.allocations[0]!.intent, 'run');
@@ -1274,8 +1284,9 @@ test('the review director takes only what the owner’s own hand may not, within
   assert.deepEqual(
     f.allocations.map((a) => [a.owner.id, a.source.kind]),
     [
-      ['shared_0:0', 'human'],
-      ['review_0:0', 'service'],
+      ['work:shared_0', 'human'],
+      // A host serves its work item's reviews too, so it is rented under the owner.
+      ['work:review_0', 'human'],
     ],
   );
 });
@@ -1528,7 +1539,7 @@ test(
     await h.sessions.dispatch.setDispatch(caller, { enabled: true });
     const work = await h.start(caller);
     const target = { instanceId: work.id, expectedRevision: work.revision };
-    const id = `${work.id}:${work.revision}`;
+    const id = `work:${work.id}`;
     await h.adapter.start();
     for (let index = 0; index < 2; index++) {
       const attempts = (await h.fleet.listOwned(h.adapter, [id])).filter((a) => a.owner.id === id);
@@ -1566,11 +1577,12 @@ test(
   },
 );
 
-const heartbeat = (runnerId: string) => ({
+/** A managed runner names its work host's capability too; an external one does not. */
+const heartbeat = (runnerId: string, workHost = true) => ({
   runnerId,
   machine: { hostname: runnerId, system: 'Linux', architecture: 'x64' },
   platforms: [hostedCodexPlatform],
-  capabilities: [...hostedCodexCapabilities],
+  capabilities: [...hostedCodexCapabilities, ...(workHost ? ['workflow.workhost.1'] : [])],
   capacity: 1,
 });
 const claim = (runnerId: string) => ({
@@ -1607,7 +1619,7 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
     await h.start(second),
   ];
   // An ordinary runner claims through the existing path before Fleet reads demand.
-  await sessions.dispatch.heartbeatRunner(caller, heartbeat('external'));
+  await sessions.dispatch.heartbeatRunner(caller, heartbeat('external', false));
   const externalClaim = claim('external');
   const external = await sessions.dispatch.lease(caller, externalClaim);
   assert.ok(external.session, external.reason);
@@ -1619,7 +1631,7 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
   const remaining = targets.filter((target) => target.id !== external.session!.instanceId);
   assert.deepEqual(
     new Set(allocations.map((a) => a.owner.id)),
-    new Set(remaining.map((target) => `${target.id}:0`)),
+    new Set(remaining.map((target) => `work:${target.id}`)),
   );
   // Each machine acts as the founder in the project it works for.
   for (const a of allocations)
@@ -1688,7 +1700,11 @@ async function managedFleetScenario(t: TestContext, workerCount: number) {
       );
     }),
   );
-  await fleet.tick(); // Observe the completed owner and stop its runtime.
+  // Each host waits five minutes for its work item's next step, then stops.
+  await fleet.tick();
+  assert.equal(h.stopped.size, 0);
+  h.advance(310_000);
+  await fleet.tick(); // Observe the idle hosts and stop their runtimes.
   assert.equal(h.stopped.size, workerCount);
   assert.deepEqual(await open(), []);
   const stillExternal = await sessions.heartbeat(caller, {
@@ -1746,7 +1762,7 @@ test('a target that returns after more than 200 released allocations gets a new 
   const caller = await h.project('History');
   const target = await h.start(caller);
   await h.adapter.start();
-  const owner = { kind: 'workflow', id: `${target.id}:0` };
+  const owner = { kind: 'workflow', id: `work:${target.id}` };
   const requestId = (generation: number) => `wf:${digest({ id: owner.id, generation })}`;
   for (let generation = 0; generation <= 200; generation++)
     await h.fleet.cancelOwned(
@@ -1819,7 +1835,7 @@ test('a Fleet machine’s hosted Codex launch is given web and literature search
   const target = await h.start(caller);
   await h.adapter.start();
   const [allocation] = await h.fleet.listOwned(h.adapter, []);
-  assert.equal(allocation.owner.id, `${target.id}:0`);
+  assert.equal(allocation.owner.id, `work:${target.id}`);
   await h.fleet.tick(); // Reserve and provision.
   await h.fleet.tick(); // Launch.
   const machine = await boot(h, allocation);
@@ -1939,12 +1955,8 @@ test('Fleet produces Pi-directed work and leases an independent current Git revi
   );
   await h.adapter.start();
   const allocations = await h.fleet.listOwned(h.adapter, []);
-  const producingAllocation = allocations.find(
-    (a) => a.owner.id === `${producing.id}:${producing.workflow.revision}`,
-  )!;
-  const reviewingAllocation = allocations.find(
-    (a) => a.owner.id === `${review.id}:${review.workflow.revision}`,
-  )!;
+  const producingAllocation = allocations.find((a) => a.owner.id === `work:${producing.id}`)!;
+  const reviewingAllocation = allocations.find((a) => a.owner.id === `work:${review.id}`)!;
   assert.ok(producingAllocation);
   assert.ok(reviewingAllocation);
   assert.deepEqual(
@@ -1963,7 +1975,7 @@ test('Fleet produces Pi-directed work and leases an independent current Git revi
   await assert.rejects(
     h.fleet.request(
       { projectId: caller.projectId, actorId: reader.actor.id, credentialId: reader.credential.id },
-      { requestId: 'reader', owner: { kind: 'workflow', id: `${producing.id}:0` } },
+      { requestId: 'reader', owner: { kind: 'workflow', id: `work:${producing.id}` } },
     ),
     { code: 'fleet_owner_denied' },
   );
@@ -2029,11 +2041,8 @@ test('a current review step’s model calls count toward the project owner', asy
   assert.equal((await h.adapter.modelBudget(worker))?.blocked, true);
 });
 
-test('opted-in work host covers later review revisions and keeps a bounded idle machine', async (t) => {
-  const f = await fixture(t, {
-    reuseWorkHosts: true,
-    reusableRuntimeProfileIds: ['image-profile'],
-  });
+test('a work host covers later review revisions and keeps a bounded idle machine', async (t) => {
+  const f = await fixture(t);
   f.demand([{ instanceId: 'task_reused', expectedRevision: 0 }]);
   await f.adapter.reconcile();
   const allocation = f.allocations[0]!;
@@ -2045,9 +2054,11 @@ test('opted-in work host covers later review revisions and keeps a bounded idle 
     'workflow.workhost.1',
   ]);
   assert.equal((f.ensureInputs[0] as any).stepSeconds, 120 * 60);
+  assert.equal(await f.state.transaction((tx) => f.owner().valid(allocation, tx)), true);
+  // A machine of the retired one-machine-per-step owner is no longer valid.
   assert.equal(
     await f.state.transaction((tx) =>
-      f.owner().valid({ ...allocation, profileId: 'unreviewed-image' }, tx),
+      f.owner().valid({ ...allocation, owner: { kind: 'workflow', id: 'task_reused:0' } }, tx),
     ),
     false,
   );
@@ -2065,7 +2076,6 @@ test('opted-in work host covers later review revisions and keeps a bounded idle 
   allocation.runtime = { ...machine!, launch: { deliveryState: 'launched' } } as any;
   allocation.phase = 'running';
   f.inspections.set(allocation.id, {
-    workInstanceId: 'task_reused',
     runnerId: 'reuse',
     enrollmentExpiresAt,
     session: {
@@ -2107,17 +2117,13 @@ test('opted-in work host covers later review revisions and keeps a bounded idle 
 });
 
 test('a fresh work host rented for a review is kept while the review waits for it', async (t) => {
-  const f = await fixture(t, {
-    reuseWorkHosts: true,
-    reusableRuntimeProfileIds: ['image-profile'],
-  });
+  const f = await fixture(t);
   f.demand([]);
   f.demand([{ instanceId: 'task_review', expectedRevision: 1 }], `review:${f.caller.projectId}`);
   await f.adapter.reconcile();
   const allocation = f.allocations[0]!;
   assert.equal(allocation.owner.id, 'work:task_review');
   f.inspections.set(allocation.id, {
-    workInstanceId: 'task_review',
     runnerId: 'fresh',
     enrollmentExpiresAt,
     session: null,

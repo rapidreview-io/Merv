@@ -1,5 +1,7 @@
-/** Hosted workflow supervisor. Bootstrap carries expiring enrollment only; Codex calls the
- *  model through Main's relay with its session bearer, so no provider key reaches the machine. */
+/** Hosted workflow supervisor of one work host: it runs every step of one work item, each in a
+ *  fresh session, resetting the assignment identity between them, until Fleet stops the machine.
+ *  Bootstrap carries expiring enrollment only; Codex calls the model through Main's relay with its
+ *  session bearer, so no provider key reaches the machine. */
 import { randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -15,7 +17,7 @@ const schema = z
     baseUrl: z.string().url(),
     projectId: z.string().min(1),
     enrollmentToken: z.string().regex(/^me_[0-9a-f]{64}$/),
-    workInstanceId: z.string().min(1).max(200).optional(),
+    workInstanceId: z.string().min(1).max(200),
   })
   .strict();
 const directory = '/var/lib/merv-runner';
@@ -93,18 +95,14 @@ async function main() {
       projectId: data.projectId,
       credentialEnv: 'MERV_HOSTED_SOURCE',
       capacity: 1,
-      ...(data.workInstanceId ? { workInstanceId: data.workInstanceId } : { oneAssignment: true }),
+      workInstanceId: data.workInstanceId,
       assignmentWorkspaceDirectory: assignmentRoot,
       workspaceDrivers: ['code'],
       profiles: [
         { ...hostedCodexPlatform, executable: codex, isolatedLauncher: launcher, hosted: true },
       ],
     },
-    {
-      autoPoll: false,
-      drivers: [codeWorkspaceDriver],
-      ...(data.workInstanceId ? { resetAssignment } : {}),
-    },
+    { autoPoll: false, drivers: [codeWorkspaceDriver], resetAssignment },
   );
   delete process.env.MERV_HOSTED_SOURCE;
   controlToken = '';
@@ -115,32 +113,14 @@ async function main() {
   process.on('SIGINT', () => {
     stopping = true;
   });
-  // The step's own deadline, which the server sets, ends the launch; this adds no clock of its own.
-  const emptyUntil = Date.now() + 60_000;
+  // Each step's own deadline, which the server sets, ends its launch, and Fleet stops the machine
+  // once its work item wants no more; this adds no clock of its own.
   try {
     status('starting');
     await runner.start();
     status('connected');
     while (!stopping) {
       const snapshot = runner.snapshot();
-      if (!data.workInstanceId && snapshot.launches.length > 1)
-        throw new Error('one-assignment invariant failed');
-      const launch = snapshot.launches[0];
-      if (
-        !data.workInstanceId &&
-        launch &&
-        ['exited', 'stopped'].includes(launch.status) &&
-        !launch.releasePending &&
-        !launch.transcriptPending &&
-        !launch.workspace?.capturePending
-      ) {
-        status('finished');
-        return;
-      }
-      if (!data.workInstanceId && !launch && Date.now() > emptyUntil) {
-        status('empty');
-        return;
-      }
       if (snapshot.state === 'unauthorized') return;
       if (snapshot.lastError === 'assignment_cleanup_failed')
         throw new Error('assignment cleanup failed');

@@ -380,31 +380,29 @@ from step 1 have to be done again.
 - **Rollback.** An older Main ignores `MERV_PI_MODELS` and runs every
   conversation on `gpt-6-luna`; the stored models are kept for a roll forward.
 
-## Retaining a CPU host between workflow phases
+## One CPU host per work item
 
-Reuse is off by default. After the exact hosted image passes the retained-workflow Linux
-isolation and multi-phase gates, set `MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS=true` and
-`MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS` to a JSON array of approved `srp_` IDs.
-These are exact Sandboxes runtime profile IDs, not release IDs, provider names or image tags.
-The ID hashes the JSON array `[provider, offerId, releaseId, leaseSeconds, ttlSeconds]` with
-SHA-256 and prefixes `srp_`; use the rendered lease (clamped to 900 seconds for workflows)
-and the TTL default of 300. The profile identity is checked against the native runtime
-constructor by the renderer regression test.
+Every Fleet workflow machine is a work host: it serves all the steps of one work item, each in a
+fresh session, and is stopped when the item settles (after five idle minutes), when its release
+acknowledgement is overdue, or at its deadline. There is no switch and no approval list:
+`MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS` and `MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS` are
+ignored if set, and may be removed from the env file.
 
-Workflows rent the first configured runtime. The renderer enables reuse only when that exact
-profile is approved. An empty or stale list keeps workflow execution enabled in the existing
-single-session mode. The hosted release switch deliberately preserves the approval list:
-a new image changes the profile ID and therefore falls back until its gates pass and its
-new ID is explicitly approved. Rollback enables reuse only if the restored profile was
-explicitly approved; an older unapproved image stays in single-session mode. Do not copy
-approval to a new hash based only on a successful Pi canary. Keep only reviewed profiles
-in the list, back up the private env and dry-run the renderer before recreating Main.
+The list used to protect against renting retained machines on an image nobody had proved could
+run several sessions in sequence safely. That proof is now automatic: the hosted release's
+workflow gate (`linux-workflow-gate.py`, run against the exact candidate on every boundary
+release, before any push or switch) enrolls the image's supervisor with a work-host bootstrap,
+runs two Codex steps in one retained working directory with fresh credentials, and between them
+resets through the supervisor's own launcher (`assignment-probed.py --reset`), checking that a
+detached assignment process is killed, private home and temp state is gone, and the step's files
+are kept. A worker-lane release changes only the Pi worker bundle, so its image keeps the gated
+supervisor and reset. An image that cannot be a work host fails the gate and is never switched in.
 
-Disabling reuse or removing an active profile's approval fences existing retained hosts and
-starts their normal Fleet cleanup. Make activation or retirement during a quiet window;
-retained files that were never uploaded are not a VM-loss recovery promise. Session actors,
-credentials, capture/transcript barriers, per-phase deadlines and billing remain independent
-for each phase; idle retention is bounded to five minutes and by the allocation deadline.
+An image older than work hosts (before 2026-10-02) refuses the work-host bootstrap; Fleet then
+stops renting for the revision after two unclaimed machines, so never pin such an image by hand.
+Rolling Main back past this change needs the old approval list naming the current profile, or its
+machines will not enroll on images built after this change. Releasing this change stops any
+one-machine-per-step machine still running; release in a quiet window.
 
 ## Restarts and limits
 

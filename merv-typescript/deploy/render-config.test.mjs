@@ -319,8 +319,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet-workflow').config, {
     enabled: true,
     people: ['https://identity.example/auth/v1 founder'],
-    reuseWorkHosts: false,
-    reusableRuntimeProfileIds: [],
     modelApiKeyEnv: 'MODEL_KEY',
     baseUrl: 'https://merv.example',
     maxAgents: 10,
@@ -607,7 +605,7 @@ test('Hugging Face config contains a key environment reference and the public br
   assert.equal(run().status, 0, 'missing optional key leaves the control service bootable');
 });
 
-test('work-host reuse requires opt-in and exact current image profile; upgrades safely fall back', (t) => {
+test('the retired work-host reuse switch and approval list are ignored, whatever their value', (t) => {
   const { run, plugin } = renderer(t);
   const workflow = {
     ...fleet,
@@ -616,84 +614,21 @@ test('work-host reuse requires opt-in and exact current image profile; upgrades 
     MERV_FLEET_WORKFLOW_MODEL_API_KEY_ENV: 'MODEL_KEY',
     MERV_FLEET_WORKFLOW_BASE_URL: 'https://merv.example',
     MODEL_KEY: 'fixture-model-key',
-    MERV_FLEET_RUNTIME_LEASE_SECONDS: '3600',
   };
   assert.equal(run(workflow).status, 0);
-  const profile = plugin('sandboxes').config.runtimes[0];
-  // Cross-check against the actual runtime constructor, including renderer lease clamping
-  // and native TTL default, so a duplicated hash algorithm cannot silently drift.
-  const native = spawnSync(
-    process.execPath,
-    [
-      '--import',
-      'tsx',
-      '--input-type=module',
-      '-e',
-      `import { SandboxRuntimeRunner } from './packages/sandboxes/src/runtimes.ts';
-     console.log(new SandboxRuntimeRunner({}, () => ({}), JSON.parse(process.argv[1])).profileId);`,
-      JSON.stringify(profile),
-    ],
-    { cwd: new URL('..', import.meta.url), encoding: 'utf8' },
-  );
-  assert.equal(native.status, 0, native.stderr);
-  const approved = native.stdout.trim();
-  const authorization = {
-    MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS: JSON.stringify([approved]),
-  };
-  assert.equal(run({ ...workflow, ...authorization }).status, 0);
-  assert.equal(plugin('fleet-workflow').config.reuseWorkHosts, false);
-  const enabled = { ...workflow, ...authorization, MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS: 'true' };
-  assert.equal(run(enabled).status, 0);
-  assert.equal(plugin('fleet-workflow').config.reuseWorkHosts, true);
-  assert.deepEqual(plugin('fleet-workflow').config.reusableRuntimeProfileIds, [approved]);
-  const configured = { ...profile, label: 'Standard', slots: 1 };
-  assert.equal(
-    run({
-      ...enabled,
-      MERV_FLEET_RUNTIMES: JSON.stringify([
-        { ...configured, key: 'new-default', releaseId: `rt1_${'b'.repeat(64)}` },
-        configured,
-      ]),
-    }).status,
-    0,
-  );
-  assert.equal(
-    plugin('fleet-workflow').config.reuseWorkHosts,
-    false,
-    'approval of a non-default profile is insufficient',
-  );
-  assert.equal(
-    run({ ...enabled, MERV_FLEET_RUNTIMES: JSON.stringify([{ ...configured, ttlSeconds: 301 }]) })
-      .status,
-    0,
-  );
-  assert.equal(
-    plugin('fleet-workflow').config.reuseWorkHosts,
-    false,
-    'TTL is part of the approved identity',
-  );
-  const upgrade = { ...enabled, MERV_FLEET_RUNTIME_RELEASE_ID: `rt1_${'b'.repeat(64)}` };
-  assert.equal(run(upgrade).status, 0);
-  assert.equal(plugin('fleet-workflow').config.reuseWorkHosts, false);
-  assert.deepEqual(plugin('fleet-workflow').config.reusableRuntimeProfileIds, [approved]);
-  assert.equal(run(enabled).status, 0); // rollback to the explicitly approved profile
-  assert.equal(plugin('fleet-workflow').config.reuseWorkHosts, true);
-  assert.equal(
-    run({ ...enabled, MERV_FLEET_RUNTIME_RELEASE_ID: `rt1_${'c'.repeat(64)}` }).status,
-    0,
-  );
-  assert.equal(plugin('fleet-workflow').config.reuseWorkHosts, false); // older unapproved image
-  assert.equal(
-    run({ ...enabled, MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS: '[]' }).status,
-    0,
-  );
-  assert.equal(plugin('fleet-workflow').config.reuseWorkHosts, false);
-  for (const value of ['["standard"]', '{}', JSON.stringify([approved, approved])])
-    assert.notEqual(
-      run({ ...enabled, MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS: value }).status,
-      0,
-    );
-  assert.notEqual(run({ ...enabled, MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS: 'yes' }).status, 0);
+  const rendered = plugin('fleet-workflow').config;
+  for (const [reuse, approved] of [
+    ['true', `["srp_${'a'.repeat(64)}"]`],
+    ['false', '[]'],
+    ['yes', '{}'],
+  ]) {
+    const retired = {
+      MERV_FLEET_WORKFLOW_REUSE_WORK_HOSTS: reuse,
+      MERV_FLEET_WORKFLOW_REUSABLE_RUNTIME_PROFILE_IDS: approved,
+    };
+    assert.equal(run({ ...workflow, ...retired }).status, 0);
+    assert.deepEqual(plugin('fleet-workflow').config, rendered);
+  }
 });
 
 test('managed ML requires both native and ML configuration and never renders its bearer', (t) => {

@@ -17,6 +17,9 @@ session = 'ms_' + secrets.token_urlsafe(32)
 hf_token = 'hf_' + secrets.token_hex(20)
 hf_endpoint = 'https://experiments.rapidreview.io/hf'
 hf_digest = hashlib.sha256(hf_token.encode()).hexdigest()
+# Every workflow machine is a work host of one work item: an image whose supervisor refuses that
+# bootstrap, or cannot reset between its steps below, fails here, before its release switches.
+work_instance = 'gate_work_' + secrets.token_hex(8)
 enrolled = threading.Event()
 # The top-level keys and tool types fleet/src/codex-relay.ts admits: a Codex that sends others fails here.
 KEYS = {'model', 'instructions', 'input', 'tools', 'tool_choice', 'parallel_tool_calls', 'reasoning',
@@ -138,7 +141,7 @@ base = f'http://127.0.0.1:{server.server_port}'
 filename, refused = supervise({'modelApiKey': model_key})
 refused_output = b''.join(refused.communicate(timeout=30))
 assert refused.returncode != 0 and not enrolled.is_set() and not filename.exists()
-filename, parent = supervise({})
+filename, parent = supervise({'workInstanceId': work_instance})
 try:
     assert enrolled.wait(30), 'fixed workflow supervisor did not reach managed enrollment'
     assert parent.poll() is None
@@ -215,9 +218,9 @@ def checked_launch():
 
 
 def reset():
+    # Exactly the supervisor's barrier between a work host's steps (smoke-supervisor.ts).
     result = subprocess.run(
-        ['/usr/bin/python3', '/opt/merv/python/merv_sandboxes/runtimes/assignment.py', '--reset'],
-        env={'PATH': '/usr/bin:/bin', 'LANG': 'C.UTF-8'},
+        ['/opt/merv/runtime/assignment-probed.py', '--reset'], cwd='/', env={'PATH': '/usr/bin:/bin'},
         stdin=subprocess.DEVNULL, capture_output=True, timeout=15,
     )
     assert result.returncode == 0, 'retained workflow reset refused'
@@ -306,7 +309,7 @@ for secret in secret_values:
 sandboxed = all(sandbox_results)
 print(json.dumps({
     'gate': 'linux-workflow-dispatch', 'fixedSupervisor': True, 'bootstrapWithModelKeyRefused': True,
-    'managedEnrollmentReached': True, 'bootstrapRemoved': True, 'noCredentialInArgvOrEnvironment': True,
+    'managedEnrollmentReached': True, 'workHostBootstrapEnrolled': True, 'bootstrapRemoved': True, 'noCredentialInArgvOrEnvironment': True,
     'codexCalledOnlyTheRelay': True, 'codexRequestKeys': sorted(request_keys),
     'noCredentialFileInCodexHome': True, 'shellNetworkOn': True, 'hfTokenInheritedByShell': True, 'hfTokenAbsentFromArgsConfigAndLogs': True, 'codexSandboxOnHost': sandboxed,
     **({'sessionBearerUnreadableFromShell': True} if sandboxed else {}),
@@ -315,6 +318,7 @@ print(json.dumps({
     'normalLaneExercised': True, 'retainedCodexLaunches': 2, 'retainedSameAbsoluteCwd': True,
     'retainedResearchPreserved': True, 'privateStateCanariesCleared': True,
     'detachedAssignmentDescendantsCleared': True, 'freshSessionCredentials': True,
+    'resetBySupervisorLauncher': True,
     'codexSandboxPerLaunch': sandbox_results,
     # Local fake relay is incompatible with the probe's sole-sshd listener rule.
     # The release's separate exact-image isolation gate covers that boundary.

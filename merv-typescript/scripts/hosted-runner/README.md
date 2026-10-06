@@ -77,6 +77,11 @@ then that Codex, launched with the hosted provider through the assignment launch
 calls only `POST /codex-model/responses` with the keys the relay admits, leaves no
 credential in its `CODEX_HOME`, and runs shell commands that have the network but
 cannot read its session bearer from any process environment.
+It also proves the image can be a work host, as Main rents every workflow machine:
+the supervisor enrolls with a work-host bootstrap, and two further Codex steps run in
+one retained working directory with fresh credentials, reset between them through the
+supervisor's own `assignment-probed.py --reset`, which must kill a detached assignment
+process and clear private home and temp state while keeping the step's files.
 Neither probe calls a model or contacts Merv production. Neither replaces the
 actual Cloudflare security, task execution, retention or cleanup gates. Current
 candidate and deployment evidence is in `docs/PI_IMPLEMENTATION_STATUS.md`.

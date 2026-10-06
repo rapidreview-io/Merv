@@ -90,15 +90,7 @@ try {
       binding.source.projectId === caller.projectId &&
       binding.source.actorId === caller.actorId,
     admits: async (id, epoch) => id === allocationId && epoch === 1,
-  });
-  const { enrollmentToken } = await app.ctx.sessions.managed.ensure({
-    allocationId,
-    epoch: 1,
-    source,
-    runtimeProfileId: 'local-codex-acceptance',
-    platform: hostedCodexPlatform,
-    capabilities: [...hostedCodexCapabilities],
-    expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
+    assignmentSources: async (binding) => [binding.source],
   });
   if (!modelApiKey) {
     const home = resolve('../output/runner-codex/home');
@@ -132,6 +124,18 @@ try {
     goal: 'Use the local shell to run id -u and calculate 6*7. Create a small Markdown artifact containing the commands and results. Submit the task using that evidence and one met confirmation per criterion. Do not read credentials or configuration files. This is a synthetic acceptance test.',
     checks: ['The shell reports UID 12001.', 'The calculation returns 42.'],
     requestId: run,
+  });
+  // The machine is a work host of this task (its workflow instance), as Fleet rents it.
+  const { enrollmentToken } = await app.ctx.sessions.managed.ensure({
+    allocationId,
+    epoch: 1,
+    source,
+    runtimeProfileId: 'local-codex-acceptance',
+    platform: hostedCodexPlatform,
+    capabilities: [...hostedCodexCapabilities, 'workflow.workhost.1'],
+    workInstanceId: task.id,
+    stepSeconds: 15 * 60,
+    expiresAt: new Date(Date.now() + 20 * 60_000).toISOString(),
   });
   await app.ctx.sessions.dispatch.setDispatch(caller, { enabled: true });
   // This app's Fleet workflow owner is off, so nothing else makes the relay's tables.
@@ -170,6 +174,7 @@ try {
     baseUrl: `http://localhost:${port}`,
     projectId: boot.project.id,
     enrollmentToken,
+    workInstanceId: task.id,
   });
   const receiver = `import sys,json,io,hashlib\nfrom pathlib import Path\nsys.path.insert(0,'/opt/merv/python')\nfrom merv_sandboxes.runtimes.releases import RuntimeRelease,RuntimeReleases\nfrom merv_sandboxes.runtimes.receiver import dispatch_bootstrap\ndata=json.load(sys.stdin)\np=Path('/opt/merv/runtime/start-runner')\nr=RuntimeRelease(provider='local-acceptance',image_digest=data['image'],executable=str(p),executable_sha256=hashlib.sha256(p.read_bytes()).hexdigest())\nprint(dispatch_bootstrap(io.BytesIO(data['bootstrap'].encode()),'launch_smoke','job_smoke',r.release_id,releases=RuntimeReleases([r])).decode().strip())`;
   const receipt = await docker(
@@ -178,9 +183,11 @@ try {
   );
   assert.equal(receipt.trim(), 'LAUNCHED');
   console.log('Runtime launched; waiting for one isolated Codex assignment.');
+  // A work host waits for its task's next step until it is stopped: the producer's submission
+  // for review ends this run.
   let state = '';
   const until = Date.now() + 15 * 60_000;
-  while (Date.now() < until) {
+  while (Date.now() < until && !(await app.ctx.tasks.get(caller, task.id)).reviewId) {
     const value = await docker([
       'exec',
       run,
@@ -194,7 +201,7 @@ try {
         state = next;
         console.log(`Supervisor: ${state}`);
       }
-      if (state === 'finished' || state === 'failed' || state === 'empty') break;
+      if (state === 'failed') break;
     }
     await delay(2000);
   }
@@ -209,7 +216,7 @@ try {
       !/mr_[0-9a-f]{64}/.test(text),
   );
   writeFileSync(`${directory}/report.json`, text, { mode: 0o600 });
-  assert.equal(state, 'finished');
+  assert.notEqual(state, 'failed');
   assert.equal(sessions.length, 1, 'One assignment only; no review assignment on this worker');
   assert.ok(finalTask.reviewId, 'Producer submitted evidence for review');
   console.log(

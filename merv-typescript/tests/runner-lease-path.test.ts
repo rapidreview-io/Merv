@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import {
+  mkdirSync,
   mkdtempSync,
   readdirSync,
+  realpathSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -270,10 +272,24 @@ const codex = {
   enabled: true,
   parallelism: 1,
 };
-test('a one-assignment runner replays only the request of its own launch', async (t) => {
+/** A managed machine: a work host of one work item, with its assignment root. */
+const workHost = (t: Parameters<typeof machine>[0], fetcher: typeof fetch, instanceId: string) => {
+  const f = machine(t, [codex], fetcher, {
+    config: { workInstanceId: instanceId, capacity: 1 },
+    resetAssignment: async () => {},
+  });
+  const assignments = join(realpathSync(f.root), 'assignments');
+  mkdirSync(assignments, { mode: 0o700 });
+  f.config.assignmentWorkspaceDirectory = assignments;
+  return f;
+};
+test('a work host replays the request of its own launch first, then asks for its next step', async (t) => {
   const own = offer('own');
-  const fake = server(() => ({ ...own, status: 'released', closeReason: 'handoff' }));
-  const f = machine(t, [codex], fake.fetch, { config: { oneAssignment: true, capacity: 1 } });
+  let replayed = false;
+  const fake = server(() =>
+    replayed ? null : ((replayed = true), { ...own, status: 'released', closeReason: 'handoff' }),
+  );
+  const f = workHost(t, fake.fetch, own.instanceId);
   const ledger = f.ledger();
   const pending = ledger.request({ name: 'codex', harness: 'codex' });
   const record = ledger.reserve({
@@ -285,19 +301,20 @@ test('a one-assignment runner replays only the request of its own launch', async
       requestId: pending.requestId,
       remoteClosed: true,
       usageReported: true,
+      // The step's own session, as a work host keeps it: its work item is this host's.
+      session: own,
     },
   });
   ledger.close();
   ended(f.config.directory, record.id);
   const runner = f.make();
   await runner.start();
-  assert.deepEqual(
-    fake.leases('codex').map((call) => call.body?.requestId),
-    [pending.requestId],
-  );
+  assert.equal(fake.leases('codex')[0]?.body?.requestId, pending.requestId);
   assert.equal(runner.snapshot().pendingRequests, 0);
   await runner.tick();
-  assert.equal(fake.leases('codex').length, 1, 'it never asks for a successor');
+  const requests = fake.leases('codex').map((call) => call.body?.requestId);
+  assert.ok(requests.length > 1, 'its settled step does not end the work host');
+  assert.ok(requests.slice(1).every((id) => id !== pending.requestId));
 });
 
 test('presence names runner.2 (and git.local) on a source runner and only the enrolled drivers on a managed one', async (t) => {
@@ -307,11 +324,10 @@ test('presence names runner.2 (and git.local) on a source runner and only the en
   };
   const capabilities = async (config: Partial<RunnerConfig>, drivers: WorkspaceDriverFactory[]) => {
     const fake = server(() => null);
-    const f = machine(t, config.oneAssignment ? [codex] : [node('a')], fake.fetch, {
-      config,
-      drivers,
-    });
-    await f.make().start();
+    const f = config.workInstanceId
+      ? workHost(t, fake.fetch, config.workInstanceId)
+      : machine(t, [node('a')], fake.fetch, { config });
+    await f.make(drivers).start();
     return fake.calls.find((call) => call.path === '/sessions/runners/heartbeat')!.body!
       .capabilities;
   };
@@ -320,9 +336,9 @@ test('presence names runner.2 (and git.local) on a source runner and only the en
   // A runner with a repository of its own says so, for work that names no driver.
   const workspace = { repository: '/nonexistent/source', baseRef: 'main' };
   assert.deepEqual(await capabilities({ workspace }, []), ['git.local', 'runner.2']);
-  const managed = { oneAssignment: true, capacity: 1 };
-  assert.deepEqual(await capabilities(managed, [driver]), ['code.v2']);
-  assert.equal(await capabilities(managed, []), undefined);
+  const managed = { workInstanceId: 'instance_managed' };
+  assert.deepEqual(await capabilities(managed, [driver]), ['code.v2', 'workflow.workhost.1']);
+  assert.deepEqual(await capabilities(managed, []), ['workflow.workhost.1']);
 });
 
 test('a guardian that cannot own its socket ends the launch it claimed, which is released', async (t) => {

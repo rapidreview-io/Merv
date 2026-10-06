@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import type { Caller } from '@merv/contracts';
+import type { Caller, DelegationSource } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { MachineRunner, type RunnerConfig } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
@@ -153,10 +153,10 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
     if (managed) delete process.env[managedSecretEnv];
     rmSync(directory, { recursive: true, force: true });
   });
-  const make = (fetcher?: typeof fetch, clock?: () => number) => {
+  const make = (fetcher?: typeof fetch, clock?: () => number, code = !managed) => {
     const runner = new MachineRunner(config, {
       autoPoll: false,
-      drivers: managed
+      drivers: !code
         ? []
         : [
             {
@@ -165,6 +165,8 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
             },
           ],
       ...(fetcher ? { fetch: fetcher } : {}),
+      // A work host's trusted barrier between steps; here nothing escapes its launches.
+      resetAssignment: async () => {},
       clock,
     });
     diagnostics.set(runner, () =>
@@ -192,6 +194,56 @@ async function fixture(t: TestContext, args: string[] = [], managed = false) {
     credentialEnv,
     token: boot.token,
   };
+}
+
+type Fixture = Awaited<ReturnType<typeof fixture>>;
+/** As Fleet rents every managed machine: a work host of one work item, enrolled with its own
+ *  control credential, running one isolated Codex profile in an assignment root. */
+async function workHost(
+  f: Fixture,
+  t: TestContext,
+  instanceId: string,
+  worker = executable,
+  drivers: string[] = [],
+) {
+  const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
+  const validator = {
+    current: async (binding: { allocationId: string }) => binding.allocationId === allocationId,
+    admits: async () => true,
+    assignmentSources: async (binding: { source: DelegationSource }) => [binding.source],
+  };
+  const unregister = { dispose: f.app.ctx.sessions.managed.registerValidator(validator) };
+  t.after(() => unregister.dispose());
+  const assignmentRoot = join(f.runnerDirectory, '..', 'assignments');
+  mkdirSync(assignmentRoot, { mode: 0o700 });
+  f.config.assignmentWorkspaceDirectory = realpathSync(assignmentRoot);
+  f.config.workInstanceId = instanceId;
+  f.config.profiles = [
+    {
+      name: 'test-worker',
+      harness: 'codex',
+      executable: worker,
+      isolatedLauncher: process.execPath,
+      enabled: true,
+      parallelism: 1,
+    },
+  ];
+  const enrollment = await f.app.ctx.sessions.managed.ensure({
+    allocationId,
+    epoch: 1,
+    source: await f.app.ctx.scope.delegationSource(f.source),
+    runtimeProfileId: 'test-profile',
+    platform: { name: 'test-worker', harness: 'codex', enabled: true, parallelism: 1 },
+    capabilities: [...drivers, 'workflow.workhost.1'],
+    workInstanceId: instanceId,
+    stepSeconds: 3600,
+    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+  });
+  const control = await f.app.ctx.sessions.managed.enroll(enrollment.enrollmentToken, {
+    workerNonce: randomBytes(32).toString('hex'),
+  });
+  process.env[f.credentialEnv] = control.controlToken;
+  return { allocationId, assignmentRoot, validator, unregister };
 }
 
 test(
@@ -293,61 +345,42 @@ test(
 );
 
 test(
-  'one-assignment runner never requests a successor after completion or restart',
+  'a work host leases only its own work item, after its step and after a restart',
   { timeout: 35_000 },
   async (t) => {
-    const f = await fixture(t);
-    const assignmentRoot = join(f.runnerDirectory, '..', 'assignments');
-    mkdirSync(assignmentRoot, { mode: 0o700 });
-    f.config.assignmentWorkspaceDirectory = realpathSync(assignmentRoot);
-    f.config.oneAssignment = true;
-    f.config.profiles = [
-      {
-        name: 'test-worker',
-        harness: 'codex',
-        executable,
-        isolatedLauncher: process.execPath,
-        enabled: true,
-        parallelism: 1,
-      },
-    ];
-    let leases = 0;
-    const capacities: number[] = [];
-    const fetcher: typeof fetch = async (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : String(input));
-      if (url.pathname === '/sessions/lease') leases++;
-      if (url.pathname === '/sessions/runners/heartbeat' && init?.body)
-        capacities.push((JSON.parse(String(init.body)) as { capacity: number }).capacity);
-      return fetch(input, init);
-    };
-    const runner = f.make(fetcher);
+    const f = await fixture(t, [], true);
+    // The task's checkout is Code's, so this host composes its driver.
+    const { assignmentRoot } = await workHost(f, t, f.task.id, executable, ['code.v2']);
+    const runner = f.make(undefined, undefined, true);
     await runner.start();
     await f.enabled(true);
     await until(
       async () => (await f.sessions())[0]?.status === 'released',
       runner,
-      'first isolated assignment',
+      'first isolated step',
     );
-    assert.equal(runner.snapshot().launches.length, 1);
     assert.equal(runner.snapshot().launches[0].exitCode, 0);
     assert.equal(childResults(assignmentRoot).length, 1);
-    const firstLeaseCount = leases;
-    await currentTask(f.app.ctx, f.source, {
+    const second = await currentTask(f.app.ctx, f.source, {
       title: 'Second task',
       goal: 'Must wait for another machine',
-      checks: ['No second launch on the original machine'],
-      requestId: 'second-one-assignment',
+      checks: ['No launch on this work host'],
+      requestId: 'second-work-item',
     });
+    const others = async () =>
+      (await f.sessions()).filter((session) => session.instanceId !== f.task.id);
     for (let i = 0; i < 3; i++) await runner.tick();
-    assert.equal(leases, firstLeaseCount);
-    assert.ok(capacities.includes(0));
+    assert.deepEqual(await others(), []);
     await runner.stop();
-    const restarted = f.make(fetcher);
+    const restarted = f.make(undefined, undefined, true);
     await restarted.start();
     for (let i = 0; i < 3; i++) await restarted.tick();
-    assert.equal(leases, firstLeaseCount);
-    assert.equal(restarted.snapshot().launches.length, 1);
-    assert.equal((await f.sessions()).length, 1);
+    assert.deepEqual(await others(), [], `${second.id} waits for its own machine`);
+    assert.ok(
+      restarted
+        .snapshot()
+        .launches.every((launch) => launch.sessionId !== undefined && launch.status !== 'running'),
+    );
   },
 );
 
@@ -536,7 +569,7 @@ test(
 
 for (const linger of [false, true])
   test(
-    `managed one-assignment runner lets Codex finish the turn after its handoff and reports what it spent${linger ? ', stopping one that lingers when its grace ends' : ''}`,
+    `a work host lets Codex finish the turn after its handoff and reports what it spent${linger ? ', stopping one that lingers when its grace ends' : ''}`,
     { timeout: 35_000 },
     async (t) => {
       const f = await fixture(t, [], true);
@@ -616,42 +649,7 @@ for (const linger of [false, true])
           }),
       });
       t.after(unregisterTool);
-      f.config.oneAssignment = true;
-      f.config.profiles = [
-        {
-          name: 'test-worker',
-          harness: 'codex',
-          executable: handoffExecutable,
-          isolatedLauncher: process.execPath,
-          enabled: true,
-          parallelism: 1,
-        },
-      ];
-      const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
-      const profile = {
-        name: 'test-worker',
-        harness: 'codex' as const,
-        enabled: true,
-        parallelism: 1,
-      };
-      const unregister = f.app.ctx.sessions.managed.registerValidator({
-        current: async (binding) => binding.allocationId === allocationId,
-        admits: async () => true,
-      });
-      t.after(unregister);
-      const enrollment = await f.app.ctx.sessions.managed.ensure({
-        allocationId,
-        epoch: 1,
-        source: await f.app.ctx.scope.delegationSource(f.source),
-        runtimeProfileId: 'test-profile',
-        platform: profile,
-        capabilities: [],
-        expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-      });
-      const control = await f.app.ctx.sessions.managed.enroll(enrollment.enrollmentToken, {
-        workerNonce: randomBytes(32).toString('hex'),
-      });
-      process.env[f.credentialEnv] = control.controlToken;
+      const { allocationId } = await workHost(f, t, target.id, handoffExecutable);
       const releases: unknown[] = [];
       let dropFirstAcknowledgement = true,
         skew = 0;
@@ -742,38 +740,8 @@ test(
   { timeout: 30_000 },
   async (t) => {
     const f = await fixture(t, [], true);
-    const allocationId = `flt_${randomUUID().replaceAll('-', '')}`;
-    const validator = {
-      current: async (binding: { allocationId: string }) => binding.allocationId === allocationId,
-      admits: async () => true,
-    };
-    let unregister = f.app.ctx.sessions.managed.registerValidator(validator);
-    t.after(() => unregister());
-    // As every managed machine runs: one isolated Codex assignment, advertising its enrolment.
-    f.config.oneAssignment = true;
-    f.config.profiles = [
-      {
-        name: 'test-worker',
-        harness: 'codex',
-        executable,
-        isolatedLauncher: process.execPath,
-        enabled: true,
-        parallelism: 1,
-      },
-    ];
-    const enrollment = await f.app.ctx.sessions.managed.ensure({
-      allocationId,
-      epoch: 1,
-      source: await f.app.ctx.scope.delegationSource(f.source),
-      runtimeProfileId: 'test-profile',
-      platform: { name: 'test-worker', harness: 'codex', enabled: true, parallelism: 1 },
-      capabilities: [],
-      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    });
-    const control = await f.app.ctx.sessions.managed.enroll(enrollment.enrollmentToken, {
-      workerNonce: randomBytes(32).toString('hex'),
-    });
-    process.env[f.credentialEnv] = control.controlToken;
+    // As every managed machine runs: a work host, advertising its enrolment.
+    const { validator, unregister } = await workHost(f, t, f.task.id);
     // Presence is sent again once 15 s have passed; each tick below comes that much later.
     let skew = 0;
     const runner = f.make(undefined, () => Date.now() + skew);
@@ -789,7 +757,8 @@ test(
       assert.equal(runner.snapshot().state, 'offline', id);
       await f.app.setEnabled(id, true);
       // A restarted Sessions has lost Fleet's stand-in validator.
-      if (id === 'sessions') unregister = f.app.ctx.sessions.managed.registerValidator(validator);
+      if (id === 'sessions')
+        unregister.dispose = f.app.ctx.sessions.managed.registerValidator(validator);
       skew += 15_000;
       await runner.tick();
       assert.equal(runner.snapshot().state, online, id);
