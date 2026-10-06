@@ -504,11 +504,13 @@ export class LeasedSessions implements Sessions {
             managed: this.managed,
             byDefault: config.dispatchByDefault,
             prepare: async (caller) => await this.prepareControl(caller),
-            offer: async (caller, input, tx) => await this.offerTransaction(caller, input, tx),
+            offer: async (caller, input, tx) =>
+              await this.offerTransaction(caller, input, tx, true),
             close: async (session, reason, tx) => {
-              // A session whose record already moved is closed by what moved it, not by the halt.
+              // A session whose record already moved is closed by what moved it, not by the halt;
+              // a re-check that could not run (the program away) halts it all the same.
               const closed = await this.reconcile(session, tx);
-              if (closed) return false;
+              if (closed && closed.status < 500) return false;
               await this.closeSession(session, reason, tx, 'released', 'halted');
               return true;
             },
@@ -1038,6 +1040,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     input: SessionOffer,
     tx: Transaction,
+    dispatched = false,
   ): Promise<Session> {
     const duration = input.hardDeadlineSeconds ?? 86400;
     const owner = await ownerOf(this.scope, caller, tx);
@@ -1165,7 +1168,9 @@ export class LeasedSessions implements Sessions {
         ),
     );
     const workspace = effectiveWorkspace(frozen.execution.policy);
-    if (workspace.mode !== 'none' && workspace.driver !== undefined)
+    // Dispatch chose this work by the capabilities the runner advertised; a work host's
+    // runner is registered under its sponsor, not the phase source (a reviewer) offering here.
+    if (!dispatched && workspace.mode !== 'none' && workspace.driver !== undefined)
       check(
         await this.dispatcher.capable(caller, input.runnerId, workspace.driver, tx),
         'runner_incompatible',
@@ -2677,13 +2682,17 @@ export class LeasedSessions implements Sessions {
         typeof result === 'object' &&
         'isError' in result &&
         result.isError === true;
-      if (!this.closed)
-        await this.observations.finish(
-          invocation.caller.session!.invocationId!,
-          failed ? 'failed' : 'succeeded',
-          result,
-        );
       state.running = false;
+      // The call has committed: a record that fails to say so is left running for the
+      // startup sweep, and the worker still gets its result.
+      if (!this.closed)
+        await this.observations
+          .finish(invocation.caller.session!.invocationId!, failed ? 'failed' : 'succeeded', result)
+          .catch((error) =>
+            process.stderr.write(
+              `${JSON.stringify({ event: 'session.observation_unrecorded', code: safeError(error).code })}\n`,
+            ),
+          );
       return result;
     } finally {
       await this.cancel(invocation);

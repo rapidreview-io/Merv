@@ -2009,3 +2009,25 @@ test('opted-in work host covers later review revisions and keeps a bounded idle 
     'active',
   );
 });
+
+test('a fresh work host rented for a review is kept while the review waits for it', async (t) => {
+  const f = await fixture(t, {
+    reuseWorkHosts: true,
+    reusableRuntimeProfileIds: ['image-profile'],
+  });
+  f.demand([]);
+  f.demand([{ instanceId: 'task_review', expectedRevision: 1 }], `review:${f.caller.projectId}`);
+  await f.adapter.reconcile();
+  const allocation = f.allocations[0]!;
+  assert.equal(allocation.owner.id, 'work:task_review');
+  f.inspections.set(allocation.id, {
+    workInstanceId: 'task_review',
+    runnerId: 'fresh',
+    enrollmentExpiresAt,
+    session: null,
+  });
+  f.advance(60_000);
+  assert.equal(await f.owner().observe(allocation), 'running', 'the review still wants it');
+  f.demand([], `review:${f.caller.projectId}`);
+  assert.equal(await f.owner().observe(allocation), 'finished');
+});

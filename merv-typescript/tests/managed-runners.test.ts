@@ -1512,11 +1512,13 @@ test('work host keeps capture and transcript barriers, settings, source authorit
     'capacity_full',
     'transcript still owed',
   );
+  // A runner gives up its delivery within the grace, and cannot say so: past it, the host is
+  // free again rather than held to its deadline.
   now += 31 * 60_000;
   assert.equal(
     (await f.sessions.inspectManaged(f.input.allocationId, 1))!.session!.capturePending,
-    true,
-    'expiry grace cannot authorize reuse',
+    false,
+    'an owed transcript holds a work host only for the grace',
   );
   stored.set(`transcripts-${session.projectId}/${transcript.sha256}`, 10);
   await f.sessions.transcript(f.caller, { ...transcript, deliver: true });
@@ -1573,6 +1575,45 @@ test('revoking the host sponsor ends its review phase and never restores old pro
   );
   // Its old producer credential is still revoked; changing source never transfers it.
   await assert.rejects(f.sessions.managedModelGrant(firstRequest.secret), { code: 'unauthorized' });
+});
+
+test('a work host offers its review phase a checkout under the reviewer', async (t) => {
+  const f = await fixture(t, { workHost: true, codeWorkspace: true });
+  await f.sessions.setDispatch(f.owner, { enabled: true });
+  await f.sessions.heartbeatRunner(f.caller, f.heartbeat(1));
+  const firstRequest = f.lease();
+  const first = (await f.sessions.lease(f.caller, firstRequest)).session!;
+  const control = { sessionId: first.id, runnerId: f.runnerId, hostRef: 'phase-one' };
+  const workspace = {
+    repositoryId: 'repo',
+    workspaceId: 'work',
+    mode: 'persistent' as const,
+    branch: 'merv/work/test',
+    baseOid: 'a'.repeat(40),
+    headOid: 'a'.repeat(40),
+    stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+  };
+  await f.sessions.attach(f.caller, { ...control, workspace });
+  const worker = await f.sessions.authenticate(firstRequest.secret);
+  const prepared = await f.sessions.prepare(worker, 'finish', {});
+  await f.sessions.run(prepared, (caller) =>
+    f.state.transaction((tx) =>
+      f.handle.transition(
+        caller,
+        {
+          instanceId: first.instanceId,
+          expectedRevision: first.expectedRevision,
+          action: 'finish',
+          requestId: 'review-checkout',
+        },
+        tx,
+      ),
+    ),
+  );
+  await f.sessions.release(f.caller, { sessionId: first.id, runnerId: f.runnerId });
+  await f.sessions.workspaceResult(f.caller, { ...control, workspace });
+  const next = await f.sessions.lease(f.caller, f.lease());
+  assert.equal(next.session?.role, 'reviewer', next.reason);
 });
 
 test('work-host Code transfers use only the unfinished assignment, including closed final capture', async (t) => {

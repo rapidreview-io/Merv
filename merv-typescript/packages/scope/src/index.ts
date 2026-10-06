@@ -706,12 +706,11 @@ export class ProjectScope implements Scope {
         await this.requireDelegation(vouchedBy, 'write', sql as Transaction);
       } else if (row.session_id) {
         const own = (caller.session?.agentSessionId ?? caller.session?.id) === row.session_id;
-        // A session halted while this call was in flight has already retired its actor. Tell
-        // the worker its session ended, the way its next call will, rather than that it lacks
-        // a permission and might usefully try something else.
-        check(row.active || !own, 'session_closed', 'Session is closed', 401);
         check(own, 'forbidden', 'Worker actors require their live session authority', 403);
         source = await this.sessions.provider().require(caller, sql as Transaction, permission);
+        // A session that ended has retired its actor, and Sessions above said how it ended (its
+        // handoff completed, say), the way the worker's next call will, whichever closed it first.
+        check(row.active, 'session_closed', 'Session is closed', 401);
         // The source is the worker's delegator, another actor of the same project.
         vouched(source, false, 'forbidden', 'Session source does not match this project');
       } else if (caller.session) {

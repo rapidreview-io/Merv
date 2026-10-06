@@ -67,8 +67,9 @@ const enrollment = z
   })
   .strict();
 
-/** A hosted machine waits this long for a transcript its runner declared before its release,
- *  capture and upload included. */
+/** A hosted machine, a work host's reuse included, waits this long for a transcript its runner
+ *  declared before its release, capture and upload included: a runner that gives up on one
+ *  cannot say so. */
 const transcriptGraceMs = 30 * 60_000;
 
 /** A managed runner supervises its bound execution through its own routes: it uses no tool. */
@@ -760,9 +761,7 @@ export class ManagedRunnerBindings {
           releaseAcknowledged: row.runner_released_at !== null,
           capturePending:
             (!!workspace && workspace.result_json === null && !disposableReview) ||
-            (!!owed &&
-              (!!row.work_instance_id ||
-                this.clock() - Date.parse(owed.declared_at) < transcriptGraceMs)),
+            (!!owed && this.clock() - Date.parse(owed.declared_at) < transcriptGraceMs),
         },
       };
     };
