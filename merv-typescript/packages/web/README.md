@@ -12,6 +12,39 @@ composes it only where a key is configured (see [Turning it on](#turning-it-on))
 | `@merv/web`       | nothing    | `web` service                                            |
 | `@merv/web/tools` | Web, Tools | `web.search`, and `web.extract` where Tavily has its key |
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph people["People & agents"]
+    pi["Pi<br/><small>in-UI agent</small>"]
+    worker["Worker agent<br/><small>leased session</small>"]
+    mcpClient[MCP client]
+  end
+  subgraph foundations["Foundations"]
+    api["API<br/><small>HTTP, MCP and tool registry</small>"]
+    web["Web<br/><small>internet search tools</small>"]
+  end
+  subgraph external["External"]
+    tavily["Tavily<br/><small>search and extract</small>"]
+    openai["OpenAI<br/><small>hosted web search</small>"]
+  end
+  pi -- "calls web.*" --> api
+  worker -- "MCP /mcp" --> api
+  mcpClient -- "MCP /mcp" --> api
+  web -- "registers web.* tools" --> api
+  api -- "dispatches web.*" --> web
+  web -- "searches, reads pages" --> tavily
+  web -- "fallback search" --> openai
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class web self
+```
+
+Web is a leaf like Nisa: it depends on no other Merv service, and the tool
+registry is its only way in. Every agent's search goes to Tavily first, and to
+OpenAI's hosted web search only when Tavily cannot serve; a page is read only
+through Tavily.
+
 ## Tools
 
 Both tools are reads (`readOnly`) of another service (`openWorld`): the

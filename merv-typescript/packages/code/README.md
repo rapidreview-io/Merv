@@ -15,6 +15,41 @@ The optional [Code work integration](../code-work/README.md) provides those conn
 and the user-facing tools, machine API and UI. Research can run without either plugin.
 GitHub is separately optional: a local repository does not require a GitHub connection.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph research["Research logic"]
+    tasks[Tasks]
+    experiments[Experiments]
+  end
+  subgraph foundations["Foundations"]
+    codeWork["Code work<br/><small>research integration</small>"]
+    code["Code<br/><small>Git utility</small>"]
+    runner["Runner<br/><small>machine workspace driver</small>"]
+    scope[Scope]
+    state[State]
+  end
+  subgraph external["External"]
+    postgres[PostgreSQL]
+    repositories["Repository files<br/><small>repositories.root</small>"]
+    github[GitHub]
+  end
+  tasks -- "injects if present" --> codeWork
+  experiments -- "injects if present" --> codeWork
+  codeWork -- "injects" --> code
+  runner -- "loads workspace driver" --> code
+  code -- "injects" --> scope
+  code -- "injects" --> state
+  state -- "reads/writes" --> postgres
+  code -- "reads/writes" --> repositories
+  code -- "App auth, Git transport" --> github
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class code self
+```
+
+Code sits at the bottom of the Git path: only Code work injects it, and research plugins reach Git through Code work, never through Code. Code keeps the facts, the repository files and the GitHub connection; whether a commit is accepted is decided above it.
+
 ## Composition and ownership
 
 | Component          | Responsibilities                                                                                   | Required services                                      |

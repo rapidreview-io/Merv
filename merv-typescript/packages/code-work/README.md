@@ -19,6 +19,53 @@ never grants acceptance or erases an existing Git obligation.
 
 The API adapter mounts `/code`, with GitHub's OAuth callback public. Unloading CodeWork withdraws those routes, which then answer 503, without stopping the API.
 
+## Where it sits
+
+```mermaid
+flowchart LR
+  subgraph people["People & agents"]
+    worker["Worker agent<br/><small>leased session</small>"]
+  end
+  subgraph research["Research logic"]
+    tasks[Tasks]
+    experiments[Experiments]
+    research[Research]
+  end
+  subgraph foundations["Foundations"]
+    codeWork["Code work<br/><small>research to Git</small>"]
+    code["Code<br/><small>Git utility</small>"]
+    sessions[Sessions]
+    workflows[Workflows]
+    domainEvents[Domain Events]
+    reviews[Reviews]
+    sandboxes[Sandboxes]
+    api["API<br/><small>HTTP and tool registry</small>"]
+    ui[UI]
+  end
+  subgraph external["External"]
+    github[GitHub]
+  end
+  tasks -- "injects if present" --> codeWork
+  experiments -- "injects if present" --> codeWork
+  research -- "injects if present" --> codeWork
+  codeWork -- "injects" --> code
+  codeWork -- "injects" --> sessions
+  codeWork -- "injects" --> workflows
+  codeWork -- "subscribes to events" --> domainEvents
+  codeWork -- "reads review provenance" --> reviews
+  codeWork -- "runs project checks" --> sandboxes
+  codeWork -- "mounts /code, code.* tools" --> api
+  codeWork -- "row, Running part" --> ui
+  worker -- "calls code.* tools" --> api
+  code -- "App auth, Git transport" --> github
+  classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
+  class codeWork self
+```
+
+Code work is the one bridge between research decisions and Git: Tasks, Experiments and Research bind to it when it is present, and it alone drives Code. Through Domain Events it initializes each new project, opens and ends a session's writer generation as its workspace attaches and closes, and reconciles research state on every workflow transition.
+
+## Composition
+
 The default composition enables the integration, with both Code and CodeWork optional.
 Disable Code to suspend all its adapters. CodeWork runs Code's repository journal, imports,
 mirroring and the `/code/v2` workspace protocol on Code's repositories and GitHub service, so
