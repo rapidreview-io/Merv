@@ -39,6 +39,9 @@ const invalidConfig = () =>
   new MervError('invalid_identity_config', 'Invalid identity configuration');
 const unauthorized = () =>
   new MervError('unauthorized', 'Invalid or unavailable user identity', 401);
+/** No usable key set: the token is unjudged, so the caller retries instead of signing out. */
+const unavailable = () =>
+  new MervError('identity_unavailable', 'User identity keys are unavailable; retry shortly', 503);
 
 function environment(reference: unknown): string {
   if (typeof reference !== 'string' || !environmentName.test(reference)) throw invalidConfig();
@@ -166,7 +169,7 @@ class RemoteKeys {
       if (this.#mayFetch()) await this.#refresh().catch(() => undefined);
     } else if (this.#age(this.#loadedAt) >= REFRESH_MS && this.#mayFetch())
       void this.#refresh().catch(() => undefined);
-    if (!this.#usable()) throw unauthorized();
+    if (!this.#usable()) throw unavailable();
     try {
       return await this.#keys!(header, token);
     } catch (error) {
@@ -289,8 +292,8 @@ export class SupabaseIdentity implements IdentityProvider {
         subject: payload.sub,
         expiresAt: new Date(payload.exp * 1000).toISOString(),
       };
-    } catch {
-      throw unauthorized();
+    } catch (error) {
+      throw error instanceof MervError && error.status === 503 ? error : unauthorized();
     }
   }
 }

@@ -24,6 +24,9 @@ const token = (overrides: JWTPayload = {}, alg = 'HS256') =>
   new SignJWT(claims(overrides)).setProtectedHeader({ alg }).sign(bytes);
 const denied = (error: unknown) =>
   error instanceof MervError && error.code === 'unauthorized' && error.status === 401;
+/** No usable key set: 503, so a signed-in person is asked to retry, not signed out. */
+const unavailable = (error: unknown) =>
+  error instanceof MervError && error.code === 'identity_unavailable' && error.status === 503;
 function environment(t: TestContext, value: string) {
   const name = `MERV_IDENTITY_TEST_${randomUUID().replaceAll('-', '_')}`;
   process.env[name] = value;
@@ -292,13 +295,13 @@ test('JWKS serves the last good set through refresh failures and fails closed on
   assert.equal(calls, 4);
   time = loadedAt + 24 * 3_600_000;
   await assert.rejects(provider.verify(nextToken), (error: unknown) => {
-    assert.ok(denied(error));
+    assert.ok(unavailable(error));
     assert.equal((error as Error).cause, undefined);
     assert.ok(!inspect(error).includes('synthetic-key-provider-outage'));
     return true;
   });
   assert.equal(calls, 5, 'A set 24 h old is no longer trusted; the request waits for a fetch');
-  await assert.rejects(provider.verify(nextToken), denied);
+  await assert.rejects(provider.verify(nextToken), unavailable);
   assert.equal(calls, 5);
   failure = false;
   time += 30_001;
@@ -519,7 +522,7 @@ test('JWKS single flight clears after the timeout even when a fetcher ignores it
   const pending = provider.verify(signed);
   await settled();
   controller.abort();
-  await assert.rejects(pending, denied);
+  await assert.rejects(pending, unavailable);
   hang = false;
   time += 30_001;
   assert.equal((await provider.verify(signed)).subject, 'shared-user');
@@ -597,7 +600,7 @@ test('JWKS status, redirect, oversized body, malformed keys and private keys fai
       { clock: () => start, fetch: fetching(async () => response()) },
     );
     await assert.rejects(provider.verify(signed), (error: unknown) => {
-      assert.ok(denied(error));
+      assert.ok(unavailable(error));
       assert.equal((error as Error).cause, undefined);
       assert.ok(!inspect(error).includes('upstream-error-secret'));
       assert.ok(!inspect(error).includes(privateKey.d!));
@@ -643,7 +646,7 @@ test('JWKS timeout bounds a stalled response body and cancels its reader', async
   const pending = provider.verify(signed);
   await responseStarted;
   controller.abort();
-  await assert.rejects(pending, denied);
+  await assert.rejects(pending, unavailable);
   assert.equal(cancelCount, 1);
 });
 
@@ -683,7 +686,7 @@ test('JWKS refreshes leave no unhandled rejections', async (t) => {
   const pending = aborted.verify(signed);
   await settled();
   for (const controller of controllers) controller.abort();
-  await assert.rejects(pending, denied);
+  await assert.rejects(pending, unavailable);
   await settled();
   assert.deepEqual(unhandled, []);
 });
