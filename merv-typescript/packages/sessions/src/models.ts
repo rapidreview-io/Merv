@@ -16,8 +16,8 @@ export type SessionRole = 'producer' | 'reviewer' | 'reader';
 export type SessionStatus = 'offered' | 'active' | 'released' | 'expired';
 
 /**
- * A lease's behaviour as the read that sent it saw it (`leaseLiveness` in rules.ts): its
- * verdict, the only word that takes colour, and the rest of the line, which stays quiet.
+ * A lease's behaviour as the read that sent it saw it (`leaseLiveness` in liveness.ts): its verdict, the only
+ * word that takes colour, and the rest of the line, which stays quiet.
  */
 export interface LeaseLiveness {
   verdict: SessionStatus | 'lapsed';

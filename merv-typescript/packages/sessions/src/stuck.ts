@@ -18,7 +18,7 @@ import type {
 import { publicBudget } from './usage.js';
 import { lastActivity } from './observations.js';
 import { isoNow, targetKey, workNameOf } from './common.js';
-import { leaseLiveness } from './rules.js';
+import { leaseLiveness } from './liveness.js';
 import type { DispatchContext, HoldRow, SessionDispatch, SessionRow } from './dispatch.js';
 import { freshForMs, rented, type RunnerRow } from './runners.js';
 

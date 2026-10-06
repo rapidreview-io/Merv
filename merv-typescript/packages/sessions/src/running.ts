@@ -29,7 +29,8 @@ import { freshForMs } from './runners.js';
 import type { DispatchReading } from './stuck.js';
 import { lastActivity } from './observations.js';
 import { ordinary as unmanaged, text, workNameOf } from './common.js';
-import { lapsed, leaseLiveness, livenessLine, platformPhrase } from './rules.js';
+import { lapsed, leaseLiveness, livenessLine } from './liveness.js';
+import { platformPhrase } from './rules.js';
 import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from './types.js';
 
 /**
@@ -40,7 +41,7 @@ import type { SessionPlatform, SessionRole, SessionWorkspace, StuckReport } from
  * stays the sweep's. A frozen assignment can be half a megabyte, so a lease row is parsed once,
  * in SQL, for the few fields a face needs, and never decoded whole.
  *
- * A lease's words are its liveness (rules.ts), as the Agents page has them: it is offered,
+ * A lease's words are its liveness (liveness.ts), as the Agents page has them: it is offered,
  * active, lapsed, released or expired; a runner is live or offline; quiet only ever means no
  * Merv call.
  */

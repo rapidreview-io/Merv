@@ -1,6 +1,6 @@
 /**
  * Liveness for the Agents pages, and the one place an enum becomes words. A lease's
- * liveness is Sessions' own (`leaseLiveness` in sessions/rules.ts), sent with each lease and
+ * liveness is Sessions' own (`leaseLiveness` in sessions/liveness.ts), sent with each lease and
  * only drawn here; a runner's is composed below.
  *
  * Liveness is behavioural, not lifecycle: one verdict and one phrase per record,

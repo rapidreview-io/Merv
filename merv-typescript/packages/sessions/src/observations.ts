@@ -1,7 +1,7 @@
 import { postgresMigrations } from './observations.postgres.js';
 import { check, type Caller, type Scope, type State, type Transaction } from '@merv/contracts';
 import { ordinary as unmanaged, safeCount, text, workName, workNameOf } from './common.js';
-import { leaseLiveness } from './rules.js';
+import { leaseLiveness } from './liveness.js';
 import type { Agent, AgentObservation, AgentSummary, AgentToolCall, Session } from './types.js';
 
 /** Payload size only. This is deliberately not a model tokenizer or billing counter. */
