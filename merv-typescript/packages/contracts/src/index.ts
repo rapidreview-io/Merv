@@ -15,7 +15,7 @@ import 'cordis';
 
 export type { Json, Data } from './data.js';
 export { cleanText, clip, ellipsis, itemTitle, visible } from './text.js';
-export { folded, idPattern, idSchema, oidPattern, oidSchema, sha256Hex } from './schemas.js';
+export { folded, idPattern, idSchema, oidPattern, oidSchema } from './schemas.js';
 export { ordered } from './order.js';
 export {
   allowedOrigin,
@@ -529,6 +529,9 @@ export function canonical(value: unknown): string {
 }
 export const digest = (value: unknown) =>
   createHash('sha256').update(canonical(value)).digest('hex');
+/** Hex SHA-256 of text, as UTF-8, or of bytes. */
+export const sha256Hex = (value: string | Uint8Array) =>
+  createHash('sha256').update(value).digest('hex');
 export type SqlValue = string | number | bigint | null | Uint8Array;
 /** Await initialization before publishing a storage-backed service. */
 export async function createService<T extends { initialize(): Promise<void> }>(

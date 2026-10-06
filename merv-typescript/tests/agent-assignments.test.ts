@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type Artifact, type Caller } from '@merv/contracts';
+import { type Artifact, type Caller, type ContextInput } from '@merv/contracts';
 import { createApp } from './fixtures/app.js';
 import { confirmedDelivery } from './fixtures/task-evidence.js';
 
@@ -238,11 +238,13 @@ test('a format-2 task lease freezes a paper of many multibyte sections within it
   ))!;
   assert.ok(Buffer.byteLength(receipt) <= 400 * 1024);
   // The sections that fit are frozen whole, and the rest are named or counted for paper.read.
-  const paper = (
-    JSON.parse(receipt) as { paper: { sections: unknown[]; left: unknown[]; more: number } }
-  ).paper;
-  assert.ok(paper.sections.length > 0 && paper.more > 0);
-  assert.equal(paper.sections.length + paper.left.length + paper.more, 300);
+  const { items } = (JSON.parse(receipt) as { paper: ContextInput }).paper;
+  const sections = items.filter((item) => item.id !== 'paper:not-included');
+  const rest = items.find((item) => item.id === 'paper:not-included')!;
+  const left = JSON.parse((rest.body as { text: string }).text) as unknown[];
+  const more = Number(/^(\d+) of them/.exec(rest.note ?? '')?.[1] ?? 0);
+  assert.ok(sections.length > 0 && more > 0);
+  assert.equal(sections.length + left.length + more, 300);
   assert.ok(context.prompt.includes('\n### paper:literature:current:1:0:literature-0-'));
 });
 

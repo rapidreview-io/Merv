@@ -1876,7 +1876,14 @@ test('an automatic v2 wave exposes Code absence and rolls back before retry', as
     assert.deepEqual(await f.app.ctx.reflections.approved(f.owner, record.reflectionId!), approved);
     await f.code(true);
     await f.research.wakeAutomatic();
-    await f.app.ctx.domainEvents.drain();
+    // The advance asks Git outside the consumer's transaction and commits on its own, after the
+    // delivery that woke it, so what it moves is delivered in a later pass.
+    const deadline = Date.now() + 5000;
+    do {
+      await f.app.ctx.domainEvents.drain();
+      if ((await f.research.get(f.owner, record.id)).successorId) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } while (Date.now() < deadline);
     const done = await f.research.get(f.owner, record.id);
     assert.ok(done.successorId);
     assert.equal(done.workflow.state, 'complete');
