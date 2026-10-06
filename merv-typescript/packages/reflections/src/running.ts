@@ -1,17 +1,26 @@
 import {
   ellipsis,
+  inTransaction,
+  keyId,
+  keyKind,
+  mapAsync,
+  MervError,
   runningKey,
+  type Caller,
   type ProcessGraph,
   type RunningAttention,
+  type RunningKey,
   type RunningNode,
   type RunningPanelPart,
   type RunningPhrase,
   type RunningRow,
   type RunningSection,
+  type Transaction,
   type WorkflowSnapshot,
   type WorkRoute,
 } from '@merv/contracts';
 import type { ChangeSpec, Reflection } from './types.js';
+import type { ReflectionService } from './index.js';
 import { lensName } from './names.js';
 
 /**
@@ -241,4 +250,93 @@ export function wavePanel(
     ),
     aliases: lensKeys(wave),
   };
+}
+
+// The Running page's reads of a wave, which ReflectionService (index.ts) runs as its own methods.
+/** What the Running page says of one wave: its record, every lease on it, its review limit. */
+export async function runningFacts(
+  this: ReflectionService,
+  caller: Caller,
+  id: string,
+  tx: Transaction,
+): Promise<WaveFacts> {
+  const wave = await this.wave(caller, id, tx, true);
+  const ids = [wave.id, ...wave.lenses.map((lens) => lens.id)];
+  const leases = await tx.all<{
+    id: string;
+    instance_id: string;
+    revision: number;
+    released_at: string | null;
+  }>(
+    `SELECT id,instance_id,revision,released_at FROM reflection_leases WHERE project_id=? AND instance_id IN (${ids.map(() => '?').join(',')})`,
+    caller.projectId,
+    ...ids,
+  );
+  return {
+    wave,
+    leases: leases.map((lease) => ({
+      id: lease.id,
+      instanceId: lease.instance_id,
+      revision: Number(lease.revision),
+      releasedAt: lease.released_at,
+    })),
+    // The returns are counted from review, so only a wave in review can have used them up.
+    exhausted:
+      wave.workflow.state === 'in_review' &&
+      !!(await this.workflows.limitStatusOf(caller, [id], 'review_returns', tx)).get(id)?.exhausted,
+  };
+}
+export async function running(
+  this: ReflectionService,
+  caller: Caller,
+  include: Iterable<RunningKey> = [],
+  transaction?: Transaction,
+): Promise<RunningNode[]> {
+  caller = structuredClone(caller);
+  // A mark may name the wave, or one of its lenses, which the wave draws.
+  const held = [...include].filter((key) => keyKind(key) === 'work').map(keyId);
+  const listed = held.map(() => '?').join(',');
+  return await inTransaction(this.state, transaction, async (tx) => {
+    await this.read(caller, tx);
+    const waves = await tx.all<{ id: string }>(
+      `SELECT id FROM reflections WHERE project_id=? AND (approved IS NULL AND abandoned IS NULL${
+        held.length
+          ? ` OR id IN (${listed}) OR id IN (SELECT reflection_id FROM reflection_lenses WHERE project_id=? AND id IN (${listed}))`
+          : ''
+      }) ORDER BY _merv_rowid`,
+      caller.projectId,
+      ...(held.length ? [...held, caller.projectId, ...held] : []),
+    );
+    // A wave whose record names something no longer there is left off on its own; the
+    // other waves are drawn.
+    const nodes = await mapAsync(waves, async ({ id }) => {
+      try {
+        return waveNode(await this.runningFacts(caller, id, tx));
+      } catch (error) {
+        if (error instanceof MervError && error.status === 404) return null;
+        throw error;
+      }
+    });
+    return nodes.filter((node) => node !== null);
+  });
+}
+export async function runningPanel(
+  this: ReflectionService,
+  caller: Caller,
+  id: string,
+  route?: WorkRoute,
+): Promise<RunningPanelPart | null> {
+  caller = structuredClone(caller);
+  const facts = await this.state.transaction(async (tx) => {
+    await this.read(caller, tx);
+    // Any other work key is another owner's, and a lens is drawn by its wave.
+    const wave = await tx.get<{ id: string }>(
+      'SELECT id FROM reflections WHERE id=? AND project_id=?',
+      id,
+      caller.projectId,
+    );
+    return wave ? await this.runningFacts(caller, id, tx) : null;
+  });
+  // Workflows reads the ladder in a transaction of its own, as it does for Tasks.process.
+  return facts && wavePanel(facts, await this.workflows.process(caller, id), route);
 }
