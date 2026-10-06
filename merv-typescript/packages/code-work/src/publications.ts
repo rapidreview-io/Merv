@@ -506,15 +506,18 @@ export class CodePublicationService implements CodePublicationApi {
             JSON.parse(row.binding_json),
             async (client, token) => {
               const current = this.decode(row);
-              let pull: GitHubPullRequest;
+              let pull = current.pull
+                ? await client.pull(token, current.repository, current.pull.number)
+                : undefined;
               if (!current.stale) {
                 await this.host.rules(caller, client, token, current, false);
                 await this.state.transaction((tx) => this.host.check(caller, current, tx));
-                await this.host.snapshot(caller, current);
+                // A pull request already off the reviewed head settles stale below, wherever
+                // its branch now stands.
+                if (!pull || pull.merged || this.pins(current, pull))
+                  await this.host.snapshot(caller, current);
               }
-              if (current.pull)
-                pull = await client.pull(token, current.repository, current.pull.number);
-              else {
+              if (!pull) {
                 const found = await client.pulls(token, current.repository, {
                   state: 'all',
                   head: `${current.repository.split('/')[0]}:${current.branch}`,
@@ -556,8 +559,9 @@ export class CodePublicationService implements CodePublicationApi {
               }
               // A merged head that is not the reviewed one is an incident, which saving retains.
               if (!pull.merged && !this.pins(current, pull)) {
+                const { number } = pull;
                 await this.settleStale(caller, row, lock, 'github_head_changed', pull, () =>
-                  client.updatePull(token, current.repository, pull.number, { state: 'closed' }),
+                  client.updatePull(token, current.repository, number, { state: 'closed' }),
                 );
                 return;
               }

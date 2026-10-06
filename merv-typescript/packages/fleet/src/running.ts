@@ -37,7 +37,7 @@ export const titleOf = (a: FleetAllocation): string => titles[a.owner.kind] ?? '
 export const statusOf = (a: FleetAllocation): string =>
   a.phase !== 'released'
     ? { run: words[a.phase] ?? a.phase, drain: 'finishing', stop: 'stopping' }[a.intent]
-    : a.error === 'runtime_refused' || a.error === 'wallet_refused'
+    : a.error === 'runtime_refused' || a.error === 'wallet_refused' || a.error === 'person_capped'
       ? 'refused'
       : 'stopped';
 /** Fleet keeps a launched machine, and its worker admission, while its lease lasts. */
@@ -69,7 +69,7 @@ const failures = (n: number): RunningPhrase => [{ count: n }, n === 1 ? ' failur
 
 /** What refused a request before any machine existed; without a connection or price, nobody. */
 const refusal = (a: FleetAllocation): string | null =>
-  a.error === 'wallet_refused'
+  a.error === 'wallet_refused' || a.error === 'person_capped'
     ? 'Refused · spending limit · '
     : a.error !== 'runtime_refused'
       ? null

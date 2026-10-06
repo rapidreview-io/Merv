@@ -174,8 +174,10 @@ class RemoteKeys {
       return await this.#keys!(header, token);
     } catch (error) {
       // A new kid joins or starts one refresh; unknown-kid spam fetches at most every 30 s.
-      if (!(error instanceof errors.JWKSNoMatchingKey) || !this.#mayFetch()) throw error;
-      await this.#refresh();
+      if (!(error instanceof errors.JWKSNoMatchingKey)) throw error;
+      if (this.#mayFetch()) await this.#refresh().catch(() => undefined);
+      // While the last fetch failed, a kid the set lacks is unjudged, not unknown.
+      if (this.#triedAt > this.#loadedAt) throw unavailable();
       return await this.#keys!(header, token);
     }
   };

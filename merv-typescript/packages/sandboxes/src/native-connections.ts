@@ -120,8 +120,24 @@ export class NativeConnections {
     return this.credentials.open<{ bearer: string }>(row.credentials, `connection:${row.id}`)
       .bearer;
   }
+  /**
+   * The assignments of a project's work on a connection other than `kept` end with that
+   * connection's tokens: it was revoked, or held only expired assignments when the work moved.
+   * Its replacement never holds those leases, so nothing is revoked through it.
+   */
+  private async revokeAssignments(tx: Transaction, projectId: string, kept: string | null) {
+    await tx.run(
+      `UPDATE sandbox_native_assignments a SET revoked_at=? FROM sandbox_native_work w
+      WHERE a.project_id=? AND a.revoked_at IS NULL AND w.project_id=a.project_id
+      AND w.work_kind=a.work_kind AND w.work_id=a.work_id AND w.connection_id IS DISTINCT FROM ?`,
+      this.now(),
+      projectId,
+      kept,
+    );
+  }
   /** The project's open work moves to `connectionId`; each gets a new grant there when it runs. */
   private async rebind(tx: Transaction, projectId: string, connectionId: string) {
+    await this.revokeAssignments(tx, projectId, connectionId);
     await tx.run(
       'UPDATE sandbox_native_work SET connection_id=?,native_grant_id=NULL,namespace=NULL,evidence_checked_at=NULL,last_error=NULL WHERE project_id=? AND closed_at IS NULL',
       connectionId,
@@ -647,6 +663,7 @@ export class NativeConnections {
           'UPDATE sandbox_native_projects SET connection_id=NULL WHERE project_id=?',
           caller.projectId,
         );
+        await this.revokeAssignments(tx, caller.projectId, null);
       }
     });
     await this.reconcileRevocations();

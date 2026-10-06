@@ -619,7 +619,7 @@ export class FleetService implements Fleet {
         ) {
           // Its person may have spent today's compute while it waited.
           if (capped(a) && (await this.spentToday(a.person!, tx)) >= cap!) {
-            a.error = 'wallet_refused';
+            a.error = 'person_capped';
             a.intent = 'stop';
             a.phase = 'released';
           } else {

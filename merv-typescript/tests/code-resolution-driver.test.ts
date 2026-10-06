@@ -259,6 +259,43 @@ test('start requires a clean checkout and admission refuses the wrong second par
   );
 });
 
+test('a retried merge start never overwrites what the agent did once HEAD moved', async (t) => {
+  const f = await fixture(t);
+  await f.lease('moved');
+  const machine = f.machine();
+  const work = await machine.prepare('moved');
+  await f.event('session.workspace_attached', 'moved');
+  const seen: CodeCommitCommand[] = [];
+  const commit = machine.driver.checkpointCommit.bind(machine.driver);
+  t.mock.method(machine.driver, 'checkpointCommit', async (...args: Parameters<typeof commit>) => {
+    seen.push(args[1]);
+    return await commit(...args);
+  });
+  // The start is journalled and materialised, and its answer is lost before Code admits it.
+  const driver = machine.driver as unknown as { upload: () => Promise<never> };
+  const upload = t.mock.method(driver, 'upload', async () => {
+    throw new Error('lost reply');
+  });
+  await assert.rejects(machine.command('moved', f.left, 'start'));
+  upload.mock.restore();
+  // The agent resolves by hand and commits, then keeps editing.
+  writeFileSync(join(work.path, 'README.md'), 'resolved by hand\n');
+  git(work.path, [
+    '-c',
+    'user.name=A',
+    '-c',
+    'user.email=a@example.test',
+    'commit',
+    '-qam',
+    'hand',
+  ]);
+  writeFileSync(join(work.path, 'README.md'), 'still editing\n');
+  await assert.rejects(commit(machine.launch('moved'), seen[0]!), {
+    code: 'workspace_head_conflict',
+  });
+  assert.equal(readFileSync(join(work.path, 'README.md'), 'utf8'), 'still editing\n');
+});
+
 /**
  * The cache is keyed by the project, and the identity it records is the one the server named
  * last. It is the one path on a machine that deletes a shared directory, and its three cases

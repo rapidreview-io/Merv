@@ -289,6 +289,9 @@ test('JWKS serves the last good set through refresh failures and fails closed on
   assert.equal(calls, 3, 'A due refresh runs in the background and the stale set is served');
   await provider.verify(nextToken);
   assert.equal(calls, 3, 'A failed refresh is retried at most every 30 s');
+  // During the outage a kid the stale set lacks may be a new key: retry, never sign out.
+  await assert.rejects(provider.verify(firstToken), unavailable);
+  assert.equal(calls, 3);
   time += 30_001;
   await provider.verify(nextToken);
   await settled();
@@ -402,9 +405,10 @@ test('JWKS keeps the last good set when a refresh returns nothing usable', async
     assert.equal((await provider.verify(signed)).subject, 'shared-user');
     await settled();
     assert.equal(calls, i + 2);
-    // The refused response was discarded: the old key still verifies and its key does not.
+    // The refused response was discarded: the old key still verifies, and a new kid waits for
+    // a fetch that succeeds.
     assert.equal((await provider.verify(signed)).subject, 'shared-user');
-    await assert.rejects(provider.verify(nextToken), denied);
+    await assert.rejects(provider.verify(nextToken), unavailable);
     assert.equal(calls, i + 2);
   }
   await provider.verify(signed);

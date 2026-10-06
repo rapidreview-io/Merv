@@ -668,6 +668,18 @@ test(
   },
 );
 
+test('one person reaching their daily cap pauses no other workflow demand', async (t) => {
+  const f = await fixture(t, { maxAgents: 5 });
+  f.demand(targets('task', 4));
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 4);
+  const capped = f.allocations[0]!;
+  capped.phase = 'released';
+  capped.error = 'person_capped';
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 5, 'the capped target is asked for again at once');
+});
+
 test('wallet refusals pause all workflow demand, retry one target, and preserve task attempts', async (t) => {
   const f = await fixture(t, { maxAgents: 5 });
   f.demand(targets('task', 4));

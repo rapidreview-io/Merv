@@ -1204,8 +1204,9 @@ export class CodeWorkspaceDriver implements WorkspaceDriver {
     if (!journal.target_oid || head !== journal.target_oid) {
       if (row.status !== 'ready') throw new WorkspaceError('workspace_commit_fenced');
       // Once the commit is journalled it is what Code is told; a head the agent moved since
-      // is rescued when the branch advances, never a reason to stop.
-      if (!journal.target_oid && head !== command.expectedHead)
+      // is rescued when the branch advances, never a reason to stop. A merge start would
+      // reset the checkout over what the agent did, so it always stops.
+      if ((!journal.target_oid || command.merge === 'start') && head !== command.expectedHead)
         throw new WorkspaceError('workspace_head_conflict');
     }
     if (command.merge === 'start') return await this.startMerge(row, command, journal);

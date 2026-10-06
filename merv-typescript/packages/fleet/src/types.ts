@@ -42,8 +42,10 @@ export interface FleetAllocation {
 /** runtime_unavailable: an ambiguous failure being retried with the same keys.
  * runtime_refused: the service refused before any machine could exist, so the slot was freed, or
  * a capped request's offer listed no price for ten minutes.
- * wallet_refused: a spending limit refused it: the provider's, or its person's daily cap. */
-export type FleetError = 'runtime_unavailable' | 'runtime_refused' | 'wallet_refused';
+ * wallet_refused: the provider's spending limit refused it.
+ * person_capped: its person spent today's compute while it queued; nobody else is held back. */
+export type FleetError =
+  'runtime_unavailable' | 'runtime_refused' | 'wallet_refused' | 'person_capped';
 export interface FleetRequest {
   requestId: string;
   /** The registered owner's kind, and its own id for the work. */

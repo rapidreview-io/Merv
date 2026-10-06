@@ -955,7 +955,7 @@ test('a request queued before its person’s compute was spent is refused, not a
   const refused = await f.get(queued.id);
   assert.deepEqual(
     [refused.phase, refused.intent, refused.error, refused.runtime],
-    ['released', 'stop', 'wallet_refused', null],
+    ['released', 'stop', 'person_capped', null],
   );
   assert.deepEqual(f.runtimes.createKeys, [`${first.id}:create`]);
   // Another person's request takes the slot.

@@ -113,7 +113,7 @@ const gone = (a: FleetAllocation | null | undefined, now: string) =>
   a.deadlineAt <= now;
 /** Why a turn on a gone slot ended. Fleet stops a failed machine too, but no one chose that. */
 const lost = (a: FleetAllocation | null | undefined): PiInterruption =>
-  a?.error === 'wallet_refused'
+  a?.error === 'wallet_refused' || a?.error === 'person_capped'
     ? 'wallet_refused'
     : a?.error === 'runtime_refused'
       ? 'runtime_refused'
@@ -2378,11 +2378,13 @@ export class PiService implements Pi, FleetOwner {
         tx,
         host,
         'failed',
-        fact(next)?.error === 'runtime_refused'
-          ? 'no free machine'
-          : next.readyBy <= now
-            ? 'not ready in time'
-            : 'the machine stopped',
+        fact(next)?.error === 'person_capped'
+          ? 'spending limit'
+          : fact(next)?.error === 'runtime_refused'
+            ? 'no free machine'
+            : next.readyBy <= now
+              ? 'not ready in time'
+              : 'the machine stopped',
       );
       changed = true;
     }

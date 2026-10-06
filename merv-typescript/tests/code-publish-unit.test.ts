@@ -995,8 +995,10 @@ const staleWakes = async (f: Awaited<ReturnType<typeof fixture>>) =>
 test('a pull request whose head changed settles stale on sync, so unreviewed commits never merge', async (t) => {
   const f = await fixture(t, true);
   const { work, publication } = await opened(f);
-  // A person clicks "Update branch": GitHub pushes a commit nobody reviewed to the head branch.
+  // A person clicks "Update branch": GitHub pushes a commit nobody reviewed to the head branch,
+  // which moves the branch and the pull request's head together.
   f.remote!.pulls[0].head.sha = 'e'.repeat(40);
+  f.branches.set(publication.branch, 'e'.repeat(40));
   const [after] = await f.sync();
   assert.equal(after.stale, true);
   assert.equal(after.lastError, 'github_head_changed');

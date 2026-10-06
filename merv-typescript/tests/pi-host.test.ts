@@ -382,6 +382,13 @@ test('a new machine that never proves ready fails the move, and the current one 
   await f.pi.tick();
   view = await lastMove();
   assert.deepEqual([view.moving, view.lastMove?.reason], [null, 'no free machine']);
+  // The person's daily cap, reached while the new machine queued, is a spending limit.
+  await f.pi.setMachine(f.operator, { machine: 'large' });
+  const capped = (await f.host(bound.work.command)).next!;
+  await released(f, capped.allocationId, { error: 'person_capped' });
+  await f.pi.tick();
+  view = await lastMove();
+  assert.deepEqual([view.moving, view.lastMove?.reason], [null, 'spending limit']);
   // A move holds two machines, so without room for a third it does not start.
   f.fleet.free = async () => 2;
   view = await f.pi.setMachine(f.operator, { machine: 'large' });

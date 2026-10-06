@@ -214,12 +214,27 @@ test('open work on a disconnected connection moves when managed ML is enabled ag
   const f = await fixture(t);
   await prior(f);
   const first = await f.service.enableManaged(f.a);
-  await f.state.transaction((tx) =>
-    tx.run(
+  await f.state.transaction(async (tx) => {
+    await tx.run(
       "UPDATE sandbox_native_work SET native_grant_id='managed_work',namespace='managed_ns' WHERE work_id='pilot'",
+    );
+    // A session that ran with compute and closed: its assignment waits to be revoked.
+    await tx.run(
+      `INSERT INTO sandbox_native_assignments
+      (lease_id,session_id,project_id,work_kind,work_id,attempt_ref,profile,expires_at,credentials,revoke_pending)
+      VALUES('lease','session',?,'experiment','pilot','attempt','execute',?,'x',TRUE)`,
+      f.a.projectId,
+      new Date(Date.now() + 6 * 3600_000).toISOString(),
+    );
+  });
+  await f.service.disconnect(f.a);
+  // The disconnected connection's tokens went with it, so its assignment is revoked too.
+  const lease = await f.state.read((tx) =>
+    tx.get<{ revoked_at: string | null }>(
+      "SELECT revoked_at FROM sandbox_native_assignments WHERE lease_id='lease'",
     ),
   );
-  await f.service.disconnect(f.a);
+  assert.ok(lease?.revoked_at);
   f.calls.length = 0;
   // The disconnected connection's grant went with it: nothing is checked or retired through it.
   const again = await f.service.enableManaged(f.a);
@@ -263,6 +278,28 @@ test('one busy work keeps every old work grant in place', async (t) => {
     f.calls.filter((call) => call.startsWith('DELETE /v1/delegations/works/')),
     [],
   );
+});
+
+test('work that moves to managed funding leaves the old account its expired assignments revoked', async (t) => {
+  const f = await fixture(t);
+  await prior(f);
+  await f.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO sandbox_native_assignments
+    (lease_id,session_id,project_id,work_kind,work_id,attempt_ref,profile,expires_at,credentials)
+    VALUES('lease','session',?,'experiment','pilot','attempt','execute',?,'x')`,
+      f.a.projectId,
+      new Date(Date.now() - 1000).toISOString(),
+    ),
+  );
+  await f.service.enableManaged(f.a);
+  // Reconciling the moved work never asks the new grant to revoke a lease it never held.
+  const lease = await f.state.read((tx) =>
+    tx.get<{ revoked_at: string | null }>(
+      "SELECT revoked_at FROM sandbox_native_assignments WHERE lease_id='lease'",
+    ),
+  );
+  assert.ok(lease?.revoked_at);
 });
 
 test('active assignments block a funding change before external issuance', async (t) => {
