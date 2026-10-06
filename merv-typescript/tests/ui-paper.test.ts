@@ -6,7 +6,7 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mount, serve, settle, text, unmount } from './ui-render.js';
+import { mount, requests, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
 // jsdom lays nothing out, so nothing ever scrolls into view: the outline's watcher is inert.
@@ -18,9 +18,11 @@ Object.assign(globalThis, {
 });
 
 const { createElement } = await import('react');
-const { MemoryRouter } = await import('react-router-dom');
+const { MemoryRouter, Routes, Route } = await import('react-router-dom');
 const { act } = await import('react-dom/test-utils');
 const { App } = await import('../packages/ui/web/app.js');
+const { PaperView } = await import('../packages/ui/web/views/paper.js');
+const { SessionProvider } = await import('../packages/ui/web/session.js');
 
 const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
 const paper = {
@@ -288,4 +290,173 @@ test('the main agent UI can save Methods and Results directly', async (t) => {
     await settle(10);
   }
   assert.deepEqual(sent, ['methods', 'results']);
+});
+
+test('the paper names its sources and reviews through their owners, and reads no list to do it', async (t) => {
+  const EXPERIMENT = `wf_${'e'.repeat(32)}`;
+  const REVIEW = `review_${'a'.repeat(32)}`;
+  const at = '2026-10-01T00:00:00Z';
+  const project = { id: 'project_1', name: 'Grokking', createdAt: at };
+  const actor = { id: 'actor_o', projectId: project.id, name: 'Operator', role: 'operator' };
+  const row = (id: string, kind: string, workflow?: string) => ({
+    id,
+    label: id,
+    group: 'work',
+    order: 1,
+    path: `/${id}`,
+    view: { kind },
+    ...(workflow && { workflow }),
+    status: {},
+    readable: true,
+  });
+  const rows = [
+    row('paper', 'paper'),
+    row('experiments', 'experiments', 'experiment'),
+    row('reviews', 'reviews'),
+  ];
+  const source = { kind: 'experiment', id: EXPERIMENT, revision: 3 };
+  const empty = (kind: string) => ({
+    current: {
+      projectId: project.id,
+      kind,
+      revision: 0,
+      sections: [],
+      updatedBy: null,
+      updatedAt: null,
+    },
+    published: null,
+  });
+  const methods = {
+    projectId: project.id,
+    kind: 'methods',
+    revision: 1,
+    sections: [{ id: 'sec_1', title: 'Setup', content: 'Three seeds.' }],
+    updatedBy: 'actor_r',
+    updatedAt: at,
+    review: { id: REVIEW, source, verdict: 'pass' },
+  };
+  const workspace = {
+    documents: {
+      problem: empty('problem'),
+      literature: empty('literature'),
+      methods: {
+        current: methods,
+        published: {
+          document: methods,
+          publication: {
+            id: 'paperpub_1',
+            projectId: project.id,
+            kind: 'methods',
+            revision: 1,
+            source,
+            reviewId: REVIEW,
+            verdict: 'pass',
+            evidence: [],
+            createdBy: 'actor_r',
+            createdAt: at,
+          },
+        },
+      },
+      results: empty('results'),
+    },
+    citations: [],
+    proposals: [
+      {
+        id: 'paperprop_1',
+        projectId: project.id,
+        source,
+        artifact: { id: 'art_1', hash: 'h' },
+        documents: [],
+        evidence: [],
+        createdBy: 'actor_p',
+        createdAt: at,
+        acceptance: { reviewId: REVIEW, reviewerId: 'actor_r', publications: [] },
+      },
+    ],
+  };
+  t.after(unmount);
+  serve('/auth/config', { body: { enabled: false } });
+  serve('/account', {
+    body: { kind: 'actor', actor: { ...actor, active: true }, projects: [project] },
+  });
+  serve('/tools/ui.shell', { body: { result: { actor, project, rows, plugins: [] } } });
+  serve('/tools/actor.list', {
+    body: { result: [{ ...actor }, { id: 'actor_r', name: 'Ada', role: 'reviewer' }] },
+  });
+  serve('/tools/artifact.list', { body: { result: [] } });
+  serve('/tools/paper.read', (_count, input) => ({
+    body: { result: input.history ? [] : workspace },
+  }));
+  const asked: string[][] = [];
+  serve('/tools/project.references', (_count, input) => {
+    asked.push(input.refs as string[]);
+    return {
+      body: {
+        result: (input.refs as string[]).map((ref) =>
+          ref === EXPERIMENT
+            ? {
+                ref,
+                status: 'resolved',
+                kind: 'experiment',
+                id: ref,
+                label: 'Seed sweep',
+                state: 'done',
+              }
+            : ref === REVIEW
+              ? {
+                  ref,
+                  status: 'resolved',
+                  kind: 'review',
+                  id: ref,
+                  label: 'Review of Seed sweep',
+                  state: 'submitted',
+                }
+              : { ref, status: 'missing', kind: null, id: ref },
+        ),
+      },
+    };
+  });
+  await mount(
+    createElement(
+      MemoryRouter,
+      { initialEntries: ['/paper'] },
+      createElement(
+        SessionProvider,
+        null,
+        createElement(
+          Routes,
+          null,
+          createElement(Route, {
+            path: '/paper/*',
+            element: createElement(PaperView, {
+              row: rows[0],
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              shell: { rows, plugins: [] } as any,
+            }),
+          }),
+        ),
+      ),
+    ),
+  );
+  await settle(50);
+  // No list is read to name a record: the paper's own references are asked, once each.
+  assert.deepEqual(
+    requests.filter((path) => /experiment\.list|reflection\.list|review\.list/.test(path)),
+    [],
+  );
+  assert.deepEqual(asked.flat().sort(), [EXPERIMENT, REVIEW].sort());
+  const links = [...document.querySelectorAll('a')].map((link) => [
+    link.textContent,
+    link.getAttribute('href'),
+  ]);
+  // The proposal’s source opens where the experiments row lists it, and stands in its own state.
+  assert.ok(
+    links.some(([name, to]) => name === 'Seed sweep' && to === `/experiments/${EXPERIMENT}`),
+  );
+  assert.ok(
+    links.some(([name, to]) => name === 'Seed sweep review' && to === `/reviews/${REVIEW}`),
+  );
+  // The review stands in the verdict the paper recorded, by the reviewer the paper recorded.
+  assert.match(document.body.textContent!, /Seed sweep reviewpass · Ada · published Methods/);
+  assert.match(document.body.textContent!, /Earlier paper proposalsSeed sweepdone/);
 });

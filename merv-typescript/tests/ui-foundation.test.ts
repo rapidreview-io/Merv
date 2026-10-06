@@ -322,6 +322,29 @@ test('an open review adds to the state pill beside it and never repeats it', () 
   assert.deepEqual(reviewClause({ ...open, status: 'started' }), { word: 'claimed' });
 });
 
+test('a verdict says every check it did not take as met, as Reviews says it on the Running page', () => {
+  const finding = (criterionNumber: number, status: string) => ({
+    criterionNumber,
+    status,
+    evidenceIds: [],
+    notes: '',
+  });
+  const decided = {
+    subjectId: 'wf_1',
+    subjectRevision: 1,
+    createdAt: '2026-09-20T10:00:00Z',
+    status: 'submitted',
+    verdict: 'needs_changes',
+    findings: [finding(1, 'met'), finding(2, 'not_met'), finding(3, 'waived')],
+  };
+  // A check held back is the reason the work came back: it is never dropped from the line.
+  assert.deepEqual(reviewClause(decided), {
+    word: 'needs_changes',
+    verdict: true,
+    detail: '1 of 3 not met · 1 of 3 waived',
+  });
+});
+
 test('an empty list offers its first record itself, and the form has one Cancel and one way out', async (t) => {
   t.after(async () => await unmount());
   await mount(page([]));

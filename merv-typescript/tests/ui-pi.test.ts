@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { PiCommand, PiEvent } from '../packages/ui/web/pi-stream.js';
+import type { PiCommand, PiEvent } from '../packages/pi/src/models.js';
 import { click, jump, mount, requests, resize, serve, settle, text, unmount } from './ui-render.js';
 
 sessionStorage.setItem('merv:token', 'fixture-token');
@@ -1488,8 +1488,13 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
     requested.push(input);
     return input.proposalId === 'pip_halt'
       ? {
-          status: 403,
-          body: { error: { code: 'forbidden', message: 'Actor lacks admin permission' } },
+          body: {
+            result: {
+              result: null,
+              told: 'fleet.halt was refused: Actor lacks admin permission',
+              whole: true,
+            },
+          },
         }
       : {
           body: {
@@ -1550,10 +1555,12 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
     { role: 'user', text: 'Ran artifact.read; its result is shown only to me.' },
     { role: 'assistant', text: 'Downloaded.' },
   ]);
-  state = snapshot(conversation(), [
-    turn('completed', { pip_download: { at: 'now', ok: true } }),
-    told,
-  ]);
+  const secret = {
+    at: 'now',
+    ok: true,
+    told: 'Ran artifact.read; its result is shown only to me.',
+  };
+  state = snapshot(conversation(), [turn('completed', { pip_download: secret }), told]);
   await act(async () => stream.push('snapshot', state));
   assert.equal(cards().length, 2);
   assert.deepEqual(ran(), [undefined, 'Ran']);
@@ -1564,14 +1571,24 @@ test('a proposed call reads as the act it performs and its facts, and Run as me 
   await settle(10);
   assert.equal(sent[1].text, 'fleet.halt was refused: Actor lacks admin permission');
   const refusal = {
-    pip_download: { at: 'now', ok: true },
-    pip_halt: { at: 'now', ok: false, code: 'forbidden' },
+    pip_download: secret,
+    pip_halt: {
+      at: 'now',
+      ok: false,
+      code: 'forbidden',
+      told: 'fleet.halt was refused: Actor lacks admin permission',
+      said: 'Actor lacks admin permission',
+    },
   };
   state = snapshot(conversation(), [turn('completed', refusal), told]);
   await act(async () => stream.push('snapshot', state));
   assert.deepEqual(ran(), ['Refused', 'Ran']);
   assert.ok(cards()[0].querySelector('.pi-receipt-word.pi-refused'));
-  // Once the agent has been told, the card says why as well.
+  // The card says why at once, and once the agent has been told it says so nowhere else.
+  assert.equal(
+    cards()[0].querySelector('.pi-receipt')!.textContent,
+    'Refused·Actor lacks admin permission',
+  );
   const refused = command('c2b', 'completed', [
     { role: 'user', text: 'fleet.halt was refused: Actor lacks admin permission' },
     { role: 'assistant', text: 'Ask an admin.' },
@@ -2096,73 +2113,134 @@ test('a call’s input reads as facts: keys in words, flags as Yes and No, neste
   );
 });
 
-test('what Run told the agent is a receipt only where it answers a call that ran', () => {
-  const ran = { at: 'now', ok: true };
-  const create = { id: 'pip_create', name: 'task.create', input: { title: 'x' }, ran };
-  const halt = { id: 'pip_halt', name: 'session.halt', input: {}, ran: { at: 'now', ok: false } };
-  const read = { id: 'pip_read', name: 'artifact.read', input: {}, secret: true as const, ran };
-  const advance = { id: 'pip_advance', name: 'research.advance', input: {}, ran };
+test('what Run told the agent is a receipt only where it is exactly what Pi kept as told', () => {
+  const ran = (told: string, ok = true) => ({ at: 'now', ok, told });
+  const create = {
+    id: 'pip_create',
+    name: 'task.create',
+    input: { title: 'x' },
+    ran: ran('Ran task.create: {"id":"wf_1"}'),
+  };
+  const halt = {
+    id: 'pip_halt',
+    name: 'session.halt',
+    input: {},
+    ran: ran('session.halt was refused: Actor lacks admin permission', false),
+  };
+  const read = {
+    id: 'pip_read',
+    name: 'artifact.read',
+    input: {},
+    secret: true as const,
+    ran: ran('Ran artifact.read; its result is shown only to me.'),
+  };
   const end = { id: 'pip_end', name: 'research.end', input: {} };
   const proposed = {
     ...command('c1', 'completed', [{ role: 'user', text: 'Go' }]),
-    proposals: [create, halt, read, advance, end],
+    proposals: [create, halt, read, end],
   } as unknown as PiCommand;
   const said = (text: string, role = 'user') =>
     command('c3', 'completed', [{ role, text }]) as unknown as PiCommand;
   const after = (text: string, role?: string) =>
     receiptOf([proposed, said('Thanks', 'assistant'), said(text, role)], 2);
-  assert.deepEqual(after('Ran task.create: {"id":"wf_1"}'), {
-    proposal: create,
-    result: '{"id":"wf_1"}',
-  });
-  assert.deepEqual(after('session.halt was refused: Actor lacks admin permission'), {
-    proposal: halt,
-    refused: 'Actor lacks admin permission',
-  });
-  assert.deepEqual(after('Ran artifact.read; its result is shown only to me.'), { proposal: read });
-  assert.deepEqual(
-    after(
-      'Ran research.advance: {"id":"research_1","state":"researching"}. Re-read research.get and workflow.status_and_next for current details.',
-    ),
-    { proposal: advance, result: '{"id":"research_1","state":"researching"}' },
-  );
-  // A result cut where Run cuts it no longer parses, whatever the server trimmed from its end, and
-  // is still the result.
-  const cut = `{"text":"${'a'.repeat(3990)}`;
-  assert.deepEqual(after(`Ran task.create: ${cut}`), { proposal: create, result: cut });
+  assert.equal(after('Ran task.create: {"id":"wf_1"}'), create);
+  assert.equal(after('session.halt was refused: Actor lacks admin permission'), halt);
+  assert.equal(after('Ran artifact.read; its result is shown only to me.'), read);
   for (const [text, role] of [
-    // A message that merely begins with the word.
+    // A message that merely begins alike.
     ['Ran the numbers again: anything new?'],
     // A receipt that waited in the composer and went with the person's own words.
     ['Ran task.create: {"id":"wf_1"}\n\nAnd then?'],
-    // A call that never ran, a call nobody proposed, and words that are not the person's.
+    // A call that never ran, and words that are not the person's.
     ['Ran research.end: {}'],
-    ['Ran fleet.halt: {}'],
     ['Ran task.create: {"id":"wf_1"}', 'assistant'],
   ])
     assert.equal(after(text!, role), null, text);
   // Only the latest calls offer Run: once a later turn proposes, an earlier call is not answered.
   const later = { ...proposed, id: 'c2', proposals: [end] } as unknown as PiCommand;
   assert.equal(receiptOf([proposed, later, said('Ran task.create: {"id":"wf_1"}')], 2), null);
-  // Two calls of one tool are answered in the order they ran, whichever was proposed first.
-  const dispatch = (enabled: boolean, at: string) => ({
-    id: `pip_${enabled}`,
+  // Two calls told alike are answered in the order they ran, whichever was proposed first.
+  const dispatch = (id: string, at: string) => ({
+    id,
     name: 'session.dispatch',
-    input: { enabled },
-    ran: { at, ok: true },
+    input: { enabled: true },
+    ran: { at, ok: true, told: 'Ran session.dispatch: {"enabled":true}' },
   });
-  const [start, pause] = [
-    dispatch(true, '2026-10-02T20:11:00Z'),
-    dispatch(false, '2026-10-02T20:10:25Z'),
+  const [start, again] = [
+    dispatch('pip_start', '2026-10-02T20:11:00Z'),
+    dispatch('pip_again', '2026-10-02T20:10:25Z'),
   ];
   const twice = [
-    { ...proposed, proposals: [start, pause] } as unknown as PiCommand,
-    said('Ran session.dispatch: {"enabled":false}'),
+    { ...proposed, proposals: [start, again] } as unknown as PiCommand,
+    said('Ran session.dispatch: {"enabled":true}'),
     said('Ran session.dispatch: {"enabled":true}'),
   ];
   assert.deepEqual(
-    [1, 2].map((at) => receiptOf(twice, at)?.proposal),
-    [pause, start],
+    [1, 2].map((at) => receiptOf(twice, at)),
+    [again, start],
+  );
+});
+
+test('a card says how its call came out from what Pi kept, and a run Pi itself refuses tells the agent nothing', async (t) => {
+  t.after(cleanup);
+  setProject('p1');
+  const proposals = [
+    {
+      id: 'pip_task',
+      name: 'task.create',
+      input: { title: 'Seed sweep' },
+      at: 'now',
+      // Kept before the agent was told: the card reads the outcome, not the sentence.
+      ran: { at: 'now', ok: true, told: 'Ran task.create: {"id":"wf_1"}', said: '{"id":"wf_1"}' },
+    },
+    {
+      id: 'pip_halt',
+      name: 'session.halt',
+      input: {},
+      act: { title: 'Halt lease' },
+      at: 'now',
+      ran: {
+        at: 'now',
+        ok: false,
+        code: 'forbidden',
+        told: 'session.halt was refused: Ask an operator',
+        said: 'Ask an operator',
+      },
+    },
+    { id: 'pip_end', name: 'research.end', input: {}, act: { title: 'End research' }, at: 'now' },
+  ];
+  const state = snapshot(conversation(), [
+    { ...command('c1', 'completed', [{ role: 'user', text: 'Go' }]), proposals },
+  ]);
+  boot(
+    () => state,
+    () => [conversation()],
+  );
+  serve('/tools/pi.run', {
+    status: 409,
+    body: {
+      error: { code: 'pi_turn_busy', message: 'This conversation already has an active turn' },
+    },
+  });
+  const sent: Record<string, unknown>[] = [];
+  serve('/tools/pi.send', (_count, input) => {
+    sent.push(input);
+    return { body: { result: command(input.commandId as string, 'waiting') } };
+  });
+  await open();
+  await settle(10);
+  const cards = () => [...document.querySelectorAll('.pi-proposal')];
+  assert.deepEqual(
+    cards().map((card) => card.querySelector('.pi-receipt-line')?.textContent),
+    ['RanResult', 'Refused·Ask an operator', undefined],
+  );
+  await act(async () => cards()[2].querySelector<HTMLButtonElement>('button.btn')!.click());
+  await settle(10);
+  // Nothing ran, so the agent is told nothing; the person reads why.
+  assert.deepEqual(sent, []);
+  assert.equal(
+    document.querySelector('.pi-error')?.textContent,
+    'This conversation already has an active turn',
   );
 });
 
@@ -2234,30 +2312,53 @@ test('a card names the records its input points at, folds what is long or nested
 test('how a run came out is said once, in its card or on a quiet line, never as a message of the person’s', async (t) => {
   t.after(cleanup);
   setProject('p1');
-  const ran = { at: 'now', ok: true };
+  const created = JSON.stringify({ id: 'task_1', title: 'Seed sweep', state: 'planned' });
+  const told = {
+    task: `Ran task.create: ${created}`,
+    halt: 'session.halt was refused: Actor lacks admin permission',
+    read: 'Ran artifact.read; its result is shown only to me.',
+  };
   const proposals = [
-    { id: 'pip_task', name: 'task.create', input: { title: 'Seed sweep' }, at: 'now', ran },
+    {
+      id: 'pip_task',
+      name: 'task.create',
+      input: { title: 'Seed sweep' },
+      at: 'now',
+      ran: { at: 'now', ok: true, told: told.task, said: created },
+    },
     {
       id: 'pip_halt',
       name: 'session.halt',
       input: { sessionId: 'session_1' },
       act: { title: 'Halt lease' },
       at: 'now',
-      ran: { at: 'now', ok: false, code: 'forbidden' },
+      ran: {
+        at: 'now',
+        ok: false,
+        code: 'forbidden',
+        told: told.halt,
+        said: 'Actor lacks admin permission',
+      },
     },
-    { id: 'pip_read', name: 'artifact.read', input: {}, secret: true, at: 'now', ran },
+    {
+      id: 'pip_read',
+      name: 'artifact.read',
+      input: {},
+      secret: true,
+      at: 'now',
+      ran: { at: 'now', ok: true, told: told.read },
+    },
   ];
   const turn = (id: string, asked: string, answer: string) =>
     command(id, 'completed', [
       { role: 'user', text: asked },
       { role: 'assistant', text: answer },
     ]);
-  const created = { id: 'task_1', title: 'Seed sweep', state: 'planned' };
   const turns = [
     { ...command('c1', 'completed', [{ role: 'user', text: 'Make the task' }]), proposals },
-    turn('c2', `Ran task.create: ${JSON.stringify(created)}`, 'Created.'),
-    turn('c3', 'session.halt was refused: Actor lacks admin permission', 'Ask an admin.'),
-    turn('c4', 'Ran artifact.read; its result is shown only to me.', 'Downloaded.'),
+    turn('c2', told.task, 'Created.'),
+    turn('c3', told.halt, 'Ask an admin.'),
+    turn('c4', told.read, 'Downloaded.'),
     turn('c5', 'Ran the numbers again: anything new?', 'Nothing yet.'),
   ];
   let state = snapshot(conversation(), turns);

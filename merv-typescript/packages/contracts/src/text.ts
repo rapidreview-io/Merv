@@ -6,6 +6,14 @@ export const clip = (text: string, max: number) =>
 /** At most `max` UTF-16 units, the last of them '…' when the text was cut. */
 export const ellipsis = (text: string, max: number) =>
   text.length > max ? `${clip(text, max - 1).trimEnd()}…` : text;
+/** The first clause of a recorded sentence, in its own words; null where nothing was written. */
+export function firstSentence(text: string | null | undefined, limit = 140): string | null {
+  const trimmed = (text ?? '').trim();
+  if (!trimmed) return null;
+  const stop = trimmed.search(/[.!?](\s|$)|\n/);
+  const first = (stop >= 0 ? trimmed.slice(0, stop + 1) : trimmed).trim();
+  return ellipsis(first, limit);
+}
 /**
  * Text a remote service sent, at most `max` UTF-16 units of it, without control characters
  * other than line breaks and tabs; anything but a string is ''.

@@ -266,6 +266,13 @@ export class TaskService implements Tasks {
           if (row.review_id === review.id && !review.override)
             await this.leasedClaim(caller, snapshot, tx);
         },
+        // A task carries the claims of its newest delivery only, so they stand beside the
+        // review of that delivery and beside no earlier one.
+        claims: async (caller, review, tx) =>
+          (await this.row(tx, caller, review.subjectId)).review_id === review.id
+            ? (((await this.workflows.get(caller, review.subjectId, tx)).data
+                .deliveryConfirmations as unknown as TaskConfirmation[] | undefined) ?? [])
+            : [],
       });
     } catch (error) {
       this.dispose();

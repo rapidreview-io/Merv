@@ -19,12 +19,12 @@ import { RecordLink, RecordText, recordNames, useRecordNames } from '../markdown
 import { homeOf, pathOf, useRows } from '../navigation';
 import type { HomeData } from './map-data';
 import { useActorNames } from './people';
-import type { Task, TaskConfirmation } from '@merv/tasks/models';
 import type { WorkflowActionStatus, WorkflowDecision } from '@merv/contracts/workflow-guidance';
-import type { ReviewGuide, ReviewRequest, Verdict } from '@merv/contracts/types';
+import type { ReviewClaim, ReviewGuide, ReviewRequest, Verdict } from '@merv/contracts/types';
 import {
   REVIEW_VERDICTS,
   SYNOPSIS_LENGTH,
+  reviewExceptions,
   assessmentProblem,
   synopsisProblem,
 } from '@merv/reviews/rules';
@@ -32,8 +32,9 @@ import {
 /** review.submit enumerates exactly these finding words. */
 const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
 
-/** A review as review.get and review.list answer it; review.get adds its owner's return routes. */
-export type Review = ReviewRequest & Pick<ReviewGuide, 'returns'>;
+/** A review as review.get and review.list answer it; review.get adds its owner's return routes,
+ * the gate it reads and the delivery's claims. */
+export type Review = ReviewRequest & Pick<ReviewGuide, 'returns' | 'gate' | 'claims'>;
 /** What a desk has said about one check so far: its word, the sentence, the files it cites. */
 export interface Draft {
   status?: string;
@@ -119,7 +120,7 @@ export function CriterionRows({
   draft,
 }: {
   criteria: string[];
-  confirmations?: TaskConfirmation[];
+  confirmations?: ReviewClaim[];
   /** The review whose findings the rows state, once there is one. */
   review?: Review;
   draft?: Drafting;
@@ -257,15 +258,6 @@ function ReviewRecord({ id }: { id: string }) {
   const home = useTool<HomeData>('ui.home').data;
   const rows = useRows();
   const subject = subjectId ? recordNames(null, home, rows).get(subjectId) : undefined;
-  const experiment = home?.experiments?.find((item) => item.id === subjectId);
-  const task = useTool<Task>(
-    home?.tasks?.some((item) => item.id === subjectId) ? 'task.get' : null,
-    { taskId: subjectId ?? '' },
-  ).data;
-  const stages = useTool<{ submissions: { stage: string; reviewId: string | null }[] }>(
-    experiment ? 'experiment.get_state' : null,
-    { experimentId: subjectId ?? '' },
-  );
   const guidance = useTool<WorkflowDecision>(
     review.data && !review.data.verdict ? 'workflow.status_and_next' : null,
     { instanceId: subjectId ?? '' },
@@ -278,17 +270,12 @@ function ReviewRecord({ id }: { id: string }) {
       </div>
     );
   const r = review.data;
-  // The submission this review pins names its own stage, so a record keeps its name
-  // after the subject has moved on; the current gate answers until that list arrives.
-  const stage =
-    stages.data?.submissions.find((item) => item.reviewId === r.id)?.stage ??
-    { design_review: 'design', experiment_review: 'results' }[experiment?.workflow.state ?? ''];
-  // The kind label over the title already says Review; only the gate it reads adds to that.
-  const gate = stage === 'design' ? 'Design' : stage === 'results' ? 'Results' : undefined;
+  // The kind label over the title already says Review; only the gate its owner says it reads
+  // adds to that.
+  const gate = r.gate;
   const submit = guidance.data?.actions.find((action) => action.tool === 'review.submit');
-  // A task carries the claims of its newest delivery only, so they stand beside the
-  // review of that delivery and beside no earlier one.
-  const claims = task?.reviewId === r.id ? task.deliveryConfirmations : undefined;
+  // What the delivery under review claimed of its checks, where its owner keeps such claims.
+  const claims = r.claims;
   // A file a criterion already opens in place is not listed a second time under them.
   const cited = new Set(
     [...(r.findings ?? []), ...(claims ?? [])].flatMap((item) => item.evidenceIds ?? []),
@@ -296,18 +283,15 @@ function ReviewRecord({ id }: { id: string }) {
   const rest = r.artifactIds.filter((artifactId) => !cited.has(artifactId));
   // The findings are the record's once a verdict exists, and this desk's draft
   // until then, so the exceptions are stated while their cost is being paid.
-  const exceptions = exceptionsOf({
-    review: r,
-    findings: r.verdict
-      ? r.findings.map((finding) => ({
-          number: finding.criterionNumber,
-          status: finding.status as string,
-        }))
+  const exceptions = exceptionsOf(
+    r,
+    r.verdict
+      ? r.findings
       : Object.entries(values).map(([number, draft]) => ({
-          number: Number(number),
+          criterionNumber: Number(number),
           status: draft.status ?? '',
         })),
-  });
+  );
   // Exceptions are stated where their cost is being paid: beside the control while
   // a verdict is still being written, beside the verdict once it is recorded.
   const stated = exceptions.length > 0 && (
@@ -394,30 +378,19 @@ function ReviewRecord({ id }: { id: string }) {
 }
 
 /**
- * An exception is stated, never absorbed. Every sentence is derived from data
- * already on the page and none of them is coloured: a reviewer waiving a check
- * that does not apply is doing the right thing, not raising an alarm.
+ * An exception is stated, never absorbed: every check Reviews says the verdict did not take as
+ * met (`reviewExceptions`), by number. None of them is coloured: a reviewer waiving a check that
+ * does not apply is doing the right thing, not raising an alarm.
  */
-function exceptionsOf({
-  review,
-  findings,
-}: {
-  review: Review;
-  findings: { number: number; status: string }[];
-}): string[] {
-  const lines: string[] = [];
-  for (const [status, word] of [
-    ['waived', 'waived'],
-    ['not_verified', 'not verified'],
-  ]) {
-    const at = findings
-      .filter((item) => item.status === status)
-      .map((item) => item.number)
-      .sort((left, right) => left - right);
-    if (at.length === 1) lines.push(`Check ${at[0]} was ${word}.`);
-    else if (at.length > 1)
-      lines.push(`Checks ${at.slice(0, -1).join(', ')} and ${at.at(-1)} were ${word}.`);
-  }
+function exceptionsOf(
+  review: Review,
+  findings: { criterionNumber: number; status: string }[],
+): string[] {
+  const lines = reviewExceptions(findings).map(({ status, criteria: at }) =>
+    at.length === 1
+      ? `Check ${at[0]} was ${words(status)}.`
+      : `Checks ${at.slice(0, -1).join(', ')} and ${at.at(-1)} were ${words(status)}.`,
+  );
   if (review.status === 'superseded') lines.push('This review was superseded.');
   return lines;
 }

@@ -80,8 +80,10 @@ export type {
   CodeCommandCompletion,
 } from './code.js';
 import type { Data, Json } from './data.js';
-import type { Artifact, ArtifactFile } from './artifact-models.js';
-export type { Artifact } from './artifact-models.js';
+import type { Artifact, ArtifactContent, ArtifactFile } from './artifact-models.js';
+export type { Artifact, ArtifactContent } from './artifact-models.js';
+import type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
+export type { Actor, IssuedUserKey, Project, UserKey } from './scope-models.js';
 import { clip, visible } from './text.js';
 import type {
   Role,
@@ -943,28 +945,6 @@ export function eventSource(caller: Caller): Data {
           }
         : {};
 }
-export interface Actor {
-  /** Credentialless service owning this actor, when present. */
-  serviceOwner?: string;
-  id: string;
-  projectId: string;
-  name: string;
-  role: Role;
-  active: boolean;
-  /** Present only for the persistent actor representing a project member. */
-  user?: { issuer: string; subject: string };
-  /** Credentialless actor owned by an agent session (or a historical assignment). */
-  agentId?: string;
-  sessionId?: string;
-}
-export interface Project {
-  id: string;
-  name: string;
-  createdAt: string;
-  /** Current Scope reads always include these; optional for legacy frozen snapshots. */
-  summary?: string;
-  contextRevision?: number;
-}
 export interface ProjectContextUpdate {
   summary: string;
   /** Supply exactly one baseline from project.get. Whitespace is significant in text mode. */
@@ -1010,23 +990,6 @@ export interface HumanPrincipal {
   kind: 'user';
   user: SharedUser;
   expiresAt: string;
-}
-/** A machine bearer owned by a verified user; projectId is its immutable issuance project. */
-export interface UserKey {
-  id: string;
-  owner: { issuer: string; subject: string };
-  projectId: string;
-  grantScope: 'project' | 'account';
-  label: string | null;
-  createdAt: string;
-  expiresAt: string | null;
-  revokedAt: string | null;
-  previousId: string | null;
-}
-export interface IssuedUserKey {
-  key: UserKey;
-  /** Returned once; only its digest is stored. */
-  token: string;
 }
 export type Principal =
   HumanPrincipal | { kind: 'actor'; actor: AuthenticatedActor } | { kind: 'key'; key: UserKey };
@@ -1215,14 +1178,6 @@ export interface ArtifactCollectionInput {
 }
 export interface ArtifactFileProvider {
   download(projectId: string, reference: string): Promise<{ url: string; expiresAt: string }>;
-}
-/** Artifact bytes as tool text; `offset` and `total` are set for a range. */
-export interface ArtifactContent {
-  artifact: Artifact;
-  content: string;
-  encoding: 'utf8' | 'base64';
-  offset?: number;
-  total?: number;
 }
 export interface ArtifactUploadInput {
   title: string;
@@ -1800,6 +1755,7 @@ export interface Workflows {
 import type { Verdict } from './types.js';
 export type { Verdict } from './types.js';
 import type {
+  ReviewClaim,
   ReviewFinding,
   ReviewGuide,
   ReviewProvenance,
@@ -1807,6 +1763,7 @@ import type {
   ReviewReturn,
 } from './review-models.js';
 export type {
+  ReviewClaim,
   ReviewFinding,
   ReviewGuide,
   ReviewProvenance,
@@ -1879,14 +1836,21 @@ export interface ReviewSubmitOwner {
    * reviewed at more than one. Read-only; ids it does not own are left out.
    */
   gates?(reviewIds: readonly string[], sql: Sql): Promise<Readonly<Record<string, string>>>;
+  /** What the delivery an owned review judges claimed of each check, where the owner keeps
+   *  such claims; read-only, and empty for a review of anything but the newest delivery. */
+  claims?(
+    caller: Caller,
+    review: Readonly<ReviewRequest>,
+    tx: Transaction,
+  ): Promise<readonly ReviewClaim[]>;
 }
 export interface Reviews {
   provenance(provider: string): { register(resolve: ReviewProvenanceResolver): () => void };
   registerSubmitOwner(owner: ReviewSubmitOwner): () => void;
   /** Select one current domain owner and apply its verdict/transition in the same writer. */
   apply(caller: Caller, input: ReviewApplication, tx?: Transaction): Promise<unknown>;
-  /** What the one domain that owns this review tells its reviewer: its verdict rules and return
-   * routes, where it states them. A review the caller has just read (get, start) is not read again. */
+  /** What the one domain that owns this review tells its reviewer: its verdict rules, return
+   * routes, the gate it reads and what the delivery claimed, where it states them. A review the caller has just read (get, start) is not read again. */
   guide(caller: Caller, review: string | ReviewRequest, tx?: Transaction): Promise<ReviewGuide>;
   request(caller: Caller, input: ReviewInput, tx?: Transaction): Promise<ReviewRequest>;
   reissue(

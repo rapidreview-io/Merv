@@ -24,12 +24,23 @@ export interface ReviewReturn {
   value: string;
   label: string;
 }
+/** What the work under review claimed of one of its checks, as the owning domain kept it. */
+export interface ReviewClaim {
+  checkNumber: number;
+  status: 'met' | 'not_met';
+  evidenceIds: string[];
+  notes: string;
+}
 /** What the owning domain tells a reviewer reading or claiming one of its reviews. */
 export interface ReviewGuide {
   /** The owner's verdict rules. */
   guidance?: string;
   /** The routes a rejecting verdict may choose; absent where the owner's routes are fixed. */
   returns?: ReviewReturn[];
+  /** The gate the review is read at, where the owner reviews its records at more than one. */
+  gate?: string;
+  /** What the delivery under review claimed of each check, where the owner keeps such claims. */
+  claims?: ReviewClaim[];
 }
 export interface ReviewRequest {
   provenance?: ReviewProvenance;

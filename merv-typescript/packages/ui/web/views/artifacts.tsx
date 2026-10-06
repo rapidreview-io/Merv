@@ -16,25 +16,7 @@ import { NotebookView, readNotebook } from '../notebook';
 import { useSession } from '../session';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
-
-export interface Artifact {
-  id: string;
-  projectId: string;
-  createdBy: string;
-  title: string;
-  mediaType: string;
-  hash: string;
-  size: number;
-  createdAt: string;
-  downloadAvailable?: boolean;
-  files?: { name: string; size: number; hash: string; provider: string }[];
-  metadata?: Record<string, unknown>;
-}
-export interface ArtifactContent {
-  artifact: Artifact;
-  content: string;
-  encoding: 'utf8' | 'base64';
-}
+import type { ArtifactContent, ArtifactListing as Artifact } from '@merv/contracts/artifact-models';
 
 export const bytes = (n: number) =>
   n < 1024

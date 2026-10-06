@@ -8,7 +8,9 @@ import { Ago, Failure, Field, PageHeader, StatusPill, Submit, cx, words } from '
 import { Chips, ListPage, useListFilter } from '../list-filters';
 import { RecordPicker, type Pickable } from '../record-picker';
 import { useSession } from '../session';
-import { OPEN, ThreeStates, firstSentence, newestReview, reviewClause } from '../states';
+import { firstSentence } from '@merv/contracts/text';
+import { currentReview } from '@merv/reviews/rules';
+import { OPEN, ThreeStates, reviewClause } from '../states';
 import type { ShellData, WorkflowShape } from '../shell-types';
 import { Dependency, StageMark, ended } from '../process';
 import { ArrowRightIcon } from '../icons';
@@ -481,7 +483,7 @@ function WaveList({ shell }: { shell: ShellData }) {
             }
       }
       line={(item) => {
-        const review = newestReview(reviews ?? undefined, item.id);
+        const review = currentReview(reviews ?? undefined, item.id);
         const said = reviewClause(review, nameOf(review?.reviewerId));
         const who = nameOf(item.owner);
         return {

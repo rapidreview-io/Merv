@@ -17,7 +17,8 @@ import { clockOf, duration, elapsed, term, words, type Liveness, type Now } from
 import { shortId } from './markdown';
 import { useCommand } from './mutations';
 import { useStateWords, type StateWords } from './navigation';
-import { ArtifactBody, bytes, fileType, type Artifact } from './views/artifacts';
+import type { ArtifactListing as Artifact } from '@merv/contracts/artifact-models';
+import { ArtifactBody, bytes, fileType } from './views/artifacts';
 
 export { term, words };
 

@@ -50,6 +50,70 @@ export function standings<
   }));
 }
 
+/**
+ * The review that speaks for a subject: the newest at the highest revision it pinned, so an open
+ * re-review outranks the verdict it will replace.
+ */
+export function currentReview<
+  T extends Pick<ReviewRequest, 'id' | 'subjectId' | 'subjectRevision' | 'createdAt'>,
+>(reviews: readonly T[] | undefined, subjectId: string): T | undefined {
+  return (reviews ?? [])
+    .filter((review) => review.subjectId === subjectId)
+    .sort(
+      (a, b) =>
+        a.subjectRevision - b.subjectRevision ||
+        a.createdAt.localeCompare(b.createdAt) ||
+        a.id.localeCompare(b.id),
+    )
+    .at(-1);
+}
+
+/** A check a verdict did not take as met, in the order a reader is told of them. */
+export const REVIEW_EXCEPTIONS = ['not_met', 'waived', 'not_verified'] as const;
+export type ReviewException = (typeof REVIEW_EXCEPTIONS)[number];
+/**
+ * The checks each exception covers, by number: what a verdict held back or let through, which a
+ * pass built on waivers must still say. Drafted findings count as recorded ones do.
+ */
+export function reviewExceptions(
+  findings: readonly { criterionNumber: number; status: string }[],
+): { status: ReviewException; criteria: number[] }[] {
+  return REVIEW_EXCEPTIONS.flatMap((status) => {
+    const criteria = findings
+      .filter((finding) => finding.status === status)
+      .map((finding) => finding.criterionNumber)
+      .sort((left, right) => left - right);
+    return criteria.length ? [{ status, criteria }] : [];
+  });
+}
+/**
+ * How one review stands, as every reader says it: nobody has it, somebody has it, it was
+ * superseded, or the verdict it came back with and the checks that verdict did not take as met,
+ * of how many. A review handed in without a verdict says nothing.
+ */
+export type ReviewStanding =
+  | { word: 'unclaimed' | 'superseded' }
+  | { word: 'claimed'; reviewerId: string | null }
+  | { word: Verdict; exceptions: ReturnType<typeof reviewExceptions>; of: number };
+export function reviewStanding(review: {
+  status: string;
+  reviewerId?: string | null;
+  verdict?: Verdict | string | null;
+  findings?: readonly { criterionNumber: number; status: string }[];
+}): ReviewStanding | null {
+  if (review.status === 'requested') return { word: 'unclaimed' };
+  if (review.status === 'started')
+    return { word: 'claimed', reviewerId: review.reviewerId ?? null };
+  if (review.status === 'superseded') return { word: 'superseded' };
+  if (!review.verdict) return null;
+  const findings = review.findings ?? [];
+  return {
+    word: review.verdict as Verdict,
+    exceptions: reviewExceptions(findings),
+    of: findings.length,
+  };
+}
+
 /** The refusal of a lease source that may not direct a reviewer: `check(directsIndependently(…), ...)`. */
 export const NOT_INDEPENDENT = [
   'review_independence',

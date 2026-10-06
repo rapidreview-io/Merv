@@ -279,11 +279,15 @@ export class ReviewService implements Reviews {
       for (const owner of [...this.owners.values()])
         if ((await owner.owns(review, tx)) === true) matches.push(owner);
       if (matches.length !== 1) return {};
-      const [{ guidance, returns }] = matches;
+      const [{ guidance, returns, claims }] = matches;
       const routes = returns ? [...(await returns(review, tx))] : [];
+      const gate = (await this.gatesOf([review.id], tx)).get(review.id);
+      const claimed = claims ? [...(await claims(caller, review, tx))] : [];
       return {
         ...(guidance === undefined ? {} : { guidance }),
         ...(routes.length ? { returns: routes.map(({ value, label }) => ({ value, label })) } : {}),
+        ...(gate === undefined ? {} : { gate }),
+        ...(claimed.length ? { claims: structuredClone(claimed) } : {}),
       };
     };
     // Ownership reads in a transaction; a snapshot's is read-only and takes no writer lock.

@@ -11,7 +11,7 @@ import { useSession } from '../session';
 import type { Row, ShellData } from '../shell-types';
 import { newest, type HomeData } from './map-data';
 import { NeedsYou, Part, useNow } from './needs-you';
-import { labels as paperTitles } from './paper';
+import { labels as paperTitles } from './paper-entries';
 import { useActorNames } from './people';
 import { Phrase, Reading } from './running-phrase';
 import { currentCycle } from './work';

@@ -10,9 +10,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { CloseIcon, ExpandIcon } from '../icons';
-import type { PiSnapshot } from '../pi-stream';
+import type { PiSnapshot } from '@merv/pi/models';
 import type { Row } from '../shell-types';
-import { Composer, Standing, Transcript, useAgent, type Conversation } from './pi';
+import { Composer, Standing, Transcript, useAgent } from './pi';
+import type { Conversation } from './pi-conversation';
 
 /** Where the window was last dragged to, for every page this browser opens after. */
 const PLACE = 'merv:agent-dock';

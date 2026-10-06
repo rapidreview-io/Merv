@@ -4,7 +4,7 @@
  * the agent in the person's name, recognised again so the transcript draws it as what came back
  * and never as something the person typed. Pure: names, inputs and messages in, words out.
  */
-import type { PiCommand, PiProposal } from '../pi-stream';
+import type { PiCommand, PiProposal } from '@merv/pi/models';
 
 type Input = Record<string, unknown>;
 const fields = (value: unknown): Input =>
@@ -90,50 +90,27 @@ export function factsOf({ name, input, act }: Pick<PiProposal, 'name' | 'input' 
   });
 }
 
-/*
- * What Run tells the agent in the person's name, which Pi's server writes (`run` in views/pi.tsx):
- * a result, as much of its JSON as Run sends; the sentence that stands for a result shown only to
- * the person; a refusal and why; and a tool's own receipt, which ends by saying where to read on.
- */
-const RAN = /^Ran (\S+): ([^]*)$/;
-const SECRET = /^Ran (\S+); its result is shown only to me\.$/;
-const REFUSED = /^(\S+) was refused: ([^]*)$/;
-const REREAD = /\. Re-read [\w. ]+ for current details\.$/;
-
-/** What came back for a call the person ran: its result as it was told, if any, or the refusal. */
-export type Receipt = { proposal: PiProposal } & ({ result?: string } | { refused: string });
-
-/** What a turn's first message tells of a call, where it says what Run says. */
-function toldOf(command?: PiCommand) {
-  const message = command?.messages[0];
-  if (message?.role !== 'user' || message.text.includes('\n\n')) return null;
-  const [secret, ran, refused] = [SECRET, RAN, REFUSED].map((said) => said.exec(message.text));
-  const tool = (secret ?? ran ?? refused)?.[1];
-  if (!tool) return null;
-  if (secret) return { tool };
-  if (refused) return { tool, refused: refused[2]! };
-  const told = ran![2]!;
-  return { tool, result: told.replace(REREAD, '') };
-}
-
 /**
- * The receipt the first message of turn `at` is, or null where the person wrote it. It must say
- * what Run says, and answer a call that ran among the latest the agent proposed before it: the
- * only cards that offer Run. Calls of one tool are answered in the order they ran. A receipt that
- * waited in the composer and went with words of the person's own after it is theirs.
+ * The call whose outcome the first message of turn `at` told the agent, or null where the person
+ * wrote it: the message is exactly what Pi kept as told (`ran.told`) for a call among the latest
+ * the agent proposed before it, the only cards that offer Run. Calls told alike are answered in
+ * the order they ran. A receipt that waited in the composer and went with the person's own words
+ * after it is theirs.
  */
-export function receiptOf(commands: PiCommand[], at: number): Receipt | null {
-  const told = toldOf(commands[at]);
-  if (!told) return null;
-  const { tool, ...outcome } = told;
+export function receiptOf(commands: PiCommand[], at: number): PiProposal | null {
+  const told = (command?: PiCommand) => {
+    const message = command?.messages[0];
+    return message?.role === 'user' ? message.text : undefined;
+  };
+  const text = told(commands[at]);
+  if (text === undefined) return null;
   const from = commands
     .slice(0, at)
     .map((command) => !!command.proposals?.length)
     .lastIndexOf(true);
   const ran = (commands[from]?.proposals ?? [])
-    .filter((call) => call.name === tool && call.ran)
+    .filter((call) => call.ran?.told === text)
     .sort((a, b) => a.ran!.at.localeCompare(b.ran!.at));
-  const earlier = commands.slice(from + 1, at).filter((turn) => toldOf(turn)?.tool === tool);
-  const proposal = ran[Math.min(earlier.length, ran.length - 1)];
-  return proposal ? { proposal, ...outcome } : null;
+  const earlier = commands.slice(from + 1, at).filter((turn) => told(turn) === text);
+  return ran[Math.min(earlier.length, ran.length - 1)] ?? null;
 }

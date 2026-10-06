@@ -1,111 +1,55 @@
-import {
-  Fragment,
-  useEffect,
-  useRef,
-  useState,
-  type InputHTMLAttributes,
-  type ReactNode,
-} from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import type {
-  PaperCitation,
   PaperKind,
-  PaperRevision,
   PaperRevisionSummary,
   PaperSection,
   PaperSource,
   PaperWorkspace,
 } from '@merv/paper/models';
 import { useTool, type Loaded } from '../api';
-import { useCommand } from '../mutations';
 import {
   Ago,
-  Area,
   Evidence,
-  Failure,
-  Field,
   KV,
   LoadState,
-  OpenedForm,
   RecordPage,
   StatusPill,
-  Submit,
   Summary,
   cx,
   useArtifacts,
 } from '../components';
-import { EditIcon, PlusIcon } from '../icons';
-import { Markdown, RecordText } from '../markdown';
+import { useReferences } from '../markdown';
 import { ReferenceLookup } from './paper-references';
-import { RecordPicker, filePick } from '../record-picker';
 import { ThreeStates } from '../states';
 import { useSession } from '../session';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
+import { CitationEditor, HeadTool, SectionEditor } from './paper-editors';
+import {
+  Block,
+  Entry,
+  Group,
+  labels,
+  Marker,
+  Outline,
+  Row,
+  dotted,
+  type DocView,
+  type SectionRow,
+} from './paper-entries';
 
 /** A control two other views share; it lives in components.tsx and is reached through here. */
 export { ResearchCommand } from '../components';
 
-/** Each document's title, wherever the paper is named: here and on Home. */
-export const labels: Record<PaperKind, string> = {
-  problem: 'Problem & scope',
-  literature: 'Literature',
-  methods: 'Methods',
-  results: 'Results',
-};
 const KINDS = Object.keys(labels) as PaperKind[];
-type Files = ReturnType<typeof useArtifacts>;
-interface Listed {
-  id: string;
-  name?: string;
-  title?: string;
-  workflow?: { state: string };
-}
-interface Graded {
-  id: string;
-  subjectId: string;
-  status: string;
-  verdict: string | null;
-  reviewerId: string | null;
-}
 
-/** The clauses of one line, in the app's one separator; a line with none is no line. */
-const dotted = (parts: ReactNode[]) => {
-  const said = parts.filter(Boolean);
-  return said.length
-    ? said.map((part, at) => <Fragment key={at}>{at ? <> · {part}</> : part}</Fragment>)
-    : null;
-};
 /** A fragment a person can read, from the section's own title. */
 const slug = (title: string) =>
   title
     .toLowerCase()
     .replaceAll(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '') || 'section';
-/** Authors as a paper prints them: three, then the rest under et al. */
-const authors = (names: string[]) =>
-  names.length > 3 ? `${names.slice(0, 3).join(', ')} et al.` : names.join(', ');
-/** How paper.cite writes a retained file among a citation's references. */
-const FILE = 'artifact:';
-const files = (n: number) => (n ? `${n} retained file${n > 1 ? 's' : ''}` : 'No retained file');
-/** The first limit a form has broken, in the tool's own words; null while it holds. */
-const complaint = (tests: [boolean, string][]) => tests.find(([broken]) => broken)?.[1] ?? null;
-interface SectionRow {
-  section: PaperSection;
-  /** The derived address, `2.1`, computed from order and never stored. */
-  n: string;
-  anchor: string;
-  /** True where the publication on screen is the one that moved this section. */
-  published?: boolean;
-}
-interface DocView {
-  kind: PaperKind;
-  n: number;
-  current: PaperRevision;
-  publication: PaperWorkspace['documents'][PaperKind]['published'];
-  rows: SectionRow[];
-  figures: { id: string; n: number }[];
-}
 
 /**
  * The paper as it is read: four documents in fixed order, their sections
@@ -187,496 +131,42 @@ function useReading(anchors: string[]): string | undefined {
   return here;
 }
 
+/** A link where its owner says the record opens, and its words alone where nobody does. */
+const Opens = ({ to, children }: { to?: string; children: ReactNode }) =>
+  to ? <Link to={to}>{children}</Link> : <>{children}</>;
 /**
- * A section's own control: one glyph beside its heading, named for a screen reader
- * and on hover by the words the form it opens is headed with. `data-tool` is how
- * the cursor finds its way back here when that form closes.
+ * The records the paper names that are not its own, as one key: where each proposal and
+ * publication came from, and the reviews that wrote or accepted it.
  */
-function HeadTool({
-  label,
-  glyph,
-  tool,
-  onClick,
-}: {
-  label: string;
-  glyph: 'edit' | 'plus';
-  tool: string;
-  onClick: () => void;
-}) {
-  const Glyph = glyph === 'edit' ? EditIcon : PlusIcon;
-  return (
-    <button
-      type="button"
-      className="btn-icon head-tool"
-      data-tool={tool}
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-    >
-      <Glyph />
-    </button>
-  );
+function citedBy(
+  workspace: PaperWorkspace | undefined,
+  kept: Loaded<PaperRevisionSummary[]>[],
+): string {
+  if (!workspace) return '';
+  const ids = new Set<string>();
+  for (const proposal of workspace.proposals) {
+    ids.add(proposal.source.id);
+    if (proposal.acceptance) ids.add(proposal.acceptance.reviewId);
+  }
+  const revisions: (PaperRevisionSummary | undefined)[] = kept.flatMap((held) => held.data ?? []);
+  for (const { current, published } of Object.values(workspace.documents)) {
+    revisions.push(current, published?.document);
+    if (published) ids.add(published.publication.source.id).add(published.publication.reviewId);
+  }
+  for (const revision of revisions) if (revision?.review) ids.add(revision.review.id);
+  return [...ids].sort().join(' ');
 }
-
-/**
- * Both editors are one form: the heading says what is being made or changed, the
- * fields sit under it, the button says only Create or Save, and a refusal is
- * stated in the same place. The cursor goes to the first field as it opens, and
- * Escape means what Cancel means.
- */
-function Editor({
-  label,
-  creates,
-  incomplete,
-  validation,
-  command,
-  onSubmit,
-  onDone,
-  children,
-}: {
-  label: string;
-  /** True where the form makes a record rather than changing one. */
-  creates: boolean;
-  /**
-   * True while a field the form cannot do without is still empty. That is not a
-   * mistake anyone has made yet, so it holds the button and says nothing; a limit
-   * that was overrun is a `validation`, and is said.
-   */
-  incomplete: boolean;
-  validation: string | null;
-  command: { busy: boolean; retry: boolean; error?: string; locked: boolean };
-  onSubmit: () => void;
-  onDone: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <OpenedForm
-      className="card stack entry-form"
-      aria-label={label}
-      onClose={onDone}
-      locked={command.locked}
-      onSubmit={(event) => {
-        event.preventDefault();
-        if ((!validation && !incomplete) || command.retry) onSubmit();
-      }}
-    >
-      <h3>{label}</h3>
-      <fieldset disabled={command.locked}>{children}</fieldset>
-      {validation && <p className="faint">{validation}</p>}
-      <Failure message={command.error} />
-      <div className="cluster">
-        <Submit
-          label={creates ? 'Create' : 'Save'}
-          busy={command.busy}
-          retry={command.retry}
-          disabled={(!!validation || incomplete) && !command.retry}
-        />
-        <button type="button" className="btn" disabled={command.locked} onClick={onDone}>
-          Cancel
-        </button>
-      </div>
-    </OpenedForm>
-  );
-}
-
-function SectionEditor({
-  revision,
-  section,
-  onDone,
-  onSaved,
-}: {
-  revision: PaperRevision;
-  section?: PaperSection;
-  onDone: () => void;
-  onSaved: () => void;
-}) {
-  const [original] = useState(revision);
-  const [id] = useState(section?.id ?? `section_${crypto.randomUUID().replaceAll('-', '')}`);
-  const [title, setTitle] = useState(section?.title ?? '');
-  const [content, setContent] = useState(section?.content ?? '');
-  const command = useCommand<PaperRevision>({
-    tool: 'paper.patch',
-    validate: (value) =>
-      !!value &&
-      value.projectId === original.projectId &&
-      value.kind === original.kind &&
-      value.revision === original.revision + 1,
-    onSuccess: () => {
-      onSaved();
-      onDone();
-    },
-  });
-  const totalChars =
-    original.sections
-      .filter((item) => item.id !== id)
-      .reduce((sum, item) => sum + item.content.length, 0) + content.length;
-  return (
-    <Editor
-      label={section ? `Edit ${section.title}` : 'New section'}
-      creates={!section}
-      command={command}
-      onDone={onDone}
-      onSubmit={() =>
-        void command.submit({
-          kind: original.kind,
-          expectedRevision: original.revision,
-          changes: [{ id, title, content }],
-        })
-      }
-      incomplete={!title.trim()}
-      validation={complaint([
-        [totalChars > 160_000, 'This document would exceed 160,000 characters.'],
-        [
-          !section && original.sections.length >= 100,
-          'A document can contain at most 100 sections.',
-        ],
-      ])}
-    >
-      <Field label="Section title" required maxLength={300} value={title} onChange={setTitle} />
-      <Area label="Content" rows={8} maxLength={100000} value={content} onChange={setContent} />
-    </Editor>
-  );
-}
-
-/** The bibliographic line, with the tool's own limits passed straight through. */
-type Told = { identifier: string; title: string; authors: string; year: string; url: string };
-const ASKED: [keyof Told, string, InputHTMLAttributes<HTMLInputElement>][] = [
-  ['identifier', 'Identifier', { required: true, maxLength: 500, placeholder: 'doi:… or arxiv:…' }],
-  ['title', 'Title', { required: true, maxLength: 1000 }],
-  ['authors', 'Authors, separated by semicolons', { maxLength: 30198 }],
-  ['year', 'Year', { type: 'number', min: '1000', max: '9999', step: '1' }],
-  ['url', 'Source URL', { type: 'url', pattern: 'https?://.*', maxLength: 2000 }],
-];
-
-/**
- * One editor for the whole ledger: which entry is being changed is chosen inside
- * the form, so a project with forty citations still has one control.
- */
-function CitationEditor({
-  citation,
-  ledger,
-  sections,
-  onPick,
-  onDone,
-  onSaved,
-}: {
-  citation?: PaperCitation;
-  ledger: PaperCitation[];
-  sections: PaperSection[];
-  onPick: (id: string) => void;
-  onDone: () => void;
-  onSaved: () => void;
-}) {
-  const { project } = useSession();
-  const [original] = useState(citation);
-  const [told, setTold] = useState<Told>({
-    identifier: citation?.identifier ?? '',
-    title: citation?.title ?? '',
-    authors: citation?.authors.join('; ') ?? '',
-    year: citation?.year?.toString() ?? '',
-    url: citation?.url ?? '',
-  });
-  const [notes, setNotes] = useState(citation?.notes ?? '');
-  const [sectionIds, setSectionIds] = useState(citation?.sectionIds ?? []);
-  // The tool takes a retained file as `artifact:<id>`; nobody types one. A reference of
-  // any other shape that the entry already carries is kept exactly as it was written.
-  const artifacts = useArtifacts();
-  const [files, setFiles] = useState(() =>
-    (citation?.refs ?? [])
-      .filter((ref) => ref.startsWith(FILE))
-      .map((ref) => ref.slice(FILE.length)),
-  );
-  const command = useCommand<PaperCitation>({
-    tool: 'paper.cite',
-    validate: (value) =>
-      !!value &&
-      value.projectId === project.id &&
-      typeof value.id === 'string' &&
-      (!original || value.id === original.id) &&
-      value.revision === (original?.revision ?? 0) + 1,
-    onSuccess: () => {
-      onSaved();
-      onDone();
-    },
-  });
-  const authorNames = told.authors
-    .split(';')
-    .map((name) => name.trim())
-    .filter(Boolean);
-  const carried = citation?.refs ?? [];
-  const refs = [
-    ...carried.filter((ref) => !ref.startsWith(FILE) || files.includes(ref.slice(FILE.length))),
-    ...files.map((id) => `${FILE}${id}`).filter((ref) => !carried.includes(ref)),
-  ];
-  return (
-    <Editor
-      label={original ? 'Edit citation' : 'New citation'}
-      creates={!original}
-      command={command}
-      onDone={onDone}
-      onSubmit={() =>
-        void command.submit({
-          ...(original ? { id: original.id } : {}),
-          expectedRevision: original?.revision ?? 0,
-          ...told,
-          authors: authorNames,
-          year: told.year ? Number(told.year) : null,
-          url: told.url || null,
-          notes,
-          sectionIds,
-          refs,
-        })
-      }
-      incomplete={!told.identifier.trim() || !told.title.trim()}
-      validation={complaint([
-        [
-          authorNames.length > 100 || authorNames.some((name) => name.length > 300),
-          'Use up to 100 author names, each at most 300 characters.',
-        ],
-        [refs.length > 200, 'Use up to 200 retained files.'],
-      ])}
-    >
-      {original && (
-        <label>
-          Citation
-          <select value={original.id} onChange={(event) => onPick(event.target.value)}>
-            {ledger.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.title}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
-      {ASKED.map(([key, label, rest]) => (
-        <Field
-          key={key}
-          label={label}
-          {...rest}
-          value={told[key]}
-          onChange={(value) => setTold((held) => ({ ...held, [key]: value }))}
-        />
-      ))}
-      <Area label="Notes" rows={3} maxLength={16000} value={notes} onChange={setNotes} />
-      {/* A group of nothing has no name to stand over. */}
-      {sections.length > 0 && (
-        <fieldset className="stack">
-          <legend>Literature sections</legend>
-          {sections.map((section) => (
-            <label className="cluster" style={{ display: 'flex' }} key={section.id}>
-              <input
-                type="checkbox"
-                checked={sectionIds.includes(section.id)}
-                onChange={(event) =>
-                  setSectionIds((ids) =>
-                    event.target.checked
-                      ? [...ids, section.id]
-                      : ids.filter((id) => id !== section.id),
-                  )
-                }
-              />
-              {section.title}
-            </label>
-          ))}
-        </fieldset>
-      )}
-      <RecordPicker
-        label="Retained files"
-        options={[...artifacts.values()].map(filePick)}
-        value={files}
-        onChange={setFiles}
-      />
-    </Editor>
-  );
-}
-
-/** A marker is a number; the work behind it is one hover away and never an id. */
-function Marker({ at, item }: { at: number; item: PaperCitation }) {
-  return (
-    <button
-      type="button"
-      className="cite"
-      onClick={() => {
-        const entry = document.getElementById(`ref-${item.id}`);
-        entry?.scrollIntoView({ block: 'center' });
-        entry?.querySelector<HTMLElement>('summary')?.focus();
-      }}
-    >
-      [{at}]
-      <span className="cite-card">
-        {dotted([authors(item.authors), item.year])}
-        <strong>{item.title}</strong>
-        {item.notes && <span>{item.notes}</span>}
-        <span>{files(item.refs.length)}</span>
-      </span>
-    </button>
-  );
-}
-
-/** The paper's References: two lines a row, and every retained file readable in place. */
-function Entry({
-  at,
-  item,
-  sections,
-  artifacts,
-  edit,
-}: {
-  at: number;
-  item: PaperCitation;
-  sections: PaperSection[];
-  artifacts: Files;
-  edit?: ReactNode;
-}) {
-  const cited = item.sectionIds
-    .map((id) => sections.find((section) => section.id === id)?.title)
-    .filter(Boolean);
-  const source = item.url?.match(/^https?:\/\//i)
-    ? item.url
-    : item.identifier.startsWith('doi:')
-      ? `https://doi.org/${item.identifier.slice(4)}`
-      : item.identifier.startsWith('arxiv:')
-        ? `https://arxiv.org/abs/${item.identifier.slice(6)}`
-        : null;
-  return (
-    <li className="row">
-      <details className="crit-file" id={`ref-${item.id}`}>
-        <Summary>
-          <span className="ref-name">
-            <span className="ref-n">[{at}]</span>
-            {dotted([authors(item.authors), item.year, item.title])}
-          </span>
-          <span className="ref-stand">
-            {dotted([
-              cited.length ? `Cited in ${cited.join(', ')}` : 'Not cited in any section',
-              item.refs.length ? files(item.refs.length) : null,
-              <>
-                updated&nbsp;
-                <Ago at={item.updatedAt} />
-              </>,
-            ])}
-          </span>
-        </Summary>
-        <div className="ref-open">
-          {item.notes && (
-            <p>
-              <RecordText text={item.notes} />
-            </p>
-          )}
-          {/* Where the work can be opened the address says which it is; otherwise its identifier does. */}
-          {source ? (
-            <p>
-              <a href={source} target="_blank" rel="noreferrer">
-                {source.replace(/^https?:\/\//, '')}
-              </a>
-            </p>
-          ) : (
-            <p className="mono">{item.identifier}</p>
-          )}
-          {item.refs.map((ref) => {
-            const id = ref.replace(/^artifact:/, '');
-            return <Evidence key={ref} artifactId={id} artifact={artifacts.get(id)} meta />;
-          })}
-          {edit}
-        </div>
-      </details>
-    </li>
-  );
-}
-
-/** Current document text; earlier producer proposals remain in retained history. */
-function Block({
-  row,
-  from,
-  markers,
-  edit,
-}: {
-  row: SectionRow;
-  from: ReactNode;
-  markers: ReactNode;
-  edit?: ReactNode;
-}) {
-  const { section } = row;
-  const shown = section.content.trim();
-  return (
-    <div className={cx('sec', !shown && 'sec--unwritten')} id={row.anchor}>
-      <h4 className="sec-h">
-        <span className="n">{row.n}</span>
-        {section.title}
-        {edit}
-      </h4>
-      {from}
-      {shown && <Markdown source={shown} under={4} />}
-      {markers}
-    </div>
-  );
-}
-
-function Outline({ docs, ledger, here }: { docs: DocView[]; ledger: number; here?: string }) {
-  return (
-    <nav className="paper-outline" aria-label="Outline">
-      <ol>
-        {docs.map((doc) => (
-          <Fragment key={doc.kind}>
-            <li>
-              <a
-                className={cx('out-doc', doc.rows.some((row) => row.anchor === here) && 'here')}
-                href={`#${doc.kind}`}
-              >
-                <span className="out-n">{doc.n}</span>
-                {labels[doc.kind]}
-              </a>
-            </li>
-            {doc.rows.map((row) => (
-              <li key={row.section.id}>
-                <a className={cx('out-sec', row.anchor === here && 'here')} href={`#${row.anchor}`}>
-                  <span className="out-n">{row.n}</span>
-                  {row.section.title}
-                </a>
-              </li>
-            ))}
-            {doc.kind === 'literature' && ledger > 0 && (
-              <li>
-                <a className="out-sec" href="#references">
-                  <span className="out-n" />
-                  References
-                </a>
-              </li>
-            )}
-          </Fragment>
-        ))}
-      </ol>
-    </nav>
-  );
-}
-
-const Group = ({ label, children }: { label: string; children: ReactNode }) => (
-  <div>
-    <span className="label">{label}</span>
-    <ul className="rows">{children}</ul>
-  </div>
-);
-/** The two-line row those groups and the history are made of: the name, then how it stands. */
-const Row = ({ name, stand }: { name: ReactNode; stand: ReactNode }) => (
-  <li className="row">
-    <span className="row-name">{name}</span>
-    <span className="ref-stand">{stand}</span>
-  </li>
-);
 
 /**
  * The paper is one record, not four: the act first, then the document itself in
  * one reading column beside its outline, then how it got here, what proposed and
  * accepted it, and the machine text last.
  */
-function PaperPage({ row, shell }: ViewProps) {
+function PaperPage({ row }: ViewProps) {
   const { actor } = useSession();
   const { pathname } = useLocation();
   const { kind: opened } = useParams();
   const workspace = useTool<PaperWorkspace>('paper.read', {}, { every: 10000 });
-  const holds = (view: string) => shell.rows.some((entry) => entry.view.kind === view);
-  const experiments = useTool<Listed[]>(holds('experiments') ? 'experiment.list' : null);
-  const reflections = useTool<Listed[]>(holds('reflections') ? 'reflection.list' : null);
-  const reviews = useTool<Graded[]>(holds('reviews') ? 'review.list' : null);
   const artifacts = useArtifacts();
   const nameOf = useActorNames();
   // Every retained revision of each document, for History; a read that fails
@@ -690,6 +180,9 @@ function PaperPage({ row, shell }: ViewProps) {
     methods: useTool<PaperRevisionSummary[]>('paper.read', { kind: 'methods', history: true }),
     results: useTool<PaperRevisionSummary[]>('paper.read', { kind: 'results', history: true }),
   };
+  // What the paper names that is not its own, named and routed by its owners.
+  const cited = citedBy(workspace.data, Object.values(kept));
+  const named = useReferences(useMemo(() => (cited ? cited.split(' ') : []), [cited]));
   /** A saved edit writes a revision, so History is read again with the workspace. */
   const reload = () => {
     workspace.reload();
@@ -726,17 +219,10 @@ function PaperPage({ row, shell }: ViewProps) {
   const literature = workspace.data.documents.literature.current;
 
   /** A source this page cannot name is left out, never printed as its identifier. */
-  const sourceOf = (source: PaperSource) => {
-    const list = source.kind === 'experiment' ? experiments.data : reflections.data;
-    const found = list?.find((item) => item.id === source.id);
-    const name = found?.name ?? found?.title;
-    return name
-      ? { name, to: `/${source.kind}s/${source.id}`, state: found?.workflow?.state }
-      : undefined;
-  };
+  const sourceOf = (source: PaperSource) => named.get(source.id);
   const Source = ({ source }: { source: PaperSource }) => {
     const found = sourceOf(source);
-    return found ? <Link to={found.to}>{found.name}</Link> : null;
+    return found ? <Opens to={found.to}>{found.name}</Opens> : null;
   };
   /** Every citation that named this section, in the ledger's own order. */
   const Markers = ({ section }: { section: string }) => (
@@ -748,15 +234,16 @@ function PaperPage({ row, shell }: ViewProps) {
       )}
     </span>
   );
-  const verdict = (reviewId: string) => {
-    const who = nameOf(reviews.data?.find((review) => review.id === reviewId)?.reviewerId);
-    return <Link to={`/reviews/${reviewId}`}>{who ? `${who}’s review` : 'the review'}</Link>;
+  /** A review, by its reviewer as the paper recorded them. */
+  const verdict = (reviewId: string, reviewerId: string | null) => {
+    const who = nameOf(reviewerId);
+    return <Opens to={named.get(reviewId)?.to}>{who ? `${who}’s review` : 'the review'}</Opens>;
   };
   /** A revision belongs to its document; a change belongs to its section. */
   const said = (revision: PaperRevisionSummary): ReactNode => {
     if (revision.review)
       return dotted([
-        <>Written by {verdict(revision.review.id)}</>,
+        <>Written by {verdict(revision.review.id, revision.updatedBy)}</>,
         revision.updatedAt ? <Ago at={revision.updatedAt} /> : null,
       ]);
     const from = proposals.find((proposal) => proposal.id === revision.proposalId);
@@ -769,7 +256,7 @@ function PaperPage({ row, shell }: ViewProps) {
         ) : (
           'Published'
         ),
-        <>accepted by {verdict(from.acceptance.reviewId)}</>,
+        <>accepted by {verdict(from.acceptance.reviewId, from.acceptance.reviewerId)}</>,
         revision.updatedAt ? <Ago at={revision.updatedAt} /> : null,
       ]);
     const who = nameOf(revision.updatedBy);
@@ -996,9 +483,9 @@ function PaperPage({ row, shell }: ViewProps) {
                     <Row
                       key={proposal.id}
                       name={
-                        <Link to={found.to}>
+                        <Opens to={found.to}>
                           <strong>{found.name}</strong>
-                        </Link>
+                        </Opens>
                       }
                       stand={<StatusPill value={found.state} />}
                     />
@@ -1015,19 +502,18 @@ function PaperPage({ row, shell }: ViewProps) {
                       (kind) => accepted(kind).publication.reviewId === reviewId,
                     );
                     const publication = accepted(took[0]).publication;
-                    const review = reviews.data?.find((item) => item.id === reviewId);
                     const subject = sourceOf(publication.source);
                     return subject ? (
                       <Row
                         key={reviewId}
                         name={
-                          <Link to={`/reviews/${reviewId}`}>
+                          <Opens to={named.get(reviewId)?.to}>
                             <strong>{subject.name} review</strong>
-                          </Link>
+                          </Opens>
                         }
                         stand={dotted([
-                          <StatusPill value={review?.verdict ?? review?.status} />,
-                          nameOf(review?.reviewerId),
+                          <StatusPill value={publication.verdict ?? named.get(reviewId)?.state} />,
+                          nameOf(publication.createdBy),
                           `published ${took.map((kind) => labels[kind]).join(' and ')}`,
                           <Ago at={publication.createdAt} />,
                         ])}

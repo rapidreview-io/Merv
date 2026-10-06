@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import type { Actor, IssuedUserKey, Project, UserKey } from '@merv/contracts/scope-models';
 
 export class ApiError extends Error {
   constructor(
@@ -209,35 +210,7 @@ export async function call<T>(name: string, input: Record<string, unknown> = {})
   return body.result as T;
 }
 
-export interface Actor {
-  id: string;
-  projectId: string;
-  name: string;
-  role: 'operator' | 'producer' | 'reviewer' | 'reader';
-  active: boolean;
-}
-export interface Project {
-  id: string;
-  name: string;
-  createdAt: string;
-  summary?: string;
-  contextRevision?: number;
-}
-export interface UserKey {
-  id: string;
-  owner: { issuer: string; subject: string };
-  projectId: string;
-  grantScope: 'project' | 'account';
-  label: string | null;
-  createdAt: string;
-  expiresAt: string | null;
-  revokedAt: string | null;
-  previousId: string | null;
-}
-export interface IssuedUserKey {
-  key: UserKey;
-  token: string;
-}
+export type { Actor, IssuedUserKey, Project, UserKey } from '@merv/contracts/scope-models';
 export type Account =
   | { kind: 'actor'; actor: Actor; projects: Project[] }
   | { kind: 'key'; key: UserKey; projects: Project[] }

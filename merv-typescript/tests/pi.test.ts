@@ -582,13 +582,12 @@ test('the agent has exactly its person’s permissions, never more', async (t) =
         () => true,
         () => false,
       );
-      const ran = await f.pi
-        .run(caller, { id: input.conversationId, commandId: input.commandId, proposalId })
-        .then(
-          () => true,
-          (error) => (assert.equal(error.code, 'forbidden', label), false),
-        );
-      assert.equal(ran, direct, `${label} ${name}`);
+      await f.pi.run(caller, { id: input.conversationId, commandId: input.commandId, proposalId });
+      const { ran } = (
+        await f.pi.snapshot(caller, input.conversationId)
+      ).commands[0].proposals!.find(({ id }) => id === proposalId)!;
+      assert.equal(ran?.ok, direct, `${label} ${name}`);
+      if (!direct) assert.equal(ran?.code, 'forbidden', label);
       delete runs[name];
     }
   }
@@ -872,13 +871,17 @@ test('the hand-off: the agent proposes, the person runs it once as themselves, a
   await f.pi.complete(keyTurn.token, f.completion(keyTurn.input));
   const [keyProposal] = (await f.pi.snapshot(key, keyTurn.input.conversationId)).commands[0]
     .proposals!;
-  await assert.rejects(
-    f.pi.run(key, {
+  assert.deepEqual(
+    await f.pi.run(key, {
       id: keyTurn.input.conversationId,
       commandId: keyTurn.input.commandId,
       proposalId: keyProposal.id,
     }),
-    code('forbidden'),
+    {
+      result: null,
+      told: 'probe.signed was refused: A signed-in person must do this',
+      whole: true,
+    },
   );
   const shown = (await f.pi.snapshot(human, turn.input.conversationId)).commands[0];
   assert.deepEqual(
@@ -975,6 +978,86 @@ test('a proposed call whose tool writes a receipt tells the agent that receipt, 
   );
   assert.equal(ran.whole, false);
   assert.match(JSON.stringify(ran.result), /Full Problem/);
+});
+
+test('a call refused when the person runs it tells the agent why, and Pi keeps what it told', async (t) => {
+  const f = await fixture(t);
+  probes(f, t);
+  t.after(
+    f.tools.register({
+      name: 'probe.gated',
+      description: 'Refuses everyone',
+      conversation: 'propose',
+      inputSchema: z.object({}).strict(),
+      handler: () => check(false, 'forbidden', 'Actor lacks admin permission', 403),
+    }),
+  );
+  t.after(
+    f.tools.register({
+      name: 'probe.broken',
+      description: 'Fails on the server',
+      conversation: 'propose',
+      inputSchema: z.object({}).strict(),
+      handler: () => {
+        throw new Error('database password is hunter2');
+      },
+    }),
+  );
+  const { all } = await sources(f);
+  const human = all.find(({ kind, role }) => kind === 'human' && role === 'operator')!.caller;
+  const turn = await f.begun(human);
+  const ids: string[] = [];
+  for (const name of ['probe.gated', 'probe.broken', 'probe.secret'])
+    ids.push(
+      (
+        (await f.pi.tool(turn.token, { ...turn.input, name, input: {} })) as {
+          proposed: { id: string };
+        }
+      ).proposed.id,
+    );
+  await f.pi.complete(turn.token, f.completion(turn.input));
+  const run = (proposalId: string) =>
+    f.pi.run(human, {
+      id: turn.input.conversationId,
+      commandId: turn.input.commandId,
+      proposalId,
+    });
+  // A refusal is an answer: the agent is told it in the tool's own words, and a failure the
+  // server did not word for a person says only that it failed.
+  assert.deepEqual(await run(ids[0]), {
+    result: null,
+    told: 'probe.gated was refused: Actor lacks admin permission',
+    whole: true,
+  });
+  assert.deepEqual(await run(ids[1]), {
+    result: null,
+    told: 'probe.broken was refused: it failed',
+    whole: true,
+  });
+  await run(ids[2]);
+  // Pi keeps what it told the agent and the part of it that says how the call came out, so the
+  // person's page reads the outcome without reading the sentence.
+  const [command] = (await f.pi.snapshot(human, turn.input.conversationId)).commands;
+  assert.deepEqual(
+    command.proposals!.map(({ ran }) => ran && { ...ran, at: typeof ran.at }),
+    [
+      {
+        at: 'string',
+        ok: false,
+        code: 'forbidden',
+        told: 'probe.gated was refused: Actor lacks admin permission',
+        said: 'Actor lacks admin permission',
+      },
+      {
+        at: 'string',
+        ok: false,
+        code: 'tool_failed',
+        told: 'probe.broken was refused: it failed',
+        said: 'it failed',
+      },
+      { at: 'string', ok: true, told: 'Ran probe.secret; its result is shown only to me.' },
+    ],
+  );
 });
 
 test('a list shown as an index clips its long strings at a whole character', () => {

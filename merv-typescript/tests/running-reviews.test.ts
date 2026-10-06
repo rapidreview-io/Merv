@@ -220,6 +220,11 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
 
   const first = await f.deliver(subject);
   const requested = await f.app.ctx.reviews.get(f.operator, first.reviewId!);
+  // review.get carries what the delivery claimed of each check, from Tasks, beside its review.
+  const claimsOf = async (reviewId: string) =>
+    (await f.app.ctx.reviews.guide(f.reader.caller, reviewId)).claims;
+  assert.ok(first.deliveryConfirmations.length > 0);
+  assert.deepEqual(await claimsOf(requested.id), first.deliveryConfirmations);
   const unclaimed = await f.sections(f.operator, first.id);
   assert.deepEqual(
     unclaimed.map(({ title, place, kind }) => ({ title, place, kind })),
@@ -270,6 +275,9 @@ test('a task review reads unclaimed, then whose it is and for how long, then its
   // Each new delivery is a new round; the ones before it are one line each, newest first.
   const second = await f.deliver(returned);
   const again = await f.app.ctx.reviews.get(f.operator, second.reviewId!);
+  // The claims stand beside the newest delivery's review only.
+  assert.deepEqual(await claimsOf(again.id), second.deliveryConfirmations);
+  assert.equal(await claimsOf(requested.id), undefined);
   const reread = await f.sections(f.operator, first.id);
   assert.deepEqual(facts(titled(reread, 'Review')).Standing, ['Unclaimed']);
   assert.deepEqual(facts(titled(reread, 'Review'))['Verdict page'], [open(again.id)]);
@@ -463,6 +471,10 @@ test('an experiment names the gate each review read, in the standing and in ever
 
   const first = await design();
   assert.deepEqual(await read(), { standing: ['Design · ', 'unclaimed'], earlier: [] });
+  // review.get says the gate as the owner names it, for the desk as for this sidebar.
+  const gateOf = async (reviewId: string) =>
+    (await f.app.ctx.reviews.guide(f.reader.caller, reviewId)).gate;
+  assert.equal(await gateOf(first), 'Design');
   await judge(first, 'needs_changes');
   assert.equal(experiment.workflow.state, 'planned');
   await judge(await design(), 'pass');
@@ -482,9 +494,14 @@ test('an experiment names the gate each review read, in the standing and in ever
     standing: ['Results · ', 'unclaimed'],
     earlier: ['Design · pass', 'Design · needs changes'],
   });
+  assert.deepEqual(
+    [await gateOf(experiment.reviewId!), await gateOf(first)],
+    ['Results', 'Design'],
+  );
   // A task is reviewed at one gate, so it names none.
   const task = await f.deliver(await f.task());
   assert.deepEqual(facts((await f.sections(f.operator, task.id))[0]).Standing, ['Unclaimed']);
+  assert.equal(await gateOf(task.reviewId!), undefined);
 
   // The gate is read inside ui.running_panel's snapshot as well, for a reader too.
   t.after(
