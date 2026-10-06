@@ -1,4 +1,5 @@
 import {
+  Component,
   useEffect,
   useRef,
   useState,
@@ -527,6 +528,45 @@ export function LoadState({
       />
     );
   return null;
+}
+
+/**
+ * Where drawing a page or a file throws, that part says so and offers to try again;
+ * the rest of the app stands. A new `reset` (the address, the shown file) clears it.
+ */
+export class ErrorBoundary extends Component<
+  { reset?: unknown; children: ReactNode },
+  { failed?: string }
+> {
+  state: { failed?: string } = {};
+  static getDerivedStateFromError(error: unknown) {
+    return { failed: error instanceof Error ? error.message : String(error) };
+  }
+  componentDidUpdate(previous: { reset?: unknown }) {
+    if (this.state.failed !== undefined && previous.reset !== this.props.reset)
+      this.setState({ failed: undefined });
+  }
+  render() {
+    const { failed } = this.state;
+    if (failed === undefined) return this.props.children;
+    return (
+      <EmptyState
+        error
+        icon="alert"
+        title="This view failed to render"
+        hint={failed}
+        action={
+          <button
+            type="button"
+            className="btn"
+            onClick={() => this.setState({ failed: undefined })}
+          >
+            Retry
+          </button>
+        }
+      />
+    );
+  }
 }
 
 /**

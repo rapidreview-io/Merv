@@ -14,7 +14,7 @@ interface Output {
   output_type?: string;
   text?: Text;
   data?: Record<string, unknown>;
-  traceback?: string[];
+  traceback?: Text;
   ename?: string;
   evalue?: string;
 }
@@ -22,7 +22,7 @@ interface Cell {
   cell_type?: string;
   source?: Text;
   execution_count?: number | null;
-  outputs?: Output[];
+  outputs?: unknown;
 }
 export interface Notebook {
   cells: Cell[];
@@ -66,7 +66,9 @@ function OutputView({ output }: { output: Output }) {
       <pre className="nb-output nb-output--error">
         <AnsiText
           text={
-            output.traceback?.join('\n') ?? `${output.ename ?? 'Error'}: ${output.evalue ?? ''}`
+            Array.isArray(output.traceback)
+              ? output.traceback.join('\n')
+              : `${output.ename ?? 'Error'}: ${output.evalue ?? ''}`
           }
         />
       </pre>
@@ -119,9 +121,12 @@ export function NotebookView({ notebook }: { notebook: Notebook }) {
             </span>
             <div className="nb-body">
               <CodeBlock code={source} lang={notebook.language} numbered={false} />
-              {(cell.outputs ?? []).map((output, at) => (
-                <OutputView key={at} output={output} />
-              ))}
+              {/* What a hand-edited or truncated notebook holds is drawn only where it is an output. */}
+              {(Array.isArray(cell.outputs) ? cell.outputs : []).map(
+                (output, at) =>
+                  !!output &&
+                  typeof output === 'object' && <OutputView key={at} output={output as Output} />,
+              )}
             </div>
           </div>
         );

@@ -82,8 +82,11 @@ export function languageOf(word: string | undefined): Language | undefined {
   return BY_NAME.get(name) ?? BY_NAME.get(name.slice(name.lastIndexOf('.') + 1));
 }
 
-/** Past either a text is drawn plain: colour is not worth a page's second on a file nobody scans. */
-export const MAX_HIGHLIGHT = 200_000;
+/**
+ * Past either a text is drawn plain: colour is not worth a page's second on a file nobody
+ * scans, and the highlighter takes about that long at a few times this length.
+ */
+export const MAX_HIGHLIGHT = 40_000;
 export const MAX_HIGHLIGHT_LINES = 5_000;
 export const highlightable = (code: string) =>
   code.length <= MAX_HIGHLIGHT &&
@@ -131,10 +134,14 @@ export function highlightNow(code: string, language: Language | undefined): Piec
   }
 }
 
-/** The lines of `code` coloured, once the highlighter and its grammar load; nothing where they cannot. */
+/**
+ * The lines of `code` coloured, once the highlighter and its grammar load; nothing where
+ * they cannot, or where the code is no longer `wanted` by the time they have.
+ */
 export async function highlight(
   code: string,
   language: Language | undefined,
+  wanted: () => boolean = () => true,
 ): Promise<Piece[][] | undefined> {
   if (!language || !highlightable(code)) return undefined;
   try {
@@ -146,7 +153,7 @@ export async function highlight(
         (grammar = language.load().then((module) => shiki.loadLanguage(module.default))),
       );
     await grammar;
-    return tokens(shiki, code, language.id);
+    return wanted() ? tokens(shiki, code, language.id) : undefined;
   } catch {
     return undefined;
   }

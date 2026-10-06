@@ -1349,6 +1349,26 @@ test('an operator verb names its consequence and keeps the reason; a session is 
   assert.equal(document.querySelector('[role="alertdialog"]'), null, 'the guard closes on a yes');
 });
 
+test('a quarantined base offers one verb, its release, and keeps the verification as the reason', async (t) => {
+  t.after(unmount);
+  servedProject();
+  let sent: Record<string, unknown> = {};
+  serve('/tools/code.base.release', (_call, body) => {
+    sent = body;
+    return { body: { result: { key: 'b1', quarantined: false } } };
+  });
+  await mount(page([row], { at: '/code/merge/b1' }));
+  const verbs = [...document.querySelectorAll('.code-verbs button')].map(
+    (item) => item.textContent,
+  );
+  assert.deepEqual(verbs, ['Release quarantine'], text().slice(0, 300));
+  await click('Release quarantine');
+  await write('Reason', 'The alarm was a stale scanner rule.');
+  await click('Release quarantine');
+  assert.equal(sent.key, 'b1', JSON.stringify(sent));
+  assert.equal(sent.reason, 'The alarm was a stale scanner rule.');
+});
+
 test('the refusal colour marks what cannot be undone, opener and confirm alike', async (t) => {
   t.after(unmount);
   servedProject();

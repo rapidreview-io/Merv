@@ -382,3 +382,34 @@ test('a review is named by what it judges, a reflection too, and the name leads 
   assert.equal(name?.textContent, 'Wave one');
   assert.equal(name?.getAttribute('href'), '/reflections/wf_wave');
 });
+
+test('a check the review requires is met to pass, never waived, as review.submit decides', async (t) => {
+  t.after(async () => await unmount());
+  serve('/tools/review.get', { body: { result: { ...claimed, requiredCriteria: [1] } } });
+  serve('/tools/workflow.status_and_next', {
+    body: { result: desk('experiment', 'design_review') },
+  });
+  await mount(page());
+  await settle(10);
+  await click('waived');
+  await write(
+    document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Notes on check 1"]')!,
+    'Feasibility is out of scope for this design.',
+  );
+  await write(
+    [...document.querySelectorAll('label')]
+      .find((label) => label.textContent?.startsWith('Synopsis'))!
+      .querySelector('textarea')!,
+    'The design is sound, and feasibility was waived as out of scope for this first round.',
+  );
+  const pass = [...document.querySelectorAll<HTMLButtonElement>('button[aria-pressed]')].find(
+    (button) => button.textContent === 'pass',
+  )!;
+  await act(async () => pass.click());
+  await settle(0);
+  const submit = [...document.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Submit verdict',
+  )!;
+  assert.equal(submit.disabled, true);
+  assert.match(text(), /Check 1 is required: a passing verdict needs it met, not waived\./);
+});
