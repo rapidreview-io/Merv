@@ -469,7 +469,8 @@ test('a publication made before reviews wrote the paper stands behind its sectio
   boot(held);
   await open();
   const setup = document.getElementById('methods-setup')!;
-  assert.match(setup.textContent!, /Edited by Operator · .* · published/);
+  // It names no sections, so whoever wrote this one is not known: it is credited to nobody.
+  assert.equal(setup.querySelector('.from')?.textContent, 'published');
   assert.ok(!text().includes('never reviewed'));
 });
 

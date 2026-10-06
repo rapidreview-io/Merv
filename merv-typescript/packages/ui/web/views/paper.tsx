@@ -248,7 +248,11 @@ function PaperPage({ row }: ViewProps) {
   };
   const attribution = (doc: DocView, item: SectionRow): ReactNode => {
     const clauses: ReactNode[] = [];
-    if (item.published && doc.publication) clauses.push(said(doc.publication.document));
+    // An early publication names no sections, so it credits nobody with any one of them.
+    if (item.published && doc.publication)
+      clauses.push(
+        doc.publication.publication.sectionIds ? said(doc.publication.document) : 'published',
+      );
     return clauses.length ? <p className="from">{dotted(clauses)}</p> : null;
   };
 
