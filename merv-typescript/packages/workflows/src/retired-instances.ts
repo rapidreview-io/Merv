@@ -146,19 +146,3 @@ ${planRetirementPreconditionsSql}`;
 
 /** The ids that retirement deletes: its own ledger rows, never those of the earlier release. */
 export const retiredPlanTaskIds = `SELECT id FROM wf_retired_instances WHERE reason='recipe_experiment.plan_2'`;
-
-/**
- * `statements` between `ALTER TABLE <table> DISABLE TRIGGER <trigger>;` and the matching ENABLE,
- * one line per trigger. DISABLE TRIGGER is transactional, so other sessions never see a guard off,
- * and it names the one guard without copying its pinned DDL; it needs table ownership. The emitted
- * text is embedded in published migrations and frozen like the ledger above.
- */
-export function withoutTriggers(
-  table: string,
-  triggers: readonly string[],
-  statements: string,
-): string {
-  const alter = (action: 'DISABLE' | 'ENABLE') =>
-    triggers.map((trigger) => `ALTER TABLE ${table} ${action} TRIGGER ${trigger};`);
-  return [...alter('DISABLE'), statements, ...alter('ENABLE')].join('\n');
-}

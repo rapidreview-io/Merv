@@ -1,6 +1,5 @@
 import {
   check,
-  delegationEnd,
   newId,
   MervError,
   type Caller,
@@ -8,6 +7,7 @@ import {
   type Sql,
   type Transaction,
 } from '@merv/contracts';
+import { delegationEnd } from '@merv/scope/rules';
 import type { FleetAllocation } from '@merv/fleet/types';
 import { tokenDigest } from '@merv/identity/credentials';
 import type {

@@ -1,4 +1,5 @@
-import { retiredInstancesSql, withoutTriggers } from '@merv/contracts/retired-instances';
+import { retiredInstancesSql } from '@merv/workflows/retired-instances';
+import { withoutTriggers } from '@merv/contracts';
 
 const retired = '(SELECT id FROM wf_retired_instances)';
 /** Deletes one table's rows of retired experiments past its no-delete guard. */

@@ -1,5 +1,5 @@
 import type { State } from '@merv/contracts';
-import { withoutTriggers } from '@merv/contracts/retired-instances';
+import { withoutTriggers } from '@merv/contracts';
 
 const schema = `CREATE TABLE code_publications (
   proposal_id TEXT PRIMARY KEY,project_id TEXT NOT NULL,record_json TEXT NOT NULL,binding_json TEXT NOT NULL,

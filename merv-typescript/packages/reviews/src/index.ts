@@ -1,6 +1,7 @@
 import { excludedFromReview, directsIndependently, REVIEW_VERDICTS } from './rules.js';
 import { permits } from '@merv/scope/rules';
-import { canonical, visible, sourceCaller, isDirectHuman } from '@merv/contracts';
+import { canonical, visible, isDirectHuman } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 import { createService, idPattern, plain, receipted, recorded, mapAsync } from '@merv/contracts';
 import { postgresMigrations } from './index.postgres.js';
 import type { Context } from 'cordis';

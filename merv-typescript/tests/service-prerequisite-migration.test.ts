@@ -1,7 +1,8 @@
 import { requireDependencies } from '@merv/workflows/rules';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { delegationEnd, type Caller, type Sql } from '@merv/contracts';
+import { type Caller, type Sql } from '@merv/contracts';
+import { delegationEnd } from '@merv/scope/rules';
 import { resolutionFixture } from './fixtures/resolution.js';
 
 const indexes = (sql: Sql, table: string) =>

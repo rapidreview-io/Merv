@@ -11,7 +11,7 @@
 --
 -- It changes nothing: everything runs in one transaction that ends in ROLLBACK. It cannot be READ
 -- ONLY, because it computes the ledger the way the migrations do (the text below is
--- retirementLedgerSql in packages/contracts/src/retired-instances.ts, byte for byte) and keeps
+-- retirementLedgerSql in packages/workflows/src/retired-instances.ts, byte for byte) and keeps
 -- working sets in temporary tables. After the release the ledger already exists, and its
 -- persisted rows are the set. The migrations follow the ledger with preconditions that refuse the
 -- whole release; this script leaves them out so that it always runs to the end, and reports each

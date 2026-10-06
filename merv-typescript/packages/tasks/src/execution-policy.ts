@@ -1,10 +1,5 @@
-import {
-  grant,
-  reference,
-  target,
-  type WorkflowExecutionBinding,
-  type WorkflowExecutionPolicy,
-} from '@merv/contracts';
+import { type WorkflowExecutionBinding, type WorkflowExecutionPolicy } from '@merv/contracts';
+import { grant, reference, target } from '@merv/workflows/rules';
 import { codeWorkspace } from '@merv/code-work/workspace';
 
 type Bindings = Record<string, WorkflowExecutionBinding>;

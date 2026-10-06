@@ -1,11 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { PostgresState } from '@merv/state';
-import {
-  retiredInstancesSql,
-  retiredPlanTasksSql,
-  withoutTriggers,
-} from '@merv/contracts/retired-instances';
+import { retiredInstancesSql, retiredPlanTasksSql } from '@merv/workflows/retired-instances';
+import { withoutTriggers } from '@merv/contracts';
 import { postgresMigrations as research } from '../packages/research/src/index.postgres.js';
 import { postgresMigrations as tasks } from '../packages/tasks/src/index.postgres.js';
 import { postgresMigrations as workflows } from '../packages/workflows/src/index.postgres.js';

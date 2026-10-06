@@ -2,7 +2,6 @@ import {
   clip,
   digest,
   MervError,
-  sourceCaller,
   type Caller,
   type DelegationSource,
   type DomainEvents,
@@ -11,6 +10,7 @@ import {
   type Transaction,
   type Workflows,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 
 /**
  * A row of research_automation. Its blocker_json column holds `{unavailableSince}`, when the

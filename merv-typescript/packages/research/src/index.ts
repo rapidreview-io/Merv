@@ -2,7 +2,6 @@ import { AsyncResource } from 'node:async_hooks';
 import type { ServiceTaskCreator, Tasks } from '@merv/tasks/types';
 import type { Code } from '@merv/code-work/types';
 import {
-  CheckedTransitions,
   check,
   clip,
   createService,
@@ -14,7 +13,6 @@ import {
   recorded,
   childRequest,
   replayed,
-  sourceCaller,
   type Artifact,
   type Artifacts,
   type Caller,
@@ -31,6 +29,8 @@ import {
   type Workflows,
   type WorkflowSnapshot,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
+import { CheckedTransitions } from '@merv/workflows/rules';
 import type { Experiments } from '@merv/experiments/types';
 import { problemDefined } from '@merv/paper/rules';
 import type { Paper, PaperRevision } from '@merv/paper/types';

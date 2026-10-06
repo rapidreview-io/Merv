@@ -1,6 +1,5 @@
 export { nativeMcpConnectionsSchema, type NativeMcpConnection } from './launch-connections.js';
 export { mapAsync, filterAsync, everyAsync } from './async.js';
-export { CheckedTransitions } from './checked-transitions.js';
 import type { ToolPolicy } from './tool-policy.js';
 export type {
   ToolPolicy,
@@ -557,6 +556,21 @@ export interface Migration {
    * SET search_path.
    */
   sql: string;
+}
+/**
+ * `statements` between `ALTER TABLE <table> DISABLE TRIGGER <trigger>;` and the matching ENABLE,
+ * one line per trigger. DISABLE TRIGGER is transactional, so other sessions never see a guard off,
+ * and it names the one guard without copying its pinned DDL; it needs table ownership. The emitted
+ * text is embedded in published migrations and frozen like the retirement ledger in `@merv/workflows/retired-instances`.
+ */
+export function withoutTriggers(
+  table: string,
+  triggers: readonly string[],
+  statements: string,
+): string {
+  const alter = (action: 'DISABLE' | 'ENABLE') =>
+    triggers.map((trigger) => `ALTER TABLE ${table} ${action} TRIGGER ${trigger};`);
+  return [...alter('DISABLE'), statements, ...alter('ENABLE')].join('\n');
 }
 export interface StoredEvent {
   id: number;
@@ -1500,20 +1514,6 @@ export type WorkflowExecutionBinding =
   | { kind: 'oneOf'; name: string }
   | { kind: 'subset'; name: string };
 export type WorkflowExecutionReferences = Record<string, string | string[]>;
-/** The argument bindings an execution policy grants a tool with. */
-export const target = (field: 'instanceId' | 'revision'): WorkflowExecutionBinding => ({
-  kind: 'target',
-  field,
-});
-export const reference = (name: string): WorkflowExecutionBinding => ({ kind: 'reference', name });
-export const literal = (value: string): WorkflowExecutionBinding => ({ kind: 'literal', value });
-export const grant = (
-  name: string,
-  ...alternatives: Record<string, WorkflowExecutionBinding>[]
-) => ({
-  name,
-  alternatives,
-});
 /** JSON declarations, separate from guidance and deployed callback implementations. */
 export interface WorkflowExecutionPolicy {
   /** Describes the work environment; explicit protocol/checkpoint writes remain permitted. */
@@ -2077,29 +2077,3 @@ export type {
   GitHubPullDetails,
   GitHubAutomationInput,
 } from './github-models.js';
-
-/** The caller a delegation source acts as, for work done later on its behalf. */
-export function sourceCaller(source: DelegationSource): Caller {
-  const base = { actorId: source.actorId, projectId: source.projectId };
-  if (source.kind === 'actor') return { ...base, credentialId: source.credentialId };
-  if (source.kind === 'key')
-    return { ...base, key: { id: source.keyId, membershipId: source.membershipId } };
-  if (source.kind === 'service') return { ...base, service: { vouchedBy: source.vouchedBy } };
-  // Delegation follows the captured membership epoch, not the original short-lived login JWT.
-  return {
-    ...base,
-    human: {
-      issuer: source.issuer,
-      subject: source.subject,
-      membershipId: source.membershipId,
-      expiresAt: '9999-12-31T23:59:59.999Z',
-    },
-  };
-}
-/** When a delegation lapses by itself: a person's never, a service's with its voucher's. */
-export const delegationEnd = (source: DelegationSource): number =>
-  source.kind === 'service'
-    ? delegationEnd(source.vouchedBy)
-    : source.kind !== 'human' && source.expiresAt
-      ? Date.parse(source.expiresAt)
-      : Infinity;

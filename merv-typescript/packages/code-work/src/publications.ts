@@ -12,7 +12,6 @@ import {
   newId,
   now,
   recorded,
-  sourceCaller,
   type Caller,
   type CodePublication,
   type CodePublicationState,
@@ -24,6 +23,7 @@ import {
   requireHuman,
   idSchema,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 import {
   publicationApproval,
   PublicationIncident,

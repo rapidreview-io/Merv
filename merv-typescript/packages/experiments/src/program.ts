@@ -9,12 +9,12 @@ import {
   REVIEW_VERDICTS,
 } from '@merv/reviews/rules';
 import { releasedLease, mapAsync } from '@merv/contracts';
-import { checkReceipt, grant, literal, reference, target } from '@merv/contracts';
+import { grant, literal, reference, target, CheckedTransitions } from '@merv/workflows/rules';
+import { checkReceipt } from '@merv/contracts';
 import { codeWorkspace } from '@merv/code-work/workspace';
 import { postgresMigrations } from './program.postgres.js';
 import {
   check,
-  CheckedTransitions,
   clip,
   digest,
   type Artifact,

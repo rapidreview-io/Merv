@@ -16,7 +16,7 @@ import type { Agent, AgentRegistration } from './types.js';
 import { tokenDigest, type CredentialStore } from '@merv/identity/credentials';
 
 export { tokenDigest };
-export { sourceCaller } from '@merv/contracts';
+export { sourceCaller } from '@merv/scope/rules';
 interface AgentRow {
   id: string;
   owner_hash: string;

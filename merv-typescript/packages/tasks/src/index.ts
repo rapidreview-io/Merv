@@ -7,7 +7,6 @@ import {
 import { requireDependencies } from '@merv/workflows/rules';
 import {
   check,
-  CheckedTransitions,
   checkReceipt,
   childRequest,
   clip,
@@ -61,6 +60,7 @@ import {
   type WorkRoute,
   requireHuman,
 } from '@merv/contracts';
+import { CheckedTransitions } from '@merv/workflows/rules';
 import type { Context } from 'cordis';
 import { types as nodeTypes } from 'node:util';
 import { z } from 'zod';

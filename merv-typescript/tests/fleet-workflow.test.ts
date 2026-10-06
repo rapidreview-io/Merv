@@ -12,12 +12,12 @@ import {
   createService,
   digest,
   MervError,
-  sourceCaller,
   type Caller,
   type DelegationSource,
   type Transaction,
   type WorkflowPolicy,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 import { ProjectScope } from '@merv/scope';
 import { WorkflowsService } from '@merv/workflows';
 import { DurableEvents } from '@merv/domain-events';

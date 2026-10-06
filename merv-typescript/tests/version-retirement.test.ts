@@ -21,7 +21,7 @@ import {
   planRetirementPreconditionsSql,
   retirementLedgerSql,
   retirementPreconditionsSql,
-} from '@merv/contracts/retired-instances';
+} from '@merv/workflows/retired-instances';
 import { PostgresState } from '@merv/state';
 import { createApp } from './fixtures/app.js';
 import { openState, postgresUrl, schemaFor } from './fixtures/state.js';

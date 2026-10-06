@@ -23,6 +23,7 @@ flowchart LR
     artifacts["Artifacts"]
     scope["Scope"]
     domainEvents["Domain events"]
+    workflows["Workflows"]
     state["State"]
   end
   workerAgent -- "calls review.submit" --> reviews
@@ -37,6 +38,7 @@ flowchart LR
   reviews -- "injects" --> scope
   reviews -- "injects" --> domainEvents
   reviews -- "injects" --> state
+  reviews -- "imports retirement ledger" --> workflows
   scope -- "emits actor.revoked" --> reviews
   classDef self fill:#2f6feb,color:#fff,stroke:#1f4fb0
   class reviews self

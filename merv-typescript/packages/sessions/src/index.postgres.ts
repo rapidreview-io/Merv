@@ -2,8 +2,8 @@ import {
   retiredInstancesSql,
   retiredPlanTaskIds,
   retiredPlanTasksSql,
-  withoutTriggers,
-} from '@merv/contracts/retired-instances';
+} from '@merv/workflows/retired-instances';
+import { withoutTriggers } from '@merv/contracts';
 
 /** The retired plan ids query, quoted for the EXECUTE strings version 9 needs for optional tables. */
 const quotedPlanTaskIds = retiredPlanTaskIds.replaceAll("'", "''");

@@ -9,11 +9,11 @@ import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import {
   createService,
-  sourceCaller,
   type Caller,
   type WorkflowSnapshot,
   type Transaction,
 } from '@merv/contracts';
+import { sourceCaller } from '@merv/scope/rules';
 import { CodeService } from '@merv/code-work/service';
 import { CodeRepositories } from '@merv/code/store/repository';
 import type { CodeCapture } from '@merv/code-work/types';

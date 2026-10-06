@@ -155,7 +155,7 @@ execution-policy rows of a retired version stay as history.
 
 Workflows owns the ledger of that retirement, `wf_retired_instances` (id, project, workflow,
 version, reason). Every component migration that deletes retired records first runs the shared
-snippet in `@merv/contracts/retired-instances`, which fills the ledger insert-only; whichever
+snippet in `@merv/workflows/retired-instances`, which fills the ledger insert-only; whichever
 runs first captures the whole set while its inputs still exist, and the rest read it. A guard
 refuses any update or delete of it, because once `wf_instances` has lost the retired rows the
 set could not be computed again. The ledger is kept permanently: it explains the ids the
@@ -205,7 +205,10 @@ assignment shows the policy with its hash and registration generation; tool call
 admitted against the offered execution only (see below). Policy hashes are pinned per
 version and state, including explicit absence. Registration generations fence
 unload/reload and restart. None of this creates session credentials or restricts
-ordinary keys. See [the contract](../../docs/WORKFLOW_EXECUTION.md).
+ordinary keys. See [the contract](../../docs/WORKFLOW_EXECUTION.md). Programs build a
+policy's argument bindings with `target`, `reference`, `literal` and `grant` from
+`@merv/workflows/rules`. `CheckedTransitions`, from the same module, lets a command that
+already ran an action's guard take that transition without the guard running a second time.
 
 ## Leased execution
 
