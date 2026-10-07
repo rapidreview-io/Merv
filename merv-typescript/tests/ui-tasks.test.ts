@@ -842,6 +842,41 @@ test('an automatic run offers its stop, and only the answers Research names for 
   assert.deepEqual(buttons(), [['Stop automatic research', false]]);
 });
 
+test('an ended cycle that still asks its owner offers the stop Research names for it', async (t) => {
+  t.after(unmount);
+  const ended: Record<string, unknown>[] = [];
+  serve('/tools/research.end', (_call, body) => {
+    ended.push(body);
+    return { body: { result: cycle('complete') } };
+  });
+  const asked = (code: string) =>
+    createElement(
+      MemoryRouter,
+      null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      createElement(CycleMove as any, {
+        cycle: {
+          ...cycle('complete'),
+          automation: { cycle: 1, maxCycles: 3, blocker: { code, message: `Asks: ${code}.` } },
+        },
+        shell: { rows: [cyclesRow], plugins: [], workflows: [researchShape] },
+        onSaved() {},
+      }),
+    );
+  await mount(asked('research_needs_owner'));
+  await settle(10);
+  assert.deepEqual(buttons(), [['Stop here', false]]);
+  assert.ok(text().includes('Asks: research_needs_owner.'));
+  await click('Stop here');
+  assert.equal(ended[0]!.researchId, 'wf_cycle');
+  assert.equal(ended[0]!.outcome, 'abandoned');
+  await unmount();
+  // An ended cycle that asks nothing Research names has no move.
+  await mount(asked('research_waiting'));
+  await settle(10);
+  assert.deepEqual(buttons(), []);
+});
+
 test('a ready gate is the one move, and it sends nothing it was not asked for', async (t) => {
   t.after(unmount);
   serve('/tools/workflow.status_and_next', cycleGate('researching', { status: 'ready' }));

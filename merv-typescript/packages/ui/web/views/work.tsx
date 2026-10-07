@@ -556,7 +556,8 @@ function WaveList({ shell }: { shell: ShellData }) {
  * gate refuses is not offered as a button that can only fail: it stands disabled over the
  * records it waits on — unless the page already `listed` them. Where the gate asks for an
  * answer, refuses for a reason or stops an automatic run, the page draws the moves Research
- * names for it on its Cycles row (`ResearchAnswer`).
+ * names for it on its Cycles row (`ResearchAnswer`). An ended cycle has only those it still
+ * stops on.
  */
 export function CycleMove({
   cycle,
@@ -575,7 +576,6 @@ export function CycleMove({
     { instanceId: cycle.id },
     { every: 10000 },
   ).data;
-  if (!open) return null;
   // A gate read at another revision is not this cycle's, and leaves the plain move.
   const gate = read?.revision === cycle.workflow.revision ? read : undefined;
   const advance = gate?.actions.find((action) => action.tool === 'research.advance');
@@ -585,12 +585,14 @@ export function CycleMove({
     !!gate?.actions.some((item) => item.tool === tool && item.status !== 'blocked');
   const automatic = cycle.automation;
   // An answer applies where the gate says so, and only if the page can make each of its moves.
+  // An ended cycle has no gate: only what it still asks, as Research names it, has moves.
   const applies = ({ when, name, moves }: ResearchAnswer) =>
     (when === 'stopped'
       ? automatic?.blocker?.code === name
-      : (when === 'asks' ? advance?.requiredInput.includes(name) : refused(name)) &&
+      : open &&
+        (when === 'asks' ? advance?.requiredInput.includes(name) : refused(name)) &&
         (!automatic || moves.every((item) => item.row))) &&
-    moves.every((item) => (item.row ? row(item.row) : !item.tool || offered(item.tool)));
+    moves.every((item) => (item.row ? row(item.row) : !item.tool || !open || offered(item.tool)));
   const answer = (row('research')?.view.answers as ResearchAnswer[] | undefined)?.find(applies);
   const move = (
     label: string,
@@ -619,6 +621,13 @@ export function CycleMove({
       move(item.label, item.input, false, item.tool)
     ),
   );
+  if (!open)
+    return answer ? (
+      <div className="stack">
+        <span>{automatic!.blocker!.message}</span>
+        {moves}
+      </div>
+    ) : null;
   // A move that answers failed work stands under it.
   const failed = answer?.moves.find((item) => item.failed)?.failed;
   if (answer && answer.when !== 'stopped')

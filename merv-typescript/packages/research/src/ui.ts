@@ -18,6 +18,18 @@ const answers = [
     name: 'research_definition_changed',
     moves: [{ label: 'Accept changed definition' }],
   },
+  // A completed run whose plan stopped for its owner: they may decide to stop here.
+  {
+    when: 'stopped',
+    name: 'research_needs_owner',
+    moves: [
+      {
+        label: 'Stop here',
+        tool: 'research.end',
+        input: { outcome: 'abandoned', reason: 'The owner decided to stop here.' },
+      },
+    ],
+  },
   // An approved plan that continues: open its work and the next cycle, or complete without them.
   {
     when: 'asks',
