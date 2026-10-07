@@ -216,7 +216,7 @@ export class CodeWriterService {
       row.unit_id,
     );
     await this.move(tx, row, 'closed');
-    await this.changed(tx, row.project_id, row.unit_id);
+    await this.changed(tx, projectId, row.unit_id);
     await this.state.appendEvent(tx, {
       projectId,
       actorId: 'system:code',
