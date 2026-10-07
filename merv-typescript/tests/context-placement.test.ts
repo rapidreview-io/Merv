@@ -295,7 +295,7 @@ test('a session worker previews inside a snapshot, where nothing may write', asy
   scope.registerSessionAuthority({
     require: async () => {
       handed.push(state.readScope);
-      return source;
+      return { source };
     },
   });
   const evidence = await artifacts.create(operator, { title: 'Proof', content: 'Result: 42.' });

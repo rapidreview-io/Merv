@@ -595,17 +595,11 @@ export class LeasedSessions implements Sessions {
       session.id,
     );
   }
-  private worker(
-    session: Pick<Session, 'id' | 'actorId' | 'projectId' | 'threadId' | 'inquiry'>,
-  ): Caller {
+  private worker(session: Pick<Session, 'id' | 'actorId' | 'projectId' | 'threadId'>): Caller {
     return {
       actorId: session.actorId,
       projectId: session.projectId,
-      session: {
-        id: session.id,
-        threadId: session.threadId,
-        ...(session.inquiry && { inquiry: true as const }),
-      },
+      session: { id: session.id, threadId: session.threadId },
     };
   }
   private async framed<T>(frame: Frame, fn: () => T | Promise<T>): Promise<T> {
@@ -676,7 +670,7 @@ export class LeasedSessions implements Sessions {
     caller: Caller,
     tx: Transaction,
     requiredPermission: Permission,
-  ): Promise<DelegationSource> {
+  ): Promise<{ source: DelegationSource; readsRetired?: boolean }> {
     this.ensureOpen();
     this.state.assertTransaction(tx);
     const frame = this.frames
@@ -690,7 +684,7 @@ export class LeasedSessions implements Sessions {
     if (frame) {
       await this.scope.requireDelegation(frame.source, permission(frame.role), tx);
       this.ensureOpen();
-      return frame.source;
+      return { source: frame.source };
     }
     check(caller.session, 'session_required', 'Worker authority requires a session', 401);
     const row = await this.row(tx, caller.session.id);
@@ -709,14 +703,6 @@ export class LeasedSessions implements Sessions {
       401,
     );
     await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
-    // Scope lets an inquiry visit read as its thread's actor even once the thread retired it, on
-    // the caller's word that it is one: that word is checked against the row here.
-    check(
-      !!caller.session.inquiry === !!session.inquiry,
-      'forbidden',
-      'Session authority does not match its visit',
-      403,
-    );
     check(
       !session.inquiry || requiredPermission === 'read',
       'inquiry_read_only',
@@ -745,7 +731,8 @@ export class LeasedSessions implements Sessions {
         403,
       );
       const fenced = this.fenced.get(tx);
-      if (invocation.running && fenced?.has(invocationId)) return session.source;
+      if (invocation.running && fenced?.has(invocationId))
+        return { source: session.source, readsRetired: session.kind === 'inquiry' };
       const current = await this.valid(session, tx);
       check(
         current.registrationId === invocation.registrationId,
@@ -759,7 +746,9 @@ export class LeasedSessions implements Sessions {
         this.fenced.set(tx, memo);
       }
     } else await this.valid(session, tx);
-    return session.source;
+    // An inquiry visit, held to reading above, still reads as its thread's actor once the thread
+    // retired it: a person may ask an agent whose work has ended.
+    return { source: session.source, readsRetired: session.kind === 'inquiry' };
   }
   private async controlled(
     caller: Caller,

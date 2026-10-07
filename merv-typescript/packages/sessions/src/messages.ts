@@ -543,7 +543,13 @@ export class SessionMessages {
         'This session has ended',
         409,
       );
-      const read = (item: MessageRow) => this.publicMessage(item, session.instanceId);
+      // An inquiry visit's reply says where its question stands: answered, its visit ended.
+      const read = async (item: MessageRow) =>
+        this.publicMessage(
+          item,
+          session.instanceId,
+          session.inquiry && (await this.host.inquiryStatuses(tx, [session.inquiry.id])),
+        );
       if (row.acknowledged_at) {
         check(
           row.ack_request_id === input.requestId && row.reply_body === (input.reply ?? null),
@@ -551,7 +557,7 @@ export class SessionMessages {
           'Message was acknowledged with different input',
           409,
         );
-        return read(row);
+        return await read(row);
       }
       await tx.run(
         'UPDATE session_messages SET acknowledged_at=?,ack_request_id=?,reply_body=? WHERE id=? AND acknowledged_at IS NULL',
@@ -574,7 +580,7 @@ export class SessionMessages {
         },
       });
       if (session.inquiry) await this.host.answered(session, row.body, input.reply!, tx);
-      return read(await this.messageRow(tx, row.id));
+      return await read(await this.messageRow(tx, row.id));
     });
   }
 }

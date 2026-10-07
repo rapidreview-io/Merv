@@ -147,7 +147,7 @@ async function leasing(
   caller: Caller,
 ) {
   const source = await scope.delegationSource(caller);
-  scope.registerSessionAuthority({ require: async () => source });
+  scope.registerSessionAuthority({ require: async () => ({ source }) });
   const sessionId = `lease-${randomBytes(4).toString('hex')}`;
   const actor = await state.transaction(
     async (tx) =>

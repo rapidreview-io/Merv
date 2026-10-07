@@ -53,7 +53,7 @@ for (const operation of ['require', 'authority', 'delegation'] as const) {
             enter();
             await waiting;
           }
-          return source;
+          return { source };
         },
       };
       if (operation === 'delegation') {

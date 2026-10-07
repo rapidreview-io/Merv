@@ -42,7 +42,7 @@ async function fixture(t: TestContext) {
     credentialId: boot.credential.id,
   };
   const source = await scope.delegationSource(owner);
-  scope.registerSessionAuthority({ require: async () => source });
+  scope.registerSessionAuthority({ require: async () => ({ source }) });
   const worker = async (sessionId: string): Promise<Caller> => {
     const actor = await state.transaction((tx) =>
       scope.createSessionActor(

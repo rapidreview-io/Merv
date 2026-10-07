@@ -79,7 +79,7 @@ async function fixture() {
       providers.handed = { tx, readScope: state.readScope };
       if (providers.writes)
         await tx.run('UPDATE projects SET name=name WHERE id=?', boot.project.id);
-      return source;
+      return { source };
     },
   });
   scope.registerConversationAuthority({ require: async () => source });

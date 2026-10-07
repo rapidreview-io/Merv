@@ -264,7 +264,7 @@ test('a leased worker is neither offered begin nor answered about it', async (t)
   const f = await setup();
   t.after(async () => await f.state.close());
   const source = await f.scope.delegationSource({ ...f.caller, credentialId: f.credentialId });
-  f.scope.registerSessionAuthority({ require: async () => source });
+  f.scope.registerSessionAuthority({ require: async () => ({ source }) });
   const actor = await f.state.transaction(
     async (tx) =>
       await f.scope.createSessionActor(

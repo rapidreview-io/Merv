@@ -696,9 +696,17 @@ export function requireHuman(
 ): asserts caller is Caller & { human: NonNullable<Caller['human']> } {
   check(isDirectHuman(caller), code, message, 403);
 }
-/** One installed session manager owns the authority of credentialless worker actors. */
+/**
+ * One installed session manager owns the authority of credentialless worker actors. It answers
+ * the worker's source, and whether this worker may still read as an actor its session retired
+ * (a visit that only reads, such as a question to an agent whose work has ended).
+ */
 export interface SessionAuthority {
-  require(caller: Caller, tx: Transaction, permission: Permission): Promise<DelegationSource>;
+  require(
+    caller: Caller,
+    tx: Transaction,
+    permission: Permission,
+  ): Promise<{ source: DelegationSource; readsRetired?: boolean }>;
 }
 export interface ConversationAuthority {
   require(caller: Caller, tx: Transaction): Promise<DelegationSource>;

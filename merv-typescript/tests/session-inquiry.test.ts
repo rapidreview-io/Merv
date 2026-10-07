@@ -347,7 +347,6 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
 
   // As its worker: the question, the project's reads, and nothing that writes but its reply.
   const worker = await f.sessions.authenticate(leased.input.secret);
-  assert.equal(worker.session?.inquiry, true);
   const tools = (await f.app.ctx.tools.describe(worker)).map((tool) => tool.name);
   for (const name of ['session.message.ack', 'session.messages', 'workflow.status_and_next'])
     assert.ok(tools.includes(name), name);
