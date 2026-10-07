@@ -8,10 +8,14 @@
 #  3. design review, execution, results review: independent agents, as in production.
 # Asserts structure only: the states reached in order, the reviews, the result artifact and its
 # accuracy above a floor, Modal work recorded, and nothing stuck, held or still running.
+# Training on Modal is BLOCKED, not FAIL, where the environment cannot give it: no connection, a
+# connection the staging-compute account does not fund, Modal not offered to that payer (seen by
+# the preflight, or reported by the agent). It FAILS only where Modal was offered and not used.
 # A producer may end its visit with session.ask_owner; the script answers as the owner with
 # session.message to its thread (at most 3 answers) and asserts the work moves on within 10 min.
 # Hard caps: 45 minutes and $2 (model tokens estimated, plus Modal); past either the script ends
 # the work (abandon / mark_failed / halt) and fails.
+import urllib.parse
 import uuid
 
 argv = sys.argv[1:]
@@ -25,6 +29,11 @@ ANSWER_CAP = 3
 RESUME_SECONDS = 10 * 60
 ANSWER_NO_SANDBOXES = ("Proceed on the workspace CPU and record machine='workspace'. This staging project has no "
                        "Sandboxes connection; the check reports that step separately.")
+ANSWER_NO_MODAL = ("Proceed on the workspace CPU and record machine='workspace'. Modal is not offered to this "
+                   "project's Sandboxes payer here; the check reports that step separately.")
+# An agent's own report that its payer is not offered Modal (as `sandbox_options` says it).
+MODAL_REFUSED = re.compile(r"modal[^.]*\bnot\b[^.]*\b(configured|offered|available|enabled)\b", re.I)
+MODAL_STEP = "training on Modal through the Sandboxes tools"
 ANSWER_DEFAULT = "Proceed with your best judgement within the experiment's caps; record any deviation in the report."
 run = Run("research-loop")
 run.facts["project"] = WHO
@@ -56,18 +65,53 @@ def open_questions(ids):
 
 
 def answer_for(question):
-    return ANSWER_NO_SANDBOXES if re.search(r"sandbox|machine", question, re.I) else ANSWER_DEFAULT
+    if not MODAL and re.search(r"sandbox|machine", question, re.I):
+        return ANSWER_NO_SANDBOXES
+    return ANSWER_NO_MODAL if MODAL and MODAL_REFUSED.search(question) else ANSWER_DEFAULT
+
+
+def staging_compute():
+    """The staging-compute account through its consumer token: its account id (where the token file,
+    STG_COMPUTE_ACCOUNT_ID or /v1/auth/me names it) and the Modal offers it may rent now."""
+    sbx = json.load(open(f"{E2E}/sandboxes-staging-compute.json"))  # never printed
+
+    def get(path, **query):
+        req = urllib.request.Request(f"{sbx['url']}/v1{path}" + ("?" + urllib.parse.urlencode(query) if query else ""),
+                                     headers={"Authorization": "Bearer " + sbx["token"]})
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            return json.loads(resp.read() or b"{}")
+    me = get("/auth/me")
+    account = (os.environ.get("STG_COMPUTE_ACCOUNT_ID") or sbx.get("accountId") or sbx.get("account_id")
+               or me.get("account_id") or me.get("accountId"))
+    return account, {o.get("offer_id") for o in get("/options", provider="modal").get("offers", [])}
+
+
+def modal_blocker(conn):
+    """Why this environment cannot give the agent Modal, or None when it can."""
+    if not conn.get("connected"):
+        return (f"{project} has no Sandboxes connection (GET /sandboxes/connection: connected=false); connecting "
+                "needs a signed-in human's consent at sandboxes.rapidreview.io with credentials = staging-compute")
+    try:
+        account, offers = staging_compute()
+    except Exception as exc:  # the check of the environment failed, not the code under test
+        return f"the staging-compute account could not be read: {exc}"
+    if account and conn.get("accountId") != account:
+        return (f"the connection is funded by account {conn.get('accountId')} (funding={conn.get('funding')}), "
+                f"not the staging-compute account {account}")
+    if "cpu-2:modal" not in offers:
+        return "Modal cpu-2 is not offered to the staging-compute account (GET /v1/options?provider=modal)"
+    return None
 
 
 # --- preflight -------------------------------------------------------------------------------
 conn = http("GET", "/sandboxes/connection", who=WHO)
-MODAL = bool(conn.get("connected"))
 project = json.load(open(f"{E2E}/{KEYS[WHO]}"))["projectId"]
-log(f"project {project} ({WHO}); Sandboxes connected={MODAL} funding={conn.get('funding')}")
-if not MODAL:
-    run.blocked("training on Modal through the Sandboxes tools",
-                f"{project} has no Sandboxes connection (GET /sandboxes/connection: connected=false); connecting "
-                "needs a signed-in human's consent at sandboxes.rapidreview.io with credentials = staging-compute")
+log(f"project {project} ({WHO}); Sandboxes connected={conn.get('connected')} funding={conn.get('funding')} "
+    f"account={conn.get('accountId')}")
+blocker = modal_blocker(conn)
+MODAL = blocker is None
+if blocker:
+    run.blocked(MODAL_STEP, blocker)
 tool("session.dispatch", {"enabled": True, "ownMachines": WHO == "operator"}, WHO)
 
 # --- the work --------------------------------------------------------------------------------
@@ -88,8 +132,8 @@ compute = (
     "Sandboxes MCP connection, with a lease of at most 20 minutes, and release the machine as soon as the job is done. "
     "Record the sandbox id in the result."
     if MODAL else
-    "Compute: this project has no Sandboxes connection, so run the training in your own workspace; it takes seconds. "
-    "Record 'workspace' as the machine in the result.")
+    "Compute: Modal is not available to this project here, so run the training in your own workspace; it takes "
+    "seconds. Record 'workspace' as the machine in the result.")
 exp = tool("experiment.create", {
     "requestId": f"t1-{TAG}-exp", "name": f"stg-t1-logreg-{TAG}", "dependsOn": [task],
     "intent": "Measure how well a plain logistic regression separates the synthetic dataset produced by "
@@ -120,6 +164,7 @@ stuck_seen = {}
 answered = {}  # thread -> question ids answered there
 pending = {}  # instance -> {"at", "state", "thread", "n"}: answered, not yet moved on
 answers = 0
+asked = []  # every question text the agents asked
 reason = None
 
 
@@ -156,6 +201,7 @@ while True:
             reason = f"agent question cap reached ({ANSWER_CAP} answers): {text[:200]}"
             break
         answers += 1
+        asked.append(text)
         body = answer_for(text)
         log(f"  question on {label(iid)} {iid} (thread {thread}): {text[:200]}")
         try:
@@ -165,7 +211,8 @@ while True:
             answered.setdefault(thread, set()).update(qids)
             continue
         answered.setdefault(thread, set()).update(qids)
-        log(f"  answered ({'no Sandboxes' if body == ANSWER_NO_SANDBOXES else 'default'}): {body}")
+        kind = {ANSWER_NO_SANDBOXES: "no Sandboxes", ANSWER_NO_MODAL: "no Modal"}.get(body, "default")
+        log(f"  answered ({kind}): {body}")
         pending[iid] = {"at": time.monotonic(), "state": state_of(iid), "thread": thread, "n": answers}
     if reason:
         break
@@ -248,8 +295,13 @@ run.facts["accuracy"] = round(acc, 4)
 run.ok(f"held-out accuracy above {ACCURACY_FLOOR}", acc >= ACCURACY_FLOOR, f"accuracy {acc:.4f} machine {metrics and metrics.get('machine')}")
 if MODAL:
     works = int(sql(f"SELECT count(*) FROM sandbox_native_work w WHERE row_to_json(w)::text LIKE '%{ident(exp_id)}%';")[0][0])
-    run.ok("training ran on Modal through the Sandboxes connection",
-           works > 0 and "sbx_" in str(metrics and metrics.get("machine")), f"native work rows {works}, machine {metrics and metrics.get('machine')}")
+    used = works > 0 and "sbx_" in str(metrics and metrics.get("machine"))
+    refused = [q for q in asked if MODAL_REFUSED.search(q)]
+    if not used and refused:  # its payer was not offered Modal: the environment, not the code
+        run.blocked(MODAL_STEP, f"the agent reported Modal not offered to its payer: {refused[0][:300]}")
+    else:
+        run.ok("training ran on Modal through the Sandboxes connection", used,
+               f"native work rows {works}, machine {metrics and metrics.get('machine')}")
 # A question seen and answered is not stuck work; one still open at the end is.
 asking = {q[2] for q in open_questions([task, exp_id])}
 left = [i for i in stuck_for({task, exp_id}) if i.get("code") != "agent_question" or i["instanceId"] in asking]
