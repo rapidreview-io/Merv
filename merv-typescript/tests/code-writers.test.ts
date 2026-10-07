@@ -394,7 +394,7 @@ test('a final capture that fully arrived before its machine was gone is admitted
   await f.code.v2!.putPart(f.admin, final.id, 0, bundle.content);
   await f.event('session.machine_gone', 'ses_1');
   assert.equal((await f.unit()).writerState, 'closing', 'whole bytes on Main are not abandoned');
-  assert.equal((await f.operationRow(final.id)).status, 'prepared');
+  assert.equal((await f.operationRow(final.id))?.status, 'prepared');
   const admitted = (
     (await f.code.v2!.call(f.admin, `uploads/${final.id}/complete`, {})) as {
       operation: { status: string };
