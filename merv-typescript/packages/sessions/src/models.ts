@@ -288,6 +288,11 @@ export interface ProjectThread extends ThreadView {
   /** The work item's name, as its newest visit's assignment gave it. */
   name: string;
   workflow: string;
+  /**
+   * Where a thread of a page stands among the project's threads; passed back as `before`, it
+   * reads the page older than it. A live thread listed first has none.
+   */
+  seq?: string;
 }
 /** The project's threads: every live one, then the newest others, a page at a time. */
 export interface ProjectThreads {

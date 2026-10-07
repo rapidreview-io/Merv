@@ -474,18 +474,25 @@ function Agents({ live: anyLive }: { live: boolean }) {
   const [busy, setBusy] = useState(false);
   const [opened, setOpened] = useState<string>();
   const shown = [...(first.data?.threads ?? []), ...(older?.threads ?? [])];
-  // A thread the newest page has just moved off of is still read from the older pages.
+  // The newest page's own read of a thread comes first; one it has moved off stays as shown.
   const seen = new Set<string>();
   const threads = shown.filter((item) => !seen.has(item.id) && seen.add(item.id));
   const next = older ? older.next : (first.data?.next ?? null);
   const more = async () => {
+    // The page after the oldest thread shown, so none a newer one pushed off the first is lost;
+    // the first page's threads are kept with the older ones as they stand now.
+    const kept = threads.filter((item) => item.seq !== undefined);
+    const oldest = kept.reduce<string | null>(
+      (low, item) => (low === null || Number(item.seq) < Number(low) ? item.seq! : low),
+      null,
+    );
     setBusy(true);
     try {
       const page = await accountRequest<ProjectThreads>(
-        `/sessions/threads?before=${encodeURIComponent(next!)}`,
+        `/sessions/threads?before=${encodeURIComponent(oldest ?? next!)}`,
         { scoped: true },
       );
-      setOlder((had) => ({ threads: [...(had?.threads ?? []), ...page.threads], next: page.next }));
+      setOlder({ threads: [...kept, ...page.threads], next: page.next });
     } finally {
       setBusy(false);
     }

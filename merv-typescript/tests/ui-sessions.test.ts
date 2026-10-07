@@ -487,6 +487,33 @@ test('the Agents page lists threads, live first, and older ones a press further'
   assert.ok(!requests.some((request) => request.includes('/sessions/agents/')));
 });
 
+test('after Show older, a thread a newer one pushes off the first page stays, and the next page follows the oldest shown', async (t) => {
+  t.after(unmount);
+  serve('/tools/ui.read', () => read());
+  const at = (id: string, name: string, seq: number) => thread(id, name, { seq: String(seq) });
+  serve('/sessions/threads', (call) =>
+    call === 1
+      ? { body: { threads: [live, at('a5', 'Five', 5), at('a4', 'Four', 4)], next: '4' } }
+      : // A newer thread a6 since: the first page now holds a6 and a5, and a4 has dropped off.
+        { body: { threads: [live, at('a6', 'Six', 6), at('a5', 'Five', 5)], next: '5' } },
+  );
+  serve('/sessions/threads?before=4', {
+    body: { threads: [at('a3', 'Three', 3)], next: '3' },
+  });
+  serve('/sessions/threads?before=3', {
+    body: { threads: [at('a2', 'Two', 2)], next: null },
+  });
+  await mount(page());
+  const names = () =>
+    [...document.querySelectorAll('.unit-row--thread .unit-row-name')].map((n) => n.textContent);
+  await click('Show older');
+  assert.deepEqual(names(), ['Sweep weight decay', 'Five', 'Four', 'Three']);
+  await settle(4600);
+  assert.deepEqual(names(), ['Sweep weight decay', 'Six', 'Five', 'Four', 'Three']);
+  await click('Show older');
+  assert.deepEqual(names(), ['Sweep weight decay', 'Six', 'Five', 'Four', 'Three', 'Two']);
+});
+
 test('a thread row opens the thread view: a failed visit shows its outcome and exit reason', async (t) => {
   t.after(unmount);
   // jsdom has the element but not its modal methods.

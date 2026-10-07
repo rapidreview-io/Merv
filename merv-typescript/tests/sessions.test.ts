@@ -2072,6 +2072,14 @@ test('the project reads its live threads, then the newest others a page at a tim
   assert.equal(first.threads[0]!.status, 'live');
   assert.notEqual(first.threads[1]!.status, 'live');
   assert.ok(first.threads.every((thread) => thread.name && thread.workflow === 'session-fixture'));
+  // Each thread of a page stands at its position, the last at the cursor; a live one at none.
+  assert.equal(first.threads[0]!.seq, undefined);
+  assert.equal(first.threads.at(-1)!.seq, first.next);
+  // From the oldest thread shown, the next page follows on whatever is newer since.
+  assert.deepEqual(
+    (await f.sessions.threads.project(f.owner, first.threads[25]!.seq!)).threads[0]!.id,
+    ids[25],
+  );
   const second = await f.sessions.threads.project(f.owner, first.next!);
   assert.deepEqual(
     second.threads.map((thread) => thread.id),

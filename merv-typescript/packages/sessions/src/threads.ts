@@ -502,10 +502,11 @@ export class SessionThreads {
       );
       const views = await this.viewed(tx, page);
       return {
-        threads: views.map((view) => ({
+        threads: views.map((view, index) => ({
           ...view,
           name: named.get(view.id)?.name ?? '',
           workflow: named.get(view.id)?.workflow ?? '',
+          ...(index < live.length ? {} : { seq: String(page[index]!.seq) }),
         })),
         next: rest.length > PAGE ? String(rest[PAGE - 1]!.seq) : null,
       };

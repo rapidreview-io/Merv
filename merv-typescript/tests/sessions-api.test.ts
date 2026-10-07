@@ -960,6 +960,8 @@ test('project observers see real MCP call metadata and failures, without worker 
   assert.equal(listed.status, 200);
   assert.equal(listed.body.threads[0].id, offer.session.threadId);
   assert.equal(listed.body.threads[0].status, 'live');
+  // A live thread listed first stands at no page's position.
+  assert.equal(listed.body.threads[0].seq, undefined);
   assert.equal(listed.body.next, null);
   // The calls read works without the Sessions tools adapter.
   await f.app.setEnabled('sessions-tools', false);
