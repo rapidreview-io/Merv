@@ -1303,6 +1303,7 @@ test('each turn says whom the agent serves, where, on what, what the project hol
     'Today is 2026-09-23 (UTC).',
   ]);
   assert.match(first.work.notes[3], /^Machine: Standard/);
+  assert.equal(first.work.previousInterrupted, undefined);
   assert.match(first.work.instructions!, /^You are this person's own agent in Merv/);
   assert.match(first.work.instructions!, /never call yourself ChatGPT/);
   assert.ok(first.work.context!.startsWith('Project paper: goals A model\n\nxxx'));
@@ -1325,6 +1326,8 @@ test('each turn says whom the agent serves, where, on what, what the project hol
     work!.notes[3],
     'Your previous answer here stopped before it finished, after it had made: probe.write probe',
   );
+  // Its checkpoint is the one the stopped turn began from: the worker compacts nothing this turn.
+  assert.equal(work!.previousInterrupted, true);
   assert.equal(work!.instructions, first.work.instructions);
   // The latest turn is the one read back; nobody else can read this conversation's.
   assert.deepEqual((await f.pi.prompt(producer, id)).turn?.notes, work!.notes);

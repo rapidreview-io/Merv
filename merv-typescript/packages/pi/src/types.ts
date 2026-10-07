@@ -158,6 +158,10 @@ export interface PiWork {
   context?: string;
   /** The agent's instructions (at most 32,000 characters), the same on every turn. */
   instructions: string;
+  /** The conversation's previous turn was interrupted, so this checkpoint is the one that turn
+   * began from: the worker compacts nothing this turn, and sends what it would have compacted
+   * within the window, so a summary that cannot finish is not tried (and charged) every turn. */
+  previousInterrupted?: true;
 }
 /** Agent tool machine.switch, seen by the model as switch_machine. Input: switchMachineInput. */
 export type PiSwitchMachineResult =

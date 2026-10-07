@@ -1246,6 +1246,23 @@ const assignment = (name: string, change: Partial<PiWork['command']> = {}): PiWo
   notes: [`Note ${name}`],
   instructions: 'You are a test agent.',
 });
+/** A stream sent one event `ms` apart. */
+function paced(body: string, ms: number): Response {
+  const frames = body.split(/(?<=\n\n)/);
+  const encoder = new TextEncoder();
+  return new Response(
+    new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (const frame of frames) {
+          await new Promise((resolve) => setTimeout(resolve, ms));
+          controller.enqueue(encoder.encode(frame));
+        }
+        controller.close();
+      },
+    }),
+    { headers: { 'content-type': 'text/event-stream' } },
+  );
+}
 /** An answer whose stream shows its first text, then waits for `release` to finish. */
 function held(text: string, release: Promise<unknown>, started = () => {}): Response {
   const frames = sse([message(text)], text).split(/(?<=\n\n)/);
@@ -1280,14 +1297,14 @@ function slotServer(
   },
 ) {
   const controller = new AbortController();
-  const calls: { route: string; body: Record<string, unknown> }[] = [];
+  const calls: { route: string; body: Record<string, unknown>; at: number }[] = [];
   const bodies = (route: string) =>
     calls.filter((call) => call.route === route).map((call) => call.body);
   const fetchImpl: typeof fetch = async (input, init) => {
     const incoming = new Request(input, init);
     const route = new URL(incoming.url).pathname.split('/').at(-1)!;
     const body = JSON.parse(await incoming.text()) as Record<string, unknown>;
-    calls.push({ route, body });
+    calls.push({ route, body, at: Date.now() });
     if (route === 'responses')
       // The last prompt named; a summary of a turn's start may name none.
       return handlers.model(
@@ -1673,6 +1690,7 @@ function conversation(
   turns: number,
   checkpoint: PiWork['checkpoint'],
   model: (body: Record<string, unknown>, requests: Record<string, unknown>[]) => Response,
+  change: Partial<PiWork> = {},
 ) {
   const requests: Record<string, unknown>[] = [];
   let issued = 0;
@@ -1689,6 +1707,7 @@ function conversation(
           checkpoint: previous
             ? { content: previous.checkpoint, hash: previous.checkpointHash }
             : checkpoint,
+          ...change,
         },
       };
     },
@@ -1763,6 +1782,58 @@ test('a checkpoint saved before compaction restores, and compacts before the tur
     sent.includes(summary) && sent.includes('Question t1') && !sent.includes('Question old1 '),
   );
   assert.deepEqual(completions()[0].messages, [{ role: 'assistant', text: 'Answer' }]);
+});
+
+test('a summary that streams past the stall window keeps the turn moving, and its output is capped', async () => {
+  // Main ends a turn that shows no progress for its stall window: an empty pulse is no progress.
+  const stall = 2_000;
+  const { server, requests, completions } = conversation(1, earlier(6, 40_000, 250_000), (body) =>
+    summarizing(body)
+      ? paced(sse([message(summary)], summary), 600)
+      : new Response(sse([message('Answer')], 'Answer')),
+  );
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.deepEqual(completions()[0].messages, [{ role: 'assistant', text: 'Answer' }]);
+  const counted = server.calls
+    .filter(
+      ({ route, body }) =>
+        ['begin', 'complete'].includes(route) ||
+        (route === 'progress' && (body.events as unknown[]).length > 0),
+    )
+    .map(({ at }) => at);
+  const gaps = counted.slice(1).map((at, index) => at - counted[index]!);
+  assert.ok(Math.max(...gaps) < stall, JSON.stringify(gaps));
+  assert.ok(
+    server
+      .bodies('progress')
+      .some((body) => JSON.stringify(body.events).includes('Compacting earlier conversation')),
+  );
+  // The summary has Pi's cap, 80% of the room set aside for it; an answer has none.
+  assert.equal(requests[0].max_output_tokens, 21_760);
+  assert.equal(requests[1].max_output_tokens, undefined);
+});
+
+test('after an interrupted turn, a checkpoint past the compaction point is not summarized again but sent within the window', async () => {
+  const { server, requests, completions } = conversation(
+    1,
+    earlier(8, 60_000, 250_000),
+    (body) =>
+      summarizing(body)
+        ? new Response(sse([message(summary)], summary))
+        : new Response(sse([message('Answer')], 'Answer')),
+    { previousInterrupted: true },
+  );
+  await server.run();
+  assert.equal(server.bodies('fail').length, 0);
+  assert.equal(requests.length, 1);
+  const sent = JSON.stringify(requests[0].input);
+  assert.ok(!sent.includes('Question old1 ') && sent.includes('Question old8 '));
+  assert.ok(sent.includes('Question t1'));
+  const [first] = completions();
+  assert.deepEqual(first.messages, [{ role: 'assistant', text: 'Answer' }]);
+  // Saved within the window, so the turn after it does not start past the compaction point.
+  assert.ok(first.checkpoint.length < 330_000 && first.checkpoint.includes('Question t1'));
 });
 
 test('a failed summary keeps the conversation: the turn and the checkpoint fall back to the window', async () => {

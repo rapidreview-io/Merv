@@ -47,10 +47,10 @@ const TOOL_OUTPUT_BYTES = 128_000;
 /** Tool calls one answer may make; the next is refused before it runs, and the model is told to
  * answer with what it has. */
 const TOOL_CALLS = 64;
-// No output cap is sent: the model's own maximum ends an answer. Pi compacts a conversation at 90%
-// of the model's window, where Codex does (executeTurn); the history a turn restores, and its
-// checkpoint, are never more than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay items
-// (of 512).
+// No answer has an output cap (a summary has Pi's): the model's own maximum ends it. Pi compacts
+// at 90% of the model's window, where Codex does (executeTurn); the history a turn restores, and
+// its checkpoint, are never more than HISTORY_BYTES (half a checkpoint) in HISTORY_ITEMS relay
+// items (of 512).
 const HISTORY_BYTES = 1_000_000;
 const HISTORY_ITEMS = 300;
 type ProgressEvent = { type: 'text' | 'progress'; text: string };
@@ -420,8 +420,8 @@ async function executeTurn(
     input: ['text'],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow,
-    // The model's own maximum applies: no max_output_tokens is sent. Pi reads 0 as no maximum, so
-    // it never compacts to ask again for an answer the model stopped for length (its words already
+    // The model's own maximum applies: an answer is sent no max_output_tokens. Pi reads 0 as none,
+    // so it never compacts to ask again for an answer the model stopped for length (its words already
     // reached the person): that answer keeps its note, and the next call compacts if it is due.
     maxTokens: 0,
     // Every tool is sent with strict false: OpenAI reads a function without it as strict, which
@@ -605,18 +605,26 @@ async function executeTurn(
     });
   };
   session.agent.streamFunction = (_model, context, options) =>
-    streamOpenAIResponses(model, context, {
-      signal: options?.signal,
-      reasoning: options?.reasoning,
-      // From the last call on, the model answers instead of asking for another.
-      toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
-      apiKey: work.modelToken,
-      fetch: relayFetch,
-      env: {},
-      cacheRetention: 'none',
-      maxRetries: 0,
-      transport: 'sse',
-    });
+    // Only a summary asks for a cap (80% of the room set aside for it), which it is sent.
+    streamOpenAIResponses(
+      options?.maxTokens
+        ? { ...model, compat: { ...model.compat, supportsMaxOutputTokens: true } }
+        : model,
+      context,
+      {
+        maxTokens: options?.maxTokens,
+        signal: options?.signal,
+        reasoning: options?.reasoning,
+        // From the last call on, the model answers instead of asking for another.
+        toolChoice: calls >= TOOL_CALLS ? 'none' : options?.toolChoice,
+        apiKey: work.modelToken,
+        fetch: relayFetch,
+        env: {},
+        cacheRetention: 'none',
+        maxRetries: 0,
+        transport: 'sse',
+      },
+    );
   // Where this turn's entries begin: compaction rewrites session.messages, never the entries.
   const begun = manager.getLeafId();
   // Once a summary fails, the turn tries no other and sends each call within the window it had
@@ -625,8 +633,25 @@ async function executeTurn(
   // A tool call's arguments and reasoning show no words, yet the turn is moving: Main hears so
   // about once a second, or it would judge a long write stalled.
   let moving = 0;
+  // A summary streams no words: while one runs, Main hears so about once a second too.
+  let compacting = false;
   const unsubscribe = session.subscribe((event) => {
+    if (event.type === 'compaction_start') {
+      // After an interrupted turn, its checkpoint may be one whose summary never finished: this
+      // turn compacts nothing and keeps to the window instead, so no summary is retried forever.
+      if (work.previousInterrupted) {
+        narrow = true;
+        session.setAutoCompactionEnabled(false);
+        session.abortCompaction();
+        return;
+      }
+      compacting = true;
+      moving = Date.now();
+      enqueue('progress', 'Compacting earlier conversation');
+      return;
+    }
     if (event.type === 'compaction_end') {
+      compacting = false;
       if (event.result) {
         // One status line, replacing any not yet sent.
         const last = events.at(-1);
@@ -657,7 +682,10 @@ async function executeTurn(
         session.abort().catch(() => {});
         return;
       }
-      if (!spoke) flush(true);
+      if (compacting && Date.now() - moving >= MOVING_MS && events.at(-1)?.type !== 'progress') {
+        moving = Date.now();
+        enqueue('progress', 'Compacting earlier conversation');
+      } else if (!spoke) flush(true);
       spoke = false;
     },
     Math.max(250, Math.min(pollIntervalMs, 1_000)),

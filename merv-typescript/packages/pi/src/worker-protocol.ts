@@ -220,7 +220,8 @@ export class PiWorkerProtocol {
           return tool && (actor!.role !== 'reader' || tool.readOnly) ? [tool] : [];
         });
       // At most 6 of the turn's and 3 of its machine's, under the worker's 10.
-      const told = [...(await this.told(conversation, command, actor!.role)), ...notes];
+      const previous = await this.told(conversation, command, actor!.role);
+      const told = [...previous.notes, ...notes];
       // What the installed plugins tell the turn about the project now, under the worker's cap.
       const context = (await this.core.tools.context(caller)).slice(0, 32_000) || undefined;
       // The offered list is fixed for the turn: a claim served again keeps it, and the model
@@ -259,6 +260,7 @@ export class PiWorkerProtocol {
         instructions: piInstructions(this.core.tools.instructions()),
         notes: sent,
         context: sentContext,
+        ...(previous.interrupted && { previousInterrupted: true as const }),
       };
     } catch {
       // A turn already ended (stopped) stays as it ended, and one moved to a fresh machine or kept
@@ -279,7 +281,7 @@ export class PiWorkerProtocol {
     conversation: PiConversationRecord,
     command: PiCommandRecord,
     role: MemberRole,
-  ): Promise<string[]> {
+  ): Promise<{ notes: string[]; interrupted: boolean }> {
     // What an answer that stopped early had already changed, as its events recorded them.
     const interrupted = await this.core.read(async (tx) => {
       const row = await tx.get<{ data_json: string }>(
@@ -288,7 +290,7 @@ export class PiWorkerProtocol {
         command.id,
       );
       const before = row && decode<PiCommandRecord>(row);
-      if (before?.status !== 'interrupted') return [];
+      if (before?.status !== 'interrupted') return null;
       const events = await this.core.state.findEvents(
         {
           projectId: conversation.projectId,
@@ -301,14 +303,17 @@ export class PiWorkerProtocol {
       );
       return events.map(({ type, subjectId }) => `${type} ${subjectId}`);
     });
-    return turnNotes({
-      role,
-      actorId: conversation.source.actorId,
-      projectId: conversation.projectId,
-      model: this.core.model(command.model),
-      today: this.core.time().slice(0, 10),
-      interrupted,
-    });
+    return {
+      notes: turnNotes({
+        role,
+        actorId: conversation.source.actorId,
+        projectId: conversation.projectId,
+        model: this.core.model(command.model),
+        today: this.core.time().slice(0, 10),
+        interrupted: interrupted ?? [],
+      }),
+      interrupted: interrupted !== null,
+    };
   }
   /** What /next gives this worker now: first a turn it claimed and has not begun, whose reply it
    * lost (a worker begins each turn before it asks again); else a draining slot retires (T5); a
