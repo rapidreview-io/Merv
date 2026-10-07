@@ -370,26 +370,4 @@ export class CredentialStore {
       return undefined;
     });
   }
-
-  async revokeSubject(
-    owner: string,
-    subject: string,
-    kind: string,
-    tx?: Transaction,
-  ): Promise<void> {
-    check(
-      identifier(owner) && identifier(subject) && identifier(kind),
-      'invalid_credential',
-      'Invalid credential owner or subject',
-    );
-    await inTransaction(this.state, tx, async (sql) => {
-      await sql.run(
-        'UPDATE identity_credentials SET revoked_at=? WHERE owner=? AND subject=? AND kind=? AND revoked_at IS NULL',
-        this.now(),
-        owner,
-        subject,
-        kind,
-      );
-    });
-  }
 }
