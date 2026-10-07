@@ -25,6 +25,7 @@ import { readBlockers, replaceBlockers } from './blockers.js';
 import { persistContract, readPinned } from './pinned.js';
 import { validateDefinition } from './definition.js';
 import { validatePolicy } from './evaluation.js';
+import { extendsAt } from './rules.js';
 import { readWorkStarts } from './assignments.js';
 import { limitStatusOf, limitStatusesOf } from './limits.js';
 import {
@@ -382,16 +383,10 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
       // Only states a loaded limit leaves, or whose rule allows another round to move on, found
       // by index, then two reads per limit.
       const capped = [...this.registrations.values()].flatMap(({ definition, policy }) => {
-        const leaving = new Set((policy?.limits ?? []).map((limit) => limit.from));
-        const extending = new Set(
-          (policy?.actions ?? [])
-            .filter((rule) => rule.tool === 'workflow.extend_limit')
-            .flatMap((rule) => rule.states),
-        );
+        const leaving = (policy?.limits ?? []).map((limit) => limit.from);
+        const extending = definition.states.filter((state) => extendsAt(policy, state));
         const states = [...new Set([...leaving, ...extending])];
-        return states.length && policy?.limits?.length
-          ? [{ definition, policy, states, extending }]
-          : [];
+        return states.length && policy?.limits?.length ? [{ definition, policy, states }] : [];
       });
       const items: Awaited<ReturnType<Workflows['escalated']>>['items'] = [];
       if (capped.length) {
@@ -421,7 +416,7 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
           tx,
           rows.map((row) => ({ id: row.id, state: row.state, policy: at(row).policy })),
         );
-        const waiting = rows.filter((row) => at(row).extending.has(row.state));
+        const waiting = rows.filter((row) => extendsAt(at(row).policy, row.state));
         const every = await limitStatusesOf(
           tx,
           waiting.map((row) => ({ id: row.id, state: row.state, policy: at(row).policy })),

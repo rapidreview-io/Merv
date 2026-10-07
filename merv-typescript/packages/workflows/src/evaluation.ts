@@ -16,13 +16,14 @@ import type {
   WorkflowActionStatus,
   WorkflowDecision,
   WorkflowDependency,
+  WorkflowLimitMove,
   WorkflowLimitStatus,
   WorkflowProvidedBlocker,
   WorkflowWorkStart,
 } from './models.js';
 import { identifier, toolName, valid } from './definition.js';
 import { freezeData, workflowJson } from './json.js';
-import { requireDependencies } from './rules.js';
+import { extendsAt, requireDependencies } from './rules.js';
 import { validateExecution } from './execution-policy.js';
 import { limitMessage, validateLimits } from './limits.js';
 import { batches } from './engine.js';
@@ -382,13 +383,19 @@ export async function decision(
   const decided = gated(result, query, provided);
   // A person's read only: a leased worker's guidance, which its assignment context embeds, says
   // nothing of whose move the record is.
-  const yours =
-    query.action || context.caller.session
-      ? undefined
-      : yoursOf(decided, described.owner, context.caller.actorId, {
-          admin: adminsMove(decided, described.owner, context.caller.actorId) && (await admin()),
-          person: !!context.caller.human,
-        });
+  if (query.action || context.caller.session) return decided;
+  const limit = limitOf(decided, policy);
+  const { actorId } = context.caller;
+  const yours = yoursOf(
+    decided,
+    described.owner,
+    actorId,
+    {
+      admin: adminsMove(decided, described.owner, actorId, limit) && (await admin()),
+      person: !!context.caller.human,
+    },
+    limit,
+  );
   return yours ? { ...decided, yours } : decided;
 }
 
@@ -399,9 +406,22 @@ export const LIMIT_ASK =
 /** What a project admin is asked where the work waits in a state only they move it on from. */
 export const RESUME_ASK = 'Suspended: a project admin resumes it, or ends what waits on it';
 
-/** Whether the work waits in a state whose rule's tool is workflow.extend_limit. */
-export const resumable = (decision: Pick<WorkflowDecision, 'actions'>) =>
-  decision.actions.some((action) => action.tool === 'workflow.extend_limit');
+/**
+ * The move only a project admin makes that open work waits on: every round a limit leaving its
+ * state allows is used (`exhausted`), or it is suspended where only an admin's allowance moves
+ * it on (`suspended`, `extendsAt`).
+ */
+export const limitOf = (
+  decision: Pick<WorkflowDecision, 'terminal' | 'currentGate' | 'state'>,
+  policy: WorkflowPolicy | undefined,
+): WorkflowLimitMove | undefined =>
+  decision.terminal
+    ? undefined
+    : decision.currentGate === 'loop_limit_reached'
+      ? 'exhausted'
+      : extendsAt(policy, decision.state)
+        ? 'suspended'
+        : undefined;
 
 /**
  * Whether the record may wait on a project admin: at a used-up limit, in a state only an admin's
@@ -409,12 +429,12 @@ export const resumable = (decision: Pick<WorkflowDecision, 'actions'>) =>
  * reader's own as the record's owner, and nobody's).
  */
 const adminsMove = (
-  decision: Pick<WorkflowDecision, 'currentGate' | 'providerBlockers' | 'actions'>,
+  decision: Pick<WorkflowDecision, 'providerBlockers'>,
   owner: WorkflowOwner | undefined,
   actorId: string,
+  limit: WorkflowLimitMove | undefined,
 ) =>
-  decision.currentGate === 'loop_limit_reached' ||
-  resumable(decision) ||
+  !!limit ||
   decision.providerBlockers.some(
     (blocker) =>
       blocker.whose === 'admin' ||
@@ -463,6 +483,8 @@ export function yoursOf(
   actorId: string,
   /** The reader: a project admin where the record may wait on one, and signed in as a person. */
   reader: { admin?: boolean; person?: boolean } = {},
+  /** The move only an admin makes that the open work waits on (`limitOf`). */
+  limit?: WorkflowLimitMove,
 ): WorkflowDecision['yours'] {
   // A blocker another plugin published says whose move ending it is, even on ended work.
   const published = decision.providerBlockers.find((blocker) =>
@@ -473,12 +495,9 @@ export function yoursOf(
       ask: published.next,
       blocker: { provider: published.provider, key: published.key },
     };
-  // Every round a limit allows is used: nothing more happens by itself, and allowing another
-  // is a project admin's move.
-  if (reader.admin && !decision.terminal && decision.currentGate === 'loop_limit_reached')
-    return { ask: LIMIT_ASK };
-  // Work suspended where only an admin's allowance resumes it is a project admin's move too.
-  if (reader.admin && !decision.terminal && resumable(decision)) return { ask: RESUME_ASK };
+  // Every round a limit allows is used, or the work is suspended where only an admin's
+  // allowance resumes it: nothing more happens by itself, and the move is a project admin's.
+  if (reader.admin && limit) return { ask: limit === 'exhausted' ? LIMIT_ASK : RESUME_ASK, limit };
   if (decision.providerBlockers.some((blocker) => blocker.whose)) return undefined;
   if (!owner || owner.actorId !== actorId || decision.terminal) return undefined;
   const words = (action?: string) =>

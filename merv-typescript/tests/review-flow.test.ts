@@ -176,7 +176,7 @@ test('a task whose review rounds are used up is offered only what ends it, and i
   const home = async (token: string) => (await f.tool('ui.home', token)).body.result;
   const gateOf = (read: any) =>
     read.workflows.workflows.find((gate: any) => gate.instanceId === task.id);
-  assert.deepEqual(gateOf(await home(f.boot.token)).yours, { ask: LIMIT_ASK });
+  assert.deepEqual(gateOf(await home(f.boot.token)).yours, { ask: LIMIT_ASK, limit: 'exhausted' });
   assert.equal(gateOf(await home(f.producer.token)).yours, undefined);
 
   // The Running card carries the admin's control.

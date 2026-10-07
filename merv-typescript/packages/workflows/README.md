@@ -68,7 +68,9 @@ however many there are, and sorts them into `ready`, `blocked`, `stalled`, `esca
 move even with nothing refused, with the sentence asking each, and those only a leased worker
 makes), a decision read by that owner carries `yours`, the rule Needs you draws by: their
 input is wanted, a prerequisite ended without succeeding, or an ask of theirs is held open on a
-step nobody else began. `process` draws one instance's graph with the traversals its
+step nobody else began. Open work at a used-up limit, or suspended where a rule's tool is
+`workflow.extend_limit` (`extendsAt` in `@merv/workflows/rules`, the one statement of that rule),
+is a project admin's move, and `yours.limit` says which (`exhausted` or `suspended`). `process` draws one instance's graph with the traversals its
 history records; a version whose program is not loaded is drawn from its pinned graph, with
 no status on any edge. A supplied policy must guard every graph edge.
 A policy may also declare `limits` on its loop edges: they are deployed policy rather than

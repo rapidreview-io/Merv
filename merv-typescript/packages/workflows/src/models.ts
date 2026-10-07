@@ -187,6 +187,8 @@ export interface WorkflowLimitStatus {
   remaining: number;
   exhausted: boolean;
 }
+/** The move only a project admin makes: another round, or resuming suspended work. */
+export type WorkflowLimitMove = 'exhausted' | 'suspended';
 export interface WorkflowDecision {
   instanceId: string;
   workflow: string;
@@ -216,9 +218,15 @@ export interface WorkflowDecision {
   /**
    * Present where the open record is the reader's own move, as its program says whose it is:
    * with `ask`, the sentence asking it of them; without, no sentence was declared. A published
-   * blocker that makes it theirs is named (`blocker`), and its `next` is the ask.
+   * blocker that makes it theirs is named (`blocker`), and its `next` is the ask. A project
+   * admin's move at a used-up limit, or on work suspended where only their allowance resumes
+   * it, says which (`limit`).
    */
-  yours?: { ask?: string; blocker?: { provider: string; key: string } };
+  yours?: {
+    ask?: string;
+    blocker?: { provider: string; key: string };
+    limit?: WorkflowLimitMove;
+  };
 }
 
 /** One recorded crossing of a definition edge, from wf_history and nowhere else. */

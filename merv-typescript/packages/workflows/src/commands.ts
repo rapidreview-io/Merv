@@ -11,6 +11,7 @@ import type {
 } from '@merv/contracts';
 import type { WorkflowSnapshot, WorkflowLimitStatus } from './models.js';
 import { clearBlockers } from './blockers.js';
+import { extendsAt } from './rules.js';
 import { enforceAction, readContext } from './evaluation.js';
 import { limitFor, limitMessage, limitStatus, limitStatusesOf } from './limits.js';
 import {
@@ -133,10 +134,7 @@ export class WorkflowCommands extends WorkflowLeases {
       if (!input.additional)
         check(
           !(await limitStatus(tx, limit, snapshot.id)).exhausted &&
-            !!registered.policy?.actions.some(
-              (rule) =>
-                rule.tool === 'workflow.extend_limit' && rule.states.includes(snapshot.state),
-            ),
+            extendsAt(registered.policy, snapshot.state),
           'invalid_input',
           'additional 0 only resumes work suspended before its rounds are used up',
         );
