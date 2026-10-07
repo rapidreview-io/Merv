@@ -85,9 +85,19 @@ a session reads whatever its project holds. The result is validated input for th
 proposed tool. It does not invoke that tool, start
 work, reserve ownership, or authenticate the caller.
 
-Passing the current transaction lets the session guard validate metadata
-in the same transaction as a native write. Approval outside that transaction
-does not confer a right to commit later.
+A worker's tool call validates its lease once, when Sessions prepares it (owner,
+2026-10-07): Sessions' own session check, then `checkLease` with the frozen
+execution, on one snapshot. The call carries what that validated; the registry's
+later binding checks reuse it without reading storage, and only a reloaded
+program (a new generation, held in memory) still refuses the call. Its reads use
+that validation. Each write transaction re-checks it once, cheaply, in that
+transaction: the session's row and credential, its source's delegation, and
+`Workflows.holdsLease`, which reads the step's revision and state, and the step's
+live lease row and receipt digest (the reads the owner's own lease check shares),
+and runs none of the program's lease hooks. A release or move committed before
+the write is refused, and none can commit between that check and the write, which
+holds the writer lock. A mounted tool's dispatch, an effect outside any
+transaction, makes the same re-check on a snapshot right before it calls upstream.
 
 ## Persistence and Cordis lifecycle
 

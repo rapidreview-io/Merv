@@ -564,8 +564,9 @@ test('a leased status_and_next admission stays within a statement budget', async
   // makes for the worker resolves from that frame instead of re-reading the session row
   // (about 400 statements unframed, 127 framed with a second lease step, 70 now).
   assert.ok(statements > 0 && statements <= 100, `${statements} statements for one leased read`);
-  // The session's Scope check, and its admission.
-  assert.equal(leaseSteps, 2);
+  // One validation per call (owner, 2026-10-07): the session's Scope check is made under its
+  // frame, so the admission's lease step is the only one.
+  assert.equal(leaseSteps, 1);
   assert.equal(references, 0);
 });
 

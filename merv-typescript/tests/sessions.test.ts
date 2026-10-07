@@ -759,14 +759,21 @@ test('one invocation may finish its own handoff transaction, while later calls a
   const next = await f.offer(),
     second = await f.sessions.authenticate(next.token),
     invocation = await f.sessions.invocations.prepare(second, 'finish', {});
-  let entered = false;
+  let wrote = false;
   await f.scope.credentials.revokeCredential(f.owner, f.source.credentialId!);
+  // The call was validated once, when prepared; its write re-checks the source in its own
+  // transaction and is refused.
   await assert.rejects(
-    f.sessions.invocations.run(invocation, () => {
-      entered = true;
-    }),
+    f.sessions.invocations.run(
+      invocation,
+      async (caller) =>
+        await f.state.transaction(async (tx) => {
+          await f.scope.require(caller, 'write', tx);
+          wrote = true;
+        }),
+    ),
   );
-  assert.equal(entered, false);
+  assert.equal(wrote, false);
   await assert.rejects(async () => await f.scope.require(invocation.caller, 'read'));
 });
 

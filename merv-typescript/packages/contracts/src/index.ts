@@ -1421,6 +1421,19 @@ export interface Workflows {
     tx?: Transaction,
     frozen?: WorkflowExecution,
   ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }>;
+  /**
+   * The cheap re-check, in a write's own transaction, of a lease checkLease validated in full
+   * at the start of the same worker call: the step is still at the lease's revision and state,
+   * its lease row is still live under the same receipt, and its registration is still
+   * installed. The program's lease hooks, the policy and the delegation are not asked again.
+   */
+  holdsLease(
+    worker: Caller,
+    lease: WorkflowLease,
+    tx: Transaction,
+  ): Promise<{ registrationId: string }>;
+  /** The generation of the registration a lease's step runs under now; no storage is read. */
+  leaseRegistration(lease: WorkflowLease): string;
   activateLease(worker: Caller, lease: WorkflowLease, tx?: Transaction): Promise<WorkflowWorkStart>;
   /** Trusted exact resource cleanup; deliberately independent of caller's expired authority. */
   releaseLease(lease: WorkflowLease, input: { reason: string }, tx?: Transaction): Promise<void>;

@@ -395,9 +395,16 @@ export class ApiServer {
 
   /** A request's one read decision, made before any body is read. Every effect then authorizes
    *  itself in its own transaction, so nothing here re-checks after the body. */
-  private async selectedCaller(principal: ApiPrincipal, projectId?: string): Promise<Caller> {
+  private async selectedCaller(
+    principal: ApiPrincipal,
+    projectId?: string,
+    toolCall = false,
+  ): Promise<Caller> {
     if (!('caller' in principal)) return await this.scope.caller(principal, projectId);
     projectSelection(principal.caller.projectId, projectId);
+    // A worker session's tool call is admitted by the registry's session policy, whose one
+    // validation of the call (owner, 2026-10-07) is its read decision: it is not made twice.
+    if (toolCall && principal.caller.session) return principal.caller;
     // A credential owner's liveness rules (a session's is Sessions' guard) are part of this read
     // decision.
     await this.scope.require(principal.caller, 'read');
@@ -451,6 +458,7 @@ export class ApiServer {
     const caller = await this.selectedCaller(
       principal,
       projectSelection(selectedProject, remote ? undefined : projectId),
+      true,
     );
     const operation = this.tools.invoke(name, caller, remote ? input : native, agent);
     this.calls.add(operation);
