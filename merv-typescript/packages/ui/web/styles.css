@@ -5990,34 +5990,63 @@ details.running-section > summary {
 .thread-dialog-body {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-5);
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-5);
 }
-.thread-dialog-body h2 {
-  font-size: var(--text-lg);
-}
-/* A thread's messages, the question its agent asked and the box that answers it. */
-.thread-messages {
+/* Who and what on one line, the unit it works on under it, quietly. */
+.thread-head {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  font-size: var(--text-sm);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
 }
-.thread-message-list {
-  display: flex;
-  flex-direction: column;
-  list-style: none;
-}
-.thread-message-list li {
-  padding: var(--space-1) 0;
-  border-bottom: 1px solid var(--line-soft);
-}
-.thread-question {
+.thread-head-text {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding-left: var(--space-3);
-  border-left: 2px solid var(--active);
+  min-width: 0;
+}
+.thread-head-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+.thread-head-state {
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--faint);
+}
+.thread-head-unit {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+/* The reading as a chat: the timeline, Details folded under it, the box at the foot. */
+.thread-reading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.thread-details > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--faint);
+  cursor: pointer;
+}
+.thread-details > summary:hover {
+  color: var(--muted);
+}
+.thread-details-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-2);
+  font-size: var(--text-sm);
 }
 .thread-compose {
   display: grid;
@@ -6028,17 +6057,19 @@ details.running-section > summary {
 .thread-compose .textarea {
   width: 100%;
   max-width: none;
+  min-height: 0;
   resize: vertical;
 }
 .thread-compose .error-message {
   grid-column: 1 / -1;
 }
 .thread-dialog .agent-timeline {
-  max-height: calc(100vh - 280px);
+  max-height: calc(100vh - 260px);
 }
-/* What an agent said (views/agent-live.tsx): it scrolls on its own and follows the newest
-   block while the reader is at its foot. Thinking is folded and quiet, a tool call is its name
-   over its arguments and what it answered, and a visit or a milestone is a word on a hairline. */
+/* What an agent said (views/agent-live.tsx), newest at the foot: it scrolls on its own and
+   follows the newest line while the reader is there. Prose is what the eye lands on; a step is
+   one faint line a press opens; an error is a red line; a person stands on an accent bar; a
+   visit or a milestone is a word on a hairline. */
 .agent-frame {
   position: relative;
   min-width: 0;
@@ -6047,13 +6078,13 @@ details.running-section > summary {
   max-height: min(70vh, 760px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-block: var(--space-3);
+  padding-block: var(--space-2);
   border-block: 1px solid var(--line);
 }
 .agent-blocks {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-2);
   list-style: none;
 }
 .agent-earlier {
@@ -6061,67 +6092,86 @@ details.running-section > summary {
   margin: 0 auto var(--space-3);
   font-size: var(--text-sm);
 }
-.agent-thinking > summary {
+.agent-text {
+  padding-block: var(--space-1);
+  font-size: var(--text-base);
+  color: var(--text);
+}
+.agent-step-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-2);
-  min-height: var(--hit);
+  width: 100%;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
   font-size: var(--text-sm);
   color: var(--faint);
+  text-align: left;
   cursor: pointer;
 }
-.agent-thinking > summary:hover {
+.agent-step-line:hover,
+.agent-step-line[aria-expanded='true'] {
   color: var(--muted);
 }
-.agent-thinking-word {
+.agent-step-icon {
+  flex: none;
+  color: var(--ghost);
+}
+.agent-step-label {
   flex: none;
   font-weight: 500;
 }
-.agent-thinking-line {
+.agent-step-summary {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-thinking[open] .agent-thinking-line {
-  display: none;
+.agent-step--tool .agent-step-summary {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
 }
-.agent-thinking-body {
-  padding-left: var(--space-4);
-  font-size: var(--text-sm);
+/* A step that failed: a red accent and its few words, in sight even with its group shut. */
+.agent-step--error {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--refutes);
+}
+.agent-step--error .agent-step-label,
+.agent-step--error .agent-step-icon,
+.agent-steps-failed {
+  color: var(--refutes);
+}
+.agent-step--error .agent-step-summary {
   color: var(--muted);
 }
-.agent-tool {
+.agent-step-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  min-width: 0;
-}
-.agent-tool-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
+  margin: var(--space-1) 0 var(--space-2) 20px;
   font-size: var(--text-sm);
 }
-/* A call that has answered keeps a dot, in the ink of what is drawn and never read. */
-.agent-tool-dot {
-  background: var(--ghost);
+.agent-step-thought {
+  color: var(--muted);
 }
-.agent-tool-name {
-  font-weight: 500;
-  overflow-wrap: anywhere;
+.agent-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.agent-tool-state {
-  font-size: var(--text-xs);
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--faint);
+.agent-steps-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 5px;
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--line);
 }
-.agent-tool-failed,
-.agent-output--error > summary,
-.agent-output--error .code-lang {
-  color: var(--refutes);
+.agent-steps > .agent-step--error {
+  margin-left: 20px;
 }
 .agent-output > summary {
   display: flex;
@@ -6132,23 +6182,50 @@ details.running-section > summary {
   color: var(--muted);
   cursor: pointer;
 }
-.agent-status {
+.agent-output--error > summary,
+.agent-output--error .code-lang {
+  color: var(--refutes);
+}
+/* A person's line: a message, the agent's question, an answer. */
+.agent-person {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-block: var(--space-1);
+  padding: var(--space-1) 0 var(--space-1) var(--space-3);
+  border-left: 2px solid var(--active);
+  font-size: var(--text-base);
+}
+.agent-person--asked {
+  border-left-color: var(--qualifies);
+}
+.agent-person-head {
+  font-size: var(--text-xs);
+}
+.agent-person-who {
+  font-weight: 600;
+  color: var(--muted);
+}
+.agent-person-reply {
+  color: var(--muted);
+}
+.agent-divider {
   display: flex;
   align-items: center;
   gap: var(--space-3);
   max-width: none;
+  padding-block: var(--space-1);
   font-size: var(--text-xs);
   color: var(--faint);
 }
-.agent-status::before,
-.agent-status::after {
+.agent-divider::before,
+.agent-divider::after {
   content: '';
   flex: 1;
-  border-top: 1px solid var(--line);
+  border-top: 1px solid var(--line-soft);
 }
-.agent-visit {
-  font-weight: 500;
-  color: var(--muted);
+.agent-divider--error {
+  color: var(--refutes);
 }
 .agent-cut {
   font-size: var(--text-xs);
@@ -6157,6 +6234,12 @@ details.running-section > summary {
 .agent-quiet {
   padding-block: var(--space-2);
   font-size: var(--text-sm);
+}
+.agent-live-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--faint);
 }
 .agent-jump {
   position: absolute;
@@ -6596,7 +6679,7 @@ ul.unit-rows {
   display: flex;
   flex-direction: column;
   justify-content: flex-end;
-  min-height: calc(6 * 1.5em);
+  min-height: calc(3 * 1.5em + 2 * var(--space-2));
   padding: var(--space-2);
   border-radius: var(--radius-sm);
   background: var(--bg-soft);
@@ -6609,14 +6692,15 @@ ul.unit-rows {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.agent-tail--tool {
-  font-family: var(--font-mono);
-  color: var(--muted);
+.agent-tail--message {
+  color: var(--text);
 }
-.agent-tail--thinking,
-.agent-tail--status {
+.agent-tail--tool,
+.agent-tail--starting {
   color: var(--faint);
-  font-style: italic;
+}
+.agent-tail--error {
+  color: var(--refutes);
 }
 .agent-card-said p {
   overflow: hidden;

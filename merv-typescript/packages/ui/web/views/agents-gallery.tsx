@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { ProjectThread, ProjectThreads } from '@merv/sessions/models';
 import { accountRequest, refreshTools, useTool } from '../api';
 import { LoadState, cx, kindOf, words } from '../components';
-import { tailLines, useLiveFeed } from '../live-feed';
+import { tailLines } from '../conversation';
+import { useLiveFeed } from '../live-feed';
 import { rowOf, useRows } from '../navigation';
 import { useReadsAgents } from '../session';
 import type { UiRowDescription } from '@merv/ui/rows';
+import { AgentTail } from './agent-live';
 import { ThreadCard, ThreadCompose, ThreadDialog, capital, delivery, isLive } from './threads';
 
 /**
@@ -24,18 +26,10 @@ const workOf = (rows: readonly UiRowDescription[], thread: ProjectThread) => {
   return [kind, thread.name].filter(Boolean).join(' · ');
 };
 
-/** The last lines its agent said or did, from the feed. */
+/** The last lines its agent said or did, from the feed, drawn as its thread draws them. */
 function Tail({ blocks }: { blocks: Parameters<typeof tailLines>[0] | undefined }) {
-  const lines = tailLines(blocks ?? []);
-  return (
-    <ol className="agent-tail" aria-label="Live" aria-live="off">
-      {lines.map((line) => (
-        <li key={line.key} className={`agent-tail--${line.kind}`}>
-          {line.text}
-        </li>
-      ))}
-    </ol>
-  );
+  const lines = useMemo(() => tailLines(blocks ?? []), [blocks]);
+  return <AgentTail lines={lines} />;
 }
 
 /** The newest message to the thread, and whether its agent has read it, with its reply; a

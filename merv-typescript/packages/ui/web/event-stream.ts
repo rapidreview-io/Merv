@@ -121,7 +121,14 @@ const onShown = (listener: () => void) => {
   return () => document.removeEventListener('visibilitychange', listener);
 };
 
-export type EventStreamState = 'connecting' | 'open' | 'retrying' | 'ended' | 'refused';
+export type EventStreamState = 'connecting' | 'stalled' | 'open' | 'retrying' | 'ended' | 'refused';
+
+/**
+ * How long a connection may go without its first frame before the page says it is slow rather
+ * than connecting. A proxy that compresses the stream holds every frame until the server rotates
+ * the connection; the page then says so and offers to try again, never "Connecting…" for good.
+ */
+export const STALL_MS = 10_000;
 
 /**
  * One server-sent event stream of this app, read while `url` is given and the tab is shown,
@@ -131,14 +138,16 @@ export type EventStreamState = 'connecting' | 'open' | 'retrying' | 'ended' | 'r
  * five seconds, still connecting, with nothing to say; one the server ends (`end`) or refuses is
  * left closed. `after`
  * names the last event the reader holds, so a reconnect asks only for what follows it
- * (`?after=`).
+ * (`?after=`). A stream with no frame STALL_MS after it was first opened is `stalled`; `retry` opens
+ * the stream again at once, from the last event held.
  */
 export function useEventStream(
   url: string | null,
   onEvent: (event: string, value: object) => void,
   after?: () => number,
-): EventStreamState {
+): { state: EventStreamState; retry(): void } {
   const [state, setState] = useState<EventStreamState>('connecting');
+  const [attempt, setAttempt] = useState(0);
   const visible = useSyncExternalStore(onShown, shown);
   const latest = useRef({ onEvent, after });
   latest.current = { onEvent, after };
@@ -150,6 +159,15 @@ export function useEventStream(
     let failures = 0;
     let busy = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    /** When reading began, until the first frame came. */
+    let waiting: number | null = Date.now();
+    // Read on the page's clock each second, so a moved clock counts as time that passed.
+    const watch = setInterval(() => {
+      if (!stopped && waiting !== null && Date.now() - waiting >= STALL_MS) {
+        waiting = null;
+        setState('stalled');
+      }
+    }, 1000);
     const controller = new AbortController();
     const connect = async () => {
       const since = Date.now();
@@ -163,6 +181,7 @@ export function useEventStream(
             if (event === 'end') ended = true;
             if (stopped || event === 'end' || event === 'rotate') return;
             failures = 0;
+            waiting = null;
             setState('open');
             latest.current.onEvent(event, value);
           },
@@ -183,12 +202,14 @@ export function useEventStream(
         Math.min(30_000, (busy ? 5000 : 1000) * 2 ** failures++),
       );
     };
+    setState((was) => (was === 'stalled' || was === 'refused' ? 'connecting' : was));
     void connect();
     return () => {
       stopped = true;
       controller.abort();
       clearTimeout(timer);
+      clearInterval(watch);
     };
-  }, [url, visible]);
-  return state;
+  }, [url, visible, attempt]);
+  return { state, retry: () => setAttempt((count) => count + 1) };
 }

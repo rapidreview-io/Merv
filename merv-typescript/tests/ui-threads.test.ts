@@ -2,9 +2,10 @@
  * Who worked each stage, on the Work page's stage card: Sessions' threads, each on the stage
  * whose state it names, and the dialog one opens. Each test states one thing a person reading
  * it relies on: a thread stands on its own stage and nowhere else, a stage's threads in one role
- * are one chip whose failed launches are a count and not a crowd, the dialog opens and closes and
- * lists every visit of the role, what an agent said is an operator's alone, a resumed visit says
- * so where it begins, and a message box answers the thread's question.
+ * are one chip whose failed launches are a count and not a crowd, the dialog opens and closes,
+ * names no machine, and folds every visit of the role under Details; the timeline marks each
+ * visit where it begins (a resumed one says so), what an agent said is an operator's alone, the
+ * people's lines stand among it, and the box at its foot answers the thread's question.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -217,6 +218,19 @@ const button = (label: string) =>
     (item) => item.textContent === label || item.getAttribute('aria-label') === label,
   );
 const dialogText = () => document.querySelector('dialog')!.textContent!;
+/** Opens the dialog's Details: its visits' table and what its calls came to. */
+const details = async () => {
+  const fold = document.querySelector<HTMLDetailsElement>('dialog .thread-details')!;
+  await act(async () => {
+    fold.open = true;
+    fold.dispatchEvent(new window.Event('toggle'));
+  });
+  await settle(10);
+};
+const dividers = () =>
+  [...document.querySelectorAll('dialog .agent-divider')].map((item) => item.textContent);
+/** The box at the foot of the reading, and the reading it stands in. */
+const reading = () => document.querySelector('dialog .thread-reading')!;
 
 test('each thread stands on the stage its state names, and failed launches are a count', async (t) => {
   t.after(unmount);
@@ -224,10 +238,10 @@ test('each thread stands on the stage its state names, and failed launches are a
   // Each chip leads with its role's mark, P or R, as the unit's history marks its entries.
   assert.deepEqual(chips('planned'), ['PProducer']);
   assert.equal(chip('planned').querySelector('.role-mark')!.textContent, 'P');
-  // The live visit's dot, and how it stands in the chip's tooltip.
+  // The live visit's dot, and how it stands in the chip's tooltip, with no machine named.
   assert.deepEqual(chips('design_review'), ['RReviewer']);
   assert.ok(chip('design_review').querySelector('.live-dot--live'));
-  assert.match(chip('design_review').getAttribute('title')!, /^active · .* · lab-1$/);
+  assert.match(chip('design_review').getAttribute('title')!, /^active · \d+[smhd]$/);
   // Two launches failed: the chip counts them beside the visits that ran, the retired thread's
   // too. The producer the current one superseded is in the same chip, not a second one.
   assert.deepEqual(chips('running'), ['PProducer· 3 visits· 2 failed launches']);
@@ -237,9 +251,11 @@ test('each thread stands on the stage its state names, and failed launches are a
   assert.ok(chip('complete').classList.contains('agent-chip--retired'));
   assert.equal(document.querySelectorAll('.agent-chip').length, 4);
 
-  // The chip opens the current thread, and its dialog lists the earlier thread's visit too.
+  // The chip opens the current thread; its Details list the earlier thread's visit too.
   await press(chip('running'));
-  assert.equal(document.querySelector('dialog h2')!.textContent, 'Producer · running · dormant');
+  assert.equal(document.querySelector('dialog h2')!.textContent, 'Producer · Running · dormant');
+  assert.equal(document.querySelectorAll('dialog .ruled-row').length, 0, 'Details start shut');
+  await details();
   assert.equal(document.querySelectorAll('dialog .ruled-row').length, 5);
 });
 
@@ -269,7 +285,7 @@ test('a review stage’s reviewers are one chip, and its dialog reaches the visi
   assert.deepEqual(chips('design_review'), ['RReviewer· 3 failed launches']);
   await press(chip('design_review'));
   assert.ok(requests.includes('GET /sessions/threads/thr_b/conversation'));
-  await press(button('Visits')!);
+  await details();
   const rows = [...document.querySelectorAll('dialog .ruled-row')].map((row) => row.textContent!);
   assert.equal(rows.length, 4);
   assert.match(rows[0]!, /^Launch failed/);
@@ -283,7 +299,7 @@ test('a chip opens the thread’s dialog, which its close control and its backdr
   await press(chip('running'));
   const dialog = document.querySelector('dialog')!;
   assert.ok(dialog.hasAttribute('open'));
-  assert.equal(dialog.querySelector('h2')!.textContent, 'Producer · running · dormant');
+  assert.equal(dialog.querySelector('h2')!.textContent, 'Producer · Running · dormant');
   assert.ok(dialog.textContent!.includes('Grokking at scale'));
   await press(button('Close')!);
   assert.equal(document.querySelector('dialog'), null);
@@ -293,51 +309,67 @@ test('a chip opens the thread’s dialog, which its close control and its backdr
   assert.equal(document.querySelector('dialog'), null, 'a press on the backdrop closes it');
 });
 
-test('a live thread’s dialog says how its lease stands and is the way to it', async (t) => {
+test('a live thread’s head is who and what, its dot and how long it has run, and no machine', async (t) => {
   t.after(unmount);
   await open('reader');
   await press(chip('design_review'));
-  assert.match(dialogText(), /active/);
-  await press(button('Lease on lab-1')!);
-  assert.deepEqual(opened, ['session:ses_v1']);
+  const head = document.querySelector('dialog h2')!;
+  assert.ok(head.querySelector('.live-dot--live'));
+  assert.match(head.textContent!, /^Reviewer · Design review · \d+[smhd]$/);
+  assert.equal(
+    document.querySelector('dialog .thread-head-unit')!.textContent,
+    'Grokking at scale',
+  );
+  // No machine, no lease link, no status said twice.
+  assert.ok(!dialogText().includes('lab-1'));
+  assert.equal(button('Lease on lab-1'), undefined);
+  assert.ok(!/live/i.test(head.textContent!));
 });
 
-test('an operator reads the conversation, each visit marked where it began', async (t) => {
+test('an operator reads one timeline, each visit a divider where it began', async (t) => {
   t.after(unmount);
   await open('operator');
   await press(chip('running'));
-  assert.ok(button('Conversation')?.getAttribute('aria-pressed') === 'true');
+  // No tabs: the conversation is the dialog's body.
+  for (const tab of ['Conversation', 'Visits', 'Calls']) assert.equal(button(tab), undefined);
   assert.ok(requests.includes('GET /sessions/threads/thr_run/conversation'));
-  const dividers = [...document.querySelectorAll('.agent-visit')].map((item) => item.textContent);
-  assert.equal(dividers.length, 2, 'the failed launches said nothing and have no divider');
-  // Numbered as the role's visits are: the superseded producer's visit was the first.
-  assert.match(dividers[0]!, /^Visit 2 · /);
-  assert.match(dividers[1]!, /^Visit 3 · resumed · /);
+  // Numbered as the role's visits are: the superseded producer's visit was the first. Each says
+  // how long it ran and how it ended; a launch that failed says why, in red.
+  assert.deepEqual(dividers(), [
+    'Visit 2 · 8m · submitted',
+    'Launch failed · exit 70',
+    'Launch failed · exit 70',
+    'Visit 3 · resumed · 9m · submitted',
+  ]);
+  assert.equal(document.querySelectorAll('dialog .agent-divider--error').length, 2);
   assert.deepEqual(
     [...document.querySelectorAll('.agent-text')].map((item) => item.textContent),
     ['First pass.', 'Picked it up again.'],
   );
 
-  // The table numbers the visits that ran as the chip counts them; a failed launch has none.
-  await press(button('Visits')!);
+  // Details number the visits that ran as the chip counts them, and name no machine.
+  await details();
   const rows = [...document.querySelectorAll('.ruled-row')].map((row) => row.textContent!);
   assert.equal(rows.length, 5);
   assert.match(rows[0]!, /^Visit 1/);
   assert.match(rows[1]!, /^Visit 2/);
   assert.match(rows[2]!, /^Launch failed.*exit 70/);
   assert.match(rows[3]!, /^Launch failed/);
-  assert.match(rows[4]!, /^Visit 3 · resumed.*submitted.*claude · mac-studio/);
+  assert.match(rows[4]!, /^Visit 3 · resumed.*submitted/);
+  assert.ok(!dialogText().includes('mac-studio'));
 });
 
-test('anyone else reads the visits alone, and never asks for the conversation', async (t) => {
+test('anyone else reads the visits’ dividers alone, and never asks for the conversation', async (t) => {
   t.after(unmount);
   await open('reviewer');
   await press(chip('running'));
   assert.equal(button('Conversation'), undefined);
-  assert.equal(document.querySelector('.agent-timeline'), null);
-  assert.equal(document.querySelectorAll('.ruled-row').length, 5);
+  assert.equal(dividers().length, 4);
+  assert.equal(document.querySelector('.agent-text'), null);
   assert.ok(!requests.some((request) => request.includes('/conversation')));
   assert.ok(dialogText().includes('Launch failed'));
+  await details();
+  assert.equal(document.querySelectorAll('.ruled-row').length, 5);
 });
 
 test('a stage’s chip turns red while its live visit’s lease has lapsed, and only then', async (t) => {
@@ -363,7 +395,7 @@ test('a stage’s chip turns red while its live visit’s lease has lapsed, and 
   assert.equal(document.querySelectorAll('.agent-chip--bad').length, 0);
 });
 
-test('the thread’s calls are a tab anyone who reads it may open', async (t) => {
+test('what the thread’s calls came to is one line under Details, for anyone who reads it', async (t) => {
   t.after(unmount);
   serve('/sessions/threads/thr_run/calls', {
     body: {
@@ -386,10 +418,9 @@ test('the thread’s calls are a tab anyone who reads it may open', async (t) =>
   });
   await open('reader');
   await press(chip('running'));
-  await press(button('Calls')!);
-  const row = document.querySelector('dialog .ruled-row')!.textContent!;
-  assert.match(row, /^artifact\.createVisit 3 · resumed.*1\.5 s≈ 120≈ 40$/);
-  assert.match(dialogText(), /1 call · ≈ 120 in · ≈ 40 out/);
+  assert.ok(!requests.includes('GET /sessions/threads/thr_run/calls'), 'read once Details open');
+  await details();
+  assert.match(dialogText(), /1 Merv call · ≈ 120 in · ≈ 40 out/);
 });
 
 /** The thread's messages as Sessions sends them: a question its agent asked, open or not, and
@@ -433,11 +464,19 @@ test('a writer answers the thread’s open question from the box under it', asyn
   );
   await open('producer');
   await press(chip('running'));
-  const box = document.querySelector('dialog .thread-messages')!;
-  // What passed before: the message, that it was read, and the agent's reply.
-  assert.match(box.textContent!, /You · .* · ReadUse the smaller model\.↳ Switching to it\./);
-  assert.equal(box.querySelector('.thread-question')!.textContent, 'AnswerWhich dataset split?');
+  const box = reading();
+  // What passed before stands in the timeline where it was said: the message, that it was
+  // read, and the agent's reply, on a person's accent bar.
+  const [said, asked] = [...box.querySelectorAll('.agent-person')];
+  assert.equal(said!.textContent, 'You · ReadUse the smaller model.↳ Switching to it.');
+  // The question that stands is the timeline's last line, and the box at the foot answers it.
+  assert.ok(asked!.classList.contains('agent-person--asked'));
+  assert.equal(asked!.textContent, 'Agent asked · waiting on an answerWhich dataset split?');
+  assert.equal(box.querySelector('.agent-blocks > li:last-child .agent-person'), asked);
   const area = box.querySelector('textarea')!;
+  assert.ok(
+    area.closest('form')!.compareDocumentPosition(asked!) & Node.DOCUMENT_POSITION_PRECEDING,
+  );
   assert.equal(area.getAttribute('aria-label'), 'Answer');
   await act(async () => {
     const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!;
@@ -455,9 +494,11 @@ test('a question that no longer stands is not offered an answer: the box only sa
   serve('/sessions/threads/thr_run/messages', { body: messages(false, false) });
   await open('producer');
   await press(chip('running'));
-  const box = document.querySelector('dialog .thread-messages')!;
-  assert.equal(box.querySelector('.thread-question'), null);
-  assert.match(box.textContent!, /Agent asked · .*Which dataset split\?/);
+  const box = reading();
+  assert.equal(
+    box.querySelector('.agent-person--asked')!.textContent,
+    'Agent askedWhich dataset split?',
+  );
   assert.notEqual(box.querySelector('textarea')!.getAttribute('aria-label'), 'Answer');
 });
 
@@ -492,8 +533,11 @@ test('an agent that takes no message but kept its conversation is asked: the que
     ),
   );
   await press(chip('running'));
-  const box = document.querySelector('dialog .thread-messages')!;
-  assert.match(box.textContent!, /You · .* · answeredWhat did you conclude\?↳ The smaller model\./);
+  const box = reading();
+  assert.equal(
+    box.querySelector('.agent-person')!.textContent,
+    'You · answeredWhat did you conclude?↳ The smaller model.',
+  );
   const area = box.querySelector('textarea')!;
   assert.equal(area.getAttribute('aria-label'), 'Ask');
   await act(async () => {
@@ -513,10 +557,9 @@ test('a reader sees what passed but no box, and an answered question is history'
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });
   await open('reader');
   await press(chip('running'));
-  const box = document.querySelector('dialog .thread-messages')!;
+  const box = reading();
   assert.equal(box.querySelector('textarea'), null);
-  assert.equal(box.querySelector('.thread-question'), null);
-  assert.match(box.textContent!, /Agent asked · .*Which dataset split\?/);
+  assert.match(box.textContent!, /Agent askedWhich dataset split\?/);
 });
 
 test('a thread that takes no message is asked instead, where Sessions says it may be', async (t) => {
@@ -528,7 +571,7 @@ test('a thread that takes no message is asked instead, where Sessions says it ma
   );
   await open('producer', unaskable);
   await press(chip('running'));
-  let box = document.querySelector('dialog .thread-messages')!;
+  let box = reading();
   assert.match(box.textContent!, /Use the smaller model\./);
   const area = box.querySelector('textarea')!;
   assert.equal(area.disabled, true);
@@ -547,7 +590,7 @@ test('a thread that takes no message is asked instead, where Sessions says it ma
   );
   await open('producer', finished);
   await press(chip('running'));
-  box = document.querySelector('dialog .thread-messages')!;
+  box = reading();
   const ask = box.querySelector('textarea')!;
   assert.equal(ask.disabled, false);
   await act(async () => {
@@ -570,7 +613,7 @@ test('a thread that takes no message is asked instead, where Sessions says it ma
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });
   await open('producer');
   await press(chip('running'));
-  const message = document.querySelector('dialog .thread-messages textarea')!;
+  const message = reading().querySelector('textarea')!;
   assert.equal(message.getAttribute('aria-label'), 'Message');
 });
 
@@ -589,7 +632,7 @@ test('an answer sent refreshes Home, and a send whose result is unknown keeps it
   await press(chip('running'));
   const homes = () => requests.filter((request) => request === 'POST /tools/ui.home').length;
   const before = homes();
-  const box = document.querySelector('dialog .thread-messages')!;
+  const box = reading();
   const area = box.querySelector('textarea')!;
   const type = async (value: string) =>
     await act(async () => {

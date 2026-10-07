@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { runningKey } from '@merv/contracts/running';
 // A visit that holds its lease, offered or taken up, as Sessions calls its thread live.
 import { live as leased } from '@merv/sessions/rules';
 import type { ProcessGraph } from '@merv/workflows/models';
@@ -19,11 +18,10 @@ import {
   LoadState,
   Ruled,
   Stamp,
-  StatusPill,
   Submit,
+  Summary,
   col,
   cx,
-  stamp,
   useNow,
   words,
 } from '../components';
@@ -33,8 +31,9 @@ import { useCommand } from '../mutations';
 import { StageList } from '../process';
 import { useActor, useReadsAgents, writes, type Actor } from '../session';
 import { AgentConversation, type ConversationVisit } from './agent-live';
+import type { PersonLine } from '../conversation';
 import { namesOf } from './people';
-import { Target, valueText } from './running-phrase';
+import { valueText } from './running-phrase';
 
 /**
  * Who worked each stage of a record: Sessions' threads, each drawn on the stage whose state
@@ -68,7 +67,7 @@ const reason = (why: string | undefined) => {
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`;
 /**
  * Each visit's name: the visits that ran are numbered in order, so the chip's count and the
- * table agree, and a launch that failed is named as one.
+ * table agree; a launch that failed is named as one, and a visit that answered a question too.
  */
 function visitNames(visits: readonly VisitView[]): Map<string, string> {
   let ran = 0;
@@ -77,18 +76,16 @@ function visitNames(visits: readonly VisitView[]): Map<string, string> {
       visit.sessionId,
       failed(visit)
         ? 'Launch failed'
-        : [`Visit ${++ran}`, visit.resumed && 'resumed'].filter(Boolean).join(' · '),
+        : visit.inquiry
+          ? 'Answering a question'
+          : [`Visit ${++ran}`, visit.resumed && 'resumed'].filter(Boolean).join(' · '),
     ]),
   );
 }
-/** The visit holding its lease, as Sessions words it, with the machine it runs on. */
+/** The visit holding its lease, as Sessions words it. */
 const liveLine = (thread: ThreadView, now: Clock) => {
   const visit = thread.visits.find(leased);
-  return visit?.liveness
-    ? [leaseLiveness({ liveness: visit.liveness }, now).phrase, visit.runnerId]
-        .filter(Boolean)
-        .join(' · ')
-    : undefined;
+  return visit?.liveness ? leaseLiveness({ liveness: visit.liveness }, now).phrase : undefined;
 };
 /**
  * A live visit whose lease ran out: its machine went quiet or offline, and Sessions' liveness
@@ -205,7 +202,7 @@ function ThreadChip({
   );
 }
 
-/** Each visit on one row: when it ran, how long, how it ended, and where. */
+/** Each visit on one row: when it ran, how long, and how it ended. */
 function Visits({
   visits,
   names,
@@ -222,7 +219,7 @@ function Visits({
   return (
     <Ruled<Row>
       label="Visits"
-      template="minmax(0, 1.2fr) repeat(2, minmax(0, 1.3fr)) minmax(0, 0.7fr) minmax(0, 1.5fr) minmax(0, 1.2fr)"
+      template="minmax(0, 1.2fr) repeat(2, minmax(0, 1.3fr)) minmax(0, 0.7fr) minmax(0, 1.5fr)"
       keyOf={({ visit }) => visit.sessionId}
       rows={rows}
       columns={[
@@ -250,125 +247,138 @@ function Visits({
             '—'
           ),
         ),
-        col<Row>('outcome', 'Outcome', ({ visit }) =>
-          failed(visit)
-            ? (reason(visit.why) ?? 'did not start')
-            : [visit.outcome && words(visit.outcome), reason(visit.why)]
-                .filter(Boolean)
-                .join(' · ') || '—',
-        ),
-        col<Row>(
-          'runner',
-          'Runner',
-          ({ visit }) => [visit.harness, visit.runnerId].filter(Boolean).join(' · ') || '—',
-        ),
+        col<Row>('outcome', 'Outcome', ({ visit }) => outcomeOf(visit) ?? '—'),
       ]}
     />
   );
 }
 
+/** How a visit ended, in words: its outcome and its close code, or why it never started. */
+const outcomeOf = (visit: VisitView) =>
+  failed(visit)
+    ? (reason(visit.why) ?? 'did not start')
+    : [visit.outcome && words(visit.outcome), reason(visit.why)].filter(Boolean).join(' · ') ||
+      undefined;
+
 /**
- * What the thread said, visit by visit. The visit that holds its lease is read from its live
- * stream; the rest are what Sessions kept, read again whenever another visit goes live.
+ * A visit's divider: its name, whether it resumed, how long it ran and how it ended, e.g.
+ * "Visit 2 · resumed · 48m · submitted". A launch that failed says so and why.
+ */
+const dividerOf = (visit: VisitView, name: string) =>
+  [
+    name,
+    visit.startedAt &&
+      visit.endedAt &&
+      elapsed(Date.parse(visit.endedAt) - Date.parse(visit.startedAt)),
+    outcomeOf(visit),
+  ]
+    .filter(Boolean)
+    .join(' · ');
+
+/** The people's lines of a thread: each message to it, and each question its agent asked. */
+function peopleOf(
+  said: ThreadMessages | undefined,
+  me: string | undefined,
+  nameOf: (id: string) => string | undefined,
+): PersonLine[] {
+  if (!said) return [];
+  return [
+    ...said.questions.map((question): PersonLine => ({
+      key: question.id,
+      at: question.askedAt,
+      who: 'Agent asked',
+      body: question.question,
+      note: question.open ? 'waiting on an answer' : undefined,
+      asked: { open: question.open },
+    })),
+    ...said.messages.map((message): PersonLine => ({
+      key: message.id,
+      at: message.createdAt,
+      who: message.senderActorId === me ? 'You' : (nameOf(message.senderActorId) ?? 'Someone'),
+      body: message.body,
+      note: delivery(message),
+      reply: message.reply ?? undefined,
+    })),
+  ];
+}
+
+/**
+ * What the thread said, visit by visit, with the people's lines among it. An operator reads
+ * what the agent said: the visit that holds its lease from its live stream, the rest from what
+ * Sessions kept, read again whenever another visit goes live. Anyone else reads the visits'
+ * dividers and the people's lines alone, and the conversation is never asked for.
  */
 function Conversation({
   thread,
+  visits: all,
   names,
+  people,
   label,
+  reads,
 }: {
   thread: ThreadView;
+  visits: readonly VisitView[];
   names: Map<string, string>;
+  people: readonly PersonLine[];
   label: string;
+  reads: boolean;
 }) {
   const kept = useTool<ThreadConversation>(
-    `/sessions/threads/${encodeURIComponent(thread.id)}/conversation`,
+    reads ? `/sessions/threads/${encodeURIComponent(thread.id)}/conversation` : null,
   );
   const { reload } = kept;
-  const liveId = thread.visits.find(active)?.sessionId;
+  const liveId = reads ? thread.visits.find(active)?.sessionId : undefined;
   const read = useRef(liveId);
   useEffect(() => {
     if (read.current === liveId) return;
     read.current = liveId;
     reload();
   }, [liveId, reload]);
-  const visits = useMemo(() => {
-    return thread.visits.flatMap((visit): ConversationVisit[] => {
-      if (!visit.launched) return [];
-      // Sessions sends each visit's live stream while it keeps it, else its stored transcript,
-      // else nothing (`from: 'none'`), which the divider says.
-      const said = kept.data?.visits.find((item) => item.sessionId === visit.sessionId);
-      const live = active(visit);
-      return [
-        {
+  const visits = useMemo(
+    () =>
+      all.map((visit): ConversationVisit => {
+        // Sessions sends each visit's live stream while it keeps it, else its stored
+        // transcript, else nothing (`from: 'none'`).
+        const said = kept.data?.visits.find((item) => item.sessionId === visit.sessionId);
+        const name = names.get(visit.sessionId)!;
+        return {
           sessionId: visit.sessionId,
-          divider: [
-            names.get(visit.sessionId),
-            stamp(visit.startedAt ?? visit.offeredAt),
-            !live && said?.from === 'none' && 'nothing kept',
-            !live && said?.from === 'unavailable' && 'unavailable',
-          ]
-            .filter(Boolean)
-            .join(' · '),
-          ...(live
+          at: visit.startedAt ?? visit.offeredAt,
+          divider: dividerOf(visit, name),
+          ...(failed(visit) && { tone: 'error' as const }),
+          ...(visit.sessionId === liveId
             ? { stream: `/sessions/${encodeURIComponent(visit.sessionId)}/events` }
             : { events: said?.events }),
-        },
-      ];
-    });
-  }, [thread, names, kept.data]);
-  if (!kept.data && !liveId) return <LoadState {...kept} />;
-  return <AgentConversation key={liveId ?? ''} label={label} visits={visits} />;
+        };
+      }),
+    [all, names, kept.data, liveId],
+  );
+  if (reads && !kept.data && !liveId && !kept.error) return <LoadState {...kept} />;
+  return (
+    <AgentConversation
+      key={liveId ?? ''}
+      label={label}
+      visits={visits}
+      people={people}
+      empty={reads ? 'Nothing said yet.' : ''}
+    />
+  );
 }
 
 const count = (value: number) => value.toLocaleString();
-const duration = (ms: number | null) =>
-  ms === null ? '—' : ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 /**
- * The Merv calls the thread's visits made, newest first with in-flight ones on top, and what
- * they all came to. Tokens are payload sizes, an estimate; Sessions keeps no arguments.
+ * What the thread's Merv calls came to, in one line. Tokens are payload sizes, an estimate;
+ * each call is a step in the conversation already.
  */
-function Calls({ thread, names }: { thread: ThreadView; names: Map<string, string> }) {
-  const read = useTool<ThreadCalls>(
-    `/sessions/threads/${encodeURIComponent(thread.id)}/calls`,
-    {},
-    { every: isLive(thread) ? 4000 : undefined },
-  );
+function CallTotals({ thread }: { thread: ThreadView }) {
+  const read = useTool<ThreadCalls>(`/sessions/threads/${encodeURIComponent(thread.id)}/calls`);
   if (!read.data) return <LoadState {...read} />;
-  const { calls, totals } = read.data;
-  type Row = (typeof calls)[number];
+  const { totals } = read.data;
   return (
-    <>
-      <p className="faint tabular">
-        {plural(totals.calls, 'call', 'calls')} · ≈ {count(totals.inputTokens)} in · ≈{' '}
-        {count(totals.outputTokens)} out
-        {totals.calls > calls.length && ` · newest ${calls.length}`}
-      </p>
-      {calls.length > 0 && (
-        <Ruled<Row>
-          label="Calls"
-          template="minmax(0, 1.6fr) minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.7fr) minmax(0, 0.7fr) minmax(0, 0.7fr)"
-          keyOf={(call) => call.id}
-          rows={calls}
-          columns={[
-            col<Row>('tool', 'Tool', (call) => <code>{call.tool}</code>),
-            col<Row>('visit', 'Visit', (call) => names.get(call.sessionId) ?? '—'),
-            col<Row>('status', 'Status', (call) => <StatusPill value={call.status} />),
-            col<Row>('start', 'Started', (call) => <Ago at={call.startedAt} />),
-            col<Row>('took', 'Took', (call) => (
-              <span className="tabular">{duration(call.durationMs)}</span>
-            )),
-            col<Row>('in', 'In', (call) => (
-              <span className="tabular">≈ {count(call.inputTokens)}</span>
-            )),
-            col<Row>('out', 'Out', (call) => (
-              <span className="tabular">
-                {call.outputTokens === null ? '—' : `≈ ${count(call.outputTokens)}`}
-              </span>
-            )),
-          ]}
-        />
-      )}
-    </>
+    <p className="faint tabular">
+      {plural(totals.calls, 'Merv call', 'Merv calls')} · ≈ {count(totals.inputTokens)} in · ≈{' '}
+      {count(totals.outputTokens)} out
+    </p>
   );
 }
 
@@ -419,7 +429,7 @@ export function ThreadCompose({
     >
       <textarea
         className="textarea"
-        rows={2}
+        rows={1}
         maxLength={8000}
         aria-label={word}
         placeholder={word}
@@ -454,62 +464,38 @@ export const delivery = (message: {
 }) => (message.inquiry ? message.inquiry.label : message.acknowledgedAt ? 'Read' : 'Sent');
 
 /**
- * What passed between the thread and the people over it, oldest first, and the box that speaks
- * to it. A question its agent asked stands over the box, which answers it.
+ * Who a thread is and what it does, on one line: its role and stage, and while a visit holds
+ * its lease a dot and how long that visit has run (red once its lease lapsed); otherwise its
+ * status, quietly. No machine, lease or id.
  */
-export function ThreadMessageBox({ thread }: { thread: ThreadView }) {
-  const actor = useActor();
-  const nameOf = namesOf(useTool<Actor[]>(actor?.role === 'operator' ? 'actor.list' : null).data);
-  const path = `/sessions/threads/${encodeURIComponent(thread.id)}/messages`;
-  const read = useTool<ThreadMessages>(path, {}, { every: isLive(thread) ? 5000 : 15_000 });
-  const said = read.data;
-  // The question that still stands, as Sessions says: one about work that ended is answered by
-  // nothing, so the box does not offer to.
-  const open = said?.questions.filter((question) => question.open).at(-1);
-  const lines = said
-    ? [
-        ...said.questions
-          .filter((question) => question !== open)
-          .map((question) => ({ at: question.askedAt, key: question.id, asked: question })),
-        ...said.messages.map((message) => ({ at: message.createdAt, key: message.id, message })),
-      ].sort((a, b) => a.at.localeCompare(b.at))
-    : [];
-  if (!lines.length && !open && !(actor && writes(actor))) return null;
+export function ThreadTitle({ thread, now }: { thread: ThreadView; now: Clock }) {
+  const live = isLive(thread);
+  const bad = live && lapsed(thread);
+  const visit = thread.visits.find(leased);
+  const since = visit?.startedAt ?? visit?.offeredAt;
   return (
-    <section className="thread-messages" aria-label="Messages">
-      {lines.length > 0 && (
-        <ol className="thread-message-list">
-          {lines.map((line) =>
-            'asked' in line && line.asked ? (
-              <li key={line.key}>
-                <span className="faint">
-                  Agent asked · <Ago at={line.at} />
-                </span>
-                <p className="wrap">{line.asked.question}</p>
-              </li>
-            ) : 'message' in line && line.message ? (
-              <li key={line.key}>
-                <span className="faint">
-                  {line.message.senderActorId === actor?.id
-                    ? 'You'
-                    : (nameOf(line.message.senderActorId) ?? 'Someone')}{' '}
-                  · <Ago at={line.at} /> · {delivery(line.message)}
-                </span>
-                <p className="wrap">{line.message.body}</p>
-                {line.message.reply && <p className="wrap muted">↳ {line.message.reply}</p>}
-              </li>
-            ) : null,
-          )}
-        </ol>
+    <>
+      {live && (
+        <span
+          className={cx('live-dot', bad ? 'live-dot--attn' : 'live-dot--live')}
+          role="img"
+          aria-label={bad ? 'Lapsed' : 'Live'}
+        />
       )}
-      {open && (
-        <div className="thread-question">
-          <span className="label">Answer</span>
-          <p className="wrap">{open.question}</p>
-        </div>
-      )}
-      <ThreadCompose thread={thread} answering={!!open} onSent={read.reload} />
-    </section>
+      <span>
+        {capital(words(thread.role))} · {capital(words(thread.state))}
+      </span>{' '}
+      <span className="thread-head-state">
+        ·{' '}
+        {bad
+          ? 'lapsed'
+          : live
+            ? since
+              ? elapsed(now.at - Date.parse(since))
+              : 'starting'
+            : thread.status}
+      </span>
+    </>
   );
 }
 
@@ -587,8 +573,9 @@ export function ThreadCard({
 /**
  * One thread, in the browser's own modal dialog: Escape and a press on the backdrop close it,
  * and the focus stays in it while it is open. It hangs from the body, so the narrow sidebar's
- * own layout never reaches it. It reads as `ThreadReading` does; `group` is the thread's stage
- * and role, whose every visit it lists.
+ * own layout never reaches it. Its head is who and what (`ThreadTitle`) over the work it is on;
+ * it reads as `ThreadReading` does, and `group` is the thread's stage and role, whose every
+ * visit it lists.
  */
 export function ThreadDialog({
   thread,
@@ -607,9 +594,7 @@ export function ThreadDialog({
   useEffect(() => {
     if (!dialog.current?.open) dialog.current?.showModal();
   }, []);
-  const name = threadName(thread);
-  const lease = thread.visits.find(leased);
-  const now = clock(undefined, loadedAt, useNow(lease ? 1000 : 0), 20_000);
+  const now = clock(undefined, loadedAt, useNow(isLive(thread) ? 1000 : 0), 20_000);
   return createPortal(
     <dialog
       ref={dialog}
@@ -620,19 +605,12 @@ export function ThreadDialog({
       onClick={(event) => event.target === event.currentTarget && event.currentTarget.close()}
     >
       <div className="thread-dialog-body">
-        <header className="cluster cluster--between">
-          <div>
-            <h2 id="thread-dialog-title">{name}</h2>
-            <p className="muted">{title}</p>
-            {/* The visit holding its lease: how it stands, and the way to the lease's controls. */}
-            {lease && (
-              <p className="cluster agent-help">
-                {lease.liveness && <Live of={leaseLiveness({ liveness: lease.liveness }, now)} />}
-                <Target to={{ key: runningKey('session', lease.sessionId) }} className="hit">
-                  {lease.runnerId ? `Lease on ${lease.runnerId}` : 'Lease'}
-                </Target>
-              </p>
-            )}
+        <header className="thread-head">
+          <div className="thread-head-text">
+            <h2 id="thread-dialog-title" className="thread-head-title">
+              <ThreadTitle thread={thread} now={now} />
+            </h2>
+            <p className="thread-head-unit">{title}</p>
           </div>
           <button
             type="button"
@@ -651,11 +629,11 @@ export function ThreadDialog({
   );
 }
 
-type Tab = 'conversation' | 'visits' | 'calls';
 /**
- * What one thread did: its messages and the box to it, then for an operator its conversation,
- * and for anyone its visits and its Merv calls, a press apart. The visits are those of its whole
- * `group`, the stage's threads in its role, numbered in one count.
+ * What one thread did, as a chat: one timeline of its visits, what its agent said and did (for
+ * an operator) and what passed between it and the people over it, then the box that speaks to
+ * it at the foot. Its visits' table and what its calls came to fold under Details. The visits
+ * are those of its whole `group`, the stage's threads in its role, numbered in one count.
  */
 export function ThreadReading({
   thread,
@@ -667,28 +645,47 @@ export function ThreadReading({
   loadedAt?: string;
 }) {
   const reads = useReadsAgents();
-  const tabs: Tab[] = reads ? ['conversation', 'visits', 'calls'] : ['visits', 'calls'];
-  const [tab, setTab] = useState<Tab>(tabs[0]!);
+  const actor = useActor();
+  const actors = useTool<Actor[]>(actor?.role === 'operator' ? 'actor.list' : null).data;
+  const said = useTool<ThreadMessages>(
+    `/sessions/threads/${encodeURIComponent(thread.id)}/messages`,
+    {},
+    { every: isLive(thread) ? 5000 : 15_000 },
+  );
   const visits = useMemo(() => visitsOf(group), [group]);
   const names = useMemo(() => visitNames(visits), [visits]);
+  const people = useMemo(
+    () => peopleOf(said.data, actor?.id, namesOf(actors)),
+    [said.data, actor?.id, actors],
+  );
+  const [details, setDetails] = useState(false);
+  // The question that still stands, as Sessions says: one about work that ended is answered by
+  // nothing, so the box does not offer to.
+  const open = said.data?.questions.some((question) => question.open) ?? false;
   return (
-    <>
-      <ThreadMessageBox thread={thread} />
-      <div className="tabs tabs--strip" role="group" aria-label="Thread">
-        {tabs.map((each) => (
-          <button type="button" key={each} aria-pressed={tab === each} onClick={() => setTab(each)}>
-            {capital(each)}
-          </button>
-        ))}
-      </div>
-      {tab === 'conversation' ? (
-        <Conversation thread={thread} names={names} label={threadName(thread)} />
-      ) : tab === 'calls' ? (
-        <Calls thread={thread} names={names} />
-      ) : (
-        <Visits visits={visits} names={names} loadedAt={loadedAt} />
-      )}
-    </>
+    <div className="thread-reading">
+      <Conversation
+        thread={thread}
+        visits={thread.visits}
+        names={names}
+        people={people}
+        label={threadName(thread)}
+        reads={reads}
+      />
+      <details
+        className="thread-details"
+        onToggle={(event) => setDetails(event.currentTarget.open)}
+      >
+        <Summary>Details</Summary>
+        {details && (
+          <div className="thread-details-body">
+            <Visits visits={visits} names={names} loadedAt={loadedAt} />
+            <CallTotals thread={thread} />
+          </div>
+        )}
+      </details>
+      <ThreadCompose thread={thread} answering={open} onSent={said.reload} />
+    </div>
   );
 }
 
