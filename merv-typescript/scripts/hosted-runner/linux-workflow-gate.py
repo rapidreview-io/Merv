@@ -65,15 +65,16 @@ exec(compile(open(%r).read(), %r, 'exec'), {'__name__': '__main__', '__file__': 
 ''' % (str(MAIN_PORT), str(LAUNCH_RECORD), str(REAL_LAUNCHER), str(LAUNCHER), str(LAUNCHER))
 
 
-def step_session(runner_id, status='offered', host_ref=None, inquiry=False):
+def step_session(runner_id, status='offered', host_ref=None, inquiry=False, outcome=None):
     common = {'instanceId': work_instance, 'projectId': 'project_workflow_gate', 'actorId': 'actor_gate', 'revision': 0}
     now = time.time()
     stamp = lambda t: time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(t))
     read_only = inquiry
-    session = {'id': inquiry_id if inquiry else step_id, 'projectId': 'project_workflow_gate', 'actorId': 'actor_gate',
+    session = {'id': inquiry_id if inquiry else step_id, 'kind': 'inquiry' if inquiry else 'work',
+               'projectId': 'project_workflow_gate', 'actorId': 'actor_gate',
                'instanceId': work_instance, 'threadId': 'thr_gate', 'runnerId': runner_id, 'hostRef': host_ref,
                'expectedRevision': 0, 'status': status, 'closeReason': None if status == 'offered' else 'released',
-               'outcome': None, 'expiresAt': stamp(now + (600 if inquiry else 3600)),
+               'outcome': outcome, 'expiresAt': stamp(now + (600 if inquiry else 3600)),
                'hardDeadline': stamp(now + (600 if inquiry else 3600)),
                'assignment': {**common, 'label': 'Inquiry: gate' if inquiry else 'Gate step',
                               'brief': 'What did you reply?' if inquiry else 'Reply done.',
@@ -151,9 +152,15 @@ def control_reply(handler, method, body):
     if action == 'attach':
         state['hostRef'] = body['hostRef']
     if action == 'release':
-        state['status'] = 'released'
+        state.update(status='released', outcome=body.get('outcome'))
         (inquiry_released if inquiry else step_released).set()
-    session = step_session(state['runner'], state['status'], state['hostRef'], inquiry)
+    session = step_session(state['runner'], state['status'], state['hostRef'], inquiry, state.get('outcome'))
+    if action == 'control' and method == 'GET':
+        # What a started launch's tick polls once a second: the control fields alone, exactly as
+        # Sessions' SessionControlView picks them. Any other answer is retried each tick, so the
+        # step never settled and never released (2026-10-07, run 20261007T165252Z-06d804cb).
+        return {'control': {k: session[k] for k in ('id', 'projectId', 'runnerId', 'hostRef', 'status',
+                                                    'expiresAt', 'hardDeadline', 'closeReason', 'outcome')}}
     prompt = 'Answer the question in the assignment, read-only.' if inquiry else 'Reply done.'
     return {'session': session, **({'prompt': prompt} if action == 'attach' else {})}
 # The top-level keys and tool types fleet/src/codex-relay.ts admits: a Codex that sends others fails here.
