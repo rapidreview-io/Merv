@@ -72,8 +72,10 @@ const enrollment = z
 
 /** A hosted machine, a work host's reuse included, waits this long for a transcript its runner
  *  declared before its release, capture and upload included: a runner that gives up on one
- *  cannot say so. */
-const transcriptGraceMs = 30 * 60_000;
+ *  cannot say so. A closed visit's workspace capture is waited for as long, from the close: a
+ *  runner that died on a live machine sends none, and its host is then let go (Fleet stops it
+ *  and rents another) instead of covering its work until its day is out. */
+const captureGraceMs = 30 * 60_000;
 
 /** A managed runner supervises its bound execution through its own routes: it uses no tool. */
 export const managedRunnerRules: CallerRules = {
@@ -775,8 +777,11 @@ export class ManagedRunnerBindings {
           outcome: session.outcome ?? null,
           releaseAcknowledged: row.runner_released_at !== null,
           capturePending:
-            (!!workspace && workspace.result_json === null && !disposableReview) ||
-            (!!owed && this.clock() - Date.parse(owed.declared_at) < transcriptGraceMs),
+            (!!workspace &&
+              workspace.result_json === null &&
+              !disposableReview &&
+              !(this.clock() - Date.parse(session.closedAt ?? '') >= captureGraceMs)) ||
+            (!!owed && this.clock() - Date.parse(owed.declared_at) < captureGraceMs),
         },
       };
     };

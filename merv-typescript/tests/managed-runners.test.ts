@@ -930,6 +930,47 @@ test('managed inspection does not hold a released disposable read-only checkout 
   }
 });
 
+test('a work host whose runner died stops wanting its capture thirty minutes after the visit closed', async (t) => {
+  // Audit 15 (robust-capture): the workspace clause had no bound, so a host whose runner died
+  // while its machine stayed up was kept running, covering its item, until its day was out.
+  let now = Date.now();
+  const f = await fixture(t, { reviewWorkspace: 'retained', clock: () => now });
+  await f.sessions.dispatch.heartbeatRunner(f.caller, f.heartbeat(1));
+  await f.sessions.dispatch.setDispatch(f.owner, { enabled: true });
+  const request = f.lease();
+  const leased = await f.sessions.dispatch.lease(f.caller, request);
+  const session = leased.session!;
+  assert.ok(session, leased.reason);
+  await f.sessions.attach(f.caller, {
+    sessionId: session.id,
+    runnerId: f.runnerId,
+    hostRef: 'launch-managed',
+    workspace: {
+      repositoryId: 'repository-managed',
+      workspaceId: 'workspace-managed',
+      mode: 'persistent',
+      branch: 'merv/review/managed',
+      baseOid: 'a'.repeat(40),
+      headOid: 'a'.repeat(40),
+      stats: { commitCount: 0, filesChanged: 0, insertions: 0, deletions: 0 },
+    },
+  });
+  await f.sessions.authenticate(request.secret);
+  const inspect = async () => (await f.sessions.managed.inspect(f.input.allocationId, 1))?.session;
+  // The runner dies here: no heartbeat, no release, no workspace result ever again.
+  now += 20 * 3_600_000;
+  await f.sessions.sweep();
+  const expired = await inspect();
+  assert.deepEqual(
+    [expired?.status, expired?.releaseAcknowledged, expired?.capturePending],
+    ['expired', false, true],
+  );
+  now += 30 * 60_000 - 1;
+  assert.equal((await inspect())?.capturePending, true);
+  now += 1;
+  assert.equal((await inspect())?.capturePending, false);
+});
+
 test('managed inspection holds a released session for its declared transcript for thirty minutes', async (t) => {
   for (const ending of ['stamped', 'expired'] as const) {
     await t.test(ending, async (subtest) => {
