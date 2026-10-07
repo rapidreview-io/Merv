@@ -580,10 +580,15 @@ export class ProjectScope implements Scope {
         'Provider-backed authority needs a transaction',
         500,
       );
-      const row = await sql.get<ActorRow>(
-        `${ACTOR_WITH_MEMBER} WHERE a.id=? AND a.project_id=?`,
-        caller.actorId,
-        caller.projectId,
+      // A worker's one call asks about its actor many times: one snapshot reads the row once.
+      const row = structuredClone(
+        await this.state.remember(`scope:actor:${caller.projectId}:${caller.actorId}`, () =>
+          sql.get<ActorRow>(
+            `${ACTOR_WITH_MEMBER} WHERE a.id=? AND a.project_id=?`,
+            caller.actorId,
+            caller.projectId,
+          ),
+        ),
       );
       check(
         row,
@@ -744,10 +749,16 @@ export class ProjectScope implements Scope {
     const place = !provided ? undefined : caller.managed ? 'read' : permission;
     const decide = () => within(this.state, tx, lookup, place);
     // A direct caller's decision rests only on rows, so one snapshot makes it once. A provider's
-    // also rests on that provider's own memory (a worker's invocation, say), so it never is.
-    const value = provided
-      ? await decide()
-      : structuredClone(await this.state.remember(`scope:${JSON.stringify(caller)}`, decide));
+    // also rests on that provider's own memory, so it is made afresh, except one tool call's: a
+    // worker's invocation holds still for its call, so the call decides each permission once
+    // per snapshot or write transaction. A check made inside another check, which carries no
+    // invocation, is never kept.
+    const kept = !provided
+      ? `scope:${JSON.stringify(caller)}`
+      : caller.session?.invocationId !== undefined
+        ? `scope:${permission}:${JSON.stringify(caller)}`
+        : undefined;
+    const value = kept ? structuredClone(await this.state.remember(kept, decide)) : await decide();
     // An in-flight decision cannot survive provider removal, even if the same object
     // is installed again before it returns. The caller must make a fresh request.
     if (value.actor.sessionId) this.sessions.fence(registration);

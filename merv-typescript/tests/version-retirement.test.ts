@@ -129,9 +129,16 @@ const guarded = [
   'research_automation',
 ];
 
-/** A wf_leases row as compared: its order of insertion aside, and its details read. */
+/** A wf_leases row as compared: its order of insertion aside, and its details read. A row the
+ * owners' copies move in after workflows@13 has no receipt digest: its reads digest it. */
 function comparableLease(text: string): string {
-  const { _merv_rowid: _, details, ...row } = JSON.parse(text) as Record<string, unknown>;
+  const {
+    _merv_rowid: _,
+    receipt_digest: digested,
+    details,
+    ...row
+  } = JSON.parse(text) as Record<string, unknown>;
+  assert.ok(digested == null);
   const sorted = (value: unknown): unknown =>
     Array.isArray(value)
       ? value.map(sorted)

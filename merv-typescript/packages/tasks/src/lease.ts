@@ -112,20 +112,21 @@ export async function currentLease(
   tx: Transaction,
 ): Promise<TaskLeaseRow> {
   check(caller.session, 'stale_lease', 'This task operation requires its lease worker', 403);
-  const [lease] = await leaseRows<TaskLeaseRow['details']>(
-    tx,
-    {
-      projectId: caller.projectId,
-      id: caller.session.id,
-      instanceIds: [taskId],
-      revision,
-      actorId: caller.actorId,
-      active: true,
-    },
-    'full',
+  const where = {
+    projectId: caller.projectId,
+    id: caller.session.id,
+    instanceIds: [taskId],
+    revision,
+    actorId: caller.actorId,
+    active: true,
+  };
+  // Every lease hook of one check asks for it: read once per snapshot, or per write transaction
+  // until it writes, and each caller gets a copy.
+  const [lease] = await ctx.state.remember(`tasks:lease:${JSON.stringify(where)}`, () =>
+    leaseRows<TaskLeaseRow['details']>(tx, where, 'full'),
   );
   check(lease, 'stale_lease', 'This worker no longer owns the task assignment', 409);
-  return lease;
+  return structuredClone(lease);
 }
 
 export async function acquireLease(

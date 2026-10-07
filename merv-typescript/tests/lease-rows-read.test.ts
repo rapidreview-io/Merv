@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { postgresMigrations } from '../packages/workflows/src/index.postgres.js';
-import { insertLease, latestReleases, leaseRows } from '@merv/workflows/lease-rows';
+import {
+  checkReceipt,
+  insertLease,
+  latestReleases,
+  leaseReceipt,
+  leaseRows,
+} from '@merv/workflows/lease-rows';
+import { digest } from '@merv/contracts';
 import { openState } from './fixtures/state.js';
 
 // A lease's receipt and details can carry a frozen paper context (160,000 characters for an
@@ -62,7 +69,14 @@ test('lease reads are narrow by default and ask for receipts, details or one det
       'full',
     );
     assert.equal(full.details.inputs.paper, paper);
-    assert.equal(JSON.parse(full.receipt).leaseId, 'session_3');
+    // The full row carries the receipt's digest, not the receipt: a check compares digests.
+    assert.equal('receipt' in full, false);
+    assert.equal(full.receipt_digest, digest({ paper, leaseId: 'session_3' }));
+    checkReceipt(full, { paper, leaseId: 'session_3' }, 'stale');
+    assert.throws(() => checkReceipt(full, { leaseId: 'session_3' }, 'stale'), {
+      code: 'stale_lease',
+    });
+    assert.deepEqual(await leaseReceipt(tx, full), { leaseId: 'session_3', paper });
     assert.deepEqual(
       (await latestReleases(tx, { projectId, instanceIds: ['experiment_a', 'missing'] })).map(
         (row) => [row.instance_id, Number(row.revision), row.released_at],

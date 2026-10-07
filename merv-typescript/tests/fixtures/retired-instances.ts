@@ -413,7 +413,7 @@ export async function seedRetirement(client: pg.Client, seed: Seed): Promise<voi
 DROP FUNCTION wf_leases_immutable_guard();
 ${taskMigrations[6]}${taskMigrations[7]}${experimentProgramMigrations[1]}${experimentProgramMigrations[2]}
 ${reflectionLeases.slice(reflectionLeases.indexOf('CREATE TABLE reflection_leases'))}
-DELETE FROM component_migrations WHERE (component='workflows' AND version=12)
+DELETE FROM component_migrations WHERE (component='workflows' AND version IN (12,13))
   OR (component='tasks' AND version=10) OR (component='experiment_program' AND version=4)
   OR (component='reflections' AND version=5);`);
     // The project.reflection retirement (tasks@11) only checks, and came later still.

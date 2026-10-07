@@ -1,5 +1,6 @@
 import { reviewHistory } from '@merv/reviews/rules';
 import { requireDependencies } from '@merv/workflows/rules';
+import { leaseReceipt } from '@merv/workflows/lease-rows';
 import {
   check,
   clip,
@@ -202,9 +203,7 @@ export async function contextInputs(
       : { ...rest, workflow: { ...workflow, data: reviewData } };
   // Worker contexts retain the offer's Introduction and paper even if they later change.
   const receipt = caller.session
-    ? (JSON.parse(
-        (await currentLease(ctx, caller, task.id, task.workflow.revision, tx)).receipt,
-      ) as Data)
+    ? await leaseReceipt(tx, await currentLease(ctx, caller, task.id, task.workflow.revision, tx))
     : null;
   const project = receipt?.project ?? (await projectContext(ctx, caller, tx));
   const projectPaper = receipt
