@@ -49,8 +49,7 @@ import {
   restoreConversation,
   type ConversationFacts,
 } from './conversation.js';
-import { launchCodexHome } from './harness/codex.js';
-import { harnessOf } from './harness/index.js';
+import { harnessOf, launcherOf, type HarnessName } from './harness/index.js';
 import { assignmentUser, RunnerWorkspaces } from './workspaces.js';
 import {
   buildLaunch,
@@ -125,8 +124,7 @@ export function validateRunnerConfig(input: unknown): RunnerConfig {
   if (parsed.data.assignmentWorkspaceDirectory || parsed.data.workInstanceId)
     check(
       profiles.length === 1 &&
-        profiles[0].harness === 'codex' &&
-        !!profiles[0].isolatedLauncher &&
+        launcherOf(profiles[0]).isolated(profiles[0]) &&
         profiles[0].parallelism === 1 &&
         parsed.data.capacity === 1 &&
         !!parsed.data.assignmentWorkspaceDirectory &&
@@ -485,9 +483,7 @@ export class MachineRunner implements Runner {
           ...profile,
           enabled: desired.enabled,
           parallelism: desired.parallelism,
-          ...(profile.harness === 'codex' || profile.harness === 'claude'
-            ? { model: desired.model, effort: desired.effort }
-            : {}),
+          ...(launcherOf(profile).tuned ? { model: desired.model, effort: desired.effort } : {}),
         };
         return validateProfile(candidate);
       });
@@ -738,20 +734,19 @@ export class MachineRunner implements Runner {
         this.save(record.id, { session: view(session), attached: true });
         if (!liveSession(session) || this.stopping) return false;
         const secret = this.ledger.sessionSecret(String(record.metadata.requestId));
+        const launcher = launcherOf(profile);
         const hfAccess =
-          /^mr_[0-9a-f]{64}$/.test(this.sourceBearer) &&
-          profile.harness === 'codex' &&
-          profile.hosted
+          /^mr_[0-9a-f]{64}$/.test(this.sourceBearer) && launcher.huggingface(profile)
             ? await this.client
                 .huggingfaceAccess(session.id, this.ledger.runnerId, record.id)
                 .catch(() => null)
             : null;
         const connections =
-          profile.harness !== 'command' && !sealed(session)
+          launcher.agent && !sealed(session)
             ? await this.client.launchConnections(session.id, this.ledger.runnerId, record.id)
             : [];
         if (this.stopping) return false;
-        const codexHome = launchCodexHome(profile, record.runDirectory);
+        const home = launcher.prepare(profile, record.runDirectory);
         const resume = await this.restore(record, profile, session, workspace.path);
         // An inquiry is put to the conversation it names; a fresh agent would know nothing.
         check(
@@ -770,13 +765,13 @@ export class MachineRunner implements Runner {
             secret,
             mcpUrl: `${this.client.baseUrl}/mcp`,
             cwd: workspace.path,
-            ...(profile.harness === 'codex'
+            ...(launcher.skills
               ? { disabledSkillPaths: collectRepositorySkillPaths(workspace.path) }
               : {}),
             shellEnvFile: join(record.runDirectory, 'shell-env.sh'),
             ...(resume && { resume }),
           },
-          codexHome ? { ...process.env, CODEX_HOME: codexHome } : process.env,
+          home ? { ...process.env, ...home } : process.env,
         );
         if (command.shellEnv)
           writeFileSync(command.env.CLAUDE_ENV_FILE!, command.shellEnv, { mode: 0o600 });
@@ -1177,7 +1172,7 @@ export class MachineRunner implements Runner {
       if (
         this.streams.has(record.id) ||
         !profile ||
-        profile.harness === 'command' ||
+        !harnessOf(profile) ||
         record.status === 'reserved' ||
         record.status === 'starting'
       )
@@ -1186,7 +1181,7 @@ export class MachineRunner implements Runner {
         record.id,
         new AgentStream(
           record.runDirectory,
-          profile.harness,
+          profile.harness as HarnessName,
           [this.sourceBearer],
           (batch) => this.client.stream(record.sessionId, this.ledger.runnerId, record.id, batch),
           this.clock,

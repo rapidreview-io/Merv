@@ -1,14 +1,21 @@
 import { nativeMcpConnectionsSchema } from '@merv/contracts';
 import type { NativeMcpConnection } from '@merv/sessions/types';
 import { lstatSync, opendirSync, realpathSync } from 'node:fs';
-import { basename, dirname, isAbsolute, join, normalize } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { inspect } from 'node:util';
 import { z } from 'zod';
-import { codexHandoffGraceMs } from '@merv/fleet/hosted-codex';
 import { check, effectiveWorkspace, MervError, sessionSecretPattern } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
 import { label, platformName } from '@merv/sessions/rules';
-import { claudeToolName } from '@merv/sessions/agent-stream';
+import { launcherOf } from './harness/index.js';
+import {
+  conversationIdPattern,
+  maximumSkillEntries,
+  sessionTokenVariable,
+} from './harness/shared.js';
+
+export { assignmentCodexHome } from './harness/codex.js';
+export { conversationIdPattern, sessionTokenVariable };
 
 const common = {
   name: z.string().regex(platformName),
@@ -113,8 +120,6 @@ export interface LaunchRequest {
   resume?: string;
 }
 
-const maximumSkillEntries = 4096;
-
 /**
  * Codex discovers repository skills at cwd/.agents/skills and each ancestor's
  * .agents/skills through the nearest repository root, including linked worktrees.
@@ -199,19 +204,6 @@ export function collectRepositorySkillPaths(cwd: string): string[] {
   }
 }
 
-/**
- * Merv's internet reads (@merv/web). Each call sends its query, or the address of a page to read,
- * to an outside provider, and that is a way out of the machine: a worker whose shell has no
- * network, or a sealed review, is not given them. Codex's own hosted web search stays disabled.
- */
-const INTERNET_READS = ['web.search', 'web.extract'] as const;
-
-export const sessionTokenVariable = 'MERV_AGENT_SESSION_TOKEN';
-/** Claude's session ids and Codex's thread ids. */
-export const conversationIdPattern =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-/** The isolated assignment's Codex home, which the hosted image's launcher fixes. */
-export const assignmentCodexHome = '/home/assignment/.codex';
 export const mcpUrlVariable = 'MERV_MCP_URL';
 const runtimeVariables = [
   'PATH',
@@ -226,13 +218,7 @@ const runtimeVariables = [
 
 export function validateProfile(input: unknown): RunnerProfile {
   const parsed = profileSchema.safeParse(input);
-  if (
-    !parsed.success ||
-    (parsed.data.harness === 'codex' &&
-      (parsed.data.isolatedLauncher !== undefined
-        ? !isAbsolute(parsed.data.executable)
-        : parsed.data.hosted))
-  ) {
+  if (!parsed.success || !launcherOf(parsed.data).valid(parsed.data)) {
     // Do not echo local configuration values: a mistaken argument may contain a secret.
     throw new MervError('invalid_runner_profile', 'Invalid or unsupported runner profile');
   }
@@ -266,224 +252,6 @@ function runtimeEnvironment(environment: Readonly<NodeJS.ProcessEnv>): Record<st
     if (value !== undefined && !value.includes('\0')) result[key] = value;
   }
   return result;
-}
-
-/** JSON string escaping is valid for these TOML basic strings; no shell evaluates the result. */
-const quote = (value: string): string => JSON.stringify(value);
-const table = (values: Record<string, string>): string =>
-  `{${Object.entries(values)
-    .map(([key, value]) => `${quote(key)}=${quote(value)}`)
-    .join(',')}}`;
-
-function codexArgs(
-  profile: Extract<RunnerProfile, { harness: 'codex' }>,
-  request: LaunchRequest,
-  url: string,
-  safeEnvironment: Record<string, string>,
-): string[] {
-  const args = [
-    'exec',
-    '--ignore-user-config',
-    '--ignore-rules',
-    // Only a session that may be continued keeps its conversation.
-    ...(request.session.continuity ? [] : ['--ephemeral']),
-    '--skip-git-repo-check',
-    '--sandbox',
-    sealed(request.session) ? 'read-only' : 'workspace-write',
-    '--json',
-    '--color',
-    'never',
-    '-C',
-    request.cwd,
-  ];
-  const config = (key: string, value: string) => args.push('-c', `${key}=${value}`);
-  config('approval_policy', quote('never'));
-  // Native shell remains available inside the declared filesystem sandbox. Unrelated
-  // account integrations, hooks and agents must not broaden this lease's tool surface.
-  for (const feature of [
-    'apps',
-    'plugins',
-    'hooks',
-    'remote_plugin',
-    'multi_agent',
-    'multi_agent_v2',
-    'shell_snapshot',
-    'tool_suggest',
-    'skill_search',
-    'skill_mcp_dependency_install',
-    'browser_use',
-    'browser_use_external',
-    'computer_use',
-    'image_generation',
-    'in_app_local_automation',
-  ])
-    config(`features.${feature}`, 'false');
-  // A model whose catalog entry names a multi-agent version (gpt-6.1-sol in Codex 0.160) gets
-  // the spawn_agent tools whatever the features say; only this turns them off.
-  config('agents.enabled', 'false');
-  config('features.skip_host_skill_discovery', 'true');
-  // A top-level key: Codex otherwise opens every stream with a warning about the feature above.
-  config('suppress_unstable_features_warning', 'true');
-  const disabledSkills = request.disabledSkillPaths ?? [];
-  check(
-    Array.isArray(disabledSkills) &&
-      disabledSkills.length <= maximumSkillEntries &&
-      disabledSkills.every(
-        (path) =>
-          typeof path === 'string' &&
-          path.length <= 4096 &&
-          isAbsolute(path) &&
-          normalize(path) === path &&
-          basename(path) === 'SKILL.md' &&
-          !/[\0\r\n]/.test(path),
-      ),
-    'invalid_runner_launch',
-    'Disabled repository skills must be canonical SKILL.md paths',
-  );
-  // --ignore-rules and skip_host_skill_discovery do not suppress repo skills.
-  // Installed Codex exec resolves these entries by the exact SKILL.md file path.
-  config(
-    'skills.config',
-    `[${[...new Set(disabledSkills)]
-      .sort()
-      .map((path) => `{path=${quote(path)},enabled=false}`)
-      .join(',')}]`,
-  );
-  config('features.shell_tool', 'true');
-  config('web_search', quote('disabled'));
-  config('project_doc_max_bytes', '0');
-  config('allow_login_shell', 'false');
-  const hfShell =
-    profile.hosted && !sealed(request.session) && !!request.hfToken && !!request.hfEndpoint;
-  config('shell_environment_policy.inherit', quote(hfShell ? 'all' : 'none'));
-  config('shell_environment_policy.ignore_default_excludes', hfShell ? 'true' : 'false');
-  config('shell_environment_policy.experimental_use_profile', 'false');
-  // MCP authentication reads the host process environment. Its bearer is deliberately
-  // absent from the environment made available to model-generated shell commands.
-  const shellEnvironment = { ...safeEnvironment };
-  delete shellEnvironment.CODEX_HOME;
-  delete shellEnvironment.CLAUDE_CONFIG_DIR;
-  // Codex applies include_only after set; retain the safe override names as well.
-  // Default exclusions remove *TOKEN*, so bypass them only behind this exact name list.
-  if (hfShell)
-    config(
-      'shell_environment_policy.include_only',
-      JSON.stringify([...Object.keys(shellEnvironment), 'HF_TOKEN', 'HF_ENDPOINT']),
-    );
-  config('shell_environment_policy.set', table(shellEnvironment));
-  config('sandbox_workspace_write.writable_roots', '[]');
-  // A hosted machine holds no provider key and the server caps its step, so its shell commands
-  // may use the network, and it is given Merv's internet reads. Codex's own web search stays
-  // disabled, and a sealed review stays read-only and offline.
-  config('sandbox_workspace_write.network_access', profile.hosted ? 'true' : 'false');
-  config('sandbox_workspace_write.exclude_tmpdir_env_var', 'true');
-  config('sandbox_workspace_write.exclude_slash_tmp', 'true');
-  // Codex sees what Merv's server lists to this session, as Claude does through the whole
-  // mcp__merv prefix: every read in the project and the writes this lease was granted. Sessions
-  // enforce the manifest and its argument bindings on every call, and a fixed list here hid the
-  // project reads a worker's own brief named. Every listed tool runs unprompted, since nobody
-  // answers a prompt under approval policy never; the internet reads stay off where the shell
-  // has no network.
-  const offline = internet(profile, request.session)
-    ? ''
-    : `,disabled_tools=${JSON.stringify(INTERNET_READS)}`;
-  config(
-    'mcp_servers',
-    // The handshake waits behind the server's writer queue under load; Codex's default 30 s failed every review launch.
-    // A call waits 60 s by default, and a web search can take 150 s (its turn, Tavily, then the
-    // fallback): a worker that gave up would leave Merv finishing, and paying for, the call.
-    `{merv={url=${quote(url)},bearer_token_env_var=${quote(sessionTokenVariable)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,default_tools_approval_mode="approve"${offline}}${nativeServers(
-      request,
-    )
-      .map(
-        (server) =>
-          `,${server.name}={url=${quote(server.url)},bearer_token_env_var=${quote(server.bearerEnv)},required=true,startup_timeout_sec=120,tool_timeout_sec=180,default_tools_approval_mode="approve"}`,
-      )
-      .join('')}}`,
-  );
-  if (profile.model !== undefined) args.push('--model', profile.model);
-  if (profile.effort !== undefined) config('model_reasoning_effort', quote(profile.effort));
-  if (profile.hosted) {
-    config('model_provider', quote('merv'));
-    config(
-      'model_providers.merv',
-      table({
-        name: 'Merv',
-        base_url: `${new URL(url).origin}/codex-model`,
-        env_key: sessionTokenVariable,
-        wire_api: 'responses',
-      }),
-    );
-  }
-  // `exec resume` takes exec's own options before it and reads the next turn from stdin.
-  args.push(...(request.resume ? ['resume', request.resume] : []), '-');
-  return args;
-}
-
-/**
- * Claude Code headless. The same shape as the Codex launch: the Merv server alone, its
- * bearer read from the process environment and never from an argument, no user or
- * project settings, hooks, plugins or skills, and no permission prompts because there
- * is nobody to answer them. A read-only lease keeps only the read tools; the server
- * enforces the fixed manifest and argument bindings on every call either way.
- */
-function claudeArgs(
-  profile: Extract<RunnerProfile, { harness: 'claude' }>,
-  request: LaunchRequest,
-  url: string,
-): string[] {
-  const readOnly = request.session.execution.policy.readOnly;
-  const offline = sealed(request.session);
-  const builtIn = offline
-    ? ['Read', 'Glob', 'Grep']
-    : ['Read', 'Glob', 'Grep', 'Bash', 'Write', 'Edit'];
-  const servers = [...(readOnly ? [] : (profile.servers ?? [])), ...nativeServers(request)];
-  return [
-    '--print',
-    '--output-format',
-    'stream-json',
-    '--verbose',
-    // Thinking and text arrive while they are written, for the live view.
-    '--include-partial-messages',
-    ...(request.resume ? ['--resume', request.resume] : []),
-    // An inquiry visit forks the conversation it resumes: a work visit of its thread may be
-    // running the same one in this home meanwhile, and the fork leaves that one alone.
-    ...(request.resume && inquiring(request.session) ? ['--fork-session'] : []),
-    ...(request.session.continuity ? [] : ['--no-session-persistence']),
-    '--setting-sources',
-    '',
-    '--strict-mcp-config',
-    '--mcp-config',
-    JSON.stringify({
-      mcpServers: {
-        merv: {
-          type: 'http',
-          url,
-          headers: { Authorization: `Bearer \${${sessionTokenVariable}}` },
-        },
-        ...Object.fromEntries(
-          servers.map((server) => [
-            server.name,
-            {
-              type: 'http',
-              url: server.url,
-              headers: { Authorization: `Bearer \${${server.bearerEnv}}` },
-            },
-          ]),
-        ),
-      },
-    }),
-    '--tools',
-    builtIn.join(','),
-    '--allowedTools',
-    [...builtIn, 'mcp__merv', ...servers.map((server) => `mcp__${server.name}`)].join(','),
-    // A sealed review has no shell, so nothing else of it reaches the network.
-    ...(offline ? ['--disallowedTools', INTERNET_READS.map(claudeToolName).join(',')] : []),
-    '--dangerously-skip-permissions',
-    '--model',
-    profile.model ?? 'opus',
-    ...(profile.effort !== undefined ? ['--effort', profile.effort] : []),
-  ];
 }
 
 function protectLogging(spec: LaunchSpec): LaunchSpec {
@@ -539,8 +307,7 @@ const nativeServers = (request: LaunchRequest) =>
 /** Whether a launch is given Merv's internet reads: only where its shell has the network already,
  * a hosted Codex launch or a Claude one, and never a sealed review. */
 const internet = (profile: RunnerProfile, session: LaunchRequest['session']): boolean =>
-  !sealed(session) &&
-  (profile.harness === 'claude' || (profile.harness === 'codex' && !!profile.hosted));
+  !sealed(session) && launcherOf(profile).networked(profile);
 
 /**
  * What a launch is told of reads beyond the project, naming the internet reads only where it is
@@ -550,14 +317,8 @@ const internet = (profile: RunnerProfile, session: LaunchRequest['session']): bo
 const searching = (web: boolean): string =>
   `For what this project does not hold, use the tools you are listed for outside sources rather than your memory, and cite what you rely on as each tool's description says.${web ? ' web.search and web.extract find and read the public web.' : ''}`;
 
-/**
- * How long a launch whose own handoff closed its session may take to end by itself. Codex writes
- * a closing message after the handoff tool returns and prints its `turn.completed` only then, so
- * it gets a minute; any other harness is stopped at once (a Claude run so stopped before its
- * `result` event reports no usage).
- */
-export const handoffGraceMs = (profile: RunnerProfile) =>
-  profile.harness === 'codex' ? codexHandoffGraceMs : 0;
+/** How long a launch whose own handoff closed its session may take to end by itself. */
+export const handoffGraceMs = (profile: RunnerProfile) => launcherOf(profile).handoffGraceMs;
 
 /** Pure launch preparation. The supervisor owns availability checks, spawning and teardown. */
 export function buildLaunch(
@@ -567,6 +328,7 @@ export function buildLaunch(
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): LaunchSpec {
   check(profile.enabled, 'runner_profile_disabled', 'Runner profile is disabled');
+  const launcher = launcherOf(profile);
   check(
     sessionSecretPattern.test(request.secret),
     'invalid_runner_launch',
@@ -598,7 +360,7 @@ export function buildLaunch(
     'Session assignment and fixed execution do not agree',
   );
   check(
-    profile.harness !== 'command' || !session.execution.policy.readOnly,
+    !!launcher.agent || !session.execution.policy.readOnly,
     'unsupported_read_only',
     'Command profiles have no filesystem sandbox and cannot execute read-only leases',
   );
@@ -608,50 +370,30 @@ export function buildLaunch(
   check(parsedConnections.success, 'invalid_runner_launch', 'Invalid private MCP connections');
   request = { ...request, connections: parsedConnections.data! };
   check(
-    profile.harness !== 'command' || request.connections!.length === 0,
+    !!launcher.agent || request.connections!.length === 0,
     'invalid_runner_launch',
     'Command profiles cannot receive MCP connections',
   );
-  if (profile.harness === 'claude' && !session.execution.policy.readOnly) {
-    const native = nativeServers(request);
-    check(
-      !(profile.servers ?? []).some((server) =>
-        native.some(
-          (connection) =>
-            server.name === connection.name || server.bearerEnv === connection.bearerEnv,
-        ),
-      ),
-      'invalid_runner_launch',
-      'Private MCP connection conflicts with configured server',
-    );
-  }
   check(
     request.resume === undefined ||
-      (profile.harness !== 'command' && conversationIdPattern.test(request.resume)),
+      (!!launcher.agent && conversationIdPattern.test(request.resume)),
     'invalid_runner_launch',
     'Only a Claude or Codex launch resumes, a conversation named by its UUID',
   );
   const url = endpoint(request.mcpUrl);
-  const safeEnvironment =
-    profile.harness === 'codex' && profile.isolatedLauncher
-      ? {
-          PATH: '/usr/bin:/bin',
-          HOME: '/home/assignment',
-          CODEX_HOME: assignmentCodexHome,
-          USER: 'assignment',
-          TMPDIR: '/tmp',
-          LANG: 'C.UTF-8',
-        }
-      : runtimeEnvironment(environment);
-  const args =
-    profile.harness === 'codex'
-      ? codexArgs(profile, request, url, safeEnvironment)
-      : profile.harness === 'claude'
-        ? claudeArgs(profile, request, url)
-        : [...(profile.args ?? [])];
+  const parts = launcher.launch(profile, {
+    request,
+    url,
+    runtime: runtimeEnvironment(environment),
+    environment,
+    sealed: sealed(session),
+    inquiry: inquiring(session),
+    internet: internet(profile, session),
+    servers: nativeServers(request),
+  });
   const inquiry = inquiring(session);
   check(
-    !inquiry || (request.resume !== undefined && profile.harness !== 'command'),
+    !inquiry || (request.resume !== undefined && !!launcher.agent),
     'invalid_runner_launch',
     'An inquiry visit runs only on the conversation it asks',
   );
@@ -681,71 +423,27 @@ export function buildLaunch(
         : session.execution.policy.readOnly
           ? 'The workspace is yours to compute in. Run what you are judging rather than reading about it, and say in your handoff what you checked yourself and what you took on trust. Nothing you write there is recorded; your handoff is the only thing this lease writes.'
           : 'Use the provided workspace for local work. Preserve results through the tools specified by the assignment.',
-    ...(profile.harness === 'claude' && !inquiry
-      ? [
-          'This session ends the moment you give a final reply, and nothing wakes it later: there is no timer, no callback and no next turn. To wait for remote work, wait inside this session (a shell sleep loop that checks again), then finish the handoff before you reply.',
-        ]
-      : []),
+    ...(parts.note && !inquiry ? [parts.note] : []),
     'Frozen assignment:',
     JSON.stringify(session.assignment),
     '',
   ].join('\n');
-  // A further server's bearer travels the same way as Merv's: by name, from the
-  // runner's own environment, never as an argument.
-  const bearers: Record<string, string> = {};
-  if (profile.harness === 'claude' && !request.session.execution.policy.readOnly)
-    for (const server of profile.servers ?? []) {
-      const value = environment[server.bearerEnv];
-      check(
-        !!value,
-        'invalid_runner_launch',
-        `No bearer in ${server.bearerEnv} for ${server.name}`,
-      );
-      bearers[server.bearerEnv] = value;
-    }
+  // Bearers travel by name, from the runner's own environment, never as an argument.
+  const bearers: Record<string, string> = { ...parts.bearers };
   for (const [index, connection] of (request.connections ?? []).entries())
     bearers[`MERV_NATIVE_MCP_TOKEN_${index}`] = connection.bearer;
-  // Claude's Bash inherits its environment, and its shell has the network: the MCP client
-  // reads the bearers there, and the script Claude Code sources before every Bash command
-  // unsets them, as Codex's shell_environment_policy keeps them from its shell.
-  const shellEnvFile = profile.harness === 'claude' ? request.shellEnvFile : undefined;
-  check(
-    profile.harness !== 'claude' || (!!shellEnvFile && isAbsolute(shellEnvFile)),
-    'invalid_runner_launch',
-    'A Claude launch requires a private shell environment file',
-  );
   return protectLogging({
-    executable:
-      profile.harness === 'codex' && profile.isolatedLauncher
-        ? profile.isolatedLauncher
-        : profile.executable,
-    args:
-      profile.harness === 'codex' && profile.isolatedLauncher
-        ? ['--', profile.executable, ...args]
-        : args,
+    executable: parts.executable,
+    args: parts.args,
     cwd: request.cwd,
     stdin,
     secrets: Object.values(bearers),
-    ...(shellEnvFile && {
+    ...(parts.shellEnvFile && {
       shellEnv: `unset ${[sessionTokenVariable, ...Object.keys(bearers)].join(' ')}\n`,
     }),
     env: {
-      ...safeEnvironment,
+      ...parts.env,
       ...bearers,
-      ...(profile.harness === 'codex' &&
-      profile.hosted &&
-      !sealed(session) &&
-      request.hfToken &&
-      request.hfEndpoint
-        ? { HF_TOKEN: request.hfToken, HF_ENDPOINT: request.hfEndpoint }
-        : {}),
-      // The handshake waits behind the server's writer queue under load, as it did for
-      // Codex; a server that lists no tools in time looks connected and useless.
-      ...(shellEnvFile && {
-        MCP_TIMEOUT: '120000',
-        MCP_TOOL_TIMEOUT: '600000',
-        CLAUDE_ENV_FILE: shellEnvFile,
-      }),
       [mcpUrlVariable]: url,
       [sessionTokenVariable]: request.secret,
     },

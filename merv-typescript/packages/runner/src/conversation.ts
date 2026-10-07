@@ -13,8 +13,9 @@ import {
 import { join, relative, sep } from 'node:path';
 import { MAX_TRANSCRIPT_BYTES, MervError } from '@merv/contracts';
 import type { SessionConversationDeclaration } from '@merv/sessions/types';
-import { type Harness, harnessOf, type HarnessName } from './harness/index.js';
-import { conversationIdPattern, type RunnerProfile } from './profiles.js';
+import { type Harness, harnessOf, type HarnessName, launcherOf } from './harness/index.js';
+import { conversationIdPattern } from './harness/shared.js';
+import type { RunnerProfile } from './profiles.js';
 import { blankPattern } from './transcript.js';
 import { assignmentUser } from './workspaces.js';
 
@@ -34,7 +35,7 @@ function home(profile: RunnerProfile, runDirectory: string, environment: NodeJS.
 }
 /** The isolated assignment owns its home; everywhere else the runner does. */
 const owner = (profile: RunnerProfile) =>
-  profile.harness === 'codex' && profile.isolatedLauncher ? assignmentUser : undefined;
+  launcherOf(profile).isolated(profile) ? assignmentUser : undefined;
 
 /**
  * The conversation as kept: each JSON line that holds a bearer or an exact secret (≥ 16
