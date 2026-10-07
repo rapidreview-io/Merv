@@ -22,6 +22,7 @@ import {
   type Scope,
   type State,
   type Transaction,
+  type WorkflowRecord,
   type Workflows,
   type WorkRoute,
 } from '@merv/contracts';
@@ -47,7 +48,7 @@ import {
   TERMINAL,
 } from './program.js';
 import { handleFor, register, unregister } from './policy.js';
-import { attach, create, exhibit, submitReview, transition } from './commands.js';
+import { attach, closeUnstarted, create, exhibit, submitReview, transition } from './commands.js';
 import {
   attemptMetadata,
   migrateExperiments,
@@ -123,6 +124,7 @@ export class ExperimentService implements Experiments {
   readonly attach = bound(this, attach);
   readonly exhibit = bound(this, exhibit);
   readonly transition = bound(this, transition);
+  readonly closeUnstarted = bound(this, closeUnstarted);
   readonly submitReview = bound(this, submitReview);
   closed = false;
   sandboxes?: Pick<Sandboxes, 'captures'>;
@@ -422,21 +424,65 @@ export class ExperimentService implements Experiments {
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
       parseExperimentInput(experimentGetSchema, { experimentId: id });
-      return await this.experiment(caller, await this.row(caller, id, tx), tx);
+      return (await this.experiments(caller, [await this.row(caller, id, tx)], tx))[0];
     });
   }
-  /** The experiment a row describes, for a caller already authorized to read it. */
-  private async experiment(caller: Caller, row: ExperimentRow, tx: Transaction) {
-    const workflow = await this.workflows.get(caller, row.id, tx);
-    const starts = await this.workflows.workStarts(caller, row.id, tx);
-    const attempts = (
-      await tx.all<AttemptRow>(
-        'SELECT * FROM experiment_attempts WHERE experiment_id=? ORDER BY attempt_index',
-        row.id,
-      )
-    )
-      .map(attemptMetadata)
-      .map((attempt) => ({
+  /**
+   * The experiments rows describe, in their order, for a caller already authorized to read
+   * them: each table is read once for all of them.
+   */
+  private async experiments(
+    caller: Caller,
+    rows: ExperimentRow[],
+    tx: Transaction,
+  ): Promise<Experiment[]> {
+    if (!rows.length) return [];
+    const ids = JSON.stringify(rows.map((row) => row.id));
+    // One experiment reads only its own workflow; several read every workflow fact at once.
+    const [one] = rows;
+    const records: Map<string, Pick<WorkflowRecord, 'snapshot' | 'workStarts'>> = rows.length === 1
+      ? new Map([
+          [
+            one.id,
+            {
+              snapshot: await this.workflows.get(caller, one.id, tx),
+              workStarts: await this.workflows.workStarts(caller, one.id, tx),
+            },
+          ],
+        ])
+      : await this.workflows.records(
+          caller,
+          rows.map((row) => row.id),
+          tx,
+        );
+    const grouped = async <T extends { experiment_id: string }>(sql: string) => {
+      const found = new Map<string, T[]>();
+      for (const item of await tx.all<T>(sql, ids))
+        found.set(item.experiment_id, [...(found.get(item.experiment_id) ?? []), item]);
+      return found;
+    };
+    const within = 'experiment_id IN (SELECT jsonb_array_elements_text(?::jsonb))';
+    const attemptRows = await grouped<AttemptRow>(
+      `SELECT * FROM experiment_attempts WHERE ${within} ORDER BY experiment_id,attempt_index`,
+    );
+    const evidenceRows = await grouped<{
+      experiment_id: string;
+      record: string;
+      selected: number;
+    }>(
+      `SELECT e.experiment_id,e.record,CASE WHEN s.evidence_id=e.id THEN 1 ELSE 0 END AS selected
+    FROM experiment_evidence e LEFT JOIN experiment_slots s ON s.experiment_id=e.experiment_id AND s.attempt_index=e.attempt_index AND s.role=e.role AND s.path=e.path
+    WHERE e.${within} ORDER BY e.experiment_id,e.sequence`,
+    );
+    const submissionRows = await grouped<SubmissionRow & { experiment_id: string }>(
+      `SELECT experiment_id,record FROM experiment_submissions WHERE ${within} ORDER BY experiment_id,attempt_index,stage,round`,
+    );
+    const workflows = rows.map((row) => records.get(row.id)!.snapshot);
+    const ends = await this.workflows.ends(workflows, tx);
+    return await mapAsync(rows, async (row, index) => {
+      const workflow = workflows[index];
+      const starts = records.get(row.id)!.workStarts;
+      const attempts = (attemptRows.get(row.id) ?? []).map(attemptMetadata).map((attempt) => ({
         ...attempt,
         startedAt:
           starts
@@ -448,51 +494,39 @@ export class ExperimentService implements Experiments {
             )
             .sort((a, b) => a.startedAt.localeCompare(b.startedAt))[0]?.startedAt ?? null,
       }));
-    const attempt = attempts.find((attempt) => attempt.index === row.attempt_index)!;
-    const evidence = (
-      await tx.all<{ record: string; selected: number }>(
-        `SELECT e.record,CASE WHEN s.evidence_id=e.id THEN 1 ELSE 0 END AS selected
-    FROM experiment_evidence e LEFT JOIN experiment_slots s ON s.experiment_id=e.experiment_id AND s.attempt_index=e.attempt_index AND s.role=e.role AND s.path=e.path
-    WHERE e.experiment_id=? ORDER BY e.sequence`,
-        row.id,
-      )
-    ).map(
-      ({ record, selected }) =>
-        ({ figureIds: [], ...JSON.parse(record), current: !!selected }) as ExperimentEvidence,
-    );
-    const submissions = (
-      await tx.all<SubmissionRow>(
-        'SELECT record FROM experiment_submissions WHERE experiment_id=? ORDER BY attempt_index,stage,round',
-        row.id,
-      )
-    ).map(submissionMetadata);
-    return {
-      id: row.id,
-      projectId: row.project_id,
-      name: row.name,
-      intent: row.intent,
-      details: row.details,
-      ownerId: row.owner_id,
-      createdBy: row.created_by,
-      createdAt: row.created_at,
-      ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
-      workflow,
-      ...(await this.workflows.ends([workflow], tx))[0],
-      attempt,
-      attempts,
-      evidence,
-      submissions,
-      reviewId: row.review_id,
-      conclusion: row.conclusion,
-      // Only what this attempt's own compute captured, under any of its states' epochs.
-      captureArtifactIds:
-        (await this.sandboxes?.captures(
-          caller.projectId,
-          row.id,
-          tx,
-          captureEpochs(attempt, workflow),
-        )) ?? [],
-    };
+      const attempt = attempts.find((attempt) => attempt.index === row.attempt_index)!;
+      const evidence = (evidenceRows.get(row.id) ?? []).map(
+        ({ record, selected }) =>
+          ({ figureIds: [], ...JSON.parse(record), current: !!selected }) as ExperimentEvidence,
+      );
+      return {
+        id: row.id,
+        projectId: row.project_id,
+        name: row.name,
+        intent: row.intent,
+        details: row.details,
+        ownerId: row.owner_id,
+        createdBy: row.created_by,
+        createdAt: row.created_at,
+        ...(row.workspace === 'git' ? { workspace: 'git' as const } : {}),
+        workflow,
+        ...ends[index],
+        attempt,
+        attempts,
+        evidence,
+        submissions: (submissionRows.get(row.id) ?? []).map(submissionMetadata),
+        reviewId: row.review_id,
+        conclusion: row.conclusion,
+        // Only what this attempt's own compute captured, under any of its states' epochs.
+        captureArtifactIds:
+          (await this.sandboxes?.captures(
+            caller.projectId,
+            row.id,
+            tx,
+            captureEpochs(attempt, workflow),
+          )) ?? [],
+      };
+    });
   }
   /**
    * What Code holds for an experiment: its pinned base, where a base stands, its acceptance.
@@ -514,12 +548,13 @@ export class ExperimentService implements Experiments {
     caller = structuredClone(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      return await mapAsync(
+      return await this.experiments(
+        caller,
         await tx.all<ExperimentRow>(
           'SELECT * FROM experiments WHERE project_id=? ORDER BY created_at,id',
           caller.projectId,
         ),
-        async (row) => await this.experiment(caller, row, tx),
+        tx,
       );
     });
   }

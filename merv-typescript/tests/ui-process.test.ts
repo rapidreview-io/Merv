@@ -351,5 +351,5 @@ test('a record on a retired version reads its program from any version still reg
   // Its stages are drawn from the registered version, not a bare dot.
   assert.ok(document.querySelector('.stage-mark svg'));
   assert.equal(document.querySelector('.stage-mark .status-dot'), null);
-  unmount();
+  await unmount();
 });

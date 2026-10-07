@@ -15,6 +15,7 @@
  * a dynamic import.
  */
 import { readFileSync } from 'node:fs';
+import { after } from 'node:test';
 import { JSDOM } from 'jsdom';
 import type { ReactElement } from 'react';
 
@@ -203,9 +204,13 @@ export async function mount(element: ReactElement): Promise<void> {
   });
   await settle(0);
 }
+/**
+ * Unmounts the view and forgets this test's fixtures. Everything is reset before React is
+ * waited for, so an unmount a test does not wait for never takes the next view's root or
+ * fixtures with it: a view left mounted keeps polling and its file's process never exits.
+ */
 export async function unmount(): Promise<void> {
-  if (root) await act(async () => root!.unmount());
-  host?.remove();
+  const [mounted, placed] = [root, host];
   root = undefined;
   host = undefined;
   handlers.clear();
@@ -214,7 +219,16 @@ export async function unmount(): Promise<void> {
   aborted.length = 0;
   offset = 0;
   media.wide = true;
+  if (mounted) await act(async () => mounted.unmount());
+  placed?.remove();
+  // What unmounting itself asked or aborted is no test's, unless a next view already mounted.
+  if (!root) {
+    requests.length = 0;
+    aborted.length = 0;
+  }
 }
+// A test that fails before its own unmount leaves no view polling once the file's tests end.
+after(unmount);
 /** The page's own stylesheet, which jsdom cascades by specificity; taken away after the test. */
 export const styled = () => {
   const sheet = document.createElement('style');

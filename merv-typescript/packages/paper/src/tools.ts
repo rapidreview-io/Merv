@@ -38,12 +38,12 @@ export const paperToolsPlugin = {
             return input.kind
               ? input.history
                 ? await paper.history(caller, input.kind)
-                : (await paper.documents(caller))[input.kind]
+                : await paper.document(caller, input.kind)
               : await paper.read(caller);
           check(input.kind, 'invalid_paper_input', 'Name the kind of the section to read');
           const document =
             input.revision === undefined
-              ? (await paper.documents(caller))[input.kind].current
+              ? (await paper.document(caller, input.kind)).current
               : await paper.revision(caller, input.kind, input.revision);
           check(document, 'not_found', 'Revision not found', 404);
           if (input.section === undefined) return document;

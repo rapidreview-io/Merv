@@ -34,6 +34,7 @@
     "tests/ui-markdown.test.ts",
     "tests/ui-needs-you.test.ts",
     "tests/ui-render-files.test.ts",
+    "tests/ui-render-harness.test.ts",
     "tests/ui-paper.test.ts",
     "tests/ui-reflections.test.ts",
     "tests/ui-reviews.test.ts",

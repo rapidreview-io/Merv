@@ -46,6 +46,17 @@ export interface Experiments {
   admits(caller: Caller, names: readonly string[], tx?: Transaction): Promise<void>;
   attach(caller: Caller, input: ExperimentAttach, tx?: Transaction): Promise<ExperimentEvidence>;
   transition(caller: Caller, input: ExperimentTransition, tx?: Transaction): Promise<Experiment>;
+  /**
+   * Abandons an experiment of this project that nobody started (still planned, no work
+   * started), with this reason; true when it did. False, with nothing changed, for anything else.
+   */
+  closeUnstarted(
+    caller: Caller,
+    experimentId: string,
+    reason: string,
+    requestId: string,
+    tx: Transaction,
+  ): Promise<boolean>;
   exhibit(caller: Caller, experimentId: string, tx?: Transaction): Promise<ExperimentExhibit>;
   /** The derived process graph, so a record page reads its gate with the record. */
   process(caller: Caller, experimentId: string): Promise<ProcessGraph>;

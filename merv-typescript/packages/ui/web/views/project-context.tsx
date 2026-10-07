@@ -9,11 +9,8 @@ import { useShell } from '../shell';
 /** The project Introduction, which Paper serves from the paper's Problem: edited there. */
 export function ProjectIntroduction() {
   const paper = useShell().data?.rows.some((row) => row.view.kind === 'paper');
-  const problem = useTool<PaperDocument>(
-    paper ? 'paper.read' : null,
-    { kind: 'problem' },
-    { every: 8000 },
-  );
+  // Read when the page opens: the Problem changes on the paper, which a visit there rereads.
+  const problem = useTool<PaperDocument>(paper ? 'paper.read' : null, { kind: 'problem' });
   const text = problem.data ? introductionFrom(problem.data.current) : '';
   return (
     <section className="stack" aria-label="Project introduction">

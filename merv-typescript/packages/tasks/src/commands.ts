@@ -545,6 +545,37 @@ export async function markFailed(
   });
 }
 
+/**
+ * Fails a task of this project that nobody started, for a coordinator whose selected work
+ * waits on an input that ended without success: one still in progress with no work ever
+ * started on it. False, with nothing changed, for anything else.
+ */
+export async function closeUnstarted(
+  ctx: TasksContext,
+  caller: Caller,
+  taskId: string,
+  reason: string,
+  requestId: string,
+  tx: Transaction,
+): Promise<boolean> {
+  const row = await tx.get<{ id: string }>(
+    'SELECT id FROM tasks WHERE id=? AND project_id=?',
+    taskId,
+    caller.projectId,
+  );
+  if (!row) return false;
+  const current = await ctx.workflows.get(caller, row.id, tx);
+  if (current.state !== 'in_progress') return false;
+  if ((await ctx.workflows.workStarts(caller, row.id, tx)).length) return false;
+  await markFailed(
+    ctx,
+    caller,
+    { taskId, expectedRevision: current.revision, reason, requestId },
+    tx,
+  );
+  return true;
+}
+
 export async function submitDelivery(
   ctx: TasksContext,
   caller: Caller,

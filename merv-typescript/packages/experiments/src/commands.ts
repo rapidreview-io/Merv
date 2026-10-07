@@ -428,6 +428,44 @@ export async function exhibit(
   });
 }
 
+/**
+ * Abandons an experiment of this project that nobody started, for a coordinator whose selected
+ * work waits on an input that ended without success: one still planned with no work ever
+ * started on it. False, with nothing changed, for anything else.
+ */
+export async function closeUnstarted(
+  ctx: ExperimentsContext,
+  caller: Caller,
+  experimentId: string,
+  reason: string,
+  requestId: string,
+  tx: Transaction,
+): Promise<boolean> {
+  ctx.open();
+  const row = await tx.get<{ id: string }>(
+    'SELECT id FROM experiments WHERE id=? AND project_id=?',
+    experimentId,
+    caller.projectId,
+  );
+  if (!row) return false;
+  const current = await ctx.workflows.get(caller, row.id, tx);
+  if (current.state !== 'planned') return false;
+  if ((await ctx.workflows.workStarts(caller, row.id, tx)).length) return false;
+  await transition(
+    ctx,
+    caller,
+    {
+      experimentId,
+      expectedRevision: current.revision,
+      transition: 'abandon',
+      evidence: { reason },
+      requestId,
+    },
+    tx,
+  );
+  return true;
+}
+
 export async function transition(
   ctx: ExperimentsContext,
   caller: Caller,

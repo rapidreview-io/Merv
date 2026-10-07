@@ -186,7 +186,7 @@ async function fixture(
   const pump = async () => {
     await app.ctx.domainEvents.drain();
     const status = (await app.ctx.domainEvents.status()).find(
-      (item) => item.id === 'research.automatic.v3',
+      (item) => item.id === 'research.automatic.v4',
     );
     assert.equal(status?.error ?? null, null, JSON.stringify(status));
   };
@@ -798,10 +798,11 @@ test('publication-aware automation upgrades the durable subscription and wakes e
     'paper.patched',
     'actor.permissions_changed',
   ];
-  // The consumers earlier releases left behind, before stale publications woke it as well.
+  // The consumers earlier releases left behind, before stale publications and departures woke it.
   for (const [id, more] of [
     ['research.automatic.v1', []],
     ['research.automatic.v2', ['code.publication_verified']],
+    ['research.automatic.v3', ['code.publication_verified', 'code.publication_stale']],
   ] as const) {
     const release = await f.app.ctx.domainEvents.subscribe({
       id,
@@ -1045,4 +1046,138 @@ test('changed definitions wait for owner acceptance and ending a cycle stops sub
   await f.pump();
   assert.equal((await f.research.get(f.owner, successor.id)).workflow.state, 'abandoned');
   assert.equal((await f.app.ctx.reflections.list(f.owner)).length, 1);
+});
+
+/** What the caller is asked of a record on Needs you, as Workflows' overview answers it. */
+const yoursOn = async (
+  f: Awaited<ReturnType<typeof fixture>>,
+  caller: Caller,
+  instanceId: string,
+) =>
+  (await f.app.ctx.workflows.overview(caller, undefined, { open: true })).workflows.find(
+    (item) => item.instanceId === instanceId,
+  )?.yours;
+
+test('a run stopped by a changed definition is its owner’s move', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const work = await f.task();
+  const cycle = await f.create([work.id]);
+  await f.pump();
+  await f.define();
+  await f.failTask(work.id);
+  await f.pump();
+  await f.approve(cycle.id, next('changed'));
+  const successor = (await f.research.get(f.owner, cycle.id)).successorId!;
+  assert.equal(
+    (await f.research.get(f.owner, successor)).automation!.blocker!.code,
+    'research_definition_changed',
+  );
+  assert.match((await yoursOn(f, f.owner, successor))?.ask ?? '', /changed definition/);
+});
+
+test('a run whose delegation lapsed with its owner is an admin’s move', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const source = await f.issue('producer');
+  const work = await f.task([], source);
+  const blocked = await f.create([work.id], {}, source);
+  await f.pump();
+  await f.app.ctx.scope.credentials.revokeActor(f.owner, source.actorId);
+  await f.failTask(work.id);
+  await f.pump();
+  assert.ok((await f.research.get(f.owner, blocked.id)).automation!.blocker);
+  assert.match((await yoursOn(f, f.owner, blocked.id))?.ask ?? '', /delegation/);
+});
+
+test('an owner who decides to stop clears research_needs_owner by ending the cycle', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const input = await f.task();
+  const first = await f.create([input.id], { maxCycles: 5 });
+  await f.finishTask(input.id);
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  await f.pump();
+  await f.approve(first.id, {
+    ...stop,
+    next: { decision: 'stop', reason: 'needs_owner', rationale: 'Choose a dataset.' },
+  });
+  const done = await f.research.get(f.owner, first.id);
+  assert.equal(done.automation!.blocker!.code, 'research_needs_owner');
+  const end = {
+    researchId: first.id,
+    expectedRevision: done.workflow.revision,
+    outcome: 'abandoned' as const,
+    reason: 'Decided to stop here.',
+    requestId: f.id(),
+  };
+  const ended = await f.research.end(f.owner, end);
+  assert.equal(ended.workflow.state, 'complete');
+  assert.equal(ended.automation!.blocker, null);
+  assert.equal(await yoursOn(f, f.owner, first.id), undefined);
+  // The same request replays; a cycle that asks nothing still cannot be ended again.
+  assert.equal((await f.research.end(f.owner, end)).automation!.blocker, null);
+  await assert.rejects(f.research.end(f.owner, { ...end, requestId: f.id() }), {
+    code: 'invalid_transition',
+  });
+});
+
+test('research_needs_owner goes to admins once its owner has left', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const writer = await f.issue('producer');
+  const input = await f.task([], writer);
+  const first = await f.create([input.id], { maxCycles: 5 }, writer);
+  await f.finishTask(input.id);
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  await f.pump();
+  await f.approve(first.id, {
+    ...stop,
+    next: { decision: 'stop', reason: 'needs_owner', rationale: 'Choose a dataset.' },
+  });
+  assert.equal(
+    (await f.research.get(f.owner, first.id)).automation!.blocker!.code,
+    'research_needs_owner',
+  );
+  assert.ok((await yoursOn(f, writer, first.id))?.ask);
+  assert.equal(await yoursOn(f, f.owner, first.id), undefined);
+  await f.app.ctx.scope.credentials.revokeActor(f.owner, writer.actorId);
+  await f.pump();
+  assert.match((await yoursOn(f, f.owner, first.id))?.ask ?? '', /Decide what comes next/);
+  // An admin's cycle that follows it answers it, and no later departure brings it back.
+  await f.research.create(f.owner, {
+    name: 'Chosen dataset',
+    previousCycleId: first.id,
+    requestId: f.id(),
+  });
+  await f.app.ctx.scope.credentials.revokeActor(f.owner, (await f.issue('producer')).actorId);
+  await f.pump();
+  assert.equal((await f.research.get(f.owner, first.id)).automation!.blocker, null);
+  assert.equal(await yoursOn(f, f.owner, first.id), undefined);
+});
+
+test('each owner closes only its own work that nobody started', async (t) => {
+  const f = await fixture(t);
+  const task = await f.task();
+  const experiment = await f.experiment();
+  const close = async (owner: 'tasks' | 'experiments', id: string) =>
+    await f.app.ctx.state.transaction(
+      async (tx) => await f.app.ctx[owner].closeUnstarted(f.owner, id, 'Not run.', f.id(), tx),
+    );
+  assert.equal(await close('tasks', experiment.id), false);
+  assert.equal(await close('experiments', task.id), false);
+  assert.equal(await close('tasks', task.id), true);
+  assert.equal(await close('experiments', experiment.id), true);
+  assert.equal((await f.app.ctx.tasks.get(f.owner, task.id)).workflow.state, 'failed');
+  assert.equal(
+    (await f.app.ctx.experiments.get(f.owner, experiment.id)).workflow.state,
+    'abandoned',
+  );
+  // Ended work is not closed again.
+  assert.equal(await close('tasks', task.id), false);
+  assert.equal(await close('experiments', experiment.id), false);
 });
