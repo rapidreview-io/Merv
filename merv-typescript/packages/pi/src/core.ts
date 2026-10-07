@@ -170,7 +170,7 @@ export class PiCore {
     readonly fleet: Fleet,
     readonly tools: Tools,
     readonly blobs: Blobs,
-    config: PiConfig = {},
+    config: PiConfig,
     readonly clock: () => number = Date.now,
   ) {
     const parsed = piConfig.safeParse(config);
@@ -185,9 +185,9 @@ export class PiCore {
     this.tokens = piTokens(state, () => this.time(), this.config.dailyTokensPerPerson);
     this.secret = process.env[this.config.secretEnv] ?? '';
     check(
-      !this.config.enabled || (this.secret.length >= 32 && this.config.baseUrl),
+      this.secret.length >= 32 && this.config.baseUrl,
       'pi_configuration',
-      'Enabled Pi needs a private signing secret and an API URL',
+      'Pi needs a private signing secret and an API URL',
       503,
     );
     if (this.config.baseUrl) {
@@ -207,12 +207,7 @@ export class PiCore {
   }
 
   ready(): void {
-    check(
-      this.config.enabled && !this.closed,
-      'pi_unavailable',
-      'Agent conversations are unavailable',
-      503,
-    );
+    check(!this.closed, 'pi_unavailable', 'Agent conversations are unavailable', 503);
   }
   time(): string {
     return new Date(this.clock()).toISOString();
@@ -221,7 +216,7 @@ export class PiCore {
     return this.state.snapshot(() => this.state.transaction(fn));
   }
   get hostProject(): string {
-    return this.config.host!.projectId;
+    return this.config.host.projectId;
   }
   /** One host per person per project (the ruling). */
   key(userId: string, projectId: string): string {

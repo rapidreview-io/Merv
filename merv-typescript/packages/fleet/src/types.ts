@@ -153,9 +153,8 @@ export interface ModelRelayConfig<
   name: N;
   route: string;
   token: RegExp;
-  enabled?: boolean;
   providerKey: () => string | Promise<string>;
-  authority?: {
+  authority: {
     authorize(token: string): Promise<unknown>;
     validate(grant: G): Promise<void>;
   };

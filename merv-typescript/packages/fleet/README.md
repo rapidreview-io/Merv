@@ -1,6 +1,6 @@
 # Fleet
 
-Fleet is a server-side capacity and sandbox lifecycle service; a deployment that composes it uses it, and the workflow adapter likewise (an `enabled` key in either's configuration is ignored). It does not run research work or expose allocation requests as agent tools; its list, get, drain and halt tools answer with the same redacted view as its page, without an allocation's source, person or launch ids. A trusted owner registers to validate authority, provide stable bootstrap bytes, and report when capture or checkpoint work has finished: Pi registers `pi-host` whenever it is enabled, and the optional workflow adapter registers `workflow`.
+Fleet is a server-side capacity and sandbox lifecycle service; a deployment that composes it uses it, and the workflow adapter likewise (an `enabled` key in either's configuration is ignored). It does not run research work or expose allocation requests as agent tools; its list, get, drain and halt tools answer with the same redacted view as its page, without an allocation's source, person or launch ids. A trusted owner registers to validate authority, provide stable bootstrap bytes, and report when capture or checkpoint work has finished: Pi registers `pi-host` wherever it is loaded, and the optional workflow adapter registers `workflow`.
 
 ## Where it sits
 

@@ -63,7 +63,7 @@ export function piModelRelay({ models, authority, ...config }: PiRelayConfig): P
     name: 'pi',
     route: '/pi-model/responses',
     token: /^pir_[A-Za-z0-9_-]{43}$/,
-    authority: authority && {
+    authority: {
       authorize: (token) => authority.authorize(token),
       validate: async (grant) => {
         if (!efforts.has(grant.model)) throw new Error('Pi relay grant names no catalog model');

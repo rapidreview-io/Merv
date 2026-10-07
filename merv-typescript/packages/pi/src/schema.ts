@@ -63,7 +63,8 @@ export const completionInput = commandInput
   .strict();
 export const piConfig = z
   .object({
-    enabled: z.boolean().default(false),
+    /** Ignored: loading Pi is the switch. Configurations rendered before still carry it. */
+    enabled: z.boolean().optional(),
     baseUrl: z.string().url().optional(),
     /** MERV_PI_MODELS: what a person may pick per conversation; the first is the default. Reasoning
      * models only (every GPT-5 and GPT-6): the relay sets each call's effort, and the worker asks
@@ -101,8 +102,7 @@ export const piConfig = z
     idleTimeoutSeconds: z.number().int().min(5).max(3600).default(600),
     pollIntervalMs: z.number().int().min(100).max(30_000).default(1000),
     /** The operator's Pi host project (MERV_PI_HOST_PROJECT_ID), whose service key rents every
-     * host slot; credentialEnv names the variable holding it. Required when enabled (refined
-     * below). */
+     * host slot; credentialEnv names the variable holding it. */
     host: z
       .object({
         projectId: id,
@@ -111,8 +111,7 @@ export const piConfig = z
           .regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
           .default('MERV_PI_HOST_KEY'),
       })
-      .strict()
-      .optional(),
+      .strict(),
     /** From MERV_FLEET_RUNTIMES, keyed like the Sandboxes runtime profiles; the first is the
      * default. `agent` lets the agent move to it. */
     machines: z
@@ -133,11 +132,7 @@ export const piConfig = z
     /** MERV_PI_AGENT_MOVES: offer switch_machine at all. */
     agentMoves: z.boolean().default(false),
   })
-  .strict()
-  .refine((config) => !config.enabled || config.host, {
-    message: 'Enabled Pi needs its host project',
-    path: ['host'],
-  });
+  .strict();
 export type PiConfig = z.input<typeof piConfig>;
 export type PiModelConfig = z.output<typeof piConfig>['models'][number];
 
@@ -277,3 +272,6 @@ export const toldMigration = {
   UPDATE pi_commands SET data_json = jsonb_set(data_json::jsonb, '{proposals}', kept.proposals)::text
   FROM kept WHERE pi_commands.conversation_id = kept.conversation_id AND pi_commands.id = kept.id;`,
 };
+
+/** Pi's tables, in order: what its service migrates when it starts. */
+export const piMigrations = [migration, hostMigration, usageMigration, toldMigration];

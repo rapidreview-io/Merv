@@ -47,7 +47,6 @@ async function fixture(overrides: Partial<PiRelayConfig & RelayTuning> = {}) {
   let revoked = false;
   const upstreamCalls: { url: string; init: RequestInit }[] = [];
   const relay = piRelay({
-    enabled: true,
     models: [
       { id: 'test-model', effort: 'none' },
       { id: 'reasoning-model', effort: 'low' },
@@ -474,12 +473,10 @@ test('rejects missing, expired or revoked grants and does not expose authority e
   assert.equal(response.status, 403);
   assert.doesNotMatch(await response.text(), /private/);
   assert.equal(f.upstreamCalls.length, 0);
-  const unavailable = await fixture({ authority: undefined });
-  t.after(() => unavailable.close());
-  assert.equal((await send(unavailable)).status, 503);
-  const disabled = await fixture({ enabled: false });
-  t.after(() => disabled.close());
-  assert.equal((await send(disabled)).status, 503);
+  // A relay its mount closed is unavailable.
+  const closed = await fixture();
+  closed.close();
+  assert.equal((await send(closed)).status, 503);
 });
 
 test('revalidates after asynchronous admission before accessing provider', async (t) => {
@@ -1486,7 +1483,6 @@ test('API shutdown ends an open relay stream after its drain window, as a discon
   const signals: AbortSignal[] = [];
   const api = new ApiServer({} as Scope, {} as Tools, { drainMs: 200 });
   const relay = piRelay({
-    enabled: true,
     models: [{ id: 'test-model', effort: 'none' }],
     providerKey: () => 'private-provider-key',
     authority: { authorize: async () => grant(), validate: async () => {} },

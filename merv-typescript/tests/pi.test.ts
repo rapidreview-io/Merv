@@ -2420,7 +2420,6 @@ test(
     let modelRequests = 0;
     const requests: Record<string, unknown>[] = [];
     const relay = piRelay({
-      enabled: true,
       models: f.pi.config.models,
       providerKey: () => 'server-only-test-key',
       authority: {

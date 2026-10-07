@@ -218,7 +218,6 @@ export interface Pi {
 /** Server-facing contract: transport and UI do not need the service implementation. */
 export interface PiRuntime extends Pi {
   readonly config: {
-    enabled: boolean;
     models: readonly PiModelConfig[];
     modelApiKeyEnv: string;
     turnTimeoutSeconds: number;

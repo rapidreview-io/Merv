@@ -193,7 +193,6 @@ export function codexModelRelay(
     name: 'codex',
     route: '/codex-model/responses',
     token: sessionSecretPattern,
-    enabled: true,
     providerKey: options.providerKey,
     authority: {
       authorize: options.authorize,

@@ -75,7 +75,7 @@ export const models = [
  * project with an operator. Tests tick Fleet and Pi themselves. */
 export async function fixture(
   t: TestContext,
-  options: { baseUrl?: string; startTime?: number; pi?: PiConfig; machines?: number } = {},
+  options: { baseUrl?: string; startTime?: number; pi?: Partial<PiConfig>; machines?: number } = {},
 ) {
   const directory = mkdtempSync(join(tmpdir(), 'merv-pi-service-'));
   const state = await openState(directory);
@@ -175,7 +175,6 @@ export async function fixture(
     get: (namespace, digest) => disk.get(namespace, digest),
   };
   const config: PiConfig = {
-    enabled: true,
     baseUrl: options.baseUrl ?? 'http://127.0.0.1:31415/',
     pollIntervalMs: 30_000,
     idleTimeoutSeconds: 5,
@@ -315,7 +314,7 @@ export async function fixture(
       now += milliseconds;
     },
     /** A new service on the same state, with `changes` to its configuration. */
-    restart: async (changes: PiConfig = {}) => {
+    restart: async (changes: Partial<PiConfig> = {}) => {
       await pi.close();
       Object.assign(config, changes);
       pi = await start();

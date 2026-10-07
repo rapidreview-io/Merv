@@ -218,7 +218,7 @@ export class ModelRelay<
       this.error(res, 403, 'browser_forbidden');
       return;
     }
-    if (!this.config.enabled || !this.config.authority || this.stopped) {
+    if (this.stopped) {
       this.error(res, 503, 'relay_unavailable');
       return;
     }

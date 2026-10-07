@@ -432,7 +432,6 @@ test('relay mount streams vetted upstream frames and cuts off revoked grants', a
     toolNames: [],
   };
   const relay = piRelay({
-    enabled: true,
     models: [{ id: 'test-model', effort: 'none' }],
     providerKey: () => 'fake-secret',
     maxRequestBytes: 512,
@@ -542,7 +541,6 @@ test('relay disconnect aborts the injected upstream and releases the conversatio
   let aborted = false;
   let cancelled = false;
   const relay = piRelay({
-    enabled: true,
     models: [{ id: 'test-model', effort: 'none' }],
     providerKey: () => 'fake-secret',
     authority: {

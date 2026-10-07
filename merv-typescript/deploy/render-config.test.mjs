@@ -260,7 +260,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(run(fleet).status, 0);
   config = JSON.parse(readFileSync(output));
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
-    enabled: true,
     globalLimit: 50,
     projectLimit: 5,
     projectLimits: {},
@@ -306,7 +305,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   assert.equal(run(workflow).status, 0);
   config = JSON.parse(readFileSync(output));
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet').config, {
-    enabled: true,
     globalLimit: 2,
     projectLimit: 2,
     projectLimits: {},
@@ -317,7 +315,6 @@ test('deployment config keeps history opt-in and binds a validated isolated sche
   config = JSON.parse(readFileSync(output));
   assert.equal(config.plugins.find((p) => p.id === 'fleet').config.allocationTimeoutSeconds, 1800);
   assert.deepEqual(config.plugins.find((p) => p.id === 'fleet-workflow').config, {
-    enabled: true,
     people: ['https://identity.example/auth/v1 founder'],
     modelApiKeyEnv: 'MODEL_KEY',
     baseUrl: 'https://merv.example',
@@ -378,7 +375,6 @@ test('Pi rents its machines from one catalog in a connected host project', (t) =
   assert.equal(run(pi).status, 0);
   assert.deepEqual(plugin('sandboxes').config.runtimes, [standard]);
   assert.deepEqual(plugin('pi').config, {
-    enabled: true,
     secretEnv: 'PI_PRIVATE_SECRET',
     modelApiKeyEnv: 'PI_PROVIDER_KEY',
     baseUrl: 'https://merv.example',

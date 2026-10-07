@@ -175,7 +175,7 @@ export class PiHosts implements FleetOwner {
    * not accept is the server's fault, never the person's 401, which would sign them out. */
   async hostCaller(): Promise<Caller> {
     if (this.renter) return this.renter;
-    const token = process.env[this.core.config.host!.credentialEnv];
+    const token = process.env[this.core.config.host.credentialEnv];
     check(token, 'pi_configuration', 'The Pi host credential is unavailable', 503);
     const actor = await this.core.scope.authenticate(token).catch((error: unknown) => {
       if (error instanceof MervError && error.status === 401) return null;
@@ -266,8 +266,7 @@ export class PiHosts implements FleetOwner {
 
   /** The live host slot an allocation serves; only Pi records a slot's allocation on a host. */
   async owning(allocation: FleetAllocation, tx: Transaction) {
-    if (this.core.closed || !this.core.config.enabled || allocation.owner.kind !== 'pi-host')
-      return null;
+    if (this.core.closed || allocation.owner.kind !== 'pi-host') return null;
     const [hostId, epoch] = allocation.owner.id.split(':');
     const host = await this.core.host(tx, hostId);
     const role = host?.status === 'live' ? roleOf(host, allocation.id) : undefined;
@@ -380,7 +379,7 @@ export class PiHosts implements FleetOwner {
   }
 
   tick(): Promise<void> {
-    if (this.core.closed || !this.core.config.enabled) return Promise.resolve();
+    if (this.core.closed) return Promise.resolve();
     return (this.pending ??= this.reconcile().finally(() => {
       this.pending = undefined;
     }));

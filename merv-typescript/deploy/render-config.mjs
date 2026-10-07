@@ -267,7 +267,6 @@ if (fleetEnabled) {
       id: 'fleet',
       name: '@merv/fleet',
       config: {
-        enabled: true,
         globalLimit: integer('MERV_FLEET_GLOBAL_LIMIT', 50, 1, 64),
         projectLimit: integer('MERV_FLEET_PROJECT_LIMIT', 5, 1, 64),
         projectLimits,
@@ -299,7 +298,6 @@ if (fleetEnabled) {
       id: 'fleet-workflow',
       name: '@merv/fleet/workflow',
       config: {
-        enabled: true,
         people,
         modelApiKeyEnv,
         baseUrl: httpsOrigin('MERV_FLEET_WORKFLOW_BASE_URL'),
@@ -344,7 +342,6 @@ if (piEnabled) {
       id: 'pi',
       name: '@merv/pi',
       config: {
-        enabled: true,
         secretEnv,
         modelApiKeyEnv,
         // Checked as Main checks it, so a dry run catches what would stop Main; the older

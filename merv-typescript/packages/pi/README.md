@@ -46,4 +46,4 @@ Pi sits between the person and a machine it rents from Fleet. A sent message bec
 - `@merv/pi`: provides `pi`; injects `state`, `scope`, `fleet`, `tools` and `blobs`, and registers as Fleet's `pi-host` owner.
 - `@merv/pi/tools`: `pi.create`, `pi.list`, `pi.snapshot`, `pi.prompt`, `pi.send`, `pi.warm`, `pi.stop`, `pi.run`, `pi.model.set`, `pi.machine.set` and `pi.machine.stop`.
 - `@merv/pi/api`: `/pi`, the conversation event stream; `/pi-worker`, the worker's routes, which only its registered `piw_` credential reaches; and `/pi-model`, a public mount whose relay authenticates its `pir_` bearer itself.
-- `@merv/pi/ui`: the Agent row at `/agent`, present only when Pi is enabled.
+- `@merv/pi/ui`: the Agent row at `/agent`, present wherever Pi is loaded.
