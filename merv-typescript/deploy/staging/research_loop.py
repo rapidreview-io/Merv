@@ -78,7 +78,11 @@ exp = tool("experiment.create", {
     "details": "Staging check T1. Data: data/make_dataset.py from the prerequisite task (standard library only). "
                "Method: logistic regression trained by full-batch gradient descent in pure Python (standard library "
                "only; numpy may be absent), an 80/20 split shuffled with random.Random(7), at most 300 epochs, "
-               "learning rate 0.5; report held-out accuracy. Expected accuracy is at least 0.85. " + compute + " "
+               "learning rate 0.5; report held-out accuracy. Expected accuracy is at least 0.85. "
+               # The results review then gets the writer's untracked files copied into its checkout
+               # on the same work host: the path that ended every review launch with exit 70.
+               "Regenerate data/dataset.csv with the script and leave it uncommitted and untracked: commit "
+               "only code and results. " + compute + " "
                "Keep it small: no hyperparameter search and no further experiments. Results: attach ONE JSON result at "
                "path results/metrics.json with role result: {\"accuracy\": float, \"n_train\": int, \"n_test\": int, "
                "\"epochs\": int, \"seconds\": float, \"machine\": string}."}, WHO)

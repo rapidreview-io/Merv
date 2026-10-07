@@ -147,3 +147,10 @@ jobs:
           (( ${#files[@]} > 0 )) || { echo 'Shard ${{ matrix.shard }} has no test files' >&2; exit 1; }
           echo "${#files[@]} test files"
           node --import tsx --test "${files[@]}"
+
+      # A hosted work host runs its Runner as root, and its launcher refuses a checkout holding any
+      # node that is not root's (exit 70). Only root can observe ownership, so the Code driver's
+      # tests, a review checkout on a reused work host among them, run again as root.
+      - name: Run the Code driver tests as root
+        if: matrix.shard == 1
+        run: sudo --preserve-env=MERV_TEST_POSTGRES_URL env "PATH=$PATH" node --import tsx --test tests/runner-code-driver.test.ts
