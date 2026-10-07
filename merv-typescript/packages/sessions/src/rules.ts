@@ -43,6 +43,13 @@ export const capabilitiesSchema = z
   .array(z.string().regex(/^[a-z][a-z0-9.]{0,39}$/))
   .max(16)
   .refine((items) => new Set(items).size === items.length);
+/**
+ * A visit its worker ended by its own hand: its handoff, or its question to its owner. Hosted
+ * Codex may finish the model call it had started for a minute after either, which Sessions and
+ * the runner's grace both read here.
+ */
+export const ownEnd = (reason: string | null | undefined) =>
+  reason === 'handoff' || reason === 'asked_owner';
 /** Every status a session row can hold (`SessionStatus`). */
 export const SESSION_STATUSES = ['offered', 'active', 'released', 'expired'] as const;
 /** A lease's platform as a person reads it, on the Running sidebar and the Agents page. */

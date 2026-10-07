@@ -405,3 +405,34 @@ test('a guardian no launch reached in time is released as a launch timeout', asy
   await until(runner, () => fake.releases(work.id).length > 0, 'released');
   assert.equal(fake.releases(work.id)[0].body?.reason, 'local_process_launch_timeout');
 });
+
+for (const closeReason of ['handoff', 'asked_owner'])
+  test(`a Codex launch its worker closed by its own hand (${closeReason}) keeps its grace to finish the turn`, async (t) => {
+    // A stand-in Codex that lingers, as a turn still finishing after its handoff does.
+    const root = mkdtempSync(join(tmpdir(), 'merv-lease-grace-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const lingering = join(root, 'codex.mjs');
+    writeFileSync(lingering, 'process.stdin.resume();setTimeout(()=>{},60_000);\n');
+    const work = offer(`grace-${closeReason}`);
+    const fake = server(() => work);
+    const f = machine(
+      t,
+      [{ ...codex, executable: lingering, isolatedLauncher: process.execPath }],
+      fake.fetch,
+    );
+    const runner = f.make();
+    await runner.start();
+    await until(
+      runner,
+      () => runner.snapshot().launches[0]?.status === 'running',
+      'the launch running',
+    );
+    // The worker ends its own visit: Sessions closes it with its own reason.
+    Object.assign(fake.sessions.get(work.id)!, {
+      status: 'released',
+      closeReason,
+      outcome: closeReason === 'handoff' ? 'completed' : 'asked_owner',
+    });
+    for (let i = 0; i < 3; i++) await runner.tick();
+    assert.equal(runner.snapshot().launches[0]?.status, 'running');
+  });

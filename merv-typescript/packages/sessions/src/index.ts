@@ -42,7 +42,6 @@ import {
   isoNow,
   live,
   ordinary,
-  ownEnd,
   ownerOf,
   readFirst,
   refused,
@@ -50,6 +49,7 @@ import {
   text,
   type Row,
 } from './common.js';
+import { ownEnd } from './rules.js';
 import { SessionServiceWork } from './service-work.js';
 import { ManagedRunnerBindings, managedRunnerRules, type HuggingFaceBinding } from './managed.js';
 import { SessionTranscripts } from './transcripts.js';

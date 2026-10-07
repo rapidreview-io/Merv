@@ -27,8 +27,11 @@ import type {
   ManagedRunnerInspection,
   ManagedBindingRow,
 } from './managed-types.js';
-import { capabilitiesSchema as capabilities, runnerPlatformSchema as profile } from './rules.js';
-import { ownEnd } from './common.js';
+import {
+  capabilitiesSchema as capabilities,
+  ownEnd,
+  runnerPlatformSchema as profile,
+} from './rules.js';
 
 /** What a Hugging Face grant binds, opaque to Secrets: one session attached on one host. */
 const huggingFaceBinding = z
