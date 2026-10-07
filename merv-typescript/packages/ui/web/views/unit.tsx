@@ -11,6 +11,7 @@ import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
 import { Ago, StatusPill, capital, cx, words } from '../components';
 import { Icon } from '../icons';
+import { clock } from '../liveness';
 import { Markdown } from '../markdown';
 import { stagesOfGraph } from '../process';
 import { Thread, historyEntries, type Handed, type Mark } from '../thread';
@@ -26,7 +27,7 @@ import {
   ThreadReading,
   roleLetter,
   threadFor,
-  threadName,
+  ThreadTitle,
   useThreadList,
 } from './threads';
 
@@ -239,7 +240,9 @@ function Agents({
           <button type="button" className="btn-text" onClick={() => onOpen(undefined)}>
             ← Agents
           </button>
-          <span className="unit-key-label">{threadName(thread)}</span>
+          <span className="unit-key-label thread-head-title">
+            <ThreadTitle thread={thread} now={clock(undefined, loadedAt, Date.now(), 20_000)} />
+          </span>
         </header>
         <ThreadReading key={thread.id} thread={thread} loadedAt={loadedAt} />
       </div>

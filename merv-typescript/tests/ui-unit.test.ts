@@ -338,10 +338,10 @@ test('an entry’s role mark opens the thread of its stage', async (t) => {
   const marks = all('.unit-history .role-mark').map((mark) => mark.textContent);
   assert.deepEqual(marks, ['P', 'R']);
   await press(button('Producer thread'));
-  assert.equal($('dialog h2')!.textContent, 'Producer · planned · dormant');
+  assert.equal($('dialog h2')!.textContent, 'Producer · Planned · dormant');
   await press(button('Close'));
   await press(button('Reviewer thread'));
-  assert.equal($('dialog h2')!.textContent, 'Reviewer · design review · retired');
+  assert.equal($('dialog h2')!.textContent, 'Reviewer · Design review · retired');
 });
 
 test('everything but the stages and the reading folds under one closed Details', async (t) => {
@@ -492,7 +492,10 @@ test('Agents lists every thread by stage in stage order, and reads one in place'
   assert.equal($('dialog[open]'), null, 'no dialog opens');
   await settle(30);
   assert.match(reading().textContent!, /Drafted the warmup plan\./);
-  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · planned/);
+  assert.match(
+    reading().querySelector('.unit-key-label')!.textContent!,
+    /Producer · Planned · dormant/,
+  );
   await press(button('← Agents'));
   assert.equal(all('.agent-card').length, 2);
 });
@@ -542,7 +545,10 @@ test('an address naming a thread opens Agents on it, a thread of a record inside
   localStorage.clear();
   await sidebar(panel(unitOf()), true, 'operator', '/work?key=work:wf_1&thread=thr_plan');
   assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
-  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · planned/);
+  assert.match(
+    reading().querySelector('.unit-key-label')!.textContent!,
+    /Producer · Planned · dormant/,
+  );
   await settle(30);
   assert.match(reading().textContent!, /Drafted the warmup plan\./);
   // The address chose the tab for this visit only: the kind's remembered tab is unchanged.
@@ -571,7 +577,7 @@ test('an address naming a thread opens Agents on it, a thread of a record inside
     '/work?key=work:wf_1&thread=thr_lens',
   );
   assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
-  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · reflecting/);
+  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · Reflecting/);
 });
 
 test('a thread a later record inside the unit resumed is listed once, under the record it is on', async (t) => {
@@ -611,8 +617,10 @@ test('a reader who is not an operator reads a thread’s visits in place, never 
   localStorage.setItem('merv:unit-tab:experiment', 'agents');
   await sidebar(panel(unitOf()), true, 'reader');
   await press(button('Producer · planned · dormant'));
-  assert.ok(reading().querySelector('[aria-label="Visits"]'));
+  // Its visits are the timeline's dividers; what the agent said is never asked for.
+  assert.match(reading().querySelector('.agent-divider')!.textContent!, /^Visit 1/);
   assert.equal(button('Conversation'), undefined);
+  assert.ok(!requests.some((request) => request.includes('/conversation')));
 });
 
 test('Artifacts lists the unit’s files newest first, and previews one in place', async (t) => {

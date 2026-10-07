@@ -244,3 +244,217 @@ export function codexEvents() {
     ];
   };
 }
+
+// ─── What each event is to a person reading it ─────────────────────────────────────────────
+// Sessions says what an event is; a page only draws it. A conversation reads as what the agent
+// said (`message`), the steps it took on the way (`thinking`, `tool`), the ones that went wrong
+// (`error`), the people over it (`person`: a message, a question or an answer, which Sessions
+// keeps beside the stream) and the session's own milestones (`system`). A milestone a person
+// has no use for (a turn's token count, the model it started on) is `quiet` and not drawn.
+
+export type LineKind = 'message' | 'thinking' | 'tool' | 'error' | 'person' | 'system' | 'quiet';
+
+/** The longest summary a step's line carries. */
+export const SUMMARY_CHARS = 80;
+
+const UUID = /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+/** A prefixed record id: `pipe_yvs82yw2idgtz0n2`, `session_a82de33c…`, `wf_000…1`. */
+const PREFIXED = /\b[a-z][a-z0-9]*_(?=[a-z0-9]*\d)[a-z0-9]{10,}\b/gi;
+/** A hash or a short commit: hex with a digit and a letter in it, seven characters or more. */
+const HASH = /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b/gi;
+
+/**
+ * Text as one short line a person reads: ids, hashes and UUIDs taken out with what only
+ * framed them (empty quotes, a doubled slash), white space run together, and cut to `max`.
+ */
+export function plainLine(text: string, max = SUMMARY_CHARS): string {
+  const line = text
+    .replace(UUID, '')
+    .replace(PREFIXED, '')
+    .replace(HASH, '')
+    .replace(/(["'`])\1/g, '')
+    .replace(/\/{2,}/g, '/')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([,:;)\]}])/g, '$1')
+    .replace(/([([{])\s+/g, '$1')
+    .replace(/(?:[\s,:;=/#-]|\(\)|\[\]|\{\})+$/, '')
+    .replace(/^[\s,:;=/#-]+/, '')
+    .trim();
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+}
+
+/** The fields whose value says what a call is about, most telling first. */
+const TELLING = ['description', 'command', 'cmd', 'query', 'pattern', 'file_path', 'path', 'url'];
+
+/** A tool's arguments as an object, or the text itself where they are not JSON. */
+function fieldsOf(input: string): Record<string, unknown> | string {
+  try {
+    const value: unknown = JSON.parse(input);
+    if (value && typeof value === 'object' && !Array.isArray(value))
+      return value as Record<string, unknown>;
+    return typeof value === 'string' ? value : input;
+  } catch {
+    // Arguments a feed cut short are no longer JSON: the telling field is read from its start.
+    const named = new RegExp(`"(${TELLING.join('|')})"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(input);
+    return named ? { [named[1]!]: JSON.parse(`"${named[2]!.replace(/\\$/, '')}"`) } : input;
+  }
+}
+
+/** A shell's script without the `bash -lc '…'` it was wrapped in. */
+function unwrapShell(command: string): string {
+  const wrapped = /^\s*(?:\S*\/)?(?:ba|z|da)?sh\s+-l?c\s+(["'])([\s\S]*)\1\s*$/.exec(command);
+  if (!wrapped) return command;
+  return wrapped[1] === '"' ? wrapped[2]!.replace(/\\(["\\$`])/g, '$1') : wrapped[2]!;
+}
+/** Lines a script starts with that say nothing about what it does. */
+const SETUP = /^(?:#|set\s+-|import\s|from\s+\S+\s+import\s|export\s+\w+=|source\s|\.\s)/;
+
+/**
+ * The first line of a shell command that says what it does: past its wrapper, its setup and a
+ * leading `cd … &&`; a script fed through a heredoc is its interpreter and the script's first
+ * line that does something.
+ */
+export function shellLine(command: string): string {
+  const lines = unwrapShell(command)
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line && !SETUP.test(line));
+  const first = lines[0] ?? '';
+  const heredoc = /^(.*?)<<-?\s*(['"]?)(\w+)\2(.*)$/.exec(first);
+  const head = (heredoc ? heredoc[1]! : first).replace(/^(?:cd\s+\S+\s*&&\s*)+/, '').trim();
+  if (!heredoc) return head;
+  const body = lines.slice(1).find((line) => line !== heredoc[3]);
+  return [head, body].filter(Boolean).join(' · ');
+}
+
+/** The words for the tools every harness has, by their lower-cased name. */
+const VERBS: Record<string, string> = {
+  shell: 'Ran shell',
+  bash: 'Ran shell',
+  exec_command: 'Ran shell',
+  local_shell: 'Ran shell',
+  read: 'Read file',
+  write: 'Wrote file',
+  edit: 'Edited file',
+  multiedit: 'Edited file',
+  notebookedit: 'Edited notebook',
+  apply_patch: 'Edited files',
+  grep: 'Searched code',
+  glob: 'Found files',
+  ls: 'Listed files',
+  webfetch: 'Fetched page',
+  web_search: 'Searched web',
+  websearch: 'Searched web',
+  todowrite: 'Updated plan',
+  update_plan: 'Updated plan',
+  task: 'Ran subagent',
+  agent: 'Ran subagent',
+};
+const SHELLS = new Set(['shell', 'bash', 'exec_command', 'local_shell']);
+
+/** A path as its last two parts, which is what a person knows it by. */
+const shortPath = (value: string) =>
+  /^(?:\/|~\/|\.\/)/.test(value) && !/\s/.test(value)
+    ? value.split('/').filter(Boolean).slice(-2).join('/')
+    : value;
+
+/**
+ * One tool call as a person reads it: a verb and the tool (`Ran shell`, `Read file`, or a Merv
+ * tool as `sandboxes · workflow_get`) and what it was about, at most SUMMARY_CHARS and without
+ * ids. A shell is its command's first line that does something, unless its harness described it.
+ */
+export function toolLine(
+  name: string | undefined,
+  input: string | undefined,
+): { label: string; summary: string } {
+  const key = (name ?? '').toLowerCase();
+  const label = VERBS[key] ?? (name ? name.replace(/\./g, ' · ') : 'Tool');
+  const fields = fieldsOf(input ?? '');
+  let said = '';
+  if (typeof fields === 'string') said = SHELLS.has(key) ? shellLine(fields) : fields;
+  else {
+    const command = fields.command ?? fields.cmd;
+    const script = Array.isArray(command)
+      ? command.length === 3 && /sh$/.test(String(command[0])) && /^-l?c$/.test(String(command[1]))
+        ? String(command[2])
+        : command.join(' ')
+      : typeof command === 'string'
+        ? command
+        : '';
+    const telling = TELLING.map((field) => fields[field]).filter(
+      (value): value is string => typeof value === 'string' && !!plainLine(value),
+    );
+    said =
+      typeof fields.description === 'string' && plainLine(fields.description)
+        ? fields.description
+        : script
+          ? shellLine(script)
+          : (telling[0] ??
+            Object.values(fields).find(
+              (value): value is string => typeof value === 'string' && !!plainLine(value),
+            ) ??
+            '');
+  }
+  return { label, summary: plainLine(shortPath(said.split('\n')[0] ?? '')) };
+}
+
+/** An answer with nothing in it: blank, `[]`, `{}`, `null` or `""`. Such an answer is not drawn. */
+export const emptyOutput = (output: string | undefined): boolean =>
+  !output || /^\s*(?:\[\s*\]|\{\s*\}|null|""|'')?\s*$/.test(output);
+
+/**
+ * Why a call failed, in a few words, or undefined where it did not: its harness marked it an
+ * error (a refusal, a non-zero exit), or its answer is a JSON refusal (`{"error": …}`, `{"ok":
+ * false, …}`). The words are the refusal's message, else the answer's first line, without ids.
+ */
+export function toolFailure(result: { output: string; error?: boolean }): string | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(result.output);
+  } catch {}
+  const object = value && typeof value === 'object' ? (value as Record<string, any>) : undefined;
+  const refused = !!object && (object.error !== undefined || object.ok === false);
+  if (!result.error && !refused) return undefined;
+  const error = object?.error;
+  const message =
+    typeof error === 'string'
+      ? error
+      : typeof error?.message === 'string'
+        ? error.message
+        : typeof object?.message === 'string'
+          ? object.message
+          : (result.output
+              .split('\n')
+              .map((line) => line.trim())
+              .find(Boolean) ?? '');
+  return plainLine(message) || 'failed';
+}
+
+/**
+ * A session milestone as a person reads it: a failure is an `error`; a stream that skipped
+ * output or a conversation compacted is a `system` divider; the rest (started, a turn's tokens,
+ * finished) is `quiet`, said already by the visit's own divider.
+ */
+export function statusLine(text: string): { kind: 'quiet' | 'system' | 'error'; text: string } {
+  const [head = '', ...rest] = text.split(' · ');
+  const tail = plainLine(rest.join(' · '));
+  if (/^(?:Turn failed|Failed|Error)$/.test(head))
+    return { kind: 'error', text: tail ? `${head} · ${tail}` : head };
+  if (/compact/i.test(text)) return { kind: 'system', text: 'Context compacted' };
+  if (/^Stream skipped/.test(head)) return { kind: 'system', text: 'Some output was skipped' };
+  return { kind: 'quiet', text: plainLine(text) };
+}
+
+/** What one event is to a reader; a tool call is an `error` once its answer says it failed. */
+export function lineKind(
+  event:
+    | { kind: 'thinking' }
+    | { kind: 'text' }
+    | { kind: 'status'; text: string }
+    | { kind: 'tool'; result?: { output: string; error?: boolean } },
+): LineKind {
+  if (event.kind === 'text') return 'message';
+  if (event.kind === 'thinking') return 'thinking';
+  if (event.kind === 'status') return statusLine(event.text).kind;
+  return event.result && toolFailure(event.result) !== undefined ? 'error' : 'tool';
+}

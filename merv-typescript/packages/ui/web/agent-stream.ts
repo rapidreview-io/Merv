@@ -9,8 +9,17 @@ import { useEventStream } from './event-stream';
  * event is taken once, by its sequence number, so a reconnect that asks from the last one it
  * holds (`?after=`) and a snapshot that overlaps what is already here add nothing twice.
  */
+/** Thinking or text, grown piece by piece. */
+interface Written {
+  key: string;
+  at: string;
+  text: string;
+  done: boolean;
+  cut: number;
+}
 export type AgentBlock =
-  | { kind: 'thinking' | 'text'; key: string; at: string; text: string; done: boolean; cut: number }
+  | ({ kind: 'thinking' } & Written)
+  | ({ kind: 'text' } & Written)
   | {
       kind: 'tool';
       key: string;
@@ -110,7 +119,7 @@ const eventsOf = (value: object): AgentStreamEvent[] => {
 export function useAgentStream(url: string | null) {
   const held = useRef(NO_TIMELINE);
   const [timeline, setTimeline] = useState(NO_TIMELINE);
-  const state = useEventStream(
+  const { state, retry } = useEventStream(
     url,
     (event, value) => {
       if (event !== 'snapshot' && event !== 'events') return;
@@ -126,5 +135,5 @@ export function useAgentStream(url: string | null) {
     },
     () => held.current.last,
   );
-  return { timeline, state };
+  return { timeline, state, retry };
 }

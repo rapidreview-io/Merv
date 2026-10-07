@@ -14,7 +14,8 @@ const { MemoryRouter } = await import('react-router-dom');
 const { setToken } = await import('../packages/ui/web/api.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 const { AgentsGallery } = await import('../packages/ui/web/views/agents-gallery.js');
-const { applyFrame, tailLines } = await import('../packages/ui/web/live-feed.js');
+const { applyFrame } = await import('../packages/ui/web/live-feed.js');
+const { tailLines } = await import('../packages/ui/web/conversation.js');
 
 // jsdom has the element but not its modal methods: open sets the attribute, close clears it.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -308,8 +309,9 @@ test('one feed connection streams every live card its agent’s last lines', asy
         `${id === 'b' ? 'Task' : 'Experiment'} · work-${id}`,
       ).querySelectorAll('.agent-tail li'),
     ].map((item) => item.textContent);
-  assert.deepEqual(tail('a'), ['Reading the config.', 'Checking the seeds.']);
-  assert.deepEqual(tail('b'), ['› shell: rg --files']);
+  // A message is its last line; a step is its words and what it was about, as the thread says.
+  assert.deepEqual(tail('a'), ['Checking the seeds.']);
+  assert.deepEqual(tail('b'), ['Ran shell · rg --files']);
   assert.deepEqual(tail('c'), ['Waiting on the GPU.']);
   // What follows reaches its own card, the block it continues joined.
   feed.send('tail', {
@@ -326,12 +328,8 @@ test('one feed connection streams every live card its agent’s last lines', asy
     ],
   });
   await settle(10);
-  assert.deepEqual(tail('a'), [
-    'Reading the config.',
-    'Checking the seeds. All six.',
-    '› Bash: pytest -q',
-  ]);
-  assert.deepEqual(tail('b'), ['› shell: rg --files']);
+  assert.deepEqual(tail('a'), ['Checking the seeds. All six.', 'Ran shell · pytest -q']);
+  assert.deepEqual(tail('b'), ['Ran shell · rg --files']);
   // Three cards, one connection, and no card's own stream.
   assert.equal(requests.filter((request) => request === 'GET /sessions/live').length, 1);
   assert.ok(!requests.some((request) => /\/sessions\/ses_[a-z]+\/events/.test(request)));
@@ -359,17 +357,23 @@ test('a press on a card opens its thread: its conversation and the box that spea
   serve('/sessions/threads/a/conversation', { body: { threadId: 'a', visits: [] } });
   serve('/sessions/ses_a/events', () => ({ stream: eventStream().stream }));
   await open('operator');
+  // A live card whose agent has said nothing yet says it is starting.
+  assert.equal(
+    cardOf('Running', 'Experiment · work-a').querySelector('.agent-tail')!.textContent,
+    'Starting…',
+  );
   // Anywhere on the card: here its stream, which is no control.
   await press(cardOf('Running', 'Experiment · work-a').querySelector('.agent-tail')!);
   const dialog = document.querySelector('dialog')!;
   assert.ok(dialog.hasAttribute('open'));
-  assert.equal(dialog.querySelector('h2')!.textContent, 'Producer · running · live');
-  assert.match(dialog.textContent!, /Experiment · work-a/);
-  assert.equal(dialog.querySelector('button[aria-pressed="true"]')!.textContent, 'Conversation');
-  assert.equal(
-    dialog.querySelector('.thread-messages textarea')!.getAttribute('aria-label'),
-    'Message',
-  );
+  assert.match(dialog.querySelector('h2')!.textContent!, /^Producer · Running · \d+[smhd]$/);
+  assert.equal(dialog.querySelector('.thread-head-unit')!.textContent, 'Experiment · work-a');
+  // The conversation is the dialog's body, and the box that speaks to it is at its foot.
+  assert.ok(dialog.querySelector('.agent-timeline'));
+  assert.equal(dialog.querySelector('button[aria-pressed]'), null, 'no tabs');
+  const box = dialog.querySelector('.thread-reading > form textarea')!;
+  assert.equal(box.getAttribute('aria-label'), 'Message');
+  assert.equal(dialog.querySelector('.thread-reading')!.lastElementChild!.tagName, 'FORM');
   await press(dialog.querySelector('button[aria-label="Close"]')!);
   assert.equal(document.querySelector('dialog'), null);
   // The title is a control too, and a card's answer box is not: typing in it opens nothing.

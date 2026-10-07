@@ -90,11 +90,11 @@ Password login works through the same Supabase project. OAuth through this tunne
 For optional read-only Pi, see [Pi operations](PI_OPERATIONS.md) for scoped service
 credential rotation, verified human access, release gates and current safeguards.
 
-When enabling Pi or the Fleet workflow behind a site-wide Caddy `encode` directive, exclude `/pi/*/events`, `/pi-model/responses` and `/codex-model/responses` from compression. The live pilot reproduced gzip buffering until SSE connection close, despite immediate uncompressed upstream events. Replace only that site's encoding directive with the following [request-matched encoding configuration](https://caddyserver.com/docs/caddyfile/directives/encode), preserving its existing upstream, authentication and other hosts:
+Behind a site-wide Caddy `encode` directive, exclude every server-sent event route from compression: `/pi/*/events`, `/pi-model/responses`, `/codex-model/responses`, and Sessions' agent streams `/sessions/live` (the Agents page's feed) and `/sessions/*/events` (a thread's live conversation). Caddy 2.6 holds a compressed response, headers included, until the upstream closes it: the live pilot reproduced gzip buffering until SSE connection close, despite immediate uncompressed upstream events, and on 2026-10-07 a local Caddy 2.6.2 held a 2 KB agent-stream snapshot until the upstream closed. Production ran 2.6.2 with the agent streams compressed, and a thread's live view waited on its first frame until the server rotated the connection (every 20 s). Staging's Caddy 2.11 streams them. Replace only that site's encoding directive with the following [request-matched encoding configuration](https://caddyserver.com/docs/caddyfile/directives/encode), preserving its existing upstream, authentication and other hosts:
 
 ```caddyfile
 @pi_compressible {
-    not path /pi/*/events /pi-model/responses /codex-model/responses
+    not path /pi/*/events /pi-model/responses /codex-model/responses /sessions/live /sessions/*/events
 }
 encode @pi_compressible zstd gzip
 ```
