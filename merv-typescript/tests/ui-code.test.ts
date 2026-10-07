@@ -2013,20 +2013,16 @@ test('exactly the Code blockers whose next move is a person’s are printed, in 
     who: 'An operator',
     whose: 'operator',
   });
-  // A writer that never handed over its final capture, or whose capture was refused, waits on
-  // an operator to fence it at the last admitted commit.
-  // The fence is drawn on the unit's own code card, so the way leads there.
-  assert.deepEqual(said('code_recovery_required', { key: 'writer', instanceId: 'wf_a b' }), {
-    sentence: 'The last writer never handed over its final capture; an operator fences it',
-    who: 'An operator',
-    whose: 'operator',
-    control: { label: 'Fence the writer', to: '/code/unit/wf_a%20b' },
-  });
-  assert.deepEqual(said('code_capture_quarantined', { key: 'capture' }), {
+  // A writer ends with its session; only one whose capture was refused waits on an operator to
+  // fence it at the last admitted commit. The fence is drawn on the unit's own code card, so the
+  // way leads there.
+  assert.equal(said('code_recovery_required', { key: 'writer', instanceId: 'wf_a b' }), null);
+  assert.deepEqual(said('code_capture_quarantined', { key: 'capture', instanceId: 'wf_a b' }), {
     sentence:
       'The final capture was refused; an operator fences the writer at the last admitted commit',
     who: 'An operator',
     whose: 'operator',
+    control: { label: 'Fence the writer', to: '/code/unit/wf_a%20b' },
   });
   // The cap or budget a person set is named by the cause the server sent, never its message.
   assert.equal(

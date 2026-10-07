@@ -193,15 +193,17 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
     if (!held.has(lease)) return;
     lease.stop();
     try {
-      const session = await host.sessions.get(lease.source, lease.session.id);
-      if (!session.closedAt)
-        await host.sessions.release(lease.source, {
-          sessionId: lease.session.id,
-          runnerId: lease.control.runnerId,
-        });
+      // As the runner does: what the session left is captured before its release, while its
+      // writer generation is live, and the release is always sent (a landed handoff is recorded
+      // as that, whoever releases it).
+      const captured = lease.driver ? await lease.driver.capture(lease.launch) : undefined;
+      await host.sessions.release(lease.source, {
+        sessionId: lease.session.id,
+        runnerId: lease.control.runnerId,
+      });
       await events?.drain?.();
       if (lease.driver) {
-        const workspace = await lease.driver.capture(lease.launch);
+        const workspace = captured ?? (await lease.driver.capture(lease.launch));
         if (workspace)
           await host.sessions.workspaceResult(lease.source, { ...lease.control, workspace });
         await lease.driver.close(lease.launch);
