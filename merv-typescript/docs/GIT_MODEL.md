@@ -16,7 +16,7 @@ This release deploys the automatic-base, shared-repository and merge work togeth
 - **Blockers and reconciliation.** Workflows retains generic blockers for status, overview, dispatch and `session.stuck`, including while Code is unloaded. Reconciliation runs on declaration, binding/import, startup and dependency completion. Blocked units never launch. Shared-base waits use `merge`; unresolved tasks use `resolution:<key>` so several intermediate conflicts each retain their task state and recovery advice. Workspace-free work remains usable without Code; Git assignments require it.
 - **Repositories and admission.** Code alone runs server Git, keeping one bare repository per project under `${directory}/code`. It uses an empty template and controlled configuration, serializes work per project and holds a process-lifetime Unix socket writer lock. One server per volume is required. Quarantine admission checks packs, connectivity, surplus objects, lineage, format, size/count limits, paths, modes, links, submodules, deny globs and `credentials@1` patterns. Rejected bytes are never served; project `secretExemptGlobs` handles false positives.
 - **Transport and recovery.** Bundles travel in parts of at most 4 MiB because HTTP requests buffer bodies and time out after 30 seconds. Completion is asynchronous and idempotent. Every transfer/ref move is journaled through receiving, admitting, objects durable and refs applied to completion/failure; the expected ref update is retained before execution. A crash retries that exact update or reports a conflicting ref. Imports use operator bundles (`merv code-import`) or the linked GitHub ref, with the same admission checks. No tool accepts a server path. Larger histories arrive incrementally.
-- **Writers and handoff.** A producer lease reserves the next writer generation. Attach or the first upload activates it; session end closes it after one final capture. Asking for a manifest only reads. Stale fences cannot advance a head, and an admitted upload prevents a successor generation. A new valid upload supersedes only still-receiving uploads. `code.unit.fence` provides operator recovery. The driver downloads the canonical head to resume and the exact submitted commit to review. `preparation_deferred` backs off a temporary preparation wait without launch-failure accounting.
+- **Writers and handoff.** A producer lease reserves the next writer generation. Attach or the first upload activates it; the session's close, whatever its reason, ends it at the last admitted commit, letting only an upload already in flight finish within the grace. Asking for a manifest only reads. Stale fences cannot advance a head, and an admitted upload prevents a successor generation. A new valid upload supersedes only still-receiving uploads. `code.unit.fence` provides operator recovery. The driver downloads the canonical head to resume and the exact submitted commit to review. `preparation_deferred` backs off a temporary preparation wait without launch-failure accounting.
 - **Shared bases.** `code_bases` holds one immutable plan per set of accepted commits, keyed by sorted full ids with a retained member-list comparison. The planner reuses contained sets, choosing the largest contribution and breaking ties by key. Each merge has two inputs; quarantined records are excluded. Code runs bounded `merge-tree --write-tree` and `commit-tree` outside transactions with fixed settings, identity and time. Epochs, two-minute deadlines and at most five admitted infrastructure attempts fence late results. Create-only base refs precede write-once sealing; containment reuses the descendant.
 - **Resolution and review.** A conflict creates one service-owned `task@6`, transactionally linked to its base and attached as a system prerequisite to every waiter. System edges contribute no code and do not fail waiters. Its producer actor has no credential or review eligibility; project writers gain no operator authority by leasing it. One branch retains all rounds and existing review/checkpoint feedback. Failure, abandonment or the `review_rounds` budget suspends it; a signed-in human administrator extends the limit to resume. The `code.v2` pending-merge protocol retains both frozen inputs, checkpoint and first merge; only this producer policy grants `code.merge`. Admission verifies parent lineage, acceptance checks retained proof transactionally, and the base worker independently verifies Git before sealing.
 - **Independence.** Code walks member acceptances and intermediate resolutions, obtaining producing actors and directing authorities from Sessions. Reviews pins their canonical exclusion certificate once, and Code rechecks resolution provenance at acceptance. Version-5 consolidation certificates additionally require recomputation at claim and submission. A later contributor to the same commit invalidates stale provenance. Ordinary and pinned reviews remain readable with Code unloaded.
@@ -205,11 +205,12 @@ The current capture check only examines changed checkout files before `git add`;
 The canonical lifecycle is:
 
 ```text
-idle → reserved → active → closing → closed
-                                  ↘ recovery_required
+idle → reserved → active → closed          (the session closed with nothing in flight)
+                          ↘ closing → closed (an upload in flight finishes within the grace)
+                          ↘ recovery_required (a quarantined capture; code.unit.fence)
 ```
 
-`closed` means the final capture is durable and the canonical unit head is committed. There is no `sync_pending` writer state.
+`closed` means the generation ended with its session and the canonical unit head is the last admitted commit. There is no `sync_pending` writer state.
 
 Each operation carries:
 
@@ -218,9 +219,9 @@ unitId, generation, sessionId, leaseId,
 expectedHead, requestId, inputFingerprint
 ```
 
-After ordinary session authority closes, a narrow source-authenticated finalizer may submit exactly one frozen final capture. It cannot execute tools, change dependencies, or reopen the writer.
+The runner submits its one frozen final capture before it releases the session; once the session has closed nothing new begins. The finalizer cannot execute tools, change dependencies, or reopen the writer.
 
-Runner confirms process termination before capture. This preserves the existing separation between session handoff and subsequent final capture. [sessions/index.ts:645](../packages/sessions/src/index.ts:645), [runner/index.ts:660](../packages/runner/src/index.ts:660)
+Runner confirms process termination before capture. [sessions/index.ts:645](../packages/sessions/src/index.ts:645), [runner/index.ts:660](../packages/runner/src/index.ts:660)
 
 A successor gets generation `g+1` when:
 
@@ -580,7 +581,6 @@ code_job_blocked
 code_resolution_suspended
 code_review_wait
 code_capture_quarantined
-code_recovery_required
 code_provider_unavailable
 ```
 
