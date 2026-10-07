@@ -507,3 +507,97 @@ test('a runner restarted over 4 MiB behind what Sessions holds skips to the logâ
   await restarted.flush();
   assert.equal(posts, sent);
 });
+
+test('one project feed carries every live visitâ€™s newest events, then what each says next', async (t) => {
+  const f = await fixture(t);
+  const a = await f.leased('runner-a');
+  const b = await f.leased('runner-b');
+  const text = (id: string, delta: string): AgentEvent => ({ kind: 'text', id, delta });
+  // A long run of one block's pieces, and a tool whose answer is long: the feed is a glance.
+  await f.ok('POST', `/sessions/${a.session.id}/stream`, f.token, {
+    ...a.control,
+    from: 0,
+    to: 10,
+    events: [
+      ...Array.from({ length: 30 }, (_, at) => text('m1', `w${at} `)),
+      {
+        kind: 'tool_call',
+        id: 't1',
+        name: 'shell',
+        input: JSON.stringify({ command: 'x'.repeat(5000) }),
+      },
+      { kind: 'tool_result', id: 't1', output: 'y'.repeat(5000) },
+    ],
+  });
+  await f.ok('POST', `/sessions/${b.session.id}/stream`, f.token, {
+    ...b.control,
+    from: 0,
+    to: 10,
+    events: [text('n1', 'Reading.')],
+  });
+
+  const page = f.events('/sessions/live', f.token);
+  const [snapshot] = await page.until(1);
+  assert.equal(snapshot!.event, 'snapshot');
+  const threadOf = (session: { id: string }) =>
+    f.app.ctx.state.read((sql) =>
+      sql.get<{ thread_id: string }>(
+        'SELECT thread_id FROM worker_sessions WHERE id=?',
+        session.id,
+      ),
+    );
+  assert.deepEqual(
+    new Set(snapshot!.data.live.map((visit: { sessionId: string }) => visit.sessionId)),
+    new Set([a.session.id, b.session.id]),
+  );
+  const sentA = snapshot!.data.visits.find(
+    (visit: { sessionId: string }) => visit.sessionId === a.session.id,
+  );
+  assert.equal(sentA.threadId, (await threadOf(a.session))!.thread_id);
+  assert.equal(sentA.reset, true);
+  // The block's thirty pieces are one event under the last piece's number; payloads are cut.
+  assert.deepEqual(
+    sentA.events.map((item: { seq: number; event: AgentEvent }) => [item.seq, item.event.kind]),
+    [
+      [30, 'text'],
+      [31, 'tool_call'],
+      [32, 'tool_result'],
+    ],
+  );
+  assert.equal(
+    sentA.events[0].event.delta,
+    Array.from({ length: 30 }, (_, at) => `w${at} `).join(''),
+  );
+  assert.ok(sentA.events[1].event.input.length <= 400);
+  assert.ok(sentA.events[2].event.output.length <= 200);
+
+  // What one visit says next reaches the same connection, for that visit alone.
+  await f.ok('POST', `/sessions/${b.session.id}/stream`, f.token, {
+    ...b.control,
+    from: 10,
+    to: 20,
+    events: [text('n1', ' Done.')],
+  });
+  const [, tail] = await page.until(2);
+  assert.equal(tail!.event, 'tail');
+  assert.deepEqual(
+    tail!.data.visits.map(
+      (visit: { sessionId: string; reset?: true; events: { seq: number }[] }) => [
+        visit.sessionId,
+        visit.reset ?? false,
+        visit.events.map((item) => item.seq),
+      ],
+    ),
+    [[b.session.id, false, [2]]],
+  );
+  page.close();
+
+  // Only an operator reads it, and it takes no query.
+  const reader = await f.app.ctx.scope.credentials.issueActor(f.owner, {
+    name: 'Reader',
+    role: 'reader',
+  });
+  assert.equal(await f.events('/sessions/live', reader.token).status(), 403);
+  assert.equal(await f.events('/sessions/live', a.secret).status(), 403);
+  assert.equal(await f.events('/sessions/live?after=1', f.token).status(), 400);
+});

@@ -16,6 +16,8 @@ export interface UiRowStatus {
   state?: 'ready' | 'degraded' | 'unavailable';
   count?: number;
   detail?: string;
+  /** A small mark the rail sets beside the row's label (`text`), heard as `label`. */
+  badge?: { text: string; label: string };
 }
 
 /** One sidebar row. Rows are data: the browser bundle renders `view.kind`, never plugin code. */

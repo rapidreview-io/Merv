@@ -32,6 +32,7 @@ import type {
   SessionStatus,
   SessionTranscript,
   ThreadConversation,
+  ThreadCounts,
   ThreadView,
   VisitView,
 } from './types.js';
@@ -67,8 +68,16 @@ const TAIL_MAX_BYTES = 16_000_000;
 /** How long one ranged read of a transcript may take. */
 const TAIL_TIMEOUT_MS = 30_000;
 type Room = { events: number; bytes: number };
-/** How many threads that are not live a page of the project's threads holds. */
+/** How many threads that want no attention a page of the project's threads holds. */
 const PAGE = 50;
+/** A thread one of whose visits holds its lease. */
+const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active'))`;
+/**
+ * A thread that wants attention: live, asking its owner, or holding a message its agent has not
+ * read yet while it may still read it.
+ */
+const ATTENTION = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
+  OR (t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id AND m.acknowledged_at IS NULL)))`;
 
 /**
  * Threads: the worker that owns one stage of one work item for one role. A session is one visit
@@ -455,12 +464,16 @@ export class SessionThreads {
         caller.projectId,
         instanceId,
       );
-      return await this.viewed(tx, threads);
+      return (await this.viewed(tx, threads)).map(
+        ({ name: _name, workflow: _workflow, ...view }) => view,
+      );
     });
   }
   /**
-   * The project's threads, as its Agents page lists them: on the first page every live one, then
-   * the newest of the rest, `PAGE` at a time, each page older than the cursor `before`.
+   * The project's threads, as its Agents page lists them: on the first page every one that wants
+   * attention (live, asking its owner, or holding a message its agent has not read), then the
+   * newest of the rest, `PAGE` at a time, each page older than the cursor `before`. A thread
+   * whose work the reader may read carries its open question and its newest message.
    */
   async project(caller: Caller, before?: string): Promise<ProjectThreads> {
     const after = before === undefined ? null : Number(before);
@@ -470,46 +483,105 @@ export class SessionThreads {
       'before is the cursor a page of threads returned',
     );
     return await this.reading(caller, async (tx) => {
-      const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active'))`;
-      const live =
+      const first =
         after === null
           ? await tx.all<Row & { seq: number | string }>(
-              `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND ${LIVE} ORDER BY t._merv_rowid DESC`,
+              `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND ${ATTENTION} ORDER BY t._merv_rowid DESC`,
               caller.projectId,
             )
           : [];
       const rest = await tx.all<Row & { seq: number | string }>(
-        `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND NOT ${LIVE}
+        `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND NOT ${ATTENTION}
           AND (CAST(? AS BIGINT) IS NULL OR t._merv_rowid<?) ORDER BY t._merv_rowid DESC LIMIT ?`,
         caller.projectId,
         after,
         after,
         PAGE + 1,
       );
-      const page = [...live, ...rest.slice(0, PAGE)];
-      // The work item each is on, as its newest visit's assignment names it.
-      const named = new Map(
+      const page = [...first, ...rest.slice(0, PAGE)];
+      const ids = page.map((row) => row.id);
+      const marks = ids.map(() => '?').join(',');
+      const asked = new Map(
         (page.length
-          ? await tx.all<{ thread_id: string; name: string; workflow: string }>(
-              `SELECT DISTINCT ON (s.thread_id) s.thread_id,${workNameOf('s.session_json::jsonb')} AS name,
-                s.session_json::jsonb #>> '{execution,workflow}' AS workflow
-                FROM worker_sessions s WHERE s.thread_id IN (${page.map(() => '?').join(',')})
-                ORDER BY s.thread_id,s._merv_rowid DESC`,
-              ...page.map((row) => row.id),
+          ? await tx.all<{ thread_id: string; id: string; question: string; asked_at: string }>(
+              `SELECT DISTINCT ON (thread_id) thread_id,id,question,asked_at FROM session_questions
+                WHERE answered_at IS NULL AND thread_id IN (${marks}) ORDER BY thread_id,_merv_rowid DESC`,
+              ...ids,
             )
           : []
         ).map((row) => [row.thread_id, row]),
       );
+      const said = new Map(
+        (page.length
+          ? await tx.all<{
+              thread_id: string;
+              id: string;
+              sender_actor_id: string;
+              body: string;
+              created_at: string;
+              acknowledged_at: string | null;
+              reply_body: string | null;
+            }>(
+              `SELECT DISTINCT ON (thread_id) thread_id,id,sender_actor_id,body,created_at,acknowledged_at,reply_body
+                FROM session_messages WHERE project_id=? AND thread_id IN (${marks}) ORDER BY thread_id,_merv_rowid DESC`,
+              caller.projectId,
+              ...ids,
+            )
+          : []
+        ).map((row) => [row.thread_id, row]),
+      );
+      // What its agent asked and what it was told are read as its work is: by a reader of it.
+      const readable = new Set<string>();
+      for (const instanceId of new Set(
+        page.filter((row) => asked.has(row.id) || said.has(row.id)).map((row) => row.instance_id),
+      ))
+        try {
+          await this.host.readable(caller, instanceId, tx);
+          readable.add(instanceId);
+        } catch (error) {
+          if (safeError(error).status >= 500) throw error;
+        }
       const views = await this.viewed(tx, page);
       return {
-        threads: views.map((view, index) => ({
-          ...view,
-          name: named.get(view.id)?.name ?? '',
-          workflow: named.get(view.id)?.workflow ?? '',
-          ...(index < live.length ? {} : { seq: String(page[index]!.seq) }),
-        })),
+        threads: views.map((view, index) => {
+          const question = readable.has(view.instanceId) ? asked.get(view.id) : undefined;
+          const message = readable.has(view.instanceId) ? said.get(view.id) : undefined;
+          return {
+            ...view,
+            ...(index < first.length ? {} : { seq: String(page[index]!.seq) }),
+            ...(question && {
+              question: {
+                id: question.id,
+                question: question.question,
+                askedAt: question.asked_at,
+              },
+            }),
+            ...(message && {
+              message: {
+                id: message.id,
+                senderActorId: message.sender_actor_id,
+                body: message.body,
+                createdAt: message.created_at,
+                acknowledgedAt: message.acknowledged_at,
+                reply: message.reply_body,
+              },
+            }),
+          };
+        }),
         next: rest.length > PAGE ? String(rest[PAGE - 1]!.seq) : null,
       };
+    });
+  }
+  /** How many of the project's threads are live, and how many ask their owner a question. */
+  async counts(caller: Caller): Promise<ThreadCounts> {
+    return await this.reading(caller, async (tx) => {
+      const row = await tx.get<{ live: number | string; waiting: number | string }>(
+        `SELECT (SELECT count(*) FROM session_threads t WHERE t.project_id=? AND ${LIVE}) AS live,
+          (SELECT count(DISTINCT q.thread_id) FROM session_questions q WHERE q.project_id=? AND q.answered_at IS NULL) AS waiting`,
+        caller.projectId,
+        caller.projectId,
+      );
+      return { live: Number(row?.live ?? 0), waiting: Number(row?.waiting ?? 0) };
     });
   }
   /** A read of the project's threads by a person or their key, never a worker. */
@@ -528,7 +600,10 @@ export class SessionThreads {
    * takes a message now: as `messaging` accepts one, while it is not retired and its work is
    * open, or as the answer to a question it asked that is still open.
    */
-  private async viewed(tx: Transaction, threads: Row[]): Promise<ThreadView[]> {
+  private async viewed(
+    tx: Transaction,
+    threads: Row[],
+  ): Promise<(ThreadView & { name: string; workflow: string })[]> {
     const ids = threads.map((thread) => thread.id);
     const visits = await this.visits(tx, ids);
     const ended = threads.length
@@ -549,8 +624,13 @@ export class SessionThreads {
         : [],
     );
     return threads.map((thread) => {
-      const own = visits.filter((visit) => visit.threadId === thread.id).map((visit) => visit.view);
+      const mine = visits.filter((visit) => visit.threadId === thread.id);
+      const own = mine.map((visit) => visit.view);
+      // The work item it is on, as its newest visit's assignment names it.
+      const newest = mine.at(-1);
       return {
+        name: newest?.name ?? '',
+        workflow: newest?.workflow ?? '',
         id: thread.id,
         instanceId: thread.instance_id,
         state: thread.state,
@@ -586,10 +666,12 @@ export class SessionThreads {
       harness: string | null;
       streamed: boolean;
       transcript: boolean;
+      name: string | null;
+      workflow: string | null;
     }>(
       `SELECT s.id,s.thread_id,s.status,s.runner_id,x.j->>'createdAt' AS created_at,x.j->>'activatedAt' AS activated_at,
           x.j->>'expiresAt' AS expires_at,x.j->>'hardDeadline' AS hard_deadline,x.j->>'closedAt' AS closed_at,
-          x.j->>'closeReason' AS close_reason,x.j->>'outcome' AS outcome,(x.j#>'{continuity,resume}') IS NOT NULL AS resumed,
+          x.j->>'closeReason' AS close_reason,${workNameOf('x.j')} AS name,x.j#>>'{execution,workflow}' AS workflow,x.j->>'outcome' AS outcome,(x.j#>'{continuity,resume}') IS NOT NULL AS resumed,
           COALESCE(d.platform_json::jsonb->>'harness',u.harness,x.j#>>'{continuity,resume,harness}') AS harness,
           EXISTS (SELECT 1 FROM session_events e WHERE e.session_id=s.id) AS streamed,
           EXISTS (SELECT 1 FROM session_transcripts t WHERE t.session_id=s.id AND t.uploaded_at IS NOT NULL) AS transcript
@@ -626,7 +708,7 @@ export class SessionThreads {
         }),
         hasConversation: row.streamed || row.transcript,
       };
-      return { threadId: row.thread_id, view };
+      return { threadId: row.thread_id, view, name: row.name, workflow: row.workflow };
     });
   }
   /**

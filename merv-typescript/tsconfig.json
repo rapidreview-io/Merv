@@ -29,6 +29,7 @@
     "tests/ui-home.test.ts",
     "tests/ui-home-page.test.ts",
     "tests/ui-agent-live.test.ts",
+    "tests/ui-agents-gallery.test.ts",
     "tests/ui-json.test.ts",
     "tests/ui-keys.test.ts",
     "tests/ui-markdown.test.ts",

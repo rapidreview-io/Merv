@@ -15,7 +15,7 @@ import { sandboxesToolsPlugin } from '@merv/sandboxes/tools';
 import { useRunSchema } from './database.js';
 import { seedAgent } from './ui-demo-agent.js';
 import { buildMachine, fakeGitHub, seedGit } from './ui-demo-git.js';
-import { beating, mcp, seedRunning } from './ui-demo-running.js';
+import { beating, mcp, seedRunning, talking } from './ui-demo-running.js';
 
 /**
  * Seeded local server for verifying the browser UI by hand: one project, four actors,
@@ -30,6 +30,10 @@ import { beating, mcp, seedRunning } from './ui-demo-running.js';
  * `--git` seeds the Git model as well: a bound and imported repository, units with their
  * commits, the bases the server merged from them and one publication. It runs in this process
  * because a commit needs a leased session and a base needs a repository holding real commits.
+ *
+ * Three of those agents talk on their live streams, a few words a second, as the Agents page's
+ * cards show. `--agents` leaves only those three working beside the one that asks its owner, as
+ * the Agents gallery's screenshots show it.
  *
  * `--agent` adds the Agent page with the real Agent service, on a machine that is this process
  * and a scripted model (scripts/ui-demo-agent.ts).
@@ -352,8 +356,16 @@ async function main() {
     });
   }
   // The Git machine last reported itself before the rest was seeded: beat once before ready.
+  if (process.argv.includes('--agents'))
+    for (const lease of leases.filter((item) => !item.says)) {
+      await app.ctx.sessions.dispatch.halt(owner, { sessionId: lease.sessionId });
+      leases.splice(leases.indexOf(lease), 1);
+    }
   const beat = beating(url, boot.token, machines, leases);
   await beat();
+  const talk = talking(url, boot.token, leases);
+  const talker = setInterval(() => void talk(), 1200);
+  talker.unref();
   if (process.argv.includes('--agent')) await seedAgent(app, url);
   const heartbeat = setInterval(() => void beat(), 20_000);
   heartbeat.unref();
@@ -385,6 +397,7 @@ async function main() {
     try {
       if (verb === 'quit') {
         clearInterval(heartbeat);
+        clearInterval(talker);
         await closeRunning();
         await work.close();
         await app.stop();
@@ -399,6 +412,7 @@ async function main() {
   });
   const stop = () => {
     clearInterval(heartbeat);
+    clearInterval(talker);
     void closeRunning()
       .then(() => work.close())
       .then(() => app.stop())

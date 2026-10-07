@@ -4,6 +4,7 @@ import { currentExperiment } from '../tests/fixtures/current-experiment.js';
 import { join } from 'node:path';
 import type { Caller } from '@merv/contracts';
 import type { Session } from '@merv/sessions/types';
+import type { AgentEvent } from '@merv/sessions/agent-stream';
 
 /**
  * What the Running page draws, seeded in the demo server's own process: work in every state a
@@ -47,6 +48,19 @@ export interface DemoLease {
   reads?: Read[];
   /** The agent's own tool route; a lease without one only renews and so goes quiet. */
   call?: Tool;
+  /** What its agent says and does on its live stream, sent by its runner a piece at a time. */
+  says?: Said;
+}
+/** One step of what an agent says (`text`, sent word by word) or does (a tool and its answer). */
+type Step = string | [tool: string, input: Record<string, unknown>, answer: string];
+interface Said {
+  control: { runnerId: string; hostRef: string };
+  steps: Step[];
+  /** Where its runner is: the step, the word within a text, the log bytes sent and the round. */
+  at: number;
+  word: number;
+  bytes: number;
+  round: number;
 }
 
 /** The desk machine the demo's agents were always registered on, and a lab machine beside it. */
@@ -175,7 +189,7 @@ export async function seedRunning(
     const { session } = joined;
     const held = await work.attach(session);
     const reads: Read[] = [['workflow.assignment', { instanceId: record.id }]];
-    const lease = {
+    const lease: DemoLease & { threadId: string; reads: Read[]; call: Tool; held: typeof held } = {
       sessionId: session.id,
       threadId: session.threadId,
       runnerId: machine.runnerId,
@@ -248,6 +262,14 @@ export async function seedRunning(
     ['Commuted pairs count as the same equation: a + b and b + a must land in one split.'],
   );
   const cleaner = await agent('demo-running-cleaner', lab, clean);
+  cleaner.says = saying(cleaner.held.control, [
+    'Reading the split manifests before I touch anything.',
+    ['shell', { command: 'rg --files splits/' }, 'splits/train.jsonl\nsplits/held-out.jsonl'],
+    'Commuted pairs: 412 held-out equations have their twin in training.',
+    ['shell', { command: 'python scripts/dedupe_pairs.py --split held-out' }, 'moved 412'],
+    'Held-out keeps 1,470 equations. Recording the split sizes next.',
+    ['artifact.create', { title: 'Leak audit: held-out split' }, 'created'],
+  ]);
   const audit = await cleaner.call('artifact.create', {
     title: 'Leak audit: held-out split',
     content: [
@@ -297,6 +319,13 @@ export async function seedRunning(
     id: harness.id,
     workflow: delivered.workflow,
   });
+  reviewing.says = saying(reviewing.held.control, [
+    'Reading the delivery and its accuracy table.',
+    ['review.get', { reviewId: delivered.reviewId }, 'in_progress'],
+    'Accuracy is logged every 100 steps, as the second check asks.',
+    ['shell', { command: 'python eval.py --split held-out-clean --dry-run' }, 'reads 1470 rows'],
+    'The harness reads the cleaned split. Both checks look met so far.',
+  ]);
   const review = await reviewing.call('review.get', { reviewId: delivered.reviewId });
   if (review.status === 'requested')
     await reviewing.call('review.start', { reviewId: delivered.reviewId });
@@ -440,6 +469,12 @@ export async function seedRunning(
   });
   const running = await p('experiment.get_state', { experimentId: experiment.id });
   const runner = await agent('demo-running-p113', lab, running);
+  runner.says = saying(runner.held.control, [
+    ['shell', { command: 'tail -n 3 runs/p113/decay-0.3/log.txt' }, 'step 4200 train 1.00'],
+    'Step 4,200: train accuracy 1.00, held-out 0.03. Not grokked yet.',
+    ['shell', { command: 'nvidia-smi --query-gpu=utilization.gpu --format=csv' }, '97 %'],
+    'GPU at 97%. The next checkpoint lands in about six minutes.',
+  ]);
   await runner.call('experiment.get_state', { experimentId: experiment.id });
   await runner.call('artifact.read', { artifactId: plan.id });
   const log = await runner.call('artifact.create', {
@@ -793,6 +828,70 @@ export async function seedRunning(
   await reflecting.call('project.records');
   reflecting.reads.push(['reflection.lens', { lensId: lens.id }], ['project.records', {}]);
   return { machines, leases, close: () => work.close() };
+}
+
+/** A runner's script for its agent's stream, from its first word. */
+const saying = (control: { runnerId: string; hostRef: string }, steps: Step[]): Said => ({
+  control,
+  steps,
+  at: 0,
+  word: 0,
+  bytes: 0,
+  round: 0,
+});
+
+/**
+ * Each scripted agent's next piece, as its runner sends what it read of the agent's log: a few
+ * words of what it says, or a tool call and its answer, then the next step, round and round.
+ */
+export function talking(url: string, token: string, leases: DemoLease[]): () => Promise<void> {
+  return async () => {
+    for (const lease of leases) {
+      const said = lease.says;
+      if (!said) continue;
+      const step = said.steps[said.at]!;
+      const id = `${lease.sessionId}-${said.round}-${said.at}`;
+      let events: AgentEvent[];
+      if (typeof step === 'string') {
+        const words = step.split(' ');
+        const piece = words.slice(said.word, said.word + 2);
+        said.word += piece.length;
+        const done = said.word >= words.length;
+        events = [
+          {
+            kind: 'text',
+            id,
+            delta: `${said.word > piece.length ? ' ' : ''}${piece.join(' ')}`,
+            ...(done && { done: true }),
+          },
+        ];
+        if (!done) {
+          await send(lease, events);
+          continue;
+        }
+      } else
+        events = [
+          { kind: 'tool_call', id, name: step[0], input: JSON.stringify(step[1]) },
+          { kind: 'tool_result', id, output: step[2] },
+        ];
+      said.word = 0;
+      said.at = (said.at + 1) % said.steps.length;
+      if (!said.at) said.round++;
+      await send(lease, events);
+    }
+  };
+  async function send(lease: DemoLease, events: AgentEvent[]) {
+    const said = lease.says!;
+    const from = said.bytes;
+    said.bytes += 100;
+    await post(url, token, `/sessions/${lease.sessionId}/stream`, {
+      runnerId: said.control.runnerId,
+      hostRef: said.control.hostRef,
+      from,
+      to: said.bytes,
+      events,
+    }).catch(() => (lease.says = undefined));
+  }
 }
 
 /**

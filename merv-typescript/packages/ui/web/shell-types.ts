@@ -2,6 +2,8 @@ export interface RowStatus {
   state?: 'ready' | 'degraded' | 'unavailable';
   count?: number;
   detail?: string;
+  /** A small mark the rail sets beside the row's label, heard as `label`. */
+  badge?: { text: string; label: string };
 }
 /** How Needs you speaks of a row's records (UiRowNeeds): every word is the owner's. */
 export interface RowNeeds {

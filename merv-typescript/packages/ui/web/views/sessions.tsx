@@ -17,29 +17,19 @@ import {
   cx,
   term,
   useNow,
-  words,
   type KVRow,
 } from '../components';
 import { ArrowRightIcon } from '../icons';
 import { Segments } from '../list-filters';
-import { homeOf, rowOf } from '../navigation';
+import { rowOf } from '../navigation';
 import { clock, decisionLiveness, runnerLiveness, type Clock } from '../liveness';
 import { useCommand } from '../mutations';
 import { useScopeKey, useSession } from '../session';
 import type { ViewProps } from './index';
-import {
-  RoleMark,
-  ThreadDialog,
-  holding,
-  isLive,
-  lastActive,
-  leaseLiveness,
-  visitCount,
-} from './threads';
+import { holding, leaseLiveness } from './threads';
+import { AgentsGallery } from './agents-gallery';
 import type {
   DispatchState,
-  ProjectThread,
-  ProjectThreads,
   RunnerPresence,
   SessionSummary,
   SessionsProjectStatus,
@@ -212,7 +202,11 @@ function LeaseRow({
   );
 }
 
-export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
+/**
+ * The machines behind the agents: dispatch, the runners and every lease, a press under the
+ * Agents gallery.
+ */
+export function MachinesPanel({ row, shell, me }: ViewProps & { me: string }) {
   const [cadence, setCadence] = useState(4000);
   const state = useTool<SessionsProjectStatus>('ui.read', { rowId: row.id }, { every: cadence });
   const [open, setOpen] = useState<string>();
@@ -302,12 +296,13 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
       {/* A failed refresh is one line over the page it leaves in place. */}
       {(!status || state.error) && <LoadState {...state} />}
       {status && (
-        <div className="page-stage stack stack--lg sessions-ops">
-          {/* Work shows what is live; this is everything there is and has been, a step under it. */}
-          <p className="cluster muted">
-            <Link to={homeOf(shell.rows).to}>← {homeOf(shell.rows).label}</Link>
-            {fleet && <Link to={fleet.path}>Fleet requests</Link>}
-          </p>
+        <div className="stack stack--lg sessions-ops">
+          {/* Every machine Fleet was asked for is a step further. */}
+          {fleet && (
+            <p className="cluster muted">
+              <Link to={fleet.path}>Fleet requests</Link>
+            </p>
+          )}
           <section className="stack" aria-label="Dispatch">
             <div className="dispatch">
               <h2 className="section-title">Dispatch</h2>
@@ -453,111 +448,32 @@ export function AgentsPage({ row, shell, me }: ViewProps & { me: string }) {
               </div>
             )}
           </section>
-          <Agents live={anyLive} />
         </div>
       )}
     </>
   );
 }
 
-/**
- * The project's agents: Sessions' threads, every live one first, then the newest others, older
- * ones a press further. A row opens the thread's dialog, as a unit's Agents tab does.
- */
-function Agents({ live: anyLive }: { live: boolean }) {
-  const first = useTool<ProjectThreads>(
-    '/sessions/threads',
-    {},
-    { every: anyLive ? 4000 : 15_000 },
-  );
-  const [older, setOlder] = useState<{ threads: ProjectThread[]; next: string | null }>();
-  const [busy, setBusy] = useState(false);
-  const [opened, setOpened] = useState<string>();
-  const shown = [...(first.data?.threads ?? []), ...(older?.threads ?? [])];
-  // The newest page's own read of a thread comes first; one it has moved off stays as shown.
-  const seen = new Set<string>();
-  const threads = shown.filter((item) => !seen.has(item.id) && seen.add(item.id));
-  const next = older ? older.next : (first.data?.next ?? null);
-  const more = async () => {
-    // The page after the oldest thread shown, so none a newer one pushed off the first is lost;
-    // the first page's threads are kept with the older ones as they stand now.
-    const kept = threads.filter((item) => item.seq !== undefined);
-    const oldest = kept.reduce<string | null>(
-      (low, item) => (low === null || Number(item.seq) < Number(low) ? item.seq! : low),
-      null,
-    );
-    setBusy(true);
-    try {
-      const page = await accountRequest<ProjectThreads>(
-        `/sessions/threads?before=${encodeURIComponent(oldest ?? next!)}`,
-        { scoped: true },
-      );
-      setOlder({ threads: [...kept, ...page.threads], next: page.next });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const thread = threads.find((item) => item.id === opened);
-  const live = threads.filter(isLive).length;
+/** The Agents page: the gallery of the project's agents, and the machines a press under it. */
+function AgentsPage(props: ViewProps & { me: string }) {
+  const [machines, showMachines] = useState(false);
   return (
-    <section className="stack" aria-label="Agents">
-      <h2 className="section-title">
-        Agents{' '}
-        <span className="section-n">
-          {threads.length}
-          {next ? '+' : ''} · {live} live
-        </span>
-      </h2>
-      {(!first.data || first.error) && <LoadState {...first} />}
-      {threads.length > 0 && (
-        <ul className="unit-rows">
-          {threads.map((item) => {
-            const { visits } = visitCount(item);
-            const last = lastActive(item);
-            const on = isLive(item);
-            return (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  className="unit-row unit-row--thread"
-                  aria-haspopup="dialog"
-                  onClick={() => setOpened(item.id)}
-                >
-                  <RoleMark role={item.role} />
-                  <span className="unit-row-name">{item.name || term(null)}</span>
-                  <span className="unit-row-stage faint">
-                    {words(item.role)} · {words(item.state)}
-                  </span>
-                  <span className={cx('unit-row-status', !on && 'faint')}>
-                    {on && <span className="live-dot live-dot--live" aria-hidden="true" />}
-                    {on ? 'live' : item.status}
-                  </span>
-                  <span className="faint tabular">
-                    {visits} {visits === 1 ? 'visit' : 'visits'}
-                  </span>
-                  <span className="faint">{last ? <Ago at={last} /> : ''}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-      {next && (
+    <div className="page-stage stack stack--lg">
+      <AgentsGallery />
+      <section className="stack" aria-label="Machines">
         <div>
-          <button type="button" className="btn-text" disabled={busy} onClick={() => void more()}>
-            {busy ? 'Loading…' : 'Show older'}
+          <button
+            type="button"
+            className="btn-text agents-recent"
+            aria-expanded={machines}
+            onClick={() => showMachines((open) => !open)}
+          >
+            Machines {machines ? '▾' : '▸'}
           </button>
         </div>
-      )}
-      {thread && (
-        <ThreadDialog
-          thread={thread}
-          title={thread.name}
-          loadedAt={first.loadedAt}
-          onClose={() => setOpened(undefined)}
-        />
-      )}
-    </section>
+        {machines && <MachinesPanel {...props} />}
+      </section>
+    </div>
   );
 }
 

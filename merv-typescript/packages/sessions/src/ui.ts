@@ -10,12 +10,25 @@ export const sessionsUiPlugin = {
     ctx.effect(() =>
       ctx.ui.register({
         id: 'sessions',
-        // Reached from the Work page, which shows what is live; the rail does not list it.
-        label: 'Agents and machines',
-        group: 'hidden',
+        // The project's agents, one card each, under the rail's Agents section beside Pi.
+        label: 'Agents',
+        group: 'operations',
         order: 24,
         path: '/sessions',
         view: { kind: 'sessions' },
+        // How many agents work now and how many wait on their owner, as the rail's badge.
+        status: async (caller) => {
+          if (caller.session || caller.managed) return {};
+          const { live, waiting } = await ctx.sessions.threads.counts(caller);
+          return live || waiting
+            ? {
+                badge: {
+                  text: `${live}·${waiting}`,
+                  label: `${live} working, ${waiting} waiting on you`,
+                },
+              }
+            : {};
+        },
         read: async (caller) =>
           (await ctx.sessions.dispatch.projectStatus(caller)) as unknown as Json,
       }),

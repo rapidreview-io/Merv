@@ -435,7 +435,7 @@ test('a writer answers the thread’s open question from the box under it', asyn
   await press(chip('running'));
   const box = document.querySelector('dialog .thread-messages')!;
   // What passed before: the message, that it was read, and the agent's reply.
-  assert.match(box.textContent!, /You · .* · readUse the smaller model\.↳ Switching to it\./);
+  assert.match(box.textContent!, /You · .* · ReadUse the smaller model\.↳ Switching to it\./);
   assert.equal(box.querySelector('.thread-question')!.textContent, 'AnswerWhich dataset split?');
   const area = box.querySelector('textarea')!;
   assert.equal(area.getAttribute('aria-label'), 'Answer');
@@ -461,23 +461,59 @@ test('a reader sees what passed but no box, and an answered question is history'
   assert.match(box.textContent!, /Agent asked · .*Which dataset split\?/);
 });
 
-test('a thread that can take no message now, its work finished and nothing asked, has no box', async (t) => {
+test('a thread that takes no message is asked instead, through session.ask_thread where Sessions offers it', async (t) => {
   t.after(unmount);
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });
+  // A composition without the tool: the box stands, disabled, and says only what it would do.
+  serve('/tools', { body: { tools: [{ name: 'session.message' }] } });
   const finished = threads.map((item) =>
     item.id === 'thr_run' ? { ...item, takesMessage: false } : item,
   );
   await open('producer', finished);
   await press(chip('running'));
-  const box = document.querySelector('dialog .thread-messages')!;
+  let box = document.querySelector('dialog .thread-messages')!;
   assert.match(box.textContent!, /Use the smaller model\./);
-  assert.equal(!!box.querySelector('textarea'), false);
+  const area = box.querySelector('textarea')!;
+  assert.equal(area.disabled, true);
+  assert.equal(area.getAttribute('placeholder'), 'Ask');
+  assert.equal(box.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled, true);
   await unmount();
-  // The same thread on open work takes one.
+
+  // Offered, it asks the thread through the tool, which starts a short visit that answers.
+  serve('/tools', { body: { tools: [{ name: 'session.ask_thread' }] } });
+  const asked: Record<string, unknown>[] = [];
+  serve('/tools/session.ask_thread', (_call, sent) => {
+    asked.push(sent);
+    return { body: { result: { message: { id: 'm3' } } } };
+  });
+  await open('producer', finished);
+  await press(chip('running'));
+  box = document.querySelector('dialog .thread-messages')!;
+  const ask = box.querySelector('textarea')!;
+  assert.equal(ask.disabled, false);
+  await act(async () => {
+    const set = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')!;
+    set.set!.call(ask, 'Why did the run stop?');
+    ask.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await act(async () => void box.querySelector('form')!.requestSubmit());
+  await settle(10);
+  assert.equal(asked.length, 1);
+  assert.equal(asked[0]!.threadId, 'thr_run');
+  assert.equal(asked[0]!.body, 'Why did the run stop?');
+  assert.equal(typeof asked[0]!.requestId, 'string');
+  assert.ok(!requests.includes('POST /sessions/threads/thr_run/messages'));
+  assert.equal(ask.value, '');
+  await unmount();
+
+  // The same thread on open work is sent a message, and reads no catalog for it.
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });
+  const before = requests.filter((request) => request === 'GET /tools').length;
   await open('producer');
   await press(chip('running'));
-  assert.equal(!!document.querySelector('dialog .thread-messages textarea'), true);
+  const message = document.querySelector('dialog .thread-messages textarea')!;
+  assert.equal(message.getAttribute('aria-label'), 'Message');
+  assert.equal(requests.filter((request) => request === 'GET /tools').length, before);
 });
 
 test('an answer sent refreshes Home, and a send whose result is unknown keeps its words locked', async (t) => {

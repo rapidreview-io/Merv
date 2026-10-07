@@ -614,7 +614,7 @@ function LiveHead({ board, now, agents }: { board: RunningBoard; now: Clock; age
         {/* Every agent, machine and lease there has been, and what is rarely needed of them. */}
         {agents && (
           <Link className="live-more" to={agents}>
-            Agents and machines
+            Agents
           </Link>
         )}
       </div>

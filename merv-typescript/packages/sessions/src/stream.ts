@@ -4,7 +4,7 @@ import { AGENT_EVENT_TEXT, type AgentEvent, type AgentStreamEvent } from './agen
 import { isoNow, live, readFirst } from './common.js';
 import { readsAgents } from './rules.js';
 import { postgresMigrations } from './stream.postgres.js';
-import type { Session, SessionStreamBatch, SessionStreamReads } from './types.js';
+import type { LiveFeedFrame, Session, SessionStreamBatch, SessionStreamReads } from './types.js';
 
 /** How long after its session closed a stream still takes the agent's last words. */
 const STREAM_GRACE_MS = 10 * 60_000;
@@ -14,6 +14,18 @@ const SNAPSHOT_EVENTS = 500;
 const SNAPSHOT_BYTES = 2_000_000;
 const READERS_PER_SESSION = 8;
 const READERS = 256;
+/** Pages reading one project's live feed at once. */
+const FEED_READERS = 16;
+/** The live visits a feed follows, newest first. */
+const FEED_VISITS = 48;
+/** The newest events a frame reads of one visit; a visit further ahead than this starts over. */
+const FEED_READ = 200;
+/** The events, pieces of one block joined, a frame sends of one visit. */
+const FEED_KEEP = 24;
+/** What a feed event keeps: the end of a text, the start of a tool's input and answer. */
+const FEED_TEXT = 1200;
+const FEED_INPUT = 400;
+const FEED_OUTPUT = 200;
 const busy = 'Too many agent streams are open; retry shortly';
 
 const offset = z.number().int().nonnegative().safe();
@@ -68,6 +80,7 @@ const view = (row: Row): AgentStreamEvent => ({
  */
 export class SessionStreams implements SessionStreamReads {
   private readonly readers = new Map<string, Set<() => void>>();
+  private readonly feeds = new Map<string, Set<() => void>>();
   private open = 0;
   /** The last session the sweep looked at: the next sweep goes on after it. */
   private pruned = '';
@@ -111,8 +124,10 @@ export class SessionStreams implements SessionStreamReads {
       );
       return { seq: Number(row?.seq ?? 0), until: Number(row?.until ?? 0) };
     };
+    let projectId = '';
     const held = await readFirst(this.state, async (tx) => {
       const session = await this.controlled(caller, batch.sessionId, batch.runnerId, tx);
+      projectId = session.projectId;
       check(
         session.hostRef !== null && session.hostRef === batch.hostRef,
         'host_conflict',
@@ -144,6 +159,7 @@ export class SessionStreams implements SessionStreamReads {
       return { until: batch.to, seq: seq + batch.events.length };
     });
     for (const wake of this.readers.get(batch.sessionId) ?? []) wake();
+    for (const wake of this.feeds.get(projectId) ?? []) wake();
     return taken;
   }
 
@@ -181,6 +197,90 @@ export class SessionStreams implements SessionStreamReads {
     );
     check(row, 'session_not_found', 'Session not found', 404);
     return live(row) || Date.parse(row.closed_at ?? '') + STREAM_GRACE_MS > this.clock();
+  }
+
+  /** The project's live feed is an operator's, as each agent's stream is. */
+  async authorizeFeed(caller: Caller): Promise<void> {
+    caller = structuredClone(caller);
+    check(
+      !caller.session && !caller.managed,
+      'forbidden',
+      'Only a person reads an agent’s stream',
+      403,
+    );
+    const actor = await this.state.snapshotTransaction((tx) =>
+      this.scope.require(caller, 'read', tx),
+    );
+    check(readsAgents(actor.role), 'forbidden', 'Only an operator reads an agent’s stream', 403);
+  }
+
+  subscribeFeed(projectId: string, wake: () => void): () => void {
+    const readers = this.feeds.get(projectId) ?? new Set();
+    check(this.open < READERS && readers.size < FEED_READERS, 'stream_busy', busy, 429);
+    readers.add(wake);
+    this.feeds.set(projectId, readers);
+    this.open++;
+    return () => {
+      if (!readers.delete(wake)) return;
+      this.open--;
+      if (!readers.size) this.feeds.delete(projectId);
+    };
+  }
+
+  /**
+   * One frame of the project's feed: the live visits, and each one's events past what `held`
+   * says the page holds, read in one statement for them all. A visit new to the page, or one
+   * that said more than FEED_READ since, is sent its newest events alone and starts over.
+   */
+  async feed(projectId: string, held: Map<string, number>): Promise<LiveFeedFrame | null> {
+    const live = (
+      await this.state.read((sql) =>
+        sql.all<{ id: string; thread_id: string }>(
+          `SELECT id,thread_id FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')
+            AND thread_id IS NOT NULL ORDER BY _merv_rowid DESC LIMIT ${FEED_VISITS}`,
+          projectId,
+        ),
+      )
+    ).map((row) => ({ sessionId: row.id, threadId: row.thread_id }));
+    const ids = new Set(live.map((visit) => visit.sessionId));
+    let changed = false;
+    for (const id of [...held.keys()])
+      if (!ids.has(id)) {
+        held.delete(id);
+        changed = true;
+      }
+    const rows = live.length
+      ? await this.state.read((sql) =>
+          sql.all<Row & { session_id: string }>(
+            `SELECT c.id AS session_id,e.seq,e.at,e.event FROM (VALUES ${live.map(() => '(?,CAST(? AS BIGINT))').join(',')}) c(id,after)
+              CROSS JOIN LATERAL (SELECT seq,at,jsonb_strip_nulls(jsonb_build_object('kind',x.event->>'kind','id',x.event->>'id',
+                  'name',x.event->>'name','done',x.event->'done','error',x.event->'error',
+                  'delta',right(x.event->>'delta',${FEED_TEXT}),'text',left(x.event->>'text',${FEED_INPUT}),
+                  'input',left(x.event->>'input',${FEED_INPUT}),'output',left(x.event->>'output',${FEED_OUTPUT})))::text AS event
+                FROM session_events x WHERE x.session_id=c.id AND x.seq>c.after ORDER BY x.seq DESC LIMIT ${FEED_READ + 1}) e`,
+            ...live.flatMap((visit) => [visit.sessionId, held.get(visit.sessionId) ?? 0]),
+          ),
+        )
+      : [];
+    const visits: LiveFeedFrame['visits'] = [];
+    for (const visit of live) {
+      const own = rows
+        .filter((row) => row.session_id === visit.sessionId)
+        .map(view)
+        .sort((a, b) => a.seq - b.seq);
+      const fresh = !held.has(visit.sessionId);
+      const reset = fresh || own.length > FEED_READ;
+      if (own.length) held.set(visit.sessionId, own.at(-1)!.seq);
+      else if (fresh) held.set(visit.sessionId, 0);
+      if (!own.length && !fresh) continue;
+      changed = true;
+      visits.push({
+        ...visit,
+        ...(reset && { reset: true as const }),
+        events: tail(reset ? own.slice(-FEED_READ) : own),
+      });
+    }
+    return changed ? { live, visits } : null;
   }
 
   /** The events after `after`, at most `limit`, oldest first. */
@@ -259,4 +359,30 @@ export class SessionStreams implements SessionStreamReads {
       return held.length < 100 ? '' : held.at(-1)!.id;
     });
   }
+}
+
+/**
+ * The newest FEED_KEEP events of a run, the pieces of one block that follow each other joined
+ * into one event under the last piece's number, its text cut to its end again.
+ */
+function tail(events: AgentStreamEvent[]): AgentStreamEvent[] {
+  const joined: AgentStreamEvent[] = [];
+  for (const item of events) {
+    const last = joined.at(-1);
+    const { event } = item;
+    if (
+      last &&
+      (event.kind === 'text' || event.kind === 'thinking') &&
+      last.event.kind === event.kind &&
+      last.event.id === event.id
+    ) {
+      const delta = (last.event.delta + event.delta).slice(-FEED_TEXT);
+      joined[joined.length - 1] = {
+        seq: item.seq,
+        at: item.at,
+        event: { ...last.event, delta, ...(event.done && { done: true }) },
+      };
+    } else joined.push(item);
+  }
+  return joined.slice(-FEED_KEEP);
 }
