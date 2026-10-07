@@ -1,12 +1,14 @@
 import { Link, useParams } from 'react-router-dom';
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 import { refreshTools, useTool, type Loaded } from '../api';
 import { useCommand } from '../mutations';
 import { recordRoutes } from '../list-filters';
 import {
   Ago,
   Area,
+  ConfirmAction,
   Evidence,
+  Failure,
   LoadState,
   RecordPage,
   StatusPill,
@@ -33,9 +35,13 @@ import {
 const FINDINGS = ['met', 'not_met', 'not_verified', 'waived'] as const;
 
 /** A review as review.get and review.list answer it; review.get adds its owner's return routes,
- * the gate it reads, the delivery's claims and, where its rounds are used up, what is left. */
+ * the gate it reads, the delivery's claims, where its rounds are used up what is left, and
+ * whether this reader may hand its claim back. */
 export type Review = ReviewRequest &
-  Pick<ReviewGuide, 'returns' | 'verdicts' | 'overrides' | 'gate' | 'claims' | 'limit'>;
+  Pick<
+    ReviewGuide,
+    'returns' | 'verdicts' | 'overrides' | 'gate' | 'claims' | 'limit' | 'releasable'
+  >;
 /** What a desk has said about one check so far: its word, the sentence, the files it cites. */
 export interface Draft {
   status?: string;
@@ -338,6 +344,7 @@ function ReviewRecord({ id }: { id: string }) {
           <>
             {stated}
             <Controls review={r} guidance={guidance} values={values} onDone={review.reload} />
+            {r.releasable && <Release review={r} onDone={review.reload} />}
           </>
         )
       }
@@ -496,6 +503,57 @@ function Controls({
       help={held?.blockers[0]?.message ?? guidance.data.instruction}
       disabled
     />
+  );
+}
+
+/**
+ * Handing a claim back, offered where Reviews says this reader may (`releasable`): its claimer,
+ * or a project admin, while no leased worker holds it. A reason is written, and each press is
+ * its own request.
+ */
+function Release({ review, onDone }: { review: Review; onDone(): void }) {
+  const [reason, setReason] = useState('');
+  const done = useRef(false);
+  const release = useCommand<Review>({
+    tool: 'review.release',
+    validate: (value) => !!value && value.id === review.id,
+    onSuccess: () => {
+      done.current = true;
+      onDone();
+      refreshTools('ui.home', 'ui.running', 'review.list', 'workflow.status_and_next');
+    },
+  });
+  return (
+    <div className="act-danger">
+      <ConfirmAction
+        label="Release review"
+        title="Release this review?"
+        confirm={release.retry ? 'Retry same request' : 'Release review'}
+        busy={release.busy ? 'Releasing…' : undefined}
+        ready={!!reason.trim()}
+        note={<Failure message={release.error} />}
+        onConfirm={async () => {
+          done.current = false;
+          await release.submit({ reviewId: review.id, reason: reason.trim() });
+          return done.current;
+        }}
+      >
+        <p>
+          The claim is handed back. Another eligible reviewer, or a leased review worker, may claim
+          it; nothing about the work changes.
+        </p>
+        <label className="stack stack--tight">
+          Reason
+          <input
+            className="input"
+            value={reason}
+            maxLength={500}
+            disabled={release.locked}
+            onChange={(event) => setReason(event.target.value)}
+          />
+        </label>
+      </ConfirmAction>
+    </div>
   );
 }
 

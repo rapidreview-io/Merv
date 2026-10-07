@@ -1,7 +1,9 @@
 import { excludedFromReview, reviewActions, reviewHistory } from '@merv/reviews/rules';
 import {
+  heldLease,
   insertLease,
   leaseRows,
+  liveLease,
   reviewedLeaseHooks,
   type LeaseRow as WorkflowLeaseRow,
 } from '@merv/workflows/lease-rows';
@@ -138,46 +140,25 @@ export async function current(
   }
   return { wave, lens };
 }
+/** The step this check is about: the wave or lens at its revision. */
+const step = ({ caller, snapshot }: WorkflowCheckContext) => ({
+  projectId: caller.projectId,
+  instanceId: snapshot.id,
+  revision: snapshot.revision,
+});
+/** The live lease on the step, whoever holds it. */
 export async function activeLease(
   ctx: ReflectionsContext,
   context: WorkflowCheckContext,
 ): Promise<LeaseRow | undefined> {
-  const { caller, snapshot, tx } = context;
-  return await ctx.once(
-    `lease:${caller.projectId}:${snapshot.id}:${snapshot.revision}`,
-    async () =>
-      (
-        await leaseRows<LeaseRow['details']>(
-          tx,
-          {
-            projectId: caller.projectId,
-            instanceIds: [snapshot.id],
-            revision: snapshot.revision,
-            active: true,
-          },
-          'full',
-        )
-      )[0],
-  );
+  return await liveLease<LeaseRow['details']>(ctx.state, context.tx, step(context));
 }
+/** The caller's own live lease on the step. */
 export async function lease(
   ctx: ReflectionsContext,
   context: WorkflowCheckContext,
 ): Promise<LeaseRow> {
-  return owned(ctx, context, await activeLease(ctx, context));
-}
-export function owned(
-  ctx: ReflectionsContext,
-  { caller }: WorkflowCheckContext,
-  row: LeaseRow | undefined,
-): LeaseRow {
-  check(
-    caller.session && row?.id === caller.session.id && row.actor_id === caller.actorId,
-    'stale_lease',
-    'Worker no longer owns this reflection assignment',
-    409,
-  );
-  return row;
+  return await heldLease<LeaseRow['details']>(ctx.state, context.tx, step(context), context.caller);
 }
 /** A leased worker's inputs as frozen when it acquired the lease; anyone else's as they stand. */
 export async function assignmentInputs(
@@ -236,9 +217,9 @@ export async function admit(
   const { wave, lens } = await current(ctx, context);
   const reviewing = snapshot.state === 'in_review';
   await ctx.scope.require(caller, reviewing ? 'review' : 'write', tx);
-  const lease = await activeLease(ctx, context);
-  if (caller.session) owned(ctx, context, lease);
-  else check(!lease, 'reflection_leased', 'A worker owns this reflection assignment', 409);
+  const held = caller.session ? await lease(ctx, context) : await activeLease(ctx, context);
+  if (!caller.session)
+    check(!held, 'reflection_leased', 'A worker owns this reflection assignment', 409);
   if (lens) {
     check(
       !lens.artifact && snapshot.state === 'reflecting',
@@ -300,7 +281,7 @@ export async function admit(
       403,
     );
   }
-  return { wave, lens, lease };
+  return { wave, lens, lease: held };
 }
 export async function inputs(
   ctx: ReflectionsContext,

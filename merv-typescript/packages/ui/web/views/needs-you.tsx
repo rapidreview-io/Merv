@@ -18,6 +18,7 @@ import {
 } from '../components';
 import { ArrowRightIcon, CheckIcon } from '../icons';
 import { personMove } from '@merv/code-work/blockers';
+import { pathOf } from '../navigation';
 import { namesOf } from './people';
 // The record shapes the home pages read are declared once, beside the graph they feed.
 import { newest, useHome, type Flow, type HomeData } from './map-data';
@@ -193,6 +194,9 @@ export function needsYou(
       { ask: yours.ask, dependencies },
       returned.has(item.id) && !capped,
     );
+    // Another round is allowed on the work's own card on the Work map, so a capped line goes
+    // there; the record's own page holds no such control.
+    const work = capped && pathOf(rows, 'work');
     lines.push({
       id: item.id,
       kind,
@@ -200,6 +204,9 @@ export function needsYou(
       to: `${row.path}/${item.id}`,
       at: item.workflow.updatedAt,
       sentence,
+      ...(work
+        ? { desk: { label: 'Allow another round', to: `${work}?key=work:${item.id}` } }
+        : {}),
       // Where the server's reason is the headline, the fold does not say it again.
       says: said(decision).filter((text) => text !== sentence),
     });

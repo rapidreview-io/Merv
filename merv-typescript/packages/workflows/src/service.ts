@@ -359,12 +359,39 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
     });
   }
 
+  async exhaustedLimit(
+    caller: Caller,
+    instanceId: string,
+    tx?: Transaction,
+  ): Promise<WorkflowLimitStatus | undefined> {
+    return await this.reading(caller, tx, async (tx, caller) => {
+      const row = await tx.get<Pick<InstanceRow, 'id' | 'workflow' | 'version' | 'state'>>(
+        'SELECT id,workflow,version,state FROM wf_instances WHERE project_id=? AND id=?',
+        caller.projectId,
+        instanceId,
+      );
+      check(row, 'not_found', 'Workflow instance not found', 404);
+      const { policy } = this.definition(row.workflow, row.version);
+      const [statuses] = (await limitStatusesOf(tx, [{ ...row, policy }])).values();
+      return statuses.find((status) => status.exhausted);
+    });
+  }
+
   async escalated(caller: Caller, tx?: Transaction): ReturnType<Workflows['escalated']> {
     return await this.reading(caller, tx, async (tx, caller) => {
-      // Only states a loaded limit leaves, found by index, then two reads per such limit.
+      // Only states a loaded limit leaves, or whose rule allows another round to move on, found
+      // by index, then two reads per limit.
       const capped = [...this.registrations.values()].flatMap(({ definition, policy }) => {
-        const states = [...new Set((policy?.limits ?? []).map((limit) => limit.from))];
-        return states.length ? [{ definition, policy, states }] : [];
+        const leaving = new Set((policy?.limits ?? []).map((limit) => limit.from));
+        const extending = new Set(
+          (policy?.actions ?? [])
+            .filter((rule) => rule.tool === 'workflow.extend_limit')
+            .flatMap((rule) => rule.states),
+        );
+        const states = [...new Set([...leaving, ...extending])];
+        return states.length && policy?.limits?.length
+          ? [{ definition, policy, states, extending }]
+          : [];
       });
       const items: Awaited<ReturnType<Workflows['escalated']>>['items'] = [];
       if (capped.length) {
@@ -384,22 +411,28 @@ export class WorkflowsService extends WorkflowCommands implements Workflows {
             ...states,
           ]),
         );
-        const policyOf = new Map(
-          capped.map(({ definition, policy }) => [
-            `${definition.name}@${definition.version}`,
-            policy,
-          ]),
+        const declared = new Map(
+          capped.map((entry) => [`${entry.definition.name}@${entry.definition.version}`, entry]),
         );
-        const statuses = await limitStatusesOf(
+        const at = (row: (typeof rows)[number]) => declared.get(`${row.workflow}@${row.version}`)!;
+        // Work at a used-up limit leaving its state; work waiting where only another round moves
+        // it on, by whichever of its limits is used up, else its first.
+        const leaving = await limitStatusesOf(
           tx,
-          rows.map((row) => ({
-            id: row.id,
-            state: row.state,
-            policy: policyOf.get(`${row.workflow}@${row.version}`),
-          })),
+          rows.map((row) => ({ id: row.id, state: row.state, policy: at(row).policy })),
+        );
+        const waiting = rows.filter((row) => at(row).extending.has(row.state));
+        const every = await limitStatusesOf(
+          tx,
+          waiting.map((row) => ({ id: row.id, state: row.state, policy: at(row).policy })),
+          true,
         );
         for (const row of rows) {
-          const limit = statuses.get(row.id)!.find((status) => status.exhausted);
+          const all = every.get(row.id);
+          const limit =
+            leaving.get(row.id)!.find((status) => status.exhausted) ??
+            all?.find((status) => status.exhausted) ??
+            all?.[0];
           if (limit) items.push({ instanceId: row.id, revision: Number(row.revision), limit });
         }
       }

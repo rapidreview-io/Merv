@@ -48,8 +48,6 @@ export interface WaveFacts {
   wave: Reflection;
   /** Every lease ever taken on the wave or on one of its current lenses. */
   leases: WaveLease[];
-  /** In review again after as many returns as its limit allows: nothing will lease a reviewer. */
-  exhausted: boolean;
   /** Every review of the wave, for its history; read for its sidebar only. */
   reviews?: readonly ReviewRequest[];
   /** The files those reviews pinned, by id: which of them is the synthesis. */
@@ -130,22 +128,15 @@ function face({ wave, leases }: WaveFacts): { says: RunningPhrase; look: Running
 }
 
 /**
- * The wave's red. A wave in review after its last allowed return is never leased a reviewer,
- * so it waits for a person: a reviewer who takes the review by hand, or its ending. Once
- * someone has claimed that review the move is being made, and the line names them. A review
- * no eligible reviewer may take waits for an operator to provide one: Reviews tells only an
- * operator so (`waiting`), as it does for a task, and its Review section says why in ink.
+ * The wave's red. A review no eligible reviewer may take waits for an operator to provide one:
+ * Reviews tells only an operator so (`waiting`), as it does for a task, and its Review section
+ * says why in ink. Returns used up are Workflows' mark on the card, in the words every owner's
+ * work shares.
  */
-function attention({ wave, exhausted }: WaveFacts): RunningAttention | undefined {
+function attention({ wave }: WaveFacts): RunningAttention | undefined {
   const review = wave.review && {
     to: { route: `/reviews/${encodeURIComponent(wave.review.id)}`, text: 'Open the review' },
   };
-  if (exhausted && wave.review?.status !== 'started')
-    return {
-      says: ['Review returns used up'],
-      who: 'An independent reviewer reviews it by hand, or its owner or an operator ends it.',
-      ...review,
-    };
   if (wave.workflow.state === 'in_review' && wave.review?.waiting)
     return {
       says: ['No independent reviewer can take it'],
@@ -379,10 +370,6 @@ export async function runningFacts(
       revision: Number(lease.revision),
       releasedAt: lease.released_at,
     })),
-    // The returns are counted from review, so only a wave in review can have used them up.
-    exhausted:
-      wave.workflow.state === 'in_review' &&
-      !!(await ctx.workflows.limitStatusOf(caller, [id], 'review_returns', tx)).get(id)?.exhausted,
   };
 }
 export async function running(

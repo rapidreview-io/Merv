@@ -33,9 +33,10 @@ import { UnitView } from './unit';
  * One control. The input is sent exactly as its owner wrote it — a halt with no lease named
  * halts every lease — and where the owner said what a confirmed act must hold (`expect`),
  * an answer short of it keeps the guard open with the owner's own sentence under it, and
- * nothing on the page is refreshed as though it had happened. An extension adds to what is
- * left, so one whose answer was lost is never offered again as the same request: the lease
- * is read again instead, and pressing once more extends it once more.
+ * nothing on the page is refreshed as though it had happened. An extension (a lease's time, a
+ * limit's rounds) adds to what is left, so one whose answer was lost is never offered again as
+ * the same request: the thing is read again instead, and pressing once more adds once more.
+ * What is done is read again on Home too, whose Needs you may have been waiting on it.
  */
 export function Act({ action }: { action: RunningAction }) {
   const [unmet, setUnmet] = useState(false);
@@ -54,14 +55,15 @@ export function Act({ action }: { action: RunningAction }) {
       const done = !expect || (result[expect.field] as number) >= expect.min;
       met.current = done;
       setUnmet(!done);
-      if (done) refreshTools('ui.running', 'ui.running_panel');
+      if (done) refreshTools('ui.running', 'ui.running_panel', 'ui.home');
     },
   });
   const run = async () => {
     met.current = undefined;
     setUnmet(false);
     await command.submit(ask ? { ...action.input, [ask.field]: said.trim() } : action.input);
-    if (adds && met.current === undefined) refreshTools('ui.running', 'ui.running_panel');
+    if (adds && met.current === undefined)
+      refreshTools('ui.running', 'ui.running_panel', 'ui.home');
     return met.current === true;
   };
   const lost = adds && command.retry;
@@ -71,7 +73,7 @@ export function Act({ action }: { action: RunningAction }) {
     command.error || unmet ? (
       <p className="error-message" role="alert">
         {lost
-          ? 'The answer was lost, so the lease may already be extended. Check how long it has left before extending it again.'
+          ? 'The answer was lost, so it may already have been done. Check where it stands before pressing again.'
           : (command.error ?? expect?.nothing)}
       </p>
     ) : null;

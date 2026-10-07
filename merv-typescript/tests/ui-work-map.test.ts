@@ -1297,7 +1297,12 @@ test('an extension whose answer was lost is never offered as a retry: a second o
   assert.equal(sent.length, 1);
   assert.ok(!button('Retry same request'), 'a lost extension is not sent again as the same one');
   assert.ok(button('Extend lease'));
-  assert.match($('#running-panel [role="alert"]')!.textContent!, /may already be extended/);
+  // Said of any extension, a lease's or a limit's: the act may already have been done.
+  assert.match(
+    $('#running-panel [role="alert"]')!.textContent!,
+    /The answer was lost, so it may already have been done/,
+  );
+  assert.doesNotMatch($('#running-panel [role="alert"]')!.textContent!, /lease/);
   assert.ok(reads('ui.running_panel') > panels, 'the lease is read again to say where it stands');
 });
 

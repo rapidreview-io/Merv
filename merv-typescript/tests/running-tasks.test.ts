@@ -589,25 +589,12 @@ test('the board reads what every task waits on, and its review rounds, once for 
       tasks.map(({ id }) => id),
       tx,
     );
-    const rounds = await workflows.limitStatusOf(
-      f.operator,
-      tasks.map(({ id }) => id),
-      'review_rounds',
-      tx,
-    );
-    for (const task of tasks) {
+    for (const task of tasks)
       assert.deepEqual(
         waitsOn.get(task.id),
         (await workflows.prerequisites(f.operator, [task.id], tx)).get(task.id)!,
         task.title,
       );
-      assert.deepEqual(
-        rounds.get(task.id),
-        (await workflows.limitStatusOf(f.operator, [task.id], 'review_rounds', tx)).get(task.id),
-        task.title,
-      );
-    }
-    assert.equal(rounds.get(reviewed.id)?.exhausted, true);
   });
 
   const calls: string[] = [];
@@ -621,7 +608,8 @@ test('the board reads what every task waits on, and its review rounds, once for 
     t.after(() => void (spied[name] = original));
   }
   const nodes = await f.app.ctx.tasks.running(f.operator);
-  assert.deepEqual(calls.sort(), ['limitStatusOf', 'prerequisites']);
+  // Rounds used up are Workflows' own mark, never counted again by Tasks.
+  assert.deepEqual(calls.sort(), ['prerequisites']);
   assert.equal(nodes.length, tasks.length);
   const answer = await f.board();
   const find = (task: { id: string }) =>
@@ -635,7 +623,12 @@ test('the board reads what every task waits on, and its review rounds, once for 
     `the card names a prerequisite, not ${String(named)}`,
   );
   assert.equal(rest, ' and 1 more');
-  assert.deepEqual(find(reviewed)?.attention?.says, ['Every review round is used']);
+  assert.deepEqual(find(reviewed)?.attention?.says, [
+    'Every round of ',
+    { mono: 'review_rounds' },
+    ' is used · ',
+    { count: 3 },
+  ]);
 });
 
 test('a task that needs a person says so in the order that decides it', () => {
@@ -651,7 +644,6 @@ test('a task that needs a person says so in the order that decides it', () => {
       createdAt: '2026-09-25T10:00:00.000Z',
     },
     dependencies: [],
-    roundsUsed: false,
     blocked: false,
   };
   const attention = (standing: Partial<TaskStanding>): RunningNode['attention'] =>
@@ -666,26 +658,11 @@ test('a task that needs a person says so in the order that decides it', () => {
       to: { route: '/reviews/review_1', text: 'Open the review' },
     },
   );
-  assert.deepEqual(
-    attention({
-      review: { ...task.review!, waiting: 'Every eligible reviewer contributed.' },
-      roundsUsed: true,
-    })?.says,
-    ['Every review round is used'],
-  );
-  // A review claimed by hand has taken the move; one a leased worker holds has not.
-  const started = { ...task.review!, status: 'started' as const, reviewerId: 'actor_2' };
-  assert.equal(attention({ review: started, roundsUsed: true }), undefined);
-  assert.deepEqual(attention({ review: started, roundsUsed: true, lease: 'review' })?.says, [
-    'Every review round is used',
-  ]);
-  assert.deepEqual(attention({ state: 'suspended', review: null }), {
-    says: ['Suspended'],
-    who: 'A signed-in operator allows another review round',
-  });
+  // Rounds used up, and waiting suspended for another, are Workflows' mark, not the task's red.
+  assert.equal(attention({ state: 'suspended', review: null }), undefined);
   assert.deepEqual(taskNode({ ...task, state: 'suspended', review: null }).lines, [['Suspended']]);
   // An ended task needs nobody, whatever it last stood at.
-  assert.equal(attention({ state: 'done', roundsUsed: true }), undefined);
+  assert.equal(attention({ state: 'done' }), undefined);
   assert.deepEqual(taskNode({ ...task, state: 'failed' }).lines, [[], ['Failed']]);
   // A long title is cut to what the page holds, and the card still stands.
   const long = taskNode({ ...task, title: 'x'.repeat(300) }).title;

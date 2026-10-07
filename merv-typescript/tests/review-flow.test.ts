@@ -194,6 +194,18 @@ test('a task whose review rounds are used up is offered only what ends it, and i
     undefined,
   );
 
+  // The desk offers the hand-back to whoever review.release takes it from: the claimer or an
+  // admin, never anyone else.
+  const releasable = async (token: string) =>
+    (await f.tool('review.get', token, { reviewId: task.reviewId })).body.result.releasable;
+  assert.deepEqual(
+    [
+      await releasable(hand.token),
+      await releasable(f.boot.token),
+      await releasable(f.producer.token),
+    ],
+    [true, true, undefined],
+  );
   // review.release: only the claimer or an admin, and the same review opens to claim again.
   const release = (token: string, requestId: string) =>
     f.tool('review.release', token, {
@@ -285,6 +297,11 @@ test('an admin may not hand back a leased reviewer’s claim: its session is hal
       JSON.stringify(refused.body),
     );
     assert.match(refused.body.error.message, /halt/);
+    // So the desk offers nobody the hand-back of a leased claim.
+    assert.equal(
+      (await f.app.ctx.reviews.guide(f.operator, pending.reviewId!)).releasable,
+      undefined,
+    );
     assert.equal((await f.app.ctx.reviews.get(f.operator, pending.reviewId!)).status, 'started');
   } finally {
     await f.work.release(review);

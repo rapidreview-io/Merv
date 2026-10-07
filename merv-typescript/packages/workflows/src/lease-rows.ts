@@ -1,11 +1,13 @@
 import { check, clip, digest, now } from '@merv/contracts';
 import type {
   Artifacts,
+  Caller,
   Data,
   EventConsumer,
   ReviewRequest,
   Reviews,
   SqlValue,
+  State,
   Transaction,
   WorkflowAssignmentRule,
   WorkflowCheckContext,
@@ -146,6 +148,60 @@ export async function leaseRows(
         details: JSON.parse(row.details!) as Data,
       }))
     : rows;
+}
+
+/** One leased step: the instance at the revision a lease holds it. */
+export interface LeaseTarget {
+  projectId: string;
+  instanceId: string;
+  revision: number;
+}
+
+/**
+ * The live lease on a step, whoever holds it: read once per snapshot, or per write transaction
+ * until it writes, and each caller gets a copy. A step has at most one live lease.
+ */
+export async function liveLease<D = Data>(
+  state: Pick<State, 'remember'>,
+  tx: Transaction,
+  { projectId, instanceId, revision }: LeaseTarget,
+): Promise<LeaseRow<D> | undefined> {
+  const [row] = await state.remember(
+    `workflows:lease:${projectId}:${instanceId}:${revision}`,
+    async () =>
+      await leaseRows<D>(
+        tx,
+        { projectId, instanceIds: [instanceId], revision, active: true },
+        'full',
+      ),
+  );
+  return row && structuredClone(row);
+}
+
+/**
+ * The caller's own live lease on a step: its session holds it, as its actor, or the caller is
+ * refused as stale. Each owner adds only its own extras, such as the attempt a lease is for.
+ */
+export async function heldLease<D = Data>(
+  state: Pick<State, 'remember'>,
+  tx: Transaction,
+  target: LeaseTarget,
+  caller: Caller,
+): Promise<LeaseRow<D>> {
+  check(
+    caller.session,
+    'stale_lease',
+    'Only the worker holding this step’s lease may do this',
+    403,
+  );
+  const lease = await liveLease<D>(state, tx, target);
+  check(
+    lease && lease.id === caller.session.id && lease.actor_id === caller.actorId,
+    'stale_lease',
+    'This worker no longer holds the lease on this step',
+    409,
+  );
+  return lease;
 }
 
 /** When each instance's leases last ended, at each revision any was released: one aggregate. */

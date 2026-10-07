@@ -535,3 +535,35 @@ test('the desk says notes are too long in the words review.submit refuses them w
     at: 1,
   });
 });
+
+test('a claim the reader may hand back is released on the desk, with a reason', async (t) => {
+  t.after(async () => await unmount());
+  const sent: Record<string, unknown>[] = [];
+  // Reviews says who may: without its word, the desk offers nothing.
+  serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+  serve('/tools/review.get', { body: { result: claimed } });
+  await mount(page());
+  await settle(10);
+  assert.ok(!text().includes('Release review'));
+  await unmount();
+  serve('/tools/workflow.status_and_next', { body: { result: desk('task', 'in_review') } });
+  serve('/tools/review.get', { body: { result: { ...claimed, releasable: true } } });
+  serve('/tools/review.release', (_, body) => {
+    sent.push(body as Record<string, unknown>);
+    return { body: { result: { ...claimed, status: 'requested', reviewerId: null } } };
+  });
+  await mount(page());
+  await settle(10);
+  await click('Release review');
+  assert.ok(text().includes('Another eligible reviewer'));
+  await write(
+    document.querySelector<HTMLInputElement>('[role="alertdialog"] input') as never,
+    'I cannot finish this review.',
+  );
+  await click('Release review');
+  await settle(10);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].reviewId, 'review_1');
+  assert.equal(sent[0].reason, 'I cannot finish this review.');
+  assert.equal(typeof sent[0].requestId, 'string');
+});

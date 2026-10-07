@@ -54,8 +54,6 @@ export interface ExperimentStanding {
   dependencies: WorkflowDependency[];
   /** The review it waits on, read only in a review state. */
   review: ReviewRequest | null;
-  /** Every return this review state allows is used. */
-  exhausted: boolean;
   /** When the experiment was created: the live card counts from it. */
   started?: string;
 }
@@ -155,7 +153,10 @@ function face(standing: ExperimentStanding): {
   };
 }
 
-/** Only what a person must do: a failed prerequisite, the rounds used up, no reviewer left. */
+/**
+ * Only what a person must do: a failed prerequisite, or no reviewer left. Rounds used up are
+ * Workflows' mark on the card, in the words every owner's work shares.
+ */
 function attention(standing: ExperimentStanding): RunningAttention | undefined {
   if (ENDED[standing.state]) return undefined;
   const failed = standing.dependencies.find((item) => item.failed);
@@ -163,11 +164,6 @@ function attention(standing: ExperimentStanding): RunningAttention | undefined {
     return {
       says: ['Stopped: ', failed.name, ' failed'],
       who: 'The owner ends the experiment, or its cycle replans it.',
-    };
-  if (standing.exhausted)
-    return {
-      says: ['Out of review rounds'],
-      who: 'An independent reviewer reviews it by hand, or an operator allows another round.',
     };
   if (standing.review?.waiting)
     return { says: ['No independent reviewer can take it'], who: 'An operator provides one.' };

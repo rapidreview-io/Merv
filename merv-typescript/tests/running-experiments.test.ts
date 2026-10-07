@@ -412,11 +412,11 @@ test('a review state says who holds the review, and rounds used up need a person
     experiment = await f.design(experiment);
   }
   board = await f.board();
+  // Workflows' mark says it, with the admin's control, in the words every owner's work shares.
   const capped = {
-    says: ['Out of review rounds'],
-    who: 'An independent reviewer reviews it by hand, or an operator allows another round.',
+    says: ['Every round of ', { mono: 'design_rounds' }, ' is used · ', { count: 4 }],
+    who: 'A project admin allows another round, or a person takes the next step by hand or ends it',
   };
-  // Workflows' mark lends the card the admin's control.
   const { action, ...own } = node(board, work(experiment.id))!.attention!;
   assert.deepEqual(own, capped);
   assert.deepEqual(
@@ -425,7 +425,8 @@ test('a review state says who holds the review, and rounds used up need a person
   );
   assert.equal(board.lanes.work.needsYou, 1);
   const sidebar = await f.panel(work(experiment.id));
-  assert.deepEqual(sidebar.header.attention, capped);
+  // The sidebar draws the board's mark, which the experiment's own head no longer repeats.
+  assert.equal(sidebar.header.attention, undefined);
   assert.deepEqual(sidebar.header.says, [
     'Design review · unclaimed · ',
     { since: (await f.app.ctx.reviews.get(f.operator, experiment.reviewId!)).createdAt },
@@ -583,7 +584,6 @@ test('evidence under a role the domain no longer writes is listed after every kn
       lease: null,
       dependencies: [],
       review: null,
-      exhausted: false,
     },
     experiment: {
       intent: 'Does depth matter?',
@@ -624,7 +624,6 @@ test('the words of a card follow where the experiment stands, first match wins',
     lease: null,
     dependencies: [],
     review: null,
-    exhausted: false,
   };
   const face = (change: Partial<ExperimentStanding>) => {
     const drawn = experimentNode({ ...base, ...change });
@@ -678,11 +677,10 @@ test('the words of a card follow where the experiment stands, first match wins',
       .attention?.who,
     'An operator provides one.',
   );
-  // A failed prerequisite outranks the rounds, which outrank a missing reviewer.
+  // A failed prerequisite outranks a missing reviewer; rounds used up are Workflows' mark.
   assert.deepEqual(
     face({
       state: 'design_review',
-      exhausted: true,
       review: { waiting: 'x' } as never,
       dependencies: [task('Clean held-out set', 'failed', false, true)],
     })[2],

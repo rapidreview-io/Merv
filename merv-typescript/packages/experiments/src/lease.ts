@@ -1,7 +1,8 @@
 import { directsIndependently, excludedFromReview, NOT_INDEPENDENT } from '@merv/reviews/rules';
 import {
+  heldLease,
   insertLease,
-  leaseRows,
+  liveLease,
   reviewedLeaseHooks,
   type LeaseRow as WorkflowLeaseRow,
 } from '@merv/workflows/lease-rows';
@@ -37,26 +38,19 @@ type LeaseTarget = Pick<Experiment, 'id' | 'projectId'> & {
   attempt?: Pick<Experiment['attempt'], 'index'>;
 };
 
-/** Read once per snapshot, or per write transaction until it writes; each caller gets a copy. */
+const step = ({ projectId, id, workflow }: LeaseTarget) => ({
+  projectId,
+  instanceId: id,
+  revision: workflow.revision,
+});
+
+/** The live lease on this revision, whoever holds it. */
 export async function activeLease(
   ctx: ExperimentsContext,
   experiment: LeaseTarget,
   tx: Transaction,
 ): Promise<LeaseRow | undefined> {
-  const { projectId, id, workflow } = experiment;
-  const lease = await ctx.state.remember(
-    `experiments:lease:${projectId}:${id}:${workflow.revision}`,
-    async () =>
-      (
-        await leaseRows<LeaseRow['details']>(
-          tx,
-          { projectId, instanceIds: [id], revision: workflow.revision, active: true },
-          'full',
-        )
-      )[0],
-  );
-  // A copy: what the lease froze is the caller's to read, not the cached row's.
-  return lease && structuredClone(lease);
+  return await liveLease<LeaseRow['details']>(ctx.state, tx, step(experiment));
 }
 
 /** The caller's live lease on this revision; without `attempt`, at whichever attempt it holds. */
@@ -66,18 +60,9 @@ export async function leaseOf(
   experiment: LeaseTarget,
   tx: Transaction,
 ): Promise<LeaseRow> {
+  const lease = await heldLease<LeaseRow['details']>(ctx.state, tx, step(experiment), caller);
   check(
-    caller.session,
-    'stale_lease',
-    'This operation requires the current experiment worker',
-    403,
-  );
-  const lease = await activeLease(ctx, experiment, tx);
-  check(
-    lease &&
-      lease.id === caller.session.id &&
-      lease.actor_id === caller.actorId &&
-      (!experiment.attempt || lease.details.attemptIndex === experiment.attempt.index) &&
+    (!experiment.attempt || lease.details.attemptIndex === experiment.attempt.index) &&
       lease.state === experiment.workflow.state,
     'stale_lease',
     'The worker no longer owns this exact experiment assignment',

@@ -289,6 +289,19 @@ test('work at a used-up limit, though out for review or only naming its reviews,
   );
   // Why the work is held stands beside the move.
   assert.ok(lines.find((line: { id: string }) => line.id === 'held')!.says.includes(held.message));
+  // Another round is allowed on the work's own card, so the capped line goes there.
+  const work = { ...rows[1], id: 'work', path: '/work', view: { kind: 'work' } };
+  const desked = needsYou(
+    [...rows, work] as never,
+    home as never,
+    { id: me, role: 'operator' },
+    () => undefined,
+  );
+  assert.deepEqual(desked.find((line: { id: string }) => line.id === 'capped')!.desk, {
+    label: 'Allow another round',
+    to: '/work?key=work:capped',
+  });
+  assert.equal(lines.find((line: { id: string }) => line.id === 'capped')!.desk, undefined);
 });
 
 /** A chore: worked, then done, or ended. Its owner submits it; a review may send it back. */
