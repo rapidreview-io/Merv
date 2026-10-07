@@ -10,7 +10,7 @@ import {
   EXPERIMENT_RECIPES,
   feasibilityCriterion,
   resultsCriteria,
-} from '@merv/experiments/program';
+} from '@merv/experiments/definitions';
 import { DELIVERY_REPORT_CRITERION, reportsDelivery, TASK_TYPES } from '@merv/tasks/definitions';
 
 const recipe = (name: string, version?: number) => {

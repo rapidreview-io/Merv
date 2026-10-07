@@ -95,7 +95,7 @@ The existing `baseTaskId` mechanism reads a done task’s `deliveryCode.headOid`
 
 Reconciliation prepares the base request. **`lease.acquire` pins it**, rechecking dependency revision, acceptance health, provider availability, and writer availability in that transaction. `references()` only reads the pin. This matches the existing acquisition order. [workflows/index.ts:735](../packages/workflows/src/index.ts:735)
 
-For experiments, pin at the first planner lease; execution inherits that pin. Preserve the feasibility gate and the current distinction between planning without a checkout and execution with one. [experiments/program.ts:63](../packages/experiments/src/program.ts:63), [experiments/program.ts:950](../packages/experiments/src/program.ts:950)
+For experiments, pin at the first planner lease; execution inherits that pin. Preserve the feasibility gate and the current distinction between planning without a checkout and execution with one. [experiments/lease.ts](../packages/experiments/src/lease.ts)
 
 Declared dependencies cannot change after pinning. Replanning creates a new unit.
 

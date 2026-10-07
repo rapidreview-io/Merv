@@ -117,8 +117,14 @@ packages/experiments/
 ├── package.json
 ├── README.md
 └── src/
-    ├── index.ts              # Service: records, commands, evidence sealing, review routing, Running board
-    ├── program.ts            # Workflow, recipes, execution policy, lease hooks and review checks; the service's base class
+    ├── index.ts              # Service: records, review routing, Running board; binds the commands
+    ├── program.ts            # Workflow graph, versions, evidence roles and compute epochs
+    ├── definitions.ts        # Context recipes and review criteria
+    ├── execution-policy.ts   # The tools each assignment is granted
+    ├── context.ts            # Frozen inputs, references and the rendered assignment context
+    ├── lease.ts              # Lease reads, roles and hooks
+    ├── policy.ts             # Registration, the workflow policy, guards and review checks
+    ├── commands.ts           # create, attach, transition, exhibit, submitReview and evidence sealing
     ├── program.postgres.ts   # Published lease-table migrations, through their move into wf_leases
     ├── storage.ts            # Owned table rows and migration registration
     ├── storage.postgres.ts   # Published record-table migrations
