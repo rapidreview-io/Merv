@@ -1,5 +1,6 @@
 /**
- * An open record page keeps what it shows current without redoing work nobody asked for: an
+ * An open record page keeps what it shows current without redoing work nobody asked for: no
+ * page runs an action's check it does not draw, an ended cycle or wave is not read again, an
  * ended task or experiment is read again only slowly, for its Code section, a running experiment's exhibit is read again only when its
  * evidence changed, and an attempt shows its own figures, never an earlier attempt's.
  */
@@ -15,6 +16,8 @@ const { MemoryRouter, Route, Routes } = await import('react-router-dom');
 await import('../packages/ui/web/components.js');
 const { TasksView } = await import('../packages/ui/web/views/tasks.js');
 const { ExperimentsView } = await import('../packages/ui/web/views/experiments.js');
+const { ResearchView } = await import('../packages/ui/web/views/research.js');
+const { ReflectionsView } = await import('../packages/ui/web/views/research-programs.js');
 const { SessionProvider } = await import('../packages/ui/web/session.js');
 
 const now = new Date().toISOString();
@@ -27,7 +30,10 @@ const row = (id: string) => ({
   view: { kind: id },
   readable: true,
 });
-const shell = { rows: [row('tasks'), row('experiments')], plugins: [] };
+const shell = {
+  rows: [row('tasks'), row('experiments'), row('research'), row('reflections')],
+  plugins: [],
+};
 const graph = (state: string, terminal: boolean) => ({
   instanceId: 'wf_1',
   workflow: 'x',
@@ -275,3 +281,51 @@ test('a running experiment reads its exhibit again only when its evidence change
   assert.equal(reads('/tools/ui.read'), 3);
   assert.equal(reads('/tools/experiment.exhibit'), 2, 'new evidence, a new exhibit');
 });
+
+const ended = {
+  research: {
+    record: {
+      id: 'wf_1',
+      name: 'Grokking cycle',
+      ownerId: 'actor_1',
+      workflow: { workflow: 'research', state: 'complete', revision: 9, updatedAt: now },
+      researchDependencies: [],
+      reflectionId: null,
+      integrations: [],
+      writable: false,
+      automation: null,
+    },
+    process: graph('complete', true),
+  },
+  reflections: {
+    reflection: {
+      id: 'wf_1',
+      title: 'Grokking wave',
+      attempt: 1,
+      ownerId: 'actor_1',
+      createdAt: now,
+      workflow: { workflow: 'reflection', state: 'approved', revision: 7, updatedAt: now },
+      lenses: [],
+      report: null,
+      changeSpec: null,
+      plan: null,
+      review: null,
+    },
+    process: graph('approved', true),
+  },
+};
+for (const [kind, view, name] of [
+  ['research', ResearchView, 'Grokking cycle'],
+  ['reflections', ReflectionsView, 'Grokking wave'],
+] as const)
+  test(`an ended ${kind} record’s page reads once, and runs no action’s check`, async (t) => {
+    t.after(unmount);
+    serve('/tools/ui.read', { body: { result: ended[kind] } });
+    await open(`/${kind}/wf_1`, view);
+    assert.ok(document.body.textContent!.includes(name));
+    assert.equal(reads('/tools/ui.read'), 1);
+    await settle(8_600);
+    assert.equal(reads('/tools/ui.read'), 1, 'an ended record is not read again');
+    for (const tool of ['workflow.process', 'research.get', 'reflection.get'])
+      assert.equal(reads(`/tools/${tool}`), 0, `${tool} is not read`);
+  });

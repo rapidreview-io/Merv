@@ -1,5 +1,5 @@
 import type { ProcessGraph } from '@merv/workflows/models';
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useTool } from '../api';
 import {
@@ -22,12 +22,6 @@ import { ArtifactBody } from './artifacts';
 import type { ViewProps } from './index';
 import { useActorNames } from './people';
 import { ReviewSummary } from './reviews';
-
-/** The gate this wave stands at, derived from its own record. */
-function WaveGate({ id, children }: { id: string; children?: ReactNode }) {
-  const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 8000 });
-  return <Gate graph={process.data}>{children}</Gate>;
-}
 
 export function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) => void }) {
   const [title, setTitle] = useState('');
@@ -69,7 +63,13 @@ export function CreateReflection({ onCreated }: { onCreated: (wave: Reflection) 
  */
 export function ReflectionDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
-  const data = useTool<Reflection>('reflection.get', { reflectionId: id }, { every: 8000 });
+  // The wave and the stage it stands at, from one read that runs no action's check; an ended
+  // wave changes no more, so it is not polled.
+  const data = useTool<{ reflection: Reflection; process: ProcessGraph }>(
+    'ui.read',
+    { rowId: row.id, params: { id } },
+    { every: (read) => (read?.process.terminal ? undefined : 8000) },
+  );
   // This row holds lenses too (a lens lease opens here): an id that is no wave is asked as a
   // lens, which opens on its wave's tab.
   const held = useTool<ReflectionLens>(
@@ -79,7 +79,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
   const nameOf = useActorNames();
   const [params, setParams] = useSearchParams();
   // A read that fails keeps what was last read, as every record page does.
-  const wave = data.data;
+  const wave = data.data?.reflection;
   if (held.data)
     return <Navigate to={`${row.path}/${held.data.reflectionId}?lens=${id}`} replace />;
   if (!wave)
@@ -108,7 +108,7 @@ export function ReflectionDetail({ row, shell }: ViewProps) {
       kind={row.view.kind}
       name={wave.title}
       state={<StageMark shapes={shell?.workflows} workflow={wave.workflow} />}
-      act={<WaveGate id={wave.id} />}
+      act={<Gate graph={data.data?.process} />}
       // Never `Synthesis`: one of the lenses is called that.
       title="Lenses"
       content={

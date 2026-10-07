@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import type { Json } from '@merv/contracts';
+import { check, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type { ResearchAnswer } from './models.js';
 import type {} from './types.js';
@@ -62,7 +62,7 @@ const answers = [
 ] satisfies ResearchAnswer[];
 export const researchUiPlugin = {
   name: 'merv-research-ui',
-  inject: ['research', 'ui'],
+  inject: ['research', 'ui', 'workflows'],
   apply(ctx: Context) {
     const research = ctx.research;
     // The wave of work, framed by its cycle: it stands under Home at the head of the rail.
@@ -109,7 +109,22 @@ export const researchUiPlugin = {
           owner: 'ownerId',
           stops: ['dependency_failed', 'integration_failed'],
         },
-        read: async (caller) => JSON.parse(JSON.stringify(await research.list(caller))) as Json,
+        // One cycle and the stage it stands at, read without running an action's check: its
+        // page polls this and draws no action (its move reads its own gate).
+        read: async (caller: Caller, params) => {
+          const id = params?.id;
+          check(
+            typeof id === 'string' && id.length > 0,
+            'invalid_input',
+            'params.id names the record',
+          );
+          return JSON.parse(
+            JSON.stringify({
+              record: await research.get(caller, id),
+              process: await ctx.workflows.process(caller, id, { checks: false }),
+            }),
+          ) as Json;
+        },
         // Open work: a cycle that has not yet completed, been abandoned or failed.
         status: async (caller) => ({ count: await research.active(caller) }),
       }),

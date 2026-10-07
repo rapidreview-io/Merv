@@ -12,16 +12,21 @@ import { CycleMove } from './work';
 function CycleDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
   const back = homeOf(shell.rows);
-  const cycle = useTool<ResearchRecord>('research.get', { researchId: id }, { every: 10000 });
-  const process = useTool<ProcessGraph>('workflow.process', { instanceId: id }, { every: 5000 });
-  if (!cycle.data)
+  // The cycle and the stage it stands at, from one read that runs no action's check; an ended
+  // cycle changes no more, so it is not polled.
+  const read = useTool<{ record: ResearchRecord; process: ProcessGraph }>(
+    'ui.read',
+    { rowId: row.id, params: { id } },
+    { every: (data) => (data?.process.terminal ? undefined : 8000) },
+  );
+  if (!read.data)
     return (
       <div className="page-stage">
-        <LoadState {...cycle} back={back} />
+        <LoadState {...read} back={back} />
       </div>
     );
-  const record = cycle.data;
-  const relations = process.data?.dependencies ?? [];
+  const { record, process } = read.data;
+  const relations = process.dependencies;
   const waitsOn = relations.filter((item) => item.direction === 'depends_on');
   const unblocks = relations.filter((item) => item.direction === 'required_by');
   const reflections = pathOf(shell.rows, 'reflections');
@@ -37,21 +42,13 @@ function CycleDetail({ row, shell }: ViewProps) {
       back={<Link to={back.to}>← {back.label}</Link>}
       kind={row.view.kind}
       name={record.name}
-      state={<StageMark graph={process.data} shapes={shell.workflows} workflow={record.workflow} />}
+      state={<StageMark graph={process} shapes={shell.workflows} workflow={record.workflow} />}
       act={
-        <Gate graph={process.data}>
+        <Gate graph={process}>
           {record.writable && (
             // The stack would stretch the one control to the pane's width.
             <div className="cluster">
-              <CycleMove
-                cycle={record}
-                shell={shell}
-                listed
-                onSaved={() => {
-                  cycle.reload();
-                  process.reload();
-                }}
-              />
+              <CycleMove cycle={record} shell={shell} listed onSaved={() => read.reload()} />
             </div>
           )}
         </Gate>

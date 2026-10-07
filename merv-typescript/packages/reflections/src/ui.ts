@@ -1,11 +1,11 @@
 import type { Context } from 'cordis';
-import { keyId, type Caller, type Json } from '@merv/contracts';
+import { check, keyId, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
 import { WAVE_STATES } from './running.js';
 export const reflectionUiPlugin = {
   name: 'merv-reflection-ui',
-  inject: ['reflections', 'ui'],
+  inject: ['reflections', 'ui', 'workflows'],
   apply(ctx: Context) {
     const reflections = ctx.reflections;
     ctx.effect(() =>
@@ -30,8 +30,22 @@ export const reflectionUiPlugin = {
         // lens's agent may ask its owner, and the wave waits on the answer, so a lens's gate may
         // name the reader's move too, on the wave's card.
         needs: { name: 'title', owner: 'ownerId', subjectOnly: true, parts: 'lenses' },
-        read: async (caller: Caller) =>
-          JSON.parse(JSON.stringify(await reflections.list(caller))) as Json,
+        // One wave and the stage it stands at, read without running an action's check: its
+        // page polls this and draws no action.
+        read: async (caller: Caller, params) => {
+          const id = params?.id;
+          check(
+            typeof id === 'string' && id.length > 0,
+            'invalid_input',
+            'params.id names the record',
+          );
+          return JSON.parse(
+            JSON.stringify({
+              reflection: await reflections.get(caller, id),
+              process: await ctx.workflows.process(caller, id, { checks: false }),
+            }),
+          ) as Json;
+        },
       }),
     );
     // The open wave heads the Running page's work lane with its lenses folded into it.

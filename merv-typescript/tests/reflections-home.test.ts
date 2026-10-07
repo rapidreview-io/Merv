@@ -1,6 +1,7 @@
 /**
  * Home and the rail read every wave on each poll, so Reflections answers them in a fixed number
- * of statements however many waves the project has made.
+ * of statements however many waves the project has made; a wave's page reads it without
+ * running an action's check.
  */
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
@@ -111,4 +112,15 @@ test('Home reads its waves in the same statements however many there are', async
       written: !!lens.artifact,
     })),
   );
+  // A wave's page reads the wave and its stage with no action checked, in fewer statements.
+  const page = (await app.ctx.tools.call('ui.read', owner, {
+    rowId: 'reflections',
+    params: { id: newest!.id },
+  })) as { reflection: unknown; process: unknown };
+  assert.deepEqual(page, {
+    reflection: JSON.parse(JSON.stringify(full)),
+    process: JSON.parse(
+      JSON.stringify(await app.ctx.workflows.process(owner, newest!.id, { checks: false })),
+    ),
+  });
 });

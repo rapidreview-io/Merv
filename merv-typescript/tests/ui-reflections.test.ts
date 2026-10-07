@@ -75,6 +75,16 @@ const row = {
   status: {},
   readable: true,
 };
+/** The stage a wave stands at, as its row's read sends it beside the wave. */
+const graph = (reflection: { id: string; workflow: { state: string } }) => ({
+  instanceId: reflection.id,
+  terminal: false,
+  nodes: [],
+  edges: [],
+  dependencies: [],
+  actions: [],
+  state: reflection.workflow.state,
+});
 /** Where the page is, said where a test can read it. */
 function Where() {
   return createElement('output', { id: 'where' }, useLocation().search);
@@ -88,7 +98,8 @@ const page = (entry: string, reflection = wave()) => {
   serve('/tools/actor.list', {
     body: { result: [{ id: 'actor_ada', projectId: project.id, name: 'Ada Byron' }] },
   });
-  serve('/tools/reflection.get', { body: { result: reflection } });
+  // The page's one read: the wave and its stage, with no action checked.
+  serve('/tools/ui.read', { body: { result: { reflection, process: graph(reflection) } } });
   serve('/tools/artifact.read', (_, sent) => ({
     body: {
       result: {
@@ -182,9 +193,9 @@ test('before its report a wave opens on its first lens, and an address it cannot
 test('an address naming a lens, as a lens lease opens, lands on its wave at that lens', async (t) => {
   t.after(async () => await unmount());
   const element = page('/reflections/wf_lens_2');
-  serve('/tools/reflection.get', (_, sent) =>
-    sent.reflectionId === 'wf_wave'
-      ? { body: { result: wave() } }
+  serve('/tools/ui.read', (_, sent) =>
+    (sent.params as { id: string }).id === 'wf_wave'
+      ? { body: { result: { reflection: wave(), process: graph(wave()) } } }
       : {
           status: 404,
           body: { error: { code: 'reflection_not_found', message: 'Reflection not found' } },
@@ -204,12 +215,12 @@ test('a read that fails after the wave was read keeps the wave on the page', asy
   t.after(async () => await unmount());
   await mount(page('/reflections/wf_wave'));
   await settle(20);
-  serve('/tools/reflection.get', {
+  serve('/tools/ui.read', {
     status: 503,
     body: { error: { code: 'unavailable', message: 'Reflections is reconnecting' } },
   });
   const { refreshTools } = await import('../packages/ui/web/api.js');
-  await act(async () => refreshTools('reflection.get'));
+  await act(async () => refreshTools('ui.read'));
   await settle(20);
   assert.deepEqual(pressed(), ['Report']);
 });
