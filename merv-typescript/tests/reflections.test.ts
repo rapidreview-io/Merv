@@ -701,7 +701,7 @@ test('review return preserves lenses for synthesis repair and creates fresh vers
   assert.equal(wave.attempt, 2);
   const lens = wave.lenses[0]!;
   const lensContext = (await f.app.ctx.workflows.assignment(f.owner, lens.id)).context!;
-  assert.equal(lensContext.typeVersion, 12);
+  assert.equal(lensContext.typeVersion, 13);
   assert.ok(lensContext.prompt.includes(`review:${firstReview}`));
   assert.ok(lensContext.prompt.includes(`review:${secondReview}`));
   assert.match(lensContext.prompt, /"verdict":"needs_changes"/);
@@ -1518,9 +1518,10 @@ test('a leased lens reads research added after assignment through existing tools
     expectedRevision: 0,
     requestId: 'peer-report',
   });
-  // A peer's report is readable too (no read constraints); lens independence is asked of
-  // the agent, not enforced here.
-  assert.ok(await call('artifact.read', { artifactId: peerReport.id }));
+  // A peer's report is not: while the wave reflects, Reflections withholds it from Artifacts.
+  await assert.rejects(call('artifact.read', { artifactId: peerReport.id }), {
+    code: 'not_found',
+  });
   const boot = await f.app.ctx.scope.credentials.bootstrap({
     projectName: 'Other project',
     actorName: 'Other owner',

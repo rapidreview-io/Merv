@@ -1006,11 +1006,25 @@ export interface ArtifactUploadStatus {
  * signed is enforced by the ToolRegistry, which reauthorises read tools after the handler; domain
  * callers act on bytes inside their own write transactions, which authorise again.
  */
+/**
+ * What an owner withholds from a session worker's reads: artifacts by id, and every artifact
+ * the named sessions made. Null withholds nothing.
+ */
+export type ArtifactReadRule = (
+  caller: Caller,
+  tx: Transaction,
+) => Promise<{ artifacts: readonly string[]; sessions: readonly string[] } | null>;
 export interface Artifacts {
   readonly downloadAvailable: boolean;
   readonly largeUploadAvailable: boolean;
   /** Backend-only provider registration; the disposer removes only this registration. */
   registerFileProvider(name: string, provider: ArtifactFileProvider): () => void;
+  /**
+   * An owner's rule over what a session worker (an inquiry visit too) may read, one per name,
+   * until disposed. Every read by a session caller asks each rule; what one withholds is not
+   * found and not listed.
+   */
+  registerReadRule(name: string, rule: ArtifactReadRule): () => void;
   /** Database-only immutable manifest. The caller must verify and pin every referenced file first.
    * One row per project/sourceKey; a retry with different content is refused. */
   createCollection(

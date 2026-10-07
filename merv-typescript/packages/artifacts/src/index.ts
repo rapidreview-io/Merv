@@ -18,6 +18,7 @@ import {
   type ArtifactInput,
   type ArtifactCollectionInput,
   type ArtifactFileProvider,
+  type ArtifactReadRule,
   type ArtifactUploadInput,
   type ArtifactUploadStatus,
   type Caller,
@@ -50,8 +51,12 @@ const collectionPath = (value: unknown): value is string =>
     .split('/')
     .every((part) => part.length > 0 && part.length <= 255 && part !== '.' && part !== '..');
 const COLLECTION_MANIFEST_BYTES = 16 * 1024 * 1024;
+/** The rows a read may return: a SQL condition on `artifacts` and its parameters. */
+type Visible = { sql: string; params: string[] };
+const EVERY: Visible = { sql: 'TRUE', params: [] };
 export class ArtifactStore implements Artifacts {
   private fileProviders = new Map<string, ArtifactFileProvider>();
+  private readRules = new Map<string, ArtifactReadRule>();
   get largeUploadAvailable(): boolean {
     return typeof this.blobs.upload === 'function';
   }
@@ -81,16 +86,44 @@ export class ArtifactStore implements Artifacts {
     const within = tx ?? this.state.ambient;
     return within ? await fn(within) : await this.state.snapshotTransaction(fn);
   }
-  /** A read authorised once, in the transaction it queries. */
+  /** A read authorised once, in the transaction it queries, of the rows its caller may see. */
   private async one<T>(
     caller: Caller,
     tx: Transaction | undefined,
-    fn: (tx: Transaction) => Promise<T>,
+    fn: (tx: Transaction, visible: Visible) => Promise<T>,
   ) {
     return await this.place(tx, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      return await fn(tx);
+      return await fn(tx, await this.visible(caller, tx));
     });
+  }
+  /** What every owner's read rule leaves a session caller; anyone else sees every row. */
+  private async visible(caller: Caller, tx: Transaction): Promise<Visible> {
+    if (!caller.session) return EVERY;
+    const artifacts: string[] = [];
+    const sessions: string[] = [];
+    for (const rule of [...this.readRules.values()]) {
+      const withheld = await rule(caller, tx);
+      artifacts.push(...(withheld?.artifacts ?? []));
+      sessions.push(...(withheld?.sessions ?? []));
+    }
+    if (!artifacts.length && !sessions.length) return EVERY;
+    return {
+      sql: 'id NOT IN (SELECT jsonb_array_elements_text(?::jsonb)) AND (session_id IS NULL OR session_id NOT IN (SELECT jsonb_array_elements_text(?::jsonb)))',
+      params: [JSON.stringify(artifacts), JSON.stringify(sessions)],
+    };
+  }
+  registerReadRule(name: string, rule: ArtifactReadRule): () => void {
+    check(
+      /^[a-z][a-z0-9_-]{0,63}$/.test(name) && typeof rule === 'function',
+      'invalid_artifact',
+      'Invalid read rule',
+    );
+    check(!this.readRules.has(name), 'read_rule_exists', 'Read rule already registered', 409);
+    this.readRules.set(name, rule);
+    return () => {
+      if (this.readRules.get(name) === rule) this.readRules.delete(name);
+    };
   }
   uploadBegin(caller: Caller, input: ArtifactUploadInput): Promise<ArtifactUploadStatus> {
     return this.uploads.begin(caller, input);
@@ -261,11 +294,12 @@ export class ArtifactStore implements Artifacts {
   }
   async get(caller: Caller, artifactId: string, tx?: Transaction): Promise<Artifact> {
     caller = structuredClone(caller);
-    const row = await this.one(caller, tx, (tx) =>
+    const row = await this.one(caller, tx, (tx, visible) =>
       tx.get(
-        `SELECT ${META} FROM artifacts WHERE id=? AND project_id=?`,
+        `SELECT ${META} FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
         artifactId,
         caller.projectId,
+        ...visible.params,
       ),
     );
     check(row, 'not_found', 'Artifact not found in this project', 404);
@@ -275,11 +309,12 @@ export class ArtifactStore implements Artifacts {
     caller = structuredClone(caller);
     if (fileName !== undefined) {
       check(collectionPath(fileName), 'invalid_artifact', 'Invalid collection file name');
-      const row = await this.one(caller, undefined, (tx) =>
+      const row = await this.one(caller, undefined, (tx, visible) =>
         tx.get<Record<string, unknown>>(
-          `SELECT ${META},file_refs_json FROM artifacts WHERE id=? AND project_id=?`,
+          `SELECT ${META},file_refs_json FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
           artifactId,
           caller.projectId,
+          ...visible.params,
         ),
       );
       check(row, 'not_found', 'Artifact not found in this project', 404);
@@ -350,11 +385,12 @@ export class ArtifactStore implements Artifacts {
     tx?: Transaction,
   ): Promise<{ artifact: Artifact; bytes: Buffer }> {
     caller = structuredClone(caller);
-    const row = await this.one(caller, tx, (tx) =>
+    const row = await this.one(caller, tx, (tx, visible) =>
       tx.get<Record<string, unknown> & { content: Buffer | null }>(
-        `SELECT ${META},content FROM artifacts WHERE id=? AND project_id=?`,
+        `SELECT ${META},content FROM artifacts WHERE id=? AND project_id=? AND ${visible.sql}`,
         artifactId,
         caller.projectId,
+        ...visible.params,
       ),
     );
     check(row, 'not_found', 'Artifact not found in this project', 404);
@@ -391,11 +427,12 @@ export class ArtifactStore implements Artifacts {
       `Expected up to ${MAX_ARTIFACT_IDS} artifact ids`,
     );
     if (!ids.length) return new Map();
-    const rows = await this.one(caller, tx, (tx) =>
+    const rows = await this.one(caller, tx, (tx, visible) =>
       tx.all(
-        `SELECT ${META} FROM artifacts WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
+        `SELECT ${META} FROM artifacts WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb)) AND ${visible.sql}`,
         caller.projectId,
         JSON.stringify([...new Set(ids)]),
+        ...visible.params,
       ),
     );
     return new Map(rows.map((row) => [row.id as string, fromRow(row)]));
@@ -428,9 +465,9 @@ export class ArtifactStore implements Artifacts {
       'invalid_artifact',
       'limit must be 1-1000',
     );
-    return await this.one(caller, tx, async (tx) => {
-      const where = ['project_id=?'];
-      const params: string[] = [caller.projectId];
+    return await this.one(caller, tx, async (tx, visible) => {
+      const where = ['project_id=?', visible.sql];
+      const params: string[] = [caller.projectId, ...visible.params];
       if (session !== undefined) {
         where.push('session_id=?');
         params.push(session);

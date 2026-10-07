@@ -81,12 +81,12 @@ const liveRecords =
 export const ITEM_RECIPES: ContextRecipeDefinition[] = ['lens', 'synthesis', 'review'].map(
   (stage) => ({
     name: `reflection.${stage}`,
-    version: stage === 'lens' ? 12 : 13,
+    version: 13,
     kind: stage === 'review' ? 'review' : 'work',
     recipe: {
       instructions:
         (stage === 'lens'
-          ? 'Independently examine the live project research from your assigned perspective. Do not consult other lens outputs. Verify sources before forming conclusions.'
+          ? 'Independently examine the live project research from your assigned perspective. The other lenses’ reports are withheld from you until synthesis, so this view is yours alone. Verify sources before forming conclusions.'
           : stage === 'synthesis'
             ? 'Reconcile all five independent lens reports against the current research. Preserve disagreement and uncertainty. Produce an evidence-linked synthesis report and explicit proposed change specification.'
             : 'Independently verify the synthesis report and change specification against all five lens reports and the current research. You own the project paper update: reconcile cross-experiment Methods and Results against the evidence, retaining disagreements and limits. Add comprehensive detail when it helps explain the project’s trajectory, how understanding has changed and what comes next; there is no brevity requirement for reflection-review paper updates. When reflection.get returns a plan, the change specification is structured: if the project owner chooses to create the next wave, research.advance creates exactly these tasks and experiments, so verify every item, its checks or question and its ordering against the evidence. Reading assertions is not verification.') +
