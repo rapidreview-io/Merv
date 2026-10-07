@@ -536,7 +536,8 @@ export interface DispatchDemandInput {
   capabilities?: string[];
 }
 export interface DispatchDemand {
-  candidates: { instanceId: string; expectedRevision: number }[];
+  /** Each target, and since when its revision has stood: what a renter counts its tries from. */
+  candidates: { instanceId: string; expectedRevision: number; since: string }[];
 }
 
 /** What the events route reads of agents' live streams: operator authority, events, wakes. */

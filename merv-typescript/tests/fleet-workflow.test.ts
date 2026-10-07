@@ -70,7 +70,7 @@ import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
-type Target = { instanceId: string; expectedRevision: number };
+type Target = { instanceId: string; expectedRevision: number; since?: string };
 /** A machine was created for it, whether or not it ever launched. */
 const machine = { sandboxId: 'sbx_created' } as FleetAllocation['runtime'];
 const targets = (prefix: string, count: number): Target[] =>
@@ -278,6 +278,7 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
     advance: (ms: number) => {
       now += ms;
     },
+    now: () => now,
     modelEnv,
     modelApiKey: process.env[modelEnv]!,
   };
@@ -470,14 +471,18 @@ test('workflow bounds created but unclaimed retries across restart without block
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 3, 'two unclaimed attempts exhaust this task revision');
 
-  // Machines are rented per work item, so its unclaimed streak holds a later revision back too;
-  // another work item is not held.
-  f.demand([{ instanceId: 'task_a', expectedRevision: 3 }]);
+  // The streak is the revision's: machines are rented per work item, but a later revision, such
+  // as one a person moved the work to by hand, is counted from when it began. Another work item
+  // is not held either.
+  f.demand([{ instanceId: 'task_a', expectedRevision: 3, since: new Date(f.now()).toISOString() }]);
   await f.adapter.reconcile();
-  assert.equal(f.allocations.length, 3);
+  assert.equal(f.allocations.length, 4);
+  assert.equal(f.allocations[3]?.owner.id, 'work:task_a');
+  // Its pending machine, no longer wanted, gives up the one slot to the other item.
   f.demand([{ instanceId: 'task_b', expectedRevision: 2 }]);
   await f.adapter.reconcile();
-  assert.equal(f.allocations[3]?.owner.id, 'work:task_b');
+  await f.adapter.reconcile();
+  assert.equal(f.allocations[4]?.owner.id, 'work:task_b');
 });
 
 test('a retry window counts only its work host’s machines, not one a retired one-machine-per-step owner left', async (t) => {
@@ -1586,6 +1591,7 @@ async function hosted(t: TestContext, workers: number, lostLaunch = false) {
     lostReply: () => lostReply,
     stick: (machines: number) => (stuck = machines),
     advance: (ms: number) => (now += ms),
+    now: () => now,
   };
 }
 
@@ -1599,6 +1605,9 @@ test(
     const work = await h.start(caller);
     const target = { instanceId: work.id, expectedRevision: work.revision };
     const id = `work:${work.id}`;
+    // Fleet's clock, frozen when the harness was made, catches up with the revision's start:
+    // its machines are counted from then.
+    h.advance(Date.parse(work.updatedAt) - h.now() + 1);
     await h.adapter.start();
     for (let index = 0; index < 2; index++) {
       const attempts = (await h.fleet.listOwned(h.adapter, [id])).filter((a) => a.owner.id === id);

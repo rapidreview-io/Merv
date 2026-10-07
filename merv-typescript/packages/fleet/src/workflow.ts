@@ -302,13 +302,14 @@ export class FleetWorkflowAdapter implements FleetOwner {
       const reviewer = this.reviewers.get(projectId);
       if (reviewer) add({ kind: 'service', projectId, actorId: reviewer, vouchedBy: source });
     }
-    const current = new Set<string>();
+    // Each revision wanted, and since when it has stood.
+    const current = new Map<string, string | undefined>();
     for (const source of sources.values()) {
       try {
         for (const candidate of (
           await this.sessions.dispatch.dispatchDemand(sourceCaller(source), demandInput)
         ).candidates)
-          current.add(targetId(candidate));
+          current.set(targetId(candidate), candidate.since);
       } catch (error) {
         // Historical directors can be revoked; another current director may still serve work.
         if (!(error instanceof MervError && [401, 403, 404].includes(error.status))) throw error;
@@ -342,12 +343,15 @@ export class FleetWorkflowAdapter implements FleetOwner {
    * the limit, and when the cooldown after the newest ends. A claimed session starts a new
    * streak; a refused create made no machine and is not one, but a machine never launched is.
    * A create that fails otherwise and leaves no machine is not one either: it is retried each
-   * releaseBy and never exhausts the revision, but it costs nothing.
+   * releaseBy and never exhausts the revision, but it costs nothing. Its work item's machines are
+   * counted only from when the revision began (`since`, as demand says it), so a later revision,
+   * such as one a person moved the work to, starts a streak of its own.
    */
-  private async streak(attempts: FleetAllocation[], prior = 0) {
+  private async streak(attempts: FleetAllocation[], prior = 0, since?: string) {
     let unclaimed = 0;
     let newest = 0;
     for (const a of attempts.slice(prior).toReversed()) {
+      if (since && Date.parse(a.createdAt) < Date.parse(since)) break;
       if (a.phase !== 'released' || !a.runtime) continue;
       if ((await this.sessions.managed.inspect(a.id, a.epoch))?.session) break;
       unclaimed++;
@@ -384,7 +388,11 @@ export class FleetWorkflowAdapter implements FleetOwner {
         // Exactly the machines renting counts, so a grant's prior count is the same list's.
         const attempts = allocations.filter((a) => a.owner.id === workOwner(id));
         const prior = grants.get(grantKey(caller.projectId, id))?.prior_allocations;
-        const { unclaimed, cooldownUntil: until } = await this.streak(attempts, prior);
+        const { unclaimed, cooldownUntil: until } = await this.streak(
+          attempts,
+          prior,
+          current.get(id),
+        );
         const cooldownUntil = until > this.clock() ? new Date(until).toISOString() : null;
         const state: keyof typeof retryNext =
           active.has(id) || active.has(`work:${instanceId}`)
@@ -641,8 +649,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
       return { who: user && `${user.issuer} ${user.subject}`, key: personKey(user, source) };
     };
     const everyone = this.config.people.includes('*');
-    // Each target a project wants, with the director whose machine takes it.
+    // Each target a project wants, with the director whose machine takes it, and since when its
+    // revision has stood.
     const served = new Map<string, Map<string, DelegationSource>>();
+    const since = new Map<string, string | undefined>();
     // Projects passed over this pass: their reads failed, or Fleet refused one of their requests.
     const failed = new Set<string>();
     for (const { projectId, source } of await this.sessions.dispatch.servedSources()) {
@@ -658,7 +668,10 @@ export class FleetWorkflowAdapter implements FleetOwner {
           for (const target of (
             await this.sessions.dispatch.dispatchDemand(sourceCaller(director), demandInput)
           ).candidates)
-            if (!wanted.has(targetId(target))) wanted.set(targetId(target), director);
+            if (!wanted.has(targetId(target))) {
+              wanted.set(targetId(target), director);
+              since.set(grantKey(projectId, targetId(target)), target.since);
+            }
         served.set(projectId, wanted);
       } catch (error) {
         skipped(projectId, error);
@@ -709,6 +722,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
       const { unclaimed, cooldownUntil } = await this.streak(
         attempts,
         grants.get(grantKey(projectId, id))?.prior_allocations,
+        since.get(grantKey(projectId, id)),
       );
       if (unclaimed >= unclaimedAttemptLimit || cooldownUntil > this.clock()) continue;
       // An active allocation claimed by different work still owns its original request ID.

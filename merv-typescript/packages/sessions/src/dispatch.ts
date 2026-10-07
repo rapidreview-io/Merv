@@ -634,9 +634,10 @@ export class SessionDispatch {
         this.passing(owner),
       );
       return {
-        candidates: selected.candidates.map(({ instanceId, expectedRevision }) => ({
+        candidates: selected.candidates.map(({ instanceId, expectedRevision, updatedAt }) => ({
           instanceId,
           expectedRevision,
+          since: updatedAt,
         })),
       };
     });
