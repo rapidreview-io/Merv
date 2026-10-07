@@ -335,7 +335,21 @@ test('a writer whose rented machine is gone for good ends by itself at the last 
   await f.code.maintainStore();
   assert.equal((await f.unit()).writerState, 'recovery_required');
   // Fleet released that machine and its runtime is deleted: no final capture can ever come.
+  // The unit's owner is told which unit's writer changed, as every other writer move tells it.
+  const writers = f.core.writers as unknown as {
+    owner: { changed(tx: unknown, projectId: string, unitId?: string): Promise<void> };
+  };
+  const owner = writers.owner;
+  const told: unknown[] = [];
+  f.core.writers.lend({
+    changed: async (tx, projectId, unitId) => {
+      told.push([projectId, unitId]);
+      await owner.changed(tx, projectId, unitId);
+    },
+  });
   await f.event('session.machine_gone', 'ses_1');
+  assert.deepEqual(told, [[f.admin.projectId, f.unitId]]);
+  f.core.writers.lend(owner);
   const unit = await f.unit();
   assert.equal(unit.writerState, 'closed');
   assert.equal(unit.canonicalHead, first, 'the next lease continues from the last admitted commit');
