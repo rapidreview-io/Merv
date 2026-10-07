@@ -913,7 +913,7 @@ test('an inquiry visit refuses a secret another authority holds as the work offe
   assert.deepEqual([leased.status, leased.body.error?.code], [409, 'session_secret_used']);
 });
 
-test('the live feed shows a thread’s work, and its inquiry visit only while no work visit is live', async (t) => {
+test('the live feed shows a thread’s work, never its inquiry visit', async (t) => {
   const f = await fixture(t);
   await f.dispatch();
   const { threadId } = await f.worked();
@@ -921,13 +921,11 @@ test('the live feed shows a thread’s work, and its inquiry visit only while no
   await f.present('runner-q');
   const inquiry = (await f.lease('runner-q')).session!;
   const live = async () =>
-    (await f.sessions.streams.feed(f.owner.projectId, new Map()))!.live.filter(
+    ((await f.sessions.streams.feed(f.owner.projectId, new Map()))?.live ?? []).filter(
       (visit) => visit.threadId === threadId,
     );
-  assert.deepEqual(
-    (await live()).map((visit) => visit.sessionId),
-    [inquiry.id],
-  );
+  assert.equal(inquiry.kind, 'inquiry');
+  assert.deepEqual(await live(), []);
   const work = (await f.lease('runner-q')).session!;
   assert.equal(work.inquiry, undefined);
   assert.deepEqual(

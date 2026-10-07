@@ -164,10 +164,10 @@ export class SessionStreams implements SessionStreamReads {
   }
 
   /**
-   * An operator's read of one session of the caller's project: whether its stream may still
-   * grow. A leased worker, a managed runner and anyone short of operator are refused.
+   * An operator's read of the project's agents' streams, one session's or the live feed's. A
+   * leased worker, a managed runner and anyone short of operator are refused.
    */
-  async authorize(caller: Caller, sessionId: string): Promise<{ growing: boolean }> {
+  async authorize(caller: Caller): Promise<void> {
     caller = structuredClone(caller);
     check(
       !caller.session && !caller.managed,
@@ -179,7 +179,6 @@ export class SessionStreams implements SessionStreamReads {
       this.scope.require(caller, 'read', tx),
     );
     check(readsAgents(actor.role), 'forbidden', 'Only an operator reads an agent’s stream', 403);
-    return { growing: await this.growing(sessionId, caller.projectId) };
   }
 
   /**
@@ -200,31 +199,25 @@ export class SessionStreams implements SessionStreamReads {
     return live(row) || Date.parse(row.closed_at ?? '') + STREAM_GRACE_MS > this.clock();
   }
 
-  /** The project's live feed is an operator's, as each agent's stream is. */
-  async authorizeFeed(caller: Caller): Promise<void> {
-    caller = structuredClone(caller);
-    check(
-      !caller.session && !caller.managed,
-      'forbidden',
-      'Only a person reads an agent’s stream',
-      403,
-    );
-    const actor = await this.state.snapshotTransaction((tx) =>
-      this.scope.require(caller, 'read', tx),
-    );
-    check(readsAgents(actor.role), 'forbidden', 'Only an operator reads an agent’s stream', 403);
-  }
-
   subscribeFeed(projectId: string, wake: () => void): () => void {
-    const readers = this.feeds.get(projectId) ?? new Set();
-    check(this.open < READERS && readers.size < FEED_READERS, 'stream_busy', busy, 429);
-    readers.add(wake);
-    this.feeds.set(projectId, readers);
+    return this.join(this.feeds, projectId, FEED_READERS, wake);
+  }
+  /** One reader of `key` among `readers`, within the process's and the key's limits. */
+  private join(
+    readers: Map<string, Set<() => void>>,
+    key: string,
+    limit: number,
+    wake: () => void,
+  ): () => void {
+    const held = readers.get(key) ?? new Set();
+    check(this.open < READERS && held.size < limit, 'stream_busy', busy, 429);
+    held.add(wake);
+    readers.set(key, held);
     this.open++;
     return () => {
-      if (!readers.delete(wake)) return;
+      if (!held.delete(wake)) return;
       this.open--;
-      if (!readers.size) this.feeds.delete(projectId);
+      if (!held.size) readers.delete(key);
     };
   }
 
@@ -232,16 +225,14 @@ export class SessionStreams implements SessionStreamReads {
    * One frame of the project's feed: the live visits, and each one's events past what `held`
    * says the page holds, read in one statement for them all. A visit new to the page, or one
    * that said more than FEED_READ since, is sent its newest events alone and starts over. A
-   * thread's card shows its work: an inquiry visit's lines only while no work visit is live.
+   * thread's card shows its work: an inquiry visit's lines are its thread's stream alone.
    */
   async feed(projectId: string, held: Map<string, number>): Promise<LiveFeedFrame | null> {
     const live = (
       await this.state.read((sql) =>
         sql.all<{ id: string; thread_id: string }>(
-          `SELECT id,thread_id FROM worker_sessions s WHERE project_id=? AND status IN ('offered','active')
-            AND thread_id IS NOT NULL AND (kind='work' OR NOT EXISTS (SELECT 1 FROM worker_sessions w
-              WHERE w.thread_id=s.thread_id AND w.kind='work' AND w.status IN ('offered','active')))
-            ORDER BY _merv_rowid DESC LIMIT ${FEED_VISITS}`,
+          `SELECT id,thread_id FROM worker_sessions WHERE project_id=? AND status IN ('offered','active')
+            AND thread_id IS NOT NULL AND kind='work' ORDER BY _merv_rowid DESC LIMIT ${FEED_VISITS}`,
           projectId,
         ),
       )
@@ -316,16 +307,7 @@ export class SessionStreams implements SessionStreamReads {
 
   /** `wake` runs on each batch this process takes for the session; a reader slot is taken. */
   subscribe(sessionId: string, wake: () => void): () => void {
-    const readers = this.readers.get(sessionId) ?? new Set();
-    check(this.open < READERS && readers.size < READERS_PER_SESSION, 'stream_busy', busy, 429);
-    readers.add(wake);
-    this.readers.set(sessionId, readers);
-    this.open++;
-    return () => {
-      if (!readers.delete(wake)) return;
-      this.open--;
-      if (!readers.size) this.readers.delete(sessionId);
-    };
+    return this.join(this.readers, sessionId, READERS_PER_SESSION, wake);
   }
 
   /**

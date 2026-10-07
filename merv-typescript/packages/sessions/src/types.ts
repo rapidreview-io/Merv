@@ -613,14 +613,13 @@ export interface DispatchDemand {
 export interface SessionStreamReads {
   /** Runner-only, live or just closed: one batch of what its agent printed (SessionStreamBatch). */
   append(caller: Caller, input: unknown): Promise<{ until: number; seq: number }>;
-  authorize(caller: Caller, sessionId: string): Promise<{ growing: boolean }>;
-  /** Whether a session `authorize` admitted may still grow, without reading authority again. */
+  /** An operator's read of the project's agents' streams; refuses everyone else. */
+  authorize(caller: Caller): Promise<void>;
+  /** Whether a session of the project may still grow, without reading authority again. */
   growing(sessionId: string, projectId: string): Promise<boolean>;
   after(sessionId: string, after: number, limit: number): Promise<AgentStreamEvent[]>;
   snapshot(sessionId: string): Promise<AgentStreamEvent[]>;
   subscribe(sessionId: string, wake: () => void): () => void;
-  /** An operator's read of the project's live feed; refuses everyone else. */
-  authorizeFeed(caller: Caller): Promise<void>;
   /** `wake` runs on each batch this process takes for any session of the project. */
   subscribeFeed(projectId: string, wake: () => void): () => void;
   /**

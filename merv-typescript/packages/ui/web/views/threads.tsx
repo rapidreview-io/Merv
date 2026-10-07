@@ -695,15 +695,12 @@ export function ThreadReading({
  * instance not named reads nothing.
  */
 export function useThreadList(instanceId: string | undefined) {
-  const [every, setEvery] = useState(10_000);
   const list = useTool<{ threads: ThreadView[] }>(
     instanceId ? `/sessions/threads?instanceId=${encodeURIComponent(instanceId)}` : null,
     {},
-    { every },
+    { every: (data) => (data?.threads.some(isLive) ? 4000 : 10_000) },
   );
   const threads = list.data?.threads ?? [];
-  const live = threads.some((thread) => thread.status === 'live');
-  useEffect(() => setEvery(live ? 4000 : 10_000), [live]);
   return { threads, loadedAt: list.loadedAt, loaded: !!list.data };
 }
 

@@ -206,9 +206,14 @@ function LeaseRow({
  * The machines behind the agents: dispatch, the runners and every lease, a press under the
  * Agents gallery.
  */
+/** Whether a lease or a runner is live now: the page's clock ticks, and its read is quick, only
+ *  then, so an idle Agents page costs nothing. */
+const busy = (status: SessionsProjectStatus | undefined) =>
+  (status?.liveSessionCount ?? 0) > 0 || (status?.runners ?? []).some((runner) => runner.live);
+const cadenceOf = (status: SessionsProjectStatus | undefined) => (busy(status) ? 4000 : 15000);
+
 export function MachinesPanel({ row, shell, me }: ViewProps & { me: string }) {
-  const [cadence, setCadence] = useState(4000);
-  const state = useTool<SessionsProjectStatus>('ui.read', { rowId: row.id }, { every: cadence });
+  const state = useTool<SessionsProjectStatus>('ui.read', { rowId: row.id }, { every: cadenceOf });
   const [open, setOpen] = useState<string>();
   const [already, setAlready] = useState<string>();
   const status = state.data;
@@ -220,15 +225,12 @@ export function MachinesPanel({ row, shell, me }: ViewProps & { me: string }) {
   );
   const hostOf = ({ runnerId: id }: SessionSummary) =>
     hosts.get(id) ?? (id.length > 20 ? `${id.slice(0, 8)}…${id.slice(-6)}` : id);
-  // The page's one clock ticks only while a lease or a runner is actually live,
-  // and the read slows to match, so an idle Agents page costs nothing.
-  const anyLive = liveCount > 0 || (status?.runners ?? []).some((runner) => runner.live);
-  const tick = useNow(anyLive ? 1000 : 0);
+  const cadence = cadenceOf(status);
+  const tick = useNow(busy(status) ? 1000 : 0);
   // Every duration is measured from the payload's own server clock, so browser
   // skew never reaches one, and past two cadences the page states the age of what
   // it is showing instead of counting on against a fact nobody has refreshed.
   const now = clock(status?.observedAt, state.loadedAt, tick, cadence * 2);
-  useEffect(() => setCadence(anyLive ? 4000 : 15000), [anyLive]);
   const haltAll = useHalt(
     '/sessions/halt',
     state.reload,

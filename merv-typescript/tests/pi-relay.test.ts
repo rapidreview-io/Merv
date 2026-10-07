@@ -7,15 +7,12 @@ import { ModelRelay, type RelayTuning } from '../packages/fleet/src/model-relay.
 import { ApiServer } from '../packages/api/src/http.js';
 import type { Tools } from '../packages/api/src/types.js';
 import { MervError, type Scope } from '@merv/contracts';
-import {
-  piModelRelay,
-  type PiRelayConfig,
-  type PiRelayFailureRecord,
-  type PiRelayGrant,
-  type PiRelayUsageRecord,
-} from '../packages/pi/src/relay.js';
+import type { ModelRelayFailure, ModelRelayUsage } from '../packages/fleet/src/types.js';
+import { piModelRelay, type PiRelayConfig, type PiRelayGrant } from '../packages/pi/src/relay.js';
 import { moveTool, type PiMoveContext } from '../packages/pi/src/moves.js';
 
+type PiRelayFailureRecord = ModelRelayFailure<'pi_relay_failure'>;
+type PiRelayUsageRecord = ModelRelayUsage<'pi_relay_usage'>;
 /** Pi's relay hooks over the shared core, as the API mounts them. */
 const piRelay = (config: PiRelayConfig & RelayTuning) =>
   new ModelRelay(piModelRelay(config), config);

@@ -59,8 +59,12 @@ function Said({ message }: { message: NonNullable<ProjectThread['message']> }) {
 export function AgentsGallery() {
   const rows = useRows();
   const reads = useReadsAgents();
-  const [every, setEvery] = useState(30_000);
-  const first = useTool<ProjectThreads>('/sessions/threads', {}, { every });
+  // Quick while an agent works; a question waits on a person, who answers here.
+  const first = useTool<ProjectThreads>(
+    '/sessions/threads',
+    {},
+    { every: (data) => (data?.threads.some(isLive) ? 4000 : 30_000) },
+  );
   const [older, setOlder] = useState<{ threads: ProjectThread[]; next: string | null }>();
   const [busy, setBusy] = useState(false);
   const [recent, showRecent] = useState(false);
@@ -79,8 +83,6 @@ export function AgentsGallery() {
   const rest = threads.filter((item) => !item.question && !isLive(item) && !item.attention);
   const live = threads.filter(isLive).length;
   const tails = useLiveFeed(reads && threads.some(isLive));
-  // Quick while an agent works; a question waits on a person, who answers here.
-  useEffect(() => setEvery(live ? 4000 : 30_000), [live]);
   // The rail's badge counts the same agents: it is told when they change.
   const counted = useRef<string>();
   const counts = first.data ? `${live}:${waiting.length}` : undefined;

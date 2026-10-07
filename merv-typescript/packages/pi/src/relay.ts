@@ -1,6 +1,6 @@
 import { check, type State } from '@merv/contracts';
 import { dailyTokens, RESPONSES_URL } from '@merv/fleet/model-ledger';
-import type { ModelRelayConfig, ModelRelayFailure, ModelRelayUsage } from '@merv/fleet/types';
+import type { ModelRelayConfig } from '@merv/fleet/types';
 import type { PiModelCharge, PiRelayGrant } from './types.js';
 import { turnCeilingMs } from './limits.js';
 import {
@@ -11,8 +11,6 @@ import {
 } from './relay-schema.js';
 
 export type { PiRelayGrant } from './types.js';
-export type PiRelayFailureRecord = ModelRelayFailure<'pi_relay_failure'>;
-export type PiRelayUsageRecord = ModelRelayUsage<'pi_relay_usage'>;
 type PiRelay = ModelRelayConfig<PiRelayGrant, 'pi', PiModelCharge>;
 export type PiRelayConfig = Omit<
   PiRelay,

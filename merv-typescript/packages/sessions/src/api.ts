@@ -245,7 +245,8 @@ async function agentEvents(
   );
   let seq = after === null ? -1 : Number(after);
   const caller = await r.caller();
-  let { growing } = await streams.authorize(caller, sessionId);
+  await streams.authorize(caller);
+  let growing = await streams.growing(sessionId, caller.projectId);
   let read = Date.now();
   await serveEvents(req, res, {
     rotateMs: 20_000,
@@ -287,7 +288,7 @@ async function liveFeed(
 ): Promise<void> {
   check(!r.url.search, 'invalid_input', 'The live feed takes no query');
   const caller = await r.caller();
-  await streams.authorizeFeed(caller);
+  await streams.authorize(caller);
   const held = new Map<string, number>();
   let first = true;
   await serveEvents(req, res, {
