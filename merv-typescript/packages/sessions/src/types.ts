@@ -600,8 +600,12 @@ export interface DispatchDemandInput {
   capabilities?: string[];
 }
 export interface DispatchDemand {
-  /** Each target, and since when its revision has stood: what a renter counts its tries from. */
-  candidates: { instanceId: string; expectedRevision: number; since: string }[];
+  /**
+   * Each target, and since when its revision has stood: what a renter counts its tries from.
+   * `inquiry` marks one wanted only for a question to an agent of it, a short visit that holds no
+   * lease, so a machine of the item that is busy with another visit cannot take it.
+   */
+  candidates: { instanceId: string; expectedRevision: number; since: string; inquiry?: true }[];
 }
 
 /** What the events route reads of agents' live streams: operator authority, events, wakes. */

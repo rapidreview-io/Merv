@@ -1,4 +1,5 @@
 import {
+  MervError,
   check,
   clip,
   digest,
@@ -11,6 +12,7 @@ import {
 } from '@merv/contracts';
 import { isoNow, ordinary, text, workName } from './common.js';
 import type {
+  DispatchState,
   InquirySession,
   InquiryStatus,
   Session,
@@ -180,8 +182,8 @@ export interface InquiryHost {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   /** Refuses a caller who may not read the work item. */
   readable(caller: Caller, instanceId: string, tx: Transaction): Promise<unknown>;
-  /** Whether the project's automatic dispatch, which launches inquiry visits too, is on. */
-  dispatching(projectId: string, tx: Transaction): Promise<boolean>;
+  /** The project's automatic dispatch, which launches inquiry visits too. */
+  dispatching(projectId: string, tx: Transaction): Promise<DispatchState>;
   decode(row: { thread_id: string; session_json: string }): Session;
 }
 
@@ -235,13 +237,8 @@ export class Inquiries implements SessionInquiries {
         id: string;
         project_id: string;
         instance_id: string;
-        sha256: string | null;
         size: number | string | null;
-        uploaded_at: string | null;
-      }>(
-        'SELECT id,project_id,instance_id,sha256,size,uploaded_at FROM session_threads WHERE id=?',
-        input.threadId,
-      );
+      }>('SELECT id,project_id,instance_id,size FROM session_threads WHERE id=?', input.threadId);
       check(
         thread && thread.project_id === caller.projectId,
         'thread_not_found',
@@ -249,21 +246,8 @@ export class Inquiries implements SessionInquiries {
         404,
       );
       await this.host.readable(caller, thread.instance_id, tx);
-      check(
-        thread.sha256 !== null && thread.uploaded_at !== null,
-        'inquiry_unkept',
-        'This agent kept no conversation to resume: a fresh agent would know nothing of its work, so there is nobody to ask',
-        409,
-      );
-      check(
-        !(await tx.get(
-          "SELECT 1 FROM session_inquiries WHERE thread_id=? AND status IN ('queued','running')",
-          thread.id,
-        )),
-        'inquiry_busy',
-        'This agent is still on an earlier question; ask again once it has answered',
-        409,
-      );
+      const refused = (await this.refusals(tx, caller.projectId, [thread.id])).get(thread.id);
+      if (refused) throw refused;
       const now = this.clock();
       const budget = inquiryBudget(Number(thread.size ?? 0));
       // What its visits spent is in Sessions' one usage ledger, as its runners reported it; one
@@ -282,12 +266,6 @@ export class Inquiries implements SessionInquiries {
         'inquiry_tokens_spent',
         'Your questions to agents have spent their model tokens for the last day; ask again later',
         429,
-      );
-      check(
-        await this.host.dispatching(caller.projectId, tx),
-        'dispatch_disabled',
-        'Automatic dispatch is off in this project, so no machine would take the question',
-        409,
       );
       const source = await this.scope.delegationSource(caller, tx);
       const id = newId('inquiry');
@@ -328,6 +306,71 @@ export class Inquiries implements SessionInquiries {
       });
       return view((await tx.get<InquiryRow>(`${INQUIRY} WHERE i.id=?`, id))!);
     });
+  }
+  /**
+   * Why each of these threads' agents may not be asked now, where it may not: the one rule `ask`
+   * refuses by and a thread's `asks` says. It kept a conversation to resume, nothing asked of it
+   * is still open, the project's dispatch is on, and a machine could take the question: a Claude
+   * conversation is resumed by a machine of its owner's, and a Codex one only by a hosted
+   * machine, whose model relay holds the visit to its budget (Codex reports its spend only as
+   * its turn ends), so only where its work last ran on one and the project is not on its own
+   * machines, which Fleet rents none for.
+   */
+  async refusals(
+    tx: Transaction,
+    projectId: string,
+    threadIds: readonly string[],
+  ): Promise<Map<string, MervError>> {
+    if (!threadIds.length) return new Map();
+    const dispatch = await this.host.dispatching(projectId, tx);
+    const rows = await tx.all<{
+      id: string;
+      kept: boolean;
+      busy: boolean;
+      codex: boolean;
+      hosted: boolean;
+    }>(
+      `SELECT t.id,t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AS kept,
+          EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND i.status IN ('queued','running')) AS busy,
+          t.harness='codex' AS codex,
+          EXISTS (SELECT 1 FROM (SELECT s.id FROM worker_sessions s WHERE s.thread_id=t.id AND s.kind='work'
+              ORDER BY s._merv_rowid DESC LIMIT 1) w
+            WHERE EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.session_id=w.id)
+              OR EXISTS (SELECT 1 FROM session_managed_runners r WHERE r.bound_session_id=w.id)) AS hosted
+        FROM session_threads t WHERE t.project_id=? AND t.id IN (${threadIds.map(() => '?').join(',')})`,
+      projectId,
+      ...threadIds,
+    );
+    const refusals = new Map<string, MervError>();
+    for (const row of rows) {
+      const refusal = !row.kept
+        ? new MervError(
+            'inquiry_unkept',
+            'This agent kept no conversation to resume: a fresh agent would know nothing of its work, so there is nobody to ask',
+            409,
+          )
+        : row.busy
+          ? new MervError(
+              'inquiry_busy',
+              'This agent is still on an earlier question; ask again once it has answered',
+              409,
+            )
+          : !dispatch.enabled
+            ? new MervError(
+                'dispatch_disabled',
+                'Automatic dispatch is off in this project, so no machine would take the question',
+                409,
+              )
+            : row.codex && !(row.hosted && !dispatch.ownMachines)
+              ? new MervError(
+                  'inquiry_unreachable',
+                  'No machine would take this question: a Codex conversation is resumed only on a hosted machine, where its work ran on one and Fleet rents them for this project',
+                  409,
+                )
+              : undefined;
+      if (refusal) refusals.set(row.id, refusal);
+    }
+    return refusals;
   }
   /**
    * The oldest queued question of the project a machine of `ownerHash` may take: its thread's

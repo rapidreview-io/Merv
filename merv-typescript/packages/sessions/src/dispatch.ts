@@ -712,11 +712,13 @@ export class SessionDispatch {
         await this.recentFailures(tx, owner, input.platform.name),
         this.passing(owner),
       );
-      const candidates = selected.candidates.map(({ instanceId, expectedRevision, updatedAt }) => ({
-        instanceId,
-        expectedRevision,
-        since: updatedAt,
-      }));
+      const candidates: DispatchDemand['candidates'] = selected.candidates.map(
+        ({ instanceId, expectedRevision, updatedAt }) => ({
+          instanceId,
+          expectedRevision,
+          since: updatedAt,
+        }),
+      );
       // A question to an agent wants a machine too, on the work item it asks about, at that
       // work's current revision: only where dispatch is on, as `eligibleCandidates` read it.
       if (
@@ -732,7 +734,12 @@ export class SessionDispatch {
           asked,
           tx,
         ))
-          candidates.push({ instanceId, expectedRevision: item.revision, since: item.updatedAt });
+          candidates.push({
+            instanceId,
+            expectedRevision: item.revision,
+            since: item.updatedAt,
+            inquiry: true,
+          });
       }
       return { candidates };
     });

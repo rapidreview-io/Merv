@@ -809,14 +809,36 @@ test('a person’s questions spend at most a day’s tokens, and the project’s
   assert.equal((await f.lease('runner-q')).session?.inquiry?.id, second.id);
 });
 
-test('a machine of the owner’s that runs Codex is offered no question: only Fleet’s relay holds its budget', async (t) => {
+test('a question no machine could take is refused: a Codex conversation is asked only where its work ran on a hosted machine', async (t) => {
   const f = await fixture(t);
   await f.dispatch();
-  const { threadId } = await f.worked('runner-hand', 'codex');
-  const asked = await f.ask(threadId, 'Which seed?');
-  await f.present('runner-codex', ['inquiry.1', 'runner.2'], 'codex');
-  assert.equal((await f.lease('runner-codex', 'codex')).session?.inquiry, undefined);
-  assert.equal((await f.inquiry(asked.id)).status, 'queued');
+  const { first, threadId } = await f.worked('runner-hand', 'codex');
+  const listed = async () =>
+    (await f.sessions.threads.project(f.owner)).threads.find((item) => item.id === threadId)!;
+  // A machine of the owner's never takes a Codex question (Codex reports its spend only as its
+  // turn ends), so this agent may not be asked.
+  assert.equal((await listed()).asks, undefined);
+  const refused = await f.http('POST', `/sessions/threads/${threadId}/ask`, f.token, {
+    body: 'Which seed?',
+    requestId: randomUUID(),
+  });
+  assert.deepEqual([refused.status, refused.body.error.code], [409, 'inquiry_unreachable']);
+  // Its work ran on a hosted machine: Fleet rents one for the question.
+  const at = new Date().toISOString();
+  await f.app.ctx.state.transaction((tx) =>
+    tx.run(
+      `INSERT INTO session_managed_runners(allocation_id,epoch,project_id,source_json,source_hash,runtime_profile_id,platform_json,
+        capabilities_json,enrollment_hash,enrollment_expires_at,control_hash,control_expires_at,runner_id,bound_session_id,created_at)
+        VALUES('allocation_test',1,?,'{}','source','profile','{}','[]','enrollment',?,'control',?,'runner-hand',?,?)`,
+      f.owner.projectId,
+      at,
+      at,
+      first.session.id,
+      at,
+    ),
+  );
+  assert.equal((await listed()).asks, true);
+  assert.equal((await f.ask(threadId, 'Which seed?')).status, 'queued');
 });
 
 test('a refused question holds up no other, and a retried reply is told that it landed', async (t) => {

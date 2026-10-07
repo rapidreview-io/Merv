@@ -504,8 +504,10 @@ test('retiring the versions that can no longer start deletes their records and n
             // retirement; jsonb orders keys by length.
             // sessions@13 gives each session its actor's thread, these sessions having no agent.
             const added = {
-              // sessions@13 threads every session; sessions@18 makes each a work visit.
+              // sessions@13 threads every session; sessions@18 makes each a work visit, and
+              // sessions@19 each usage row a work visit's.
               worker_sessions: { thread_id: `thr_${String(row.actor_id)}`, kind: 'work' },
+              session_usage: { kind: 'work' },
               reflections: { abandoned: null },
               wf_blockers: { cause: null, whose: null, revision: null },
               research_automation: { unavailable_since: null },

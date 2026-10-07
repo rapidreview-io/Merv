@@ -115,8 +115,12 @@ export class SessionThreads {
       stream(sessionId: string): Promise<AgentStreamEvent[]>;
       /** Which of these work items of the project have ended. */
       ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
-      /** Whether the project's automatic dispatch, which launches inquiry visits too, is on. */
-      dispatching(projectId: string, tx: Transaction): Promise<boolean>;
+      /** Which of these threads' agents may not be asked now (Inquiries.refusals). */
+      unaskable(
+        projectId: string,
+        threadIds: string[],
+        tx: Transaction,
+      ): Promise<Map<string, unknown>>;
       /** Refuses once Sessions has closed. */
       available(): void;
     },
@@ -677,19 +681,9 @@ export class SessionThreads {
           ).map((row) => row.thread_id)
         : [],
     );
-    const dispatching = threads.length
-      ? await this.host.dispatching(threads[0]!.project_id, tx)
-      : false;
-    const inquiring = new Set(
-      dispatching && ids.length
-        ? (
-            await tx.all<{ thread_id: string }>(
-              `SELECT DISTINCT thread_id FROM session_inquiries WHERE status IN ('queued','running') AND thread_id IN (${marks})`,
-              ...ids,
-            )
-          ).map((row) => row.thread_id)
-        : [],
-    );
+    const unaskable = threads.length
+      ? await this.host.unaskable(threads[0]!.project_id, ids, tx)
+      : new Map<string, unknown>();
     return threads.map((thread) => {
       const mine = visits.filter((visit) => visit.threadId === thread.id);
       const own = mine.map((visit) => visit.view);
@@ -710,10 +704,7 @@ export class SessionThreads {
               : 'dormant',
         takesMessage:
           asking.has(thread.id) || (thread.status !== 'retired' && !ended.has(thread.instance_id)),
-        ...(thread.sha256 !== null &&
-          thread.uploaded_at !== null &&
-          dispatching &&
-          !inquiring.has(thread.id) && { asks: true as const }),
+        ...(!unaskable.has(thread.id) && { asks: true as const }),
         visits: own,
       };
     });

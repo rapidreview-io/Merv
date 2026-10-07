@@ -446,13 +446,13 @@ export class LeasedSessions implements Sessions {
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
       stream: (sessionId) => this.streams.snapshot(sessionId),
       ended: (projectId, instanceIds, tx) => this.endedWork(projectId, instanceIds, tx),
-      dispatching: async (projectId, tx) => (await this.dispatch.dispatch(projectId, tx)).enabled,
+      unaskable: (projectId, threadIds, tx) => this.inquiries.refusals(tx, projectId, threadIds),
       available,
     });
     this.inquiries = new Inquiries(state, scope, this.clock, {
       transaction: (fn) => this.transaction(fn),
       readable: (caller, instanceId, tx) => this.workflows.get(caller, instanceId, tx),
-      dispatching: async (projectId, tx) => (await this.dispatch.dispatch(projectId, tx)).enabled,
+      dispatching: (projectId, tx) => this.dispatch.dispatch(projectId, tx),
       decode: (row) => this.decode({ ...row, attachment_json: null, result_json: null } as Row),
     });
     this.messaging = new SessionMessages(state, scope, this.clock, {
