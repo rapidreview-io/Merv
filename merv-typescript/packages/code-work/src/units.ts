@@ -465,7 +465,7 @@ export class CodeUnitService {
     if (!row.publishes_at) {
       const project = await this.code.project(tx, caller.projectId);
       check(
-        project?.durability === 'code' && project.main.stored,
+        project?.main.stored,
         'code_publish_unhosted',
         'Publishing to main needs Code to host this project and hold the commit that is main',
         409,

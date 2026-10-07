@@ -234,7 +234,7 @@ test(
     const main = initial.project!.main.oid;
     assert.equal(initial.store?.source, 'managed');
     assert.equal((await code.github.status(owner)).repository, null);
-    assert.equal((await code.status(owner)).project?.durability, 'code');
+    assert.ok((await code.status(owner)).project);
 
     const task = await tasks.create(owner, {
       title: 'Harness',

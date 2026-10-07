@@ -159,14 +159,6 @@ export interface CodeProjectBinding {
     reason: string;
     operationId: string;
   }[];
-  /**
-   * `legacy-local`: accepted code stays in the runner's repository and the server claims no
-   * durability for it. `code`: the project was imported, and Code's repository is where new
-   * work is kept. Durability never goes back. The repository identity may change, once per
-   * verified rebind; it is a Code-side opaque name and is not the linked GitHub repository,
-   * which `code_github` holds and which a rebind never touches.
-   */
-  durability: 'legacy-local' | 'code';
 }
 export const codeLocalBindInputSchema = z
   .object({

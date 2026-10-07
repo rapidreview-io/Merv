@@ -33,7 +33,6 @@ test('a repository is imported in parts, continued by a thin bundle, and every c
   });
   const f = await codeStoreFixture(t, {}, one);
   const before = await f.code.status(f.admin);
-  assert.equal(before.project!.durability, 'legacy-local');
   assert.equal(before.project!.main.stored, false);
   assert.equal(before.store!.hosted, false);
 
@@ -95,7 +94,6 @@ test('a repository is imported in parts, continued by a thin bundle, and every c
   assert.equal(existsSync(join(f.paths.quarantine, begun.id)), false);
 
   const hosted = await f.code.status(f.admin);
-  assert.equal(hosted.project!.durability, 'code');
   // Main was already named; the import found it in what it admitted.
   assert.equal(hosted.project!.main.stored, true);
   assert.deepEqual(
@@ -420,14 +418,14 @@ test('naming a main records whether the repository holds it, so nothing has to a
   await f.code.v2!.call(human, `uploads/${begun.id}/complete`, {});
   // Hosted, but main is a commit the import did not bring.
   let status = await f.code.status(human);
-  assert.deepEqual([status.project!.durability, status.project!.main.stored], ['code', false]);
+  assert.equal(status.project!.main.stored, false);
   // Naming a held commit says so at once; naming one that is not held says that too.
   assert.equal((await bind(one, two)).main.stored, true);
   assert.equal((await bind('c'.repeat(40), one)).main.stored, false);
   status = await f.code.status(human);
   assert.deepEqual(
-    [status.project!.durability, status.project!.main.oid, status.project!.main.stored],
-    ['code', 'c'.repeat(40), false],
+    [status.project!.main.oid, status.project!.main.stored],
+    ['c'.repeat(40), false],
   );
 });
 

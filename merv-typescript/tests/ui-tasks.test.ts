@@ -494,7 +494,7 @@ test('new cycle publication preflight does not blame a transient mirror outage o
   serve('/tools/code.status', {
     body: {
       result: {
-        project: { durability: 'code' },
+        project: { main: { stored: true } },
         mirror: { blockedBy: 'code_mirror_unavailable' },
         publication: { controls: { blockers: [] } },
       },
@@ -511,7 +511,7 @@ test('new cycle remains usable without hosted Code or its status read', async (t
     serve('/tools/experiment.list', { body: { result: [] } });
     if (!unavailable)
       serve('/tools/code.status', {
-        body: { result: { project: { durability: 'legacy-local' } } },
+        body: { result: { project: null } },
       });
     let sent: Record<string, unknown> | undefined;
     serve('/tools/research.create', (_call, body) => {

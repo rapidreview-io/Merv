@@ -100,12 +100,6 @@ export async function createTask(
         'New tasks always use Git. Omit workspace or use git, and use dependsOn for accepted code dependencies; baseTaskId is retired.',
       );
       await ctx.code.ensureRepository(caller, tx);
-      check(
-        await ctx.code.hosted(caller, tx),
-        'code_store_required',
-        'Import the existing project repository into Code before creating work',
-        409,
-      );
       const inputIds = input.contextInputs ?? {};
       check(
         inputIds && typeof inputIds === 'object' && !Array.isArray(inputIds),

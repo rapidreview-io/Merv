@@ -177,10 +177,7 @@ export function CodePage({ row, shell, manages, signedIn, named }: ViewProps & R
           was made over, so it stays on the page; a missing one is a pill and the way to mend it. */}
       {unlinked ? (
         <p className="cluster">
-          <span>
-            {read.data?.status?.project?.durability === 'code' ? 'Managed Git · ' : ''}GitHub not
-            connected
-          </span>
+          <span>{read.data?.status?.project ? 'Managed Git · ' : ''}GitHub not connected</span>
           {mends && connect(label)}
         </p>
       ) : (

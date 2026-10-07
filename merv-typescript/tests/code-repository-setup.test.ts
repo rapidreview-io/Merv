@@ -101,27 +101,6 @@ test('relinking before import authorization never fetches the replacement reposi
   assert.equal((await f.code.status(f.admin)).project?.main.stored, false);
 });
 
-test('preparing a project whose repository Code does not keep is refused before any import', async (t) => {
-  const f = await codeStoreFixture(t);
-  t.mock.method(f.code.github, 'status', async () => ({
-    revision: 3,
-    baseBranch: 'main',
-    automation: 'write',
-    repository: { id: 42 },
-  }));
-  const imports = t.mock.method(f.code, 'importRepository');
-  await assert.rejects(
-    f.code.prepareRepository(f.admin, {
-      expectedRevision: 3,
-      baseBranch: 'main',
-      headOid: 'a'.repeat(40),
-      requestId: 'unhosted',
-    }),
-    { code: 'code_project_unhosted' },
-  );
-  assert.equal(imports.mock.callCount(), 0);
-});
-
 test('repository imports accept Unicode branches while rejecting unsafe Git ref syntax', () => {
   for (const ref of [
     'refs/heads/研究/évaluation',

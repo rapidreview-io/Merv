@@ -674,12 +674,6 @@ export class ExperimentService implements Experiments {
         );
         const owner = await this.scope.authorityActor(caller, tx);
         await this.code.ensureRepository(caller, tx);
-        check(
-          await this.code.hosted(caller, tx),
-          'code_store_required',
-          'Import the existing project repository into Code before creating work',
-          409,
-        );
         const workflow = await handleFor(
           this,
           programVersion(this.artifacts.largeUploadAvailable),

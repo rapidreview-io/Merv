@@ -303,9 +303,17 @@ test('only a signed-in administrator binds the repository, and main moves by com
 
   const bound = await f.code.bindLocal(f.admin, first);
   assert.deepEqual(
-    [bound.mode, bound.repositoryId, bound.main.oid, bound.durability, bound.boundBy],
-    ['local', 'runner-repository', oid('a'), 'legacy-local', f.admin.actorId],
+    [bound.mode, bound.repositoryId, bound.main.oid, bound.boundBy],
+    ['local', 'runner-repository', oid('a'), f.admin.actorId],
   );
+  // A first bind declares the project managed: Code keeps every project's history.
+  const row = await f.state.read((sql) =>
+    sql.get<{ binding_json: string }>(
+      'SELECT binding_json FROM code_projects WHERE project_id=?',
+      f.project.id,
+    ),
+  );
+  assert.equal(JSON.parse(row!.binding_json).managed, true);
   assert.deepEqual(await f.code.bindLocal(f.admin, first), bound, 'the same request replays');
   await assert.rejects(f.code.bindLocal(f.admin, { ...first, mainOid: oid('b') }), {
     code: 'request_conflict',
