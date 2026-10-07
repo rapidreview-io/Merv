@@ -14,7 +14,7 @@ import { openState } from './fixtures/state.js';
 // A lease's receipt and details can carry a frozen paper context (160,000 characters for an
 // experiment), so a read of who holds what loads neither unless it asks for them, and a read of
 // when each instance's leases ended is one aggregate, not every lease ever taken.
-test('lease reads are narrow by default and ask for receipts, details or one detail by name', async () => {
+test('lease reads are narrow by default and ask for receipts and details', async () => {
   const state = await openState();
   await state.migrate('workflows', postgresMigrations);
   const projectId = 'project_lease_reads';
@@ -58,10 +58,10 @@ test('lease reads are narrow by default and ask for receipts, details or one det
         ['session_3', 2, null],
       ],
     );
-    const purposes = await leaseRows(tx, { ...where, active: true }, { detail: 'purpose' });
+    const live = await leaseRows(tx, { ...where, active: true });
     assert.deepEqual(
-      purposes.map((row) => [row.id, row.detail, 'details' in row]),
-      [['session_3', 'work', false]],
+      live.map((row) => [row.id, row.state, 'details' in row]),
+      [['session_3', 'running', false]],
     );
     const [full] = await leaseRows<{ inputs: { paper: string } }>(
       tx,

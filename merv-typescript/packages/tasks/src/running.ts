@@ -39,7 +39,7 @@ import {
 import { reviewAttention, reviewCard } from '@merv/reviews/running';
 import { composedBrief } from './evidence.js';
 import type { TaskRow, TasksContext } from './index.js';
-import { TASK_WORKFLOW, taskVersions } from './workflow.js';
+import { purposeOf, TASK_WORKFLOW, taskVersions } from './workflow.js';
 
 /**
  * A task on the Running page: its card in the work lane and its sidebar, composed from facts
@@ -598,18 +598,12 @@ export async function liveLeases(
   tx: Transaction,
   taskId?: string,
 ): Promise<Map<string, 'work' | 'review'>> {
-  const rows = await leaseRows(
-    tx,
-    {
-      projectId: caller.projectId,
-      ...(taskId === undefined ? { workflows: [TASK_WORKFLOW.name] } : { instanceIds: [taskId] }),
-      active: true,
-    },
-    { detail: 'purpose' },
-  );
-  return new Map(
-    rows.map((row) => [`${row.instance_id}@${row.revision}`, row.detail as 'work' | 'review']),
-  );
+  const rows = await leaseRows(tx, {
+    projectId: caller.projectId,
+    ...(taskId === undefined ? { workflows: [TASK_WORKFLOW.name] } : { instanceIds: [taskId] }),
+    active: true,
+  });
+  return new Map(rows.map((row) => [`${row.instance_id}@${row.revision}`, purposeOf(row)]));
 }
 
 /**
