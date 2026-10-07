@@ -248,6 +248,20 @@ test('a Responses Lite call passes with Codex’s lite header, its tools held to
     },
     { ...lite, input: [{ ...carrier, role: 'user' }, ...rest] },
     { ...lite, input: [{ type: 'additional_tools', tools: 'web_search' }, ...rest] },
+    // Only a valid additional_tools item, by its exact type, may carry tools.
+    { ...lite, input: [{ ...carrier, type: 'Additional_tools' }, ...rest] },
+    {
+      ...lite,
+      input: [
+        carrier,
+        { type: 'tool_search_output', call_id: 'c1', tools: [{ type: 'web_search' }] },
+        ...rest,
+      ],
+    },
+    {
+      ...lite,
+      input: [carrier, { ...rest[1], tools: [{ type: 'function', name: 'x' }] }, ...rest],
+    },
     { ...lite, reasoning: { effort: 'low', context: 'current_turn_and_more' } },
   ]) {
     const refused = await f.call(body);

@@ -65,7 +65,10 @@ const codexRequest = z
     input: z.array(
       z.union([
         additionalTools,
-        z.record(z.unknown()).refine((item) => item.type !== 'additional_tools'),
+        // No other item carries tools, however it names itself.
+        z
+          .record(z.unknown())
+          .refine((item) => item.type !== 'additional_tools' && !Object.hasOwn(item, 'tools')),
       ]),
     ),
     tools: tools.optional(),
