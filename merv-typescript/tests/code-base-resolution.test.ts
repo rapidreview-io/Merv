@@ -1461,6 +1461,15 @@ test('three resolution rounds retain one task, carry all feedback and suspend un
         blocker.message.includes('suspended') && blocker.next.includes('workflow.extend_limit'),
     ),
   );
+  // The move is the suspended task's own, asked of a project admin once on its card: each unit
+  // waiting on it names nobody's move, so Needs you does not list it again per waiter.
+  assert.equal(
+    blockers.find((blocker) => blocker.code === 'code_merge_conflict')?.whose,
+    undefined,
+  );
+  const gates = (await f.workflows.overview(f.admin, undefined, { open: true })).workflows;
+  assert.equal(gates.find((gate) => gate.instanceId === waiter.id)?.yours, undefined);
+  assert.ok(gates.find((gate) => gate.instanceId === taskId)?.yours?.ask);
   assert.ok(
     (await f.sessions.dispatch.stuck(f.admin)).items.some(
       (item) => item.instanceId === waiter.id && item.why.includes('suspended'),
