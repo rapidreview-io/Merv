@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import { Fragment, type CSSProperties, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type {
   UiAction,
@@ -157,18 +157,23 @@ function Columns({ columns, ...facts }: { columns: UiColumn[] } & Facts) {
 function CollectionList({ row }: ViewProps) {
   const spec = row.view.spec as UiCollectionSpec;
   const linked = !!row.view.record;
-  const [every, setEvery] = useState(spec.cadence?.idleMs ?? 8000);
-  const read = useTool<unknown>('ui.read', { rowId: row.id }, { every });
-  const items: Item[] = records(read.data).map((data) => ({ id: str(at(data, spec.key)), data }));
   // The clocks and the cadence are for what is moving; a still list costs nothing.
   const when =
     spec.cadence?.liveWhen ??
     (spec.states?.live && { field: spec.states.field, in: spec.states.live });
-  const running = !!when && items.some((item) => when.in.includes(str(at(item.data, when.field))));
+  const moving = (data: unknown) =>
+    !!when && records(data).some((item) => when.in.includes(str(at(item, when.field))));
+  const read = useTool<unknown>(
+    'ui.read',
+    { rowId: row.id },
+    {
+      every: (data) =>
+        !spec.cadence ? 8000 : moving(data) ? spec.cadence.liveMs : spec.cadence.idleMs,
+    },
+  );
+  const items: Item[] = records(read.data).map((data) => ({ id: str(at(data, spec.key)), data }));
+  const running = moving(read.data);
   const now = useNow(running ? 1000 : 0);
-  useEffect(() => {
-    if (spec.cadence) setEvery(running ? spec.cadence.liveMs : spec.cadence.idleMs);
-  }, [running, spec.cadence]);
 
   const labels = (item: Item) =>
     [spec.title, ...(spec.search ?? [])].map((field) => str(at(item.data, field)));

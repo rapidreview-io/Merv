@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useTool } from '../api';
 import { useCommand } from '../mutations';
@@ -302,14 +302,13 @@ export function Integrations({ shell }: ViewProps) {
  */
 function Connections({ shell }: ViewProps) {
   const row = shell.rows.find((entry) => entry.view.kind === 'connections');
-  const [cadence, setCadence] = useState(4000);
   const mounts = useTool<Mount[]>(
     row ? 'ui.read' : null,
     { rowId: row?.id ?? '' },
-    { every: cadence },
+    {
+      every: (data) => (!data || data.some((mount) => mount.state === 'connecting') ? 4000 : 15000),
+    },
   );
-  const connecting = (mounts.data ?? []).some((mount) => mount.state === 'connecting');
-  useEffect(() => setCadence(connecting ? 4000 : 15000), [connecting]);
   if (!row || (mounts.data && !mounts.data.length))
     return <Nothing icon="connections" said="No connections" />;
   return (

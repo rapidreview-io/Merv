@@ -170,18 +170,20 @@ function ExperimentRecord({
 /** The record and the gate it stands at arrive together, from the row that owns them. */
 function ExperimentDetail({ row, shell }: ViewProps) {
   const { id = '' } = useParams();
-  // Whether the record can still change arrives with the record itself, so the
-  // first read polls and every read stops once a settled state has come back.
-  const settled = useRef(false);
+  // An ended experiment changes no more, but what Code holds of it may (its accepted code's
+  // publication to main): the read that brings it back ended slows the polling to a minute.
   const record = useTool<{
     experiment: Experiment;
     process: ProcessGraph;
     codeUnit: CodeUnit | null;
     history: RunningUnitEntry[];
-  }>('ui.read', { rowId: row.id, params: { id } }, { every: settled.current ? undefined : 8000 });
+  }>(
+    'ui.read',
+    { rowId: row.id, params: { id } },
+    { every: (data) => (data?.process.terminal ? 60_000 : 8000) },
+  );
   const state = record.data?.experiment.workflow.state;
-  settled.current = !!record.data?.process.terminal;
-  const live = settled.current ? undefined : 8000;
+  const live = record.data?.process.terminal ? undefined : 8000;
   const reviews = useTool<Review[]>('review.list', { subjectId: id }, { every: live });
   // The exhibit is worked out from the attempt's results, parsing each: it is read again only
   // when the evidence the record lists has changed, not on every poll of the record.

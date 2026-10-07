@@ -1,6 +1,6 @@
 /**
  * An open record page keeps what it shows current without redoing work nobody asked for: an
- * ended task is read again only slowly, for its Code section, a running experiment's exhibit is read again only when its
+ * ended task or experiment is read again only slowly, for its Code section, a running experiment's exhibit is read again only when its
  * evidence changed, and an attempt shows its own figures, never an earlier attempt's.
  */
 import assert from 'node:assert/strict';
@@ -184,6 +184,38 @@ const experiment = (ids: string[]) => ({
   ],
   reviewId: null,
   conclusion: null,
+});
+
+test('an ended experiment’s page still refreshes, slowly: its accepted code can be published later', async (t) => {
+  t.after(unmount);
+  const waits: number[] = [];
+  const real = globalThis.setTimeout;
+  globalThis.setTimeout = ((handler: () => void, ms?: number) => {
+    waits.push(ms ?? 0);
+    return real(handler, ms);
+  }) as typeof setTimeout;
+  t.after(() => void (globalThis.setTimeout = real));
+  serve('/tools/ui.read', {
+    body: {
+      result: {
+        experiment: {
+          ...experiment([]),
+          workflow: { state: 'complete', revision: 12, updatedAt: now },
+          settled: true,
+        },
+        process: graph('complete', true),
+        codeUnit: null,
+      },
+    },
+  });
+  serve('/tools/review.list', { body: { result: [] } });
+  await open('/experiments/wf_1', ExperimentsView);
+  await settle(20);
+  assert.ok(document.body.textContent!.includes('grokking'));
+  assert.ok(
+    waits.some((ms) => ms > 30_000 && ms <= 60_000),
+    `a slow cadence stands for the ended experiment: ${waits.filter((ms) => ms > 1000).join(', ')}`,
+  );
 });
 
 test('an experiment sent back to planning shows its new attempt’s figures, not the last one’s', async (t) => {
