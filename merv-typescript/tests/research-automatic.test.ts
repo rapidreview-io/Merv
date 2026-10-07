@@ -1125,6 +1125,34 @@ test('an owner who decides to stop clears research_needs_owner by ending the cyc
   });
 });
 
+test('an ended cycle that still asks its owner stays on Home after a later cycle ends', async (t) => {
+  const f = await fixture(t);
+  await f.define();
+  await f.enable();
+  const input = await f.task();
+  const first = await f.create([input.id], { maxCycles: 5 });
+  await f.finishTask(input.id);
+  hostedCode(f.research, f.app.ctx, f.owner, { unitIds: [] });
+  await f.pump();
+  await f.approve(first.id, {
+    ...stop,
+    next: { decision: 'stop', reason: 'needs_owner', rationale: 'Choose a dataset.' },
+  });
+  // Another member's cycle leaves the decision the owner's, and it ends after the first.
+  const member = await f.issue('producer');
+  const later = await f.research.create(member, { name: 'Unrelated', requestId: f.id() });
+  await f.research.end(member, {
+    researchId: later.id,
+    expectedRevision: later.workflow.revision,
+    outcome: 'abandoned',
+    reason: 'Ended after the first.',
+    requestId: f.id(),
+  });
+  const home = (await f.research.home(f.owner)).map((cycle) => cycle.id);
+  assert.ok(home.includes(first.id), 'the cycle that asks its owner is on Home');
+  assert.ok(home.includes(later.id), 'the newest ended cycle is on Home');
+});
+
 test('research_needs_owner goes to admins once its owner has left', async (t) => {
   const f = await fixture(t);
   await f.define();
