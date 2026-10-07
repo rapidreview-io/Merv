@@ -19,7 +19,13 @@ import type {
   WorkflowHistoryEntry,
 } from '@merv/workflows/models';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
-import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';
+import {
+  reviewWord,
+  unitArtifacts,
+  unitHistory,
+  type UnitFile,
+  type UnitStateWords,
+} from '@merv/reviews/unit-history';
 import type { Experiment, ExperimentSubmission } from './models.js';
 import { roleRank } from './rules.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
@@ -196,8 +202,12 @@ export function experimentNode(standing: ExperimentStanding): RunningNode {
   };
 }
 
-/** What crossing into each review gate says its producer did. */
-const GATES = {
+/**
+ * What the shell and an experiment's history say of its states: planning is before any of the
+ * experiment's work, and each review answers a submission.
+ */
+export const EXPERIMENT_STATES: Readonly<Record<string, UnitStateWords>> = {
+  planned: { idle: true },
   design_review: { submitted: 'Submitted the design' },
   experiment_review: { submitted: 'Submitted the results' },
 };
@@ -258,19 +268,19 @@ export function experimentUnit(
   const history = unitHistory({
     graph,
     reviews,
-    gates: GATES,
+    states: EXPERIMENT_STATES,
     document: (review) => handed(byReview.get(review.id)),
   });
   const verdicts = new Map(reviews.map((review) => [review.id, review]));
-  const word = (submission: ExperimentSubmission) => {
-    const review = verdicts.get(submission.reviewId);
-    return review?.verdict ?? (review ? 'in_review' : undefined);
-  };
+  const word = (submission: ExperimentSubmission) => reviewWord(verdicts.get(submission.reviewId));
+  // Only the current attempt's: a plan revised starts again from its draft.
   const newest = (stage: ExperimentSubmission['stage'], approved = false) =>
     experiment.submissions
       .filter(
         (item) =>
-          item.stage === stage && (!approved || verdicts.get(item.reviewId)?.verdict === 'pass'),
+          item.stage === stage &&
+          item.attemptIndex === experiment.attempt.index &&
+          (!approved || word(item) === 'pass'),
       )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       .at(-1);

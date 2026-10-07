@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import { check, keyId, keyKind } from '@merv/contracts';
 import type { Caller, Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
+import { TASK_STATES } from './running.js';
 
 export const taskUiPlugin = {
   name: 'merv-task-ui',
@@ -17,7 +18,7 @@ export const taskUiPlugin = {
         order: 15,
         path: '/tasks',
         workflow: 'task',
-        states: { in_review: { submitted: 'Delivered' } },
+        states: TASK_STATES,
         view: { kind: 'tasks' },
         home: {
           tool: 'task.list',
@@ -49,6 +50,8 @@ export const taskUiPlugin = {
               task: await tasks.get(caller, id),
               process: await tasks.process(caller, id),
               codeUnit: await tasks.codeUnit(caller, id),
+              // Its history as its sidebar tells it.
+              history: (await tasks.runningPanel(caller, id))?.unit?.history ?? [],
             }),
           ) as Json;
         },

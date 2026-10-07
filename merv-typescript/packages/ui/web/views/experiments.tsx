@@ -3,10 +3,11 @@ import { Link, useParams } from 'react-router-dom';
 import type { Experiment, ExperimentEvidence, ExperimentExhibit } from '@merv/experiments/models';
 import { EXPERIMENT_ROLES, roleRank } from '@merv/experiments/rules';
 import type { ProcessGraph } from '@merv/workflows/models';
+import type { RunningUnitEntry } from '@merv/contracts/running';
 import { useTool } from '../api';
 import { CodeBlock } from '../code-block';
 import { recordRoutes } from '../list-filters';
-import { homeOf, useStateWords } from '../navigation';
+import { homeOf } from '../navigation';
 import {
   Evidence,
   KV,
@@ -23,7 +24,7 @@ import { signedInAdmin } from './code';
 import { UnitCode } from './code-section';
 import { currentReview } from '@merv/reviews/rules';
 import { ThreeStates, reviewClause } from '../states';
-import { Thread, threadOf } from '../thread';
+import { Thread, historyEntries } from '../thread';
 import { type Review } from './reviews';
 import { useActorNames } from './people';
 import type { ViewProps } from './index';
@@ -85,6 +86,7 @@ function ExperimentRecord({
   reviews,
   exhibit,
   unit,
+  history,
   nameOf,
   back,
 }: {
@@ -92,6 +94,8 @@ function ExperimentRecord({
   experiment: Experiment;
   process?: ProcessGraph;
   reviews?: Review[];
+  /** Its history as its owner tells it. */
+  history: RunningUnitEntry[];
   exhibit?: ExperimentExhibit;
   unit?: CodeUnit | null;
   nameOf(id: string | null | undefined): string | undefined;
@@ -112,10 +116,7 @@ function ExperimentRecord({
     e.submissions.filter((item) => item.attemptIndex === e.attempt.index).at(-1)?.figureIds ?? [];
   const shown = exhibit?.attemptIndex === e.attempt.index ? exhibit : undefined;
   const ended = e.failed;
-  const states = useStateWords();
-  const thread = reviews
-    ? threadOf({ graph: process, reviews, subject: e.id, nameOf, states })
-    : [];
+  const thread = historyEntries(history, nameOf);
   const names = useRecordNames(e.intent);
   return (
     <RecordPage
@@ -176,6 +177,7 @@ function ExperimentDetail({ row, shell }: ViewProps) {
     experiment: Experiment;
     process: ProcessGraph;
     codeUnit: CodeUnit | null;
+    history: RunningUnitEntry[];
   }>('ui.read', { rowId: row.id, params: { id } }, { every: settled.current ? undefined : 8000 });
   const state = record.data?.experiment.workflow.state;
   settled.current = !!record.data?.process.terminal;
@@ -215,8 +217,8 @@ function ExperimentDetail({ row, shell }: ViewProps) {
       back={homeOf(shell.rows)}
       experiment={record.data.experiment}
       process={record.data.process}
-      // A list that could not be read leaves the thread to the graph alone.
-      reviews={reviews.data ?? (reviews.error ? [] : undefined)}
+      reviews={reviews.data}
+      history={record.data.history ?? []}
       exhibit={exhibit.data}
       unit={record.data.codeUnit}
       nameOf={nameOf}

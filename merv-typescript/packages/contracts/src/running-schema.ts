@@ -591,5 +591,7 @@ export const runningUnit = z
     history: kept(runningUnitEntry, 80).default([]),
     /** Every file of the unit's, newest first. */
     artifacts: kept(runningUnitArtifact, 160).optional(),
+    /** The records inside the unit whose agents are its own too, as a wave's lenses are. */
+    instances: z.array(z.string().min(1).max(200)).max(24).optional(),
   })
   .transform(lean);

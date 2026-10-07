@@ -1,11 +1,10 @@
 import { useState } from 'react';
-import type { ProcessGraph } from '@merv/workflows/models';
+import type { RunningUnitEntry } from '@merv/contracts/running';
 import { Link } from 'react-router-dom';
-import { Ago, Evidence, StatusPill, cx, useArtifacts, words } from './components';
+import { Ago, Evidence, StatusPill, cx, useArtifacts } from './components';
 import { ArrowRightIcon, Icon } from './icons';
-import { pathOf, useRows, type StateWords } from './navigation';
+import { pathOf, useRows } from './navigation';
 import { initials } from './views/people';
-import { notMet, type Review } from './views/reviews';
 
 /** The disc a post or a line stands on in place of initials: its thread's role, which opens it. */
 export interface Mark {
@@ -44,10 +43,6 @@ export type Entry =
       at: string;
       /** What the producer did. */
       said?: string;
-      /** What a delivery pinned, each file opening in place. */
-      files?: string[];
-      /** The verdict a reviewer posted. */
-      review?: Review;
     }
   | {
       kind: 'line';
@@ -62,106 +57,43 @@ export type Entry =
       attention?: boolean;
     };
 
-const sentence = (state: string) => words(state).replace(/^./, (first) => first.toUpperCase());
-
 /**
- * What happened to a unit of work, oldest first, as a forum reads it. Every recorded
- * crossing of the record's own process graph is one entry: a crossing into a review
- * gate is its producer's post, and the verdict that carried it out again the
- * reviewer's. A submission is answered by the review it requested, which is pinned at
- * the revision the crossing made, so the k-th submission meets the k-th review and a
- * review reissued at its gate replaces the one before it. A verdict that lands
- * earlier in the program than the gate it left is followed by the return it was;
- * anything else only moved the record and is one quiet line. A record standing at a
- * gate ends on the review still open there. Without a graph the reviews alone are the
- * thread.
+ * A unit's history as its owner tells it (`unit.history`), drawn as a thread: an entry with a
+ * role and a time is that thread's post, anything else a quiet line. `mark` gives an entry the
+ * disc of the thread that made it, where the reader has the threads to open; without it, a
+ * review still open is the way to its page.
  */
-export function threadOf({
-  graph,
-  reviews,
-  subject,
-  briefId,
-  nameOf,
-  states,
-}: {
-  graph?: ProcessGraph;
-  reviews: Review[];
-  subject: string;
-  /** A task's brief: every review of it pins the brief, and a delivery's post shows the rest. */
-  briefId?: string;
-  nameOf(id: string | null | undefined): string | undefined;
-  /** The gates a review answers, and what crossing into each says its producer did. */
-  states: Pick<StateWords, 'gates' | 'said'>;
-}): Entry[] {
-  const rounds = reviews
-    .filter((review) => review.subjectId === subject)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  const verdict = (review: Review, at: string): Entry => ({
-    kind: 'post',
-    key: review.id,
-    role: 'Reviewer',
-    who: nameOf(review.reviewerId),
-    at,
-    review,
-  });
-  const waiting = (review: Review): Entry => {
-    const reviewer = nameOf(review.reviewerId);
+export function historyEntries(
+  history: readonly RunningUnitEntry[],
+  nameOf: (id: string) => string | undefined,
+  mark?: (entry: RunningUnitEntry) => Mark | undefined,
+): Entry[] {
+  return history.map((item, at): Entry => {
+    const who = item.actor ? nameOf(item.actor) : undefined;
+    const key = `${at}`;
+    if (item.role && item.at)
+      return {
+        kind: 'post',
+        key,
+        role: item.role === 'producer' ? 'Producer' : 'Reviewer',
+        who,
+        at: item.at,
+        said: item.said,
+        mark: mark?.(item),
+        document: item.artifact,
+        verdict: item.verdict && { ...item.verdict, review: item.review },
+      };
     return {
       kind: 'line',
-      key: `${review.id}-open`,
-      said:
-        review.status === 'requested'
-          ? 'Review unclaimed'
-          : reviewer
-            ? `In review with ${reviewer}`
-            : 'Review claimed',
-      review: review.id,
+      key,
+      said: item.said ?? '',
+      who,
+      at: item.at,
+      // Beside the threads, the way to a review still open is its Review section's.
+      ...(mark ? { mark: mark(item) } : { review: item.review }),
+      attention: item.attention,
     };
-  };
-  if (!graph)
-    return rounds.map((review) =>
-      review.verdict ? verdict(review, review.createdAt) : waiting(review),
-    );
-  const order = graph.nodes.map((node) => node.state);
-  const crossings = graph.edges
-    .flatMap((edge) => edge.traversals.map((step) => ({ ...step, from: edge.from, to: edge.to })))
-    .sort((a, b) => a.at.localeCompare(b.at) || a.revision - b.revision);
-  const entries: Entry[] = [];
-  let open: Review | undefined;
-  for (const step of crossings) {
-    const into = states.gates.has(step.to);
-    const out = states.gates.has(step.from);
-    const decided = out && !into && open?.verdict ? open : undefined;
-    open = into ? rounds.find((review) => review.subjectRevision === step.revision) : undefined;
-    if (into && !out)
-      entries.push({
-        kind: 'post',
-        key: `${step.revision}`,
-        role: 'Producer',
-        who: nameOf(step.actorId),
-        at: step.at,
-        said: states.said.get(step.to)?.submitted,
-        files: briefId === undefined ? undefined : open?.artifactIds.filter((id) => id !== briefId),
-      });
-    else if (decided) {
-      entries.push(verdict(decided, step.at));
-      if (order.indexOf(step.to) < order.indexOf(step.from))
-        entries.push({
-          kind: 'line',
-          key: `${step.revision}-back`,
-          said: `Returned to ${words(step.to)}`,
-        });
-    } else
-      entries.push({
-        kind: 'line',
-        key: `${step.revision}`,
-        said: sentence(step.to),
-        who: nameOf(step.actorId),
-        at: step.at,
-      });
-  }
-  if (states.gates.has(graph.state) && open && !open.verdict) entries.push(waiting(open));
-  return entries;
+  });
 }
 
 /** The way to a review, where this composition has a page for one. */
@@ -172,24 +104,6 @@ function OpenReview({ id }: { id: string }) {
       Open the review <ArrowRightIcon size={14} />
     </Link>
   ) : null;
-}
-
-/** A verdict posted: its word, how many checks it found short, its sentence, the way to it. */
-function Verdict({ review }: { review: Review }) {
-  const short = notMet(review);
-  const said = review.synopsis ?? review.notes;
-  return (
-    <>
-      <p className="cluster">
-        <StatusPill value={review.verdict} />
-        {short && <span className="muted">{short}</span>}
-      </p>
-      {said && <p>{said}</p>}
-      <p>
-        <OpenReview id={review.id} />
-      </p>
-    </>
-  );
 }
 
 /** A thread's role disc: a button to its thread where there is one to open. */
@@ -303,10 +217,6 @@ export function Thread({
                     />
                   ))}
                 {entry.verdict && <VerdictLine verdict={entry.verdict} />}
-                {entry.review && <Verdict review={entry.review} />}
-                {entry.files?.map((id) => (
-                  <Evidence key={id} artifactId={id} artifact={artifacts.get(id)} meta />
-                ))}
               </div>
             </div>
           </li>

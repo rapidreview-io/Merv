@@ -250,6 +250,7 @@ const pureRules = new Set([
   '@merv/workflows/retired-instances',
   '@merv/experiments/rules',
   '@merv/reviews/rules',
+  '@merv/reviews/unit-history',
   '@merv/scope/rules',
   '@merv/reflections/names',
   '@merv/workflows/execution',
@@ -258,7 +259,6 @@ const pureRules = new Set([
   '@merv/fleet/hosted-codex',
   '@merv/workflows/dependency-rows',
   '@merv/workflows/lease-rows',
-  '@merv/workflows/unit-history',
   '@merv/code-work/workspace',
   '@merv/paper/rules',
   '@merv/context-builder/artifact-item',
@@ -557,8 +557,12 @@ test('pure rule modules that other units run import nothing but contracts and zo
       assert.ok(
         ['@merv/contracts', '@merv/contracts/text', 'zod'].includes(reference.specifier) ||
           (reference.typeOnly && reference.specifier.startsWith('@merv/contracts/')) ||
-          // Its own unit's public types, which hold no runtime.
-          (reference.typeOnly && reference.specifier === './models.js'),
+          // Its own unit's public types, or another unit's, which hold no runtime.
+          (reference.typeOnly &&
+            (reference.specifier === './models.js' ||
+              /^@merv\/[a-z-]+\/models$/.test(reference.specifier))) ||
+          // Another pure rule module of its own unit.
+          pureRules.has(`@merv/${name}/${reference.specifier.replace(/^\.\/|\.js$/g, '')}`),
         `${specifier} imports ${reference.specifier}`,
       );
   }

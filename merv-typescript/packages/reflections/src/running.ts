@@ -1,5 +1,5 @@
 import { leaseRows } from '@merv/workflows/lease-rows';
-import { unitHistory } from '@merv/workflows/unit-history';
+import { reviewWord, unitHistory, type UnitStateWords } from '@merv/reviews/unit-history';
 import {
   ellipsis,
   inTransaction,
@@ -182,6 +182,11 @@ const document = (artifact: Pick<Artifact, 'id' | 'title'>) => ({
 const itemTitle = (item: ChangeSpec['items'][number]) =>
   item.kind === 'task' ? item.title : item.name;
 
+/** What the shell and a wave's history say of its states: crossing into review is a synthesis. */
+export const WAVE_STATES: Readonly<Record<string, UnitStateWords>> = {
+  in_review: { submitted: 'Submitted the synthesis' },
+};
+
 /**
  * The wave as a unit: each lens's report and every round of its synthesis's review as its
  * history, and the one thing to read now. While it reflects that is its lenses, one opened at
@@ -215,14 +220,14 @@ export function waveUnit(
   const own = unitHistory({
     graph,
     reviews,
-    gates: { in_review: { submitted: 'Submitted the synthesis' } },
+    states: WAVE_STATES,
     document: synthesis,
   });
   // The lenses' reports stand among the wave's own moves by when each was written.
   const history = [...lenses, ...own.filter((entry) => entry.at)]
     .sort((a, b) => a.at!.localeCompare(b.at!))
     .concat(own.filter((entry) => !entry.at));
-  const verdict = wave.review?.verdict ?? (wave.review ? 'in_review' : undefined);
+  const verdict = reviewWord(wave.review);
   const parts: RunningUnitKey = {
     label: 'Lenses',
     parts: wave.lenses.map((lens) => ({
@@ -258,7 +263,9 @@ export function waveUnit(
       : state === 'approved'
         ? (plan ?? report ?? parts)
         : (report ?? parts);
-  return { key, history };
+  // Each lens is a record of its own, and its agents are the wave's too.
+  const instances = wave.lenses.map((lens) => lens.id);
+  return { key, history, ...(instances.length ? { instances } : {}) };
 }
 
 function lensTable({ wave, leases }: WaveFacts): RunningSection {

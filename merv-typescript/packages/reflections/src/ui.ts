@@ -2,6 +2,7 @@ import type { Context } from 'cordis';
 import { keyId, type Caller, type Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
+import { WAVE_STATES } from './running.js';
 export const reflectionUiPlugin = {
   name: 'merv-reflection-ui',
   inject: ['reflections', 'ui'],
@@ -18,6 +19,7 @@ export const reflectionUiPlugin = {
         workflow: 'reflection',
         // A lens lives in its wave, so its page opens one too.
         holds: ['reflection.lens'],
+        states: WAVE_STATES,
         view: { kind: 'reflections' },
         home: { tool: 'reflection.list', keep: ['id', 'title', 'ownerId', 'workflow', 'lenses'] },
         // A wave names the review of it, which is asked for as work: a wave is no delivery.
