@@ -6,11 +6,11 @@ the Sandboxes service. Run them from a Mac that has `ssh azureuser@dev-experimen
 Each run appends one row to [`../STAGING_CHECKS.md`](../STAGING_CHECKS.md); commit that row with
 the change it vouches for. The full log goes to `$STG_LOG_DIR` (default `$TMPDIR/merv-staging-checks`).
 
-| Script | When | Time | Cost | What it proves |
-| --- | --- | --- | --- | --- |
-| `smoke.sh [TAG]` (T0) | every staging release | ~10–20 min | ~$0.5–1 | the release gate below |
-| `provider-check.sh` | after a Sandboxes release, and daily | ~2–4 min | ~$0.02 | Modal and Cloudflare start, run and stop |
-| `research-loop.sh [TAG] [--project hosted\|e2e]` (T1) | cycles that touch workflows, experiments or compute | ≤45 min | ≤$2 | one whole small research flow |
+| Script                                                | When                                                | Time       | Cost    | What it proves                           |
+| ----------------------------------------------------- | --------------------------------------------------- | ---------- | ------- | ---------------------------------------- |
+| `smoke.sh [TAG]` (T0)                                 | every staging release                               | ~10–20 min | ~$0.5–1 | the release gate below                   |
+| `provider-check.sh`                                   | after a Sandboxes release, and daily                | ~2–4 min   | ~$0.02  | Modal and Cloudflare start, run and stop |
+| `research-loop.sh [TAG] [--project hosted\|e2e]` (T1) | cycles that touch workflows, experiments or compute | ≤45 min    | ≤$2     | one whole small research flow            |
 
 Exit codes: 0 pass, 1 fail, 3 partial (a step was blocked by something outside the script, named
 in the row). Assertions are about structure (states reached, artifacts present, numbers above a
