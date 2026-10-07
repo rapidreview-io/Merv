@@ -126,3 +126,39 @@ test('a restart does not begin a capture’s refusal count again', async (t) => 
     ['node'],
   );
 });
+
+test('a workflow that fails as a whole is refused like a capture, and then rests', async (t) => {
+  const h = await harness(t, 'tooManyCaptures');
+  const evidence = h.evidence();
+  const errors = new Set<string>();
+  for (let pass = 0; pass < 70; pass++, h.time.now += 30_000)
+    await evidence
+      .publish(h.work, h.connection, h.workflow)
+      .catch((e: Error & { code?: string }) => errors.add(`${e.code}: ${e.message}`));
+  assert.deepEqual([...errors], ['sandbox_evidence_invalid: Too many native capture nodes']);
+  assert.deepEqual(await h.refused(), [
+    { node_id: '*', error: 'sandbox_evidence_invalid: Too many native capture nodes' },
+  ]);
+  // A later process settles it without registering anything.
+  await h.evidence().publish(h.work, h.connection, h.workflow);
+  assert.equal(
+    (
+      await h.state.read((sql) =>
+        sql.all('SELECT 1 FROM sandbox_native_captures WHERE artifact_id IS NOT NULL'),
+      )
+    ).length,
+    0,
+  );
+});
+
+test('a workflow whose provenance never parses is refused as a whole', async (t) => {
+  const h = await harness(t, 'object404');
+  const evidence = h.evidence();
+  const broken = { ...h.workflow, name: 7 };
+  for (let pass = 0; pass < 70; pass++, h.time.now += 30_000)
+    await evidence.publish(h.work, h.connection, broken).catch(() => undefined);
+  assert.deepEqual(await h.refused(), [
+    { node_id: '*', error: 'sandbox_evidence_invalid: Native capture provenance is incomplete' },
+  ]);
+  await evidence.publish(h.work, h.connection, broken);
+});

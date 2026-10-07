@@ -118,6 +118,55 @@ export class NativeEvidence {
     connection: NativeConnectionRow,
     value: unknown,
   ): Promise<void> {
+    // Work resources are listed with valid ids in the work's namespace, so even a workflow whose
+    // provenance does not parse is counted, and refused, as node '*': the workflow as a whole.
+    const whole = { namespace: work.namespace!, id: String((value as { id?: unknown })?.id) };
+    const key = JSON.stringify([connection.id, whole.namespace, whole.id]);
+    if (this.settled.has(key)) return;
+    let attempt: string | null = null;
+    let read;
+    try {
+      read = await this.read(work, connection, value, (found) => (attempt = found));
+    } catch (error) {
+      await this.refuse(connection, whole, attempt, '*', error);
+      return void this.settled.add(key);
+    }
+    if (!read) return;
+    const { workflow, nodes } = read;
+    // A Capture registered or refused is settled; one still failing only counts its failures.
+    const done = new Set(
+      (
+        await this.state.read((sql) =>
+          sql.all<{ node_id: string }>(
+            'SELECT node_id FROM sandbox_native_captures WHERE connection_id=? AND namespace=? AND workflow_id=? AND (artifact_id IS NOT NULL OR error IS NOT NULL)',
+            connection.id,
+            workflow.namespace,
+            workflow.id,
+          ),
+        )
+      ).map((row) => row.node_id),
+    );
+    if (!done.has('*'))
+      for (const node of nodes) {
+        if (done.has(node.id)) continue;
+        try {
+          await this.register(work, connection, workflow, read.attempt, node);
+        } catch (error) {
+          await this.refuse(connection, workflow, read.attempt, node.id, error);
+        }
+      }
+    this.settled.add(key);
+  }
+  /**
+   * The ended, delegated workflow's provenance, attempt and Capture receipts; null for one that
+   * is not Merv evidence or has not ended. `attempt` hears the attempt once it is known.
+   */
+  private async read(
+    work: NativeWorkRow,
+    connection: NativeConnectionRow,
+    value: unknown,
+    known: (attempt: string) => void,
+  ) {
     const parsed = workflowSchema.safeParse(value);
     check(
       parsed.success,
@@ -137,12 +186,10 @@ export class NativeEvidence {
     );
     // Native administrators may run unrelated workflows in this namespace.
     // Their outputs are not delegated Merv evidence and must not stall work cleanup.
-    if (workflow.origin_grant_id === null) return;
+    if (workflow.origin_grant_id === null) return null;
     // A terminal Capture can still gain committed-object receipts during native
     // storage recovery. Freeze its immutable collection only after workflow cleanup ends.
-    if (workflow.state === 'running' || workflow.state === 'cleaning_up') return;
-    const key = JSON.stringify([connection.id, workflow.namespace, workflow.id]);
-    if (this.settled.has(key)) return;
+    if (workflow.state === 'running' || workflow.state === 'cleaning_up') return null;
     // A workflow that names no attempt is the attempt of the assignment whose token launched
     // it; one no assignment of this work launched is not delegated Merv evidence either.
     const attempt =
@@ -158,31 +205,10 @@ export class NativeEvidence {
           ),
         )
       )?.attempt_ref;
-    if (!attempt) return;
+    if (!attempt) return null;
+    known(attempt);
     await this.connections.get(connection.id);
-    const nodes = await this.captures(work, connection, workflow.id);
-    // A Capture registered or refused is settled; one still failing only counts its failures.
-    const done = new Set(
-      (
-        await this.state.read((sql) =>
-          sql.all<{ node_id: string }>(
-            'SELECT node_id FROM sandbox_native_captures WHERE connection_id=? AND namespace=? AND workflow_id=? AND (artifact_id IS NOT NULL OR error IS NOT NULL)',
-            connection.id,
-            workflow.namespace,
-            workflow.id,
-          ),
-        )
-      ).map((row) => row.node_id),
-    );
-    for (const node of nodes) {
-      if (done.has(node.id)) continue;
-      try {
-        await this.register(work, connection, workflow, attempt, node);
-      } catch (error) {
-        await this.refuse(connection, workflow, attempt, node.id, error);
-      }
-    }
-    this.settled.add(key);
+    return { workflow, attempt, nodes: await this.captures(work, connection, workflow.id) };
   }
   /** One Capture as one immutable collection, with its row saying it is registered. */
   private async register(
@@ -382,8 +408,9 @@ export class NativeEvidence {
         attempt,
         new Date(now).toISOString(),
       );
+      // Registered or refused already, by this pass's workflow or another process.
+      if (!counted) return true;
       if (
-        !counted ||
         Number(counted.failures) < REFUSE_AFTER ||
         now - Date.parse(counted.failing_since) < REFUSE_AFTER_MS
       )
