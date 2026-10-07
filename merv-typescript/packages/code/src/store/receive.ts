@@ -843,7 +843,7 @@ export class CodeReceiver {
           subjectId: row!.project_id,
           data: { operationId: id, head: progress.target!, source: payload.source },
         });
-        await this.core.hooks.imported(tx, row!.project_id);
+        await this.core.hooks.changed(tx, row!.project_id);
       });
       this.core.fault('before_ack');
       await rm(directory, { recursive: true, force: true });

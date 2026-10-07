@@ -100,7 +100,7 @@ export async function publicationControls(
 export interface PublicationCode {
   store: Pick<CodeStore, 'contains' | 'importRepository'>;
   transport: MirrorTransport;
-  units: Pick<CodeUnitService, 'imported' | 'records'>;
+  units: Pick<CodeUnitService, 'changed' | 'records'>;
 }
 
 /** Hosted publication borrows the repository and admission journal; it never owns a credential. */
@@ -168,7 +168,7 @@ export class PublicationHost {
    * An accepted unit has no producing state to return to, so this is all an outcome changes.
    */
   async reconcile(caller: Caller, tx: Transaction) {
-    await this.code.units.imported(tx, caller.projectId);
+    await this.code.units.changed(tx, caller.projectId);
   }
   async ancestor(projectId: string, base: string, head: string) {
     const repos = this.repositories;
@@ -259,7 +259,7 @@ export class PublicationHost {
   }
   async main(caller: Caller, oid: string, tx: Transaction, expectedOid?: string) {
     await this.code.units.records.moveMain(caller, oid, tx, expectedOid);
-    await this.code.units.imported(tx, caller.projectId);
+    await this.reconcile(caller, tx);
   }
   async verifyLocal(caller: Caller, record: CodePublication) {
     check(

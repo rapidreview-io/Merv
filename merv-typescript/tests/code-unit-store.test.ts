@@ -161,7 +161,7 @@ test('Code storage imports and rebinds while research retains unfinished bases a
         settleMs: 60_000,
       },
       {
-        imported: async () => {},
+        changed: async () => {},
         workspaces: async () => [],
         fenced: async () => {},
         advanced: async () => {},

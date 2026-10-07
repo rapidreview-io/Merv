@@ -1738,7 +1738,7 @@ test('work-host Code transfers use only the unfinished assignment, including clo
     f.scope,
     { root, reservedFreeBytes: 1 },
     {
-      imported: async () => {},
+      changed: async () => {},
       workspaces: async () => [],
       fenced: async () => {},
       advanced: async () => {

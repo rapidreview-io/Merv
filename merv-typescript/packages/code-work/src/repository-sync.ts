@@ -216,7 +216,7 @@ export async function reconcileRepository(
       remoteHead: input.headOid,
       main: accepted.reference,
     });
-    await units.imported(tx, caller.projectId);
+    await units.changed(tx, caller.projectId);
   });
   return result(accepted.reference);
 }

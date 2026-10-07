@@ -29,9 +29,12 @@ export interface CodeConfiguration {
  * or writer changing changes its units, which of its sessions hold a workspace, and the lane
  * every GitHub call it waits for at unload runs in.
  */
-export interface CodeStorePort extends Pick<CodeStoreHooks, 'imported' | 'workspaces'> {
+export interface CodeStorePort extends Pick<CodeStoreHooks, 'workspaces'> {
   network<T>(operation: () => Promise<T>): Promise<T>;
-  /** A project's binding (no unit) or one unit's writer changed, in the mutation's transaction. */
+  /**
+   * A project's history or binding (no unit) or one unit's writer changed, in the mutation's
+   * transaction.
+   */
   changed(tx: Transaction, projectId: string, unitId?: string): Promise<void>;
 }
 /** The deployment's settings of the store and the mirror, and what a test replaces in them. */
@@ -106,7 +109,7 @@ export class CodeService {
       this.scope,
       { ...repositories.config, ...options.config },
       {
-        imported: (tx, projectId) => port.imported(tx, projectId),
+        changed: (tx, projectId) => writers.changed(tx, projectId),
         workspaces: (projectId, tx) => port.workspaces(projectId, tx),
         fenced: (tx, fence, kind) => writers.fenced(tx, fence, kind),
         advanced: (tx, fence, input) => writers.advanced(tx, fence, input),

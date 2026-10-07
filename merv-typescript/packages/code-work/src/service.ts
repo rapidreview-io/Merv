@@ -144,7 +144,7 @@ export class CodeService implements Code {
         );
       // Bases come first: what the store's start finishes may derive units, which merge.
       const bases = new CodeBaseService(state, utility.repositories, {
-        changed: (tx, projectId) => this.unitStore.imported(tx, projectId),
+        changed: (tx, projectId) => this.unitStore.changed(tx, projectId),
         sponsors: (tx, projectId, members) => this.unitStore.baseSponsors(tx, projectId, members),
         serviceWork: sessions.serviceWork,
         resolved: async (tx, projectId, key, commit) => {
@@ -157,7 +157,6 @@ export class CodeService implements Code {
       this.baseStore = bases;
       const opened = await utility.openStore(
         {
-          imported: (tx, projectId) => this.unitStore.imported(tx, projectId),
           changed: (tx, projectId, unitId) => this.unitStore.changed(tx, projectId, unitId),
           workspaces: (projectId, tx) => sessions.holdingWorkspace(projectId, CODE_DRIVER, tx),
           network: (operation) => this.network(operation),

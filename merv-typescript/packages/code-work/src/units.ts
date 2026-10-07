@@ -1045,13 +1045,12 @@ export class CodeUnitService {
     };
   }
 
-  /** The project's repository gained history, which a unit may have been waiting for. */
-  async imported(tx: Transaction, projectId: string): Promise<void> {
-    this.state.assertTransaction(tx);
-    await this.reconcileProject(tx, projectId);
-  }
-  /** Code bound the project's main again (no unit), or moved one unit's writer. */
+  /**
+   * The project's repository gained history or its main was bound again (no unit), or one
+   * unit's writer moved: what waited for it is derived again.
+   */
   async changed(tx: Transaction, projectId: string, unitId?: string): Promise<void> {
+    this.state.assertTransaction(tx);
     if (unitId) await this.reconcileUnit(tx, projectId, unitId);
     else await this.reconcileProject(tx, projectId);
   }
