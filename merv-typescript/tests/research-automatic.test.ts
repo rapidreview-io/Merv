@@ -1144,9 +1144,11 @@ test('research_needs_owner goes to admins once its owner has left', async (t) =>
     'research_needs_owner',
   );
   assert.ok((await yoursOn(f, writer, first.id))?.ask);
-  assert.equal(await yoursOn(f, f.owner, first.id), undefined);
+  // An owner's move is a project admin's too, so the admin reads it before the owner leaves.
+  assert.match((await yoursOn(f, f.owner, first.id))?.ask ?? '', /Decide what comes next/);
   await f.app.ctx.scope.credentials.revokeActor(f.owner, writer.actorId);
   await f.pump();
+  // Once its owner has left, it is the admins' own move, and it still asks them.
   assert.match((await yoursOn(f, f.owner, first.id))?.ask ?? '', /Decide what comes next/);
   // An admin's cycle that follows it answers it, and no later departure brings it back.
   await f.research.create(f.owner, {
