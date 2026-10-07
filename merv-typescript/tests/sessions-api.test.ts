@@ -231,6 +231,8 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
   ).value as any;
   assert.equal(sent.acknowledgedAt, null);
   assert.equal(sent.instanceId, f.instance.id);
+  // A session addresses its thread: the one message address.
+  assert.deepEqual([sent.threadId, sent.sessionId], [issued.session.threadId, null]);
   const retry = (
     await f.app.ctx.tools.invoke('session.message', f.source, {
       sessionId: issued.session.id,
@@ -286,7 +288,7 @@ test('session messages reach the next tool boundary, fence writes, and retain a 
       body: 'Too late',
       requestId: 'correction-late',
     }),
-    { code: 'session_ended' },
+    { code: 'thread_retired' },
   );
   const after = (
     await f.app.ctx.tools.invoke('session.find', f.source, { instanceId: f.instance.id })

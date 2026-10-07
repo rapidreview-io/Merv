@@ -172,15 +172,16 @@ automatic offers.
 
 ## Steering an assigned agent
 
-Pi sends a message to a session with `session.message({sessionId, body, requestId})`.
-Project writers may send messages; project readers may read their history. Workers
-may read and acknowledge only their own session's messages. A message to a reviewer
-does not grant its sender authority to decide the review verdict.
-The message belongs to that session, not to its experiment or task. Use
-`session.find({instanceId})` to find the current and latest session from a work item;
-an ended session refuses a
-new message instead of claiming delivery. Repeating an identical request ID returns
-the retained message, while changing its contents is a conflict.
+Pi sends a message to a worker's thread, a stage's worker across its visits, with
+`session.message({threadId, body, requestId})`, or `POST /sessions/threads/:id/messages`
+with `{body, requestId}`. Project writers may send messages; project readers may read their
+history. Workers may read and acknowledge only their own visit's messages. A message to a
+reviewer does not grant its sender authority to decide the review verdict. Use
+`session.find({instanceId})` to find a work item's current and latest session and its
+`threadId`. For one release a `sessionId` is still taken and addresses that session's thread.
+A thread that is retired, or whose work has ended, refuses a new message instead of claiming
+delivery, unless it answers a question. Repeating an identical request ID returns the retained
+message, while changing its contents is a conflict.
 
 Messages are queued for the worker's next Merv tool interaction. The worker reads
 them with `session.messages` and acknowledges them with `session.message.ack`,
@@ -197,13 +198,10 @@ further evidence lookups. The worker can acknowledge receipt with a reply such a
 not require agreeing with the correction. This does not inject text into a running
 shell process or interrupt a long compute command.
 
-A message may instead go to a thread, a stage's worker across its visits:
-`session.message({threadId, body, requestId})`, or `POST /sessions/threads/:id/messages`
-with `{body, requestId}`. It waits for the thread's live visit or, once its work comes back,
-its next one, and fences that visit's writes until it is acknowledged, exactly as a message to
-a session does. A visit also reads the messages to other threads of its continuity key, so a
-message to a thread its key replaced still reaches the key's worker. A retired thread takes a
-message only as the answer to its question. `session.thread_messages({threadId})`, or
+A message waits for the thread's live visit or, once its work comes back, its next one, and
+fences that visit's writes until it is acknowledged. A visit also reads the messages to other
+threads of its continuity key, so a message to a thread its key replaced still reaches the
+key's worker. `session.thread_messages({threadId})`, or
 `GET /sessions/threads/:id/messages`, reads a thread's messages (to it and to each of its
 visits) and its questions, for anyone who may read the work and never for a leased worker.
 

@@ -553,4 +553,12 @@ FOR EACH ROW EXECUTE FUNCTION session_managed_assignment_guard();
   12: `CREATE INDEX session_usage_closed ON session_usage(closed_at);`,
   13: threadsMigration,
   14: threadMessagesMigration,
+  // (unpublished) A visit's messages are read by its thread's continuity key, retired threads
+  // included, and dispatch reads the questions answered lately by asking time: both ask by
+  // project, which only indexes ordered so can answer without reading every row. Read-only
+  // prod counts first (the rows each index is built over):
+  //   SELECT count(*) FILTER (WHERE continuity_key IS NOT NULL) AS keyed_threads FROM session_threads;
+  //   SELECT count(*) AS questions FROM session_questions;
+  15: `CREATE INDEX session_threads_continuity ON session_threads(project_id,continuity_key) WHERE continuity_key IS NOT NULL;
+CREATE INDEX session_questions_asked ON session_questions(project_id,asked_at);`,
 };

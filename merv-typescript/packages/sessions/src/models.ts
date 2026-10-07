@@ -314,15 +314,16 @@ export interface ThreadConversation {
 }
 
 /**
- * A message to a worker: to one visit (`sessionId`), or to a thread (`threadId`), which its live
- * or next visit reads. Either is acknowledged by the visit that reads it, with an optional reply.
+ * A message to a worker's thread (`threadId`), which its live or next visit reads and
+ * acknowledges, with an optional reply. One sent to a single visit (`sessionId`) is from before
+ * every message went to a thread.
  */
 export interface SessionMessage {
   id: string;
   sessionId: string | null;
   threadId: string | null;
   instanceId: string;
-  /** The revision of the visit it was sent to; null for a message to a thread. */
+  /** The revision of the visit an older message was sent to; null for a message to a thread. */
   expectedRevision: number | null;
   senderActorId: string;
   body: string;

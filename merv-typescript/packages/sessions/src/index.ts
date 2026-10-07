@@ -421,7 +421,6 @@ export class LeasedSessions implements Sessions {
       reading: (fn) => this.reading(fn),
       row: (tx, id) => this.row(tx, id),
       decode: (row) => this.decode(row),
-      valid: (session, tx) => this.valid(session, tx),
       asked: async (session, tx) => {
         await this.closeSession(session, 'asked_owner', tx, 'released', 'asked_owner');
       },

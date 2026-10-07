@@ -1377,3 +1377,63 @@ test('only a visit that keeps a conversation is offered session.ask_owner, in it
   assert.equal(reviewer.session.continuity, undefined);
   assert.deepEqual(reviewer.offered, [false, false]);
 });
+
+test('a visit’s message check reads only its own project’s pending messages and its key’s threads', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-a');
+  // Thousands of other threads, retired, and one stray message pending to one of them.
+  await f.app.ctx.state.transaction(async (tx) => {
+    await tx.run(
+      `INSERT INTO actors(id,project_id,name,role,active,session_id,agent_id)
+        SELECT 'actor_seed_' || n, ?, 'Seed', 'producer', 0, 'thr_seed_' || n, 'thr_seed_' || n
+        FROM generate_series(1, 3000) AS n`,
+      f.owner.projectId,
+    );
+    await tx.run(
+      `INSERT INTO session_threads(id,project_id,continuity_key,instance_id,state,role,actor_id,status,retired_reason,created_at,updated_at)
+        SELECT 'thr_seed_' || n, ?, 'seed-key-' || n, 'wf_seed', 'working', 'producer', 'actor_seed_' || n, 'retired', 'dormant', '2026-01-01', '2026-01-01'
+        FROM generate_series(1, 3000) AS n`,
+      f.owner.projectId,
+    );
+    await tx.run(
+      `INSERT INTO session_messages(id,project_id,thread_id,sender_actor_id,request_id,fingerprint,body,created_at)
+        VALUES('session_message_stray', ?, 'thr_seed_7', ?, 'stray', 'stray', 'Never read', '2026-01-01')`,
+      f.owner.projectId,
+      f.owner.actorId,
+    );
+    await tx.run('ANALYZE session_threads');
+    await tx.run('ANALYZE session_messages');
+  });
+  // The check as a worker's write sends it, run again under EXPLAIN ANALYZE.
+  const sent: { sql: string; params: unknown[] }[] = [];
+  await f.app.ctx.state.transaction(async (tx) => {
+    const { get } = tx;
+    Object.assign(tx, {
+      get: (sql: string, ...params: never[]) => {
+        if (sql.includes('FROM session_messages')) sent.push({ sql, params });
+        return get.call(tx, sql, ...params);
+      },
+    });
+    await leased.messaging.requireMessagesAcknowledged(first.session.id, tx);
+  });
+  assert.equal(sent.length, 1);
+  const [{ 'QUERY PLAN': plan }] = await f.app.ctx.state.transaction(
+    async (tx) =>
+      await tx.all<{ 'QUERY PLAN': unknown }>(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${sent[0]!.sql}`,
+        ...(sent[0]!.params as never[]),
+      ),
+  );
+  let threads = 0;
+  const walk = (node: Record<string, unknown>) => {
+    if (node['Relation Name'] === 'session_threads')
+      threads +=
+        Number(node['Actual Rows'] ?? 0) * Number(node['Actual Loops'] ?? 1) +
+        Number(node['Rows Removed by Filter'] ?? 0);
+    for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) walk(child);
+  };
+  walk((plan as { Plan: Record<string, unknown> }[])[0]!.Plan);
+  assert.ok(threads < 10, `the check read ${threads} thread rows`);
+});

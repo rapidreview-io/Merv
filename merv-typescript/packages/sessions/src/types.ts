@@ -204,7 +204,10 @@ export interface SessionTranscript {
   /** On a delivery with nothing stored: the store's signed PUT (1 h, exact size, x-amz-checksum-sha256, If-None-Match:*). */
   upload?: { url: string; headers: Record<string, string>; expiresAt: string };
 }
-/** A message to one visit (`sessionId`) or to a thread (`threadId`): exactly one of them. */
+/**
+ * A message to a thread (`threadId`). For one release a `sessionId` addresses that session's
+ * thread instead; exactly one of them.
+ */
 export interface SessionMessageInput {
   sessionId?: string;
   threadId?: string;
