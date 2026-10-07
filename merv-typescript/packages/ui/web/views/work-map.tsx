@@ -19,7 +19,7 @@ import {
 } from '@merv/contracts/running';
 import { useTool } from '../api';
 import { Ago, LoadState, cx, kindOf, useNow, words } from '../components';
-import { clock, type Clock } from '../liveness';
+import { clock, duration, type Clock } from '../liveness';
 import { StageMark } from '../process';
 import type { WorkflowShape } from '../shell-types';
 import type { Flow } from './map-data';
@@ -329,6 +329,8 @@ function Card({
   // Red is the dot of what needs a person; otherwise green only on what is live, and it
   // stops breathing once the read it came from is stale.
   const dot = red ? 'attn' : node?.dot === 'moving' && reading.now.stale ? 'live' : node?.dot;
+  // While a visit works it, the card counts from when its work began, as its owner records it.
+  const started = node?.started && (node.dot === 'moving' || node.dot === 'live') && node.started;
   // Beside the stage and the lines of who is on it, the board's line would say both again.
   const line = own || !flow || !live.length ? (node?.attention?.says ?? node?.lines[0]) : undefined;
   // What the card draws, as its name. Its clocks are left out, so the name of a card in hand
@@ -373,7 +375,16 @@ function Card({
       </span>
       <span className="wmap-name">{unit.name}</span>
       {/* What a person has to do takes the place of where the unit stands: two lines of it. */}
-      {flow && !own && <StageMark shapes={shapes} workflow={flow} />}
+      {flow && !own && (
+        <span className="wmap-status">
+          <StageMark shapes={shapes} workflow={flow} />
+          {started && (
+            <span className="wmap-timer tabular" title="Time since the work began">
+              {duration(reading.now.at - Date.parse(started))}
+            </span>
+          )}
+        </span>
+      )}
       {!!line?.length && (
         <span className={cx('wmap-line', own && 'running-attn')}>
           <Phrase value={line} />

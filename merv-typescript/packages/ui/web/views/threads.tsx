@@ -61,8 +61,50 @@ const liveLine = (thread: ThreadView, now: Clock) => {
  */
 const lapsed = (thread: ThreadView) =>
   thread.visits.some((visit) => visit.liveness?.verdict === 'lapsed');
-const threadName = (thread: ThreadView) =>
+export const threadName = (thread: ThreadView) =>
   `${capital(words(thread.role))} · ${words(thread.state)} · ${thread.status}`;
+
+/** How many visits a thread made that ran, and how many launches failed. */
+export function visitCount(thread: ThreadView) {
+  const launches = thread.visits.filter(failed).length;
+  return { visits: thread.visits.length - launches, launches };
+}
+/** Whether a visit of the thread holds its lease now. */
+export const isLive = (thread: ThreadView) => thread.visits.some(active);
+/** When the thread last did anything: the newest moment any of its visits records. */
+export const lastActive = (thread: ThreadView) =>
+  thread.visits
+    .flatMap((visit) => [visit.offeredAt, visit.startedAt, visit.endedAt])
+    .filter((at): at is string => !!at)
+    .sort()
+    .at(-1);
+
+/** A role's mark: its first letter, P for a producer and R for a reviewer. */
+export const roleLetter = (role: string) => role.charAt(0).toUpperCase();
+/** The small disc a thread's role is known by, on its chip and in the unit's history. */
+export function RoleMark({ role }: { role: string }) {
+  return (
+    <span className="role-mark" aria-hidden="true">
+      {roleLetter(role)}
+    </span>
+  );
+}
+
+/**
+ * The thread that did one thing on a record: the one at that stage in that role, and of
+ * several (a reviewer is a new thread each round), the newest that had begun by then.
+ */
+export function threadFor(
+  threads: readonly ThreadView[],
+  { stage, role, at }: { stage: string; role: string; at?: string },
+): ThreadView | undefined {
+  const began = (thread: ThreadView) => thread.visits[0]?.offeredAt ?? '';
+  const here = threads
+    .filter((thread) => thread.state === stage && thread.role === role)
+    .sort((a, b) => began(a).localeCompare(began(b)));
+  if (!at) return here.at(-1);
+  return here.filter((thread) => began(thread) <= at).at(-1) ?? here[0];
+}
 
 /**
  * One thread as one chip: its role, a live dot while a visit holds its lease, how many visits
@@ -70,8 +112,7 @@ const threadName = (thread: ThreadView) =>
  * Its tooltip says how the lease stands and on which machine.
  */
 function ThreadChip({ thread, now, onOpen }: { thread: ThreadView; now: Clock; onOpen(): void }) {
-  const launches = thread.visits.filter(failed).length;
-  const visits = thread.visits.length - launches;
+  const { visits, launches } = visitCount(thread);
   return (
     <button
       type="button"
@@ -87,6 +128,7 @@ function ThreadChip({ thread, now, onOpen }: { thread: ThreadView; now: Clock; o
       {thread.visits.some(active) && (
         <span className="live-dot live-dot--live" aria-label="Live" role="img" />
       )}
+      <RoleMark role={thread.role} />
       <span>{capital(words(thread.role))}</span>
       {visits > 1 && <span className="faint">· {visits} visits</span>}
       {launches > 0 && (
@@ -202,7 +244,7 @@ function Conversation({ thread, label }: { thread: ThreadView; label: string }) 
  * own layout never reaches it. An operator reads its conversation and its
  * visits; anyone else, its visits alone, as the live stream has always been an operator's.
  */
-function ThreadDialog({
+export function ThreadDialog({
   thread,
   title,
   loadedAt,
@@ -214,8 +256,6 @@ function ThreadDialog({
   onClose(): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
-  const reads = useReadsAgents();
-  const [tab, setTab] = useState<'conversation' | 'visits'>(reads ? 'conversation' : 'visits');
   useEffect(() => {
     if (!dialog.current?.open) dialog.current?.showModal();
   }, []);
@@ -256,25 +296,7 @@ function ThreadDialog({
             <CloseIcon />
           </button>
         </header>
-        {reads && (
-          <div className="tabs tabs--strip" role="group" aria-label="Thread">
-            {(['conversation', 'visits'] as const).map((each) => (
-              <button
-                type="button"
-                key={each}
-                aria-pressed={tab === each}
-                onClick={() => setTab(each)}
-              >
-                {capital(each)}
-              </button>
-            ))}
-          </div>
-        )}
-        {reads && tab === 'conversation' ? (
-          <Conversation thread={thread} label={name} />
-        ) : (
-          <Visits thread={thread} loadedAt={loadedAt} />
-        )}
+        <ThreadReading thread={thread} loadedAt={loadedAt} />
       </div>
     </dialog>,
     document.body,
@@ -282,22 +304,90 @@ function ThreadDialog({
 }
 
 /**
- * A record's stages with its threads on them, for the Work page's sidebar. The threads are
- * read every 4 s while one of them is live, every 10 s otherwise.
+ * What one thread did: for an operator, its conversation and its visits a press apart; for
+ * anyone else, its visits alone, as the live stream has always been an operator's.
  */
-export function ThreadStages({ graph, title }: { graph: ProcessGraph; title: string }) {
+export function ThreadReading({ thread, loadedAt }: { thread: ThreadView; loadedAt?: string }) {
+  const reads = useReadsAgents();
+  const [tab, setTab] = useState<'conversation' | 'visits'>(reads ? 'conversation' : 'visits');
+  return (
+    <>
+      {reads && (
+        <div className="tabs tabs--strip" role="group" aria-label="Thread">
+          {(['conversation', 'visits'] as const).map((each) => (
+            <button
+              type="button"
+              key={each}
+              aria-pressed={tab === each}
+              onClick={() => setTab(each)}
+            >
+              {capital(each)}
+            </button>
+          ))}
+        </div>
+      )}
+      {reads && tab === 'conversation' ? (
+        <Conversation thread={thread} label={threadName(thread)} />
+      ) : (
+        <Visits thread={thread} loadedAt={loadedAt} />
+      )}
+    </>
+  );
+}
+
+/**
+ * A record's threads, read every 4 s while one of them is live, every 10 s otherwise; an
+ * instance not named reads nothing.
+ */
+export function useThreadList(instanceId: string | undefined) {
   const [every, setEvery] = useState(10_000);
   const list = useTool<{ threads: ThreadView[] }>(
-    `/sessions/threads?instanceId=${encodeURIComponent(graph.instanceId)}`,
+    instanceId ? `/sessions/threads?instanceId=${encodeURIComponent(instanceId)}` : null,
     {},
     { every },
   );
   const threads = list.data?.threads ?? [];
   const live = threads.some((thread) => thread.status === 'live');
   useEffect(() => setEvery(live ? 4000 : 10_000), [live]);
+  return { threads, loadedAt: list.loadedAt, loaded: !!list.data };
+}
+
+/**
+ * A record's stages with its threads on them, for the Work page's sidebar, each chip the way
+ * to its thread's dialog.
+ */
+export function ThreadStages({ graph, title }: { graph: ProcessGraph; title: string }) {
+  const { threads, loadedAt } = useThreadList(graph.instanceId);
   const [opened, setOpened] = useState<string>();
   const thread = threads.find((item) => item.id === opened);
-  const now = clock(undefined, list.loadedAt, Date.now(), 20_000);
+  return (
+    <>
+      <StageThreads graph={graph} threads={threads} loadedAt={loadedAt} onOpen={setOpened} />
+      {thread && (
+        <ThreadDialog
+          thread={thread}
+          title={title}
+          loadedAt={loadedAt}
+          onClose={() => setOpened(undefined)}
+        />
+      )}
+    </>
+  );
+}
+
+/** The stage card with each stage's threads as chips; a chip opens its thread through `onOpen`. */
+export function StageThreads({
+  graph,
+  threads,
+  loadedAt,
+  onOpen: setOpened,
+}: {
+  graph: ProcessGraph;
+  threads: readonly ThreadView[];
+  loadedAt?: string;
+  onOpen(threadId: string): void;
+}) {
+  const now = clock(undefined, loadedAt, Date.now(), 20_000);
   // The stage's current threads first; one retired beside them is the quiet "+1 earlier",
   // which opens the newest of them. Retired threads with nothing current are chips themselves.
   const aside = (state: string) => {
@@ -323,17 +413,5 @@ export function ThreadStages({ graph, title }: { graph: ProcessGraph; title: str
       ),
     ];
   };
-  return (
-    <>
-      <StageList graph={graph} aside={aside} />
-      {thread && (
-        <ThreadDialog
-          thread={thread}
-          title={title}
-          loadedAt={list.loadedAt}
-          onClose={() => setOpened(undefined)}
-        />
-      )}
-    </>
-  );
+  return <StageList graph={graph} aside={aside} />;
 }

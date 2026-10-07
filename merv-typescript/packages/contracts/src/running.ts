@@ -60,6 +60,10 @@ export type RunningSection = z.input<typeof schema.runningSection> & {
   owner?: string;
 };
 export type RunningHeader = z.input<typeof schema.runningHeader>;
+export type RunningUnitEntry = z.input<typeof schema.runningUnitEntry>;
+export type RunningUnitKey = z.input<typeof schema.runningUnitKey>;
+export type RunningUnitArtifact = z.input<typeof schema.runningUnitArtifact>;
+export type RunningUnit = z.input<typeof schema.runningUnit>;
 
 /** What one owner draws, and how old it is when it comes from a cache. */
 export interface RunningNodes {
@@ -91,6 +95,11 @@ export interface RunningPanelPart {
    * this node's, and other owners are asked for sections about them too.
    */
   aliases?: RunningKey[];
+  /**
+   * A unit of work's history and its key artifact. With it the sidebar draws the stages, then
+   * the history beside the key artifact, and folds every other section under Details.
+   */
+  unit?: RunningUnit;
 }
 
 // ─── Tool answers ──────────────────────────────────────────────────────────────────────────

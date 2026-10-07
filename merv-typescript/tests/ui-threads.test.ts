@@ -216,17 +216,19 @@ const dialogText = () => document.querySelector('dialog')!.textContent!;
 test('each thread stands on the stage its state names, and failed launches are a count', async (t) => {
   t.after(unmount);
   await open('reader');
-  assert.deepEqual(chips('planned'), ['Producer']);
+  // Each chip leads with its role's mark, P or R, as the unit's history marks its entries.
+  assert.deepEqual(chips('planned'), ['PProducer']);
+  assert.equal(chip('planned').querySelector('.role-mark')!.textContent, 'P');
   // The live visit's dot, and how it stands in the chip's tooltip.
-  assert.deepEqual(chips('design_review'), ['Reviewer']);
+  assert.deepEqual(chips('design_review'), ['RReviewer']);
   assert.ok(chip('design_review').querySelector('.live-dot--live'));
   assert.match(chip('design_review').getAttribute('title')!, /^active · .* · lab-1$/);
   // Two launches failed: the chip counts them beside the two visits that ran. The retired
   // thread beside it is a quiet way back, not a second chip.
-  assert.deepEqual(chips('running'), ['Producer· 2 visits· 2 failed launches', '+1 earlier']);
+  assert.deepEqual(chips('running'), ['PProducer· 2 visits· 2 failed launches', '+1 earlier']);
   assert.ok(!chip('running').classList.contains('agent-chip--retired'));
   // A retired thread alone is a quieter chip.
-  assert.deepEqual(chips('complete'), ['Reviewer']);
+  assert.deepEqual(chips('complete'), ['RReviewer']);
   assert.ok(chip('complete').classList.contains('agent-chip--retired'));
   assert.equal(document.querySelectorAll('.agent-chip').length, 4);
 

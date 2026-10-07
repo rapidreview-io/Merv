@@ -5189,6 +5189,14 @@ del.cut {
 .running-plane[data-full] .running-sidebar > :is(.running-panel-head, .running-acts) {
   column-span: all;
 }
+/* A unit of work has its own two columns, so its page is one column of them at full width. */
+.running-plane[data-full] .running-sidebar--unit {
+  display: flex;
+  columns: auto;
+}
+.running-plane[data-full] .running-sidebar--unit > * {
+  margin-bottom: 0;
+}
 @container running (max-width: 899.98px) {
   .work-main:not([hidden]) + .running-panel {
     border-top: 1px solid var(--line);
@@ -5370,6 +5378,18 @@ del.cut {
   font-size: var(--text-sm);
   font-weight: 600;
   line-height: 18px;
+}
+/* The card's stage, and while a visit works it, the time since its work began. */
+.wmap-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+.wmap-timer {
+  font-size: var(--text-sm);
+  line-height: 17px;
+  color: var(--muted);
 }
 .wmap-line {
   display: -webkit-box;
@@ -6191,4 +6211,330 @@ details.running-section > summary {
 }
 .agent-jump:hover {
   color: var(--active);
+}
+
+/* A unit of work (views/unit.tsx). ------------------------------------------- */
+/* A thread's role, a letter on a small disc: P for a producer, R for a reviewer. On a chip it
+   leads the role's word; in a unit's history it stands where a post's initials would and is
+   the way to the thread. */
+.role-mark {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--bg-soft);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+.role-mark--disc {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--line);
+  font-family: inherit;
+  font-size: var(--text-xs);
+}
+button.role-mark--disc {
+  cursor: pointer;
+}
+button.role-mark--disc:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+.feed-line > .role-mark--disc {
+  align-self: start;
+}
+/* On the left a narrow history, on the right the reading, as wide as the page allows. Narrow,
+   the reading comes first and the history under it. */
+.unit-columns {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  min-width: 0;
+}
+.unit-columns > .unit-reading {
+  order: -1;
+}
+.unit-columns--wide {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  column-gap: calc(2 * var(--space-5));
+  align-items: start;
+}
+.unit-columns--wide > .unit-reading {
+  order: 0;
+}
+/* With no history yet, the reading has the whole width. */
+.unit-columns--wide > .unit-reading:only-child {
+  grid-column: 1 / -1;
+}
+.unit-history,
+.unit-reading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.unit-history .thread {
+  max-width: none;
+}
+.unit-history .feed-entry {
+  padding: var(--space-2) 0;
+}
+.unit-history .feed-author {
+  font-size: var(--text-sm);
+}
+.unit-key-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--hit);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+.unit-key-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+/* Narrow, the reading is cut short: the way to read it whole gives it the page. */
+.unit-body {
+  min-width: 0;
+}
+.unit-body--cut {
+  max-height: 320px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 72%, transparent);
+  mask-image: linear-gradient(to bottom, #000 72%, transparent);
+}
+.unit-read {
+  align-self: flex-start;
+}
+/* What a person has to do: one line, its move beside it. */
+.unit-ask {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+}
+.unit-checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+.unit-checks ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  list-style: none;
+}
+.unit-checks li {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.unit-check-mark {
+  color: var(--ghost);
+}
+.unit-check--met .unit-check-mark {
+  color: var(--supports);
+}
+.unit-parts {
+  list-style: none;
+}
+.unit-part {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--hit);
+  padding: var(--space-1) 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-align: left;
+}
+button.unit-part {
+  cursor: pointer;
+}
+button.unit-part:hover .unit-part-name,
+.unit-part[aria-pressed='true'] .unit-part-name {
+  color: var(--active);
+}
+.unit-part-name {
+  margin-right: auto;
+}
+.unit-items {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+}
+.unit-items li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: var(--text-sm);
+}
+.unit-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+/* The reading's three tabs, and what each lists: rows on hairlines, one fact a column. */
+.unit-tabs {
+  margin-bottom: var(--space-2);
+}
+.unit-tab-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.unit-group + .unit-group {
+  margin-top: var(--space-3);
+}
+.unit-group-head {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+}
+ul.unit-rows {
+  list-style: none;
+}
+.unit-row {
+  display: grid;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--hit);
+  padding: var(--space-1) 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.unit-row--agent {
+  grid-template-columns: auto minmax(0, 9rem) minmax(0, 1fr) 72px 64px 72px;
+}
+.unit-row--file {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 10rem) 64px 72px;
+}
+/* Narrow, a row keeps its name and its quiet facts; the group head already says the stage. */
+.unit-columns:not(.unit-columns--wide) .unit-row--agent {
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+}
+.unit-columns:not(.unit-columns--wide) .unit-row--file {
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+}
+.unit-columns:not(.unit-columns--wide) :is(.unit-row-stage, .unit-row-by) {
+  display: none;
+}
+.unit-row:hover .unit-row-name {
+  color: var(--active);
+}
+.unit-row-name,
+.unit-row-stage {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unit-row-status,
+.unit-row-by {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.unit-row > :last-child {
+  text-align: right;
+}
+/* A document an entry handed in: the way to read it on the right, pressed while it is read. */
+.thread-doc {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 6px;
+  max-width: 100%;
+  min-height: var(--hit);
+  padding: 0 var(--space-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  cursor: pointer;
+}
+.thread-doc:hover {
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+.thread-doc[aria-pressed='true'] {
+  border-color: var(--text);
+  color: var(--text);
+}
+.thread-doc > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A verdict as one line: its word and a square for each check, filled where it was met. */
+.verdict-line {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-2);
+  min-height: var(--hit);
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.verdict-line:disabled {
+  cursor: default;
+}
+.met-squares {
+  display: inline-flex;
+  gap: 2px;
+}
+.met-square {
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+}
+.met-square--met {
+  border-color: var(--supports);
+  background: var(--supports);
+}
+.verdict-text {
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+.unit-details {
+  gap: var(--space-4);
 }

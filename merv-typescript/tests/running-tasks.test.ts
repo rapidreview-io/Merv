@@ -179,7 +179,9 @@ function words(value: unknown, out: string[] = []): string[] {
   else if (value && typeof value === 'object') {
     if ('actor' in value) return out;
     for (const [key, item] of Object.entries(value))
-      if (!(key === 'graph' && (value as { kind?: string }).kind === 'ladder')) words(item, out);
+      // A file is referred to by its id, as a link by its key: neither is a word drawn.
+      if (key !== 'id' && !(key === 'graph' && (value as { kind?: string }).kind === 'ladder'))
+        words(item, out);
   }
   return out;
 }
@@ -370,6 +372,7 @@ test('a done task stays, quiet, only while another owner holds its key on the bo
       lines: [[], ['Done']],
       look: 'quiet',
       rank: 4,
+      started: task.createdAt,
     },
   ]);
   assert.equal(await f.card(task), undefined);
@@ -395,7 +398,7 @@ test('a done task stays, quiet, only while another owner holds its key on the bo
   });
 });
 
-test('the sidebar holds the ladder, relations, goal, pinned brief, checks and details, and names nobody by id', async (t) => {
+test('the sidebar holds the ladder, relations, pinned brief and details, its unit the goal and checks, and names nobody by id', async (t) => {
   const f = await fixture(t);
   const prerequisite = await f.create('Collect source archive');
   const spec = await f.app.ctx.artifacts.create(f.producer.caller, {
@@ -431,13 +434,11 @@ test('the sidebar holds the ladder, relations, goal, pinned brief, checks and de
       ['Progress', 'ladder', 'progress'],
       ['Waits on', 'links', 'relations'],
       ['Unblocks', 'links', 'relations'],
-      ['Goal', 'text', 'content'],
       ['Pinned brief', 'links', 'content'],
-      ['Checks', 'table', 'content'],
       ['Details', 'facts', 'details'],
     ],
   );
-  const [progress, waits, unblocks, goal, brief, checks, details] = own;
+  const [progress, waits, unblocks, brief, details] = own;
   assert.ok(progress?.kind === 'ladder');
   assert.equal(progress.graph.state, 'in_progress');
   assert.deepEqual(
@@ -447,20 +448,26 @@ test('the sidebar holds the ladder, relations, goal, pinned brief, checks and de
   assert.deepEqual(unblocks?.kind === 'links' && unblocks.rows.map(({ to }) => to), [
     { key: `work:${dependent.id}`, route: `/tasks/${dependent.id}` },
   ]);
-  assert.deepEqual(goal, {
-    title: 'Goal',
-    place: 'content',
-    kind: 'text',
-    text: 'Finish rebuild citation index so the draft can cite it.',
-    clamp: 4,
-    owner: 'tasks',
+  // Nothing delivered yet: the unit reads its goal, every check still open, and no history;
+  // its one file is the brief it was asked with, made before any thread worked it.
+  assert.deepEqual(panel.unit, {
+    key: { label: 'Goal', text: 'Finish rebuild citation index so the draft can cite it.' },
+    checks: task.checks.map((text) => ({ text })),
+    history: [],
+    artifacts: [
+      {
+        id: spec.id,
+        title: 'Citation index spec',
+        mediaType: spec.mediaType,
+        size: spec.size,
+        at: spec.createdAt,
+        stage: 'in_progress',
+      },
+    ],
   });
   assert.deepEqual(brief?.kind === 'links' && brief.rows, [
     { to: { route: `/artifacts/${spec.id}` }, name: 'Citation index spec' },
   ]);
-  assert.ok(checks?.kind === 'table');
-  assert.deepEqual(checks.columns, ['Check']);
-  assert.equal(checks.aside, undefined);
   assert.deepEqual(details, {
     title: 'Details',
     place: 'details',
@@ -492,6 +499,42 @@ test('the sidebar holds the ladder, relations, goal, pinned brief, checks and de
       undefined,
       `${id} is printed`,
     );
+});
+
+test('a task’s unit reads its delivery once there is one, and tells each round in its history', async (t) => {
+  const f = await fixture(t);
+  const task = await f.create('Rebuild citation index');
+  const pending = await f.deliver(task);
+  const delivered = (await f.panel(task)).unit!;
+  assert.equal(delivered.key?.label, 'Delivery');
+  assert.equal(delivered.key?.state, 'in_review');
+  assert.match(delivered.key?.artifact?.title ?? '', /^Evidence \d+$/);
+  // Until a verdict, each check stands as the delivery claimed it.
+  assert.deepEqual(
+    delivered.checks?.map(({ met }) => met),
+    task.checks.map(() => true),
+  );
+  assert.deepEqual(delivered.history?.[0], {
+    role: 'producer',
+    stage: 'in_progress',
+    actor: delivered.history?.[0]?.actor,
+    at: delivered.history?.[0]?.at,
+    said: 'Delivered',
+    artifact: delivered.key?.artifact,
+  });
+  assert.equal(delivered.history?.at(-1)?.role, 'reviewer');
+
+  await f.verdict(pending, 'needs_changes');
+  const returned = (await f.panel(task)).unit!;
+  assert.equal(returned.key?.state, 'needs_changes');
+  assert.deepEqual(
+    returned.history?.map((entry) => entry.said ?? entry.verdict?.word),
+    ['Delivered', 'needs_changes', 'Returned to in progress'],
+  );
+  const judged = returned.history?.[1];
+  assert.equal(judged?.role, 'reviewer');
+  assert.equal(judged?.stage, 'in_review');
+  assert.equal(judged?.verdict?.of, task.checks.length);
 });
 
 test('a key that is not a task of this project has no task sidebar', async (t) => {

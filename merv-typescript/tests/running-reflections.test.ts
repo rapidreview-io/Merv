@@ -171,6 +171,7 @@ test('an open wave is one node at the head of the work lane that absorbs its len
       look: 'dashed',
       aliases: lensKeys(wave),
       rank: -1,
+      started: wave.createdAt,
       owner: 'reflections',
     });
     // Its lenses are never drawn: every one of their keys lands on the wave.
