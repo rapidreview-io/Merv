@@ -84,6 +84,11 @@ export interface UiRowNeeds {
   stops?: string[];
   /** The records only name the reviews of them, and are never a move of their own. */
   subjectOnly?: true;
+  /**
+   * The field of a record listing records inside it, each with its `id` and `workflow`, such as
+   * a wave's lenses: their gates may name the reader's move too, which stands under the record.
+   */
+  parts?: string;
 }
 
 export interface UiRowDescription extends Omit<UiRow, 'status' | 'read' | 'home'> {

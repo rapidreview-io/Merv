@@ -185,7 +185,7 @@ const artifact = (id: string) => ({
 });
 const names: Record<string, string> = { actor_codex: 'Codex producer', actor_claude: 'Claude' };
 
-async function sidebar(sent: unknown, full = true, role = 'operator') {
+async function sidebar(sent: unknown, full = true, role = 'operator', address = '/') {
   const project = { id: 'project_1', name: 'Grokking', createdAt: '2026-09-01T00:00:00Z' };
   const actor = { id: 'actor_me', projectId: project.id, name: 'Me', role };
   serve('/auth/config', { body: { enabled: false } });
@@ -226,7 +226,7 @@ async function sidebar(sent: unknown, full = true, role = 'operator') {
   await mount(
     createElement(
       MemoryRouter,
-      null,
+      { initialEntries: [address] },
       createElement(
         SessionProvider,
         null,
@@ -524,6 +524,43 @@ test('Agents also lists the threads of the records its owner names inside the un
     all('.unit-row--agent .unit-row-name').map((name) => name.textContent),
     ['Producer', 'Reviewer', 'Evidence lens'],
   );
+});
+
+test('an address naming a thread opens Agents on it, a thread of a record inside the unit too', async (t) => {
+  t.after(unmount);
+  t.after(() => localStorage.clear());
+  localStorage.clear();
+  await sidebar(panel(unitOf()), true, 'operator', '/work?key=work:wf_1&thread=thr_plan');
+  assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
+  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · planned/);
+  await settle(30);
+  assert.match(reading().textContent!, /Drafted the warmup plan\./);
+  // The address chose the tab for this visit only: the kind's remembered tab is unchanged.
+  assert.equal(localStorage.getItem('merv:unit-tab:experiment'), null);
+  await unmount();
+  serve('/sessions/threads?instanceId=wf_lens', {
+    body: {
+      threads: [
+        {
+          id: 'thr_lens',
+          instanceId: 'wf_lens',
+          state: 'reflecting',
+          role: 'producer',
+          status: 'dormant',
+          visits: [visit('ses_l1', at(3))],
+        },
+      ],
+    },
+  });
+  serve('/sessions/threads/thr_lens/conversation', { body: { threadId: 'thr_lens', visits: [] } });
+  await sidebar(
+    panel({ ...unitOf(), instances: ['wf_lens'], names: { wf_lens: 'Evidence lens' } }),
+    true,
+    'operator',
+    '/work?key=work:wf_1&thread=thr_lens',
+  );
+  assert.equal(tab('Agents')!.getAttribute('aria-pressed'), 'true');
+  assert.match(reading().querySelector('.unit-key-label')!.textContent!, /Producer · reflecting/);
 });
 
 test('a reader who is not an operator reads a thread’s visits in place, never its conversation', async (t) => {

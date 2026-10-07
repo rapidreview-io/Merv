@@ -730,6 +730,6 @@ test('a blocker the gate names as the reader’s move is their line, in its own 
       { id: 'actor_op' },
       () => undefined,
     ).map((line) => line.to);
-  assert.deepEqual(to(question), ['/work?key=work:t1']);
+  assert.deepEqual(to(question), ['/work?key=work:t1&thread=thr_1']);
   assert.deepEqual(to(publication), ['/tasks/t1']);
 });

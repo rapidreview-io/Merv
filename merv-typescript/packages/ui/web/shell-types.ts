@@ -10,6 +10,7 @@ export interface RowNeeds {
   reads?: Record<string, string>;
   stops?: string[];
   subjectOnly?: true;
+  parts?: string;
 }
 /** What a row's owner says of one state of its workflow (UiStateWords). */
 export interface RowStateWords {
