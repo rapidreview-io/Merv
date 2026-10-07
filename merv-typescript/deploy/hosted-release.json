@@ -4,19 +4,22 @@
     "credential": "/var/lib/merv-fleet-pilot/hosted-canary/credential.json"
   },
   "current": {
-    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:4fd708de2a853dccf82e37544af0e86cb337573d6a607aed8f07a9071914a871",
-    "releaseId": "rt1_dc1e84ca7521142b777419b350e062f6ad9aa580af0e10467041cce69c584994",
+    "image": "registry.cloudflare.com/ac27350cd4a42855004ab960c906b6d5/merv-hosted-codex@sha256:6021cb8a1aa92ebd4f01ae0918b965cbf7df6fa4fbf4a42f65c8032a8ff558b4",
+    "releaseId": "rt1_2a625e7ea68f7ffaadd76396ef049968d35005bbab1038265963f02cda290205",
     "releases": {
-      "cloudflare-fleet": "rt1_dc1e84ca7521142b777419b350e062f6ad9aa580af0e10467041cce69c584994",
-      "cloudflare-fleet-large": "rt1_97b0efc42eb813d5e5ec4e96745a08b4db194b22111ee417a6634731f5d5db27"
+      "cloudflare-fleet": "rt1_2a625e7ea68f7ffaadd76396ef049968d35005bbab1038265963f02cda290205",
+      "cloudflare-fleet-large": "rt1_56928c84a852e414e231e31bbfdbb69351b97f0ddf88155be88968e837705f38"
     },
-    "localId": "sha256:de9460cf2460bfed4ec2a4f3495fb8514363d653063ea7ff700ed079ee27854d",
-    "sourceCommit": "e493d7e315ff6feadc5d2aaf430f4283eb1a5764",
+    "localId": "sha256:2e8d9f74635026a6bab34bed9ce08f7196e9aadfa743095fd3a02781fdd1e1c0",
+    "sourceCommit": "68093a6373987066719a41280de4fb803efbef0d",
     "sandboxesCommit": "5157f1ed7618ff3987da7f214d2312afd31e636d"
   },
   "inputs": [
+    "packages/code/src/driver/checkout.ts",
+    "packages/code/src/driver/core.ts",
     "packages/code/src/driver/git.ts",
     "packages/code/src/driver/index.ts",
+    "packages/code/src/driver/transfer.ts",
     "packages/code/src/files.ts",
     "packages/code/src/merge-settings.ts",
     "packages/code/src/store/protocol.ts",
@@ -26,6 +29,7 @@
     "packages/contracts/src/index.ts",
     "packages/contracts/src/launch-connections.ts",
     "packages/contracts/src/order.ts",
+    "packages/contracts/src/origins.ts",
     "packages/contracts/src/outbound.ts",
     "packages/contracts/src/private-directory.ts",
     "packages/contracts/src/running-schema.ts",
@@ -47,6 +51,7 @@
     "packages/runner/src/conversation.ts",
     "packages/runner/src/harness/claude.ts",
     "packages/runner/src/harness/codex.ts",
+    "packages/runner/src/harness/command.ts",
     "packages/runner/src/harness/index.ts",
     "packages/runner/src/harness/shared.ts",
     "packages/runner/src/index.ts",
