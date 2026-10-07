@@ -159,3 +159,34 @@ for (const [name, end] of [
       { code: 'refused' },
     );
   });
+
+// A write that its domain gates with a read decision (session.ask_owner, session.message.ack)
+// is still a write: its transaction re-checks the lease the call validated at its start.
+test('a write gated by a read decision is refused when its lease row was released before it commits', async (t) => {
+  const f = await fixture(t);
+  const { sessions } = f.app.ctx;
+  const invocation = await sessions.invocations.prepare(f.lease.worker, 'session.ask_owner', {
+    question: 'Asked after the lease ended?',
+  });
+  await assert.rejects(
+    sessions.invocations.run(invocation, async (caller) => {
+      await f.app.ctx.state.transaction(
+        async (tx) =>
+          await tx.run(
+            'UPDATE wf_leases SET released_at=? WHERE id=?',
+            new Date().toISOString(),
+            f.lease.session.id,
+          ),
+      );
+      const head = await f.app.ctx.state.eventHead();
+      await assert.rejects(
+        sessions.messaging.ask(caller, { question: 'Asked after the lease ended?' }),
+        (error: { code?: string }) =>
+          ['session_closed', 'session_completed', 'stale_lease'].includes(error.code ?? ''),
+      );
+      assert.equal(await f.app.ctx.state.eventHead(), head, 'The refused write wrote nothing');
+      throw Object.assign(new Error('refused'), { code: 'refused' });
+    }),
+    { code: 'refused' },
+  );
+});
