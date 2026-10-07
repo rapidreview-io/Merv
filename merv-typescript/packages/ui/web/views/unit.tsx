@@ -10,7 +10,6 @@ import type {
 import type { ProcessGraph } from '@merv/workflows/models';
 import type { ThreadView } from '@merv/sessions/models';
 import { Ago, StatusPill, capital, cx, words } from '../components';
-import { useTool } from '../api';
 import { Icon } from '../icons';
 import { Markdown } from '../markdown';
 import { stagesOfGraph } from '../process';
@@ -96,24 +95,6 @@ function marker(
       ...(thread || (elsewhere && item.stage) ? { onOpen: () => open(item, thread?.id) } : {}),
     };
   };
-}
-
-/**
- * The threads of the unit and of the records inside it (a wave's lenses), in one read: every
- * 4 s while one of them is live, every 10 s otherwise. A thread a later record took up (a lens's
- * author on the next attempt's lens) has visits on both, and is listed once.
- */
-function useUnitThreads(instances: readonly string[]) {
-  const list = useTool<{ threads: ThreadView[] }>(
-    instances.length
-      ? `/sessions/threads?${instances.map((id) => `instanceId=${encodeURIComponent(id)}`).join('&')}`
-      : null,
-    {},
-    {
-      every: (data) => (data?.threads.some((thread) => thread.status === 'live') ? 4000 : 10_000),
-    },
-  );
-  return { threads: list.data?.threads ?? [], loadedAt: list.loadedAt };
 }
 
 /** Lenses, perspectives, parts: a line each, and the one pressed opened under the list. */
@@ -389,10 +370,11 @@ export function UnitView({
   details?: ReactNode;
 }) {
   const { nameOf } = useContext(Reading);
-  // The records inside the unit have agents of their own, which its Agents tab lists too; the
-  // unit's own stages draw the threads that are not theirs.
+  // The records inside the unit have agents of their own, which its Agents tab lists too, in one
+  // read; a thread a later record took up (a lens's author on the next attempt's lens) is listed
+  // once. The unit's own stages draw the threads that are not theirs.
   const inside = unit.instances ?? [];
-  const { threads: agents, loadedAt } = useUnitThreads(
+  const { threads: agents, loadedAt } = useThreadList(
     graph ? [graph.instanceId, ...inside] : inside,
   );
   const threads = agents.filter((item) => !inside.includes(item.instanceId));

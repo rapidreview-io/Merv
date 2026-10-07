@@ -691,12 +691,15 @@ export function ThreadReading({
 }
 
 /**
- * A record's threads, read every 4 s while one of them is live, every 10 s otherwise; an
- * instance not named reads nothing.
+ * The threads of a record, or of several in one read (a unit and the records inside it), read
+ * every 4 s while one of them is live, every 10 s otherwise; no instance named reads nothing.
  */
-export function useThreadList(instanceId: string | undefined) {
+export function useThreadList(instanceIds: string | readonly string[] | undefined) {
+  const ids = typeof instanceIds === 'string' ? [instanceIds] : (instanceIds ?? []);
   const list = useTool<{ threads: ThreadView[] }>(
-    instanceId ? `/sessions/threads?instanceId=${encodeURIComponent(instanceId)}` : null,
+    ids.length
+      ? `/sessions/threads?${ids.map((id) => `instanceId=${encodeURIComponent(id)}`).join('&')}`
+      : null,
     {},
     { every: (data) => (data?.threads.some(isLive) ? 4000 : 10_000) },
   );

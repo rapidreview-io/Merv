@@ -83,7 +83,9 @@ const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t
 /** A thread that wants attention whatever its work: live, asking its owner a question that still
  *  stands (`standing`: not about work that has ended, whose `marks` the caller binds), or asked a
  *  question (an inquiry) that is still open. */
-const urgent = (marks: string) => `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id
+const urgent = (
+  marks: string,
+) => `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id
   AND q.answered_at IS NULL${marks ? ` AND q.instance_id NOT IN (${marks})` : ''}) OR ${INQUIRING})`;
 /** A thread holding a person's message its agent has not read, where it is not retired. The
  *  context an answered inquiry left its work is not one: the person has read that answer. */
@@ -637,7 +639,13 @@ export class SessionThreads {
       projectId,
     );
     const over = asked.length
-      ? [...(await this.host.ended(projectId, asked.map((row) => row.instance_id), tx))]
+      ? [
+          ...(await this.host.ended(
+            projectId,
+            asked.map((row) => row.instance_id),
+            tx,
+          )),
+        ]
       : [];
     const urgentSql = urgent(over.map(() => '?').join(','));
     const unread = await tx.all<{ id: string; instance_id: string }>(

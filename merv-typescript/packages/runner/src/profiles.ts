@@ -406,10 +406,7 @@ export function buildLaunch(
       : []),
     request.prompt,
     ...(launcher.agent ? [searching(internet(profile, session))] : []),
-    ...(launcher.huggingface(profile) &&
-    !sealed(session) &&
-    request.hfToken &&
-    request.hfEndpoint
+    ...(launcher.huggingface(profile) && !sealed(session) && request.hfToken && request.hfEndpoint
       ? [
           'Hugging Face downloads are available through HF_TOKEN and HF_ENDPOINT already in your environment. Use huggingface_hub, datasets, transformers or hf download normally; do not log in or print these variables. HF_TOKEN is a readable, read-only capability valid only during this session, not the account token. For SSH work, send both variables privately through stdin to the remote process; never put them in tool arguments, durable job commands, files, logs or artifacts. The next worker supplies its own access. Managed compute jobs do not yet receive HF access. Uploads, account settings and raw Git authentication are not supported by this broker.',
         ]
