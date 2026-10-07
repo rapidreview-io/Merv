@@ -1,5 +1,5 @@
 import type { Context } from 'cordis';
-import { check, runningKey } from '@merv/contracts';
+import { check } from '@merv/contracts';
 import type { Json } from '@merv/contracts';
 import type {} from '@merv/ui/types';
 import type {} from './types.js';
@@ -45,10 +45,8 @@ export const experimentsUiPlugin = {
               experiment: await experiments.get(caller, id),
               process: await experiments.process(caller, id),
               codeUnit: await experiments.codeUnit(caller, id),
-              // Its history as its sidebar tells it.
-              history:
-                (await experiments.runningPanel(caller, runningKey('work', id)))?.unit?.history ??
-                [],
+              // Its history as its sidebar tells it, read alone: the page polls this.
+              history: await experiments.history(caller, id),
             }),
           ) as Json;
         },

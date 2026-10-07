@@ -18,6 +18,7 @@ import {
   type ContextRegistration,
   type RunningNode,
   type RunningPanelPart,
+  type RunningUnitEntry,
   type Reviews,
   type Scope,
   type State,
@@ -33,6 +34,7 @@ import {
   enteredAgain,
   experimentFileIds,
   experimentNode,
+  experimentHistory,
   experimentPanel,
   type ExperimentStanding,
 } from './running.js';
@@ -303,6 +305,25 @@ export class ExperimentService implements Experiments {
     // The ladder is where the record stands, so no action's check runs to draw it.
     const graph = await this.workflows.process(caller, id, { checks: false });
     return experimentPanel({ ...read, graph, route });
+  }
+  /**
+   * Its history alone, as its sidebar tells it, for its record page to poll: the record, its
+   * reviews and its graph, and nothing else of the sidebar.
+   */
+  async history(caller: Caller, experimentId: string): Promise<RunningUnitEntry[]> {
+    this.open();
+    caller = structuredClone(caller);
+    const read = await inTransaction(this.state, undefined, async (tx) => {
+      const experiment = await this.get(caller, experimentId, tx);
+      const reviews = await this.reviews.find(
+        caller,
+        experiment.submissions.map((item) => item.reviewId),
+        tx,
+      );
+      return { experiment, reviews: [...reviews.values()] };
+    });
+    const graph = await this.workflows.process(caller, experimentId, { checks: false });
+    return experimentHistory(read.experiment, graph, read.reviews);
   }
   private async standingRows(
     caller: Caller,

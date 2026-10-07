@@ -50,8 +50,8 @@ export const taskUiPlugin = {
               task: await tasks.get(caller, id),
               process: await tasks.process(caller, id),
               codeUnit: await tasks.codeUnit(caller, id),
-              // Its history as its sidebar tells it.
-              history: (await tasks.runningPanel(caller, id))?.unit?.history ?? [],
+              // Its history as its sidebar tells it, read alone: the page polls this.
+              history: await tasks.history(caller, id),
             }),
           ) as Json;
         },

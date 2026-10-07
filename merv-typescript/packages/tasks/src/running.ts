@@ -17,6 +17,7 @@ import {
   type RunningPhrase,
   type RunningSection,
   type RunningUnit,
+  type RunningUnitEntry,
   type Transaction,
   type WorkRoute,
 } from '@merv/contracts';
@@ -251,6 +252,67 @@ export const TASK_STATES: Readonly<Record<string, UnitStateWords>> = {
 };
 
 /**
+ * A task's history: each delivery with what it handed in, its report first and then every other
+ * file, but not the brief it was pinned beside; each verdict, and each return.
+ */
+function taskHistory(
+  briefId: string,
+  graph: ProcessGraph,
+  reviews: readonly ReviewRequest[],
+  artifacts: ReadonlyMap<string, Pick<Artifact, 'id' | 'title' | 'mediaType'>>,
+): RunningUnitEntry[] {
+  const handedIn = (review: ReviewRequest) => {
+    const handed = review.artifactIds
+      .filter((id) => id !== briefId)
+      .map((id) => artifacts.get(id))
+      .filter((artifact) => artifact !== undefined);
+    const report =
+      handed.find((artifact) => /^text\/(markdown|plain)/.test(artifact.mediaType)) ?? handed[0];
+    return [report, ...handed.filter((artifact) => artifact !== report)]
+      .filter((artifact) => artifact !== undefined)
+      .map((artifact) => ({ id: artifact.id, title: short(artifact.title) }));
+  };
+  return unitHistory({
+    graph,
+    reviews,
+    states: TASK_STATES,
+    document: (review) => handedIn(review)[0],
+    files: (review) => handedIn(review).slice(1),
+  });
+}
+
+/**
+ * A task's history alone, as its sidebar tells it, for its record page to poll: its graph, its
+ * reviews and what they pinned, and nothing else of the sidebar. Empty for an id that is not a
+ * task of this project.
+ */
+export async function history(
+  ctx: TasksContext,
+  caller: Caller,
+  taskId: string,
+): Promise<RunningUnitEntry[]> {
+  caller = structuredClone(caller);
+  return await ctx.state.snapshot(async () => {
+    const row = await ctx.state.transaction(async (tx) => {
+      await ctx.scope.require(caller, 'read', tx);
+      return await tx.get<Pick<TaskRow, 'brief_id'>>(
+        'SELECT brief_id FROM tasks WHERE id=? AND project_id=?',
+        taskId,
+        caller.projectId,
+      );
+    });
+    if (!row) return [];
+    const graph = await ctx.workflows.process(caller, taskId, { checks: false });
+    const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
+    const ids = [...new Set(reviews.flatMap((review) => review.artifactIds))];
+    const artifacts = await ctx.state.transaction(
+      async (tx) => await ctx.artifacts.find(caller, ids.slice(0, MAX_ARTIFACT_IDS), tx),
+    );
+    return taskHistory(row.brief_id, graph, reviews, artifacts);
+  });
+}
+
+/**
  * The task as a unit: its history, and the one thing to read. Before anything is delivered
  * that is the goal, with the checks still open under it; once something is, the report the
  * producer delivered, with each check met or not as the newest verdict found it, or as the
@@ -266,26 +328,7 @@ export function taskUnit(
   >,
   made: readonly UnitFile['artifact'][] = [],
 ): RunningUnit {
-  // What a delivery handed in: its report first, then every other file, not the brief it was
-  // pinned beside.
-  const handedIn = (review: ReviewRequest) => {
-    const handed = review.artifactIds
-      .filter((id) => id !== record.briefId)
-      .map((id) => artifacts.get(id))
-      .filter((artifact) => artifact !== undefined);
-    const report =
-      handed.find((artifact) => /^text\/(markdown|plain)/.test(artifact.mediaType)) ?? handed[0];
-    return [report, ...handed.filter((artifact) => artifact !== report)]
-      .filter((artifact) => artifact !== undefined)
-      .map((artifact) => ({ id: artifact.id, title: short(artifact.title) }));
-  };
-  const history = unitHistory({
-    graph,
-    reviews,
-    states: TASK_STATES,
-    document: (review) => handedIn(review)[0],
-    files: (review) => handedIn(review).slice(1),
-  });
+  const history = taskHistory(record.briefId, graph, reviews, artifacts);
   const delivered = [...history].reverse().find((entry) => entry.artifact);
   const newest = [...reviews]
     .filter((review) => review.subjectId === record.id)

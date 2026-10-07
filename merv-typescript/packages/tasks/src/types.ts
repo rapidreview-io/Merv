@@ -5,6 +5,7 @@ import type {
   ReviewApplication,
   RunningNode,
   RunningPanelPart,
+  RunningUnitEntry,
   Transaction,
   WorkRoute,
 } from '@merv/contracts';
@@ -127,6 +128,8 @@ export interface Tasks {
   running(caller: Caller, include?: Iterable<string>): Promise<RunningNode[]>;
   /** A task's sidebar on the Running page; null when no task of this project has the id. Reads only. */
   runningPanel(caller: Caller, taskId: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
+  /** Its history alone, as its sidebar tells it, for its record page; empty for another id. */
+  history(caller: Caller, taskId: string): Promise<RunningUnitEntry[]>;
 }
 
 declare module 'cordis' {

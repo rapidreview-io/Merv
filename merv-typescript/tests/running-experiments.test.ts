@@ -369,6 +369,23 @@ test('an open experiment is a work card that says where it stands and what it wa
   assert.equal(await f.app.ctx.experiments.runningPanel(f.operator, 'session:unknown'), null);
 });
 
+test('an experiment’s record page reads its history alone, never the whole sidebar', async (t) => {
+  const f = await assembled(t);
+  const experiment = await f.design(await f.create('ablate-retrieval'));
+  const told = (await f.panel(work(experiment.id))).unit!.history;
+  const experiments = f.app.ctx.experiments as { runningPanel: unknown };
+  const panel = experiments.runningPanel;
+  experiments.runningPanel = () => assert.fail('the record page read the whole sidebar');
+  t.after(() => void (experiments.runningPanel = panel));
+  const read = await f.tool('ui.read', f.token, {
+    rowId: 'experiments',
+    params: { id: experiment.id },
+  });
+  assert.equal(read.status, 200, JSON.stringify(read.body));
+  assert.deepEqual(read.body.result.history, told);
+  assert.ok(told?.length);
+});
+
 test('a review state says who holds the review, and rounds used up need a person', async (t) => {
   const f = await assembled(t);
   let experiment = await f.design(await f.create('ablate-retrieval'));

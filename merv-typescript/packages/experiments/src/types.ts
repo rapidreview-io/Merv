@@ -3,6 +3,7 @@ import type {
   ReviewApplication,
   RunningNode,
   RunningPanelPart,
+  RunningUnitEntry,
   Transaction,
   WorkRoute,
 } from '@merv/contracts';
@@ -67,6 +68,8 @@ export interface Experiments {
   running(caller: Caller, include?: ReadonlySet<string>): Promise<RunningNode[]>;
   /** The sidebar of `work:<experimentId>`; null for any other key. */
   runningPanel(caller: Caller, key: string, route?: WorkRoute): Promise<RunningPanelPart | null>;
+  /** Its history alone, as its sidebar tells it, for its record page. */
+  history(caller: Caller, experimentId: string): Promise<RunningUnitEntry[]>;
   /** What the optional Code plugin holds for a Git experiment; null without it. */
   codeUnit(caller: Caller, experimentId: string): Promise<CodeUnit | null>;
   submitReview(caller: Caller, input: ExperimentReview, tx?: Transaction): Promise<Experiment>;

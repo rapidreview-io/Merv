@@ -570,6 +570,22 @@ test('a delivery’s post names every file it handed in, its report first', asyn
   assert.ok(!titles.includes(post!.artifact!.title), 'the report is not named twice');
 });
 
+test('a task’s record page reads its history alone, never the whole sidebar', async (t) => {
+  const f = await fixture(t);
+  const task = await f.create('Rebuild citation index');
+  await f.verdict(await f.deliver(task, 1), 'needs_changes');
+  const told = (await f.panel(task)).unit!.history;
+  // The record page's poll draws no sidebar of the task's.
+  const tasks = f.app.ctx.tasks as { runningPanel: unknown };
+  const panel = tasks.runningPanel;
+  tasks.runningPanel = () => assert.fail('the record page read the whole sidebar');
+  t.after(() => void (tasks.runningPanel = panel));
+  const read = await f.tool('ui.read', f.boot.token, { rowId: 'tasks', params: { id: task.id } });
+  assert.equal(read.status, 200, JSON.stringify(read.body));
+  assert.deepEqual(read.body.result.history, told);
+  assert.equal(told?.length, 3);
+});
+
 test('a key that is not a task of this project has no task sidebar', async (t) => {
   const f = await fixture(t);
   const experiment = await f.app.ctx.experiments.create(f.operator, {

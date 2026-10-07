@@ -10,6 +10,7 @@ import {
   type RunningPhrase,
   type RunningSection,
   type RunningUnit,
+  type RunningUnitEntry,
   type RunningUnitKey,
   type WorkRoute,
 } from '@merv/contracts';
@@ -243,6 +244,27 @@ export function experimentFileIds(
   return { ids: [...new Set(ids)], sessions: [...new Set(sessions)] };
 }
 
+/** The one document a submission handed in for its stage. */
+const handed = (submission: ExperimentSubmission | undefined) => {
+  const item = submission?.evidence.find((each) => each.role === HANDED[submission.stage]);
+  return item && named(item);
+};
+
+/** An experiment's history: each submission with what it handed in, each verdict and return. */
+export function experimentHistory(
+  experiment: Experiment,
+  graph: ProcessGraph,
+  reviews: readonly ReviewRequest[],
+): RunningUnitEntry[] {
+  const byReview = new Map(experiment.submissions.map((item) => [item.reviewId, item]));
+  return unitHistory({
+    graph,
+    reviews,
+    states: EXPERIMENT_STATES,
+    document: (review) => handed(byReview.get(review.id)),
+  });
+}
+
 /**
  * The experiment as a unit: its history, the one thing to read now, and its files. While it is
  * designed and its design reviewed, the thing to read is the newest design submitted, or the
@@ -256,17 +278,7 @@ export function experimentUnit(
   reviews: readonly ReviewRequest[],
   files: ExperimentFiles = { found: new Map() },
 ): RunningUnit {
-  const byReview = new Map(experiment.submissions.map((item) => [item.reviewId, item]));
-  const handed = (submission: ExperimentSubmission | undefined) => {
-    const item = submission?.evidence.find((each) => each.role === HANDED[submission.stage]);
-    return item && named(item);
-  };
-  const history = unitHistory({
-    graph,
-    reviews,
-    states: EXPERIMENT_STATES,
-    document: (review) => handed(byReview.get(review.id)),
-  });
+  const history = experimentHistory(experiment, graph, reviews);
   const verdicts = new Map(reviews.map((review) => [review.id, review]));
   const word = (submission: ExperimentSubmission) => reviewWord(verdicts.get(submission.reviewId));
   // Only the current attempt's: a plan revised starts again from its draft.
