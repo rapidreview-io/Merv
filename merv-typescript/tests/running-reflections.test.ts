@@ -611,3 +611,24 @@ test('on the board a session on a lens lands on its wave, and a mark on a lens c
   assert.deepEqual(asked, [keyOf(wave.id), ...lensKeys(wave)]);
   assert.deepEqual(sidebar.aliases, lensKeys(wave));
 });
+
+test('the wave sidebar draws its ladder without running any action’s check', async (t) => {
+  const f = await fixture(t);
+  const wave = await f.app.ctx.reflections.create(f.owner, {
+    title: 'Retrieval depth: reflection',
+    requestId: 'wave',
+  });
+  const workflows = f.app.ctx.workflows;
+  const process = workflows.process;
+  const asked: unknown[] = [];
+  workflows.process = async (caller, instanceId, options, tx) => {
+    asked.push(options);
+    return await process.call(workflows, caller, instanceId, options, tx);
+  };
+  try {
+    assert.ok(await f.app.ctx.reflections.runningPanel(f.owner, wave.id));
+  } finally {
+    workflows.process = process;
+  }
+  assert.deepEqual(asked, [{ checks: false }]);
+});

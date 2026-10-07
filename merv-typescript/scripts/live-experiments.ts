@@ -11,6 +11,7 @@ import type { CodeCapture } from '@merv/code-work/types';
 import { MachineRunner } from '@merv/runner';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { programVersion } from '@merv/experiments/program';
+import { introductionFrom } from '@merv/paper/rules';
 import { createApp } from '../src/app.js';
 import { useRunSchema } from './database.js';
 
@@ -369,7 +370,11 @@ try {
   // An owner-side check that the live record reads back what the program wrote. No model
   // claims to have performed Reflection, publication, or claim assessment.
   const records = await app.ctx.knowledge.records(source);
-  assert.ok((await app.ctx.paper.introduction(source)).text.includes(introduction.trim()));
+  assert.ok(
+    introductionFrom((await app.ctx.paper.documents(source)).problem.current).includes(
+      introduction.trim(),
+    ),
+  );
   assert.equal(records.experiments.length, 1);
   assert.deepEqual(records.experiments[0], final);
   if (gitProof) {

@@ -575,23 +575,27 @@ test("the list of paper sections left out never pushes a consumer's own evidence
   assert.ok(prompt.includes('paper:not-included'), 'what was left out is still named');
 });
 
-test('Paper serves the Introduction from the current Problem, at its revision, and Scope holds none', async (t) => {
+test('The Introduction is written from the current Problem, at its revision, and Scope holds none', async (t) => {
   const f = await fixture(t);
-  assert.deepEqual(await f.paper.introduction(f.reader), { revision: 0, text: '' });
+  const introduction = async () => {
+    const problem = (await f.paper.documents(f.reader)).problem.current;
+    return { revision: problem.revision, text: introductionFrom(problem) };
+  };
+  assert.deepEqual(await introduction(), { revision: 0, text: '' });
   const patch = async (changes: { id: string; content: string }[]) =>
     await f.paper.patch(f.producer, {
       kind: 'problem',
-      expectedRevision: (await f.paper.introduction(f.producer)).revision,
+      expectedRevision: (await f.paper.documents(f.producer)).problem.current.revision,
       requestId: f.request(),
       changes,
     });
   await patch([{ id: 'scope', content: '  ' }]);
-  assert.deepEqual(await f.paper.introduction(f.reader), { revision: 1, text: '' });
+  assert.deepEqual(await introduction(), { revision: 1, text: '' });
   await patch([
     { id: 'problem', content: 'Can this comparison be evaluated reliably?' },
     { id: 'goals', content: 'Retain independently verified evidence.' },
   ]);
-  assert.deepEqual(await f.paper.introduction(f.reader), {
+  assert.deepEqual(await introduction(), {
     revision: 2,
     text: '## Problem\n\nCan this comparison be evaluated reliably?\n\n## Goals\n\nRetain independently verified evidence.',
   });
@@ -602,7 +606,7 @@ test('Paper serves the Introduction from the current Problem, at its revision, a
     requestId: f.request(),
     changes: [{ id: 'm', title: 'M', content: 'Method' }],
   });
-  assert.equal((await f.paper.introduction(f.reader)).revision, 2);
+  assert.equal((await f.paper.documents(f.reader)).problem.current.revision, 2);
   assert.equal(
     introductionFrom({
       sections: [
@@ -616,4 +620,44 @@ test('Paper serves the Introduction from the current Problem, at its revision, a
   const project = await f.scope.project(f.operator);
   assert.deepEqual(Object.keys(project).sort(), ['createdAt', 'id', 'name']);
   assert.equal('updateProjectContext' in f.scope, false);
+});
+
+test('One document is read alone, as the whole paper reads it', async (t) => {
+  const f = await fixture(t);
+  await f.paper.patch(f.producer, {
+    kind: 'methods',
+    expectedRevision: 0,
+    requestId: f.request(),
+    changes: [{ id: 'm', title: 'M', content: 'Method' }],
+  });
+  const all = await f.paper.documents(f.reader);
+  const asked: string[][] = [];
+  const transaction = f.state.transaction.bind(f.state);
+  f.state.transaction = ((fn: Parameters<typeof transaction>[0]) =>
+    transaction((tx) => {
+      const { all } = tx;
+      Object.assign(tx, {
+        all: (sql: string, ...params: never[]) => (
+          sql.includes('paper_revisions') && asked.push(params),
+          all(sql, ...params)
+        ),
+      });
+      return fn(tx);
+    })) as typeof f.state.transaction;
+  try {
+    for (const kind of ['problem', 'literature', 'methods', 'results'] as const)
+      assert.deepEqual(await f.paper.document(f.reader, kind), all[kind]);
+  } finally {
+    f.state.transaction = transaction;
+  }
+  // Each read names its one kind and no other.
+  assert.deepEqual(
+    asked.map((params) =>
+      params.filter((value) => ['problem', 'literature', 'methods', 'results'].includes(value)),
+    ),
+    [['problem'], ['literature'], ['methods'], ['results']],
+  );
+  await assert.rejects(f.paper.document(f.reader, 'abstract' as never), {
+    code: 'invalid_paper_input',
+  });
 });

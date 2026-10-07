@@ -80,16 +80,6 @@ export interface PaperDocument {
   current: PaperRevision;
   published: { publication: PaperPublication; document: PaperRevision } | null;
 }
-/**
- * The project Introduction: what the project is, as its current Problem says it. A Problem not
- * yet written is revision 0 with empty text.
- */
-export interface PaperIntroduction {
-  /** The Problem revision it is written from, which work pins at its lease. */
-  revision: number;
-  /** Its filled sections in paper order, each under its own Markdown heading. */
-  text: string;
-}
 export interface PaperWorkspace {
   documents: Record<PaperKind, PaperDocument>;
   citations: PaperCitation[];

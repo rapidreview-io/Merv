@@ -65,7 +65,7 @@ test('Task contexts freeze the Problem at lease offer, carry it once, and retain
   });
   assert.equal(offered.assignment.context!.prompt.split('INTRO_AT_OFFER_731').length, 2);
   assert.equal(offered.assignment.context!.recipeHash, saved.recipeHash);
-  const pin = { id: boot.project.id, name: boot.project.name, contextRevision: 1 };
+  const pin = { ...boot.project };
   assert.deepEqual(offered.lease.receipt.project, pin);
   await problem('INTRO_AFTER_OFFER_942', 1);
   assert.deepEqual(
@@ -100,5 +100,5 @@ test('Task contexts freeze the Problem at lease offer, carry it once, and retain
   assert.match(freshWorkerContext.prompt, /INTRO_AT_OFFER_731/);
   assert.doesNotMatch(freshWorkerContext.prompt, /INTRO_AFTER_OFFER_942/);
   assert.equal(freshWorkerContext.recipeHash, saved.recipeHash);
-  assert.equal((await app.ctx.paper.introduction(source)).revision, 2);
+  assert.equal((await app.ctx.paper.documents(source)).problem.current.revision, 2);
 });

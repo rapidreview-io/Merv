@@ -154,18 +154,6 @@ export function contextType(
   return type;
 }
 
-/** The project, and the revision of the Problem Paper serves its Introduction from; the
- * paper's own items carry the Problem's text. */
-export async function projectContext(
-  ctx: TasksContext,
-  caller: Caller,
-  tx: Transaction,
-): Promise<Data> {
-  const project = await ctx.scope.project(caller, tx);
-  const { revision } = await ctx.paper.introduction(caller, tx);
-  return { id: project.id, name: project.name, contextRevision: revision };
-}
-
 /** The saved context and read-only workflow assignment use exactly the same recipe inputs. */
 export async function contextInputs(
   ctx: TasksContext,
@@ -201,17 +189,18 @@ export async function contextInputs(
     purpose === 'work'
       ? { ...work, ...(rendered ? {} : { acceptanceChecks }), workflow: { ...workflow, data } }
       : { ...rest, workflow: { ...workflow, data: reviewData } };
-  // Worker contexts retain the offer's Introduction and paper even if they later change.
+  // Worker contexts retain the offer's project and paper even if they later change; the
+  // paper's items carry the Problem, which is the project's Introduction.
   const receipt = caller.session
     ? await leaseReceipt(tx, await currentLease(ctx, caller, task.id, task.workflow.revision, tx))
     : null;
-  const project = receipt?.project ?? (await projectContext(ctx, caller, tx));
+  const project = receipt?.project ?? (await ctx.scope.project(caller, tx));
   const projectPaper = receipt
     ? (receipt.paper as unknown as ContextInput)
     : await ctx.paper.contextInput(caller, type.definition.recipe.maxChars, tx);
   const taskMetadata =
     JSON.stringify(assignmentTask) +
-    `\n\nProject Introduction (captured project context):\n${JSON.stringify(project)}`;
+    `\n\nProject (as pinned when this work was offered):\n${JSON.stringify(project)}`;
   let inputs: Record<string, Source>;
   if (purpose === 'review') {
     check(review, 'invalid_context', 'Missing review assignment');

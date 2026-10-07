@@ -588,8 +588,9 @@ export async function runningPanel(
       return { record, standing: facts, brief };
     });
     if (!read) return null;
-    // The ladder is Workflows' own read of this snapshot, so it runs after the one above.
-    const graph = await ctx.process(caller, taskId);
+    // The ladder is Workflows' own read of this snapshot, so it runs after the one above; it
+    // draws where the task stands, so no action's check runs.
+    const graph = await ctx.workflows.process(caller, taskId, { checks: false });
     // Every round of review, and the files each one pinned, for the history and its documents.
     const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
     const named = taskFileIds(read.record, reviews);

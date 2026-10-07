@@ -18,7 +18,7 @@ import type { WorkflowSnapshot } from '@merv/workflows/models';
 import type { TaskCheckpoint, TaskCheckpointInput } from './types.js';
 import type { TaskLeaseRow, TaskRow, TasksContext } from './index.js';
 import { serviceOwned } from './workflow.js';
-import { assignment, contextType, projectContext } from './context.js';
+import { assignment, contextType } from './context.js';
 import { reviewCommit } from './policy.js';
 
 // A task's lease hooks and checkpoints: who may hold the lease, what it pins and the checkpoints
@@ -174,7 +174,7 @@ export async function acquireLease(
     purpose,
     reviewId: review?.id ?? null,
     claimId: review?.claimId ?? null,
-    project: await projectContext(ctx, source, tx),
+    project: { ...(await ctx.scope.project(source, tx)) },
     paper: (await ctx.paper.contextInput(
       source,
       type.definition.recipe.maxChars,

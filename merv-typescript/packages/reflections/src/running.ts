@@ -419,24 +419,27 @@ export async function runningPanel(
   route?: WorkRoute,
 ): Promise<RunningPanelPart | null> {
   caller = structuredClone(caller);
-  const facts = await ctx.state.transaction(async (tx) => {
-    await ctx.read(caller, tx);
-    // Any other work key is another owner's, and a lens is drawn by its wave.
-    const wave = await tx.get<{ id: string }>(
-      'SELECT id FROM reflections WHERE id=? AND project_id=?',
-      id,
-      caller.projectId,
-    );
-    return wave ? await runningFacts(ctx, caller, id, tx) : null;
+  // One snapshot, so the wave, its ladder and its reviews are read as of one moment.
+  return await ctx.state.snapshot(async () => {
+    const facts = await ctx.state.transaction(async (tx) => {
+      await ctx.read(caller, tx);
+      // Any other work key is another owner's, and a lens is drawn by its wave.
+      const wave = await tx.get<{ id: string }>(
+        'SELECT id FROM reflections WHERE id=? AND project_id=?',
+        id,
+        caller.projectId,
+      );
+      return wave ? await runningFacts(ctx, caller, id, tx) : null;
+    });
+    if (!facts) return null;
+    // Workflows reads the ladder, where the wave stands, so no action's check runs to draw it,
+    // and Reviews every round of the synthesis's review, with the files each one pinned.
+    const graph = await ctx.workflows.process(caller, id, { checks: false });
+    const reviews = await ctx.reviews.list(caller, { subjectId: id });
+    const ids = [...new Set(reviews.flatMap((review) => review.artifactIds))];
+    const pinned = ids.length
+      ? await ctx.state.transaction(async (tx) => await ctx.artifacts.find(caller, ids, tx))
+      : new Map<string, Artifact>();
+    return wavePanel({ ...facts, reviews, pinned }, graph, route);
   });
-  if (!facts) return null;
-  // Workflows reads the ladder in a transaction of its own, as it does for Tasks.process, and
-  // Reviews every round of the synthesis's review, with the files each one pinned.
-  const graph = await ctx.workflows.process(caller, id);
-  const reviews = await ctx.reviews.list(caller, { subjectId: id });
-  const ids = [...new Set(reviews.flatMap((review) => review.artifactIds))];
-  const pinned = ids.length
-    ? await ctx.state.transaction(async (tx) => await ctx.artifacts.find(caller, ids, tx))
-    : new Map<string, Artifact>();
-  return wavePanel({ ...facts, reviews, pinned }, graph, route);
 }

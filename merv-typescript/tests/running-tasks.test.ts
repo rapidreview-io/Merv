@@ -692,3 +692,22 @@ test('a task that needs a person says so in the order that decides it', () => {
   assert.equal(long.length, 200);
   assert.ok(long.endsWith('…'));
 });
+
+test('the sidebar draws its ladder without running any action’s check', async (t) => {
+  const f = await fixture(t);
+  const task = await f.create('Rebuild citation index');
+  await f.deliver(task);
+  const workflows = f.app.ctx.workflows;
+  const process = workflows.process;
+  const asked: unknown[] = [];
+  workflows.process = async (caller, instanceId, options, tx) => {
+    asked.push(options);
+    return await process.call(workflows, caller, instanceId, options, tx);
+  };
+  try {
+    assert.equal((await f.panel(task)).sections[0]?.kind, 'ladder');
+  } finally {
+    workflows.process = process;
+  }
+  assert.deepEqual(asked, [{ checks: false }]);
+});

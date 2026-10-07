@@ -1199,3 +1199,40 @@ test('guidance never offers a person the results submission only the attempt’s
   assert.equal(action.status, 'blocked');
   assert.ok(action.blockers.some((blocker) => blocker.code === 'session_required'));
 });
+
+test('experiments.list reads each table once however many experiments there are', async (t) => {
+  const f = await fixture(t);
+  let made = 0;
+  const statements = async (count: number) => {
+    for (; made < count; made++) {
+      const experiment = await f.create(`Listed-${made}`);
+      if (made % 2) await f.transition(experiment, 'abandon', { evidence: { reason: 'Filler.' } });
+    }
+    let issued = 0;
+    const transaction = f.state.transaction.bind(f.state);
+    f.state.transaction = ((fn: Parameters<typeof transaction>[0]) =>
+      transaction((tx) => {
+        const { run, get, all } = tx;
+        Object.assign(tx, {
+          run: (...args: Parameters<typeof run>) => (issued++, run(...args)),
+          get: (...args: Parameters<typeof get>) => (issued++, get(...args)),
+          all: (...args: Parameters<typeof all>) => (issued++, all(...args)),
+        });
+        return fn(tx);
+      })) as typeof f.state.transaction;
+    try {
+      const listed = await f.experiments.list(f.reader);
+      assert.equal(listed.length, count);
+    } finally {
+      f.state.transaction = transaction;
+    }
+    return issued;
+  };
+  const few = await statements(2);
+  const many = await statements(6);
+  assert.equal(many, few, `${few} statements for 2 experiments, ${many} for 6`);
+  // Each one is what get reads, in creation order.
+  const listed = await f.experiments.list(f.reader);
+  for (const experiment of listed)
+    assert.deepEqual(experiment, await f.experiments.get(f.reader, experiment.id));
+});

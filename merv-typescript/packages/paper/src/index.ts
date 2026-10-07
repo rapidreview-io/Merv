@@ -17,6 +17,7 @@ import type {
   Paper,
   PaperCitation,
   PaperCite,
+  PaperDocument,
   PaperKind,
   PaperPatch,
   PaperChanges,
@@ -26,11 +27,10 @@ import type {
   PaperWorkspace,
   PaperReview,
   PaperEdit,
-  PaperIntroduction,
 } from './types.js';
 import { changesSchema, citeSchema, kind, parse, patchSchema, reviewSchema } from './input.js';
 import { paperInput } from './context.js';
-import { introductionFrom, PROBLEM_SECTIONS } from './rules.js';
+import { PROBLEM_SECTIONS } from './rules.js';
 import { postgresMigrations } from './storage.postgres.js';
 export type * from './types.js';
 const kinds: PaperKind[] = ['problem', 'literature', 'methods', 'results'];
@@ -99,19 +99,35 @@ export class PaperService implements Paper {
     });
   }
   async documents(caller: Caller, transaction?: Transaction): Promise<PaperWorkspace['documents']> {
+    return (await this.documentsOf(caller, kinds, transaction)) as PaperWorkspace['documents'];
+  }
+  async document(
+    caller: Caller,
+    documentKind: PaperKind,
+    transaction?: Transaction,
+  ): Promise<PaperDocument> {
+    parse(kind, documentKind);
+    return (await this.documentsOf(caller, [documentKind], transaction))[documentKind]!;
+  }
+  /** Each of `of`'s documents: its newest revision, newest publication and that revision. */
+  private async documentsOf(
+    caller: Caller,
+    of: PaperKind[],
+    transaction?: Transaction,
+  ): Promise<Partial<PaperWorkspace['documents']>> {
     caller = this.capture(caller);
     return await inTransaction(this.state, transaction, async (tx) => {
       await this.scope.require(caller, 'read', tx);
-      // In `kinds` order: each kind's newest revision, newest publication and its revision.
+      // In `of` order: each kind's newest revision, newest publication and its revision.
       const rows = await tx.all<
         { kind: PaperKind } & Record<'current' | 'publication' | 'published', string | null>
       >(
         `SELECT k.kind,c.record AS current,p.record AS publication,r.record AS published
-         FROM (VALUES ${kinds.map((_, n) => `(?,${n})`).join(',')}) k(kind,n)
+         FROM (VALUES ${of.map((_, n) => `(?,${n})`).join(',')}) k(kind,n)
          LEFT JOIN LATERAL (SELECT record FROM paper_revisions WHERE project_id=? AND kind=k.kind ORDER BY revision DESC LIMIT 1) c ON true
          LEFT JOIN LATERAL (SELECT revision,record FROM paper_publications WHERE project_id=? AND kind=k.kind ORDER BY _merv_rowid DESC LIMIT 1) p ON true
          LEFT JOIN paper_revisions r ON r.project_id=? AND r.kind=k.kind AND r.revision=p.revision ORDER BY k.n`,
-        ...kinds,
+        ...of,
         ...Array<string>(3).fill(caller.projectId),
       );
       return Object.fromEntries(
@@ -124,15 +140,7 @@ export class PaperService implements Paper {
               : null,
           },
         ]),
-      ) as PaperWorkspace['documents'];
-    });
-  }
-  async introduction(caller: Caller, transaction?: Transaction): Promise<PaperIntroduction> {
-    caller = this.capture(caller);
-    return await inTransaction(this.state, transaction, async (tx) => {
-      await this.scope.require(caller, 'read', tx);
-      const problem = await this.current(caller, 'problem', tx);
-      return { revision: problem.revision, text: introductionFrom(problem) };
+      );
     });
   }
   async history(
