@@ -92,7 +92,7 @@ export class ManagedRunnerBindings {
     return !!this.validator;
   }
   serves(projectId: string): boolean {
-    return !!this.validator?.serves?.(projectId);
+    return !!this.validator?.serves(projectId);
   }
   registerValidator(validator: ManagedRunnerValidator): () => void {
     this.available();
@@ -570,12 +570,7 @@ export class ManagedRunnerBindings {
     ));
   }
   async sources(row: ManagedBindingRow, tx: Transaction): Promise<Caller[]> {
-    check(
-      this.validator?.assignmentSources,
-      'managed_unavailable',
-      'Work host directors unavailable',
-      503,
-    );
+    check(this.validator, 'managed_unavailable', 'Work host directors unavailable', 503);
     const sources = await this.validator.assignmentSources(this.identity(row), tx);
     check(
       sources.length <= 2 && sources.every((source) => source.projectId === row.project_id),
@@ -668,7 +663,7 @@ export class ManagedRunnerBindings {
   async stranded(sessionId: string, tx: Transaction): Promise<boolean | undefined> {
     const row = await tx.get<ManagedBindingRow>(boundTo, sessionId, sessionId);
     if (!row || !this.validator || (await this.validator.current(this.identity(row), tx))) return;
-    return !!(await this.validator.retired?.(this.identity(row), tx));
+    return await this.validator.retired(this.identity(row), tx);
   }
   async inspect(
     allocationId: string,

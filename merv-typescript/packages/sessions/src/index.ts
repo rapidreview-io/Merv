@@ -517,15 +517,8 @@ export class LeasedSessions implements Sessions {
     };
   }
   private decode(row: Row): Session {
-    // The column, never the JSON: a session stored before threads names its agent there, which
-    // the next save drops.
-    const {
-      agentId: _agent,
-      agentSessionId: _agentSession,
-      contextEpoch: _epoch,
-      ...stored
-    } = JSON.parse(row.session_json);
-    const session: Session = { ...stored, threadId: row.thread_id };
+    // The thread is the column's: the JSON never holds it.
+    const session: Session = { ...JSON.parse(row.session_json), threadId: row.thread_id };
     if (row.attachment_json !== null)
       session.workspace = {
         attachment: JSON.parse(row.attachment_json),
@@ -1937,26 +1930,19 @@ export class LeasedSessions implements Sessions {
 }
 export const sessionsPlugin = {
   name: 'merv-sessions',
-  inject: ['state', 'scope', 'workflows', 'domainEvents'],
+  inject: ['state', 'scope', 'workflows', 'domainEvents', 'blobs'],
   async apply(ctx: Context, config: SessionsConfig = {}) {
     await ctx.effect(async function* () {
       const sessions = await createService(
         new LeasedSessions(ctx.state, ctx.scope, ctx.workflows, ctx.domainEvents, config),
       );
+      // Transcripts and conversations go to the object store.
+      sessions.transcripts.blobs = sessions.threads.blobs = ctx.blobs;
       yield async () => await sessions.close();
       // Without these registrations the tool registry refuses every session and managed caller.
       ctx.inject(['tools'], (ctx) => {
         ctx.effect(() => ctx.tools.registerSessionPolicy(sessions.invocations));
         ctx.effect(() => ctx.tools.registerCallerRules('managed', managedRunnerRules));
-      });
-      // Transcripts go to the object store; while Blobs is unloaded a runner is told to retry.
-      ctx.inject(['blobs'], (ctx) => {
-        ctx.effect(() => {
-          sessions.transcripts.blobs = sessions.threads.blobs = ctx.blobs;
-          return () => {
-            sessions.transcripts.blobs = sessions.threads.blobs = undefined;
-          };
-        });
       });
       ctx.inject(['secrets'], (ctx) => {
         ctx.effect(() => {

@@ -44,6 +44,9 @@ async function fixture(t: TestContext) {
       binding.epoch === 1 &&
       binding.source.actorId === owner.actorId,
     admits: async () => true,
+    serves: () => false,
+    retired: async () => false,
+    assignmentSources: async (binding) => [binding.source],
   });
   const enrollment = await app.ctx.sessions.managed.ensure({
     allocationId: 'allocation-api',

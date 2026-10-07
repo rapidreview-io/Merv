@@ -1,8 +1,8 @@
 # Sessions
 
 Agent identity, authenticated sessions, and assignment execution lifecycle. The provider injects
-`state`, `scope`, `workflows`, `domainEvents`, and registers its session tool policy with `tools` whenever a tool
-registry is loaded. It stores [transcripts](#transcripts) through `blobs` whenever Blobs is loaded, and is Secrets'
+`state`, `scope`, `workflows`, `domainEvents` and `blobs`, and registers its session tool policy with `tools` whenever a tool
+registry is loaded. It stores [transcripts](#transcripts) and conversations through `blobs`, and is Secrets'
 authority for [Hugging Face access](#private-account-credential-delivery) whenever Secrets is loaded. Session and
 managed-runner credentials live in Identity's credential store (`@merv/identity/credentials`). What a runner
 advertises (`RUNNER_HARNESSES`, the platform and capability schemas, session statuses) is the pure-rules module
@@ -126,7 +126,7 @@ The runner that held a session keeps one copy of what the agent process printed,
 - Only the runner that held the session may call it, live or closed: the source credential with the session's owner and `runnerId`, or the managed runner (`mr_`) bound to it. `hostRef` must be the attached host (409 `host_conflict`).
 - Without `deliver`, the call declares the file: the first declaration is recorded in `session_transcripts` and every later one must repeat it (409 `transcript_conflict`). It does no store I/O.
 - With `deliver: true`, one HEAD at `transcripts-<projectId>/<sha256>`: bytes of the declared size stamp `uploaded_at` once; nothing stored answers a signed PUT in `upload` (`url`, `headers`, `expiresAt`; 1 h, exact size, SHA-256 checksum, `If-None-Match: *`); another size is 409 `transcript_mismatch`. A stamped row is answered as it is.
-- Blobs not loaded, or a failed HEAD, is 503 `blob_unavailable`, which a runner retries. A store that cannot sign uploads (disk blobs) is 409 `transcripts_unsupported`, and nothing is recorded.
+- A failed HEAD is 503 `blob_unavailable`, which a runner retries. A store that cannot sign uploads (disk blobs) is 409 `transcripts_unsupported`, and nothing is recorded.
 
 Sessions trusts the runner for the four file facts only; every other column comes from the session it holds. `hostname` is the dispatching runner's presence at declaration (none for a hand offer). The row is write-once: a trigger refuses any delete and any change but the one stamp. Byte-identical transcripts in one project share one object. A caller with the same owner, runner and host could declare first; that is the same trust as a workspace result. Transcripts are kept forever; the per-project prefix allows a per-project purge or lifecycle rule. On AWS S3 the store credential needs `s3:ListBucket`, or a missing key HEADs as 403 and every delivery answers 503 (R2 answers 404). A retirement migration that deletes worker sessions must first delete their `session_transcripts` rows with `session_transcripts_immutable` disabled.
 

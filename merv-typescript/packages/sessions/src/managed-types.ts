@@ -19,14 +19,14 @@ export type ManagedRunnerValidator = {
   current(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
   admits(allocationId: string, epoch: number, tx: Transaction): Promise<boolean>;
   /** Whether its last look rented machines for this project's automatic work. */
-  serves?(projectId: string): boolean;
+  serves(projectId: string): boolean;
   /** Trusted phase directors; host registration and billing remain under its original source. */
-  assignmentSources?(
+  assignmentSources(
     binding: ManagedRunnerBindingIdentity,
     tx: Transaction,
   ): Promise<DelegationSource[]>;
   /** A machine no longer current because a release retired its image, not for any fault. */
-  retired?(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
+  retired(binding: ManagedRunnerBindingIdentity, tx: Transaction): Promise<boolean>;
   /** Whether this machine's image brokers Hugging Face downloads; without it, none does. */
   huggingFace?(binding: ManagedRunnerBindingIdentity): boolean;
 };

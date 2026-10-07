@@ -26,9 +26,8 @@ const view = (row: Row): SessionTranscript => ({
 
 type Uploads = Required<Pick<Blobs, 'upload' | 'stored'>>;
 /** Blobs that take a session's transcript or conversation, or why they cannot. */
-export function uploads(blobs: Blobs | undefined, kind: 'transcript' | 'conversation'): Uploads {
+export function uploads(blobs: Blobs, kind: 'transcript' | 'conversation'): Uploads {
   const name = `${kind[0]!.toUpperCase()}${kind.slice(1)} storage`;
-  check(blobs, 'blob_unavailable', `${name} is not loaded`, 503);
   check(blobs.upload && blobs.stored, `${kind}s_unsupported`, `${name} takes no uploads`, 409);
   return blobs as Uploads;
 }
@@ -57,8 +56,8 @@ export async function deliver(
 
 /** The one copy of what a worker's process printed, kept for operators; nothing in Merv reads it back. */
 export class SessionTranscripts {
-  /** Late-bound like `tools`: unbound while Blobs loads or reloads. */
-  blobs?: Blobs;
+  /** Bound once, as Sessions is provided. */
+  blobs!: Blobs;
   constructor(
     private state: State,
     private clock: () => number,

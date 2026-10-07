@@ -877,6 +877,8 @@ async function rent(f: Awaited<ReturnType<typeof fixture>>) {
   f.sessions.managed.registerValidator({
     current: async () => true,
     admits: async () => true,
+    serves: () => false,
+    retired: async () => false,
     assignmentSources: async (binding) => [binding.source],
   });
 

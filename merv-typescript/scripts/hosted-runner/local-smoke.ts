@@ -90,6 +90,8 @@ try {
       binding.source.projectId === caller.projectId &&
       binding.source.actorId === caller.actorId,
     admits: async (id, epoch) => id === allocationId && epoch === 1,
+    serves: () => false,
+    retired: async () => false,
     assignmentSources: async (binding) => [binding.source],
   });
   if (!modelApiKey) {

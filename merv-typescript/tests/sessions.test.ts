@@ -1699,10 +1699,15 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
   });
   const before = await f.sessions.get(f.source, live.id);
   const sha256 = 'a'.repeat(64);
-  // Back to the tables production holds before sessions@13: agentId in each session's JSON, the
+  // Back to the tables production holds before sessions@13 (and @14): agentId in each session's JSON, the
   // key's latest closed session in session_conversations, no thread anywhere.
   await f.state.transaction(async (tx) => {
     await tx.run(`
+      DROP TABLE session_questions;
+      DROP FUNCTION session_questions_guard();
+      ALTER TABLE session_messages DROP CONSTRAINT session_messages_addressed;
+      ALTER TABLE session_messages DROP COLUMN thread_id;
+      ALTER TABLE session_messages ALTER COLUMN session_id SET NOT NULL;
       DROP TRIGGER worker_sessions_thread_immutable ON worker_sessions;
       DROP FUNCTION worker_sessions_thread_immutable_guard();
       CREATE FUNCTION worker_sessions_agent_immutable_guard() RETURNS trigger LANGUAGE plpgsql AS $g$ BEGIN RETURN NEW; END $g$;
@@ -1721,7 +1726,7 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       ALTER TABLE worker_sessions DROP COLUMN thread_id;
       DROP TABLE session_threads;
       INSERT INTO component_migrations VALUES('agents',1,'legacy'),('session_conversations',1,'legacy');
-      DELETE FROM component_migrations WHERE component='sessions' AND version=13;`);
+      DELETE FROM component_migrations WHERE component='sessions' AND version IN (13,14);`);
     // Agents no session ever visited: a persistent one, with a token of its own, and one whose
     // offer never landed. Production holds 694; they stay attribution history in Scope.
     for (const [id, active, tokenHash, persistent] of [
@@ -1795,6 +1800,10 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
       unvisited: await sql.all(
         "SELECT id,active,agent_id FROM actors WHERE id LIKE 'actor_agent_%' ORDER BY id",
       ),
+      // sessions@14 strips the agent from every stored session once; a read no longer does.
+      agentEra: await sql.get(
+        "SELECT count(*)::int AS n FROM worker_sessions WHERE session_json::jsonb->'agentId' IS NOT NULL",
+      ),
     })),
     {
       tables: { agents: null, conversations: null },
@@ -1806,6 +1815,7 @@ test('upgrading agents to threads keeps a live execution, a dormant conversation
         { id: 'actor_agent_persistent', active: 1, agent_id: 'agent_persistent' },
         { id: 'actor_agent_unlanded', active: 0, agent_id: 'agent_unlanded' },
       ],
+      agentEra: { n: 0 },
     },
   );
   // The live execution reads and authenticates as it did, as its thread's actor.

@@ -10,12 +10,6 @@ import type { RunnerPlatform } from '@merv/contracts/types';
 const harnesses: Record<RunnerPlatform['harness'], true> = {
   codex: true,
   claude: true,
-  gemini: true,
-  cursor: true,
-  opencode: true,
-  copilot: true,
-  qwen: true,
-  hermes: true,
   command: true,
 };
 /** Every harness a runner platform may name. */

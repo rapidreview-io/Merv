@@ -256,6 +256,7 @@ async function fixture(
   const validator: Parameters<LeasedSessions['managed']['registerValidator']>[0] = {
     current: async (binding) => current && binding.runtimeProfileId === 'codex-profile',
     admits: async () => admits,
+    serves: () => false,
     retired: async () => retired,
     huggingFace: () => huggingFace,
     assignmentSources: async (binding) => [

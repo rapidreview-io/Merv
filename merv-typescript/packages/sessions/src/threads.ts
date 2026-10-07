@@ -77,8 +77,8 @@ type Room = { events: number; bytes: number };
  * that waited longer than `dormantMs`, or whose resume its harness could not take up, is retired.
  */
 export class SessionThreads {
-  /** Late-bound like transcripts'. */
-  blobs?: Blobs;
+  /** Bound once, as Sessions is provided. */
+  blobs!: Blobs;
   private readonly providers = new Map<string, ContinuityProvider>();
   constructor(
     private state: State,
@@ -345,7 +345,12 @@ export class SessionThreads {
   /** The signed GET of what a live session resumes, for the runner that attached it. */
   async download(caller: Caller, input: SessionControl & { hostRef: string }) {
     const blobs = this.blobs;
-    check(blobs?.download, 'blob_unavailable', 'Conversation storage is not loaded', 503);
+    check(
+      blobs.download,
+      'conversations_unsupported',
+      'Conversation storage takes no downloads',
+      409,
+    );
     const session = await readFirst(this.state, (tx) =>
       this.host.controlled(caller, input.sessionId, input.runnerId, tx),
     );
@@ -555,7 +560,7 @@ export class SessionThreads {
     if (from === 'stream')
       return { sessionId, from, events: newest(await this.host.stream(sessionId), room) };
     const blobs = this.blobs;
-    check(blobs?.download, 'blob_unavailable', 'Transcript storage is not loaded', 503);
+    check(blobs.download, 'transcripts_unsupported', 'Transcript storage takes no downloads', 409);
     const size = Number(visit.size);
     const { url } = await blobs.download(`transcripts-${visit.project_id}`, visit.sha256!, size);
     // Only the transcript's end: a ranged GET of its signed download.

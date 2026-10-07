@@ -31,7 +31,16 @@ async function fixture(t: TestContext) {
   const config = JSON.parse(
     readFileSync(new URL('../config/default.json', import.meta.url), 'utf8'),
   ) as ApplicationConfig;
-  const keep = ['state', 'domain-events', 'scope', 'workflows', 'identity', 'api', 'tools'];
+  const keep = [
+    'state',
+    'domain-events',
+    'scope',
+    'workflows',
+    'identity',
+    'api',
+    'tools',
+    'blobs',
+  ];
   config.plugins = config.plugins.flatMap((plugin) =>
     plugin.id === 'sessions'
       ? [{ ...plugin, config: { managedSecretEnv: env, sweepIntervalMs: 60_000 } }]

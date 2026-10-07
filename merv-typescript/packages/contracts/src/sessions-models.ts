@@ -25,16 +25,8 @@ export interface SessionWorkspace {
 
 export interface RunnerPlatform {
   name: string;
-  harness:
-    | 'codex'
-    | 'claude'
-    | 'gemini'
-    | 'cursor'
-    | 'opencode'
-    | 'copilot'
-    | 'qwen'
-    | 'hermes'
-    | 'command';
+  /** The harnesses a runner has a profile for. */
+  harness: 'codex' | 'claude' | 'command';
   model?: string;
   effort?: string;
   enabled: boolean;
