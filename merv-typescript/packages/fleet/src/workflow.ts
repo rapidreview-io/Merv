@@ -812,7 +812,6 @@ export const fleetWorkflowPlugin = {
       providerKey: () => process.env[adapter.config.modelApiKeyEnv] ?? '',
       dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
       authorize: (token) => adapter.modelGrant(token),
-      inquiries: ctx.sessions.inquiries,
     });
     ctx.effect(() => {
       const model = ctx.fleet.modelRelay(relay);

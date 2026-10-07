@@ -606,6 +606,12 @@
       "published": true
     },
     {
+      "component": "fleet_workflow",
+      "version": 5,
+      "hash": "e1fe53ba3d62222440337174667c499921c4a208c15c68c2db9e39502288a397",
+      "published": false
+    },
+    {
       "component": "session_service_work",
       "version": 1,
       "hash": "3926794066e21646b403382a4a7e5da3e3745208cb6615f643c475c2d2a4f6e2",
@@ -1042,6 +1048,12 @@
       "component": "sessions",
       "version": 18,
       "hash": "510c657060dc28c4ea42267e8493dbdf202e5b117df37d78f732b0a5b79069a4",
+      "published": false
+    },
+    {
+      "component": "sessions",
+      "version": 19,
+      "hash": "d1b1b8a0cd5b8913bc41f08d623ceaa6316677e71a054c2dcbf35ccabef78705",
       "published": false
     }
   ]

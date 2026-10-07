@@ -128,6 +128,12 @@ interface SessionVisit {
   workspace?: SessionWorkspaceRecord;
   /** Set at the offer and frozen with it, where the session's conversation may be continued. */
   continuity?: SessionContinuity;
+  /**
+   * The model tokens this visit may spend, where it has a budget of its own: Fleet's model relay
+   * charges each hosted call to it, and a machine of the owner's stops the visit once what its
+   * agent printed of its spend passes it.
+   */
+  tokenBudget?: number;
 }
 /** A work visit: it holds the step's lease, under the execution its workflow froze for it. */
 export interface WorkSession extends SessionVisit {
@@ -155,13 +161,11 @@ export type InquiryExecution = Omit<
 >;
 /** A thread's visit, of its work or answering a question to it (`kind`). */
 export type Session = WorkSession | InquirySession;
-/** What an inquiry visit answers: its inquiry, the question's message and who asked, and the
- *  model tokens it may spend, which its runner or Fleet's model relay holds it to. */
+/** What an inquiry visit answers: its inquiry, the question's message and who asked. */
 export interface SessionInquiryRef {
   id: string;
   messageId: string;
   askedBy: string;
-  tokenBudget: number;
 }
 /** The conversation a session continues: the one its key's latest closed session kept. */
 export interface SessionResume {
@@ -555,11 +559,6 @@ export interface SessionInquiries {
    * conversation read-only, and its reply lands on the question's message in the thread.
    */
   ask(caller: Caller, input: ThreadInquiryInput): Promise<ThreadInquiry>;
-  /** Server-only, for a model relay: charge `tokens` to an inquiry visit's budget, false when it
-   *  would pass it. Any other session is not limited here (true). */
-  reserve(sessionId: string, tokens: number): Promise<boolean>;
-  /** Server-only: correct what `reserve` charged by `delta` once the call's usage is known. */
-  settle(sessionId: string, delta: number): Promise<void>;
 }
 export interface SessionInvocationPolicy {
   readonly instructions: string;

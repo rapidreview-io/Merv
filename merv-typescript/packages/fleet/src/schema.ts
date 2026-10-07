@@ -99,9 +99,19 @@ export const workflowRetryMigration = {
   CREATE TRIGGER fleet_workflow_retry_no_delete BEFORE DELETE ON fleet_workflow_retry_grants
     FOR EACH ROW EXECUTE FUNCTION fleet_workflow_retry_immutable();`,
 };
+/** What each session with a budget of its own (a grant's `tokenBudget`) has spent, charged call
+ *  by call beside its person's day. A new table: no prod count. */
+export const grantTokensMigration = {
+  version: 5,
+  sql: `CREATE TABLE fleet_grant_tokens (
+    grant_id TEXT PRIMARY KEY,
+    tokens BIGINT NOT NULL CHECK (tokens >= 0)
+  );`,
+};
 export const modelMigrations = [
   usageMigration,
   limitsMigration,
   blockerMigration,
   workflowRetryMigration,
+  grantTokensMigration,
 ];

@@ -24,16 +24,19 @@ import type {
 export const INQUIRY_WAIT_MS = 10 * 60_000;
 /** An inquiry visit's hard deadline from its offer: a short answer, never work. */
 export const INQUIRY_VISIT_SECONDS = 10 * 60;
-/**
- * The model tokens one inquiry visit may spend, charged to the person who asked: Fleet's relay
- * holds a hosted visit to it call by call, and a runner's report counts against it after.
- */
+/** The model tokens one inquiry visit may spend besides resending its conversation. */
 export const INQUIRY_TOKENS = 300_000;
+/** How many model calls' worth of its conversation an inquiry visit may resend: each call of a
+ *  resumed conversation carries all of it, and an answer takes a call or a few. */
+const INQUIRY_RESENDS = 4;
 /**
  * The model tokens one person's questions may spend in a day, wherever they ran: each counts
- * what its runner or the relay reported, and one still waiting or running its whole budget.
+ * what its runner reported, and one still waiting, running or unreported its whole budget.
  */
 export const INQUIRY_DAILY_TOKENS = 2_000_000;
+/** An inquiry's budget for a conversation of `size` bytes (about four to a token), within a day's. */
+const inquiryBudget = (size: number) =>
+  Math.min(INQUIRY_DAILY_TOKENS, INQUIRY_TOKENS + INQUIRY_RESENDS * Math.ceil(size / 4));
 
 interface InquiryRow {
   id: string;
@@ -50,7 +53,6 @@ interface InquiryRow {
   session_id: string | null;
   ended_at: string | null;
   token_budget: number | string;
-  tokens: number | string;
   /** Joined from its thread. */
   instance_id: string;
 }
@@ -68,7 +70,6 @@ const view = (row: InquiryRow): ThreadInquiry => ({
   sessionId: row.session_id,
   endedAt: row.ended_at,
   tokenBudget: Number(row.token_budget),
-  tokens: Number(row.tokens),
 });
 
 /** A queued question a machine may take now, with what its visit is built from. */
@@ -153,12 +154,8 @@ export function inquirySession(input: {
     },
     execution: { ...step, policy: { readOnly: true, tools: [] } },
     continuity: { key: candidate.continuityKey, resume: candidate.resume },
-    inquiry: {
-      id: candidate.id,
-      messageId: candidate.messageId,
-      askedBy: candidate.askedBy,
-      tokenBudget: candidate.tokenBudget,
-    },
+    tokenBudget: candidate.tokenBudget,
+    inquiry: { id: candidate.id, messageId: candidate.messageId, askedBy: candidate.askedBy },
   };
 }
 
@@ -239,9 +236,10 @@ export class Inquiries implements SessionInquiries {
         project_id: string;
         instance_id: string;
         sha256: string | null;
+        size: number | string | null;
         uploaded_at: string | null;
       }>(
-        'SELECT id,project_id,instance_id,sha256,uploaded_at FROM session_threads WHERE id=?',
+        'SELECT id,project_id,instance_id,sha256,size,uploaded_at FROM session_threads WHERE id=?',
         input.threadId,
       );
       check(
@@ -267,15 +265,20 @@ export class Inquiries implements SessionInquiries {
         409,
       );
       const now = this.clock();
+      const budget = inquiryBudget(Number(thread.size ?? 0));
+      // What its visits spent is in Sessions' one usage ledger, as its runners reported it; one
+      // still open, or that ran with no report, counts its whole budget.
       const day = await tx.get<{ spent: number | string }>(
-        `SELECT COALESCE(SUM(CASE WHEN status IN ('queued','running') THEN GREATEST(tokens,token_budget) ELSE tokens END),0) AS spent
-          FROM session_inquiries WHERE project_id=? AND asker_actor_id=? AND asked_at>?`,
+        `SELECT COALESCE(SUM(CASE WHEN i.status IN ('queued','running') OR (u.started_at IS NOT NULL AND u.reported_at IS NULL)
+            THEN i.token_budget ELSE COALESCE(u.input_tokens,0)+COALESCE(u.output_tokens,0) END),0) AS spent
+          FROM session_inquiries i LEFT JOIN session_usage u ON u.session_id=i.session_id
+          WHERE i.project_id=? AND i.asker_actor_id=? AND i.asked_at>?`,
         caller.projectId,
         caller.actorId,
         new Date(now - 86_400_000).toISOString(),
       );
       check(
-        Number(day?.spent ?? 0) + INQUIRY_TOKENS <= INQUIRY_DAILY_TOKENS,
+        Number(day?.spent ?? 0) + budget <= INQUIRY_DAILY_TOKENS,
         'inquiry_tokens_spent',
         'Your questions to agents have spent their model tokens for the last day; ask again later',
         429,
@@ -314,7 +317,7 @@ export class Inquiries implements SessionInquiries {
         fingerprint,
         at,
         new Date(now + INQUIRY_WAIT_MS).toISOString(),
-        INQUIRY_TOKENS,
+        budget,
       );
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
@@ -480,40 +483,6 @@ export class Inquiries implements SessionInquiries {
       "UPDATE session_inquiries SET status='expired',ended_at=? WHERE status='queued' AND wait_until<=?",
       at,
       at,
-    );
-  }
-  /** What a runner reported its visit spent, counted against the budget once known. */
-  async reported(tx: Transaction, sessionId: string, tokens: number): Promise<void> {
-    await tx.run(
-      'UPDATE session_inquiries SET tokens=GREATEST(tokens,?) WHERE session_id=?',
-      tokens,
-      sessionId,
-    );
-  }
-  async reserve(sessionId: string, tokens: number): Promise<boolean> {
-    check(Number.isSafeInteger(tokens) && tokens >= 0, 'invalid_input', 'Tokens are a count', 400);
-    return await this.state.transaction(async (tx) => {
-      const row = await tx.get<{ id: string }>(
-        'SELECT id FROM session_inquiries WHERE session_id=?',
-        sessionId,
-      );
-      if (!row) return true;
-      return !!(await tx.get(
-        'UPDATE session_inquiries SET tokens=tokens+? WHERE id=? AND tokens+?<=token_budget RETURNING id',
-        tokens,
-        row.id,
-        tokens,
-      ));
-    });
-  }
-  async settle(sessionId: string, delta: number): Promise<void> {
-    check(Number.isSafeInteger(delta), 'invalid_input', 'A token correction is a count', 400);
-    await this.state.transaction((tx) =>
-      tx.run(
-        'UPDATE session_inquiries SET tokens=GREATEST(0,tokens+?) WHERE session_id=?',
-        delta,
-        sessionId,
-      ),
     );
   }
   /** An inquiry visit's question and asker, for its message reads and its relay grant. */

@@ -829,13 +829,13 @@ export class LeasedSessions implements Sessions {
       ));
     if (credential && !managedHandoff)
       await this.credentials.revoke(credential.token_hash, 'sessions', tx);
+    await recordUsage(tx, session);
     // An inquiry visit counts against no work and leaves its thread exactly as it was: its
     // conversation, status and latest visit. Its question is answered, or not.
     if (session.inquiry) {
       await this.inquiries.closed(tx, session);
       return session;
     }
-    await recordUsage(tx, session);
     // An offer that lapsed before any process activated it is a launch that was lost, and
     // would otherwise be re-offered every five minutes for ever with nothing counting it.
     const failure = failureReasons.has(session.outcome)
@@ -1968,9 +1968,6 @@ export class LeasedSessions implements Sessions {
     usage: SessionUsageReport,
     tx: Transaction,
   ): Promise<void> {
-    // An inquiry visit's spend is its asker's, counted against its own budget, never the work's.
-    if (session.inquiry)
-      return await this.inquiries.reported(tx, session.id, usage.inputTokens + usage.outputTokens);
     if (!(await reportUsage(tx, session.id, usage, isoNow(this.clock)))) return;
     await this.state.appendEvent(tx, {
       projectId: session.projectId,

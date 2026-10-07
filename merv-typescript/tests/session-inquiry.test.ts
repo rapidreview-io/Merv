@@ -15,6 +15,7 @@ import { MervError, type Caller, type WorkflowPolicy } from '@merv/contracts';
 import { CredentialStore } from '@merv/identity/credentials';
 import { MachineRunner } from '@merv/runner';
 import { codexModelRelay, hostedGrant } from '../packages/fleet/src/codex-relay.js';
+import { modelMigrations } from '../packages/fleet/src/schema.js';
 import { dormantMs } from '../packages/sessions/src/threads.js';
 import {
   INQUIRY_DAILY_TOKENS,
@@ -239,10 +240,12 @@ async function fixture(t: TestContext) {
   };
   const messages = async (threadId: string) =>
     (await ok('GET', `/sessions/threads/${threadId}/messages`, token)) as ThreadMessages;
+  /** An inquiry, with what its visit's runner reported it spent. */
   const inquiry = async (id: string) =>
     (await app.ctx.state.read((sql) =>
       sql.get<{ status: string; tokens: number | string; session_id: string | null }>(
-        'SELECT status,tokens,session_id FROM session_inquiries WHERE id=?',
+        `SELECT i.status,COALESCE(u.input_tokens,0)+COALESCE(u.output_tokens,0) AS tokens,i.session_id
+          FROM session_inquiries i LEFT JOIN session_usage u ON u.session_id=i.session_id WHERE i.id=?`,
         id,
       ),
     ))!;
@@ -299,7 +302,7 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
   const asked = await f.ask(threadId, question, 'ask-1');
   assert.deepEqual(
     [asked.status, asked.threadId, asked.instanceId, asked.sessionId, asked.tokenBudget],
-    ['queued', threadId, unit.id, null, INQUIRY_TOKENS],
+    ['queued', threadId, unit.id, null, INQUIRY_TOKENS + 4 * Math.ceil(facts.size / 4)],
   );
   // The same requestId answers the same inquiry; another body under it is refused.
   assert.equal((await f.ask(threadId, question, 'ask-1')).id, asked.id);
@@ -414,11 +417,11 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
     ],
   );
   assert.deepEqual(await f.threadRow(threadId), before);
+  // Its spend is a usage row of its kind: its asker's, never the work's.
   const usage = await f.app.ctx.state.read((sql) =>
-    sql.all('SELECT 1 FROM session_usage WHERE session_id=?', visit.id),
+    sql.all('SELECT kind FROM session_usage WHERE session_id=?', visit.id),
   );
-  assert.deepEqual(usage, []);
-  // Its runner's report of what it spent is charged to the inquiry, its asker's, not the work's.
+  assert.deepEqual(usage, [{ kind: 'inquiry' }]);
   await f.release(visit, { usage: { inputTokens: 1200, outputTokens: 300 } });
   assert.equal(Number((await f.inquiry(asked.id)).tokens), 1500);
   assert.equal((await f.sessions.usage(f.owner, { instanceId: unit.id })).totals.sessions, 1);
@@ -592,47 +595,114 @@ test("an inquiry never blocks its work: the work's visit is offered alongside, r
   );
 });
 
-test('an inquiry visit spends a budget of its own, charged to its asker through the model relay', async (t) => {
+/** A resumed Codex call: the conversation so far as one input item of `chars` characters. */
+const resumed = (chars: number) => ({
+  model: 'gpt-6.1-sol',
+  input: [
+    { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'x'.repeat(chars) }] },
+  ],
+  store: false,
+  stream: true,
+});
+
+test('an inquiry visit spends a budget of its own, charged in the model relay’s ledger', async (t) => {
   const f = await fixture(t);
   await f.dispatch();
   const { threadId } = await f.worked();
   const asked = await f.ask(threadId, 'How much did it cost?');
   await f.present('runner-q');
   const visit = (await f.lease('runner-q')).session!;
-  // Server-side, as Fleet's relay charges each call at its most and settles it.
-  assert.equal(await f.sessions.inquiries.reserve(visit.id, INQUIRY_TOKENS + 1), false);
-  assert.equal(await f.sessions.inquiries.reserve(visit.id, 100_000), true);
-  await f.sessions.inquiries.settle(visit.id, -40_000);
-  assert.equal(Number((await f.inquiry(asked.id)).tokens), 60_000);
-  assert.equal(await f.sessions.inquiries.reserve(visit.id, INQUIRY_TOKENS - 60_000), true);
-  assert.equal(await f.sessions.inquiries.reserve(visit.id, 1), false);
-  // Any other session is not held to an inquiry's budget.
-  const other = await f.offer((await f.start()).id);
-  assert.equal(await f.sessions.inquiries.reserve(other.session.id, INQUIRY_TOKENS * 10), true);
-
-  // Fleet's relay: an inquiry visit's grant charges its asker, and its own budget, call by call.
+  assert.equal(visit.tokenBudget, asked.tokenBudget);
+  await f.app.ctx.state.migrate('fleet_workflow', modelMigrations);
+  // A hosted visit's grant carries its budget, and charges its asker, call by call.
   const bound = {
     sessionId: visit.id,
     projectId: visit.projectId,
     allocationId: 'allocation_test',
     expiresAt: visit.hardDeadline,
-    inquiry: { id: asked.id, asker: { kind: 'human' } as never },
+    tokenBudget: 100_000,
   };
   const grant = hostedGrant(bound, 'person_asker', Date.now());
-  assert.deepEqual([grant.person, grant.inquiry], ['person_asker', true]);
-  const budget: string[] = [];
+  assert.deepEqual([grant.person, grant.tokenBudget], ['person_asker', 100_000]);
   const relay = codexModelRelay(f.app.ctx.state, {
     providerKey: () => 'key',
     dailyTokensPerPerson: 10_000_000,
     authorize: async () => grant,
-    inquiries: {
-      reserve: async (id, tokens) => (budget.push(`reserve ${id} ${tokens}`), false),
-      settle: async (id, delta) => void budget.push(`settle ${id} ${delta}`),
-    },
   });
-  await assert.rejects(relay.reserve!(grant, { input: [] }), { code: 'inquiry_budget_spent' });
-  assert.equal(budget.length, 1);
-  assert.match(budget[0]!, new RegExp(`^reserve ${visit.id} \\d+$`));
+  const usage = (inputTokens: number) => ({
+    event: 'codex_relay_usage' as const,
+    model: grant.model,
+    inputTokens,
+    cachedTokens: 0,
+    outputTokens: 0,
+    reasoningTokens: 0,
+  });
+  const first = await relay.reserve!(grant, resumed(4_000));
+  await relay.onUsage!(usage(20_000), grant, first);
+  // The next call's most passes what is left, and is refused without touching the person's day.
+  await assert.rejects(relay.reserve!(grant, resumed(60_000)), { code: 'token_budget_spent' });
+  const spent = await f.app.ctx.state.read(async (sql) => ({
+    grant: await sql.get<{ tokens: string }>(
+      'SELECT tokens FROM fleet_grant_tokens WHERE grant_id=?',
+      visit.id,
+    ),
+    day: await sql.get<{ tokens: string }>(
+      'SELECT tokens FROM fleet_model_usage WHERE person=?',
+      'person_asker',
+    ),
+  }));
+  assert.deepEqual([Number(spent.grant?.tokens), Number(spent.day?.tokens)], [20_000, 20_000]);
+  // A session with no budget of its own is held only to its person's day.
+  const { tokenBudget: _budget, ...open } = grant;
+  await relay.onUsage!(usage(0), open, await relay.reserve!(open, resumed(600_000)));
+});
+
+test('an inquiry to a long conversation is budgeted for that conversation, resent on every call', async (t) => {
+  const f = await fixture(t);
+  await f.dispatch();
+  const unit = await f.start();
+  const first = await f.offer(unit.id, 'runner-hand');
+  await f.release(first.session);
+  // A conversation of about 240K tokens, near where Codex compacts.
+  const conversation = `{"type":"user","text":"${'x'.repeat(960_000)}"}\n`;
+  await f.keep(first.session, first.control, conversation);
+  const asked = await f.ask(first.session.threadId, 'Why seed 3?');
+  assert.ok(asked.tokenBudget >= INQUIRY_TOKENS + 4 * Math.ceil(conversation.length / 4));
+  await f.present('runner-q');
+  const visit = (await f.lease('runner-q')).session!;
+  await f.app.ctx.state.migrate('fleet_workflow', modelMigrations);
+  const grant = hostedGrant(
+    {
+      sessionId: visit.id,
+      projectId: visit.projectId,
+      allocationId: 'allocation_test',
+      expiresAt: visit.hardDeadline,
+      tokenBudget: visit.tokenBudget,
+    },
+    'person_asker',
+    Date.now(),
+  );
+  const relay = codexModelRelay(f.app.ctx.state, {
+    providerKey: () => 'key',
+    dailyTokensPerPerson: 100_000_000,
+    authorize: async () => grant,
+  });
+  // A read or two before the reply, each call carrying the whole conversation again.
+  for (let call = 0; call < 3; call++) {
+    const reserved = await relay.reserve!(grant, resumed(960_000 + call * 2_000));
+    await relay.onUsage!(
+      {
+        event: 'codex_relay_usage',
+        model: grant.model,
+        inputTokens: 240_000,
+        cachedTokens: 230_000,
+        outputTokens: 400,
+        reasoningTokens: 0,
+      },
+      grant,
+      reserved,
+    );
+  }
 });
 
 test('a question holds its thread among those that want attention only while it is open, and the card says how it ended', async (t) => {
@@ -711,7 +781,7 @@ test('a person’s questions spend at most a day’s tokens, and the project’s
   await f.present('runner-q');
   const visit = (await f.lease('runner-q')).session!;
   assert.equal(visit.inquiry?.id, asked.id);
-  assert.equal(visit.inquiry?.tokenBudget, INQUIRY_TOKENS);
+  assert.equal(visit.tokenBudget, asked.tokenBudget);
   // A machine of the owner's reports what the visit spent once it ends.
   await f.release(visit, { usage: { inputTokens: INQUIRY_DAILY_TOKENS - 1000, outputTokens: 0 } });
   const spent = await f.http('POST', `/sessions/threads/${b.threadId}/ask`, f.token, {
@@ -961,5 +1031,5 @@ test('real runners: a machine stops an inquiry visit once what its agent printed
   // What it spent so far, each model call's once, is reported to its asker's budget.
   assert.equal(Number(row.tokens), 401_050);
   const visit = await f.sessions.get(f.owner, row.session_id!);
-  assert.deepEqual([visit.status, visit.closeReason], ['released', 'inquiry_budget_spent']);
+  assert.deepEqual([visit.status, visit.closeReason], ['released', 'token_budget_spent']);
 });

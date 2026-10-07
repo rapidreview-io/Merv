@@ -407,9 +407,8 @@ export interface ThreadInquiry {
   /** Its visit, once a machine took it. */
   sessionId: string | null;
   endedAt: string | null;
-  /** The most its visit may spend, and what it is known to have spent (model tokens). */
+  /** The most its visit may spend (model tokens): its conversation is resent on every call. */
   tokenBudget: number;
-  tokens: number;
 }
 /** A question a worker asked its owner as it ended its visit; a message to its thread answers it. */
 export interface ThreadQuestion {

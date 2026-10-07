@@ -319,6 +319,32 @@ $merv$;
 CREATE TRIGGER session_inquiries_immutable BEFORE UPDATE OR DELETE ON session_inquiries
 FOR EACH ROW EXECUTE FUNCTION session_inquiries_guard();
 `;
+/**
+ * One usage ledger for every visit: an inquiry visit's spend is a `session_usage` row of its
+ * `kind`, as its runner reported it, so the per-asker day is read there. The per-visit cap is the
+ * session's `tokenBudget`, which Fleet's relay charges in its own ledger, so `session_inquiries`
+ * no longer counts tokens.
+ *
+ * Read-only prod counts first (what the new column is added over, and the spend dropped):
+ *   SELECT count(*) AS usage_rows FROM session_usage;
+ *   SELECT count(*) AS inquiries, COALESCE(sum(tokens),0) AS tokens FROM session_inquiries;
+ */
+const usageKindMigration = `
+ALTER TABLE session_usage ADD COLUMN kind TEXT NOT NULL DEFAULT 'work' CHECK (kind IN ('work','inquiry'));
+CREATE OR REPLACE FUNCTION session_usage_write_once_guard() RETURNS trigger LANGUAGE plpgsql AS $merv$
+BEGIN
+  IF OLD.reported_at IS NOT NULL OR NEW.session_id IS DISTINCT FROM OLD.session_id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR
+          NEW.instance_id IS DISTINCT FROM OLD.instance_id OR NEW.revision IS DISTINCT FROM OLD.revision OR NEW.workflow IS DISTINCT FROM OLD.workflow OR
+          NEW.state IS DISTINCT FROM OLD.state OR NEW.role IS DISTINCT FROM OLD.role OR NEW.outcome IS DISTINCT FROM OLD.outcome OR
+          NEW.started_at IS DISTINCT FROM OLD.started_at OR NEW.closed_at IS DISTINCT FROM OLD.closed_at OR NEW.wall_ms IS DISTINCT FROM OLD.wall_ms OR
+          NEW.harness IS DISTINCT FROM OLD.harness OR NEW.model IS DISTINCT FROM OLD.model OR NEW.kind IS DISTINCT FROM OLD.kind THEN
+    RAISE EXCEPTION USING MESSAGE = 'Session usage is recorded once', ERRCODE = '23514';
+  END IF;
+  RETURN NEW;
+END;
+$merv$;
+ALTER TABLE session_inquiries DROP COLUMN tokens;
+`;
 export const postgresMigrations: Record<number, string> = {
   1: `
 CREATE TABLE worker_sessions (
@@ -701,4 +727,6 @@ UPDATE session_threads t SET instance_id = n.instance_id, state = n.state
  WHERE n.thread_id = t.id AND t.status <> 'retired' AND n.instance_id <> t.instance_id;`,
   // (unpublished) Inquiry visits; prod counts in `inquiriesMigration`'s comment.
   18: inquiriesMigration,
+  // (unpublished) Inquiry spend in session_usage; prod counts in `usageKindMigration`'s comment.
+  19: usageKindMigration,
 };
