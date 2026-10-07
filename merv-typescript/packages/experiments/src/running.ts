@@ -1,6 +1,7 @@
 import {
   clip,
   runningKey,
+  type Artifact,
   type ProcessGraph,
   type ReviewRequest,
   type RunningAttention,
@@ -16,7 +17,7 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
-import { unitHistory } from '@merv/workflows/unit-history';
+import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';
 import type { Experiment, ExperimentSubmission } from './models.js';
 import { roleRank } from './rules.js';
 import { EXPERIMENT_WORKFLOW } from './program.js';
@@ -208,15 +209,44 @@ const named = (item: { artifactId: string; path: string }) => ({
   title: clip(item.path.split('/').pop()!, 200),
 });
 
+/** The files an experiment's panel read: those it names by id, and those its sessions made. */
+export interface ExperimentFiles {
+  found: ReadonlyMap<string, UnitFile['artifact']>;
+  made?: readonly UnitFile['artifact'][];
+}
+
+/** Every file an experiment's record names: its evidence, its figures, and what its reviews cite. */
+export function experimentFileIds(
+  experiment: Experiment,
+  reviews: readonly ReviewRequest[],
+): { ids: string[]; sessions: string[] } {
+  const evidence = [
+    ...experiment.evidence,
+    ...experiment.submissions.flatMap((item) => item.evidence),
+  ];
+  const ids = [
+    ...evidence.flatMap((item) => [item.artifactId, ...item.figureIds]),
+    ...experiment.submissions.flatMap((item) => item.figureIds),
+    ...reviews.flatMap((review) => review.findings.flatMap((finding) => finding.evidenceIds)),
+  ];
+  const sessions = [...evidence, ...experiment.submissions].flatMap((item) =>
+    item.sessionId ? [item.sessionId] : [],
+  );
+  return { ids: [...new Set(ids)], sessions: [...new Set(sessions)] };
+}
+
 /**
- * The experiment as a unit: its history, and the one thing to read now. While it is designed
- * and its design reviewed, that is the newest design submitted, or the draft plan before any
- * was; while it runs, the design that was approved; from its results on, the report.
+ * The experiment as a unit: its history, the one thing to read now, and its files. While it is
+ * designed and its design reviewed, the thing to read is the newest design submitted, or the
+ * draft plan before any was; while it runs, the design that was approved; from its results on,
+ * the report. Its files are what its producer attached and its producing sessions made, what
+ * the server pinned beside them, and what its reviewers cited besides.
  */
 export function experimentUnit(
   experiment: Experiment,
   graph: ProcessGraph,
   reviews: readonly ReviewRequest[],
+  files: ExperimentFiles = { found: new Map() },
 ): RunningUnit {
   const byReview = new Map(experiment.submissions.map((item) => [item.reviewId, item]));
   const handed = (submission: ExperimentSubmission | undefined) => {
@@ -267,9 +297,30 @@ export function experimentUnit(
       : experiment.workflow.state === 'running'
         ? (of('Current plan', newest('design', true), 'approved') ?? plan())
         : (of('Report', newest('results')) ?? plan());
+  const file = (id: string, role?: UnitFile['role']): UnitFile[] => {
+    const artifact = files.found.get(id);
+    return artifact ? [{ artifact, ...(role ? { role } : {}) }] : [];
+  };
+  const evidence = [
+    ...experiment.evidence,
+    ...experiment.submissions.flatMap((item) => item.evidence),
+  ];
+  const artifacts = unitArtifacts(graph, [
+    ...evidence.flatMap((item) =>
+      file(item.artifactId, item.systemGenerated ? undefined : 'producer'),
+    ),
+    ...[...evidence, ...experiment.submissions]
+      .flatMap((item) => item.figureIds)
+      .flatMap((id) => file(id, 'producer')),
+    ...(files.made ?? []).map((artifact): UnitFile => ({ artifact, role: 'producer' })),
+    ...reviews
+      .flatMap((review) => review.findings.flatMap((finding) => finding.evidenceIds))
+      .flatMap((id) => file(id, 'reviewer')),
+  ]);
   return {
     key: key ?? { label: 'Question', text: experiment.intent },
     history,
+    ...(artifacts.length ? { artifacts } : {}),
   };
 }
 
@@ -284,9 +335,10 @@ export function experimentPanel(input: {
   graph: ProcessGraph;
   route: WorkRoute;
   reviews?: readonly ReviewRequest[];
+  files?: ExperimentFiles;
 }): RunningPanelPart {
   const { standing, experiment, graph, route, reviews } = input;
-  const unit = reviews && experimentUnit(experiment, graph, reviews);
+  const unit = reviews && experimentUnit(experiment, graph, reviews, input.files);
   const { line } = face(standing);
   const red = attention(standing);
   const ended = !!ENDED[standing.state];

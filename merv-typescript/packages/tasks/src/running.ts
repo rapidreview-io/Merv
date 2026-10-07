@@ -4,6 +4,7 @@ import {
   keyId,
   keyKind,
   mapAsync,
+  MAX_ARTIFACT_IDS,
   MervError,
   runningKey,
   type Caller,
@@ -24,7 +25,7 @@ import {
 } from '@merv/contracts';
 import { dependencyRows } from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
-import { unitHistory } from '@merv/workflows/unit-history';
+import { unitArtifacts, unitHistory, type UnitFile } from '@merv/workflows/unit-history';
 import { composedBrief } from './evidence.js';
 import type { TaskRow, TasksContext } from './index.js';
 import { roundsFrom, TASK_WORKFLOW, taskVersions } from './workflow.js';
@@ -227,6 +228,31 @@ export function taskNode(task: TaskStanding): RunningNode {
   };
 }
 
+/**
+ * Every file a task's record names, `delivered` being what its producer handed in or cited,
+ * and the session that delivered it.
+ */
+export function taskFileIds(record: TaskRecord, reviews: readonly ReviewRequest[]) {
+  const delivered = [
+    ...record.deliveryIds,
+    ...(record.deliveryCodeArtifactId ? [record.deliveryCodeArtifactId] : []),
+    ...record.deliveryConfirmations.flatMap((item) => item.evidenceIds),
+  ];
+  const ids = [
+    record.briefId,
+    ...delivered,
+    ...reviews.flatMap((review) => [
+      ...review.artifactIds,
+      ...review.findings.flatMap((finding) => finding.evidenceIds),
+    ]),
+  ];
+  return {
+    ids: [...new Set(ids)],
+    delivered,
+    sessions: record.deliveryCode ? [record.deliveryCode.sessionId] : [],
+  };
+}
+
 /** What a delivery says it did, and the review that answered it, by the review gate. */
 const GATES = { in_review: { submitted: 'Delivered' } };
 
@@ -240,7 +266,11 @@ export function taskUnit(
   record: TaskRecord,
   graph: ProcessGraph,
   reviews: readonly ReviewRequest[],
-  artifacts: ReadonlyMap<string, Pick<Artifact, 'id' | 'title' | 'mediaType'>>,
+  artifacts: ReadonlyMap<
+    string,
+    Pick<Artifact, 'id' | 'title' | 'mediaType'> & Partial<Pick<Artifact, 'size' | 'createdAt'>>
+  >,
+  made: readonly UnitFile['artifact'][] = [],
 ): RunningUnit {
   // What a delivery handed in: its report, not the brief it was pinned beside or its code record.
   const document = (review: ReviewRequest) => {
@@ -267,7 +297,29 @@ export function taskUnit(
     const status = delivered ? (judged ? found.get(number) : claimed.get(number)) : undefined;
     return { text: short(text, 1000), ...(status ? { met: status === 'met' } : {}) };
   });
+  // Its files: what each delivery handed in and cited, what its delivering session made, what
+  // its reviewers cited besides, and the brief it was asked with.
+  const file = (id: string, role?: UnitFile['role']): UnitFile[] => {
+    const artifact = artifacts.get(id);
+    const { size, createdAt } = artifact ?? {};
+    return artifact && size !== undefined && createdAt
+      ? [{ artifact: { ...artifact, size, createdAt }, ...(role ? { role } : {}) }]
+      : [];
+  };
+  const files = unitArtifacts(graph, [
+    ...taskFileIds(record, []).delivered.flatMap((id) => file(id, 'producer')),
+    ...reviews
+      .flatMap((review) => review.artifactIds)
+      .filter((id) => id !== record.briefId)
+      .flatMap((id) => file(id, 'producer')),
+    ...made.map((artifact): UnitFile => ({ artifact, role: 'producer' })),
+    ...reviews
+      .flatMap((review) => review.findings.flatMap((finding) => finding.evidenceIds))
+      .flatMap((id) => file(id, 'reviewer')),
+    ...file(record.briefId),
+  ]);
   return {
+    ...(files.length ? { artifacts: files } : {}),
     key: delivered?.artifact
       ? {
           label: 'Delivery',
@@ -542,11 +594,17 @@ export async function runningPanel(
     const graph = await ctx.process(caller, taskId);
     // Every round of review, and the files each one pinned, for the history and its documents.
     const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
-    const pinned = [...new Set(reviews.flatMap((review) => review.artifactIds))];
-    const artifacts = pinned.length
-      ? await ctx.state.transaction(async (tx) => await ctx.artifacts.find(caller, pinned, tx))
-      : new Map<string, Artifact>();
-    const unit = taskUnit(read.record, graph, reviews, artifacts);
+    const named = taskFileIds(read.record, reviews);
+    const { artifacts, made } = await ctx.state.transaction(async (tx) => {
+      const made: Artifact[] = [];
+      for (const session of named.sessions)
+        made.push(...(await ctx.artifacts.list(caller, { session, limit: 200 }, tx)));
+      return {
+        artifacts: await ctx.artifacts.find(caller, named.ids.slice(0, MAX_ARTIFACT_IDS), tx),
+        made,
+      };
+    });
+    const unit = taskUnit(read.record, graph, reviews, artifacts, made);
     return taskPanel(read.standing, read.record, graph, read.brief, route, unit);
   });
 }

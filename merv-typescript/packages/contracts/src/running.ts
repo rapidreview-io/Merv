@@ -62,6 +62,7 @@ export type RunningSection = z.input<typeof schema.runningSection> & {
 export type RunningHeader = z.input<typeof schema.runningHeader>;
 export type RunningUnitEntry = z.input<typeof schema.runningUnitEntry>;
 export type RunningUnitKey = z.input<typeof schema.runningUnitKey>;
+export type RunningUnitArtifact = z.input<typeof schema.runningUnitArtifact>;
 export type RunningUnit = z.input<typeof schema.runningUnit>;
 
 /** What one owner draws, and how old it is when it comes from a cache. */

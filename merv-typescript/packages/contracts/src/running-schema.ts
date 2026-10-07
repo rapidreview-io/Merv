@@ -562,6 +562,21 @@ export const runningUnitKey = z
     'A key artifact has exactly one body',
   );
 /**
+ * One file the unit produced or pinned, as its owner lists it: its name, what it is and weighs,
+ * when it was made, and the stage and role of the thread that made it, where one did.
+ */
+export const runningUnitArtifact = z
+  .object({
+    id: z.string().min(1).max(200),
+    title: words(200),
+    mediaType: z.string().max(200).optional(),
+    size: lenient(count().optional()),
+    at: lenient(instant.optional()),
+    stage: words(64).optional(),
+    role: z.enum(['producer', 'reviewer']).optional(),
+  })
+  .transform(lean);
+/**
  * What the unit's page draws beside its stages: its history on the left, its key artifact on
  * the right, and for work judged against checks, those checks under it. Only the owner knows
  * which artifact matters in which state, so it is said here, per record.
@@ -574,5 +589,7 @@ export const runningUnit = z
       40,
     ).optional(),
     history: kept(runningUnitEntry, 80).default([]),
+    /** Every file of the unit's, newest first. */
+    artifacts: kept(runningUnitArtifact, 160).optional(),
   })
   .transform(lean);

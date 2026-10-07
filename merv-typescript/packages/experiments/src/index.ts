@@ -1,4 +1,4 @@
-import { visible, mapAsync, record } from '@merv/contracts';
+import { MAX_ARTIFACT_IDS, visible, mapAsync, record } from '@merv/contracts';
 import { childRequest, createService, plain, recorded, replayed, sha256Hex } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
@@ -36,6 +36,7 @@ import type { Code, CodeCaptureRef } from '@merv/code-work/types';
 import type { Sandboxes } from '@merv/sandboxes/types';
 import {
   enteredAgain,
+  experimentFileIds,
   experimentNode,
   experimentPanel,
   type ExperimentStanding,
@@ -347,10 +348,17 @@ export class ExperimentService implements Experiments {
         experiment.submissions.map((item) => item.reviewId),
         tx,
       );
+      // Its files, for the Artifacts tab: those its record names and those its sessions made.
+      const named = experimentFileIds(experiment, [...reviews.values()]);
+      const found = await this.artifacts.find(caller, named.ids.slice(0, MAX_ARTIFACT_IDS), tx);
+      const made: Artifact[] = [];
+      for (const session of named.sessions)
+        made.push(...(await this.artifacts.list(caller, { session, limit: 200 }, tx)));
       return {
         standing: await this.standing(caller, row, context, tx),
         experiment,
         reviews: [...reviews.values()],
+        files: { found, made },
       };
     });
     if (!read) return null;

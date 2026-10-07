@@ -1,4 +1,10 @@
-import type { ProcessGraph, ReviewRequest, RunningUnitEntry } from '@merv/contracts';
+import type {
+  Artifact,
+  ProcessGraph,
+  ReviewRequest,
+  RunningUnitArtifact,
+  RunningUnitEntry,
+} from '@merv/contracts';
 
 /**
  * A unit's history as its owner tells it on the Work page: every recorded crossing of the
@@ -95,4 +101,45 @@ export function unitHistory({ graph, reviews, gates, document }: UnitHistoryInpu
   }
   if (gate(graph.state) && open && !open.verdict) entries.push(waiting(open, graph.state));
   return entries;
+}
+
+/** Where the record stood at `at`: the state its last crossing before then led into. */
+export function stageAt(graph: ProcessGraph, at: string): string {
+  const crossings = graph.edges
+    .flatMap((edge) =>
+      edge.traversals.map((step) => ({ at: step.at, from: edge.from, to: edge.to })),
+    )
+    .sort((a, b) => a.at.localeCompare(b.at));
+  if (!crossings.length) return graph.state;
+  return crossings.filter((step) => step.at < at).at(-1)?.to ?? crossings[0]!.from;
+}
+
+/** A file of the unit's, and the role of whoever made it where the owner knows it. */
+export interface UnitFile {
+  artifact: Pick<Artifact, 'id' | 'title' | 'mediaType' | 'size' | 'createdAt'>;
+  role?: 'producer' | 'reviewer';
+}
+
+/**
+ * The unit's files for its Artifacts tab, newest first: each listed once, under the role the
+ * owner names first for it, at the stage the record stood in when the file was made.
+ */
+export function unitArtifacts(graph: ProcessGraph, files: readonly UnitFile[]) {
+  const seen = new Map<string, UnitFile>();
+  for (const file of files) if (!seen.has(file.artifact.id)) seen.set(file.artifact.id, file);
+  return [...seen.values()]
+    .sort(
+      (a, b) =>
+        b.artifact.createdAt.localeCompare(a.artifact.createdAt) ||
+        b.artifact.id.localeCompare(a.artifact.id),
+    )
+    .map(({ artifact, role }): RunningUnitArtifact => ({
+      id: artifact.id,
+      title: artifact.title.slice(0, 200),
+      mediaType: artifact.mediaType,
+      size: artifact.size,
+      at: artifact.createdAt,
+      stage: stageAt(graph, artifact.createdAt),
+      ...(role ? { role } : {}),
+    }));
 }

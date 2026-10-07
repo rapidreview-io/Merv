@@ -179,7 +179,9 @@ function words(value: unknown, out: string[] = []): string[] {
   else if (value && typeof value === 'object') {
     if ('actor' in value) return out;
     for (const [key, item] of Object.entries(value))
-      if (!(key === 'graph' && (value as { kind?: string }).kind === 'ladder')) words(item, out);
+      // A file is referred to by its id, as a link by its key: neither is a word drawn.
+      if (key !== 'id' && !(key === 'graph' && (value as { kind?: string }).kind === 'ladder'))
+        words(item, out);
   }
   return out;
 }
@@ -446,11 +448,22 @@ test('the sidebar holds the ladder, relations, pinned brief and details, its uni
   assert.deepEqual(unblocks?.kind === 'links' && unblocks.rows.map(({ to }) => to), [
     { key: `work:${dependent.id}`, route: `/tasks/${dependent.id}` },
   ]);
-  // Nothing delivered yet: the unit reads its goal, every check still open, and no history.
+  // Nothing delivered yet: the unit reads its goal, every check still open, and no history;
+  // its one file is the brief it was asked with, made before any thread worked it.
   assert.deepEqual(panel.unit, {
     key: { label: 'Goal', text: 'Finish rebuild citation index so the draft can cite it.' },
     checks: task.checks.map((text) => ({ text })),
     history: [],
+    artifacts: [
+      {
+        id: spec.id,
+        title: 'Citation index spec',
+        mediaType: spec.mediaType,
+        size: spec.size,
+        at: spec.createdAt,
+        stage: 'in_progress',
+      },
+    ],
   });
   assert.deepEqual(brief?.kind === 'links' && brief.rows, [
     { to: { route: `/artifacts/${spec.id}` }, name: 'Citation index spec' },

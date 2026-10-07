@@ -541,6 +541,14 @@ test('a planned experiment’s sidebar draws its ladder without running a check,
     owner: 'experiments',
     rows: [{ label: 'Owner', value: [{ actor: f.operator.actorId }] }],
   });
+  // Its files, newest first, each under the stage it was made in and the producer's role.
+  assert.deepEqual(
+    sidebar.unit?.artifacts?.map((item) => [item.id, item.stage, item.role, item.size]),
+    [
+      [written.id, 'planned', 'producer', written.size],
+      [feasibility.id, 'planned', 'producer', feasibility.size],
+    ],
+  );
   assert.deepEqual(
     [sidebar.route, sidebar.live, sidebar.actions],
     [`/experiments/${experiment.id}`, false, []],
