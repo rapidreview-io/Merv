@@ -172,7 +172,8 @@
           "merv-review-ui",
           "merv-sandboxes-ui",
           "merv-sessions-ui",
-          "merv-task-ui"
+          "merv-task-ui",
+          "merv-workflows-ui"
         ],
         "kinds": [
           "ui"
@@ -188,7 +189,7 @@
       }
     ]
   },
-  "snapshot": "2026-10-06",
+  "snapshot": "2026-10-07",
   "groups": [
     {
       "id": "front",
@@ -1938,6 +1939,11 @@
           "readOnly": true
         },
         {
+          "name": "review.release",
+          "description": "Hand back a claimed review so that another eligible reviewer, or a leased review worker, may claim it. Only the reviewer who claimed it or a project admin may, never a leased worker, whose claim is released with its lease. Pass the reviewId, a reason and a stable requestId; a retry with the same requestId answers the same. Nothing about the work under review changes.",
+          "readOnly": false
+        },
+        {
           "name": "review.start",
           "description": "Claim an available review as an independent reviewer. Returns the review with a claimId that review.submit and the owning domain’s review steps require, and that domain’s verdict guidance: follow it in review.submit. Retrying the current claim is safe. A revoked claim is released automatically. Your directing authority must not be the producer, and for owner-certified reviews neither you nor it may be a retained contributor.",
           "readOnly": false
@@ -1999,6 +2005,11 @@
           "name": "review.list",
           "description": "List immutable review requests, their claim/verdict status, whether you may claim them in the current project. Pass subjectId to list only the reviews of that record.",
           "readOnly": true
+        },
+        {
+          "name": "review.release",
+          "description": "Hand back a claimed review so that another eligible reviewer, or a leased review worker, may claim it. Only the reviewer who claimed it or a project admin may, never a leased worker, whose claim is released with its lease. Pass the reviewId, a reason and a stable requestId; a retry with the same requestId answers the same. Nothing about the work under review changes.",
+          "readOnly": false
         },
         {
           "name": "review.start",
@@ -2179,11 +2190,6 @@
           "readOnly": true
         },
         {
-          "name": "project.context.update",
-          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Refused, saying why, while a plugin writes the Introduction itself. Reuse requestId only to retry identical input.",
-          "readOnly": false
-        },
-        {
           "name": "project.get",
           "description": "Read the current project.",
           "readOnly": true
@@ -2268,11 +2274,6 @@
           "readOnly": true
         },
         {
-          "name": "project.context.update",
-          "description": "Replace the project Introduction. First read project.get, then supply exactly one baseline: expectedContextRevision copied from its contextRevision, or expectedSummary copied exactly from its summary. On conflict, reread project.get before retrying. Ordinary operators and producers only; worker sessions cannot change project intent. Refused, saying why, while a plugin writes the Introduction itself. Reuse requestId only to retry identical input.",
-          "readOnly": false
-        },
-        {
           "name": "project.get",
           "description": "Read the current project.",
           "readOnly": true
@@ -2328,11 +2329,11 @@
         "state",
         "scope",
         "workflows",
-        "domainEvents"
+        "domainEvents",
+        "blobs"
       ],
       "optional": [
         "tools",
-        "blobs",
         "secrets"
       ],
       "kind": "service",
@@ -2344,6 +2345,11 @@
       "label": "Agent Sessions",
       "purpose": "Owns continuing agent identity, context-reset history and authenticated sessions. Attaches one workflow assignment at a time, freezes its context and tool permissions, and fences each execution independently. Runner launches fresh agents; external agents can explicitly change assignments.",
       "exposedTools": [
+        {
+          "name": "session.ask_owner",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until the owner answers by a message to your thread. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
+          "readOnly": false
+        },
         {
           "name": "session.dispatch",
           "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its longest-standing signed-in operator), whoever changed either.",
@@ -2361,7 +2367,7 @@
         },
         {
           "name": "session.message",
-          "description": "Queue a durable message for one offered or active worker session by sessionId. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "description": "Queue a durable message for a worker: by sessionId for one offered or active session, or by threadId for a thread (a stage's worker), which its live visit or, once its work comes back, its next visit reads. Give exactly one. A message to a thread answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
           "readOnly": false
         },
         {
@@ -2387,6 +2393,11 @@
         {
           "name": "session.stuck",
           "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
+          "readOnly": true
+        },
+        {
+          "name": "session.thread_messages",
+          "description": "Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread and to each of its visits, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.",
           "readOnly": true
         },
         {
@@ -2449,6 +2460,11 @@
       "purpose": "Connects Agent Sessions to the Tools registry. This adapter owns no domain state.",
       "exposedTools": [
         {
+          "name": "session.ask_owner",
+          "description": "Assigned worker only: end this visit with a question for the owner, when the work cannot go on without their decision and no tool can settle it. Your session closes at once, without counting as a failed launch; the work waits, withheld from dispatch, until the owner answers by a message to your thread. The work then comes back to you in this same conversation, and the answer is the queued message you read with session.messages and acknowledge. Stop after calling it. Ask one self-contained question that says what you need and the options you see; a visit that keeps no conversation (a reviewer) cannot ask.",
+          "readOnly": false
+        },
+        {
           "name": "session.dispatch",
           "description": "Project admin only, never a leased worker. Turn automatic dispatch of ready work to machines on or off for the project, and choose with ownMachines whether it goes only to the project's own runners (true) or also to machines Fleet rents (false). Turning dispatch on or off also clears every failed-launch count, as the go-ahead for the whole project. Fleet's machines here act as, and are paid for by, the project's owner (its longest-standing signed-in operator), whoever changed either.",
           "readOnly": false
@@ -2465,7 +2481,7 @@
         },
         {
           "name": "session.message",
-          "description": "Queue a durable message for one offered or active worker session by sessionId. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
+          "description": "Queue a durable message for a worker: by sessionId for one offered or active session, or by threadId for a thread (a stage's worker), which its live visit or, once its work comes back, its next visit reads. Give exactly one. A message to a thread answers every question its agent asked with session.ask_owner, and dispatch then offers the work again. This does not interrupt local computation or prove the worker has read it. A pending message is shown at the next Merv tool boundary and must be acknowledged before another write can commit. Reuse requestId after an uncertain response.",
           "readOnly": false
         },
         {
@@ -2491,6 +2507,11 @@
         {
           "name": "session.stuck",
           "description": "Read everything in the project that stopped moving, and why. Never for a leased worker. Kinds: session_idle (an active session with no Merv tool call for idleNoticeSeconds; a runner heartbeat is not progress), dispatch_held (a target whose launches failed maxLaunchFailures times and is withheld from automatic dispatch), dispatch_failing (failing but still retried; listed, not counted in total), work_blocked (work another plugin published a blocker for, such as a Code base that cannot be derived yet; it is never offered, and next names the recovery), work_deferred (three machines in a row took this work and could not prepare its checkout, because the place its history lives was away, busy or full; nothing counts that, so it is offered again and again, and code names the cause), ready_quiet (a ready step no session has taken for quietReadySeconds since its last revision change, operator steps included), dispatch_disabled, no_live_runner and runner_refusing (a live runner refused the same way for refusalSeconds). Each item carries since, forSeconds, code, why and next. why and next are advice; the server enforces every guard where it commits. At most 200 items; counts cover all of them.",
+          "readOnly": true
+        },
+        {
+          "name": "session.thread_messages",
+          "description": "Anyone who may read the work item, never a leased worker: what passed between one thread (threadId, from session.threads) and the people over it, oldest first. messages holds the messages to the thread and to each of its visits, with their acknowledgements and replies; questions holds what its agent asked its owner with session.ask_owner, and whether a message answered it.",
           "readOnly": true
         },
         {
@@ -2582,7 +2603,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Every new task has a private managed Git checkout, even without GitHub. Record work with code.commit and deliver that operation’s commandId. The independent reviewer inspects that exact commit. Code derives the base from accepted dependsOn prerequisites and project main. Conflicting dependency branches wait for reviewed resolution. Repository initialization or missing Code storage blocks work; it never falls back to scratch. GitHub is optional synchronization and publication. Only a leased reviewer in the pinned checkout can pass a task; a review claimed without a lease, possible only once review_rounds is used up, can only fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work; experiments are planned through the experiment tools, and reflections through the reflection tools, not as tasks. Every new task has a private managed Git checkout, even without GitHub. Record work with code.commit and deliver that operation’s commandId. The independent reviewer inspects that exact commit. Code derives the base from accepted dependsOn prerequisites and project main. Conflicting dependency branches wait for reviewed resolution. Repository initialization or missing Code storage blocks work; it never falls back to scratch. GitHub is optional synchronization and publication. Only a leased reviewer in the pinned checkout can pass a task; a review claimed without a lease, possible only once review_rounds is used up, can only fail it.",
           "readOnly": false
         },
         {
@@ -2598,11 +2619,6 @@
         {
           "name": "task.mark_failed",
           "description": "Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a human operator resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
-          "readOnly": false
-        },
-        {
-          "name": "task.reissue_review",
-          "description": "Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.",
           "readOnly": false
         },
         {
@@ -2671,7 +2687,7 @@
         },
         {
           "name": "task.create",
-          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work. project.reflection requires experiments and projectKnowledge artifact IDs in contextInputs; experiments are planned through the experiment tools, not as tasks. Every new task has a private managed Git checkout, even without GitHub. Record work with code.commit and deliver that operation’s commandId. The independent reviewer inspects that exact commit. Code derives the base from accepted dependsOn prerequisites and project main. Conflicting dependency branches wait for reviewed resolution. Repository initialization or missing Code storage blocks work; it never falls back to scratch. GitHub is optional synchronization and publication. Only a leased reviewer in the pinned checkout can pass a task; a review claimed without a lease, possible only once review_rounds is used up, can only fail it.",
+          "description": "Create a durable task. Merv renders and pins its goal and numbered checks as an immutable brief. Optional briefId uses your own text brief, which must include the goal and checks. Every new task requires a delivery confirmation for each check with evidence references and verification notes. The current actor becomes the producer. Optional dependsOn names existing work items in this project; work context and delivery wait until each succeeds. Dependencies are set at creation. Type defaults to task.work; experiments are planned through the experiment tools, and reflections through the reflection tools, not as tasks. Every new task has a private managed Git checkout, even without GitHub. Record work with code.commit and deliver that operation’s commandId. The independent reviewer inspects that exact commit. Code derives the base from accepted dependsOn prerequisites and project main. Conflicting dependency branches wait for reviewed resolution. Repository initialization or missing Code storage blocks work; it never falls back to scratch. GitHub is optional synchronization and publication. Only a leased reviewer in the pinned checkout can pass a task; a review claimed without a lease, possible only once review_rounds is used up, can only fail it.",
           "readOnly": false
         },
         {
@@ -2687,11 +2703,6 @@
         {
           "name": "task.mark_failed",
           "description": "Producer/operator: stop an active task with a specific reason, closing any unfinished review and preserving evidence. Service-owned tasks suspend until a human operator resumes them; other tasks end terminally. Use only when the task cannot or should not continue. expectedRevision is the current task workflow revision.",
-          "readOnly": false
-        },
-        {
-          "name": "task.reissue_review",
-          "description": "Producer/operator: replace an open review claim while preserving exactly the same evidence. Use when a reviewer is unavailable or revoked. Supersedes the old review and advances the task revision atomically; requires a reason.",
           "readOnly": false
         },
         {
@@ -2872,7 +2883,7 @@
         },
         {
           "name": "workflow.status_and_next",
-          "description": "Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
+          "description": "Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit of the work with the state it leaves (from), so the review rounds used and remaining at each gate; at gate loop_limit_reached every allowed return there is used, nothing more is dispatched, and the work escalates to the project’s owner, who may decide it by hand or allow another round. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
           "readOnly": true
         }
       ]
@@ -2924,10 +2935,29 @@
         },
         {
           "name": "workflow.status_and_next",
-          "description": "Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit leaving the current state; at gate loop_limit_reached every allowed return is used and the work waits for a human. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
+          "description": "Start or resume here. With instanceId (the id of the work item, which is its workflow instance id), read the current gate, caller-specific next action, blockers, references and revision. limits reports each loop limit of the work with the state it leaves (from), so the review rounds used and remaining at each gate; at gate loop_limit_reached every allowed return there is used, nothing more is dispatched, and the work escalates to the project’s owner, who may decide it by hand or allow another round. Omit instanceId for a project overview of all workflow instances, where such work is listed under escalated. Optionally preflight an action with proposed input; this does not execute it or reserve permission. Commands recheck current rules. Use stable requestId values when calling mutation tools.",
           "readOnly": true
         }
       ]
+    },
+    {
+      "plugin": "merv-workflows-ui",
+      "source": "packages/workflows/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "workflows",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
+      "runtime": "server",
+      "defaultConfiguration": true,
+      "id": "merv-workflows-ui",
+      "group": "front",
+      "owner": "workflows",
+      "label": "Workflows · ui adapter",
+      "purpose": "Connects Workflows to the UI registry. This adapter owns no domain state.",
+      "exposedTools": []
     }
   ],
   "edges": [
@@ -3748,12 +3778,12 @@
     },
     {
       "from": "sessions",
-      "to": "tools",
-      "optional": true
+      "to": "blobs",
+      "optional": false
     },
     {
       "from": "sessions",
-      "to": "blobs",
+      "to": "tools",
       "optional": true
     },
     {
@@ -3900,13 +3930,23 @@
       "from": "workflows",
       "to": "scope",
       "optional": false
+    },
+    {
+      "from": "merv-workflows-ui",
+      "to": "workflows",
+      "optional": false
+    },
+    {
+      "from": "merv-workflows-ui",
+      "to": "ui",
+      "optional": false
     }
   ],
   "counts": {
-    "plugins": 70,
+    "plugins": 71,
     "providers": 32,
-    "adapters": 38,
-    "dependencies": 194
+    "adapters": 39,
+    "dependencies": 196
   },
   "network": [
     {

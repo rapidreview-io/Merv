@@ -1,17 +1,17 @@
 {
-  "snapshot": "2026-10-06",
+  "snapshot": "2026-10-07",
   "definition": "Requires: mandatory Cordis injection. Optional: child injection that may be absent without stopping the provider. Not a call graph or remote-health guarantee.",
-  "pluginCount": 70,
+  "pluginCount": 71,
   "serviceProviders": 32,
   "toolAdapters": 18,
-  "uiAdapters": 15,
+  "uiAdapters": 16,
   "apiAdapters": 5,
-  "defaultEntries": 50,
+  "defaultEntries": 51,
   "apiEntries": 39,
-  "serverPlugins": 69,
+  "serverPlugins": 70,
   "machinePlugins": 1,
-  "directDependencyCount": 194,
-  "optionalDependencyCount": 14,
+  "directDependencyCount": 196,
+  "optionalDependencyCount": 13,
   "directConsumers": {
     "api": 8,
     "artifacts": 12,
@@ -42,9 +42,9 @@
     "state": 22,
     "tasks": 4,
     "tools": 24,
-    "ui": 15,
+    "ui": 16,
     "web": 1,
-    "workflows": 9
+    "workflows": 10
   },
   "plugins": [
     {
@@ -880,11 +880,11 @@
         "state",
         "scope",
         "workflows",
-        "domainEvents"
+        "domainEvents",
+        "blobs"
       ],
       "optional": [
         "tools",
-        "blobs",
         "secrets"
       ],
       "kind": "service",
@@ -1070,6 +1070,19 @@
       ],
       "optional": [],
       "kind": "service",
+      "runtime": "server",
+      "defaultConfiguration": true
+    },
+    {
+      "plugin": "merv-workflows-ui",
+      "source": "packages/workflows/src/ui.ts",
+      "provides": [],
+      "requires": [
+        "workflows",
+        "ui"
+      ],
+      "optional": [],
+      "kind": "ui",
       "runtime": "server",
       "defaultConfiguration": true
     }

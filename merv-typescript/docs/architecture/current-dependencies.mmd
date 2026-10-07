@@ -69,6 +69,7 @@ flowchart BT
     merv_web_tools["merv-web-tools"]
     merv_workflow_tools["merv-workflow-tools"]
     workflows["workflows"]
+    merv_workflows_ui["merv-workflows-ui"]
   end
   subgraph machine["Independent machine runtime"]
     runner["runner"]
@@ -236,8 +237,8 @@ flowchart BT
   sessions --> scope
   sessions --> workflows
   sessions --> domainEvents
+  sessions --> blobs
   sessions -. optional .-> tools
-  sessions -. optional .-> blobs
   sessions -. optional .-> secrets
   merv_sessions_api --> sessions
   merv_sessions_api --> api
@@ -267,4 +268,6 @@ flowchart BT
   merv_workflow_tools --> tools
   workflows --> state
   workflows --> scope
+  merv_workflows_ui --> workflows
+  merv_workflows_ui --> ui
   runner -. "HTTP session and Code controls; not a Cordis dependency" .-> api
