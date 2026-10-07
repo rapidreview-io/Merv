@@ -73,6 +73,7 @@ function request(readOnly = false, workspace?: WorkflowWorkspacePolicy): LaunchR
     state: 'working',
   };
   const session: Session = {
+    kind: 'work',
     id: 'session_fixture',
     threadId: 'thr_fixture',
     projectId: target.projectId,

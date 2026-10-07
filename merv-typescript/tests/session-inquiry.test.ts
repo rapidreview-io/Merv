@@ -323,6 +323,13 @@ test('an inquiry on a retired thread resumes its conversation read-only, replies
   assert.deepEqual(visit.continuity?.resume, { sessionId: first.session.id, ...facts });
   assert.equal(visit.execution.policy.readOnly, true);
   assert.deepEqual(visit.execution.policy.tools, []);
+  // It names the step it asks of, but holds no lease and binds no workflow registration.
+  assert.equal(visit.kind, 'inquiry');
+  assert.equal(visit.lease, undefined);
+  assert.deepEqual(
+    ['policyHash', 'registrationId', 'references'].filter((key) => key in visit.execution),
+    [],
+  );
   assert.ok(
     Date.parse(visit.hardDeadline) - Date.parse(visit.createdAt) <= INQUIRY_VISIT_SECONDS * 1000,
   );

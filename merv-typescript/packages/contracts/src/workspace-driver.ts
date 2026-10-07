@@ -29,7 +29,7 @@ export interface WorkspaceSession {
   id: string;
   runnerId: string;
   instanceId: string;
-  execution: WorkflowExecution;
+  execution: Pick<WorkflowExecution, 'policy'>;
 }
 export interface WorkspaceDriver {
   get(launchId: string): WorkspaceHandle | undefined;

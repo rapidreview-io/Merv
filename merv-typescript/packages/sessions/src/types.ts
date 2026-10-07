@@ -101,8 +101,8 @@ export type {
 } from './managed-types.js';
 export type { RunnerPlatform, SessionUsageReport, SessionWorkspace } from '@merv/contracts';
 
-/** Assignment execution. Its id remains fixed for evidence and late-call fencing. */
-export interface Session {
+/** One visit of a thread. Its id remains fixed for evidence and late-call fencing. */
+interface SessionVisit {
   id: string;
   /** The thread this session is a visit of: its `worker_sessions.thread_id`, never its JSON. */
   threadId: string;
@@ -125,18 +125,36 @@ export interface Session {
   /** Why a `preparation_deferred` close was put off; absent on every other outcome. */
   deferral?: SessionDeferral | null;
   assignment: WorkflowAssignment;
-  execution: WorkflowExecution;
-  lease: WorkflowLease;
   workspace?: SessionWorkspaceRecord;
   /** Set at the offer and frozen with it, where the session's conversation may be continued. */
   continuity?: SessionContinuity;
-  /**
-   * An inquiry visit's: the person's question it answers. Such a visit resumes its thread's
-   * conversation (`continuity.resume`) read-only, holds no lease on the work, and never saves the
-   * conversation back; its assignment, execution and lease are its own, never the workflow's.
-   */
-  inquiry?: SessionInquiryRef;
 }
+/** A work visit: it holds the step's lease, under the execution its workflow froze for it. */
+export interface WorkSession extends SessionVisit {
+  kind: 'work';
+  execution: WorkflowExecution;
+  lease: WorkflowLease;
+  inquiry?: undefined;
+}
+/**
+ * An inquiry visit: a person's question to its thread's agent. It resumes the thread's
+ * conversation (`continuity.resume`) read-only and never saves it back. It holds no lease on the
+ * work and is bound to no workflow registration: its execution only names the step it asks of,
+ * and runs read-only with no workspace and no tools.
+ */
+export interface InquirySession extends SessionVisit {
+  kind: 'inquiry';
+  execution: InquiryExecution;
+  lease?: undefined;
+  inquiry: SessionInquiryRef;
+}
+/** What an inquiry visit runs as: the step its conversation is of, and a read-only policy. */
+export type InquiryExecution = Omit<
+  WorkflowExecution,
+  'policyHash' | 'registrationId' | 'references'
+>;
+/** A thread's visit, of its work or answering a question to it (`kind`). */
+export type Session = WorkSession | InquirySession;
 /** What an inquiry visit answers: its inquiry, the question's message and who asked, and the
  *  model tokens it may spend, which its runner or Fleet's model relay holds it to. */
 export interface SessionInquiryRef {
@@ -302,8 +320,9 @@ export type StatusSection = (
   project: SessionsProjectStatus | null,
 ) => Promise<unknown>;
 
+/** What a work visit's launch is given; an inquiry visit reads the project through Merv alone. */
 export type LaunchConnectionsProvider = (
-  session: Readonly<Session>,
+  session: Readonly<WorkSession>,
 ) => Promise<NativeMcpConnection[]>;
 
 export interface Sessions {
@@ -385,7 +404,7 @@ export interface Sessions {
     caller: Caller,
     instanceId: string,
   ): Promise<{ current: SessionLookup | null; latest: SessionLookup | null }>;
-  offer(caller: Caller, input: SessionOffer): Promise<Session>;
+  offer(caller: Caller, input: SessionOffer): Promise<WorkSession>;
   list(caller: Caller): Promise<Session[]>;
   get(caller: Caller, sessionId: string): Promise<Session>;
   attach(

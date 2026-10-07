@@ -59,7 +59,6 @@ import { QUESTION_PROVIDER, SessionMessages } from './messages.js';
 import { SessionInvocations } from './invocations.js';
 import {
   Inquiries,
-  INQUIRY_POLICY,
   INQUIRY_VISIT_SECONDS,
   inquiryContext,
   inquirySession,
@@ -68,6 +67,7 @@ import {
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type {
   Session,
+  WorkSession,
   SessionContinuity,
   SessionConversationDeclaration,
   LaunchConnectionsProvider,
@@ -289,12 +289,22 @@ const ended = (session: Session): MervError =>
           session.closeReason ? `Session is closed: ${session.closeReason}` : 'Session is closed',
           401,
         );
+/** A work visit, where only one can be: an inquiry visit holds no lease, workspace or launch. */
+const working = (session: Session): WorkSession => {
+  check(
+    session.kind === 'work',
+    'inquiry_read_only',
+    'An inquiry visit holds no lease on the work',
+    409,
+  );
+  return session;
+};
 /** What session.workspace_attached and session.workspace_result say. */
 const workspaceEvent = (session: Session, workspace: SessionWorkspace) => ({
   sessionId: session.id,
   instanceId: session.instanceId,
   expectedRevision: session.expectedRevision,
-  policyHash: session.execution.policyHash,
+  policyHash: working(session).execution.policyHash,
   workflow: session.execution.workflow,
   version: session.execution.version,
   state: session.execution.state,
@@ -558,7 +568,17 @@ export class LeasedSessions implements Sessions {
   }
   private decode(row: Row): Session {
     // The thread is the column's: the JSON never holds it.
-    const session: Session = { ...JSON.parse(row.session_json), threadId: row.thread_id };
+    const stored = { ...JSON.parse(row.session_json), threadId: row.thread_id };
+    // An inquiry visit stored before visits named their kind carried a lease and a binding.
+    const session: Session = stored.inquiry
+      ? (({ lease: _lease, ...rest }) => ({
+          ...rest,
+          kind: 'inquiry',
+          execution: (({ policyHash: _p, registrationId: _r, references: _f, ...step }) => step)(
+            rest.execution,
+          ),
+        }))(stored)
+      : { kind: 'work', ...stored };
     if (row.attachment_json !== null)
       session.workspace = {
         attachment: JSON.parse(row.attachment_json),
@@ -604,8 +624,8 @@ export class LeasedSessions implements Sessions {
   private async valid(
     session: Session,
     tx: Transaction,
-    frozen?: Session['execution'],
-  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }> {
+    frozen?: WorkSession['execution'],
+  ): Promise<{ registrationId?: string; references?: WorkflowExecutionReferences }> {
     this.ensureOpen();
     if (!live(session)) throw await this.endedHere(session, tx);
     check(
@@ -615,9 +635,9 @@ export class LeasedSessions implements Sessions {
       401,
     );
     await this.source(session, tx);
-    // An inquiry visit holds no lease on the work: its own deadline and its source's delegation
-    // are all that keep it, wherever the work has gone since.
-    if (session.inquiry) return { registrationId: INQUIRY_POLICY };
+    // An inquiry visit holds no lease on the work and binds no registration: its own deadline
+    // and its source's delegation are all that keep it, wherever the work has gone since.
+    if (session.kind === 'inquiry') return {};
     let execution: { registrationId: string; references?: WorkflowExecutionReferences };
     try {
       execution = await this.framed(
@@ -936,7 +956,7 @@ export class LeasedSessions implements Sessions {
     }));
   }
 
-  async offer(caller: Caller, input: SessionOffer): Promise<Session> {
+  async offer(caller: Caller, input: SessionOffer): Promise<WorkSession> {
     ordinary(caller);
     caller = structuredClone(caller);
     input = closed(offerSchema, input, offerRefusals);
@@ -961,7 +981,7 @@ export class LeasedSessions implements Sessions {
     input: SessionOffer,
     tx: Transaction,
     dispatched = false,
-  ): Promise<Session> {
+  ): Promise<WorkSession> {
     const duration = input.hardDeadlineSeconds ?? 86400;
     const owner = await ownerOf(this.scope, caller, tx);
     const fingerprint = digest({
@@ -972,7 +992,7 @@ export class LeasedSessions implements Sessions {
       tokenHash: tokenDigest(input.secret),
     });
     const old = await this.admitVisit(owner, input, fingerprint, tx);
-    if (old) return old;
+    if (old) return working(old);
     // Authority first: a caller who may not offer learns nothing about live sessions or secrets.
     const role = await this.workflows.leaseRole(caller, input, tx);
     check(
@@ -1051,7 +1071,8 @@ export class LeasedSessions implements Sessions {
       );
     const time = this.clock();
     const hard = Math.min(time + duration * 1000, delegationEnd(owner.source));
-    const session: Session = {
+    const session: WorkSession = {
+      kind: 'work',
       id,
       threadId: thread.id,
       projectId: caller.projectId,
@@ -1106,15 +1127,15 @@ export class LeasedSessions implements Sessions {
    * and Identity holds every other authority's. Reuse is a malformed runner offer, never a failed
    * launch of the target.
    */
-  private async insertVisit(
-    session: Session,
+  private async insertVisit<S extends Session>(
+    session: S,
     kind: 'work' | 'inquiry',
     owner: { hash: string },
     input: { runnerId: string; requestId: string; secret: string },
     fingerprint: string,
     caller: Caller,
     tx: Transaction,
-  ): Promise<Session> {
+  ): Promise<S> {
     const tokenHash = tokenDigest(input.secret);
     check(
       !(await tx.get('SELECT id FROM worker_sessions WHERE token_hash=?', tokenHash)),
@@ -1413,14 +1434,15 @@ export class LeasedSessions implements Sessions {
     if (transaction) this.state.assertTransaction(transaction);
     const read = async (sql: Transaction) => {
       await this.scope.require(caller, 'read', sql);
+      // An inquiry visit holds no workspace.
       const rows = await sql.all<Row>(
-        `${SESSION} WHERE project_id=? AND id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
+        `${SESSION} WHERE project_id=? AND kind='work' AND id IN (SELECT jsonb_array_elements_text(?::jsonb))`,
         caller.projectId,
         JSON.stringify([...new Set(sessionIds)]),
       );
       return new Map(
         await mapAsync(rows, async (row) => {
-          const session = this.decode(row);
+          const session = working(this.decode(row));
           return [session.id, await this.observation(caller, session, sql)] as const;
         }),
       );
@@ -1430,7 +1452,7 @@ export class LeasedSessions implements Sessions {
   }
   private async observation(
     caller: Caller,
-    session: Session,
+    session: WorkSession,
     sql: Transaction,
   ): Promise<SessionWorkspaceObservation> {
     const [event] = session.workspace?.result
@@ -1526,9 +1548,8 @@ export class LeasedSessions implements Sessions {
         );
       if (workspace && policy.mode !== 'none') {
         const name = policy.base.slice('reference:'.length);
-        const oid = Object.hasOwn(session.execution.references, name)
-          ? session.execution.references[name]
-          : undefined;
+        const { references } = working(session).execution;
+        const oid = Object.hasOwn(references, name) ? references[name] : undefined;
         check(
           typeof oid === 'string' && oidPattern.test(oid),
           'workspace_reference_unavailable',
@@ -1617,7 +1638,11 @@ export class LeasedSessions implements Sessions {
         }
         const row = await this.row(tx, session.id);
         await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
-        const authority = await this.valid(session, tx, session.execution);
+        const authority = await this.valid(
+          session,
+          tx,
+          session.kind === 'work' ? session.execution : undefined,
+        );
         return { session, registrationId: authority.registrationId };
       });
     const before = await authorize();
@@ -1625,7 +1650,7 @@ export class LeasedSessions implements Sessions {
     const provider = this.launchConnectionsProvider;
     // An inquiry visit reads the project through Merv alone.
     if (
-      before.session.inquiry ||
+      before.session.kind === 'inquiry' ||
       !provider ||
       (before.session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain)
     )

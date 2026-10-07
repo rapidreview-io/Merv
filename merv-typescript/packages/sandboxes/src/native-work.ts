@@ -11,7 +11,7 @@ import {
   type Workflows,
 } from '@merv/contracts';
 import { computeEpoch, computeProfile, type ComputeProfile } from './compute-capability.js';
-import type { NativeMcpConnection, Session } from '@merv/sessions/types';
+import type { NativeMcpConnection, WorkSession } from '@merv/sessions/types';
 import type { NativeConnections } from './native-connections.js';
 import type { NativeAssignmentRow, NativeConnectionRow, NativeWorkRow } from './native-schema.js';
 
@@ -321,7 +321,7 @@ export class NativeWorkService {
   }
   private async live(
     sql: Sql,
-    session: Readonly<Session>,
+    session: Readonly<WorkSession>,
     connectionId: string,
     workflow: string,
     attempt: string,
@@ -357,7 +357,7 @@ export class NativeWorkService {
    * instance. The work is pinned on its first launch in a funded project. An assignment that
    * declares no kind binds no compute.
    */
-  async launchConnections(session: Readonly<Session>): Promise<NativeMcpConnection[]> {
+  async launchConnections(session: Readonly<WorkSession>): Promise<NativeMcpConnection[]> {
     check(
       !this.state.ambient,
       'sandbox_transaction_forbidden',
@@ -410,7 +410,7 @@ export class NativeWorkService {
     return await this.issue(session, work.connection_id, workflow, work.desired_attempt, profile);
   }
   private async issue(
-    session: Readonly<Session>,
+    session: Readonly<WorkSession>,
     connectionId: string,
     workflow: string,
     attempt: string,

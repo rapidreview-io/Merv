@@ -10,7 +10,7 @@ import {
   type Transaction,
   type WorkspaceHandle,
 } from '@merv/contracts';
-import type { Sessions, Session } from '@merv/sessions/types';
+import type { Session, Sessions, WorkSession } from '@merv/sessions/types';
 import type { Code } from '@merv/code-work/types';
 import { CodeWorkspaceDriver } from '@merv/code/driver/index';
 import { waitForManagedCode } from './managed-code.js';
@@ -83,7 +83,9 @@ export function currentWork(host: Host, options: { directory: string; source: Ca
   }
 
   /** Attach an already offered lease, without activating or authenticating its worker. */
-  async function attach(session: Session, source = options.source) {
+  async function attach(offered: Session, source = options.source) {
+    // Only a work visit has a workspace to attach.
+    const session = offered as WorkSession;
     const runnerId = session.runnerId;
     const directory = join(options.directory, request());
     mkdirSync(directory, { recursive: true });

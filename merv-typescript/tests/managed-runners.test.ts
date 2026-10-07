@@ -1772,7 +1772,7 @@ test('work-host Code transfers use only the unfinished assignment, including clo
     sessionId: first.id,
     runnerId: f.runnerId,
     hostRef: 'code-launch',
-    leaseId: first.lease.leaseId,
+    leaseId: first.lease!.leaseId,
     unitId: first.instanceId,
     generation: 1,
     expectedHead: head,

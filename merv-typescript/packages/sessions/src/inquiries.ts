@@ -11,6 +11,7 @@ import {
 } from '@merv/contracts';
 import { isoNow, ordinary, text, workName } from './common.js';
 import type {
+  InquirySession,
   InquiryStatus,
   Session,
   SessionInquiries,
@@ -33,8 +34,6 @@ export const INQUIRY_TOKENS = 300_000;
  * what its runner or the relay reported, and one still waiting or running its whole budget.
  */
 export const INQUIRY_DAILY_TOKENS = 2_000_000;
-/** What an inquiry visit's frozen execution and lease name in place of a workflow policy. */
-export const INQUIRY_POLICY = 'inquiry';
 
 interface InquiryRow {
   id: string;
@@ -91,9 +90,10 @@ export interface InquiryCandidate {
 
 /**
  * The visit an inquiry runs as: the thread's actor and conversation, a short deadline, and an
- * assignment, execution and lease of its own that name the step the conversation is of but grant
- * nothing on it. Its policy is read-only with no workspace and no tools: what it may call is the
- * project's reads and its one reply, which Sessions admits for inquiry visits alone.
+ * assignment and execution of its own that name the step the conversation is of. It holds no
+ * lease and binds no registration. Its policy is read-only with no workspace and no tools: what
+ * it may call is the project's reads and its one reply, which Sessions admits for inquiry visits
+ * alone.
  */
 export function inquirySession(input: {
   id: string;
@@ -103,7 +103,7 @@ export function inquirySession(input: {
   runnerId: string;
   createdAt: string;
   hardDeadline: string;
-}): Session {
+}): InquirySession {
   const { candidate, id, projectId } = input;
   const { latest } = candidate;
   const step = {
@@ -117,6 +117,7 @@ export function inquirySession(input: {
   };
   const name = workName(latest.assignment);
   return {
+    kind: 'inquiry',
     id,
     threadId: candidate.threadId,
     projectId,
@@ -150,26 +151,7 @@ export function inquirySession(input: {
       execution: { readOnly: true, tools: [] },
       context: null,
     },
-    execution: {
-      ...step,
-      policyHash: INQUIRY_POLICY,
-      registrationId: INQUIRY_POLICY,
-      policy: { readOnly: true, tools: [] },
-      references: {},
-    },
-    lease: {
-      leaseId: id,
-      instanceId: step.instanceId,
-      expectedRevision: step.revision,
-      projectId,
-      actorId: step.actorId,
-      workflow: step.workflow,
-      version: step.version,
-      state: step.state,
-      policyHash: INQUIRY_POLICY,
-      registrationId: INQUIRY_POLICY,
-      receipt: {},
-    },
+    execution: { ...step, policy: { readOnly: true, tools: [] } },
     continuity: { key: candidate.continuityKey, resume: candidate.resume },
     inquiry: {
       id: candidate.id,
@@ -450,7 +432,7 @@ export class Inquiries implements SessionInquiries {
     check(result.changes === 1, 'inquiry_taken', 'The question was taken by another machine', 409);
   }
   /** Its visit closed: answered when the question's message carries the reply, else not. */
-  async closed(tx: Transaction, session: Session): Promise<void> {
+  async closed(tx: Transaction, session: InquirySession): Promise<void> {
     const ref = session.inquiry!;
     const replied = await tx.get<{ reply_body: string | null }>(
       'SELECT reply_body FROM session_messages WHERE id=?',

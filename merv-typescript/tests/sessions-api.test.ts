@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Caller, Data, WorkflowExecutionPolicy } from '@merv/contracts';
-import type { Session } from '@merv/sessions/types';
+import type { Session, WorkSession } from '@merv/sessions/types';
 import { sessionsUiPlugin } from '@merv/sessions/ui';
 import { uiPlugin } from '@merv/ui';
 import { CredentialStore } from '@merv/identity/credentials';
@@ -137,7 +137,7 @@ async function fixture(
     };
     const response = await http('/sessions/offer', boot.token, input);
     assert.equal(response.status, 200, JSON.stringify(response));
-    return { session: response.body.session as Session, secret, input };
+    return { session: response.body.session as WorkSession, secret, input };
   }
   async function connect(secret: string, projectId?: string) {
     const client = new Client({ name: 'session-api-test', version: '1' });
@@ -1067,7 +1067,7 @@ test('the runner can read a server-admitted session whose combined frozen packet
     assert.ok(Buffer.byteLength(JSON.stringify(packet)) <= 524_288);
   assert.ok(Buffer.byteLength(JSON.stringify({ session })) > 1024 * 1024);
   const runner = new RunnerClient(f.app.ctx.api.url!, f.boot.project.id, f.boot.token);
-  const observed = await runner.get(session.id, 'runner');
+  const observed = (await runner.get(session.id, 'runner')) as WorkSession;
   assert.equal(observed.assignment.brief, packetText);
   assert.equal(observed.execution.references.evidence, packetText);
   assert.equal(observed.lease.receipt.evidence, packetText);

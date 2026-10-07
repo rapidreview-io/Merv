@@ -15,7 +15,7 @@ import {
 import { admitDispatch, type WorkflowDispatchAdmission } from '@merv/workflows/execution';
 import { clone, ordinary, safeError } from './common.js';
 import type { AgentObservations } from './observations.js';
-import type { Session, SessionInvocation, SessionInvocationPolicy } from './types.js';
+import type { Session, SessionInvocation, SessionInvocationPolicy, WorkSession } from './types.js';
 
 const snapshotInput = (input: Data): Data =>
   plain(input, 'invalid_input', {
@@ -73,7 +73,8 @@ function admitCall(
 interface InvocationState {
   public: SessionInvocation;
   sessionId: string;
-  registrationId: string;
+  /** The registration its work visit's lease is checked against; an inquiry visit binds none. */
+  registrationId?: string;
   running: boolean;
   used: boolean;
   input: Data;
@@ -90,8 +91,8 @@ export interface InvocationHost {
   valid(
     session: Session,
     tx: Transaction,
-    frozen?: Session['execution'],
-  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }>;
+    frozen?: WorkSession['execution'],
+  ): Promise<{ registrationId?: string; references?: WorkflowExecutionReferences }>;
   /** Refuses while a queued operator message waits for the worker's acknowledgement. */
   acknowledged(sessionId: string, tx: Transaction): Promise<void>;
 }
