@@ -214,6 +214,10 @@ export interface Fleet {
   describe(projectId: string, key: string): Promise<FleetMachine | null>;
   registerOwner(kind: string, owner: FleetOwner): () => void;
   inspectOwned(owner: FleetOwner, id: string, tx?: Transaction): Promise<FleetAllocation>;
+  /** Whether work machines are held (fleet_holds): a release is about to replace them, so the
+   * workflow owner rents none and stops each whose step has settled, and none admits a step
+   * (those of an owner that keepsRunning; Pi's are drained by their turns). */
+  held(tx?: Transaction): Promise<boolean>;
   /** Whether a release retired this allocation's machine: its profile is no longer configured. */
   retired(id: string, tx?: Transaction): Promise<boolean>;
   /** The owner's open allocations in every project, oldest first, with every released one whose
@@ -226,7 +230,8 @@ export interface Fleet {
   list(caller: Caller, recent?: number): Promise<FleetAllocation[]>;
   cancel(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
   drain(caller: Caller, id: string, tx?: Transaction): Promise<FleetAllocation>;
-  /** Sessions must call this inside the same transaction that enrolls or claims work. */
+  /** Sessions must call this inside the same transaction that enrolls or claims work. False for
+   * a work machine while work machines are held. */
   admits(id: string, epoch: number, tx: Transaction): Promise<boolean>;
   /** A model relay for workers that hold no provider key; its owner mounts and closes it. */
   modelRelay<G extends ModelRelayGrant, N extends string, R>(

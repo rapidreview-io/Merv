@@ -124,6 +124,13 @@ if (argv[at + 1] === '-' && argv[at + 2] === 'staging') {
   Object.assign(sim.staging.machines, releases); save();
   console.log(JSON.stringify({ changed })); process.exit(0);
 }
+// Staging Main's work drain before its apps take the image, and the lift of its hold.
+if (argv[at + 1] === '-' && ['staging-drain', 'staging-unhold'].includes(argv[at + 2])) {
+  if (!input.includes('def work_drain(')) process.exit(2);
+  event(argv[at + 2] + ' ' + argv[at + 3].slice(1, -1));
+  if (argv[at + 2] === 'staging-drain' && sim.fail.stagingDrain) { save(); console.log(JSON.stringify({ error: sim.fail.stagingDrain })); process.exit(1); }
+  console.log(JSON.stringify(argv[at + 2] === 'staging-drain' ? { drained: true } : { lifted: true })); process.exit(0);
+}
 if (argv[at + 1] === '-') { console.log(JSON.stringify({ state: sim.state, active: sim.active })); process.exit(0); }
 const [, step, dir] = argv.slice(at + 1);
 const run = dir.split('/').pop();
@@ -424,11 +431,14 @@ test('a failed canary rolls back to the previous digest, Worker and release, and
   order(
     r.steps.slice(r.steps.indexOf('canary') + 1),
     'note',
+    'drain',
     'wrangler',
     'switch',
     'canary',
     'finish',
   );
+  // The rollback replaces every container too: work machines end first, Pi turns are not waited on.
+  assert.equal(r.events[r.steps.lastIndexOf('drain')], 'drain {"work":true}');
   assert.equal(r.sim.main, LIVE.releaseId);
   assert.equal(r.sim.native.image, LIVE.image);
   assert.equal(r.sim.state.current.image, LIVE.image);
@@ -577,10 +587,12 @@ test('an open run begun with another pipeline is rolled back, never driven forwa
   const run = openRun(current, { deployAttempted: true }, DEPLOYED, '0'.repeat(40));
   const r = simulate('moved', { ...run, ...ON_NEXT });
   assert.equal(r.status, 1, r.out);
-  order(r.steps, 'note', 'wrangler', 'switch', 'canary', 'finish');
+  order(r.steps, 'note', 'drain', 'wrangler', 'switch', 'canary', 'finish');
+  // Work machines Main rented on the new release since its switch end before the rollback.
   assert.deepEqual(
-    r.events.filter((e) => /^(wrangler|switch|canary)/.test(e)),
+    r.events.filter((e) => /^(drain|wrangler|switch|canary)/.test(e)),
     [
+      'drain {"work":true}',
       'wrangler aaaa worker v1',
       `switch {"releaseId":"${LIVE.releaseId}"}`,
       `canary {"releaseId":"${LIVE.releaseId}"}`,
@@ -810,7 +822,17 @@ test('once production passes, staging takes the release: catalog copies, its app
   const r = simulate('staging', STAGING);
   assert.equal(r.status, 0, r.out);
   order(r.steps, 'switch', 'canary', 'stage');
-  order(r.steps.slice(r.steps.indexOf('stage')), 'stage', 'wrangler', 'staging', 'finish');
+  order(
+    r.steps.slice(r.steps.indexOf('stage')),
+    'stage',
+    'staging-drain',
+    'wrangler',
+    'staging',
+    'finish',
+  );
+  // Staging's work visits end before its apps are replaced, within --drain-minutes.
+  assert.ok(r.events.includes('staging-drain 900'), r.events.join('\n'));
+  assert.ok(!r.steps.includes('staging-unhold'));
   const staged = r.steps.indexOf('stage');
   assert.deepEqual(
     r.events.slice(staged).filter((e) => e.startsWith('wrangler')),
@@ -841,8 +863,19 @@ test('once production passes, staging takes the release: catalog copies, its app
 });
 
 test('a staging failure is reported in the ledger and never rolls production back', () => {
-  for (const fail of [{ deploy: 'staging' }, { stagingSwitch: 'Main did not take the release' }]) {
+  for (const fail of [
+    { deploy: 'staging' },
+    { stagingSwitch: 'Main did not take the release' },
+    { stagingDrain: 'not_drained_after_900s {"work": ["flt_w"]}' },
+  ]) {
     const r = simulate('staging-fails', { ...STAGING, fail });
+    // Staging Main's hold on its work machines is lifted however staging failed.
+    order(r.steps, 'staging-drain', 'staging-unhold', 'finish');
+    if (fail.stagingDrain)
+      assert.ok(
+        !r.events.some((e) => / cloudflare-fleet-staging/.test(e)),
+        'staging kept its apps',
+      );
     assert.equal(r.status, 0, r.out);
     assert.equal(r.sim.main, NEXT_ID);
     assert.equal(r.sim.native.image, NEXT);

@@ -107,8 +107,13 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
   const allocations: FleetAllocation[] = [];
   /** While set, a reconcile waits at its first read. */
   let held: Promise<void> | undefined;
+  /** Whether a release holds work machines (Fleet's fleet_holds). */
+  let releasing = false;
   const fakeFleet = {
     allocationSeconds: 86_400,
+    async held() {
+      return releasing;
+    },
     registerOwner(kind: string, value: FleetOwner) {
       assert.equal(kind, 'workflow');
       owner = value;
@@ -267,6 +272,10 @@ async function fixture(t: TestContext, config: Partial<FleetWorkflowConfig> = {}
       };
     },
     serves: (projectId: string) => validator!.serves!(projectId),
+    /** A release holds work machines, or lifts its hold. */
+    release: (value: boolean) => {
+      releasing = value;
+    },
     demand: (value: Target[] | Error, projectId = main.id) => {
       demands.set(projectId, value);
     },
@@ -1094,6 +1103,64 @@ test('a settled work host without a whole step left stops at once, so the next s
   // A step under way keeps it: Sessions ends that step five minutes before the machine.
   f.inspections.get(allocation.id)!.session!.status = 'active';
   assert.equal(await f.owner().observe(allocation), 'running');
+});
+
+test('a release’s hold rents nothing and stops each work host whose step has settled, never one mid-step', async (t) => {
+  const f = await fixture(t, { maxAgents: 6 });
+  f.demand(targets('task', 5));
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 5);
+  const [queued, empty, working, capturing, settled] = f.allocations;
+  for (const a of [empty, working, capturing, settled]) {
+    a!.phase = 'running';
+    a!.runtime = {
+      ...machine,
+      launch: { deliveryState: 'launched' },
+    } as FleetAllocation['runtime'];
+  }
+  const step = (
+    a: FleetAllocation,
+    status: 'active' | 'released',
+    capturePending = false,
+  ): ManagedRunnerInspection => ({
+    runnerId: 'managed-machine',
+    enrollmentExpiresAt,
+    session: {
+      id: `session_${a.id}`,
+      instanceId: workOf(a),
+      expectedRevision: 0,
+      status,
+      closedAt: status === 'released' ? new Date(f.now()).toISOString() : null,
+      outcome: status === 'released' ? 'completed' : null,
+      releaseAcknowledged: status === 'released',
+      capturePending,
+    },
+  });
+  const workOf = (a: FleetAllocation) => a.owner.id.slice('work:'.length);
+  f.inspections.set(empty!.id, { runnerId: 'managed-machine', enrollmentExpiresAt, session: null });
+  f.inspections.set(working!.id, step(working!, 'active'));
+  f.inspections.set(capturing!.id, step(capturing!, 'released', true));
+  f.inspections.set(settled!.id, step(settled!, 'released'));
+  f.demand([...targets('task', 5), { instanceId: 'other', expectedRevision: 0 }]);
+  f.release(true);
+  const requested = f.requests.length;
+  await f.adapter.reconcile();
+  assert.equal(f.requests.length, requested, 'a held Fleet rents nothing, whatever is wanted');
+  assert.deepEqual(
+    f.allocations.map((a) => a.intent),
+    ['stop', 'stop', 'run', 'run', 'stop'],
+    'the queued, the empty and the settled host stop; the step in flight and the capture keep theirs',
+  );
+  // Once its step settles, the working host stops too, and the release finds none up.
+  f.inspections.set(working!.id, step(working!, 'released'));
+  f.inspections.set(capturing!.id, step(capturing!, 'released'));
+  await f.adapter.reconcile();
+  assert.deepEqual(f.open(), []);
+  // The hold lifted, the work is rented again.
+  f.release(false);
+  await f.adapter.reconcile();
+  assert.ok(f.requests.length > requested);
+  assert.ok(f.open().length > 0);
 });
 
 test('a missing model key serves nothing, and the adapter still starts', async (t) => {

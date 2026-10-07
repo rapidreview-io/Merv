@@ -645,6 +645,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
    * one of its people, and its reviews the owner may not direct through its review director;
    * a failure in one project leaves the others served. */
   private async reconcileOnce(): Promise<void> {
+    if (await this.fleet.held()) return await this.drainForRelease();
     // The key stays on Main for the relay; without it no machine is rented to call the model.
     check(
       process.env[this.config.modelApiKeyEnv],
@@ -760,6 +761,25 @@ export class FleetWorkflowAdapter implements FleetOwner {
       slots--;
       if (paused) break;
     }
+  }
+  /**
+   * While a release holds work machines (it is about to replace the apps they run on, which kills
+   * every running container): rent nothing, and stop each machine with no step in flight, so the
+   * release finds none up. A step in flight runs on, and its machine admits no other (Fleet.admits),
+   * so it stops once the step has settled. Each is judged and stopped under the writer, where no
+   * step can be claimed between the two.
+   */
+  private async drainForRelease(): Promise<void> {
+    for (const a of (await this.fleet.listOwned(this, [])).filter(occupied))
+      if (a.intent !== 'stop')
+        await this.state.transaction(async (tx) => {
+          const session = (await this.sessions.managed.inspect(a.id, a.epoch, tx))?.session;
+          const settled =
+            !session ||
+            ((session.status === 'released' || session.status === 'expired') &&
+              !session.capturePending);
+          if (settled) await this.fleet.cancelOwned(this, a.id, tx);
+        });
   }
   async close(): Promise<void> {
     if (this.closed) return;

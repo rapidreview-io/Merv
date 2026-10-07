@@ -777,6 +777,45 @@ test('source revocation and missing owner stop a live allocation', async (t) => 
   assert.ok(f.runtimes.stopped.includes('sbx_2'));
 });
 
+test('a release’s hold admits no step on a work machine until it is lifted or lapses', async (t) => {
+  const f = await fixture(t, { globalLimit: 2, projectLimit: 2 });
+  f.unregister();
+  f.fleet.registerOwner('workflow', { ...f.owner, keepsRunning: true });
+  f.fleet.registerOwner('pi-host', f.owner);
+  const allocation = await f.fleet.request(f.caller, input('held'));
+  const chat = await f.fleet.request(f.caller, {
+    requestId: 'chat',
+    owner: { kind: 'pi-host', id: 'host_1' },
+  });
+  for (let i = 0; i < 3; i++) await f.fleet.tick();
+  const admits = () => f.state.transaction((tx) => f.fleet.admits(allocation.id, 1, tx));
+  const chats = () => f.state.transaction((tx) => f.fleet.admits(chat.id, 1, tx));
+  assert.deepEqual([await f.fleet.held(), await admits(), await chats()], [false, true, true]);
+  // As deploy/hosted-release-vm.py writes it: an ISO instant ahead.
+  const hold = (until: string) =>
+    f.state.transaction((tx) =>
+      tx.run(
+        'INSERT INTO fleet_holds(name, until) VALUES (?, ?) ON CONFLICT (name) DO UPDATE SET until = EXCLUDED.until',
+        'hosted-release',
+        until,
+      ),
+    );
+  await hold('2026-09-22T00:30:00.000Z');
+  assert.deepEqual([await f.fleet.held(), await admits()], [true, false]);
+  // A Pi machine is drained by its turns, never held.
+  assert.equal(await chats(), true);
+  assert.equal(await f.state.transaction((tx) => f.fleet.held(tx)), true);
+  // A hold whose holder never lifted it lapses.
+  f.advance(1_800_000);
+  assert.deepEqual([await f.fleet.held(), await admits()], [false, true]);
+  await hold('2026-09-22T00:45:00.000Z');
+  assert.equal(await admits(), false);
+  await f.state.transaction((tx) =>
+    tx.run("DELETE FROM fleet_holds WHERE name = 'hosted-release'"),
+  );
+  assert.deepEqual([await f.fleet.held(), await admits()], [false, true]);
+});
+
 test('active unchanged observations perform no writes; admission requires launch', async (t) => {
   const f = await fixture(t);
   const allocation = await f.fleet.request(f.caller, input('stable'));

@@ -422,9 +422,10 @@ one-machine-per-step machine still running; release in a quiet window.
   tool. A turn that has not waits, and starts on a fresh machine once Main is
   back; so does one whose machine is lost, once. A machine Fleet rented for a
   workflow step keeps running through the restart (its lease is at most 900 s,
-  renewed by Fleet), and the restarted Main takes it back; a hosted-image
-  rollout stops it, and its session closes as `machine_retired`, which never
-  builds a hold. `MERV_FLEET_WORKFLOW_ENABLED=false` with Fleet on stops them.
+  renewed by Fleet), and the restarted Main takes it back. A Cloudflare rollout
+  of the hosted image replaces every running container of the app, so a work
+  visit on it would die; the hosted release drains work machines first (below).
+  `MERV_FLEET_WORKFLOW_ENABLED=false` with Fleet on stops them.
   Schedule the change for a quiet window all the same.
 - `render-config.mjs` runs on every start, and the restart policy is
   `unless-stopped`, so a bad env value crash-loops Main. The rollback in
@@ -439,6 +440,15 @@ one-machine-per-step machine still running; release in a quiet window.
   the rollout killing it (the next turn starts on the person's own pick), and
   waits until no Pi machine is up for 10 s. A turn sent after that, before the
   rollout begins, can still start on the old image and lose its machine to it.
+  The drain also holds work machines (a `fleet_holds` row in Main): Fleet rents
+  none, admits no new step on one, and stops each whose step has settled, and the
+  drain waits until Fleet has released every one. A step still running at
+  `--drain-minutes` stops the release with nothing deployed and the hold lifted;
+  rerun later, or with a longer `--drain-minutes` (a step runs for up to two
+  hours, and no new step starts while the drain waits). The switch, or the
+  run's finish, lifts the hold; one left behind lapses an hour after the
+  drain's last look. A rollback drains work machines the same way before it
+  redeploys, and staging Main's are drained before the staging apps move.
   The image on every
   Cloudflare app that serves one of Main's machines (Standard, and Large once
   `MERV_FLEET_RUNTIMES` names it), the release and its Large copy in the
