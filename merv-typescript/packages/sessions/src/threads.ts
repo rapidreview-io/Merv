@@ -85,6 +85,9 @@ const PAGE = 50;
 export class SessionThreads {
   /** Bound once, as Sessions is provided. */
   blobs!: Blobs;
+  /** How many threads waiting for an answer one sweep pass reads, and where the last stopped. */
+  askingPage = 100;
+  private askingAfter = 0;
   private readonly providers = new Map<string, ContinuityProvider>();
   constructor(
     private state: State,
@@ -390,22 +393,38 @@ export class SessionThreads {
       before,
     );
     for (const row of rows) await this.retire(row, 'dormant', tx);
-    // A question keeps its thread only while its work can still come back to it.
-    const asking = await tx.all<{ id: string; project_id: string; instance_id: string }>(
-      `SELECT t.id,q.project_id,q.instance_id FROM session_threads t
-        JOIN session_questions q ON q.thread_id=t.id AND q.answered_at IS NULL
-        WHERE t.status='dormant' AND t.updated_at<?`,
+    // A question keeps its thread only while its work can still come back to it. Work that
+    // ended took its question's blocker with it; its thread is read once more here and retired.
+    // Work that stays open is read again each pass, `askingPage` threads at a time from where
+    // the last pass stopped, so every waiting one is reached in turn and no pass reads them all.
+    const page = await tx.all<{ id: string; seq: number | string }>(
+      `SELECT t.id,t._merv_rowid AS seq FROM session_threads t WHERE t.status='dormant' AND t.updated_at<?
+        AND t._merv_rowid>? AND EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
+        ORDER BY t._merv_rowid LIMIT ?`,
       before,
+      this.askingAfter,
+      this.askingPage,
+    );
+    this.askingAfter = page.length < this.askingPage ? 0 : Number(page.at(-1)!.seq);
+    if (!page.length) return;
+    const asking = await tx.all<{ id: string; project_id: string; instance_id: string }>(
+      `SELECT thread_id AS id,project_id,instance_id FROM session_questions
+        WHERE answered_at IS NULL AND thread_id IN (${page.map(() => '?').join(',')})`,
+      ...page.map((row) => row.id),
     );
     const ended = new Set<string>();
     for (const projectId of new Set(asking.map((row) => row.project_id)))
       for (const id of await this.host.ended(
         projectId,
-        asking.filter((row) => row.project_id === projectId).map((row) => row.instance_id),
+        [
+          ...new Set(
+            asking.filter((row) => row.project_id === projectId).map((row) => row.instance_id),
+          ),
+        ],
         tx,
       ))
         ended.add(id);
-    for (const id of new Set(asking.map((row) => row.id)))
+    for (const { id } of page)
       if (asking.every((row) => row.id !== id || ended.has(row.instance_id)))
         await this.retire(await this.row(id, tx), 'dormant', tx);
   }

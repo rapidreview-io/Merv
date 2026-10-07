@@ -1437,3 +1437,48 @@ test('a visit’s message check reads only its own project’s pending messages 
   walk((plan as { Plan: Record<string, unknown> }[])[0]!.Plan);
   assert.ok(threads < 10, `the check read ${threads} thread rows`);
 });
+
+test('the sweep reads a bounded page of waiting questions a pass, and every one of them in turn', async (t) => {
+  const f = await fixture(t);
+  const leased = f.sessions as unknown as LeasedSessions;
+  const ask = async () => {
+    const unit = await f.start();
+    const visit = await f.offer(unit.id, 'runner-a');
+    await f.app.ctx.tools.invoke(
+      'session.ask_owner',
+      await f.sessions.authenticate(visit.input.secret),
+      { question: 'Which cohort?' },
+    );
+    await f.release(visit.session);
+    return { unit, threadId: visit.session.threadId };
+  };
+  // The older question's work stays open; the newer one's ends unanswered.
+  const open = await ask();
+  const ended = await ask();
+  await f.move(ended.unit.id, 'submit');
+  await f.move(ended.unit.id, 'approve');
+  await f.age(dormantMs + 60_000);
+  const status = async (id: string) =>
+    (
+      await f.app.ctx.state.read((sql) =>
+        sql.get<{ status: string }>('SELECT status FROM session_threads WHERE id=?', id),
+      )
+    )?.status;
+  const read: string[][] = [];
+  const host = (leased.threads as unknown as { host: { ended: Function } }).host;
+  const original = host.ended;
+  host.ended = async (projectId: string, ids: string[], tx: unknown) => {
+    read.push(ids);
+    return await original(projectId, ids, tx);
+  };
+  (leased.threads as unknown as { askingPage: number }).askingPage = 1;
+  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
+  assert.deepEqual(read, [[open.unit.id]]);
+  assert.equal(await status(ended.threadId), 'dormant');
+  await f.app.ctx.state.transaction((tx) => leased.threads.expire(tx));
+  assert.deepEqual(read.at(-1), [ended.unit.id]);
+  assert.deepEqual(
+    [await status(open.threadId), await status(ended.threadId)],
+    ['dormant', 'retired'],
+  );
+});
