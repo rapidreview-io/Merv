@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { allowedUrl, origin } from '@merv/contracts';
+import { allowedUrl, nativeMcpConnectionsSchema, origin } from '@merv/contracts';
 
 test('one origin rule: https, or http on loopback only, with no credentials, query or fragment', () => {
   for (const [value, named] of [
@@ -42,4 +42,14 @@ test('one origin rule: https, or http on loopback only, with no credentials, que
     'not a url',
   ])
     assert.equal(allowedUrl(value), false, value);
+});
+
+test('a URL names http(s) only: a blob: URL, whose origin is the URL inside it, is refused', () => {
+  assert.equal(allowedUrl('blob:https://a.example/x'), false);
+  assert.equal(
+    nativeMcpConnectionsSchema.safeParse([
+      { name: 'tools', url: 'blob:https://mcp.example/mcp', bearer: 'b'.repeat(32) },
+    ]).success,
+    false,
+  );
 });
