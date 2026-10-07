@@ -314,7 +314,7 @@ export class SessionThreads {
       // The fork: an inquiry visit's conversation is never saved back, so the thread's next work
       // visit resumes the conversation as it was (and reads the exchange as a message).
       check(
-        !session.inquiry,
+        session.kind === 'work',
         'conversation_unkept',
         'An inquiry visit keeps no conversation: its thread resumes the one it had',
         409,

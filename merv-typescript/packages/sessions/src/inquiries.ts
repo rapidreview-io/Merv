@@ -496,7 +496,7 @@ export class Inquiries implements SessionInquiries {
   }
   /** Its visit closed: answered when the question's message carries the reply, else not. */
   async closed(tx: Transaction, session: InquirySession): Promise<void> {
-    const ref = session.inquiry!;
+    const ref = session.inquiry;
     const replied = await tx.get<{ reply_body: string | null }>(
       'SELECT reply_body FROM session_messages WHERE id=?',
       ref.messageId,

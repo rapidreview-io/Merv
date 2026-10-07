@@ -13,6 +13,7 @@ import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
 import { messageInquiry } from './inquiries.js';
 import type {
+  InquirySession,
   InquiryStatus,
   Session,
   SessionMessage,
@@ -94,7 +95,12 @@ export interface MessageHost {
   /** Closes a visit that asked its owner: released, not counted against the work. */
   asked(session: Session, tx: Transaction): Promise<void>;
   /** An inquiry visit replied to its question: it ends, and its thread's work is told. */
-  answered(session: Session, question: string, reply: string, tx: Transaction): Promise<void>;
+  answered(
+    session: InquirySession,
+    question: string,
+    reply: string,
+    tx: Transaction,
+  ): Promise<void>;
   /** Where these inquiries stand. */
   inquiryStatuses(tx: Transaction, ids: string[]): Promise<Map<string, InquiryStatus>>;
   /** Refuses a caller who may not read the work item. */
@@ -148,7 +154,7 @@ export class SessionMessages {
   /** A visit reads the messages to its thread's (`KEY_THREADS`). */
   private async addressed(tx: Transaction, session: Session): Promise<MessageRow[]> {
     // An inquiry visit reads its one question, and nothing meant for its thread's work.
-    if (session.inquiry)
+    if (session.kind === 'inquiry')
       return await tx.all<MessageRow>(
         'SELECT * FROM session_messages WHERE id=?',
         session.inquiry.messageId,
@@ -519,7 +525,7 @@ export class SessionMessages {
       const session = this.host.decode(await this.host.row(tx, caller.session!.id));
       check(
         row.project_id === caller.projectId &&
-          (session.inquiry
+          (session.kind === 'inquiry'
             ? row.id === session.inquiry.messageId
             : row.inquiry_role !== 'question' &&
               !!(await tx.get(
@@ -532,7 +538,7 @@ export class SessionMessages {
         404,
       );
       check(
-        !session.inquiry || input.reply !== undefined,
+        session.kind === 'work' || input.reply !== undefined,
         'invalid_session_message',
         'An inquiry is answered by its reply: give one',
       );
@@ -547,7 +553,9 @@ export class SessionMessages {
         this.publicMessage(
           item,
           session.instanceId,
-          session.inquiry && (await this.host.inquiryStatuses(tx, [session.inquiry.id])),
+          session.kind === 'inquiry'
+            ? await this.host.inquiryStatuses(tx, [session.inquiry.id])
+            : undefined,
         );
       if (row.acknowledged_at) {
         check(
@@ -575,10 +583,10 @@ export class SessionMessages {
           sessionId: session.id,
           threadId: row.thread_id,
           replied: input.reply !== undefined,
-          ...(session.inquiry && { inquiryId: session.inquiry.id }),
+          ...(session.kind === 'inquiry' && { inquiryId: session.inquiry.id }),
         },
       });
-      if (session.inquiry) await this.host.answered(session, row.body, input.reply!, tx);
+      if (session.kind === 'inquiry') await this.host.answered(session, row.body, input.reply!, tx);
       return await read(await this.messageRow(tx, row.id));
     });
   }

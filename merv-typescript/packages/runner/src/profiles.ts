@@ -288,13 +288,12 @@ export const sealed = (session: LaunchRequest['session']): boolean => {
   );
 };
 /**
- * An inquiry visit (`session.inquiry`): a person's question to the agent, answered from its
+ * An inquiry visit (its `kind`): a person's question to the agent, answered from its
  * restored conversation. It is sealed as a review of a retained checkout is: the filesystem
  * read-only (its directory may be the work's own, on a work host), no shell writes, no
  * connections, and nothing of it kept.
  */
-export const inquiring = (session: LaunchRequest['session']): boolean =>
-  !!(session as { inquiry?: unknown }).inquiry;
+export const inquiring = (session: LaunchRequest['session']): boolean => session.kind === 'inquiry';
 
 /** Deterministic environment names are local to one spawn, never persisted or global. */
 const nativeServers = (request: LaunchRequest) =>

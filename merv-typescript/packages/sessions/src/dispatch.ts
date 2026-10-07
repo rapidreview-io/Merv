@@ -993,7 +993,7 @@ export class SessionDispatch {
           instanceId: session.instanceId,
           runnerRef: runner.id,
           platform: input.platform,
-          ...(session.inquiry && { inquiryId: session.inquiry.id }),
+          ...(session.kind === 'inquiry' && { inquiryId: session.inquiry.id }),
         });
         return { session, reason: await decided('offered') };
       };

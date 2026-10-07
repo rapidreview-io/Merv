@@ -66,6 +66,7 @@ import {
 } from './inquiries.js';
 import { accountingMethod, recordUsage, reportUsage, usageTotals } from './usage.js';
 import type {
+  InquirySession,
   Session,
   WorkSession,
   SessionContinuity,
@@ -573,19 +574,8 @@ export class LeasedSessions implements Sessions {
   private decode(row: Row): Session {
     // The thread is the column's: the JSON never holds it.
     const stored = { ...JSON.parse(row.session_json), threadId: row.thread_id };
-    // An inquiry visit stored before visits named their kind carried a lease and a binding. A
-    // control read (CONTROL) has no execution to strip.
-    const session: Session = stored.inquiry
-      ? (({ lease: _lease, ...rest }) => ({
-          ...rest,
-          kind: 'inquiry',
-          ...(rest.execution && {
-            execution: (({ policyHash: _p, registrationId: _r, references: _f, ...step }) => step)(
-              rest.execution,
-            ),
-          }),
-        }))(stored)
-      : { kind: 'work', ...stored };
+    // Every inquiry visit's JSON names its kind (sessions@19); a work visit's older JSON did not.
+    const session: Session = { kind: 'work', ...stored };
     if (row.attachment_json !== null)
       session.workspace = {
         attachment: JSON.parse(row.attachment_json),
@@ -711,13 +701,13 @@ export class LeasedSessions implements Sessions {
     );
     await this.credentials.authenticateHash(row.token_hash, 'session-execution', tx);
     check(
-      !session.inquiry || requiredPermission === 'read',
+      session.kind === 'work' || requiredPermission === 'read',
       'inquiry_read_only',
       'An inquiry visit only reads: it holds no lease on the work and writes nothing but its reply',
       403,
     );
     if (
-      !session.inquiry &&
+      session.kind === 'work' &&
       requiredPermission !== 'read' &&
       caller.session?.invocationId !== undefined &&
       caller.session?.invocationId === this.invocations.toolHandler.getStore()
@@ -828,7 +818,7 @@ export class LeasedSessions implements Sessions {
     await recordUsage(tx, session);
     // An inquiry visit counts against no work and leaves its thread exactly as it was: its
     // conversation, status and latest visit. Its question is answered, or not.
-    if (session.inquiry) {
+    if (session.kind === 'inquiry') {
       await this.inquiries.closed(tx, session);
       return session;
     }
@@ -888,7 +878,7 @@ export class LeasedSessions implements Sessions {
   }
   private async handedOff(session: Session, tx: Transaction): Promise<boolean> {
     // An inquiry visit moves nothing; the thread's actor moving the step is its work's doing.
-    if (session.inquiry) return false;
+    if (session.kind === 'inquiry') return false;
     return (
       (await this.workflows.movedBy(session.instanceId, session.expectedRevision + 1, tx)) ===
       session.actorId
@@ -1090,7 +1080,7 @@ export class LeasedSessions implements Sessions {
       ...(thread.continuity && { continuity: thread.continuity }),
       ...frozen,
     };
-    return await this.insertVisit(session, 'work', owner, input, fingerprint, caller, tx);
+    return await this.insertVisit(session, owner, input, fingerprint, caller, tx);
   }
   /** What every visit's offer checks first: a request it already made for this input answers the
    *  visit it made, and one made for other input is refused. */
@@ -1125,7 +1115,6 @@ export class LeasedSessions implements Sessions {
    */
   private async insertVisit<S extends Session>(
     session: S,
-    kind: 'work' | 'inquiry',
     owner: { hash: string },
     input: { runnerId: string; requestId: string; secret: string },
     fingerprint: string,
@@ -1155,7 +1144,7 @@ export class LeasedSessions implements Sessions {
       fingerprint,
       session.status,
       JSON.stringify(stored),
-      kind,
+      session.kind,
     );
     try {
       await this.credentials.issue(
@@ -1177,7 +1166,7 @@ export class LeasedSessions implements Sessions {
     await this.state.appendEvent(tx, {
       projectId: session.projectId,
       actorId: caller.actorId,
-      type: kind === 'inquiry' ? 'session.inquiry_offered' : 'session.offered',
+      type: session.kind === 'inquiry' ? 'session.inquiry_offered' : 'session.offered',
       subjectId: session.id,
       data: {
         sessionId: session.id,
@@ -1187,7 +1176,10 @@ export class LeasedSessions implements Sessions {
         role: session.role,
         source: session.source,
         runnerId: session.runnerId,
-        ...(session.inquiry && { inquiryId: session.inquiry.id, threadId: session.threadId }),
+        ...(session.kind === 'inquiry' && {
+          inquiryId: session.inquiry.id,
+          threadId: session.threadId,
+        }),
       },
     });
     return clone(session);
@@ -1237,15 +1229,7 @@ export class LeasedSessions implements Sessions {
       hardDeadline: new Date(hard).toISOString(),
     });
     // The writer read the question queued just now; nothing else takes it in between.
-    const offered = await this.insertVisit(
-      session,
-      'inquiry',
-      owner,
-      input,
-      fingerprint,
-      caller,
-      tx,
-    );
+    const offered = await this.insertVisit(session, owner, input, fingerprint, caller, tx);
     await this.inquiries.started(tx, candidate.id, session.id);
     return offered;
   }
@@ -1254,7 +1238,7 @@ export class LeasedSessions implements Sessions {
    * told of the exchange as a message to the thread, unless no visit will take the work up again.
    */
   private async inquiryAnswered(
-    session: Session,
+    session: InquirySession,
     question: string,
     reply: string,
     tx: Transaction,
@@ -1269,7 +1253,7 @@ export class LeasedSessions implements Sessions {
       (await this.endedWork(session.projectId, [thread.instance_id], tx)).size
     )
       return;
-    const ref = session.inquiry!;
+    const ref = session.inquiry;
     const id = newId('session_message');
     const body = inquiryContext(question, reply);
     await tx.run(
@@ -1731,7 +1715,7 @@ export class LeasedSessions implements Sessions {
     await this.valid(session, tx);
     const workspace = effectiveWorkspace(session.execution.policy);
     if (
-      session.inquiry ||
+      session.kind === 'inquiry' ||
       (session.execution.policy.readOnly && workspace.mode !== 'none' && workspace.retain) ||
       !this.managed.huggingFace(row)
     )
@@ -2010,7 +1994,7 @@ export class LeasedSessions implements Sessions {
       if (error) return { error };
       if (session.status === 'offered') {
         // An inquiry visit starts no work: nothing of the workflow is marked started.
-        if (!session.inquiry)
+        if (session.kind === 'work')
           await this.framed(
             {
               tx,

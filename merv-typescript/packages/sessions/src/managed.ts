@@ -420,16 +420,17 @@ export class ManagedRunnerBindings {
         await this.credentials.authenticateHash(found!.token_hash, 'session-execution', tx);
       await this.current(row, tx);
       await this.scope.requireDelegation(session.source, 'read', tx);
-      const asker = session.inquiry
-        ? await tx.get<{ asker_source_json: string }>(
-            'SELECT asker_source_json FROM session_inquiries WHERE id=?',
-            session.inquiry.id,
-          )
-        : undefined;
+      // Its stored JSON names an inquiry visit's kind; a work visit's older JSON names none.
+      const inquiry = session.kind === 'inquiry' ? session.inquiry : undefined;
+      const asker =
+        inquiry &&
+        (await tx.get<{ asker_source_json: string }>(
+          'SELECT asker_source_json FROM session_inquiries WHERE id=?',
+          inquiry.id,
+        ));
       return {
-        ...(asker && {
-          inquiry: { id: session.inquiry!.id, asker: JSON.parse(asker.asker_source_json) },
-        }),
+        ...(inquiry &&
+          asker && { inquiry: { id: inquiry.id, asker: JSON.parse(asker.asker_source_json) } }),
         sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,

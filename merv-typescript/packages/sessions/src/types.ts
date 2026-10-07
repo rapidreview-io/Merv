@@ -141,7 +141,6 @@ export interface WorkSession extends SessionVisit {
   kind: 'work';
   execution: WorkflowExecution;
   lease: WorkflowLease;
-  inquiry?: undefined;
 }
 /**
  * An inquiry visit: a person's question to its thread's agent. It resumes the thread's
