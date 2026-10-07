@@ -94,9 +94,11 @@ export interface TaskRow {
   context_inputs: string;
   evidence_version: 2;
 }
-/** A task's lease: what it pins besides the step, its claim and its receipt. */
+/**
+ * A task's lease: what it pins besides the step, its claim and its receipt. Its purpose is its
+ * state's (`purposeOf`); leases before cycle 11 also wrote it here, and it is never read.
+ */
 export type TaskLeaseRow = LeaseRow<{
-  purpose: 'work' | 'review';
   pinnedArtifacts: Artifact[];
   checkpoints: TaskCheckpoint[];
 }>;

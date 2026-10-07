@@ -16,7 +16,14 @@ import type { WorkflowSnapshot } from '@merv/workflows/models';
 import { taskExecutionPolicy } from './execution-policy.js';
 import type { TaskDeliveryCode, TaskReview } from './types.js';
 import type { TasksContext } from './index.js';
-import { GIT_CLAIM, producing, roundsFrom, serviceOwned, taskWorkspace } from './workflow.js';
+import {
+  GIT_CLAIM,
+  producing,
+  purposeOf,
+  roundsFrom,
+  serviceOwned,
+  taskWorkspace,
+} from './workflow.js';
 import { checkDelivery, checkFailure } from './commands.js';
 import {
   workflowAssignment,
@@ -399,7 +406,7 @@ export async function checkoutReviewer(
   );
   const lease = await currentLease(ctx, caller, snapshot.id, snapshot.revision, tx);
   check(
-    lease.details.purpose === 'review' && lease.review_id === review.id,
+    purposeOf(lease) === 'review' && lease.review_id === review.id,
     'stale_lease',
     'This worker does not hold the lease of the current review',
     409,
