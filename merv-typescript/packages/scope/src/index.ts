@@ -676,13 +676,15 @@ export class ProjectScope implements Scope {
           ? row.agent_id === caller.session?.threadId
           : row.session_id === caller.session?.id;
         check(own, 'forbidden', 'Worker actors require their live session authority', 403);
-        source = await this.sessions.provider().require(caller, sql as Transaction, permission);
+        const answer = await this.sessions
+          .provider()
+          .require(caller, sql as Transaction, permission);
+        source = answer.source;
         // A session that ended has retired its actor, and Sessions above said how it ended (its
         // handoff completed, say), the way the worker's next call will, whichever closed it first.
-        // An inquiry visit, which Sessions above held to reading, still reads as a thread's actor
-        // its thread retired: a person may ask an agent whose work has ended.
+        // A worker Sessions says may still read as its retired actor does, to read.
         check(
-          row.active || (permission === 'read' && caller.session?.inquiry === true),
+          row.active || (permission === 'read' && answer.readsRetired === true),
           'session_closed',
           'Session is closed',
           401,

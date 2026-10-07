@@ -827,7 +827,7 @@ test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
   roleTarget.expectedRevision = 99;
   assert.equal(await selectingRole, 'producer');
   const source = await f.scope.delegationSource(f.caller);
-  f.scope.registerSessionAuthority({ require: async () => source });
+  f.scope.registerSessionAuthority({ require: async () => ({ source }) });
   const actor = await f.state.transaction(
     async (tx) =>
       await f.scope.createSessionActor(
@@ -879,7 +879,7 @@ test('lease lifecycle calls act on a snapshot of their inputs', async (t) => {
 test('a lease check with its frozen execution grants the frozen references and declared outputs', async (t) => {
   const f = await engineFixture(t);
   const source = await f.scope.delegationSource(f.caller);
-  f.scope.registerSessionAuthority({ require: async () => source });
+  f.scope.registerSessionAuthority({ require: async () => ({ source }) });
   const actor = await f.state.transaction(
     async (tx) =>
       await f.scope.createSessionActor(

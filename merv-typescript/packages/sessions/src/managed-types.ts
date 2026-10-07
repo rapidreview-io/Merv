@@ -54,6 +54,8 @@ export interface ManagedBoundSession {
   handedOffAt?: string;
   /** An inquiry visit's asker, whose model tokens it spends rather than the machine's payer's. */
   inquiry?: { id: string; asker: DelegationSource };
+  /** The session's own model tokens (`Session.tokenBudget`), which each call is charged to. */
+  tokenBudget?: number;
 }
 export interface ManagedRunnerInspection {
   runnerId: string | null;

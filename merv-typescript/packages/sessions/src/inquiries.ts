@@ -1,4 +1,5 @@
 import {
+  MervError,
   check,
   clip,
   digest,
@@ -11,7 +12,10 @@ import {
 } from '@merv/contracts';
 import { isoNow, ordinary, text, workName } from './common.js';
 import type {
+  DispatchState,
+  InquirySession,
   InquiryStatus,
+  MessageInquiry,
   Session,
   SessionInquiries,
   SessionResume,
@@ -23,18 +27,38 @@ import type {
 export const INQUIRY_WAIT_MS = 10 * 60_000;
 /** An inquiry visit's hard deadline from its offer: a short answer, never work. */
 export const INQUIRY_VISIT_SECONDS = 10 * 60;
-/**
- * The model tokens one inquiry visit may spend, charged to the person who asked: Fleet's relay
- * holds a hosted visit to it call by call, and a runner's report counts against it after.
- */
+/** The model tokens one inquiry visit may spend besides resending its conversation. */
 export const INQUIRY_TOKENS = 300_000;
+/** How many model calls' worth of its conversation an inquiry visit may resend: each call of a
+ *  resumed conversation carries all of it, and an answer takes a call or a few. */
+const INQUIRY_RESENDS = 4;
 /**
  * The model tokens one person's questions may spend in a day, wherever they ran: each counts
- * what its runner or the relay reported, and one still waiting or running its whole budget.
+ * what its runner reported, and one still waiting, running or unreported its whole budget.
  */
 export const INQUIRY_DAILY_TOKENS = 2_000_000;
-/** What an inquiry visit's frozen execution and lease name in place of a workflow policy. */
-export const INQUIRY_POLICY = 'inquiry';
+/** An inquiry's budget for a conversation of `size` bytes (about four to a token), within a day's. */
+const inquiryBudget = (size: number) =>
+  Math.min(INQUIRY_DAILY_TOKENS, INQUIRY_TOKENS + INQUIRY_RESENDS * Math.ceil(size / 4));
+
+/** An inquiry still waiting for a machine or being answered, as SQL over `alias`. */
+export const openInquiry = (alias: string) => `${alias}.status IN ('queued','running')`;
+/** What a page says of a question to an agent, by its status. */
+const LABELS: Record<InquiryStatus, string> = {
+  queued: 'asking',
+  running: 'answering',
+  answered: 'answered',
+  unanswered: 'no answer',
+  // Nobody took it in time, or its visit ran out of time before answering.
+  expired: 'expired',
+};
+/** A question's status as a page shows it. */
+export const messageInquiry = (id: string, status: InquiryStatus): MessageInquiry => ({
+  id,
+  status,
+  open: status === 'queued' || status === 'running',
+  label: LABELS[status],
+});
 
 interface InquiryRow {
   id: string;
@@ -51,7 +75,6 @@ interface InquiryRow {
   session_id: string | null;
   ended_at: string | null;
   token_budget: number | string;
-  tokens: number | string;
   /** Joined from its thread. */
   instance_id: string;
 }
@@ -69,8 +92,19 @@ const view = (row: InquiryRow): ThreadInquiry => ({
   sessionId: row.session_id,
   endedAt: row.ended_at,
   tokenBudget: Number(row.token_budget),
-  tokens: Number(row.tokens),
 });
+
+/**
+ * The queued questions of a project a machine of an owner running a harness may take now, with
+ * their thread and its newest work visit `w`: the thread's conversation was kept by that harness,
+ * and its work visits ran under that owner, whose machines alone resume it (as continuity does).
+ * `TAKEABLE_WHERE` takes (projectId, now, harness, ownerHash).
+ */
+const TAKEABLE = `FROM session_inquiries i JOIN session_threads t ON t.id=i.thread_id
+  CROSS JOIN LATERAL (SELECT s.id,s.thread_id,s.owner_hash,s.session_json FROM worker_sessions s
+    WHERE s.thread_id=t.id AND s.kind='work' ORDER BY s._merv_rowid DESC LIMIT 1) w`;
+const TAKEABLE_WHERE = `i.project_id=? AND i.status='queued' AND i.wait_until>? AND t.harness=?
+  AND t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AND t.continuity_key IS NOT NULL AND w.owner_hash=?`;
 
 /** A queued question a machine may take now, with what its visit is built from. */
 export interface InquiryCandidate {
@@ -91,9 +125,10 @@ export interface InquiryCandidate {
 
 /**
  * The visit an inquiry runs as: the thread's actor and conversation, a short deadline, and an
- * assignment, execution and lease of its own that name the step the conversation is of but grant
- * nothing on it. Its policy is read-only with no workspace and no tools: what it may call is the
- * project's reads and its one reply, which Sessions admits for inquiry visits alone.
+ * assignment and execution of its own that name the step the conversation is of. It holds no
+ * lease and binds no registration. Its policy is read-only with no workspace and no tools: what
+ * it may call is the project's reads and its one reply, which Sessions admits for inquiry visits
+ * alone.
  */
 export function inquirySession(input: {
   id: string;
@@ -103,7 +138,7 @@ export function inquirySession(input: {
   runnerId: string;
   createdAt: string;
   hardDeadline: string;
-}): Session {
+}): InquirySession {
   const { candidate, id, projectId } = input;
   const { latest } = candidate;
   const step = {
@@ -117,6 +152,7 @@ export function inquirySession(input: {
   };
   const name = workName(latest.assignment);
   return {
+    kind: 'inquiry',
     id,
     threadId: candidate.threadId,
     projectId,
@@ -141,53 +177,19 @@ export function inquirySession(input: {
       role: 'reader',
       label: `Inquiry: ${name}`,
       name,
-      brief: inquiryBrief(candidate.messageId, candidate.body),
+      // What an inquiry is, and how it is answered, its worker prompt says (workerPrompt).
+      brief: `The question: ${candidate.body}`,
       references: [],
-      handoff: {
-        instruction: `Answer with session.message.ack {messageId: "${candidate.messageId}", reply, requestId}; the reply ends this visit.`,
-        tools: ['session.message.ack'],
-      },
+      handoff: { instruction: '', tools: ['session.message.ack'] },
       execution: { readOnly: true, tools: [] },
       context: null,
     },
-    execution: {
-      ...step,
-      policyHash: INQUIRY_POLICY,
-      registrationId: INQUIRY_POLICY,
-      policy: { readOnly: true, tools: [] },
-      references: {},
-    },
-    lease: {
-      leaseId: id,
-      instanceId: step.instanceId,
-      expectedRevision: step.revision,
-      projectId,
-      actorId: step.actorId,
-      workflow: step.workflow,
-      version: step.version,
-      state: step.state,
-      policyHash: INQUIRY_POLICY,
-      registrationId: INQUIRY_POLICY,
-      receipt: {},
-    },
+    execution: { ...step, policy: { readOnly: true, tools: [] } },
     continuity: { key: candidate.continuityKey, resume: candidate.resume },
-    inquiry: {
-      id: candidate.id,
-      messageId: candidate.messageId,
-      askedBy: candidate.askedBy,
-      tokenBudget: candidate.tokenBudget,
-    },
+    tokenBudget: candidate.tokenBudget,
+    inquiry: { id: candidate.id, messageId: candidate.messageId, askedBy: candidate.askedBy },
   };
 }
-
-/** What an inquiry visit's assignment tells its agent: the question, and that it only answers. */
-const inquiryBrief = (messageId: string, body: string) =>
-  [
-    'A person over this project is asking you a question about your work. This is an inquiry: a short, read-only visit that resumes your conversation as you left it, to answer them and stop.',
-    'Nothing you do here is part of your work. You hold no lease on it: make no workflow moves, no commits and no writes; the read tools of this project are yours, the local filesystem is read-only, and this conversation is not kept for your work afterwards (your next work visit is told of the question and your answer).',
-    `Answer once, plainly and from what you know, with session.message.ack {messageId: "${messageId}", reply, requestId}. That reply is the answer the person reads, and it ends this visit: stop after it.`,
-    `The question: ${body}`,
-  ].join('\n\n');
 
 /** What the thread's next work visit reads of an inquiry it did not take part in. */
 export const inquiryContext = (question: string, reply: string) =>
@@ -201,8 +203,8 @@ export interface InquiryHost {
   transaction<T>(fn: (tx: Transaction) => T | Promise<T>): Promise<T>;
   /** Refuses a caller who may not read the work item. */
   readable(caller: Caller, instanceId: string, tx: Transaction): Promise<unknown>;
-  /** Whether the project's automatic dispatch, which launches inquiry visits too, is on. */
-  dispatching(projectId: string, tx: Transaction): Promise<boolean>;
+  /** The project's automatic dispatch, which launches inquiry visits too. */
+  dispatching(projectId: string, tx: Transaction): Promise<DispatchState>;
   decode(row: { thread_id: string; session_json: string }): Session;
 }
 
@@ -256,12 +258,8 @@ export class Inquiries implements SessionInquiries {
         id: string;
         project_id: string;
         instance_id: string;
-        sha256: string | null;
-        uploaded_at: string | null;
-      }>(
-        'SELECT id,project_id,instance_id,sha256,uploaded_at FROM session_threads WHERE id=?',
-        input.threadId,
-      );
+        size: number | string | null;
+      }>('SELECT id,project_id,instance_id,size FROM session_threads WHERE id=?', input.threadId);
       check(
         thread && thread.project_id === caller.projectId,
         'thread_not_found',
@@ -269,40 +267,26 @@ export class Inquiries implements SessionInquiries {
         404,
       );
       await this.host.readable(caller, thread.instance_id, tx);
-      check(
-        thread.sha256 !== null && thread.uploaded_at !== null,
-        'inquiry_unkept',
-        'This agent kept no conversation to resume: a fresh agent would know nothing of its work, so there is nobody to ask',
-        409,
-      );
-      check(
-        !(await tx.get(
-          "SELECT 1 FROM session_inquiries WHERE thread_id=? AND status IN ('queued','running')",
-          thread.id,
-        )),
-        'inquiry_busy',
-        'This agent is still on an earlier question; ask again once it has answered',
-        409,
-      );
+      const refused = (await this.refusals(tx, caller.projectId, [thread.id])).get(thread.id);
+      if (refused) throw refused;
       const now = this.clock();
+      const budget = inquiryBudget(Number(thread.size ?? 0));
+      // What its visits spent is in Sessions' one usage ledger, as its runners reported it; one
+      // still open, or that ran with no report, counts its whole budget.
       const day = await tx.get<{ spent: number | string }>(
-        `SELECT COALESCE(SUM(CASE WHEN status IN ('queued','running') THEN GREATEST(tokens,token_budget) ELSE tokens END),0) AS spent
-          FROM session_inquiries WHERE project_id=? AND asker_actor_id=? AND asked_at>?`,
+        `SELECT COALESCE(SUM(CASE WHEN ${openInquiry('i')} OR (u.started_at IS NOT NULL AND u.reported_at IS NULL)
+            THEN i.token_budget ELSE COALESCE(u.input_tokens,0)+COALESCE(u.output_tokens,0) END),0) AS spent
+          FROM session_inquiries i LEFT JOIN session_usage u ON u.session_id=i.session_id
+          WHERE i.project_id=? AND i.asker_actor_id=? AND i.asked_at>?`,
         caller.projectId,
         caller.actorId,
         new Date(now - 86_400_000).toISOString(),
       );
       check(
-        Number(day?.spent ?? 0) + INQUIRY_TOKENS <= INQUIRY_DAILY_TOKENS,
+        Number(day?.spent ?? 0) + budget <= INQUIRY_DAILY_TOKENS,
         'inquiry_tokens_spent',
         'Your questions to agents have spent their model tokens for the last day; ask again later',
         429,
-      );
-      check(
-        await this.host.dispatching(caller.projectId, tx),
-        'dispatch_disabled',
-        'Automatic dispatch is off in this project, so no machine would take the question',
-        409,
       );
       const source = await this.scope.delegationSource(caller, tx);
       const id = newId('inquiry');
@@ -332,7 +316,7 @@ export class Inquiries implements SessionInquiries {
         fingerprint,
         at,
         new Date(now + INQUIRY_WAIT_MS).toISOString(),
-        INQUIRY_TOKENS,
+        budget,
       );
       await this.state.appendEvent(tx, {
         projectId: caller.projectId,
@@ -345,10 +329,74 @@ export class Inquiries implements SessionInquiries {
     });
   }
   /**
-   * The oldest queued question of the project a machine of `ownerHash` may take: its thread's
-   * conversation was kept by `harness` and its work visits ran under the same owner (whose
-   * machines alone resume it, as continuity does), on `workInstanceId` alone for a work host.
-   * Those `skip` names, which this lease was refused, are passed over.
+   * Why each of these threads' agents may not be asked now, where it may not: the one rule `ask`
+   * refuses by and a thread's `asks` says. It kept a conversation to resume, nothing asked of it
+   * is still open, the project's dispatch is on, and a machine could take the question: a Claude
+   * conversation is resumed by a machine of its owner's, and a Codex one only by a hosted
+   * machine, whose model relay holds the visit to its budget (Codex reports its spend only as
+   * its turn ends), so only where its work last ran on one and the project is not on its own
+   * machines, which Fleet rents none for.
+   */
+  async refusals(
+    tx: Transaction,
+    projectId: string,
+    threadIds: readonly string[],
+  ): Promise<Map<string, MervError>> {
+    if (!threadIds.length) return new Map();
+    const dispatch = await this.host.dispatching(projectId, tx);
+    const rows = await tx.all<{
+      id: string;
+      kept: boolean;
+      busy: boolean;
+      codex: boolean;
+      hosted: boolean;
+    }>(
+      `SELECT t.id,t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AS kept,
+          EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND ${openInquiry('i')}) AS busy,
+          t.harness='codex' AS codex,
+          EXISTS (SELECT 1 FROM (SELECT s.id FROM worker_sessions s WHERE s.thread_id=t.id AND s.kind='work'
+              ORDER BY s._merv_rowid DESC LIMIT 1) w
+            WHERE EXISTS (SELECT 1 FROM session_managed_assignments a WHERE a.session_id=w.id)
+              OR EXISTS (SELECT 1 FROM session_managed_runners r WHERE r.bound_session_id=w.id)) AS hosted
+        FROM session_threads t WHERE t.project_id=? AND t.id IN (${threadIds.map(() => '?').join(',')})`,
+      projectId,
+      ...threadIds,
+    );
+    const refusals = new Map<string, MervError>();
+    for (const row of rows) {
+      const refusal = !row.kept
+        ? new MervError(
+            'inquiry_unkept',
+            'This agent kept no conversation to resume: a fresh agent would know nothing of its work, so there is nobody to ask',
+            409,
+          )
+        : row.busy
+          ? new MervError(
+              'inquiry_busy',
+              'This agent is still on an earlier question; ask again once it has answered',
+              409,
+            )
+          : !dispatch.enabled
+            ? new MervError(
+                'dispatch_disabled',
+                'Automatic dispatch is off in this project, so no machine would take the question',
+                409,
+              )
+            : row.codex && !(row.hosted && !dispatch.ownMachines)
+              ? new MervError(
+                  'inquiry_unreachable',
+                  'No machine would take this question: a Codex conversation is resumed only on a hosted machine, where its work ran on one and Fleet rents them for this project',
+                  409,
+                )
+              : undefined;
+      if (refusal) refusals.set(row.id, refusal);
+    }
+    return refusals;
+  }
+  /**
+   * The oldest queued question of the project a machine of `ownerHash` running `harness` may
+   * take (`TAKEABLE`), on `workInstanceId` alone for a work host. Those `skip` names, which this
+   * lease was refused, are passed over.
    */
   async candidate(
     tx: Transaction,
@@ -380,19 +428,11 @@ export class Inquiries implements SessionInquiries {
       `SELECT i.id,i.thread_id,i.message_id,i.asker_actor_id,i.token_budget,t.instance_id,t.actor_id,t.continuity_key,
           t.latest_session_id,t.harness,t.conversation_id,t.sha256,t.size,m.body,
           w.id AS visit_id,w.thread_id AS visit_thread,w.session_json AS visit_json
-        FROM session_inquiries i JOIN session_threads t ON t.id=i.thread_id
-        JOIN session_messages m ON m.id=i.message_id
-        CROSS JOIN LATERAL (SELECT s.id,s.thread_id,s.owner_hash,s.session_json FROM worker_sessions s
-          WHERE s.thread_id=t.id AND s.kind='work' ORDER BY s._merv_rowid DESC LIMIT 1) w
-        WHERE i.project_id=? AND i.status='queued' AND i.wait_until>? AND t.harness=?
-          AND t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AND t.continuity_key IS NOT NULL
-          AND w.owner_hash=? AND (CAST(? AS TEXT) IS NULL OR t.instance_id=?)
+        ${TAKEABLE} JOIN session_messages m ON m.id=i.message_id
+        WHERE ${TAKEABLE_WHERE} AND (CAST(? AS TEXT) IS NULL OR t.instance_id=?)
           ${skip.length ? `AND i.id NOT IN (${skip.map(() => '?').join(',')})` : ''}
         ORDER BY i._merv_rowid LIMIT 1`,
-      projectId,
-      isoNow(this.clock),
-      harness,
-      ownerHash,
+      ...this.takeable(projectId, ownerHash, harness),
       workInstanceId,
       workInstanceId,
       ...skip,
@@ -428,17 +468,14 @@ export class Inquiries implements SessionInquiries {
   ): Promise<string[]> {
     return (
       await tx.all<{ instance_id: string }>(
-        `SELECT DISTINCT t.instance_id FROM session_inquiries i JOIN session_threads t ON t.id=i.thread_id
-          CROSS JOIN LATERAL (SELECT s.owner_hash FROM worker_sessions s
-            WHERE s.thread_id=t.id AND s.kind='work' ORDER BY s._merv_rowid DESC LIMIT 1) w
-          WHERE i.project_id=? AND i.status='queued' AND i.wait_until>? AND t.harness=?
-            AND t.sha256 IS NOT NULL AND t.uploaded_at IS NOT NULL AND w.owner_hash=?`,
-        projectId,
-        isoNow(this.clock),
-        harness,
-        ownerHash,
+        `SELECT DISTINCT t.instance_id ${TAKEABLE} WHERE ${TAKEABLE_WHERE}`,
+        ...this.takeable(projectId, ownerHash, harness),
       )
     ).map((row) => row.instance_id);
+  }
+  /** The parameters of `TAKEABLE_WHERE`. */
+  private takeable(projectId: string, ownerHash: string, harness: string) {
+    return [projectId, isoNow(this.clock), harness, ownerHash];
   }
   /** Its visit took the question: the inquiry runs, or another lease took it first. */
   async started(tx: Transaction, inquiryId: string, sessionId: string): Promise<void> {
@@ -450,7 +487,7 @@ export class Inquiries implements SessionInquiries {
     check(result.changes === 1, 'inquiry_taken', 'The question was taken by another machine', 409);
   }
   /** Its visit closed: answered when the question's message carries the reply, else not. */
-  async closed(tx: Transaction, session: Session): Promise<void> {
+  async closed(tx: Transaction, session: InquirySession): Promise<void> {
     const ref = session.inquiry!;
     const replied = await tx.get<{ reply_body: string | null }>(
       'SELECT reply_body FROM session_messages WHERE id=?',
@@ -499,48 +536,6 @@ export class Inquiries implements SessionInquiries {
       at,
       at,
     );
-  }
-  /** What a runner reported its visit spent, counted against the budget once known. */
-  async reported(tx: Transaction, sessionId: string, tokens: number): Promise<void> {
-    await tx.run(
-      'UPDATE session_inquiries SET tokens=GREATEST(tokens,?) WHERE session_id=?',
-      tokens,
-      sessionId,
-    );
-  }
-  async reserve(sessionId: string, tokens: number): Promise<boolean> {
-    check(Number.isSafeInteger(tokens) && tokens >= 0, 'invalid_input', 'Tokens are a count', 400);
-    return await this.state.transaction(async (tx) => {
-      const row = await tx.get<{ id: string }>(
-        'SELECT id FROM session_inquiries WHERE session_id=?',
-        sessionId,
-      );
-      if (!row) return true;
-      return !!(await tx.get(
-        'UPDATE session_inquiries SET tokens=tokens+? WHERE id=? AND tokens+?<=token_budget RETURNING id',
-        tokens,
-        row.id,
-        tokens,
-      ));
-    });
-  }
-  async settle(sessionId: string, delta: number): Promise<void> {
-    check(Number.isSafeInteger(delta), 'invalid_input', 'A token correction is a count', 400);
-    await this.state.transaction((tx) =>
-      tx.run(
-        'UPDATE session_inquiries SET tokens=GREATEST(0,tokens+?) WHERE session_id=?',
-        delta,
-        sessionId,
-      ),
-    );
-  }
-  /** An inquiry visit's question and asker, for its message reads and its relay grant. */
-  async asker(tx: Transaction, sessionId: string): Promise<DelegationSource | undefined> {
-    const row = await tx.get<{ asker_source_json: string }>(
-      'SELECT asker_source_json FROM session_inquiries WHERE session_id=?',
-      sessionId,
-    );
-    return row ? JSON.parse(row.asker_source_json) : undefined;
   }
   /** The statuses of these inquiries, for the thread's messages read. */
   async statuses(tx: Transaction, ids: string[]): Promise<Map<string, InquiryStatus>> {

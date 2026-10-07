@@ -11,6 +11,7 @@ import {
 } from '@merv/contracts';
 import type { WorkflowProvidedBlockerInput } from '@merv/workflows/models';
 import { isoNow, live, ordinary, text, type Row } from './common.js';
+import { messageInquiry } from './inquiries.js';
 import type {
   InquiryStatus,
   Session,
@@ -130,10 +131,8 @@ export class SessionMessages {
     instanceId: string,
     inquiries?: Map<string, InquiryStatus>,
   ): SessionMessage {
-    const inquiry =
-      row.inquiry_role === 'question' && inquiries?.get(row.inquiry_id!)
-        ? { inquiry: { id: row.inquiry_id!, status: inquiries.get(row.inquiry_id!)! } }
-        : {};
+    const status = row.inquiry_role === 'question' && inquiries?.get(row.inquiry_id!);
+    const inquiry = status ? { inquiry: messageInquiry(row.inquiry_id!, status) } : {};
     return {
       id: row.id,
       threadId: row.thread_id,
@@ -543,7 +542,13 @@ export class SessionMessages {
         'This session has ended',
         409,
       );
-      const read = (item: MessageRow) => this.publicMessage(item, session.instanceId);
+      // An inquiry visit's reply says where its question stands: answered, its visit ended.
+      const read = async (item: MessageRow) =>
+        this.publicMessage(
+          item,
+          session.instanceId,
+          session.inquiry && (await this.host.inquiryStatuses(tx, [session.inquiry.id])),
+        );
       if (row.acknowledged_at) {
         check(
           row.ack_request_id === input.requestId && row.reply_body === (input.reply ?? null),
@@ -551,7 +556,7 @@ export class SessionMessages {
           'Message was acknowledged with different input',
           409,
         );
-        return read(row);
+        return await read(row);
       }
       await tx.run(
         'UPDATE session_messages SET acknowledged_at=?,ack_request_id=?,reply_body=? WHERE id=? AND acknowledged_at IS NULL',
@@ -574,7 +579,7 @@ export class SessionMessages {
         },
       });
       if (session.inquiry) await this.host.answered(session, row.body, input.reply!, tx);
-      return read(await this.messageRow(tx, row.id));
+      return await read(await this.messageRow(tx, row.id));
     });
   }
 }

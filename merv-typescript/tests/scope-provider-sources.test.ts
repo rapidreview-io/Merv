@@ -69,7 +69,10 @@ async function fixture(t: TestContext) {
 
 const kinds = {
   session: {
-    register: (scope: Scope, provider: Provider) => scope.registerSessionAuthority(provider),
+    register: (scope: Scope, provider: Provider) =>
+      scope.registerSessionAuthority({
+        require: async () => ({ source: await provider.require() }),
+      }),
     registered: 'session_authority_registered',
     unavailable: 'session_unavailable',
     name: 'Session authority',
@@ -182,7 +185,7 @@ for (const [kind, slot] of Object.entries(kinds) as [
 test('session: the source may be another actor of the project, the worker delegator', async (t) => {
   const f = await fixture(t);
   let vouched: DelegationSource = { ...f.source, projectId: 'project_foreign' };
-  f.scope.registerSessionAuthority({ require: async () => vouched });
+  f.scope.registerSessionAuthority({ require: async () => ({ source: vouched }) });
   await assert.rejects(f.scope.require(f.callers.session, 'read'), {
     code: 'forbidden',
     status: 403,

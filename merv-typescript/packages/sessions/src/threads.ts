@@ -16,6 +16,7 @@ import {
   type AgentStreamEvent,
 } from './agent-stream.js';
 import { isoNow, live, ordinary, readFirst, safeError, text, workNameOf } from './common.js';
+import { messageInquiry, openInquiry } from './inquiries.js';
 import { freezeLaunchSnapshot } from './launch-connections.js';
 import { leaseLiveness } from './liveness.js';
 import { readsAgents } from './rules.js';
@@ -74,15 +75,15 @@ const PAGE = 50;
 /** A thread one of whose work visits holds its lease (an inquiry visit holds none). */
 const LIVE = `EXISTS (SELECT 1 FROM worker_sessions s WHERE s.thread_id=t.id AND s.status IN ('offered','active') AND s.kind='work')`;
 /** A question to it (an inquiry) still waiting for a machine or being answered. */
-const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND i.status IN ('queued','running'))`;
-/**
- * A thread that wants attention: live, asking its owner, or holding a message its agent has not
- * read yet while it may still read it. A question to it (an inquiry) counts only until it ends:
- * one that expired or went unanswered is never read.
- */
-const ATTENTION = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
-  OR (t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id AND m.acknowledged_at IS NULL
-    AND (m.inquiry_role IS DISTINCT FROM 'question' OR ${INQUIRING}))))`;
+const INQUIRING = `EXISTS (SELECT 1 FROM session_inquiries i WHERE i.thread_id=t.id AND ${openInquiry('i')})`;
+/** A thread that wants attention whatever its work: live, asking its owner, or asked a question
+ *  (an inquiry) that is still open. */
+const URGENT = `(${LIVE} OR EXISTS (SELECT 1 FROM session_questions q WHERE q.thread_id=t.id AND q.answered_at IS NULL)
+  OR ${INQUIRING})`;
+/** A thread holding a person's message its agent has not read, where it is not retired. The
+ *  context an answered inquiry left its work is not one: the person has read that answer. */
+const UNREAD = `(t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages m WHERE m.thread_id=t.id
+  AND m.acknowledged_at IS NULL AND m.inquiry_role IS NULL))`;
 
 /**
  * Threads: the worker that owns one stage of one work item for one role. A session is one visit
@@ -115,8 +116,12 @@ export class SessionThreads {
       stream(sessionId: string): Promise<AgentStreamEvent[]>;
       /** Which of these work items of the project have ended. */
       ended(projectId: string, instanceIds: string[], tx: Transaction): Promise<Set<string>>;
-      /** Whether the project's automatic dispatch, which launches inquiry visits too, is on. */
-      dispatching(projectId: string, tx: Transaction): Promise<boolean>;
+      /** Which of these threads' agents may not be asked now (Inquiries.refusals). */
+      unaskable(
+        projectId: string,
+        threadIds: string[],
+        tx: Transaction,
+      ): Promise<Map<string, unknown>>;
       /** Refuses once Sessions has closed. */
       available(): void;
     },
@@ -502,17 +507,20 @@ export class SessionThreads {
       'before is the cursor a page of threads returned',
     );
     return await this.reading(caller, async (tx) => {
+      const attention = await this.attention(tx, caller.projectId);
       const first =
         after === null
           ? await tx.all<Row & { seq: number | string }>(
-              `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND ${ATTENTION} ORDER BY t._merv_rowid DESC`,
+              `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND ${attention.sql} ORDER BY t._merv_rowid DESC`,
               caller.projectId,
+              ...attention.params,
             )
           : [];
       const rest = await tx.all<Row & { seq: number | string }>(
-        `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND NOT ${ATTENTION}
+        `SELECT t.*,t._merv_rowid AS seq FROM session_threads t WHERE t.project_id=? AND NOT ${attention.sql}
           AND (CAST(? AS BIGINT) IS NULL OR t._merv_rowid<?) ORDER BY t._merv_rowid DESC LIMIT ?`,
         caller.projectId,
+        ...attention.params,
         after,
         after,
         PAGE + 1,
@@ -573,7 +581,9 @@ export class SessionThreads {
           const message = readable.has(view.instanceId) ? said.get(view.id) : undefined;
           return {
             ...view,
-            ...(index < first.length ? {} : { seq: String(page[index]!.seq) }),
+            ...(index < first.length
+              ? { attention: true as const }
+              : { seq: String(page[index]!.seq) }),
             ...(question && {
               question: {
                 id: question.id,
@@ -591,7 +601,7 @@ export class SessionThreads {
                 reply: message.reply_body,
                 ...(message.inquiry_id &&
                   message.inquiry_status && {
-                    inquiry: { id: message.inquiry_id, status: message.inquiry_status },
+                    inquiry: messageInquiry(message.inquiry_id, message.inquiry_status),
                   }),
               },
             }),
@@ -600,6 +610,25 @@ export class SessionThreads {
         next: rest.length > PAGE ? String(rest[PAGE - 1]!.seq) : null,
       };
     });
+  }
+  /**
+   * Which of the project's threads want attention: those `URGENT` names, and those holding an
+   * unread message while they take one (`takesMessage`), so not on work that has ended, which no
+   * visit will read it on.
+   */
+  private async attention(tx: Transaction, projectId: string) {
+    const unread = await tx.all<{ id: string; instance_id: string }>(
+      `SELECT t.id,t.instance_id FROM session_threads t WHERE t.project_id=? AND ${UNREAD} AND NOT ${URGENT}`,
+      projectId,
+    );
+    const ended = unread.length
+      ? await this.host.ended(projectId, [...new Set(unread.map((row) => row.instance_id))], tx)
+      : new Set<string>();
+    const unheard = unread.filter((row) => ended.has(row.instance_id)).map((row) => row.id);
+    return {
+      sql: `(${URGENT} OR (${UNREAD}${unheard.length ? ` AND t.id NOT IN (${unheard.map(() => '?').join(',')})` : ''}))`,
+      params: unheard,
+    };
   }
   /** How many of the project's threads are live, and how many ask their owner a question. */
   async counts(caller: Caller): Promise<ThreadCounts> {
@@ -655,19 +684,9 @@ export class SessionThreads {
           ).map((row) => row.thread_id)
         : [],
     );
-    const dispatching = threads.length
-      ? await this.host.dispatching(threads[0]!.project_id, tx)
-      : false;
-    const inquiring = new Set(
-      dispatching && ids.length
-        ? (
-            await tx.all<{ thread_id: string }>(
-              `SELECT DISTINCT thread_id FROM session_inquiries WHERE status IN ('queued','running') AND thread_id IN (${marks})`,
-              ...ids,
-            )
-          ).map((row) => row.thread_id)
-        : [],
-    );
+    const unaskable = threads.length
+      ? await this.host.unaskable(threads[0]!.project_id, ids, tx)
+      : new Map<string, unknown>();
     return threads.map((thread) => {
       const mine = visits.filter((visit) => visit.threadId === thread.id);
       const own = mine.map((visit) => visit.view);
@@ -688,10 +707,7 @@ export class SessionThreads {
               : 'dormant',
         takesMessage:
           asking.has(thread.id) || (thread.status !== 'retired' && !ended.has(thread.instance_id)),
-        ...(thread.sha256 !== null &&
-          thread.uploaded_at !== null &&
-          dispatching &&
-          !inquiring.has(thread.id) && { asks: true as const }),
+        ...(!unaskable.has(thread.id) && { asks: true as const }),
         visits: own,
       };
     });

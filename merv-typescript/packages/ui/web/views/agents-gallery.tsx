@@ -40,7 +40,7 @@ function Tail({ blocks }: { blocks: Parameters<typeof tailLines>[0] | undefined 
 /** The newest message to the thread, and whether its agent has read it, with its reply; a
  *  question to its agent (an inquiry), where its answer is. */
 function Said({ message }: { message: NonNullable<ProjectThread['message']> }) {
-  const open = !message.inquiry || ['queued', 'running'].includes(message.inquiry.status);
+  const open = !message.inquiry || message.inquiry.open;
   return (
     <div className="agent-card-said">
       <p>
@@ -59,8 +59,12 @@ function Said({ message }: { message: NonNullable<ProjectThread['message']> }) {
 export function AgentsGallery() {
   const rows = useRows();
   const reads = useReadsAgents();
-  const [every, setEvery] = useState(30_000);
-  const first = useTool<ProjectThreads>('/sessions/threads', {}, { every });
+  // Quick while an agent works; a question waits on a person, who answers here.
+  const first = useTool<ProjectThreads>(
+    '/sessions/threads',
+    {},
+    { every: (data) => (data?.threads.some(isLive) ? 4000 : 30_000) },
+  );
   const [older, setOlder] = useState<{ threads: ProjectThread[]; next: string | null }>();
   const [busy, setBusy] = useState(false);
   const [recent, showRecent] = useState(false);
@@ -71,15 +75,14 @@ export function AgentsGallery() {
   const threads = shown.filter((item) => !seen.has(item.id) && seen.add(item.id));
   const next = older ? older.next : (first.data?.next ?? null);
   const waiting = threads.filter((item) => item.question);
-  // What wants attention without asking: at work, or holding a message its agent has not read.
+  // What wants attention without asking its owner, as Sessions says: at work, being asked, or
+  // holding a message its agent will still read.
   const working = threads
-    .filter((item) => !item.question && (isLive(item) || item.seq === undefined))
+    .filter((item) => !item.question && (isLive(item) || item.attention))
     .sort((a, b) => Number(isLive(b)) - Number(isLive(a)));
-  const rest = threads.filter((item) => !item.question && !isLive(item) && item.seq !== undefined);
+  const rest = threads.filter((item) => !item.question && !isLive(item) && !item.attention);
   const live = threads.filter(isLive).length;
   const tails = useLiveFeed(reads && threads.some(isLive));
-  // Quick while an agent works; a question waits on a person, who answers here.
-  useEffect(() => setEvery(live ? 4000 : 30_000), [live]);
   // The rail's badge counts the same agents: it is told when they change.
   const counted = useRef<string>();
   const counts = first.data ? `${live}:${waiting.length}` : undefined;

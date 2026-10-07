@@ -465,14 +465,13 @@ test('an agent that takes no message but kept its conversation is asked: the que
           createdAt: at(60),
           acknowledgedAt: at(61),
           reply: 'The smaller model.',
-          inquiry: { id: 'inquiry_1', status: 'answered' },
+          inquiry: { id: 'inquiry_1', status: 'answered', open: false, label: 'answered' },
         },
       ],
       questions: [],
     },
   });
-  serve('/tools', { body: { tools: [{ name: 'session.ask_thread' }] } });
-  serve('/tools/session.ask_thread', { body: { result: { inquiry: { id: 'inquiry_2' } } } });
+  serve('/sessions/threads/thr_run/ask', { body: { inquiry: { id: 'inquiry_2' } } });
   await open(
     'producer',
     threads.map((item) =>
@@ -491,7 +490,7 @@ test('an agent that takes no message but kept its conversation is asked: the que
   });
   await act(async () => void box.querySelector('form')!.requestSubmit());
   await settle(10);
-  assert.ok(requests.some((request) => request.includes('session.ask_thread')));
+  assert.ok(requests.includes('POST /sessions/threads/thr_run/ask'));
   assert.ok(!requests.includes('POST /sessions/threads/thr_run/messages'));
   assert.equal(area.value, '');
 });
@@ -507,16 +506,14 @@ test('a reader sees what passed but no box, and an answered question is history'
   assert.match(box.textContent!, /Agent asked · .*Which dataset split\?/);
 });
 
-test('a thread that takes no message is asked instead, through session.ask_thread where Sessions offers it', async (t) => {
+test('a thread that takes no message is asked instead, where Sessions says it may be', async (t) => {
   t.after(unmount);
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });
-  // A composition without the tool: the box stands, disabled, and says only what it would do.
-  serve('/tools', { body: { tools: [{ name: 'session.message' }] } });
-  // A thread that kept its conversation (`asks`): one that kept none has nobody to ask.
-  const finished = threads.map((item) =>
-    item.id === 'thr_run' ? { ...item, takesMessage: false, asks: true } : item,
+  // One Sessions says may not be asked (it kept no conversation, say): the box stands, disabled.
+  const unaskable = threads.map((item) =>
+    item.id === 'thr_run' ? { ...item, takesMessage: false } : item,
   );
-  await open('producer', finished);
+  await open('producer', unaskable);
   await press(chip('running'));
   let box = document.querySelector('dialog .thread-messages')!;
   assert.match(box.textContent!, /Use the smaller model\./);
@@ -526,13 +523,15 @@ test('a thread that takes no message is asked instead, through session.ask_threa
   assert.equal(box.querySelector<HTMLButtonElement>('button[type=submit]')!.disabled, true);
   await unmount();
 
-  // Offered, it asks the thread through the tool, which starts a short visit that answers.
-  serve('/tools', { body: { tools: [{ name: 'session.ask_thread' }] } });
+  // One that may be (`asks`) is asked through its thread's ask route, as a message is sent.
   const asked: Record<string, unknown>[] = [];
-  serve('/tools/session.ask_thread', (_call, sent) => {
+  serve('/sessions/threads/thr_run/ask', (_call, sent) => {
     asked.push(sent);
-    return { body: { result: { message: { id: 'm3' } } } };
+    return { body: { inquiry: { id: 'inquiry_3' } } };
   });
+  const finished = threads.map((item) =>
+    item.id === 'thr_run' ? { ...item, takesMessage: false, asks: true } : item,
+  );
   await open('producer', finished);
   await press(chip('running'));
   box = document.querySelector('dialog .thread-messages')!;
@@ -546,21 +545,20 @@ test('a thread that takes no message is asked instead, through session.ask_threa
   await act(async () => void box.querySelector('form')!.requestSubmit());
   await settle(10);
   assert.equal(asked.length, 1);
-  assert.equal(asked[0]!.threadId, 'thr_run');
   assert.equal(asked[0]!.body, 'Why did the run stop?');
   assert.equal(typeof asked[0]!.requestId, 'string');
   assert.ok(!requests.includes('POST /sessions/threads/thr_run/messages'));
   assert.equal(ask.value, '');
+  // Whether it may be asked is Sessions' to say: the page reads no tool catalog for it.
+  assert.ok(!requests.some((request) => request === 'GET /tools'));
   await unmount();
 
-  // The same thread on open work is sent a message, and reads no catalog for it.
+  // The same thread on open work is sent a message.
   serve('/sessions/threads/thr_run/messages', { body: messages(true) });
-  const before = requests.filter((request) => request === 'GET /tools').length;
   await open('producer');
   await press(chip('running'));
   const message = document.querySelector('dialog .thread-messages textarea')!;
   assert.equal(message.getAttribute('aria-label'), 'Message');
-  assert.equal(requests.filter((request) => request === 'GET /tools').length, before);
 });
 
 test('an answer sent refreshes Home, and a send whose result is unknown keeps its words locked', async (t) => {

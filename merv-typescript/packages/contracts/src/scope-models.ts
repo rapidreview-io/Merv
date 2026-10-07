@@ -69,11 +69,6 @@ export interface Caller {
     /** The thread this visit belongs to, whose actor the worker acts as. */
     threadId?: string;
     invocationId?: string;
-    /**
-     * An inquiry visit: it only reads, as its thread's actor even after its thread retired that
-     * actor. Set by Sessions alone, whose authority checks it against the visit on every call.
-     */
-    inquiry?: true;
   };
   conversation?: { id: string; epoch: number; commandId: string; runtimeId: string };
   /** Server-authenticated supervisor; the binding is rechecked on every control. */

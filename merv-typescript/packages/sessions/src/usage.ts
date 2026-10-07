@@ -64,7 +64,7 @@ export async function recordUsage(tx: Transaction, session: Session): Promise<vo
     : {};
   const closedAt = session.closedAt!;
   await tx.run(
-    'INSERT INTO session_usage(session_id,project_id,instance_id,revision,workflow,state,role,outcome,started_at,closed_at,wall_ms,harness,model) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO NOTHING',
+    'INSERT INTO session_usage(session_id,project_id,instance_id,revision,workflow,state,role,outcome,started_at,closed_at,wall_ms,harness,model,kind) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(session_id) DO NOTHING',
     session.id,
     session.projectId,
     session.instanceId,
@@ -78,6 +78,7 @@ export async function recordUsage(tx: Transaction, session: Session): Promise<vo
     session.activatedAt ? Math.max(0, Date.parse(closedAt) - Date.parse(session.activatedAt)) : 0,
     platform.harness ?? null,
     platform.model ?? null,
+    session.kind,
   );
 }
 
@@ -109,9 +110,9 @@ async function groups(
   instanceIds: string[] | null,
 ): Promise<{ row: GroupRow; totals: UsageTotals }[]> {
   const select =
-    'SELECT u.instance_id,u.workflow,COUNT(*) AS sessions,COALESCE(SUM(CASE WHEN u.reported_at IS NULL THEN 0 ELSE 1 END),0) AS reported,COALESCE(SUM(CASE WHEN u.reported_at IS NULL AND u.started_at IS NOT NULL THEN 1 ELSE 0 END),0) AS unreported,COALESCE(SUM(u.wall_ms),0) AS wall_ms,COALESCE(SUM(u.input_tokens),0) AS input_tokens,COALESCE(SUM(u.output_tokens),0) AS output_tokens,MIN(u.closed_at) AS since FROM session_usage u WHERE u.project_id=?';
+    "SELECT u.instance_id,u.workflow,COUNT(*) AS sessions,COALESCE(SUM(CASE WHEN u.reported_at IS NULL THEN 0 ELSE 1 END),0) AS reported,COALESCE(SUM(CASE WHEN u.reported_at IS NULL AND u.started_at IS NOT NULL THEN 1 ELSE 0 END),0) AS unreported,COALESCE(SUM(u.wall_ms),0) AS wall_ms,COALESCE(SUM(u.input_tokens),0) AS input_tokens,COALESCE(SUM(u.output_tokens),0) AS output_tokens,MIN(u.closed_at) AS since FROM session_usage u WHERE u.project_id=? AND u.kind='work'";
   const calls =
-    'SELECT u.instance_id,COUNT(*) AS calls,COALESCE(SUM(c.input_tokens),0)+COALESCE(SUM(c.output_tokens),0) AS payload FROM session_tool_calls c JOIN session_usage u ON u.session_id=c.execution_id WHERE u.project_id=?';
+    "SELECT u.instance_id,COUNT(*) AS calls,COALESCE(SUM(c.input_tokens),0)+COALESCE(SUM(c.output_tokens),0) AS payload FROM session_tool_calls c JOIN session_usage u ON u.session_id=c.execution_id WHERE u.project_id=? AND u.kind='work'";
   const slices: (string[] | null)[] = [];
   if (instanceIds === null) slices.push(null);
   else

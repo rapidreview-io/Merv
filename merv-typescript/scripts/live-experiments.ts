@@ -328,7 +328,10 @@ try {
     assert.equal(capture.provenance.revision, 2);
     assert.notEqual(captured.headOid, initialOid);
     assert.notEqual(captured.treeOid, sessions[2].workspace!.attachment.treeOid);
-    assert.equal(sessions[3].execution.references.code, captured.headOid);
+    assert.equal(
+      sessions[3].kind === 'work' && sessions[3].execution.references.code,
+      captured.headOid,
+    );
     assert.equal(sessions[3].workspace!.attachment.baseOid, captured.headOid);
     assert.equal(sessions[3].workspace!.attachment.headOid, captured.headOid);
     assert.equal(sessions[3].workspace!.attachment.treeOid, captured.treeOid);

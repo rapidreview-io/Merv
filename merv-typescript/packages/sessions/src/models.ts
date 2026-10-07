@@ -311,6 +311,9 @@ export interface ProjectThread extends ThreadView {
    * reads the page older than it. A thread listed first for its attention has none.
    */
   seq?: string;
+  /** Listed first: it is live, asks its owner, is being asked, or holds a message its agent will
+   *  still read. */
+  attention?: true;
   /** The question its agent asked that is still open, for a reader of its work. */
   question?: { id: string; question: string; askedAt: string };
   /**
@@ -381,7 +384,16 @@ export interface SessionMessage {
   acknowledgedAt: string | null;
   reply: string | null;
   /** A question to an inquiry visit (`session.ask_thread`): its reply is that visit's answer. */
-  inquiry?: { id: string; status: InquiryStatus };
+  inquiry?: MessageInquiry;
+}
+/** Where a question to an agent stands, as a page shows it. */
+export interface MessageInquiry {
+  id: string;
+  status: InquiryStatus;
+  /** Still waiting for a machine or being answered. */
+  open: boolean;
+  /** What the page says of it, by its status. */
+  label: string;
 }
 /**
  * Where an inquiry stands: waiting for a machine (`queued`), its visit running (`running`), or
@@ -407,9 +419,8 @@ export interface ThreadInquiry {
   /** Its visit, once a machine took it. */
   sessionId: string | null;
   endedAt: string | null;
-  /** The most its visit may spend, and what it is known to have spent (model tokens). */
+  /** The most its visit may spend (model tokens): its conversation is resent on every call. */
   tokenBudget: number;
-  tokens: number;
 }
 /** A question a worker asked its owner as it ended its visit; a message to its thread answers it. */
 export interface ThreadQuestion {

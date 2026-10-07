@@ -697,15 +697,16 @@ export class MachineRunner implements Runner {
       record = await this.halt(record.id, { releaseOutcome: 'host_failed' });
       return terminalLaunch(record) && this.settle(record);
     }
-    // An inquiry visit spends its asker's budget: it stops once what its agent printed of its
-    // spend so far passes it.
-    const budget = session.inquiry?.tokenBudget;
-    if (record.status === 'running' && typeof budget === 'number') {
+    // A visit with a budget of its own stops once what its agent printed of its spend passes it,
+    // where no model relay holds it to it: on a machine of the owner's (self-hosted Claude). A
+    // hosted machine's calls go through Fleet's relay, which refuses the call past it.
+    const budget = session.tokenBudget;
+    if (record.status === 'running' && typeof budget === 'number' && !this.managed()) {
       const used = this.readUsage(record, 16 << 20);
       if (used && used.inputTokens + used.outputTokens > budget) {
         record = await this.halt(record.id, {
           releaseOutcome: 'host_failed',
-          releaseReason: 'inquiry_budget_spent',
+          releaseReason: 'token_budget_spent',
         });
         return terminalLaunch(record) && this.settle(record);
       }

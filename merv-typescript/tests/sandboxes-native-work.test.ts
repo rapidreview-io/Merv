@@ -9,7 +9,7 @@ import {
   type Workflows,
   sha256Hex,
 } from '@merv/contracts';
-import type { Session } from '@merv/sessions/types';
+import type { WorkSession } from '@merv/sessions/types';
 import { NativeConnections } from '../packages/sandboxes/src/native-connections.js';
 import { NativeWorkService, type NativeResources } from '../packages/sandboxes/src/native-work.js';
 import {
@@ -218,7 +218,7 @@ async function fixture(
       references = {} as Record<string, string>,
       revision = 1,
     } = {},
-  ): Session =>
+  ): WorkSession =>
     ({
       id: lease,
       projectId: 'project',
@@ -227,7 +227,7 @@ async function fixture(
       hardDeadline: new Date(Date.now() + 3_600_000).toISOString(),
       lease: { leaseId: lease, instanceId: id, projectId: 'project', workflow },
       execution: { workflow, policy, references: { computeKind: 'task', ...references } },
-    }) as unknown as Session;
+    }) as unknown as WorkSession;
   const readWork = () =>
     state.read((sql) =>
       sql.get<NativeWorkRow>('SELECT * FROM sandbox_native_work WHERE work_id=?', id),

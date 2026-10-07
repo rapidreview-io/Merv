@@ -85,6 +85,7 @@ export type {
   ThreadConversation,
   ThreadMessages,
   InquiryStatus,
+  MessageInquiry,
   ThreadInquiry,
   ThreadQuestion,
   ThreadView,
@@ -101,8 +102,8 @@ export type {
 } from './managed-types.js';
 export type { RunnerPlatform, SessionUsageReport, SessionWorkspace } from '@merv/contracts';
 
-/** Assignment execution. Its id remains fixed for evidence and late-call fencing. */
-export interface Session {
+/** One visit of a thread. Its id remains fixed for evidence and late-call fencing. */
+interface SessionVisit {
   id: string;
   /** The thread this session is a visit of: its `worker_sessions.thread_id`, never its JSON. */
   threadId: string;
@@ -125,25 +126,47 @@ export interface Session {
   /** Why a `preparation_deferred` close was put off; absent on every other outcome. */
   deferral?: SessionDeferral | null;
   assignment: WorkflowAssignment;
-  execution: WorkflowExecution;
-  lease: WorkflowLease;
   workspace?: SessionWorkspaceRecord;
   /** Set at the offer and frozen with it, where the session's conversation may be continued. */
   continuity?: SessionContinuity;
   /**
-   * An inquiry visit's: the person's question it answers. Such a visit resumes its thread's
-   * conversation (`continuity.resume`) read-only, holds no lease on the work, and never saves the
-   * conversation back; its assignment, execution and lease are its own, never the workflow's.
+   * The model tokens this visit may spend, where it has a budget of its own: Fleet's model relay
+   * charges each hosted call to it, and a machine of the owner's stops the visit once what its
+   * agent printed of its spend passes it.
    */
-  inquiry?: SessionInquiryRef;
+  tokenBudget?: number;
 }
-/** What an inquiry visit answers: its inquiry, the question's message and who asked, and the
- *  model tokens it may spend, which its runner or Fleet's model relay holds it to. */
+/** A work visit: it holds the step's lease, under the execution its workflow froze for it. */
+export interface WorkSession extends SessionVisit {
+  kind: 'work';
+  execution: WorkflowExecution;
+  lease: WorkflowLease;
+  inquiry?: undefined;
+}
+/**
+ * An inquiry visit: a person's question to its thread's agent. It resumes the thread's
+ * conversation (`continuity.resume`) read-only and never saves it back. It holds no lease on the
+ * work and is bound to no workflow registration: its execution only names the step it asks of,
+ * and runs read-only with no workspace and no tools.
+ */
+export interface InquirySession extends SessionVisit {
+  kind: 'inquiry';
+  execution: InquiryExecution;
+  lease?: undefined;
+  inquiry: SessionInquiryRef;
+}
+/** What an inquiry visit runs as: the step its conversation is of, and a read-only policy. */
+export type InquiryExecution = Omit<
+  WorkflowExecution,
+  'policyHash' | 'registrationId' | 'references'
+>;
+/** A thread's visit, of its work or answering a question to it (`kind`). */
+export type Session = WorkSession | InquirySession;
+/** What an inquiry visit answers: its inquiry, the question's message and who asked. */
 export interface SessionInquiryRef {
   id: string;
   messageId: string;
   askedBy: string;
-  tokenBudget: number;
 }
 /** The conversation a session continues: the one its key's latest closed session kept. */
 export interface SessionResume {
@@ -319,8 +342,9 @@ export type StatusSection = (
   project: SessionsProjectStatus | null,
 ) => Promise<unknown>;
 
+/** What a work visit's launch is given; an inquiry visit reads the project through Merv alone. */
 export type LaunchConnectionsProvider = (
-  session: Readonly<Session>,
+  session: Readonly<WorkSession>,
 ) => Promise<NativeMcpConnection[]>;
 
 export interface Sessions {
@@ -402,7 +426,7 @@ export interface Sessions {
     caller: Caller,
     instanceId: string,
   ): Promise<{ current: SessionLookup | null; latest: SessionLookup | null }>;
-  offer(caller: Caller, input: SessionOffer): Promise<Session>;
+  offer(caller: Caller, input: SessionOffer): Promise<WorkSession>;
   list(caller: Caller): Promise<Session[]>;
   get(caller: Caller, sessionId: string): Promise<Session>;
   /** The session's control fields alone, read without its lease check: the sweep records a
@@ -556,11 +580,6 @@ export interface SessionInquiries {
    * conversation read-only, and its reply lands on the question's message in the thread.
    */
   ask(caller: Caller, input: ThreadInquiryInput): Promise<ThreadInquiry>;
-  /** Server-only, for a model relay: charge `tokens` to an inquiry visit's budget, false when it
-   *  would pass it. Any other session is not limited here (true). */
-  reserve(sessionId: string, tokens: number): Promise<boolean>;
-  /** Server-only: correct what `reserve` charged by `delta` once the call's usage is known. */
-  settle(sessionId: string, delta: number): Promise<void>;
 }
 export interface SessionInvocationPolicy {
   readonly instructions: string;
@@ -602,22 +621,25 @@ export interface DispatchDemandInput {
   capabilities?: string[];
 }
 export interface DispatchDemand {
-  /** Each target, and since when its revision has stood: what a renter counts its tries from. */
-  candidates: { instanceId: string; expectedRevision: number; since: string }[];
+  /**
+   * Each target, and since when its revision has stood: what a renter counts its tries from.
+   * `inquiry` marks one wanted only for a question to an agent of it, a short visit that holds no
+   * lease, so a machine of the item that is busy with another visit cannot take it.
+   */
+  candidates: { instanceId: string; expectedRevision: number; since: string; inquiry?: true }[];
 }
 
 /** What the events route reads of agents' live streams: operator authority, events, wakes. */
 export interface SessionStreamReads {
   /** Runner-only, live or just closed: one batch of what its agent printed (SessionStreamBatch). */
   append(caller: Caller, input: unknown): Promise<{ until: number; seq: number }>;
-  authorize(caller: Caller, sessionId: string): Promise<{ growing: boolean }>;
-  /** Whether a session `authorize` admitted may still grow, without reading authority again. */
+  /** An operator's read of the project's agents' streams; refuses everyone else. */
+  authorize(caller: Caller): Promise<void>;
+  /** Whether a session of the project may still grow, without reading authority again. */
   growing(sessionId: string, projectId: string): Promise<boolean>;
   after(sessionId: string, after: number, limit: number): Promise<AgentStreamEvent[]>;
   snapshot(sessionId: string): Promise<AgentStreamEvent[]>;
   subscribe(sessionId: string, wake: () => void): () => void;
-  /** An operator's read of the project's live feed; refuses everyone else. */
-  authorizeFeed(caller: Caller): Promise<void>;
   /** `wake` runs on each batch this process takes for any session of the project. */
   subscribeFeed(projectId: string, wake: () => void): () => void;
   /**

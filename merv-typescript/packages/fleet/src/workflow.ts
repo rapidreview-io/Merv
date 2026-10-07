@@ -654,6 +654,14 @@ export class FleetWorkflowAdapter implements FleetOwner {
       return 'finished';
     return observed?.runnerId ? 'running' : 'starting';
   }
+  /** Whether each of these hosts holds a live visit. */
+  private async busy(hosts: FleetAllocation[]): Promise<boolean> {
+    for (const a of hosts) {
+      const session = (await this.sessions.managed.inspect(a.id, a.epoch))?.session;
+      if (session?.status !== 'offered' && session?.status !== 'active') return false;
+    }
+    return true;
+  }
   /** Idempotent demand reconciliation; pending Fleet allocations cover their target revision. */
   reconcile(): Promise<void> {
     if (this.closed) return Promise.resolve();
@@ -682,6 +690,8 @@ export class FleetWorkflowAdapter implements FleetOwner {
     // revision has stood.
     const served = new Map<string, Map<string, DelegationSource>>();
     const since = new Map<string, string | undefined>();
+    // Targets wanted only for a question to an agent of the item.
+    const asking = new Set<string>();
     // Projects passed over this pass: their reads failed, or Fleet refused one of their requests.
     const failed = new Set<string>();
     for (const { projectId, source } of await this.sessions.dispatch.servedSources()) {
@@ -700,6 +710,7 @@ export class FleetWorkflowAdapter implements FleetOwner {
             if (!wanted.has(targetId(target))) {
               wanted.set(targetId(target), director);
               since.set(grantKey(projectId, targetId(target)), target.since);
+              if (target.inquiry) asking.add(grantKey(projectId, targetId(target)));
             }
         served.set(projectId, wanted);
       } catch (error) {
@@ -732,7 +743,15 @@ export class FleetWorkflowAdapter implements FleetOwner {
       if (a.intent === 'run' && !launched(a) && !failed.has(a.projectId) && !steps(a).length)
         await this.fleet.cancelOwned(this, a.id);
     if (paused && this.clock() - newestRefused < refusedRetryCooldownMs) return;
-    const covered = new Set(active.filter((a) => a.intent === 'run').flatMap(steps));
+    const running = active.filter((a) => a.intent === 'run');
+    const covered = new Set(running.flatMap(steps));
+    // A host takes one visit at a time, and a question's visit is short and holds no lease: while
+    // every host of its item is busy with another visit, the question gets a host of its own.
+    for (const key of asking) {
+      const [projectId, id] = [key.slice(0, key.indexOf(' ')), key.slice(key.indexOf(' ') + 1)];
+      const hosts = running.filter((a) => a.projectId === projectId && steps(a).includes(id));
+      if (hosts.length && (await this.busy(hosts))) covered.delete(id);
+    }
     let slots = Math.max(0, this.config.maxAgents - active.length);
     const queue = [...served].flatMap(([projectId, wanted]) =>
       [...wanted].map(([id, source]) => ({ projectId, source, id })),
@@ -812,7 +831,6 @@ export const fleetWorkflowPlugin = {
       providerKey: () => process.env[adapter.config.modelApiKeyEnv] ?? '',
       dailyTokensPerPerson: adapter.config.dailyTokensPerPerson,
       authorize: (token) => adapter.modelGrant(token),
-      inquiries: ctx.sessions.inquiries,
     });
     ctx.effect(() => {
       const model = ctx.fleet.modelRelay(relay);

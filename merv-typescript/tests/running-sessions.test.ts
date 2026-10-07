@@ -1151,10 +1151,11 @@ test('an agent’s live stream is kept 30 days after its session ended, then the
     );
   await f.sessions.dispatch.halt(f.owner, { sessionId: session.id, reason: 'halted_by_operator' });
   // Closed: a page still waits for the agent's last words for ten minutes, then is told the end.
-  assert.deepEqual(await f.sessions.streams.authorize(f.owner, session.id), { growing: true });
+  await f.sessions.streams.authorize(f.owner);
+  assert.equal(await f.sessions.streams.growing(session.id, f.owner.projectId), true);
   f.advance(10 * 60_000 + 1);
-  assert.deepEqual(await f.sessions.streams.authorize(f.owner, session.id), { growing: false });
-  await assert.rejects(f.sessions.streams.authorize(f.reader, session.id), { code: 'forbidden' });
+  assert.equal(await f.sessions.streams.growing(session.id, f.owner.projectId), false);
+  await assert.rejects(f.sessions.streams.authorize(f.reader), { code: 'forbidden' });
   f.advance(29 * 86_400_000);
   await f.sessions.sweep();
   assert.equal(await count(session.id), 1, 'kept within 30 days of its end');

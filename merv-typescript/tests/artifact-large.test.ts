@@ -393,7 +393,7 @@ test('resuming an upload waits for no writer, for an owner or a session caller',
     app.ctx.scope.registerSessionAuthority({
       require: async () => {
         handed.push(app.ctx.state.readScope);
-        return source;
+        return { source };
       },
     }),
   );

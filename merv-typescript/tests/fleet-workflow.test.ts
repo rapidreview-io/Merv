@@ -71,7 +71,7 @@ import { keyEnv, provider, tavilyResults } from './fixtures/web.js';
 
 const enrollmentExpiresAt = '2026-09-22T00:15:00.000Z';
 const issuer = 'https://identity.example/auth/v1';
-type Target = { instanceId: string; expectedRevision: number; since?: string };
+type Target = { instanceId: string; expectedRevision: number; since?: string; inquiry?: true };
 /** A machine was created for it, whether or not it ever launched. */
 const machine = { sandboxId: 'sbx_created' } as FleetAllocation['runtime'];
 const targets = (prefix: string, count: number): Target[] =>
@@ -480,6 +480,45 @@ test('a running work host covers every revision of its work item, and another it
   assert.equal(f.allocations[1]?.owner.id, 'work:task_b');
   await f.adapter.reconcile();
   assert.equal(f.allocations.length, 2, 'both items are covered');
+});
+
+test('a question to an agent rents a host of its own while its work item’s host is busy', async (t) => {
+  const f = await fixture(t, { maxAgents: 3 });
+  const a = { instanceId: 'task_a', expectedRevision: 0 };
+  f.demand([a]);
+  await f.adapter.reconcile();
+  const first = f.allocations[0]!;
+  first.phase = 'running';
+  first.runtime = { launch: { deliveryState: 'launched' } } as FleetAllocation['runtime'];
+  // Its host runs the item's long visit; a person asks one of the item's agents meanwhile.
+  const busy = (status: 'active' | 'released') => ({
+    runnerId: 'managed-machine',
+    enrollmentExpiresAt,
+    session: {
+      id: 'session_a',
+      instanceId: 'task_a',
+      expectedRevision: 0,
+      status,
+      closedAt: status === 'active' ? null : new Date().toISOString(),
+      outcome: status === 'active' ? null : ('completed' as const),
+      releaseAcknowledged: status !== 'active',
+      capturePending: false,
+    },
+  });
+  f.inspections.set(first.id, busy('active'));
+  f.demand([{ ...a, inquiry: true }]);
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 2);
+  assert.equal(f.allocations[1]?.owner.id, 'work:task_a');
+  assert.notEqual(f.allocations[1]?.requestId, first.requestId);
+  // The new host is free for it: no third.
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.length, 2);
+  // A question while the item's host is free is that host's to take.
+  f.allocations[1]!.phase = 'released';
+  f.inspections.set(first.id, busy('released'));
+  await f.adapter.reconcile();
+  assert.equal(f.allocations.filter((item) => item.phase !== 'released').length, 1);
 });
 
 test('workflow bounds created but unclaimed retries across restart without blocking other work', async (t) => {

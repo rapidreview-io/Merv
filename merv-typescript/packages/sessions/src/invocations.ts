@@ -15,7 +15,7 @@ import {
 import { admitDispatch, type WorkflowDispatchAdmission } from '@merv/workflows/execution';
 import { clone, ordinary, safeError } from './common.js';
 import type { AgentObservations } from './observations.js';
-import type { Session, SessionInvocation, SessionInvocationPolicy } from './types.js';
+import type { Session, SessionInvocation, SessionInvocationPolicy, WorkSession } from './types.js';
 
 const snapshotInput = (input: Data): Data =>
   plain(input, 'invalid_input', {
@@ -73,7 +73,8 @@ function admitCall(
 interface InvocationState {
   public: SessionInvocation;
   sessionId: string;
-  registrationId: string;
+  /** The registration its work visit's lease is checked against; an inquiry visit binds none. */
+  registrationId?: string;
   running: boolean;
   used: boolean;
   input: Data;
@@ -90,8 +91,8 @@ export interface InvocationHost {
   valid(
     session: Session,
     tx: Transaction,
-    frozen?: Session['execution'],
-  ): Promise<{ registrationId: string; references?: WorkflowExecutionReferences }>;
+    frozen?: WorkSession['execution'],
+  ): Promise<{ registrationId?: string; references?: WorkflowExecutionReferences }>;
   /** Refuses while a queued operator message waits for the worker's acknowledgement. */
   acknowledged(sessionId: string, tx: Transaction): Promise<void>;
 }
@@ -119,29 +120,37 @@ export class SessionInvocations implements SessionInvocationPolicy {
   ) {}
   /** Tool names per session, read once: a policy is frozen at offer, and the tool listing
    *  asks about every registered tool, which under load meant one locked transaction each. */
-  private readonly toolNames = new Map<string, { names: Set<string>; at: number }>();
+  private readonly toolNames = new Map<
+    string,
+    { names: Set<string>; inquiry: boolean; at: number }
+  >();
   async allowsTool(caller: Caller, name: string, read?: boolean): Promise<boolean> {
     ordinary(caller);
     caller = structuredClone(caller);
-    // An inquiry visit reads the project and replies; Sessions' guard holds it to that too.
-    if (caller.session?.inquiry) return !!read || name === inquiryReply;
-    if (read || (workerTools.has(name) && name !== 'session.ask_owner')) return true;
     const id = caller.session?.id;
-    const cached = id ? this.toolNames.get(id) : undefined;
-    if (cached && this.clock() - cached.at < 60_000) return cached.names.has(name);
-    const names = await this.host.reading(async (tx) => {
-      const session = await this.host.session(caller, tx);
-      return new Set([
-        ...session.execution.policy.tools.map((tool) => tool.name),
-        // Only a visit that keeps a conversation can wait for its owner's answer.
-        ...(session.continuity ? ['session.ask_owner'] : []),
-      ]);
-    });
-    if (id) {
+    if (!id) return !!read || (workerTools.has(name) && name !== 'session.ask_owner');
+    let known = this.toolNames.get(id);
+    if (!known || this.clock() - known.at >= 60_000) {
+      known = await this.host.reading(async (tx) => {
+        const session = await this.host.session(caller, tx);
+        return {
+          names: new Set([
+            ...session.execution.policy.tools.map((tool) => tool.name),
+            // Only a work visit that keeps a conversation can wait for its owner's answer.
+            ...(session.continuity && session.kind === 'work' ? ['session.ask_owner'] : []),
+          ]),
+          inquiry: session.kind === 'inquiry',
+          at: this.clock(),
+        };
+      });
       if (this.toolNames.size >= 1000) this.toolNames.clear();
-      this.toolNames.set(id, { names, at: this.clock() });
+      this.toolNames.set(id, known);
     }
-    return names.has(name);
+    // An inquiry visit reads the project and replies; Sessions' guard holds it to that too.
+    if (known.inquiry) return !!read || name === inquiryReply;
+    return (
+      !!read || (workerTools.has(name) && name !== 'session.ask_owner') || known.names.has(name)
+    );
   }
   private async admit(
     caller: Caller,
@@ -206,7 +215,6 @@ export class SessionInvocations implements SessionInvocationPolicy {
           id: prepared.session.id,
           threadId: prepared.session.threadId,
           invocationId,
-          ...(prepared.session.inquiry && { inquiry: true as const }),
         }),
       }),
       tool,

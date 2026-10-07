@@ -184,10 +184,11 @@ Sessions has no cost budget: model spend is capped by Fleet's relay metering (to
 person per UTC day), and a local runner uses its owner's own subscription.
 
 An inquiry visit (`session.ask_thread`) is not a worker session of the work and counts in none
-of these: no `session_usage` row, no project or instance budget. It has a budget of its own,
-300 000 model tokens, charged to the person who asked: on a Fleet machine the relay charges each
-call to the asker's day and to the inquiry, and refuses a call past the inquiry's budget; on a
-runner of one's own, its release report is counted to the inquiry.
+of these: its `session_usage` row is of `kind='inquiry'`, which no project or instance total
+counts. It has a budget of its own (`Session.tokenBudget`): 300 000 model tokens plus four
+resends of the conversation it resumes, charged to the person who asked, at most 2 000 000 a day.
+On a Fleet machine the relay charges each call to the asker's day and to the session's budget,
+and refuses a call past it; on a runner of one's own, the runner stops the visit past it.
 
 A budget covers **worker sessions Merv launched**, and nothing else: what a remote job
 costs — a sandbox's compute, a provider's bill for a service the worker called — is not in

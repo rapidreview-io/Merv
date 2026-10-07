@@ -207,7 +207,8 @@ export const sessionsToolsPlugin = {
           input: { messageId: string; reply?: string; requestId: string },
         ) => {
           const message = await sessions.messaging.acknowledgeMessage(caller, input);
-          return caller.session?.inquiry
+          // The reply to a question to an agent (an inquiry) is its visit's answer.
+          return message.inquiry
             ? {
                 ...message,
                 ended: true,

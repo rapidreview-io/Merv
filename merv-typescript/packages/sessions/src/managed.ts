@@ -412,6 +412,7 @@ export class ManagedRunnerBindings {
         sessionId: session.id,
         projectId: row.project_id,
         allocationId: row.allocation_id,
+        ...(session.tokenBudget !== undefined && { tokenBudget: session.tokenBudget }),
         expiresAt: new Date(
           Math.min(Date.parse(session.hardDeadline), Date.parse(row.control_expires_at)),
         ).toISOString(),

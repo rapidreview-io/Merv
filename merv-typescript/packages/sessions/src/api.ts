@@ -52,7 +52,7 @@ const messageInput = z
  */
 export const workerPrompt = (session: Pick<Session, 'continuity' | 'inquiry'>) =>
   session.inquiry
-    ? inquiryPrompt
+    ? inquiryPrompt(session.inquiry.messageId)
     : [
         'You are the worker for one Merv workflow step. The following assignment is frozen for this lease.',
         'Use the Merv MCP tools to inspect the assigned work, perform it, and follow its handoff instruction.',
@@ -69,12 +69,14 @@ export const workerPrompt = (session: Pick<Session, 'continuity' | 'inquiry'>) =
           : []),
         'Before each handoff, read session.messages for this session and address every queued message. A new message may also appear as session_message_pending on any Merv tool call. Read it with session.messages, then call session.message.ack with a stable requestId and a concise reply about what you will do. Acknowledging a message changes nothing already submitted; a change it asks of submitted work goes through the workflow’s own actions, never quietly.',
       ].join('\n');
-/** What an inquiry visit is told instead: its assignment carries the question. */
-const inquiryPrompt = [
-  'You are answering a question about your earlier work in this conversation: an inquiry visit, not a work visit. The frozen assignment below carries the question.',
-  'You hold no lease on the work. Use only the Merv read tools to check anything you need; make no workflow moves, commits or writes, and leave the local files as they are.',
-  'Answer with session.message.ack on the question’s messageId, a stable requestId and your answer as the reply. The reply ends this visit: stop after it.',
-].join('\n');
+/** What an inquiry visit is told instead, the one place that says what an inquiry is: its
+ *  assignment carries only the question. */
+const inquiryPrompt = (messageId: string) =>
+  [
+    'A person over this project is asking you a question about your earlier work in this conversation: an inquiry visit, not a work visit. The frozen assignment below carries the question.',
+    'Nothing you do here is part of your work: you hold no lease on it. Use only the Merv read tools to check anything you need, and make no workflow moves, commits or writes. This conversation is not kept for your work; your next work visit is told of the question and your answer.',
+    `Answer once, plainly and from what you know, with session.message.ack {messageId: "${messageId}", reply, requestId}. That reply is the answer the person reads, and it ends this visit: stop after it.`,
+  ].join('\n');
 
 /** Managed supervisor bearers have no general project, tool or administration transport. */
 const managedRoute = (method: string, path: string): boolean =>
@@ -247,7 +249,8 @@ async function agentEvents(
   );
   let seq = after === null ? -1 : Number(after);
   const caller = await r.caller();
-  let { growing } = await streams.authorize(caller, sessionId);
+  await streams.authorize(caller);
+  let growing = await streams.growing(sessionId, caller.projectId);
   let read = Date.now();
   await serveEvents(req, res, {
     rotateMs: 20_000,
@@ -289,7 +292,7 @@ async function liveFeed(
 ): Promise<void> {
   check(!r.url.search, 'invalid_input', 'The live feed takes no query');
   const caller = await r.caller();
-  await streams.authorizeFeed(caller);
+  await streams.authorize(caller);
   const held = new Map<string, number>();
   let first = true;
   await serveEvents(req, res, {

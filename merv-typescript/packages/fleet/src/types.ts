@@ -137,8 +137,8 @@ export interface ManagedModelGrant {
   model: string;
   effort?: string;
   expiresAt: string;
-  /** An inquiry visit: each call is charged to its own small budget too. */
-  inquiry?: true;
+  /** The session's own model tokens (`Session.tokenBudget`): each call is charged to it too. */
+  tokenBudget?: number;
 }
 /**
  * A relay that holds the provider key for the workers Fleet launches, which hold none
