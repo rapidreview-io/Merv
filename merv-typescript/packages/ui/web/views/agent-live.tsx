@@ -6,6 +6,7 @@ import type { EventStreamState } from '../event-stream';
 import { CodeBlock } from '../code-block';
 import { Summary, cx } from '../components';
 import {
+  says,
   timeline,
   type Entry,
   type PersonLine,
@@ -305,9 +306,11 @@ export function AgentConversation({
     if (element) element.scrollTop = element.scrollHeight;
     setBottom(true);
   };
-  const quiet = !!streamed && !live.blocks.length && SAID[state];
-  const trouble =
-    !!streamed && live.blocks.length > 0 && ['stalled', 'retrying', 'refused'].includes(state);
+  // A live visit whose agent has drawn nothing yet (a quiet `Started` is not a line) says where
+  // its stream stands; once it has, only trouble is said.
+  const drawn = !!streamed && says(live.blocks, true);
+  const quiet = !!streamed && !drawn && SAID[state];
+  const trouble = drawn && ['stalled', 'retrying', 'refused'].includes(state);
   const shownEntries = entries.slice(from);
   return (
     <div className="agent-frame">

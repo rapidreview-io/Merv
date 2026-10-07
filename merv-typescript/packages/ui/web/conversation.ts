@@ -110,6 +110,10 @@ function read(
   };
 }
 
+/** Whether these blocks draw anything: a quiet milestone (`Started`) alone draws nothing. */
+export const says = (blocks: readonly AgentBlock[], live: boolean): boolean =>
+  blocks.some((block) => read(block, live) !== undefined);
+
 /**
  * The timeline: each visit's divider, then what its agent said and did, the people's lines
  * placed among them by when they were said, and every run of steps between two lines that are
