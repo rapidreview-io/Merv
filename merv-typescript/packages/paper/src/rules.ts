@@ -34,3 +34,11 @@ export const introductionFrom = (problem: {
  */
 export const PAPER_REVIEW_GUIDANCE =
   'own Methods/Results updates: include your own paperChanges: {documents: [{kind: methods or results, expectedRevision, changes: [{id, title, content}]}]}. Cite experiments as [Experiment name](/experiments/EXPERIMENT_ID), using the actual name as the visible label and keeping IDs in link destinations. Read the current paper first, distinguish planned work from established findings, and integrate the evidence into the project narrative.';
+
+/**
+ * What a scientific reviewer who keeps the paper is told in its handoff: read the paper, submit
+ * its own Methods/Results edits with the verdict, and say why when there are none. Each owner's
+ * published recipe or policy embeds it exactly, so it never changes in place.
+ */
+export const PAPER_REVIEWER_INSTRUCTION =
+  'You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes.';

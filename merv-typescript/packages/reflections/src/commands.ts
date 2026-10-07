@@ -13,7 +13,7 @@ import {
   type Transaction,
 } from '@merv/contracts';
 import { parseChangeSpec } from './change-spec.js';
-import { CHANGE_SPEC_CRITERION, REFLECTION_CRITERIA } from './definitions.js';
+import { CHANGE_SPEC_CRITERION, REFLECTION_CRITERIA, REVIEW_RETURNS } from './definitions.js';
 import type {
   ApprovedReflection,
   ChangeSpec,
@@ -357,11 +357,12 @@ export async function submitReview(
       'Only the exact current reflection review can be submitted',
       409,
     );
-    const route = input.verdict === 'pass' ? 'approved' : (input.returnTo ?? 'synthesizing');
+    const route =
+      input.verdict === 'pass' ? 'approved' : (input.returnTo ?? REVIEW_RETURNS[0].value);
     check(
       input.verdict === 'pass'
         ? input.returnTo === undefined
-        : ['reflecting', 'synthesizing'].includes(route),
+        : REVIEW_RETURNS.some((each) => each.value === route),
       'invalid_review_return',
       'Pass accepts no returnTo; rejections return to synthesizing or reflecting',
     );

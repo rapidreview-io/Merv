@@ -1,3 +1,4 @@
+import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import { type ContextRecipeDefinition } from '@merv/contracts';
 import type { FeasibilityStatement } from './evidence.js';
 import { activeStates, type ActiveState, reviewing } from './program.js';
@@ -80,8 +81,7 @@ export const handoffs: Record<ActiveState, string> = {
 };
 
 for (const state of ['design_review', 'experiment_review'] as const)
-  handoffs[state] +=
-    ' You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes.';
+  handoffs[state] += ` ${PAPER_REVIEWER_INSTRUCTION}`;
 
 /**
  * What a feasibility-gated design adds to the planner's and the design reviewer's handoff. It is
@@ -212,3 +212,15 @@ export const resultsCriteria = [
   'The report’s conclusions follow from the evidence, including negative findings and limitations.',
   'Format: the report stands alone without the plan, is one to two screens without padding, and has the answer first in two sentences, a table of every arm’s primary measure with uncertainty, a mermaid diagram of what happened or the decision, at most 3 bullets each of meaning and limits, and links to the evidence.',
 ];
+
+/**
+ * Where a rejected design or results review may send the experiment, by the stage it read: a
+ * design has one route, taken when none is named; a results review must choose.
+ */
+export const REVIEW_RETURNS = {
+  design: [{ value: 'planned', label: 'Planning, for a new design' }],
+  results: [
+    { value: 'planned', label: 'Planning, for a new design and attempt' },
+    { value: 'running', label: 'Running, to repair under the approved plan' },
+  ],
+} as const;

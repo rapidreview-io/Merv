@@ -1,18 +1,17 @@
 import type { TaskRecord } from './types.js';
 import {
+  absent,
   check,
   ellipsis,
   keyId,
   keyKind,
   mapAsync,
   MAX_ARTIFACT_IDS,
-  MervError,
   runningKey,
   type Caller,
   type Artifact,
   type ReviewRequest,
   type RunningAttention,
-  type RunningLinkRow,
   type RunningNode,
   type RunningPanelPart,
   type RunningPhrase,
@@ -23,11 +22,16 @@ import {
   type WorkRoute,
 } from '@merv/contracts';
 import type { ProcessGraph, WorkflowDependency } from '@merv/workflows/models';
-import { dependencyRows } from '@merv/workflows/dependency-rows';
+import {
+  dependencyLinks,
+  dependencySections,
+  prerequisiteNames,
+} from '@merv/workflows/dependency-rows';
 import { leaseRows } from '@merv/workflows/lease-rows';
 import {
   reviewWord,
-  unitArtifacts,
+  unitFileList,
+  unitFiles,
   unitHistory,
   type UnitFile,
   type UnitStateWords,
@@ -126,7 +130,7 @@ function face(at: Holding): RunningPhrase {
     case 'review':
       return at.card.line;
     case 'waits':
-      return ['Waits on ', ...more(at.names)];
+      return ['Waits on ', ...prerequisiteNames(at.names)];
     case 'waiting':
       return ['Waiting'];
     case 'ready':
@@ -146,7 +150,7 @@ function clause(at: Holding): RunningPhrase {
       // Only a review nobody has taken is dashed.
       return at.card.look === 'dashed' ? [' · unclaimed'] : [];
     case 'waits':
-      return [' · waits on ', ...more(at.names)];
+      return [' · waits on ', ...prerequisiteNames(at.names)];
     case 'waiting':
       return [' · waiting'];
     case 'ready':
@@ -155,11 +159,6 @@ function clause(at: Holding): RunningPhrase {
       return [];
   }
 }
-
-const more = (names: string[]): RunningPhrase => [
-  short(names[0]!),
-  ...(names.length > 1 ? [` and ${names.length - 1} more`] : []),
-];
 
 /** A name as long as the page holds one. */
 const short = (name: string, max = 200) => ellipsis(name, max);
@@ -197,15 +196,7 @@ export function taskNode(task: TaskStanding): RunningNode {
             ? 'dashed'
             : 'solid',
     ...(attention ? { attention } : {}),
-    ...(task.dependencies.length
-      ? {
-          links: task.dependencies.map((dependency) => ({
-            to: runningKey('work', dependency.id),
-            verb: 'waits on' as const,
-            ...(dependency.settled ? {} : { waiting: true }),
-          })),
-        }
-      : {}),
+    ...(task.dependencies.length ? { links: dependencyLinks(task.dependencies) } : {}),
     rank: attention ? 0 : at.at === 'review' && !at.card.held ? 2 : RANK[at.at],
     ...(task.started ? { started: task.started } : {}),
   };
@@ -339,25 +330,20 @@ export function taskUnit(
   });
   // Its files: what each delivery handed in and cited, what its delivering session made, what
   // its reviewers cited besides, and the brief it was asked with.
-  const file = (id: string, role?: UnitFile['role']): UnitFile[] => {
-    const artifact = artifacts.get(id);
-    const { size, createdAt } = artifact ?? {};
-    return artifact && size !== undefined && createdAt
-      ? [{ artifact: { ...artifact, size, createdAt }, ...(role ? { role } : {}) }]
-      : [];
-  };
-  const files = unitArtifacts(graph, [
-    ...taskFileIds(record, []).delivered.flatMap((id) => file(id, 'producer')),
-    ...reviews
-      .flatMap((review) => review.artifactIds)
-      .filter((id) => id !== record.briefId)
-      .flatMap((id) => file(id, 'producer')),
-    ...made.map((artifact): UnitFile => ({ artifact, role: 'producer' })),
-    ...reviews
-      .flatMap((review) => review.findings.flatMap((finding) => finding.evidenceIds))
-      .flatMap((id) => file(id, 'reviewer')),
-    ...file(record.briefId),
-  ]);
+  const files = unitFileList(
+    graph,
+    { found: artifacts, made },
+    {
+      producer: [
+        ...taskFileIds(record, []).delivered,
+        ...reviews.flatMap((review) => review.artifactIds).filter((id) => id !== record.briefId),
+      ],
+      reviewer: reviews.flatMap((review) =>
+        review.findings.flatMap((finding) => finding.evidenceIds),
+      ),
+      other: [record.briefId],
+    },
+  );
   return {
     ...(files.length ? { artifacts: files } : {}),
     key: delivered?.artifact
@@ -387,14 +373,6 @@ export function taskPanel(
 ): RunningPanelPart {
   const at = holding(task);
   const attention = need(task);
-  const named = (row: RunningLinkRow): RunningLinkRow => ({ ...row, name: short(row.name) });
-  const { waitsOn, unblocks } = dependencyRows(record.dependencies, record.dependents, route);
-  // A failed prerequisite is why the task needs a person, but only while it is worked on: the
-  // row still says failed after that, without the red.
-  const failing = !!failedPrerequisite(task);
-  const waits = waitsOn.map(({ attention: red, ...row }) =>
-    named(failing && red ? { ...row, attention: red } : row),
-  );
   // A delivery's claims belong to it: once a review sends the work back they are withdrawn.
   const claimed = task.state === 'in_review' || task.state === 'done';
   const claims = new Map(
@@ -410,27 +388,14 @@ export function taskPanel(
     .at(-1);
   const sections: RunningSection[] = [
     { title: 'Progress', place: 'progress', kind: 'ladder', graph },
-    ...(waits.length
-      ? [
-          {
-            title: 'Waits on',
-            place: 'relations' as const,
-            kind: 'links' as const,
-            rows: waits,
-            ...(waits.some((row) => row.attention) ? { attention: true } : {}),
-          },
-        ]
-      : []),
-    ...(unblocks.length
-      ? [
-          {
-            title: 'Unblocks',
-            place: 'relations' as const,
-            kind: 'links' as const,
-            rows: unblocks.map(named),
-          },
-        ]
-      : []),
+    // A failed prerequisite is why the task needs a person, but only while it is worked on: the
+    // row still says failed after that, without the red.
+    ...dependencySections(
+      record.dependencies,
+      record.dependents,
+      route,
+      !!failedPrerequisite(task),
+    ),
     // A unit says its goal and its checks itself, so they are sections only without one.
     ...(unit
       ? []
@@ -505,12 +470,6 @@ export function taskPanel(
 }
 
 // TaskService's reads for the board and the sidebar, each run on it as its TasksContext.
-
-/** A record another plugin answers 404 for is simply not there to speak of. */
-const absent = (error: unknown): null => {
-  if (error instanceof MervError && error.status === 404) return null;
-  throw error;
-};
 
 /** A task as the Running page's work lane reads it, with where its workflow stands. */
 interface RunningTaskRow {
@@ -614,10 +573,7 @@ export async function runningPanel(
         (await ctx.workflows.blockers(caller, taskId, tx)).length > 0,
         tx,
       );
-      const brief = await ctx.artifacts.get(caller, record.briefId, tx).catch((error) => {
-        if (error instanceof MervError && error.status === 404) return null;
-        throw error;
-      });
+      const brief = await ctx.artifacts.get(caller, record.briefId, tx).catch(absent);
       return { record, standing: facts, brief };
     });
     if (!read) return null;
@@ -627,16 +583,10 @@ export async function runningPanel(
     // Every round of review, and the files each one pinned, for the history and its documents.
     const reviews = await ctx.reviews.list(caller, { subjectId: taskId });
     const named = taskFileIds(read.record, reviews);
-    const { artifacts, made } = await ctx.state.transaction(async (tx) => {
-      const made: Artifact[] = [];
-      for (const session of named.sessions)
-        made.push(...(await ctx.artifacts.list(caller, { session, limit: 200 }, tx)));
-      return {
-        artifacts: await ctx.artifacts.find(caller, named.ids.slice(0, MAX_ARTIFACT_IDS), tx),
-        made,
-      };
-    });
-    const unit = taskUnit(read.record, graph, reviews, artifacts, made);
+    const { found, made } = await ctx.state.transaction(
+      async (tx) => await unitFiles(ctx.artifacts, caller, named, tx),
+    );
+    const unit = taskUnit(read.record, graph, reviews, found, made);
     return taskPanel(read.standing, read.record, graph, read.brief, route, unit);
   });
 }

@@ -1,4 +1,5 @@
-import { MAX_ARTIFACT_IDS, mapAsync } from '@merv/contracts';
+import { absent, mapAsync } from '@merv/contracts';
+import { unitFiles } from '@merv/reviews/unit-history';
 import { bound, createService } from '@merv/contracts';
 import type { Context } from 'cordis';
 import { MAX_ACTIVE_EXPERIMENTS } from './rules.js';
@@ -10,7 +11,6 @@ import {
   keyId,
   keyKind,
   MervError,
-  type Artifact,
   type Artifacts,
   type Caller,
   type ContextBuilder,
@@ -50,6 +50,7 @@ import {
 } from './program.js';
 import { handleFor, register, unregister } from './policy.js';
 import { attach, closeUnstarted, create, exhibit, submitReview, transition } from './commands.js';
+import { REVIEW_RETURNS } from './definitions.js';
 import {
   attemptMetadata,
   migrateExperiments,
@@ -84,14 +85,6 @@ interface StandingContext {
 }
 /** The gate a submission's review reads, as the verdict page names it. */
 const GATE: Record<string, string> = { design: 'Design', results: 'Results' };
-/** Where a rejected design or results review may send the experiment, by the stage it read. */
-const RETURNS: Record<string, { value: string; label: string }[]> = {
-  design: [{ value: 'planned', label: 'Planning, for a new design' }],
-  results: [
-    { value: 'planned', label: 'Planning, for a new design and attempt' },
-    { value: 'running', label: 'Running, to repair under the approved plan' },
-  ],
-};
 /** What review.start and review.get tell the reviewer of an experiment's design or results. */
 const REVIEW_GUIDANCE = `Pass rejects returnTo. A rejected design returns only to planned. A rejected results review must choose returnTo planned for a new design/attempt, or running for repair under the same approved plan. Experiment design and results reviewers ${PAPER_REVIEW_GUIDANCE} Keep design-review paper updates brief, usually one or two sentences. Results reviewers may add comprehensive detail when it helps explain the project’s trajectory and informs what comes next. Edits save with any verdict; if none are needed, explain why in notes.`;
 
@@ -168,7 +161,7 @@ export class ExperimentService implements Experiments {
             'SELECT stage FROM experiment_submissions WHERE review_id=?',
             review.id,
           );
-          return (row && RETURNS[row.stage]) ?? [];
+          return (row && REVIEW_RETURNS[row.stage as keyof typeof REVIEW_RETURNS]) ?? [];
         },
         // Both rejecting verdicts return the experiment.
         returning: ['needs_changes', 'fail'],
@@ -285,15 +278,11 @@ export class ExperimentService implements Experiments {
       );
       // Its files, for the Artifacts tab: those its record names and those its sessions made.
       const named = experimentFileIds(experiment, [...reviews.values()]);
-      const found = await this.artifacts.find(caller, named.ids.slice(0, MAX_ARTIFACT_IDS), tx);
-      const made: Artifact[] = [];
-      for (const session of named.sessions)
-        made.push(...(await this.artifacts.list(caller, { session, limit: 200 }, tx)));
       return {
         standing: await this.standing(caller, row, context, tx),
         experiment,
         reviews: [...reviews.values()],
-        files: { found, made },
+        files: await unitFiles(this.artifacts, caller, named, tx),
       };
     });
     if (!read) return null;
@@ -423,12 +412,7 @@ export class ExperimentService implements Experiments {
           (await this.workflows.prerequisites(caller, [row.id], tx)).get(row.id)!),
       // A review the experiment names and Reviews does not hold is drawn as no review, so one
       // dangling row costs its own card its reviewer and nothing else on the board.
-      review: review
-        ? await this.reviews.get(caller, review, tx).catch((error: unknown) => {
-            if (error instanceof MervError && error.status === 404) return null;
-            throw error;
-          })
-        : null,
+      review: review ? await this.reviews.get(caller, review, tx).catch(absent) : null,
       ...(row.created_at ? { started: new Date(row.created_at).toISOString() } : {}),
     };
   }

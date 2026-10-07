@@ -146,6 +146,14 @@ export const stateFault = (error: unknown): error is MervError =>
     'invalid_sql_parameters',
   ].includes(error.code) ||
     /^(transaction|state)_/.test(error.code));
+/**
+ * A read's refusal as "not there": a record another owner answers 404 for is simply not there
+ * to speak of, so `.catch(absent)` turns it into null and rethrows anything else.
+ */
+export const absent = (error: unknown): null => {
+  if (error instanceof MervError && error.status === 404) return null;
+  throw error;
+};
 /** Every role a member, an actor or a lease may hold. */
 export const ROLES = [
   'operator',

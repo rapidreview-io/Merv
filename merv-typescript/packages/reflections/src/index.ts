@@ -1,4 +1,5 @@
 import {
+  absent,
   bound,
   mapAsync,
   childRequest,
@@ -7,7 +8,6 @@ import {
   replayed,
   check,
   inTransaction,
-  MervError,
   now,
   type Artifact,
   type Artifacts,
@@ -32,7 +32,13 @@ import * as running from './running.js';
 import * as program from './program.js';
 import * as commands from './commands.js';
 import { submitted, type LensRow, type WaveRow } from './program.js';
-import { LENSES, LENS_WORKFLOW, ITEM_RECIPES, REFLECTION_WORKFLOW } from './definitions.js';
+import {
+  LENSES,
+  LENS_WORKFLOW,
+  ITEM_RECIPES,
+  REFLECTION_WORKFLOW,
+  REVIEW_RETURNS,
+} from './definitions.js';
 import type {
   ApprovedReflection,
   Reflection,
@@ -121,11 +127,7 @@ export class ReflectionService implements Reflections {
             review.projectId,
           )),
         submit: async (caller, input, tx) => await commands.submitReview(this, caller, input, tx),
-        // A rejected report goes back to synthesis, or to the lenses for five new reports.
-        returns: async () => [
-          { value: 'synthesizing', label: 'Synthesis, for a revised report' },
-          { value: 'reflecting', label: 'Lenses, for five new reports' },
-        ],
+        returns: async () => REVIEW_RETURNS,
         // Both rejecting verdicts return the wave.
         returning: ['needs_changes', 'fail'],
         guidance: REVIEW_GUIDANCE,
@@ -230,6 +232,7 @@ export class ReflectionService implements Reflections {
   async wave(caller: Caller, id: string, tx: Transaction, lenient = false): Promise<Reflection> {
     const row = await this.row(caller, id, tx);
     const submission = submitted(row);
+    const review = (id: string) => this.reviews.get(caller, id, tx);
     return {
       id,
       projectId: row.project_id,
@@ -240,10 +243,7 @@ export class ReflectionService implements Reflections {
       lenses: await this.hydrated(caller, await this.lensRows(row, tx), tx),
       workflow: await this.workflows.get(caller, id, tx),
       review: row.review_id
-        ? await this.reviews.get(caller, row.review_id, tx).catch((error: unknown) => {
-            if (lenient && error instanceof MervError && error.status === 404) return null;
-            throw error;
-          })
+        ? await (lenient ? review(row.review_id).catch(absent) : review(row.review_id))
         : null,
       report: submission?.report ?? null,
       changeSpec: submission?.changeSpec ?? null,

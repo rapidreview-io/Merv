@@ -1,3 +1,4 @@
+import { PAPER_REVIEWER_INSTRUCTION } from '@merv/paper/rules';
 import type { ContextRecipeDefinition, WorkflowDefinition } from '@merv/contracts';
 
 export const LENSES = [
@@ -125,9 +126,18 @@ export const ITEM_RECIPES: ContextRecipeDefinition[] = ['lens', 'synthesis', 're
           : stage === 'synthesis'
             ? 'Retain your own report as an immutable text artifact. Retain the change specification either as text, which leaves all follow-on work for the owner to create by hand, or as an application/json artifact (mediaType application/json, at most 64000 bytes) that the owner can turn into the next wave without retyping it: {version: 3, changes: prose scope and consolidation changes (at most 8000 characters), next: {decision: "continue", name: next research cycle name, rationale} or {decision: "stop", reason: goal_met | no_worthwhile_next_step | needs_owner, rationale}, items: at most 12 of {key, kind: "task", title, goal, checks: 1-12 distinct one-line checks, dependsOn, rationale} or {key, kind: "experiment", name, question, details, dependsOn, rationale}, carriedOver: at most 20 of {workflowId, reason} naming existing tasks or experiments the next cycle still waits on, rejected: [{title, reason}]}. Every listed field is required and no other is accepted. A key is lowercase letters, digits and hyphens; dependsOn holds keys of other items without cycles; an experiment depends only on tasks, and a plan holds at most 7 experiments; goal, question and details are at most 4000 characters and each rationale or reason at most 1000. A stop decision has no items and no carriedOver; a continue decision has at least one of either. Call reflection.submit with the report and change specification IDs, reflectionId, expectedRevision and requestId. The reviewer owns the paper update. Stop for independent review.'
             : 'Use review.submit with the exact claimId and expectedRevision, verdict, verification notes, synopsis and one finding per criterion. A pass approves this immutable report. For needs_changes or fail choose returnTo synthesizing to retain the lenses, or reflecting to require five fresh lens reports.' +
-              ' You are responsible for updating the project paper’s Methods and Results in perspective of the whole project. Read paper.read immediately before preparing edits. Submit your own paperChanges: {documents: [{kind: "methods" or "results", expectedRevision: current revision, changes: [{id, title, content}]}]} with review.submit. Revise existing sections rather than appending a review log; cite experiments with Markdown links [Experiment name](/experiments/EXPERIMENT_ID), using each experiment’s actual name as the visible label, and cite exact evidence. Keep stable IDs only in link destinations. Paper edits save with any verdict, so describe rejected or inconclusive work honestly without presenting it as accepted findings. If no edits are warranted, explain why in notes.',
+              ` ${PAPER_REVIEWER_INSTRUCTION}`,
       maxChars: 32000,
       format: 2,
     },
   }),
 );
+
+/**
+ * Where a rejected synthesis may send its wave: back to synthesis (the default, keeping the
+ * lenses), or to the lenses for five new reports.
+ */
+export const REVIEW_RETURNS = [
+  { value: 'synthesizing', label: 'Synthesis, for a revised report' },
+  { value: 'reflecting', label: 'Lenses, for five new reports' },
+] as const;

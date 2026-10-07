@@ -1,10 +1,10 @@
 import {
+  absent,
   ellipsis,
   filterAsync,
   keyId,
   keyKind,
   mapAsync,
-  MervError,
   runningKey,
   runningKeyPattern,
   type Actor,
@@ -426,12 +426,6 @@ async function acceptedUnits(
 const unitsOf = (check: CodeCheckStanding, accepted: ReadonlyMap<string, string[]>) => [
   ...new Set(check.members.flatMap((commit) => accepted.get(commit) ?? [])),
 ];
-
-/** A record another owner answers 404 for is simply not there to speak of. */
-const absent = (error: unknown): null => {
-  if (error instanceof MervError && error.status === 404) return null;
-  throw error;
-};
 
 /** What the reader asks of the rest of Code. */
 export interface CodeRunningSources {

@@ -2,12 +2,12 @@ import { leaseRows } from '@merv/workflows/lease-rows';
 import { reviewWord, unitHistory, type UnitStateWords } from '@merv/reviews/unit-history';
 import { reviewAttention, reviewCard } from '@merv/reviews/running';
 import {
+  absent,
   ellipsis,
   inTransaction,
   keyId,
   keyKind,
   mapAsync,
-  MervError,
   runningKey,
   type Artifact,
   type Caller,
@@ -395,12 +395,8 @@ export async function running(
     // A wave whose record names something no longer there is left off on its own; the
     // other waves are drawn.
     const nodes = await mapAsync(waves, async ({ id }) => {
-      try {
-        return waveNode(await runningFacts(ctx, caller, id, tx));
-      } catch (error) {
-        if (error instanceof MervError && error.status === 404) return null;
-        throw error;
-      }
+      const facts = await runningFacts(ctx, caller, id, tx).catch(absent);
+      return facts && waveNode(facts);
     });
     return nodes.filter((node) => node !== null);
   });

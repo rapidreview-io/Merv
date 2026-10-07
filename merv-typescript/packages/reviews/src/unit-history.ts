@@ -1,9 +1,13 @@
 import type { ProcessGraph } from '@merv/workflows/models';
+import { MAX_ARTIFACT_IDS } from '@merv/contracts';
 import type {
   Artifact,
+  Artifacts,
+  Caller,
   ReviewRequest,
   RunningUnitArtifact,
   RunningUnitEntry,
+  Transaction,
 } from '@merv/contracts';
 import { reviewStanding } from './rules.js';
 
@@ -174,4 +178,59 @@ export function unitArtifacts(graph: ProcessGraph, files: readonly UnitFile[]) {
       stage: stageAt(graph, artifact.createdAt),
       ...(role ? { role } : {}),
     }));
+}
+
+/** A unit's files as its sidebar read them: those its record names, and what its sessions made. */
+export interface UnitFiles {
+  found: ReadonlyMap<
+    string,
+    Pick<Artifact, 'id' | 'title' | 'mediaType'> & Partial<Pick<Artifact, 'size' | 'createdAt'>>
+  >;
+  made?: readonly UnitFile['artifact'][];
+}
+
+/**
+ * Reads a unit's files in the sidebar's transaction: the first MAX_ARTIFACT_IDS its record
+ * names, and the newest 200 each of its sessions made.
+ */
+export async function unitFiles(
+  artifacts: Pick<Artifacts, 'find' | 'list'>,
+  caller: Caller,
+  named: { ids: readonly string[]; sessions: readonly string[] },
+  tx: Transaction,
+): Promise<{ found: Map<string, Artifact>; made: Artifact[] }> {
+  const found = await artifacts.find(caller, named.ids.slice(0, MAX_ARTIFACT_IDS), tx);
+  const made: Artifact[] = [];
+  for (const session of named.sessions)
+    made.push(...(await artifacts.list(caller, { session, limit: 200 }, tx)));
+  return { found, made };
+}
+
+/**
+ * The unit's Artifacts tab from its files (`unitArtifacts`): what its producer handed in or
+ * made, then what its reviewers cited, then any other file its record names, such as its brief.
+ * A file named twice is listed under the first of these.
+ */
+export function unitFileList(
+  graph: ProcessGraph,
+  files: UnitFiles,
+  named: {
+    producer: readonly string[];
+    reviewer: readonly string[];
+    other?: readonly string[];
+  },
+): RunningUnitArtifact[] {
+  const file = (role?: UnitFile['role']) => (id: string) => {
+    const artifact = files.found.get(id);
+    const { size, createdAt } = artifact ?? {};
+    return artifact && size !== undefined && createdAt
+      ? [{ artifact: { ...artifact, size, createdAt }, ...(role ? { role } : {}) }]
+      : [];
+  };
+  return unitArtifacts(graph, [
+    ...named.producer.flatMap(file('producer')),
+    ...(files.made ?? []).map((artifact): UnitFile => ({ artifact, role: 'producer' })),
+    ...named.reviewer.flatMap(file('reviewer')),
+    ...(named.other ?? []).flatMap(file()),
+  ]);
 }
