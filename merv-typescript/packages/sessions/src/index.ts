@@ -836,7 +836,9 @@ export class LeasedSessions implements Sessions {
       ? session.outcome
       : reason === 'session_expired' && session.activatedAt === null
         ? 'offer_expired'
-        : undefined;
+        : reason === 'session_expired' && (await this.threads.overran(session, tx))
+          ? 'review_unfinished'
+          : undefined;
     if (failure) await this.dispatch.failed(session, failure, tx);
     if (budget)
       await this.dispatch.reportModelWait(
@@ -1017,6 +1019,7 @@ export class LeasedSessions implements Sessions {
         instanceId: unit.id,
         workflow: unit.workflow,
         state: unit.state,
+        revision: unit.revision,
         data: unit.data,
         role,
       },

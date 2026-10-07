@@ -187,6 +187,8 @@ export interface ContinuityUnit {
   instanceId: string;
   workflow: string;
   state: string;
+  /** The record's revision the visit is offered at: one review round. */
+  revision: number;
   data: Data;
   role: SessionRole;
 }

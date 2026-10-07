@@ -64,6 +64,8 @@ type OpenQuestion = { thread_id: string; instance_id: string };
 const namespace = (projectId: string) => `conversations-${projectId}`;
 /** How long a thread waits, dormant, for its work to come back to it. */
 export const dormantMs = 14 * 86_400_000;
+/** How many visits of one review round its step limit may cut before each further cut counts. */
+const reviewVisits = 4;
 /** What a conversation read sends: its newest events across visits, at most this many or bytes. */
 const READ_EVENTS = 500;
 const READ_BYTES = 2_000_000;
@@ -100,7 +102,9 @@ const UNREAD = `(t.status<>'retired' AND EXISTS (SELECT 1 FROM session_messages 
  * visit acts as, the conversation they kept and whether it is open, dormant or retired.
  *
  * A session's continuity key is its workflow's provider's, else its instance, state and role, so
- * a reviewer never continues a producer, and no reviewer continues at all. A key has at most one
+ * a reviewer never continues a producer. A reviewer's is its round's (instance, state, role and
+ * revision): a visit cut before its verdict is continued, a verdict handed in retires it, and the
+ * next round's reviewer starts fresh and retires the earlier rounds'. A key has at most one
  * thread that is not retired. An offer resumes it, with its actor and conversation, when it is
  * dormant, belongs to the same source and declared a conversation; otherwise the offer retires it
  * as superseded and opens a new one. A visit without a key retires its thread at close; a thread
@@ -149,8 +153,10 @@ export class SessionThreads {
     };
   }
   key(unit: ContinuityUnit): string | null {
-    // A review is read with fresh eyes each round: a reviewer never carries its earlier verdict.
-    if (unit.role === 'reviewer') return null;
+    // A review is read with fresh eyes each round: a reviewer never carries its earlier verdict,
+    // but one cut before giving it (its step limit, a lost host, a release) goes on with it.
+    if (unit.role === 'reviewer')
+      return JSON.stringify([unit.instanceId, unit.state, unit.role, unit.revision]);
     const provider = this.providers.get(unit.workflow);
     if (!provider) return JSON.stringify([unit.instanceId, unit.state, unit.role]);
     const key = provider(freezeLaunchSnapshot(structuredClone(unit)));
@@ -214,6 +220,16 @@ export class SessionThreads {
       }
       await this.retire(held, 'superseded', tx);
     }
+    // A new round's reviewer: the earlier rounds' reviewers of this stage are done with.
+    if (unit.role === 'reviewer')
+      for (const earlier of await tx.all<Row>(
+        "SELECT * FROM session_threads WHERE project_id=? AND instance_id=? AND state=? AND role='reviewer' AND status<>'retired' AND continuity_key<>?",
+        projectId,
+        unit.instanceId,
+        unit.state,
+        key,
+      ))
+        await this.retire(earlier, 'superseded', tx);
     const id = newId('thr');
     const actor = await this.scope.createSessionActor(
       owner.source,
@@ -281,7 +297,9 @@ export class SessionThreads {
     if (thread.status === 'retired')
       return await this.scope.retireSessionActor(thread.actor_id, reason, tx);
     const failed = session.deferral?.cause === 'resume_failed' && session.continuity?.resume;
-    if (!session.continuity) return await this.retire(thread, reason, tx);
+    // A reviewer's verdict ends its round: nothing continues it.
+    if (!session.continuity || (session.role === 'reviewer' && session.outcome === 'completed'))
+      return await this.retire(thread, reason, tx);
     if (failed && thread.sha256 !== null && resumeOf(thread).sha256 === failed.sha256)
       return await this.retire(thread, 'superseded', tx);
     await tx.run(
@@ -290,6 +308,20 @@ export class SessionThreads {
       session.id,
       thread.id,
     );
+  }
+  /**
+   * Whether a reviewer's visit its step limit cut is past what one review round is given: the
+   * round's reviewer is resumed through `reviewVisits` visits uncounted, and each further cut
+   * counts against the work (`review_unfinished`), so a review that never finishes is held.
+   */
+  async overran(session: Session, tx: Transaction): Promise<boolean> {
+    if (session.role !== 'reviewer' || !session.continuity) return false;
+    const visits = await tx.get<{ n: number | string }>(
+      "SELECT count(*) AS n FROM worker_sessions s JOIN session_threads t ON t.id=s.thread_id WHERE t.project_id=? AND t.continuity_key=? AND s.kind='work'",
+      session.projectId,
+      session.continuity.key,
+    );
+    return Number(visits?.n ?? 0) > reviewVisits;
   }
   /** Like a transcript: declared with no store I/O, delivered by one HEAD and a signed PUT. */
   async record(
